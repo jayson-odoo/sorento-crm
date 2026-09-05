@@ -22,6 +22,60 @@ logger = logging.getLogger(__name__)
 # that needed a second chance.
 WEBHOOK_AUTH_HEADER_CHANNELS = frozenset({"n8n_crm_chat_outbound", "n8n_crm_close_convo"})
 
+# What a masked header value reads as in `integration_logs.request_headers`. One
+# token, so an operator reading a log row can tell "we redacted this" from "the
+# caller sent this literal".
+MASKED_HEADER_VALUE = "***"
+
+# Header names whose VALUE is a credential. `dict(request.headers)` is serialised
+# whole into `integration_logs.request_headers`, which is written once per
+# customer message and never pruned, so anything here would otherwise sit in the
+# table in plaintext for the life of the install. Both `X-API-Key` and
+# `Authorization: Bearer` are accepted by `get_current_user_or_api_key`, so
+# masking only the first left the choice of which credential to keep to whoever
+# configured the n8n HTTP node.
+CREDENTIAL_HEADERS = frozenset(
+    {
+        "authorization",
+        "proxy-authorization",
+        "cookie",
+        "set-cookie",
+        "x-api-key",
+        "x-chatbot-retry-key",
+    }
+)
+
+# A denylist cannot name a header nobody has invented yet, and the cost of a miss
+# is a permanent plaintext secret, so the NAME is read as well: anything calling
+# itself a key, a token or a secret is treated as one. False positives cost an
+# operator one header value in a debugging session; a false negative costs a
+# credential.
+_CREDENTIAL_NAME_PARTS = ("key", "token", "secret")
+
+
+def sanitize_request_headers(headers: Dict[str, str]) -> Dict[str, str]:
+    """The request headers as they may be stored, credentials masked.
+
+    ONE implementation for every external endpoint that logs its own call. Each
+    of them used to carry its own two-line copy that knew about `x-api-key` and
+    nothing else, and each new endpoint could forget a different key.
+
+    Absent stays absent: a header that was not sent is never added, or every log
+    row would claim a credential it never saw. The original key spelling is kept
+    so a log row still shows what the caller actually sent.
+    """
+    masked: Dict[str, str] = {}
+    for name, value in headers.items():
+        lowered = str(name).lower()
+        if lowered in CREDENTIAL_HEADERS or any(
+            part in lowered for part in _CREDENTIAL_NAME_PARTS
+        ):
+            masked[name] = MASKED_HEADER_VALUE
+        else:
+            masked[name] = value
+    return masked
+
+
 # How long a row created by a direct-send lane is held back from the sweeper.
 # The direct lane commits the row `pending` and then POSTs it on a daemon
 # thread; a sweeper tick landing in that gap would send the same row a second

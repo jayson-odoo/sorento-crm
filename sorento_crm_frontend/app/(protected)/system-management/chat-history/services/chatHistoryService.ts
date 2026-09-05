@@ -10,6 +10,12 @@ function buildParams(filters: ChatHistoryFilters, extra: Record<string, string |
   const params = new URLSearchParams();
   Object.entries({ ...filters, ...extra }).forEach(([key, value]) => {
     if (value === undefined || value === null || value === '' || value === false) return;
+    if (Array.isArray(value)) {
+      // Repeated, not comma-joined: the endpoint declares `contact_id` as a repeatable
+      // query parameter, and a joined string would be read as one contact id nobody has.
+      value.forEach((entry) => params.append(key, String(entry)));
+      return;
+    }
     params.set(key, String(value));
   });
   return params;

@@ -61,7 +61,9 @@ class ChatThreadResponse(BaseModel):
 class ChatHistoryExportRequest(BaseModel):
     date_from: Optional[datetime] = None
     date_to: Optional[datetime] = None
-    contact_id: Optional[str] = None
+    # One contact, or the several the list is currently narrowed to ("Failed turns only"
+    # sends the contacts whose turns failed). The CSV has to be the set on the screen.
+    contact_id: Optional[str] | Optional[list[str]] = None
     direction: Optional[str] = None
     search: Optional[str] = None
     breached_only: bool = False

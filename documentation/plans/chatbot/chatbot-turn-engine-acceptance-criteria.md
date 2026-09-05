@@ -140,6 +140,14 @@ Derived, never asked: nothing to configure. The trace is written by the engine o
   SLA row, no chat-history ingest. The response carries the would-be `session_patch` and every
   action flagged `dry_run: true`. Console and clone turns are safe by construction, not by
   which URL they hit.
+  **A dry run returns every action it WOULD have taken, in order, flagged `dry_run`, with
+  preview placeholders where a side effect would have supplied the value** (ruling 5 Sep
+  2026, agreed with the n8n executor; AC-507 is the contract). Returning a shorter list on a
+  dry run would make it a different shape from the live one, and the executor renders one set
+  of expressions against both. So the seams stay unreached and the values they would have
+  returned are stood in for: an id becomes `null` with `preview: true` beside it, a rendered
+  timestamp becomes `"<preview>"`. Anything that does NOT depend on a seam - a fixed sentence,
+  or one interpolating state the turn already resolved - carries its real value either way.
   **A dry run is also an INPUT surface (O2, agreed with the n8n side 5 Sep 2026).** Zero
   writes is only half of what a harness needs; the other half is being able to say what the
   turn should start from. So a dry-run envelope may carry three optional keys and the engine
@@ -202,9 +210,14 @@ clone or live. Each AC traces to a journey step (A1 to D1).
   `MODULE_KEY = "chatbot"`, `MODULE_MANIFEST` carries the `chatbot` entry with its dependencies,
   and `app_modules_catalog` is seeded with it on first run. (C1)
 - AC-002 `[BE][T]` Given the package `app/services/chatbot/`, when any module outside
-  `app/api/v1/external/chat.py`, `app/tasks/chat_turns.py`, `app/modules/chatbot/` or
-  `tests/chatbot/` imports from it, then `tests/chatbot/test_import_boundary.py` fails naming the
-  importer. (C1)
+  `app/api/v1/external/chat.py`, `app/api/v1/system/chatbot.py`, `app/tasks/chat_turns.py`,
+  `app/modules/chatbot/` or `tests/chatbot/` imports from it, then
+  `tests/chatbot/test_import_boundary.py` fails naming the importer. (C1)
+
+  `app/api/v1/system/chatbot.py` was added to the list at S2b (5 Sep 2026): AC-257 names it
+  as where the trace endpoint lives, and its Retry calls the module's own retry seam. It is
+  a chatbot-module surface mounted in a shared router, not core reaching in - the asymmetry
+  the rule protects (core never imports the package) is unchanged.
 - AC-003 `[BE]` Given the `chatbot` migration, when applied, then schema `chatbot` exists and
   table `chatbot.turns` exists with `id, contact_respond_id, envelope (jsonb), status
   (queued|processing|delegated|done|failed), stage, branch_kind, error, attempt (int, default
@@ -408,6 +421,36 @@ Runs after S1 parity is green and before S1 promotes, in the same lane.
   members in-process), compile-current-state and crossdomain-compose, writes session vars
   in-process, marks the turn `done`, and responds `{ reply: {text, quick_replies, result_set,
   attachments_src}, actions: [] }`. (A2, A3)
+
+  **A second route, same everything else** (5 Sep 2026, agreed with the n8n side):
+  `POST /api/v1/external/chat/turn/complete` takes the SAME body and returns the SAME
+  response, and identifies the turn from `(ctx.contact.id, ctx.text.message.messageId)` -
+  the pair `chatbot.turns` is already UNIQUE on (D15) - taking the HIGHEST attempt. It
+  requires `delegated`: 404 with a sentence when no row matches, 409
+  `CHATBOT_TURN_NOT_DELEGATED` otherwise, both BEFORE the tail runs, and both writing an
+  `integration_log` like every other call to this endpoint.
+
+  **Three amendments, all agreed with the n8n side (5 Sep 2026):**
+
+  - **`done` WITH a stored response is not refused**; it falls through to
+    `complete_turn`'s replay branch and returns the answer already composed (D15's
+    duplicate-delivery shape). 409 is for a turn with neither a lane result to fold in nor
+    an answer to replay - `processing`, `failed`, or `done` with nothing stored.
+  - **Both routes answer with `is_test`** (the ROW's, decided on the envelope at `/turn`),
+    so the caller's test-guard logs what it recorded instead of sent without carrying the
+    head's answer across two calls.
+  - **A tail that RAISES is still a 200 answer**: `reply = {text: <today's error reply>,
+    quick_replies: null, result_set: null, attachments_src: null}` AND
+    `actions = [{kind: send_message, text: <the same>, quick_replies: null,
+    result_set: null, dry_run: <the row's is_test>}]`, never a null reply or an empty
+    action list - the executor executes `actions` and nothing else. The row is still
+    `failed` at `remembered` with the reason on it.
+
+  The reason is the n8n side's, and it keeps their cut inside one workflow: `sub-output`
+  holds the `ctx` but not the turn id (the id lives on the spine, two workflows up), so
+  the id-in-the-path form would have meant editing the spine, `sub-main-processing` and
+  every `Call 'sub-output'*` caller to thread it down. `/turn/{turn_id}/complete` is
+  UNCHANGED and still the form a retry from the trace screen uses, where the id is known.
 - AC-202 `[T]` Given every `compile-current-state`, `crossdomain-compose`, `build-outcome`,
   `escalate-catalog`, `cs-roster-plan`, `build-cs-member-offer` fixture, when replayed, then
   `reply.text`, `reply.quick_replies` and `session_patch.variables` equal `expected`, the only
@@ -453,8 +496,13 @@ endpoint over `chatbot.turns.trace`. Lands after S2 so the head and tail both wr
   destructive tone. (D1)
 - AC-252 `[FE]` Given the Turn line, when expanded, then a vertical stage timeline renders:
   Received, Understood, Access, Routed, Looked up, Replied, Remembered, Sent; each row has a
-  status icon, `summary` and `why` sentences, and duration; a stage that did not run for that
-  lane is omitted, not greyed. (D2)
+  status icon, `summary` and `why` sentences, and duration.
+
+  A stage a lane never runs (a clarify ask looks nothing up) is OMITTED, never greyed. A
+  stage a FAILURE stopped is different and collapses into ONE "not reached" row naming them
+  together, per the approved mockup (review page section 10): on a turn that failed at stage
+  two, "Routed, Looked up, Replied and Remembered did not run, memory unchanged" is the
+  operator's next question, and eight greyed placeholders would bury it. (D2)
 - AC-253 `[FE]` Given a failed stage, when rendered, then the row shows the reason sentence, a
   Retry button (enabled when the turn is `failed`; the only retry path, R4), and a "Technical
   details" collapsible using the existing `SearchableCode` viewer over `raw`. (D3)
@@ -462,17 +510,55 @@ endpoint over `chatbot.turns.trace`. Lands after S2 so the head and tail both wr
   memory keys in words (labels, not key names, with the raw key in a tooltip). (D4)
 - AC-255 `[FE]` Given the Chat History list, when the filter "Failed turns only" is on, then only
   contacts with a `failed` turn in the range are listed, and the row shows the last failed stage.
-  (D1)
+  Backed by `GET /api/v1/system/chatbot/turns/failed-contacts?from=&to=` ->
+  `{items: [{contact_respond_id, last_failed_stage, last_failed_at, count}]}`: the question is
+  "which contacts are worth opening", which is an aggregate over tens of rows, not a page of
+  every turn grouped in the browser.
+
+  The list then asks `GET /api/v1/system/chat-history` for those contacts' messages by
+  REPEATING `contact_id`, one value per contact named by the aggregate: several ids narrow
+  to those ids, one id narrows to it, an explicit blank value matches NOBODY (an empty
+  filter is a filter, not an absent one) and an absent param filters nothing. The page and
+  its total are therefore the filtered ones - narrowing in the browser instead left the
+  pager counting rows it had just hidden. (D1)
 - AC-256 `[FE]` Usable and non-clipped at 375px and 1280px; the timeline stacks, the drawer
   scrolls, no horizontal page scroll. (D2)
 - AC-257 `[BE]` Given `GET /api/v1/system/chatbot/turns?contact_respond_id=&from=&to=&status=`,
-  when called with `system.chat_history.view`, then it returns the turn rows with `trace`,
-  paged, newest first; `POST /api/v1/system/chatbot/turns/{id}/retry` requeues a `failed` turn
-  (403 without `system.chat_history.manage`, 409 unless `failed`). (D1, D3)
+  when called with `system.chat_history.view`, then it returns the turn rows with `trace` and
+  `response`, newest first, paged by `limit` (default 50, max 200) and an opaque keyset
+  `cursor` echoed back as `next_cursor` (null on the last page); an unknown `status` is 422,
+  not an empty page. `POST /api/v1/system/chatbot/turns/{id}/retry` re-injects a `failed` turn
+  (403 without `system.chat_history.manage`; 409 unless `failed`; 409 `retry_unavailable` when
+  no ingress is configured, having sent nothing; 409 when a retry is IN FLIGHT, meaning
+  `chatbot.turns.retry_requested_at` is set AND younger than `chatbot_retry_stale_minutes`
+  (setting, default 5), so a double click cannot answer the customer twice; 502 when the
+  ingress refuses, leaving the row unchanged). A marker OLDER than that window is stale and
+  the turn may be retried again: the marker is cleared by the re-injected turn arriving, and
+  one that never arrives (n8n dropped it, the contact was deleted, the workflow was
+  mid-deploy) must not leave the row un-retryable forever. The claim is a conditional
+  `UPDATE ... WHERE retry_requested_at IS NULL OR retry_requested_at < <stale cutoff>` whose
+  rowcount decides, so two simultaneous POSTs cannot both pass the check and both inject.
+
+  `GET .../turns` carries `retry_available` and `retry_unavailable_reason` on the LIST
+  response, not per row: whether this environment has an ingress at all is a property of the
+  deployment, and the screen needs it to disable the button rather than offer a 409 the
+  operator only discovers by pressing it. On success the row STAYS `failed` and gains
+  `retry_requested_at`; the response is `{turn_id, attempt}` where `attempt` is what the
+  re-injected turn will carry. (D1, D3)
 - AC-258 `[T]` vitest for the timeline (happy, failed, delegated, retry disabled) and the
   Kept/New/Cleared derivation; pytest for the list filters and the retry guards. (D1 to D4)
 - AC-259 `[E2E]` agent-browser: from `/`, System > Chat History, open a thread, expand a turn,
   read the Understood row, open Technical details; screenshot at 375 and 1280. (D1 to D3)
+- AC-260 `[BE]` Given a turn left `delegated` because the n8n lane that took it over never
+  called `/complete` (workflow error, worker redeploy, execution deleted), when the sweep runs
+  (every minute, from the existing APScheduler registration in
+  `app/scheduler/task_scheduler.py`), then every `delegated` row whose `started_at` is older
+  than `CHATBOT_DELEGATED_TTL_MINUTES` (setting, default 10) becomes `failed` with
+  `stage = "delegated"`, `error = "n8n lane did not complete within N minutes"` and a trace
+  note explaining it. Test turns included; running it twice changes nothing; a fresh
+  `delegated` row and any `done` / `failed` row are untouched. Without this the trace list
+  fills with ghosts that read as work in progress, and Retry cannot reach them at all because
+  R4 makes a manual retry possible on a FAILED turn only. (D1, D3)
 
 ### S3 - Canned lanes, ideation, offer-hold inside the head (journey A2, B2, D6)
 
@@ -513,6 +599,15 @@ endpoint over `chatbot.turns.trace`. Lands after S2 so the head and tail both wr
     copy. Only `{{team}}` and `{{user_goal}}` are declared.
   - Migration `476_chatbot_reply_copy` seeds them; the engine falls back to the same
     strings when a row is missing or the DB is unreachable, so the bot answers either way.
+  - **The last two land at S3 with their lanes** (5 Sep 2026), as this note said they
+    would: `chatbot_reply_access_denied` (the send node's own expression, `{{team}}` being
+    the parser's `suggested_agent` with em-dashes folded to hyphens) and
+    `chatbot_reply_offer_hold` (+ `_no_companies`, because a pool with no names gets a
+    DIFFERENT clause rather than an empty parenthetical). Seeded by migration
+    `478_chatbot_s3_copy` (S4's `477_chatbot_lanes` seeds no copy; it adds the
+    `chatbot_completed_lanes` switch, and 478 chains onto it). Eleven keys now, and
+    `{{companies}}` is finally used - by the offer-hold clause, which is the only canned
+    string that names a pool.
 - AC-303 `[BE][T]` Given `domain_hint == 'ideate'`, when the head runs, then the engine calls
   MCP tool `crm_ideation_turn` (via `MCPRuntimeClient`) with the same arguments
   `ideate-turn-http` sends today (including `media_selection` derivation from
@@ -527,6 +622,14 @@ endpoint over `chatbot.turns.trace`. Lands after S2 so the head and tail both wr
   `system_settings.chatbot_unsupported_domains` (JSON array, default
   `["goods_receive", "spo_allocation"]`), exposed in BOTH settings GET dict builders and the
   `SystemSettingUpdate` schema. (B2)
+
+  **Landed with a sibling** (5 Sep 2026): `system_settings.chatbot_completed_lanes`, a JSON
+  list shipped EMPTY, which decides which branch kinds the CRM finishes rather than
+  delegating. A lane completes only when it is in BOTH that list and the code's own
+  `lanes.canned.COMPLETED_BRANCH_KINDS`, so the S3 cutover is a data change with an edit-
+  the-list rollback rather than a deploy. Both columns are in the settings GET dict and the
+  `SystemSettingUpdate` schema, typed `List[str]` so a bare string cannot be saved and then
+  iterated one character at a time by the membership test.
 - AC-306 `[BE][T]` Given `system_settings.chatbot_stock_denial_enabled` (boolean, default
   false, both dict builders), when false, then `isStockCheckDenied` is never evaluated and no
   turn routes to `stock_denied` / `demand_qty`; when true, then a contact without
@@ -535,6 +638,19 @@ endpoint over `chatbot.turns.trace`. Lands after S2 so the head and tail both wr
   eight branch kinds above are removed and a single `if delegate == null` node after the head
   call goes straight to `sub-sendmsg`; the `ideate-turn-http`, `build-ideate-reply`,
   `offer-hold-reply`, `tag-*` and `Edit Fields2` nodes are deleted. (A2)
+
+  **Amended 5 Sep 2026, two corrections from the implementation:**
+
+  - There is an ORDER, and it is written at node level in `n8n-changes.md` S3: CRM deploy
+    (inert, `chatbot_completed_lanes = []`) -> shadow -> the owner adds the kind(s) to the
+    list -> only THEN the Switch outputs and nodes go. Deleting before the data flip turns
+    a reversible change into an outage; rollback before that point is editing the list.
+  - `Edit Fields2` STAYS. It stamps `not_allowed_check_stock` onto the `stock_denied`
+    item and that lane still delegates until S6. The CRM stamps the same field itself now
+    (`engine._stamp_item`), so the node is a no-op - but a no-op that is deleted while its
+    lane still runs is a lane that stops carrying the field.
+  - The `if delegate == null` node already exists: it is S1's `head-arm` Switch `finished`
+    route, so S3 adds no node to the spine at all.
 
 ### S4 - low_signal lane (journey A2)
 
@@ -579,8 +695,10 @@ endpoint over `chatbot.turns.trace`. Lands after S2 so the head and tail both wr
   removed from the spine; `sub-escalation` and `sub-human-intervention` unpublished; the n8n
   outbound executes `assign_conversation` / `add_comment` via the existing respond.io nodes. (A4)
 - AC-507 `[E2E]` Given the clone with `is_test`, when an escalation turn runs, then
-  `test:egress:{run}` records the four would-send actions in order and no real assignment
-  happens. (A4)
+  `test:egress:{run}` records the four would-send actions in order (`send_message`,
+  `assign_conversation`, `add_comment`, `send_message`), each `send_message.quick_replies`
+  a non-empty comma-joined string or `null` (never a list, never `""`), and no real
+  assignment happens. (A4)
 
 ### S6 - Business lane (journey A2, A3)
 
@@ -657,8 +775,14 @@ contact inside the synchronous request. Different contacts run in parallel.
   `failed` with `stage` and `error`, an `integration_log` row is written, the response still
   carries the error reply as a `send_message` action, and NO automatic retry happens (R4). (A6)
 - AC-705 `[BE]` Given a `failed` turn, when Retry is pressed on the trace screen (AC-257), then
-  the CRM re-posts the original envelope to the n8n ingress webhook with `attempt + 1`, so the
-  normal path (ordering, engine, caller sends) runs; the CRM never sends itself. (D3, R4)
+  the CRM re-posts the ORIGINAL respond.io webhook body (`envelope.message` as stored on the
+  row) to the n8n inject webhook until S7, and to the thin-spine webhook after, so the normal
+  path (ordering, engine, caller sends) runs; the CRM never sends itself. The re-injected
+  message keeps its `message_id`, so the engine treats a `failed` row carrying
+  `retry_requested_at` as re-runnable rather than as a D15 duplicate: it inserts a NEW row with
+  `attempt + 1` and `ingress = retry` (the unique key is
+  `(contact_respond_id, message_id, attempt)`, migration 474) and clears the marker. Any other
+  existing row is still a duplicate. (D3, R4)
 - AC-706 `[N8N]` Given the n8n side, when S7 is promoted, then the ingress is webhook >
   `sub-media-intake` > `POST /chat/turn` > a Switch on `action.kind` feeding the existing
   `sub-sendmsg` / `send-attachments` / assign / comment / update-contact nodes; the

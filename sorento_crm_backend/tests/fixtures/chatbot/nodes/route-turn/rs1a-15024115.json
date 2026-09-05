@@ -58,7 +58,7 @@
               },
               "channel": {
                 "id": 453209,
-                "name": "Internal (+60 11-1673 1179)",
+                "name": "Internal (+60 11-0000 0001)",
                 "source": "whatsapp_business",
                 "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 21\"},\"wa_id\":\"60100000025\",\"user_id\":\"MY.900000047\",\"firstName\":\"Person 73\",\"lastName\":\"Person 74\"}}",
                 "created_at": 1767682908
@@ -167,7 +167,7 @@
                 },
                 "channel": {
                   "id": 453209,
-                  "name": "Internal (+60 11-1673 1179)",
+                  "name": "Internal (+60 11-0000 0001)",
                   "source": "whatsapp_business",
                   "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 21\"},\"wa_id\":\"60100000025\",\"user_id\":\"MY.900000047\",\"firstName\":\"Person 73\",\"lastName\":\"Person 74\"}}",
                   "created_at": 1767682908
@@ -290,7 +290,7 @@
               },
               "channel": {
                 "id": 453209,
-                "name": "Internal (+60 11-1673 1179)",
+                "name": "Internal (+60 11-0000 0001)",
                 "source": "whatsapp_business",
                 "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 21\"},\"wa_id\":\"60100000025\",\"user_id\":\"MY.900000047\",\"firstName\":\"Person 73\",\"lastName\":\"Person 74\"}}",
                 "created_at": 1767682908
@@ -409,7 +409,7 @@
           },
           "channel": {
             "id": 453209,
-            "name": "Internal (+60 11-1673 1179)",
+            "name": "Internal (+60 11-0000 0001)",
             "source": "whatsapp_business",
             "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 21\"},\"wa_id\":\"60100000025\",\"user_id\":\"MY.900000047\",\"firstName\":\"Person 73\",\"lastName\":\"Person 74\"}}",
             "created_at": 1767682908
@@ -880,7 +880,7 @@
               },
               "channel": {
                 "id": 453209,
-                "name": "Internal (+60 11-1673 1179)",
+                "name": "Internal (+60 11-0000 0001)",
                 "source": "whatsapp_business",
                 "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 21\"},\"wa_id\":\"60100000025\",\"user_id\":\"MY.900000047\",\"firstName\":\"Person 73\",\"lastName\":\"Person 74\"}}",
                 "created_at": 1767682908
@@ -1174,7 +1174,7 @@
             },
             "channel": {
               "id": 453209,
-              "name": "Internal (+60 11-1673 1179)",
+              "name": "Internal (+60 11-0000 0001)",
               "source": "whatsapp_business",
               "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 21\"},\"wa_id\":\"60100000025\",\"user_id\":\"MY.900000047\",\"firstName\":\"Person 73\",\"lastName\":\"Person 74\"}}",
               "created_at": 1767682908

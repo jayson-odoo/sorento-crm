@@ -16,6 +16,7 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | --- | --- | ---: | ---: | ---: | --- | --- | --- |
 | `spine-rs-1a` | `51f7b0d2` | 581 | 581 | 946 | yes | 2026-09-05 | `route-turn`, `build-ctx` |
 | `sub-casual-llm-live` | `08bf56a5` | 13 | 13 | 13 | yes | 2026-09-05 | `construct-user-prompt`, `mark-casual-error` |
+| `sub-escalation-live` | `bac9613b` | 33 | 33 | 36 | yes | 2026-09-05 | `escalation-input`, `escalation-context`, `clarify-company-reply`, `escalation-result` |
 | `sub-fetch-results-live` | `live-5sep` | 772 | 772 | 772 | yes | 2026-09-05 | `tool-filter`, `tier-probe-plan`, `tier-probe-collect`, `fetch-result` |
 | `sub-get-rag-live` | `live-5sep` | 862 | 862 | 1050 | yes | 2026-09-05 | `Code_in_JavaScript`, `Code_in_JavaScript1` |
 | `sub-get-results` | `125e5c32` | 365 | 365 | 365 | yes | 2026-09-05 | `entity-ids-transformer`, `output-structurer` |
@@ -64,6 +65,9 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `disallowed-entity-gate` | 242 | 177 | 6 |
 | `entity-ids-transformer` | 20 | 20 | 2 |
 | `escalate-catalog` | 130 | 130 | 5 |
+| `escalation-context` | 22 | 22 | 10 |
+| `escalation-input` | 22 | 22 | 10 |
+| `escalation-result` | 22 | 22 | 10 |
 | `fetch-result` | 43 | 43 | 2 |
 | `item` | 11 | 11 | 1 |
 | `output-structurer` | 20 | 20 | 2 |
@@ -151,6 +155,9 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `escalate-catalog` | `not_supported` | 3 | 0 | exhausted (3) |
 | `escalate-catalog` | `offer_hold` | 3 | 0 | exhausted (3) |
 | `escalate-catalog` | `out_of_scope` | 15 | 0 | met |
+| `escalation-context` | `all` | 22 | 0 | met |
+| `escalation-input` | `all` | 22 | 0 | met |
+| `escalation-result` | `all` | 22 | 0 | met |
 | `fetch-result` | `error` | 1 | 0 | exhausted (1) |
 | `fetch-result` | `result` | 37 | 0 | met |
 | `fetch-result` | `tier-ask` | 5 | 0 | met |

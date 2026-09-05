@@ -87,12 +87,48 @@ CHATBOT_TURN_ERROR_REPLY = (
     "Sorry, I ran into a problem understanding that. Please try again in a moment."
 )
 
+# `sorento-sub-respond-sendmsg-respond5`'s `message` expression - the ENTIRE reply on the
+# access-denied lane, which never reaches `compile-current-state` at all. `{{team}}` is
+# the parser's `suggested_agent`, em-dash folded to a hyphen by the caller (the fold is
+# n8n's own, on the agent name, not on this sentence).
+CHATBOT_REPLY_ACCESS_DENIED = "Sorry, you are not allowed to access {{team}}"
+
+# `offer-hold-reply.js`'s closing clause. The LEAD ("Both *A* and *B* teams are listed")
+# is a function of how many companies the pool holds, so it is composed in
+# `lanes/canned.offer_hold_clarify_text` rather than templated - a count is not a
+# substitution. What IS editable is this clause, and it carries the leading separator so
+# an owner can reword the whole tail of the sentence in one place.
+CHATBOT_REPLY_OFFER_HOLD = (
+    " - reply a number, a name, or the company ({{companies}}) and I'll assign automatically."
+)
+# The same clause for a pool that carries NO company names. A DIFFERENT sentence, not this
+# one with a blank in it: the parser's company-pick arm refuses every pick against an
+# empty pool, so inviting a reply that cannot resolve would be worse than not offering it.
+CHATBOT_REPLY_OFFER_HOLD_NO_COMPANIES = (
+    " - reply a number or a name and I'll assign automatically."
+)
+
 
 # `short name -> (registry key, template, declared {{tokens}})`. ONE table: the registry
 # builds `PROMPT_KEYS` from it, the seed migration seeds from it, and the package's
 # `copy.py` resolves against it, so the three can never list different keys (H28's
 # lesson, applied to copy instead of to enums).
 CHATBOT_REPLY_COPY: dict[str, tuple[str, str, tuple[str, ...]]] = {
+    "access_denied": (
+        "chatbot_reply_access_denied",
+        CHATBOT_REPLY_ACCESS_DENIED,
+        ("team",),
+    ),
+    "offer_hold": (
+        "chatbot_reply_offer_hold",
+        CHATBOT_REPLY_OFFER_HOLD,
+        ("companies",),
+    ),
+    "offer_hold_no_companies": (
+        "chatbot_reply_offer_hold_no_companies",
+        CHATBOT_REPLY_OFFER_HOLD_NO_COMPANIES,
+        (),
+    ),
     "demand_qty": (
         "chatbot_reply_demand_qty",
         CHATBOT_REPLY_DEMAND_QTY,

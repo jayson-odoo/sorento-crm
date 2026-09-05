@@ -1,6 +1,6 @@
 # PLAN - Chatbot Turn Engine: n8n business logic moves into the CRM
 
-Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); approved "ok good to go", 6 review rounds, D1 to D16; re-ported onto the LIVE n8n body 5 Sep (see S1 "pending re-port"); S1b DELIVERED 5 Sep (-40.0% prompt, published unlabelled, promote is the owner's call); S2 (the tail) MERGED 5 Sep; S6a MERGED 5 Sep, behind `CHATBOT_BUSINESS_LANE_ENABLED` (default off) until the n8n edit in `n8n-changes.md` S6a is made
+Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); approved "ok good to go", 6 review rounds, D1 to D16; re-ported onto the LIVE n8n body 5 Sep (see S1 "pending re-port"); S1b DELIVERED 5 Sep (-40.0% prompt, published unlabelled, promote is the owner's call); S2 (the tail) MERGED 5 Sep; S6a MERGED 5 Sep, behind `CHATBOT_BUSINESS_LANE_ENABLED` (default off) until the n8n edit in `n8n-changes.md` S6a is made; S4 (the `low_signal` clarifier lane) and S5 (the escalation lane) DELIVERED 5 Sep, both inert until the owner adds their `branch_kind` to `system_settings.chatbot_completed_lanes`
 UAC: `documentation/plans/chatbot/chatbot-turn-engine-acceptance-criteria.md`
 Classification: **MODULE** (`chatbot`), own Postgres schema `chatbot` (D12)
 Owner decisions: D1 to D13 in the UAC; rulings R1 to R6 in the UAC
@@ -62,7 +62,7 @@ PII-scrubbed; 11 full-execution `worlds`; 5 `regression-guards`; 5 named canarie
 | the pattern | `app/services/ideation_turn_service.handle_turn` + `app/api/v1/external/ideation.py`: fail-closed config, LLM in a never-raising extractor, integration_log on every call |
 | LLM | `llm_provider.get_provider(...).chat(messages, json_schema=...)`, OpenAI / Anthropic / Gemini |
 | prompts | `ai_prompt_registry` (17 keys, versioned, 60 s cache, DB-down fallback, admin UI) |
-| MCP | `sorento_crm_mcp/catalog.py` (40 tools; ideation NOT yet a tool, added in S3 per D6) + `ai_assistant_service.MCPRuntimeClient` (in-process JSON-RPC client) |
+| MCP | `sorento_crm_mcp/catalog.py` (40 tools; ideation NOT yet a tool, added in S3 per D6) + `ai_assistant_service.MCPRuntimeClient` (HTTP JSON-RPC client for the streamable-HTTP MCP endpoint) |
 | tool search | `EmbeddingReadService` behind `POST /external/rag/tool-search` |
 | resolver | service behind `POST /system/references/resolve` (`app/api/v1/system/references.py:2133`), `entity_pins` supported |
 | access / teams / assignee / SLA | `mcp_access_service.evaluate_agent`, `ContactAccessTypeService`, `company_routing_service` (team members), next-assignee service (`next_assignee.py`, commits a round-robin cursor), `ConversationSLATrackingService` |
@@ -112,8 +112,10 @@ tests/chatbot/                   # replay + unit + endpoint + inbox + boundary
 tests/fixtures/chatbot/          # vendored golden subset (< 3 MB)
 ```
 
-Boundary rule (guardrail test): nothing outside `app/api/v1/external/chat.py`,
-`app/tasks/chat_turns.py`, `app/modules/chatbot/`, `tests/chatbot/` imports
+Boundary rule (guardrail test): nothing outside the module's own ROUTERS
+(`app/api/v1/external/chat.py`, the n8n-facing turn endpoint, and
+`app/api/v1/system/chatbot.py`, the admin turn-trace endpoint added at S2b),
+`app/tasks/chat_turns.py`, `app/modules/chatbot/` or `tests/chatbot/` imports
 `app.services.chatbot`. The package imports core services freely. That is the whole
 "liftable later" story: the day a measured trigger fires, the package moves behind an HTTP
 boundary with the same contracts. **Lift trigger (named, not built):** p95 turn latency above
@@ -130,7 +132,9 @@ POST /api/v1/external/chat/turn            body { envelope: A }
            reply?: {text, quick_replies, result_set, attachments_src},
            actions?: [...], session_patch?: {...} }      # session_patch only on dry run
 POST /api/v1/external/chat/turn/{id}/complete   body = sub-output input contract (S2 to S6)
-  -> 200 { reply, actions, session_patch? }
+POST /api/v1/external/chat/turn/complete        same body; the turn is identified from
+                                                (ctx.contact.id, ctx.text.message.messageId)
+  -> 200 { turn_id, reply, actions, is_test, session_patch? }
 ```
 
 `delegate` names the n8n lane that must still run during migration (`business_query`,
@@ -143,7 +147,55 @@ the caller sends `reply` and executes `actions`. From S7 there is no `/complete`
 result_set}`, `send_attachments {attachments_src, reply}`, `assign_conversation
 {respond_user_id}`, `add_comment {text, mention_user_ids}`, `update_contact_fields {fields}`.
 Every action carries `dry_run` (true on test envelopes, D14) so the clone's `test-guard`
-records instead of sends, exactly as today.
+records instead of sends, exactly as today. **A dry run returns every action it would have
+taken, flagged `dry_run`, with preview placeholders where a side effect would have supplied
+the value** (AC-507): the lane still reaches no seam, so where a real run would have read an
+id off `next-assignee` the preview carries `null` plus `preview: true`, and where it would
+have read a timestamp off `sla_create` the rendered text carries `<preview>`. Anything not
+behind a seam - a fixed sentence, or one interpolating state the turn already resolved -
+carries its real value on both. The shape, the order and the key set are therefore identical
+live and dry, which is what lets the executor render ONE set of expressions against both.
+
+**Implemented verbatim at S3** (5 Sep 2026, field shapes agreed with the n8n executor), so
+this line needs no amendment - but two properties of it are worth stating because an
+implementation could satisfy the field NAMES and still break the sender:
+
+- `quick_replies` is the SEALED `compile-current-state` value, unchanged: n8n's own
+  comma-joined string, or null when the turn offered none. `sub-sendmsg`'s `quick_reply`
+  input has never been given a list, and the sender is the half that did NOT move into the
+  CRM, so an action that normalised the type would break it. `result_set` is likewise
+  `variables.last_result_set` as sealed.
+- `send_attachments` is emitted ONLY when `reply.attachments_src` is non-null, and it comes
+  AFTER `send_message` for the reason n8n wires it that way: the text explains the files.
+  It carries the whole `reply` object because `sub-send-attachments` reads more than one
+  field off it.
+
+**The executor executes `actions[]` and NOTHING else (ruling, 5 Sep 2026, help-crm).**
+n8n never sends `reply.text`. `reply` is the record of what was composed (and what the
+trace screen and the duplicate-delivery replay read); `actions` is the instruction list,
+so a lane whose words are only on `reply.text` is a customer left in silence. Every lane
+that finishes in the CRM therefore puts its customer copy in an action:
+
+- the eight S3 kinds and `low_signal` all end at `_send_actions`, or (for `low_signal`)
+  at the one `send_message` the casual lane stamps before its tail runs;
+- a failed HEAD returns the parser's error reply as a `send_message` (AC-105);
+- a failed TAIL returns the same error reply as a `send_message` with the row's `dry_run`,
+  rather than a null `reply` and an empty list (5 Sep);
+- `/complete` also carries `is_test` (the row's), so the caller's test-guard reads one
+  field instead of remembering what `/turn` said two calls ago.
+
+One measured shape difference, recorded rather than smoothed over: `low_signal`'s action
+is stamped BEFORE the tail (it has to be on the row before the tail reads `prior_actions`,
+so a duplicate delivery replays the action as well as the reply, D15). It therefore carries
+the clarifier's text with `quick_replies: []` and no `result_set` key, where `_send_actions`
+would have carried the sealed `quick_reply` and `last_result_set`. Identical text; the
+executor reads a missing `result_set` the same way it reads a null.
+
+Measured while implementing: no canned lane can produce quick replies today.
+`compile-current-state` sets `quickReply` from `access-level-choice-message` or
+`build-suggest-offer` only, and no canned lane supplies either fragment, so every one of
+the eight seals a null. That is why the pass-through is what S3's own test asserts on a
+lane and the populated shape is asserted as a unit.
 
 **D14's input half (O2, AC-112).** A dry-run envelope may also carry three optional harness
 keys, and the engine honours them ONLY on a dry run: `mock_reformulator_output` replaces the
@@ -548,7 +600,57 @@ Cleared memory rows; a "Failed turns only" filter on the list. Built against a m
 agent-browser from `/` via System > Chat History at 375 and 1280. **Phase 2:**
 `GET /api/v1/system/chatbot/turns` + `POST .../{id}/retry` (`app/api/v1/system/chatbot.py`,
 reads `chatbot.turns`, slugs `system.chat_history.view` / `.manage`), mock swapped at the
-service boundary. AC-251 to AC-259. Mockup: review page section 10.
+service boundary. AC-251 to AC-260. Mockup: review page section 10.
+
+**Delegated TTL (AC-260).** A turn handed to an n8n lane is `delegated` until that lane calls
+`/complete`. When the lane dies mid-turn the call never comes, so a minute-ly sweep
+(`app/services/chatbot_turn_sweep.py`, registered next to the existing ticks in
+`app/scheduler/task_scheduler.py`) fails every `delegated` row older than
+`CHATBOT_DELEGATED_TTL_MINUTES` (default 10) with a trace note. Two reasons it cannot wait for
+S7: the trace list otherwise fills with ghosts that read as work in progress, and R4 makes
+Retry available on FAILED turns only, so a stuck row is unrecoverable from the screen that
+exists to recover it. The sweep lives in core, not in `app/services/chatbot/`, because the
+scheduler is core and AC-002 forbids core importing the package - it settles a ROW, and the
+model is core.
+
+#### AC-259 evidence run (agent-browser, 5 Sep 2026)
+
+Against the REAL endpoints: dev server :3000 and the lane backend :8002 (`--reload`,
+`ENABLE_SCHEDULER=true`), isolated browser session `chatbot-s2b`. Data was three `ZZT9001`
+chat rows plus three turns (answered / failed-at-understood / stale delegated), seeded and
+deleted again in the same session; the screenshots are in the coder's scratchpad, and the
+run is written here so it can be re-walked.
+
+Steps, and what each one proved:
+
+1. `open http://localhost:3000`, sign in, then **sidebar only**: System > Messaging > Chat
+   History (never a deep URL, so the nav config and the permission gate are exercised).
+2. List loads: `GET /api/v1/system/chat-history?date_from=..&date_to=..&page=1&limit=50`.
+3. Filters > "Failed turns only: off" -> on. Two calls follow, in order:
+   `GET /api/v1/system/chatbot/turns/failed-contacts?from=..&to=..` then
+   `GET /api/v1/system/chat-history?...&contact_id=ZZT9001&contact_id=445239397&page=1...`.
+   That second call IS B1: the contacts the aggregate named are sent back as repeated
+   `contact_id`, so the rows, the total and the pager describe one set. Each row carries the
+   "failed at understood" badge.
+4. Row click opens the drawer: `GET /api/v1/system/chatbot/turns?contact_respond_id=ZZT9001&limit=200`.
+   Three turn panels, each with the short id chip (`#6791`, `#f713`, `#780a`).
+5. Expand the failed turn: Received ok, Understood failed with the provider error, the
+   collapsed "Access, Routed, Looked up, Replied, Remembered, Sent / not reached" row, and
+   `tokens 0` on the Understood facts (SEC2). "Technical details" opens the searchable raw
+   payload viewer.
+6. Retry is DISABLED with the reason "Retry is not configured in this environment.", read off
+   `retry_available` / `retry_unavailable_reason` on the LIST response (S7: no second route).
+7. AC-260 observed live rather than simulated: a turn left `delegated` since 4 Sep and a
+   seeded stale one were both flipped to `failed` / `Failed at Handover` by the minute-ly
+   sweep while the run was open, and the panel shows the sweep note as a FOOTER line under
+   the timeline ("Gave up waiting: n8n lane did not complete within 10 minutes.") rather than
+   as a ninth stage row (S8).
+8. Drawer's own "Failed turns only" toggle: 3 panels -> 1.
+9. 1280x800 and 375x812: `scrollWidth - clientWidth == 0` on both, drawer 375 wide at 375, no
+   panel overflow; drawer closed and reopened (end state, not a mid-transition frame).
+10. Console: zero errors, and zero warnings after the drawer was given
+    `aria-describedby={undefined}` (Radix warns for a `SheetContent` with no description; the
+    alternative, a sentence on screen, is an on-screen explanation).
 
 ### S3 - Canned lanes, offer-hold, ideation (150 lines + bridge)
 
@@ -591,13 +693,71 @@ both change what an operator sees:
 
 ### S5 - Escalation (400 lines)
 
-`lanes/escalation.py`: `escalation-input`, `fresh-entity-gate` (calls S6a's resolve + gate,
-so S5 lands AFTER S6a, or ships with a temporary in-process call to the resolver only; decide
-at ticketing, default = after S6a), `escalation-context` (six-rank ladder, null never
-defaults, H27), team / company clarify gates and replies (`pending.kind`), assignment path as
-`actions[]` with next-assignee + SLA create in-process behind a dry-run gate evaluated first
-(H37). H2 is structurally impossible in one function (AC-505). n8n: four spine nodes deleted,
-two subs unpublished; the outbound executes assign / comment (AC-506).
+`lanes/escalation.py`: `escalation-input`, `escalation-context`, the company clarify gate and
+reply (`pending.kind`), assignment path as `actions[]` with next-assignee + SLA create
+in-process behind a dry-run gate evaluated FIRST (H37). H2 is structurally impossible in one
+function (AC-505). n8n: four spine nodes deleted, two subs unpublished; the outbound executes
+assign / comment (AC-506).
+
+**Delivered 5 Sep 2026, and the plan above was wrong about the graph.** It described the
+EXPORT of `sub-escalation`, which carries uncommitted riders from two unpromoted builds. The
+LIVE workflow (`fr2u3e6FKg52cPvK` @ `bac9613b`, 10 nodes, confirmed by 33 captures on the
+version) is simpler, and the slice was ported from the live bodies:
+
+* **No `fresh-entity-gate`.** The lane never calls the resolver, so **H26 stays open**:
+  escalation routing is brand-blind exactly as it is in production. `resolve_and_gate` is in
+  the services bundle for the day B-HB-1 promotes and is asserted never called.
+* **No team clarify.** **H27 stays open** too, and the reason is worth writing down: a null
+  `suggested_team` is not reachable through the real pipeline at all, because
+  `head/output_exchange.derive_routing`'s nullish chain hard-defaults it to
+  `customer_service` long before this lane sees it. The hazard lives in the PARSER, not
+  here. Porting a clarify the live graph does not have would have shipped behaviour
+  production has never run.
+* **The ladder has five outcomes, not six, and no `gate` rank**: `picked_member` ->
+  `company_pick` -> `sameTeam` (`prior_state` / `prior_state_no_company` /
+  `multi_company_unpicked`) -> `stated_brand` -> `none`.
+
+Both omissions are `xfail(strict=True)` in `tests/chatbot/test_s5_escalation_lane.py`, so the
+promotion flips them green and forces the markers off rather than being remembered.
+
+**Two decisions, and one open question.**
+
+1. **The lane owns its own unit of work.** `next_assignee` and `sla_create` run on a session
+   of the lane's own, not the turn's routing transaction: a turn that fails later must not
+   roll an assignment back out from under the person who has already been told about it.
+2. **`assign_conversation` is the first action kind the spine does not already perform.**
+   Every earlier slice returned `send_message`, which `head-arm` already routes. The n8n
+   action executor is therefore a PREREQUISITE of switching this lane on, not a follow-up:
+   without it the customer is told a person is coming and nobody is assigned
+   (n8n-changes.md, S5 step 1).
+3. **The escalation arm RUNS THE TAIL** (decided 5 Sep). n8n sends this arm through
+   `tag-out-of-scope` -> `sub-output`, which persists the session - the routing axes and
+   `escalate-catalog`'s `includeResponse: false` state text - so skipping the tail would
+   have quietly dropped both the moment the lane was switched on. After the lane produces
+   its actions the arm hands `complete_turn` the `tag-out-of-scope` item
+   (`{branch_kind: "out_of_scope"}`, NOT `route-turn`'s item, which is what makes the entry
+   gate run `escalate-catalog`) plus the `clarify` fragment when the clarify arm fired.
+   Compile-state writes the session, or returns `session_patch` on a dry run, and the trace
+   ends `[..., looked_up, replied, remembered]`. The acknowledgement TEXT stays a tail
+   concern and is not one of the actions.
+4. **The lane writes no chat history** (decided 5 Sep). `sub-add-comment-respond` does two
+   things when it runs - the respond.io comment AND a CRM chat-history POST - and it keeps
+   doing both when the caller executes the `add_comment` action. Writing it here as well
+   would double the comment: one row from this lane, one from the sub, minutes apart and
+   under different authors. Asserted by ROW COUNT in
+   `tests/chatbot/test_s5_no_chat_history_write.py`, not by grep, because a count catches an
+   import three layers down.
+5. **Action shapes** (agreed with the n8n executor author, 5 Sep). `send_message` carries
+   `{kind, text, quick_replies, result_set, dry_run}`, with the two sealed halves filled from
+   the tail's reply after `complete_turn` returns; `assign_conversation` is
+   `{kind, respond_user_id, dry_run}`; `add_comment` is
+   `{kind, text, mention_user_ids, dry_run}` where `mention_user_ids` is exactly one RESPOND
+   user id (the executor maps it to `sub-add-comment-respond`'s `user_id`, which is what
+   respond.io needs for a mention) and the text carries no `{{@user.<id>}}` markup because
+   the sub prefixes that itself. A `send_attachments` action is appended last when the tail
+   produced an `attachments_src`. The comment text was verified byte for byte against the
+   live node expression, timestamps included (`%Y-%m-%d %H:%M:%S` at a fixed +08:00).
+   Sample responses for the executor: `documentation/plans/chatbot/samples/`.
 
 ### S6 - Business lane (about 7,000 lines, three PRs)
 

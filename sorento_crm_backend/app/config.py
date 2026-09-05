@@ -75,6 +75,27 @@ class Settings(BaseSettings):
     # call is skipped with a warning and the resolve is unaffected.
     n8n_close_convo_webhook_url: str | None = None
 
+    # S2b Retry (AC-705). The trace screen's Retry re-posts the ORIGINAL respond.io
+    # webhook body to n8n's inject webhook, so the turn re-enters at the SAME ingress a
+    # live message uses and gets the same ordering and the same lanes. The CRM never
+    # sends to the customer itself (D9).
+    #
+    # UNSET LOCALLY ON PURPOSE: with no URL the endpoint answers 409 `retry_unavailable`
+    # and makes no call. A dev machine that silently re-injected into production n8n
+    # would answer a real customer from a developer's click.
+    chatbot_retry_ingress_url: str | None = None  # CHATBOT_RETRY_INGRESS_URL
+    # Sent as `X-Chatbot-Retry-Key`. n8n checks it on its side (owner item).
+    chatbot_retry_ingress_key: str | None = None  # CHATBOT_RETRY_INGRESS_KEY
+    # How long a `retry_requested_at` marker blocks a second Retry. The marker is
+    # cleared by the re-injected turn arriving; if it never arrives (n8n dropped it,
+    # the contact was deleted) the row would otherwise be un-retryable forever, so an
+    # older marker is treated as stale and the operator may try again.
+    chatbot_retry_stale_minutes: int = 5  # CHATBOT_RETRY_STALE_MINUTES
+    # How long a turn may sit `delegated` before the sweep calls it failed. A delegated
+    # turn is one an n8n lane took over and is expected to finish by calling `/complete`;
+    # when that lane dies mid-turn the call never comes and the row would stay `delegated`
+    # forever - a ghost in the trace list that Retry (failed turns only, R4) cannot touch.
+    chatbot_delegated_ttl_minutes: int = 10  # CHATBOT_DELEGATED_TTL_MINUTES
     # Chatbot turn engine: run the ported business lane (resolve + gate, S6a) in process.
     # OFF by default, and that default is the strangler's whole point (D7). Until the n8n
     # edits in documentation/plans/chatbot/n8n-changes.md section S6a are made, n8n STILL

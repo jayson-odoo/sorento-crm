@@ -486,7 +486,7 @@ def test_ai_assistant_prompt_version(
 def usage_summary(
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
-    feature: Optional[str] = Query(None, description="Filter by usage feature (ai_assistant | ai_extract | ai_document_extract)."),
+    feature: Optional[str] = Query(None, description="Filter by usage feature (ai_assistant | ai_extract | ai_document_extract | chatbot_parser)."),
     _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
     db: Session = Depends(get_db),
 ):
@@ -517,7 +517,7 @@ def usage_summary(
 def usage_by_day(
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
-    feature: Optional[str] = Query(None, description="Filter by usage feature (ai_assistant | ai_extract | ai_document_extract)."),
+    feature: Optional[str] = Query(None, description="Filter by usage feature (ai_assistant | ai_extract | ai_document_extract | chatbot_parser)."),
     _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
     db: Session = Depends(get_db),
 ):
@@ -554,7 +554,7 @@ def usage_top_users(
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
     limit: int = Query(10, ge=1, le=100),
-    feature: Optional[str] = Query(None, description="Filter by usage feature (ai_assistant | ai_extract | ai_document_extract)."),
+    feature: Optional[str] = Query(None, description="Filter by usage feature (ai_assistant | ai_extract | ai_document_extract | chatbot_parser)."),
     _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
     db: Session = Depends(get_db),
 ):
@@ -644,7 +644,7 @@ def usage_recent_queries(
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
-    feature: Optional[str] = Query(None, description="Filter by usage feature (ai_assistant | ai_extract | ai_document_extract)."),
+    feature: Optional[str] = Query(None, description="Filter by usage feature (ai_assistant | ai_extract | ai_document_extract | chatbot_parser)."),
     _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
     db: Session = Depends(get_db),
 ):

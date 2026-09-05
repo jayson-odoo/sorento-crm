@@ -1061,4 +1061,37 @@ CATALOG: tuple[ToolSpec, ...] = (
         escalation_team="sales",
         related_tools=("crm_projects_list",),
     ),
+    ToolSpec(
+        "crm_ideation_turn",
+        (
+            "Record or continue an IDEA / suggestion / feature request a customer is submitting over "
+            "WhatsApp - one turn of a multi-turn collection. INVOCATION: pass `respond_io_id` (the "
+            "respond.io contact id) and `message_text` (what they just said), plus `session_vars` "
+            "carrying the `ideation` pointer from the previous turn (null on the first). Optionally "
+            "`submitter_name`, `media_selection` when a photo menu is open (comma-joined positions, "
+            "or 'all'), and `is_new_idea` to start a fresh draft over an open one. RETURNS "
+            "`{status, reply_text, link?, session_vars}` - `reply_text` is what to "
+            "send the customer, `session_vars.ideation` is the pointer to carry into the next turn, and "
+            "`link` is the deep link once `status` is 'complete'. WRITE action: it creates and updates a "
+            "real idea record."
+        ),
+        "/api/v1/external/ideation/turn",
+        (),
+        (),
+        method="POST",
+        # DOCUMENTATION for the admin catalog, not a compiled signature: this spec is
+        # `external`, so `sorento_crm_mcp/ideation.py` owns the argument schema (that is
+        # where `session_vars` is typed as an OBJECT rather than the template's `str`).
+        body_params=(
+            "respond_io_id",
+            "message_text",
+            "session_vars",
+            "submitter_name",
+            "media_selection",
+            "is_new_idea",
+        ),
+        module="chatbot",
+        external=True,
+        domain="ideation",
+    ),
 )
