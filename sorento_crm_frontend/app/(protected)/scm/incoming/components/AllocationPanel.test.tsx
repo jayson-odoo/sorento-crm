@@ -87,7 +87,7 @@ describe('AllocationPanel', () => {
 
     expect(await screen.findByText(/highest priority of the open orders/i)).toBeInTheDocument();
     // Twice on purpose: in the reason line, and in the picker showing what it beat.
-    expect(screen.getAllByText(/PO-2026-001/).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/PO-2026-001/)).length).toBeGreaterThan(0);
   });
 
   it('states how much is still to allocate', async () => {
@@ -104,7 +104,7 @@ describe('AllocationPanel', () => {
     renderPanel();
 
     expect(await screen.findByText('Allocated')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /approve/i })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: /approve/i })).toBeDisabled();
   });
 
   it('says a single open order is the only one rather than that it won a comparison', async () => {
@@ -122,7 +122,7 @@ describe('AllocationPanel', () => {
 
     expect(await screen.findByText(/no open order for this item/i)).toBeInTheDocument();
     expect(
-      screen.getByText(/leaves the ordered figure unchanged/i),
+      await screen.findByText(/leaves the ordered figure unchanged/i),
     ).toBeInTheDocument();
   });
 
@@ -134,7 +134,7 @@ describe('AllocationPanel', () => {
     renderPanel();
 
     expect(await screen.findByText(/nowhere to land/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /approve/i })).toBeDisabled();
+    expect(await screen.findByRole('button', { name: /approve/i })).toBeDisabled();
   });
 
   it('approves the quantity that is left, against the chosen order', async () => {
