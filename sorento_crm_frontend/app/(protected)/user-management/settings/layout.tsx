@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
   Bell,
+  Bot,
   Eye,
   FileClock,
   HeartPulse,
@@ -275,6 +276,11 @@ export default function Layout({ children }: { children: React.ReactNode }) {
         icon: FileClock,
         path: '/user-management/settings/portal-revisions',
       },
+      chatbot: {
+        title: 'Chatbot',
+        icon: Bot,
+        path: '/user-management/settings/chatbot',
+      },
       'chatbot-media': {
         title: 'Chatbot Media',
         icon: ImageIcon,
@@ -347,7 +353,7 @@ export default function Layout({ children }: { children: React.ReactNode }) {
       </Container>
       <Container>
         <Tabs defaultValue={activeTab} value={activeTab} className="space-y-5">
-          {/* Ten tabs: at 375 seven of them were off-screen with nothing saying
+          {/* Eleven tabs: at 375 most of them were off-screen with nothing saying
               so. The strip scrolls now (S1) and each tab reads as the Users one. */}
           <TabsList>
             {Object.entries(navRoutes).map(
