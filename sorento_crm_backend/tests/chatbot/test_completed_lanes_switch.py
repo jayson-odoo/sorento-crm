@@ -134,7 +134,9 @@ class TestEndToEndThroughRunTurn:
 
         called: list[str] = []
         monkeypatch.setattr(
-            casual, "resolve_clarifier_config", lambda db: called.append("config") or object()
+            casual,
+            "resolve_clarifier_config",
+            lambda db, **_: called.append("config") or object(),
         )
         monkeypatch.setattr(
             casual, "call_clarifier", lambda config, prompt: called.append("call") or "{}"
@@ -161,7 +163,7 @@ class TestEndToEndThroughRunTurn:
         from app.services.chatbot.lanes import casual
 
         monkeypatch.setattr(casual, "resolve_for_prompt", lambda db, *, ctx: {"resolutions": []})
-        monkeypatch.setattr(casual, "resolve_clarifier_config", lambda db: object())
+        monkeypatch.setattr(casual, "resolve_clarifier_config", lambda db, **_: object())
         monkeypatch.setattr(
             casual, "call_clarifier", lambda config, prompt: '{"response": "Hi there!"}'
         )
@@ -225,7 +227,7 @@ class TestEndToEndThroughRunTurn:
         from app.services.chatbot.lanes import casual
 
         monkeypatch.setattr(casual, "resolve_for_prompt", lambda db, *, ctx: {"resolutions": []})
-        monkeypatch.setattr(casual, "resolve_clarifier_config", lambda db: object())
+        monkeypatch.setattr(casual, "resolve_clarifier_config", lambda db, **_: object())
         monkeypatch.setattr(casual, "call_clarifier", lambda config, prompt: '{"response": "hi"}')
 
         engine_mod.run_turn(_envelope(), session_factory=counting_session_factory)

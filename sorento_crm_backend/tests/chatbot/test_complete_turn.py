@@ -58,7 +58,7 @@ def seeded(session_factory):
 
 @pytest.fixture()
 def stub_parser(monkeypatch):
-    def fake_resolve_config(db, *, current_date):
+    def fake_resolve_config(db, *, current_date, override_version_id=None):
         return parser_mod.ParserConfig(
             system_prompt="stub",
             prompt_version=1,
@@ -244,7 +244,7 @@ class TestGuards:
         inventing an answer."""
         from app.services.chatbot.head import parser as parser_mod
 
-        def fake_resolve_config(db, *, current_date):
+        def fake_resolve_config(db, *, current_date, override_version_id=None):
             return parser_mod.ParserConfig(
                 system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
             )
@@ -421,7 +421,7 @@ class TestTheEndpoint:
 
         monkeypatch.setattr("app.api.v1.external.chat.SessionLocal", session_factory)
 
-        def fake_resolve_config(db, *, current_date):
+        def fake_resolve_config(db, *, current_date, override_version_id=None):
             return parser_mod.ParserConfig(
                 system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
             )

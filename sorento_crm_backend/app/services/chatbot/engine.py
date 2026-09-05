@@ -241,18 +241,42 @@ def build_latest_user_message(envelope: Envelope, session_block: Any = None) -> 
     return f"{line1}\n{line2}\n"
 
 
-# O2 / AC-112: the three keys a DRY-RUN envelope may carry so a harness can drive a turn
-# with no LLM and none of the contact's real memory. Declared in ONE order, and that order
-# is what `harness_keys_ignored` reports, so two traces diff readably.
+# O2 / AC-112: the keys a DRY-RUN envelope may carry so a harness can drive a turn with no
+# LLM and none of the contact's real memory. Declared in ONE order, and that order is what
+# `harness_keys_ignored` reports, so two traces diff readably.
 #
 # `Envelope` is `extra="allow"`, so they arrive as extras rather than as declared fields -
 # deliberately: they are a HARNESS contract, not part of the envelope every injector sends,
 # and declaring them would invite a live producer to start setting them.
+#
+# `prompt_overrides` (S8a, AC-807) joined at the end: `{prompt_key: version_id}`, so the
+# Prompts screen can run a real turn against the version an operator is EDITING rather than
+# the published one. It belongs here and not on the envelope proper for the same reason the
+# other three do, plus one of its own - pinning an unpublished prompt version is exactly a
+# live producer must never be able to do, and being dry-run-only is what guarantees it.
 HARNESS_KEYS = (
     "mock_reformulator_output",
     "previous_conversation_state",
     "referenced_result_set",
+    "prompt_overrides",
 )
+
+
+def _prompt_override(envelope: Envelope, prompt_key: str, *, dry_run: bool) -> str | None:
+    """The version id this dry run pins for `prompt_key`, or None.
+
+    Returns None on a LIVE turn whatever the envelope says. The harness keys are already
+    ignored when `dry_run` is false, and this is the one whose leak would mean a customer
+    answered by an unpublished prompt, so it is checked here as well rather than relying on
+    the caller having checked.
+    """
+    if not dry_run:
+        return None
+    overrides = _harness_value(envelope, "prompt_overrides")
+    if not isinstance(overrides, dict):
+        return None
+    value = overrides.get(prompt_key)
+    return str(value) if value else None
 
 
 def _harness_keys_present(envelope: Envelope) -> list[str]:
@@ -991,7 +1015,11 @@ def _run_stages(  # noqa: PLR0915
             jsc.get(session_block, "session_vars"), "referenced_result_set"
         )
         latest_user_message = build_latest_user_message(envelope, session_block)
-        parser_config = parser.resolve_config(db, current_date=_current_date_directive())
+        parser_config = parser.resolve_config(
+            db,
+            current_date=_current_date_directive(),
+            override_version_id=_prompt_override(envelope, parser.PROMPT_KEY, dry_run=dry_run),
+        )
 
     turn_trace.record(
         "received",
@@ -1224,7 +1252,12 @@ def _run_stages(  # noqa: PLR0915
             try:
                 resolved = casual.resolve_for_prompt(db, ctx=ctx)
                 clarifier_prompt = casual.construct_user_prompt(ctx, resolved)
-                clarifier_config = casual.resolve_clarifier_config(db)
+                clarifier_config = casual.resolve_clarifier_config(
+                    db,
+                    override_version_id=_prompt_override(
+                        envelope, casual.PROMPT_KEY, dry_run=dry_run
+                    ),
+                )
             except Exception as exc:  # noqa: BLE001 - see below
                 # Everything in this block exists to make the clarifier call possible: the
                 # entities that go into its prompt, and the prompt / model / key it runs

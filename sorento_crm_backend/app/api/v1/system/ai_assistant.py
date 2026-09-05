@@ -33,6 +33,11 @@ from app.schemas.ai_prompt import (
     SetAgentModelResponse,
     SetLabelResponse,
 )
+from app.api.v1.external.chat import (
+    CHATBOT_PROMPT_KEYS,
+    DryRunTurnRefused,
+    run_prompt_dry_run_turn,
+)
 from app.services.ai_prompt_registry import PROMPT_KEYS
 from app.services.ai_prompt_service import AIPromptRegistryError, AIPromptService
 from app.schemas.ai_assistant import (
@@ -387,7 +392,7 @@ def set_ai_assistant_agent_model(
     return SetAgentModelResponse(**result)
 
 
-@router.post("/ai-assistant/prompts/{name}/test", response_model=DryRunResponse)
+@router.post("/ai-assistant/prompts/{name}/test")
 def test_ai_assistant_prompt_version(
     name: str,
     payload: DryRunRequest,
@@ -399,13 +404,26 @@ def test_ai_assistant_prompt_version(
     is deleted afterwards so it never pollutes history, and write-capable MCP
     tools (``*_submit`` / ``*_create`` / ``*_link``) are stripped for the turn so
     a test can never persist real business data. Dormant key → 400; a key that is not
-    an assistant-pipeline node → 400 as well."""
+    an assistant-pipeline node → 400 as well.
+
+    **The two chatbot keys run a chatbot TURN instead** (AC-807). They are not assistant
+    pipeline nodes, so the chat dry run above would answer from prompts the operator did
+    not edit; the turn is what actually exercises them. Same permission, same version
+    pinning, and `is_test` so it writes nothing outside `chatbot.turns` (D14).
+
+    **No `response_model`.** The two answers have different shapes (an assistant output
+    and token usage; a turn id, status, branch and trace) and `response_model` silently
+    DROPS undeclared fields, so declaring either one would empty the other
+    (`LESSONS-LEARNT`). Both are serialised as plain dicts and pinned by tests.
+    """
     _ensure_known_prompt(name)
     if not PROMPT_KEYS[name].active:
         raise HTTPException(
             status_code=400,
             detail=f"Prompt '{name}' is dormant and has no runtime call site to test.",
         )
+    if name in CHATBOT_PROMPT_KEYS:
+        return _test_chatbot_prompt_version(name, payload, db)
     if not PROMPT_KEYS[name].dry_runnable:
         # Checked BEFORE the version lookup: running a non-assistant key (the spec
         # extractor, the SCM advisory) through the chat pipeline produces an answer
@@ -476,7 +494,36 @@ def test_ai_assistant_prompt_version(
         token_usage=token_usage,
         tool_calls=tool_calls,
         used_overrides={name: payload.version_id},
+    ).model_dump()
+
+
+def _test_chatbot_prompt_version(name: str, payload: DryRunRequest, db: Session) -> dict:
+    """AC-807: run one dry-run chatbot turn on the version being edited.
+
+    The version is checked against THIS key first, exactly as the assistant path does, so
+    a stale id from the browser is a 404 rather than a turn that quietly ran the published
+    prompt - which would look like a passing test of an edit that was never exercised.
+    """
+    from app.models.ai_prompt import AIPromptVersion
+
+    version = (
+        db.query(AIPromptVersion)
+        .filter(AIPromptVersion.id == payload.version_id, AIPromptVersion.name == name)
+        .first()
     )
+    if version is None:
+        raise HTTPException(status_code=404, detail="Version not found for this prompt.")
+
+    try:
+        result = run_prompt_dry_run_turn(
+            prompt_key=name,
+            version_id=payload.version_id,
+            message=payload.message,
+            contact_respond_id=payload.contact_respond_id,
+        )
+    except DryRunTurnRefused as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {**result, "used_overrides": {name: payload.version_id}}
 
 
 # --- Usage analytics --------------------------------------------------------
