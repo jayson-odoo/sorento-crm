@@ -4,6 +4,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 import json
 import logging
+import re
 import httpx
 from app.config import settings
 from app.models.integration import IntegrationLog
@@ -50,7 +51,43 @@ CREDENTIAL_HEADERS = frozenset(
 # itself a key, a token or a secret is treated as one. False positives cost an
 # operator one header value in a debugging session; a false negative costs a
 # credential.
-_CREDENTIAL_NAME_PARTS = ("key", "token", "secret")
+_CREDENTIAL_NAME_PARTS = ("key", "token", "secret", "auth")
+
+# The three shapes a hand-rolled mask takes, declared ONCE so the guardrail test and
+# any future scan read the same rule rather than two regexes drifting apart (AC-806).
+# The alternation is BUILT from `CREDENTIAL_HEADERS`, so adding a header to the
+# denylist widens the scan with it - the previous version hard-coded `x-api-key` and
+# therefore guarded one instance of the rule instead of the rule.
+#
+#   1. bracket assignment  - the header key indexed on the left of an `=` whose right
+#      side is the mask (a run of stars, or a name with "mask" in it);
+#   2. `.get` into a log   - the header key as a dict KEY whose value is a `.get` read;
+#   3. dict literal        - the header key as a dict key whose value is a run of stars.
+#
+# Written as prose rather than as literal examples on purpose: a comment carrying the
+# offending source would be flagged by the scan it describes.
+#
+# Shapes 2 and 3 are the ones that used to slip through: neither assigns to a header
+# key, so a scan looking for an indexed assignment alone never saw them, and both put a
+# credential VALUE straight into a dict that gets serialised into `integration_logs`.
+#
+# Shape 1 requires the mask on the RIGHT, so BUILDING an outbound credential header
+# (`base[<auth header>] = f"Bearer ..."`, further down this file) is not an offender:
+# that is a call being authorised, not a log being redacted, and flagging it would make
+# the guardrail something people learn to skip.
+_CREDENTIAL_HEADER_ALTERNATION = "|".join(
+    re.escape(name) for name in sorted(CREDENTIAL_HEADERS)
+)
+_MASK_RHS = r"""(?:["']\*+["']|[\w.]*mask[\w.]*)"""
+
+HAND_ROLLED_HEADER_MASK_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(source, re.IGNORECASE)
+    for source in (
+        rf"""\[\s*["']({_CREDENTIAL_HEADER_ALTERNATION})["']\s*\]\s*=\s*{_MASK_RHS}""",
+        rf"""["']({_CREDENTIAL_HEADER_ALTERNATION})["']\s*:\s*[A-Za-z_][\w.]*\.get\s*\(""",
+        rf"""["']({_CREDENTIAL_HEADER_ALTERNATION})["']\s*:\s*["']\*+["']""",
+    )
+)
 
 
 def sanitize_request_headers(headers: Dict[str, str]) -> Dict[str, str]:

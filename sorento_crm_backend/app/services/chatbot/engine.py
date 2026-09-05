@@ -551,6 +551,19 @@ def _duplicate_result(row: ChatbotTurn) -> TurnResult:
     `status` is the row's own, so `processing` (in flight), `failed` and `delegated` /
     `done` are all distinguishable: a caller that sees `duplicate: true, status:
     processing` knows the nulls mean "not finished yet", not "nothing to say".
+
+    **`is_test` here is the ORIGINAL ROW's flag, not this call's envelope, and that is
+    deliberate** (security review round 2, N5). Everywhere else the head stamps
+    `result.is_test` from the CURRENT envelope, because the flag describes the call; on
+    this path the whole answer describes the first turn, so its flag has to come from the
+    same place its `reply` and `actions` do. Stamping the caller's flag on somebody else's
+    answer would produce a result whose top-level field and whose per-action `dry_run`
+    disagreed. The consequence, stated rather than left implicit: a TEST envelope
+    duplicating a LIVE message reads back `is_test: false` with live-flagged actions.
+    Containment does not rest on it - `duplicate: true` is set here and the caller's
+    Switch on `duplicate` sits ahead of every send (AC-110), so nothing is sent either
+    way - and the trigger to revisit is a caller that executes `actions` WITHOUT reading
+    `duplicate` first.
     """
     response = row.response if isinstance(row.response, dict) else {}
     return TurnResult(

@@ -91,11 +91,18 @@ def test_a_missing_credential_header_adds_nothing() -> None:
 def test_no_endpoint_hand_rolls_the_mask_any_more() -> None:
     """The copy-paste this replaces, as a pattern: assigning a literal mask to a
     header key. A new external endpoint that reinvents it fails here rather than
-    in a table nobody reads."""
+    in a table nobody reads.
+
+    AC-806: the scan reads `HAND_ROLLED_HEADER_MASK_PATTERNS`, so it guards the RULE
+    (three shapes, every denylisted header) rather than the one instance of it the
+    original hard-coded regex knew about.
+    """
+    from app.services.integration_service import HAND_ROLLED_HEADER_MASK_PATTERNS
+
     offenders: list[str] = []
-    pattern = re.compile(r"""\[["']x-api-key["']\]\s*=""", re.IGNORECASE)
     for path in (BACKEND_ROOT / "app").rglob("*.py"):
-        if pattern.search(path.read_text()):
+        source = path.read_text()
+        if any(pattern.search(source) for pattern in HAND_ROLLED_HEADER_MASK_PATTERNS):
             offenders.append(str(path.relative_to(BACKEND_ROOT)))
 
     assert offenders == [], (
@@ -165,9 +172,11 @@ def test_the_guardrail_catches_every_hand_rolled_shape(tmp_path) -> None:
         for match in pattern.finditer(source)
         for line_no in (source.count("\n", 0, match.start()) + 1,)
     }
-    # Lines 2, 6 and 8 (1-indexed) are the three offending shapes above.
+    # Lines 2, 5 and 8 (1-indexed) are the three offending shapes above: `"\n".join`
+    # over the ten entries puts entry i on line i + 1, so the `.get` shape (entry 4)
+    # is line 5, not line 6.
     assert 2 in matched_lines, "bracket-assignment shape was not caught"
-    assert 6 in matched_lines, "`.get` read into a log dict was not caught"
+    assert 5 in matched_lines, "`.get` read into a log dict was not caught"
     assert 8 in matched_lines, "dict-literal-with-masked-value shape was not caught"
 
 
