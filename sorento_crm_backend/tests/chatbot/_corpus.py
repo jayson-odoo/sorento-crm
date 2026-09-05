@@ -59,6 +59,24 @@ VENDORED_ROOT = BACKEND_ROOT / "tests" / "fixtures" / "chatbot" / "nodes"
 # by counting parents (which is how this silently skipped in every worktree).
 _CORPUS_SUFFIX = Path("sorento_crm_n8n") / "n8n-workflows-init" / "tests" / "fixtures"
 
+# ...and the CAPTURE lane's worktree first, when it is there. The capture runs land in
+# `captures-rs1a-parser` and reach the main n8n checkout only when that lane merges, so
+# auto-discovery that stops at the main checkout grades a port against a corpus that is
+# missing the captures the port was written from - measured: `miss-suggest-result` has
+# captures in the worktree and none in the main checkout, so
+# `test_full_corpus_has_at_least_one_capture[miss-suggest-result]` fails, and ONLY when
+# `CHATBOT_FIXTURES_DIR` is unset. An explicit `CHATBOT_FIXTURES_DIR` still wins over
+# both; this only changes what "found it myself" means.
+_CORPUS_WORKTREE_SUFFIX = (
+    Path("sorento_crm_n8n")
+    / ".claude"
+    / "worktrees"
+    / "captures-rs1a-parser"
+    / "n8n-workflows-init"
+    / "tests"
+    / "fixtures"
+)
+
 # Which capture slugs hold each ported node. A node can live under more than one slug
 # (the live spine and the fail-closed clone capture the same node names), so the loader
 # unions them and prefixes the fixture id with the slug to keep ids unique.
@@ -424,9 +442,10 @@ def corpus_root() -> Path | None:
         root = Path(raw).expanduser()
         return root if (root / "nodes").is_dir() else None
     for ancestor in BACKEND_ROOT.parents:
-        candidate = ancestor / _CORPUS_SUFFIX
-        if (candidate / "nodes").is_dir():
-            return candidate
+        for suffix in (_CORPUS_WORKTREE_SUFFIX, _CORPUS_SUFFIX):
+            candidate = ancestor / suffix
+            if (candidate / "nodes").is_dir():
+                return candidate
     return None
 
 
