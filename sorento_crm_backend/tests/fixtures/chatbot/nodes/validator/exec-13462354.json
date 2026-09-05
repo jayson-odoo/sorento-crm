@@ -1,0 +1,1266 @@
+{
+  "source": {
+    "execution_id": "13462354",
+    "workflow_id": "9qVyfUxmRQqrpGRMDLRuz",
+    "node": "validator",
+    "captured_at": "2026-08-22T11:43:38+00:00",
+    "expected_from": "runData"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "test": null,
+          "test_run_id": null,
+          "started_at": null,
+          "contact": "900000003"
+        }
+      }
+    ],
+    "redis-pop-main-message-list": [
+      {
+        "json": {
+          "message": {
+            "message": {
+              "event_type": "message.received",
+              "event_id": "bd42436a-844b-4a64-8b6a-1114d22e504d",
+              "contact": {
+                "id": 900000003,
+                "firstName": "<redacted>",
+                "lastName": "<redacted>",
+                "phone": "<redacted>",
+                "email": "<redacted>",
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": "<redacted>",
+                  "lastName": "<redacted>",
+                  "email": "<redacted>"
+                },
+                "created_at": 1783941122
+              },
+              "message": {
+                "messageId": 1787381917000000,
+                "channelMessageId": "wamid.HBgLNjAxNjMyODExNzkVAgASGBQzQTQ0REZDRUNCNkZGQTUzNjIyNQA=",
+                "contactId": 900000003,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787381917000,
+                "message": {
+                  "type": "text",
+                  "text": "Any incoming"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 17\"},\"wa_id\":\"60100000002\",\"user_id\":\"MY.900000023\",\"firstName\":\"Person 15\",\"lastName\":\"Person 16\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "contact": {
+              "id": 900000003,
+              "firstName": "<redacted>",
+              "lastName": "<redacted>",
+              "phone": "<redacted>",
+              "email": "<redacted>",
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": null
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/046a9d73-1753-426f-9275-b5e530c7e860"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1783941122
+            }
+          }
+        }
+      }
+    ],
+    "if-audio-in": [],
+    "tf-message": [
+      {
+        "json": {
+          "event_type": "message.received",
+          "event_id": "bd42436a-844b-4a64-8b6a-1114d22e504d",
+          "contact": {
+            "id": 900000003,
+            "firstName": "<redacted>",
+            "lastName": "<redacted>",
+            "phone": "<redacted>",
+            "email": "<redacted>",
+            "language": null,
+            "profilePic": null,
+            "countryCode": "MY",
+            "status": "open",
+            "assignee": {
+              "id": null,
+              "firstName": "<redacted>",
+              "lastName": "<redacted>",
+              "email": "<redacted>"
+            },
+            "created_at": 1783941122
+          },
+          "message": {
+            "messageId": 1787381917000000,
+            "channelMessageId": "wamid.HBgLNjAxNjMyODExNzkVAgASGBQzQTQ0REZDRUNCNkZGQTUzNjIyNQA=",
+            "contactId": 900000003,
+            "channelId": 453209,
+            "traffic": "incoming",
+            "timestamp": 1787381917000,
+            "message": {
+              "type": "text",
+              "text": "Any incoming"
+            }
+          },
+          "channel": {
+            "id": 453209,
+            "name": "Internal (+60 11-1673 1179)",
+            "source": "whatsapp_business",
+            "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 17\"},\"wa_id\":\"60100000002\",\"user_id\":\"MY.900000023\",\"firstName\":\"Person 15\",\"lastName\":\"Person 16\"}}",
+            "created_at": 1767682908
+          },
+          "sender": {
+            "source": "contact",
+            "userId": null,
+            "teamId": null,
+            "workflowId": null,
+            "broadcastHistoryId": null
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": 900000003,
+          "firstName": "<redacted>",
+          "lastName": "<redacted>",
+          "phone": "<redacted>",
+          "email": "<redacted>",
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": null
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/046a9d73-1753-426f-9275-b5e530c7e860"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [],
+          "assignee": null,
+          "lifecycle": null,
+          "created_at": 1783941122
+        }
+      }
+    ],
+    "if-transcribed-confirm": [],
+    "is-human-intervened": [
+      {
+        "json": {
+          "id": 900000003,
+          "firstName": "<redacted>",
+          "lastName": "<redacted>",
+          "phone": "<redacted>",
+          "email": "<redacted>",
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": null
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/046a9d73-1753-426f-9275-b5e530c7e860"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [],
+          "assignee": null,
+          "lifecycle": null,
+          "created_at": 1783941122
+        }
+      }
+    ],
+    "if-message-is-audio": [],
+    "get-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000003",
+          "session_vars": {
+            "variables": {
+              "routing": {
+                "suggested_team": "purchasing_product",
+                "suggested_agent": "general_enquiries"
+              },
+              "entities": [
+                {
+                  "raw": "Srtwt1900-DIy",
+                  "hint": "product",
+                  "confident": true,
+                  "canonical_code": "SRTWT1900-DIY",
+                  "current_message": true
+                }
+              ],
+              "ideation": null,
+              "response": "Previous turn (master_products): returned 2 records",
+              "date_mode": null,
+              "dym_offer": null,
+              "user_goal": "trying to check the product Srtwt1900-DIy",
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "match_mode": "and",
+              "domain_hint": "master_products",
+              "intent_hint": "check_product",
+              "message_type": "business_query",
+              "query_brands": [],
+              "access_levels": [],
+              "routing_brand": "sorento",
+              "contains_flyer": false,
+              "dym_candidates": [],
+              "date_filter_end": null,
+              "last_result_set": [
+                {
+                  "idx": 1,
+                  "uuid": null,
+                  "label": "SRTWT1900-DIY",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 2,
+                  "uuid": null,
+                  "label": "SRTWT1900-DIY",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                }
+              ],
+              "routing_company": null,
+              "date_filter_start": null,
+              "routing_companies": [
+                {
+                  "codes": [
+                    "SRTWT1900-DIY"
+                  ],
+                  "brand_code": null,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha"
+                },
+                {
+                  "codes": [
+                    "SRTWT1900-DIY"
+                  ],
+                  "brand_code": "sorento",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento"
+                }
+              ],
+              "selection_context": null,
+              "routing_roster_plan": null,
+              "routing_brand_source": "resolved"
+            },
+            "user_response": "Here are the matching products.\n\n1. *Company:* Sorento\n*Product Code:* SRTWT1900-DIY\n*Description:* SORENTO ANGLE VALVE SRTWT1900-DIY\n*List Price:* MYR 38.00\n*Dimensions:* Not defined\n\n2. *Company:* Mocha\n*Product Code:* SRTWT1900-DIY\n*Description:* SORENTO ANGLE VALVE SRTWT1900-DIY\n*List Price:* MYR 38.00\n*Dimensions:* Not defined\n\n_Data last updated: 18/08/2026 19:17:11_\n\nP/S: if the spec you're after isn't shown above, just ask me for the *product catalogue* and I'll pull it up for you \ud83d\ude0a"
+          }
+        }
+      }
+    ],
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_incoming",
+            "domain_hint": "incoming",
+            "scope_intent": "broaden",
+            "is_affirmative": null,
+            "user_goal": "trying to check incoming shipments",
+            "access_levels": [],
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [],
+            "entity_op": "reuse",
+            "scope_exclusive": false,
+            "requested_attributes": [
+              "__all__"
+            ],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "entity_op_applied": "reuse",
+            "query_brands": [],
+            "entities_filtered": true,
+            "entities_emptied_by_filter": true,
+            "broaden_dropped": [
+              "product:Srtwt1900-DIy"
+            ],
+            "_pending_pick": true
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "check_incoming",
+            "domain_hint": "incoming",
+            "scope_intent": "broaden",
+            "is_affirmative": null,
+            "user_goal": "trying to check incoming shipments",
+            "access_levels": [],
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [],
+            "entity_op": "reuse",
+            "scope_exclusive": false,
+            "requested_attributes": [
+              "__all__"
+            ],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            }
+          }
+        }
+      }
+    ],
+    "check-access": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Incoming Stock Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "If5": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "Incoming Stock Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "If2": [],
+    "If-ideate": [],
+    "If10": [],
+    "is-escalation-declined": [],
+    "If9": [],
+    "If1": [],
+    "not-supported-domain": [],
+    "If": [],
+    "If7": [],
+    "resolve-entity": [
+      {
+        "json": {
+          "tokens": [],
+          "elapsed_ms": 0,
+          "resolutions": [],
+          "unresolved_tokens": [],
+          "ambiguous_tokens": []
+        }
+      }
+    ],
+    "disallowed-entity-gate": [
+      {
+        "json": {
+          "tokens": [],
+          "elapsed_ms": 0,
+          "resolutions": [],
+          "unresolved_tokens": [],
+          "ambiguous_tokens": [],
+          "gate_passed": true,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities; 'incoming' permits broad query",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "incoming",
+            "allowed_lookup": [
+              "product",
+              "inbound_shipment",
+              "category",
+              "brand"
+            ],
+            "entities_count": 0
+          }
+        }
+      }
+    ],
+    "If3": [],
+    "Execute 'sub-get-rag'": [
+      {
+        "json": {
+          "tools": [
+            {
+              "name": "crm_incoming_stock_list",
+              "similarity": 0.4893372225571784
+            }
+          ]
+        }
+      }
+    ],
+    "tool-filter": [
+      {
+        "json": {
+          "name": "crm_incoming_stock_list",
+          "similarity": 0.4893372225571784,
+          "_tool_pick": {
+            "chosen": "crm_incoming_stock_list",
+            "rejected": [],
+            "count": 1,
+            "has_product": false
+          }
+        }
+      }
+    ],
+    "if-tier-ask": [],
+    "Call 'sub-get-results'": [
+      {
+        "json": {
+          "response": "No matching results found.",
+          "response_intro": "No matching results found.",
+          "answers": [],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": null,
+          "has_result": false,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [
+            "__all__"
+          ],
+          "keys_served": false
+        }
+      }
+    ],
+    "validator": [
+      {
+        "json": {
+          "response": "No matching results found.",
+          "response_intro": "No matching results found.",
+          "answers": [],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": null,
+          "has_result": false,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [
+            "__all__"
+          ],
+          "keys_served": false,
+          "is_valid": true
+        }
+      }
+    ],
+    "promo-picker": [
+      {
+        "json": {
+          "response": "No matching results found.",
+          "response_intro": "No matching results found.",
+          "answers": [],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": null,
+          "has_result": false,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [
+            "__all__"
+          ],
+          "keys_served": false,
+          "is_valid": true
+        }
+      }
+    ],
+    "crossdomain-zeroset": [
+      {
+        "json": {
+          "response": "No matching results found.",
+          "response_intro": "No matching results found.",
+          "answers": [],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": null,
+          "has_result": false,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [
+            "__all__"
+          ],
+          "keys_served": false,
+          "is_valid": true,
+          "_xd": {
+            "active": false,
+            "origin_domain": "incoming",
+            "other_tool": "crm_inventory_stock_balance_list",
+            "team": "purchasing",
+            "requested": [],
+            "returned_codes": [],
+            "missing": [],
+            "probe_entities": []
+          }
+        }
+      }
+    ],
+    "crossdomain-gate": [],
+    "If6": [],
+    "Aggregate1": [
+      {
+        "json": {
+          "response_intro": [
+            "No matching results found."
+          ]
+        }
+      }
+    ],
+    "not-found-error-message": [
+      {
+        "json": {
+          "response_intro": [
+            "No matching results found."
+          ],
+          "escalate_message": "Could not find incoming. Would you like me to escalate to purchasing team?",
+          "is_clarification": false,
+          "found_summary": ""
+        }
+      }
+    ],
+    "sibling-gate": [],
+    "dym-transform": [
+      {
+        "json": {
+          "response_intro": [
+            "No matching results found."
+          ],
+          "escalate_message": "Could not find incoming. Would you like me to escalate to purchasing team?",
+          "is_clarification": false,
+          "found_summary": "",
+          "dym_probe_entities": [],
+          "dym_candidate_codes": [],
+          "dym_excluded_codes": [],
+          "dym_capped_codes": [],
+          "probe_cap_applied": false,
+          "probe_tool": null,
+          "probe_noun": null,
+          "probe_predicate": null,
+          "probe_needed": false,
+          "probe_skip_reason": "domain_not_enabled",
+          "probe_lane": "d1",
+          "_dym_probe_input": true
+        }
+      }
+    ],
+    "dym-gate": [],
+    "build-suggest-offer": [
+      {
+        "json": {
+          "response_intro": [
+            "No matching results found."
+          ],
+          "escalate_message": "Could not find incoming. Would you like me to escalate to purchasing team?",
+          "is_clarification": false,
+          "found_summary": "",
+          "suggest_offer": false
+        }
+      }
+    ],
+    "tag-not-found": [
+      {
+        "json": {
+          "branch_kind": "not_found"
+        }
+      }
+    ],
+    "escalate-catalog": [
+      {
+        "json": {
+          "branch_kind": "not_found",
+          "response": "Could not find incoming. Would you like me to escalate to purchasing team?",
+          "manualResponse": true,
+          "includeResponse": true,
+          "is_escalate_offer": true
+        }
+      }
+    ],
+    "cs-offer-gate": [],
+    "compile-current-state": [
+      {
+        "json": {
+          "variables": {
+            "message_type": "business_query",
+            "intent_hint": "check_incoming",
+            "domain_hint": "incoming",
+            "user_goal": "trying to check incoming shipments",
+            "query_brands": [],
+            "access_levels": [],
+            "entities": [],
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "response": "Could not find incoming. Would you like me to escalate to purchasing team?",
+            "last_result_set": [],
+            "selection_context": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "date_mode": null,
+            "match_mode": "and",
+            "contains_flyer": false,
+            "dym_offer": null,
+            "dym_candidates": [],
+            "ideation": null,
+            "routing_roster_plan": null,
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_company": null,
+            "routing_companies": null
+          },
+          "user_response": "Could not find incoming. Would you like me to escalate to purchasing team?"
+        }
+      }
+    ],
+    "crossdomain-compose": [
+      {
+        "json": {
+          "variables": {
+            "message_type": "business_query",
+            "intent_hint": "check_incoming",
+            "domain_hint": "incoming",
+            "user_goal": "trying to check incoming shipments",
+            "query_brands": [],
+            "access_levels": [],
+            "entities": [],
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "response": "Could not find incoming. Would you like me to escalate to purchasing team?",
+            "last_result_set": [],
+            "selection_context": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "date_mode": null,
+            "match_mode": "and",
+            "contains_flyer": false,
+            "dym_offer": null,
+            "dym_candidates": [],
+            "ideation": null,
+            "routing_roster_plan": null,
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_company": null,
+            "routing_companies": null
+          },
+          "user_response": "Could not find incoming. Would you like me to escalate to purchasing team?"
+        }
+      }
+    ],
+    "sorento-sub-respond-sendmsg-respond2": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "Execution Data": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "attach-merge": [
+      {
+        "json": {
+          "attachments": []
+        }
+      }
+    ],
+    "if-got-attachments": [],
+    "save-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000003",
+          "session_vars": {
+            "variables": {
+              "message_type": "business_query",
+              "intent_hint": "check_incoming",
+              "domain_hint": "incoming",
+              "user_goal": "trying to check incoming shipments",
+              "query_brands": [],
+              "access_levels": [],
+              "entities": [],
+              "routing": {
+                "suggested_team": "purchasing",
+                "suggested_agent": "incoming_stock_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "response": "Could not find incoming. Would you like me to escalate to purchasing team?",
+              "last_result_set": [],
+              "selection_context": null,
+              "date_filter_start": null,
+              "date_filter_end": null,
+              "date_mode": null,
+              "match_mode": "and",
+              "contains_flyer": false,
+              "dym_offer": null,
+              "dym_candidates": [],
+              "ideation": null,
+              "routing_roster_plan": null,
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_company": null,
+              "routing_companies": null
+            },
+            "user_response": "Could not find incoming. Would you like me to escalate to purchasing team?"
+          }
+        }
+      }
+    ],
+    "Call 'sub-respond-save-message-redis'2": [
+      {
+        "json": {
+          "contact_id": 900000003,
+          "phone_number": "<redacted>",
+          "message": "Any incoming",
+          "sent_at": 1787381925619,
+          "turn_id": "13462354",
+          "data": "{\"contact_id\":\"900000003\",\"phone_number\":\"+60100000002\",\"message\":\"Any incoming\",\"sent_at\":1787381917000,\"first_name\":\"Person 18\",\"last_name\":\"Person 19\",\"reply_to_message_id\":null,\"reply_to_message\":null,\"type\":\"incoming\",\"message_id\":\"1787381917000000\",\"turn_id\":\"13462354\",\"state_trace\":{\"v\":1,\"before\":{\"routing\":{\"suggested_team\":\"purchasing_product\",\"suggested_agent\":\"general_enquiries\"},\"entities\":[{\"raw\":\"Srtwt1900-DIy\",\"hint\":\"product\",\"confident\":true,\"canonical_code\":\"SRTWT1900-DIY\",\"current_message\":true}],\"ideation\":null,\"response\":\"Previous turn (master_products): returned 2 records\",\"date_mode\":null,\"dym_offer\":null,\"user_goal\":\"trying to check the product Srtwt1900-DIy\",\"escalation\":{\"is_escalation_confirmation\":false},\"match_mode\":\"and\",\"domain_hint\":\"master_products\",\"intent_hint\":\"check_product\",\"message_type\":\"business_query\",\"query_brands\":[],\"access_levels\":[],\"routing_brand\":\"sorento\",\"contains_flyer\":false,\"dym_candidates\":{\"n\":0,\"first\":null},\"date_filter_end\":null,\"last_result_set\":{\"n\":2,\"first\":\"SRTWT1900-DIY\"},\"routing_company\":null,\"date_filter_start\":null,\"routing_companies\":[{\"codes\":[\"SRTWT1900-DIY\"],\"brand_code\":null,\"company_id\":\"38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2\",\"company_name\":\"Mocha\"},{\"codes\":[\"SRTWT1900-DIY\"],\"brand_code\":\"sorento\",\"company_id\":\"00000000-0000-0000-0000-000000000001\",\"company_name\":\"Sorento\"}],\"selection_context\":null,\"routing_roster_plan\":null,\"routing_brand_source\":\"resolved\"},\"parser_raw\":{\"message_type\":\"business_query\",\"intent_hint\":\"check_incoming\",\"domain_hint\":\"incoming\",\"scope_intent\":\"broaden\",\"is_affirmative\":null,\"user_goal\":\"trying to check incoming shipments\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"reuse\",\"scope_exclusive\":false,\"requested_attributes\":[\"__all__\"],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"purchasing\",\"suggested_agent\":\"incoming_stock_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false}},\"parser_applied\":{\"message_type\":\"business_query\",\"intent_hint\":\"check_incoming\",\"domain_hint\":\"incoming\",\"scope_intent\":\"broaden\",\"is_affirmative\":null,\"user_goal\":\"trying to check incoming shipments\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"reuse\",\"scope_exclusive\":false,\"requested_attributes\":[\"__all__\"],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"purchasing\",\"suggested_agent\":\"incoming_stock_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false},\"domain_signal_source\":\"intent_explicit\",\"entity_op_applied\":\"reuse\",\"query_brands\":[],\"entities_filtered\":true,\"entities_emptied_by_filter\":true,\"broaden_dropped\":[\"product:Srtwt1900-DIy\"],\"_pending_pick\":true},\"after\":{\"message_type\":\"business_query\",\"intent_hint\":\"check_incoming\",\"domain_hint\":\"incoming\",\"user_goal\":\"trying to check incoming shipments\",\"query_brands\":[],\"access_levels\":[],\"entities\":[],\"routing\":{\"suggested_team\":\"purchasing\",\"suggested_agent\":\"incoming_stock_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false},\"response\":\"Could not find incoming. Would you like me to escalate to purchasing team?\",\"last_result_set\":{\"n\":0,\"first\":null},\"selection_context\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"date_mode\":null,\"match_mode\":\"and\",\"contains_flyer\":false,\"dym_offer\":null,\"dym_candidates\":{\"n\":0,\"first\":null},\"ideation\":null,\"routing_roster_plan\":null,\"routing_brand\":null,\"routing_brand_source\":null,\"routing_company\":null,\"routing_companies\":null}}}"
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000003,
+              "firstName": "<redacted>",
+              "lastName": "<redacted>",
+              "phone": "<redacted>",
+              "email": "<redacted>",
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": null
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/046a9d73-1753-426f-9275-b5e530c7e860"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1783941122
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "bd42436a-844b-4a64-8b6a-1114d22e504d",
+              "contact": {
+                "id": 900000003,
+                "firstName": "<redacted>",
+                "lastName": "<redacted>",
+                "phone": "<redacted>",
+                "email": "<redacted>",
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": "<redacted>",
+                  "lastName": "<redacted>",
+                  "email": "<redacted>"
+                },
+                "created_at": 1783941122
+              },
+              "message": {
+                "messageId": 1787381917000000,
+                "channelMessageId": "wamid.HBgLNjAxNjMyODExNzkVAgASGBQzQTQ0REZDRUNCNkZGQTUzNjIyNQA=",
+                "contactId": 900000003,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787381917000,
+                "message": {
+                  "type": "text",
+                  "text": "Any incoming"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": "{\"meta\":{\"profile\":{\"name\":\"Person 17\"},\"wa_id\":\"60100000002\",\"user_id\":\"MY.900000023\",\"firstName\":\"Person 15\",\"lastName\":\"Person 16\"}}",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000003",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "purchasing_product",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "Srtwt1900-DIy",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": "SRTWT1900-DIY",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Previous turn (master_products): returned 2 records",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check the product Srtwt1900-DIy",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "master_products",
+                  "intent_hint": "check_product",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": null,
+                      "label": "SRTWT1900-DIY",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 2,
+                      "uuid": null,
+                      "label": "SRTWT1900-DIY",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    }
+                  ],
+                  "routing_company": null,
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTWT1900-DIY"
+                      ],
+                      "brand_code": null,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha"
+                    },
+                    {
+                      "codes": [
+                        "SRTWT1900-DIY"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Here are the matching products.\n\n1. *Company:* Sorento\n*Product Code:* SRTWT1900-DIY\n*Description:* SORENTO ANGLE VALVE SRTWT1900-DIY\n*List Price:* MYR 38.00\n*Dimensions:* Not defined\n\n2. *Company:* Mocha\n*Product Code:* SRTWT1900-DIY\n*Description:* SORENTO ANGLE VALVE SRTWT1900-DIY\n*List Price:* MYR 38.00\n*Dimensions:* Not defined\n\n_Data last updated: 18/08/2026 19:17:11_\n\nP/S: if the spec you're after isn't shown above, just ask me for the *product catalogue* and I'll pull it up for you \ud83d\ude0a"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_incoming",
+                "domain_hint": "incoming",
+                "scope_intent": "broaden",
+                "is_affirmative": null,
+                "user_goal": "trying to check incoming shipments",
+                "access_levels": [],
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [
+                  "__all__"
+                ],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "entity_op_applied": "reuse",
+                "query_brands": [],
+                "entities_filtered": true,
+                "entities_emptied_by_filter": true,
+                "broaden_dropped": [
+                  "product:Srtwt1900-DIy"
+                ],
+                "_pending_pick": true
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_incoming",
+                "domain_hint": "incoming",
+                "scope_intent": "broaden",
+                "is_affirmative": null,
+                "user_goal": "trying to check incoming shipments",
+                "access_levels": [],
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [
+                  "__all__"
+                ],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "purchasing",
+                  "suggested_agent": "incoming_stock_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "Incoming Stock Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            }
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "response": "No matching results found.",
+        "response_intro": "No matching results found.",
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": null,
+        "has_result": false,
+        "alternatives": [],
+        "relaxed_axis": null,
+        "field_access": null,
+        "requested_attributes": [
+          "__all__"
+        ],
+        "keys_served": false
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "response": "No matching results found.",
+        "response_intro": "No matching results found.",
+        "answers": [],
+        "attachments": [],
+        "action_links": [],
+        "last_updated_at": null,
+        "has_result": false,
+        "alternatives": [],
+        "relaxed_axis": null,
+        "field_access": null,
+        "requested_attributes": [
+          "__all__"
+        ],
+        "keys_served": false,
+        "is_valid": true
+      }
+    }
+  ],
+  "runIndex": 0,
+  "ran": [
+    "When Executed by Another Workflow",
+    "redis-pop-main-message-list",
+    "if-audio-in",
+    "tf-message",
+    "sorento-sub-respond-findcontact-respond",
+    "if-transcribed-confirm",
+    "is-human-intervened",
+    "if-message-is-audio",
+    "get-session-vars",
+    "Call 'sub-query-reformulator'",
+    "check-access",
+    "If5",
+    "If2",
+    "If-ideate",
+    "If10",
+    "is-escalation-declined",
+    "If9",
+    "If1",
+    "not-supported-domain",
+    "If",
+    "If7",
+    "resolve-entity",
+    "disallowed-entity-gate",
+    "If3",
+    "Execute 'sub-get-rag'",
+    "tool-filter",
+    "if-tier-ask",
+    "Call 'sub-get-results'",
+    "validator",
+    "promo-picker",
+    "crossdomain-zeroset",
+    "crossdomain-gate",
+    "If6",
+    "Aggregate1",
+    "not-found-error-message",
+    "sibling-gate",
+    "dym-transform",
+    "dym-gate",
+    "build-suggest-offer",
+    "tag-not-found",
+    "escalate-catalog",
+    "cs-offer-gate",
+    "compile-current-state",
+    "crossdomain-compose",
+    "sorento-sub-respond-sendmsg-respond2",
+    "Execution Data",
+    "attach-merge",
+    "if-got-attachments",
+    "save-session-vars",
+    "Call 'sub-respond-save-message-redis'2"
+  ]
+}

@@ -60,6 +60,37 @@ class McpCallFn(Protocol):
     def __call__(self, name: str, args: dict[str, Any]) -> Any: ...
 
 
+class McpProbeFn(Protocol):
+    """One MCP tool call, by name, with arguments already built (D10).
+
+    No `db` / `session` parameter, deliberately: this is a NETWORK call, and threading a
+    session in is the hold-a-connection-across-I/O hazard the plan's 96/100-connection
+    incident is the evidence against. The production binding opens nothing.
+    """
+
+    def __call__(self, name: str, args: dict[str, Any]) -> Any: ...
+
+
+class FamilyFetchFn(Protocol):
+    """The product-family read the miss lane makes before offering a sibling.
+
+    n8n does this as an HTTP call to a raw host; in process it is the products service.
+    The seam takes a QUERY STRING and nothing else - no url, no session. Its production
+    binding opens its own short session, which is why the caller (the answer lane) can
+    stay session-free.
+    """
+
+    def __call__(self, query: str) -> Any: ...
+
+
+@dataclass(frozen=True)
+class AnswerServices:
+    """S6c's two seams: the did-you-mean / sibling probes, and the family fetch."""
+
+    mcp_probe: McpProbeFn
+    family_fetch: FamilyFetchFn
+
+
 @dataclass(frozen=True)
 class FetchServices:
     """S6b's three seams, same shape as `ResolveGateServices` for the same reason.
@@ -220,7 +251,7 @@ def _tool_search(db: Session) -> ToolSearchFn:
     return call
 
 
-def _mcp_call(db: Session) -> McpCallFn:
+def _mcp_call(db: Session | None = None) -> McpCallFn:
     def call(name: str, args: dict[str, Any]) -> Any:
         """One MCP tool call at the CONFIGURED url (H52, D10).
 
@@ -240,6 +271,56 @@ def _mcp_call(db: Session) -> McpCallFn:
         return client.call_tool(name, args)
 
     return call
+
+
+def _family_fetch(db: Session) -> FamilyFetchFn:
+    def call(query: str) -> Any:
+        """`family-fetch`: the sibling/family lookup, through the products service.
+
+        n8n calls a raw host over HTTP for this (the same class of hazard as H52's MCP
+        endpoint). In process it is a service call, so there is no url to go stale and no
+        credential in the workflow.
+        """
+        from app.services.product_service import ProductService
+
+        # n8n's `family-fetch` is
+        # `GET https://<raw ip>/api/v1/master-data/products?query=..&variant_filter=all&limit=5000`.
+        # Same read, same three parameters, no host and no credential (the H52 class of
+        # hazard, on a second node).
+        return ProductService(db).list_products(
+            query=query, variant_filter="all", limit=5000, page=1
+        )
+
+    return call
+
+
+def production_answer_services(db: Session) -> AnswerServices:
+    """S6c's bundle. The probe is the SAME MCP client the fetch step uses (H52, D10)."""
+    return AnswerServices(mcp_probe=_mcp_call(db), family_fetch=_family_fetch(db))
+
+
+def answer_services_for(session_factory: Any) -> AnswerServices:
+    """S6c's bundle, bound to a session FACTORY rather than to a live session.
+
+    The answer lane makes two MCP probes and a products read, and the capacity rule says no
+    database session is held across either. `production_answer_services(db)` binds
+    `family_fetch` to the caller's session, which is right for a caller that already has one
+    open and wrong for this lane, whose whole point is that it runs with none. So the family
+    read opens its OWN short session and closes it again; the probe seam needs no session at
+    all (`_mcp_call` never touches its parameter).
+
+    The wider "every bundle takes a factory" change is deliberately NOT made here - only the
+    ONE bundle whose caller holds no session needs it today, and the rest have no such caller.
+    """
+
+    def family_fetch(query: str) -> Any:
+        db = session_factory()
+        try:
+            return _family_fetch(db)(query)
+        finally:
+            db.close()
+
+    return AnswerServices(mcp_probe=_mcp_call(None), family_fetch=family_fetch)
 
 
 def fetch_services(db: Session) -> FetchServices:

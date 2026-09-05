@@ -796,9 +796,32 @@ contact inside the synchronous request. Different contacts run in parallel.
   ticket `chatbot:seq:{contact}` + `chatbot:done:{contact}`), and two requests for two
   different contacts run concurrently (measured overlap in the test). (A5, H30)
 - AC-710 `[BE][T]` Given a predecessor request that died without advancing the done counter,
-  when the next waiter sees no `chatbot:running:{contact}` key for more than 2 s, then it
-  repairs the counter and proceeds; given the wait exceeds `CHATBOT_QUEUE_WAIT_SECONDS`, then
-  the turn is `failed` at `stage = queued` with today's error reply. (A6)
+  when the next waiter sees no `chatbot:running:{contact}` key for more than
+  `STALL_GRACE_SECONDS`, then it repairs the counter and proceeds; given the wait exceeds
+  `CHATBOT_QUEUE_WAIT_SECONDS`, then the turn is `failed` at `stage = queued` with today's
+  error reply AND releases its own ticket on the way out, so the contact is blocked for one
+  turn rather than for the `running` key's whole TTL. (A6)
+  **Grace revised 5 Sep 2026, from 2 s to the redis socket timeout + 2 s (12 s).** The
+  liveness probe is itself a redis round trip on a connection with `socket_timeout = 10`, so
+  a two-second grace made one slow redis call enough to declare a LIVE predecessor dead and
+  run beside it - the failure the ordering exists to prevent, reached through its own repair.
+  The second clause above is what now covers the death case the grace cannot see (a process
+  killed with its `running` key still set looks alive for 300 s).
+- AC-715 `[BE][T]` (added 5 Sep 2026, S7 mode) Given S7 mode is on and a turn routes to a
+  lane the CRM does not complete (not in `CRM_COMPLETED_BRANCH_KINDS`, or not in
+  `system_settings.chatbot_completed_lanes`), when the head finishes routing, then the turn
+  is `failed` at the stage it reached with an error naming the lane and
+  `chatbot_completed_lanes`, the caller gets today's error reply as a `send_message` action,
+  the trace carries the reason, and R4's manual Retry applies - rather than the row being
+  left `delegated` for a `/complete` that S7 mode answers 410. With the flag off the same
+  turn delegates unchanged. (A6, D7)
+  **LIVE turns only (D14).** A dry run delegates as before and records the same finding as
+  a `skipped` trace note instead: nothing was going to complete it either way (the clone's
+  `test-guard` records actions and never calls `/complete`), there is no customer waiting,
+  and failing it would make the AC-711 load gate, the shadow window and the console unable
+  to run in the very mode they exist to prove out - measured, every turn of a gate run went
+  red on that arm. The harness therefore still SEES the lane that is not ready, which is
+  what makes a shadow run the place this gets caught before a customer meets it.
 - AC-712 `[BE][T]` Given the same respond `message_id` for one contact posted twice (webhook
   and poller, or a watermark re-list), when the second arrives, then no second turn runs, the
   response is 200 `{duplicate: true, turn_id: <original>, reply, actions}` and the n8n Switch
@@ -818,8 +841,14 @@ contact inside the synchronous request. Different contacts run in parallel.
   in the n8n repo. (A5, D15)
 - AC-711 `[E2E]` Given `scripts/chatbot_load.py` against the S7 backend with 50 contacts x 2
   messages fired at once (dry run), when it completes, then p95 turn time is under 12 s, zero
-  errors, DB pool usage below 60%, and every contact's two replies are in order; repeated at
-  300 turns. (A5)
+  errors, DB pool usage below 60%, and every contact's two replies come back in the order the
+  CRM RECEIVED that contact's messages, with no two of that contact's turns overlapping (both
+  graded from `chatbot.turns` after the run, never from the client's send order - AC-709's
+  guarantee is arrival order); repeated at 300 turns. (A5)
+  **Measured 5 Sep 2026** (ordering on, one uvicorn worker, mocked parser): 100 turns, zero
+  errors, zero out of order, p95 1.24 s; 300-turn repeat p95 3.77 s. The pool clause is the
+  one that did not hold as written - see the plan's capacity section, where the number and
+  the question for the owner are recorded.
 - AC-707 `[E2E]` Given live traffic for one pilot contact routed through S7, when they send
   three messages quickly, then the three replies arrive in order and `chatbot.turns` shows
   three `done` rows with `finished_at` ascending. (A5)

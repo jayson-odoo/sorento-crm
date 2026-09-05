@@ -96,6 +96,42 @@ class Settings(BaseSettings):
     # when that lane dies mid-turn the call never comes and the row would stay `delegated`
     # forever - a ghost in the trace list that Retry (failed turns only, R4) cannot touch.
     chatbot_delegated_ttl_minutes: int = 10  # CHATBOT_DELEGATED_TTL_MINUTES
+
+    # S7 MODE (AC-701, AC-709, AC-710). OFF until the owner promotes S7, because until
+    # then n8n's own dispatcher is still serialising per contact and doing it twice would
+    # only add the CRM's wait to n8n's.
+    #
+    # It switches on TWO halves of one promote, and they are one flag because they are one
+    # cutover - the thin spine posts every message to `/turn` and the CRM answers it:
+    #
+    #   * per-contact ordering: a turn takes a redis ticket for its contact and waits for
+    #     the ticket before it; different contacts never wait on each other;
+    #   * the CRM owns the tail: `POST /chat/turn` returns the finished reply, and
+    #     `/turn/{id}/complete` answers 410 Gone (H6, one trigger).
+    #
+    # **Precondition for turning it on: the CRM must complete every lane** - S6c landed
+    # and every branch kind listed in `system_settings.chatbot_completed_lanes`. Flip it
+    # while a lane still delegates and that lane's turns have nobody to finish them, so the
+    # engine refuses them rather than leaving ghosts: `failed` at the stage they reached,
+    # naming the lane and this setting, with today's error reply and Retry available
+    # (AC-715, LIVE turns only - a dry run delegates as before and records the finding on
+    # its trace, so the harness that exists to catch this can still run). The symptom is
+    # immediate and the fix is this flag back off.
+    # CHATBOT_ORDERING_ENABLED.
+    chatbot_ordering_enabled: bool = False
+    # The longest a turn waits for its contact's earlier turns. Past it the turn is failed
+    # at stage `queued` with today's error reply rather than holding the request open: n8n's
+    # HTTP node waits 60 s, so a wait that outlives that would turn one stuck turn into a
+    # stuck n8n execution as well. CHATBOT_QUEUE_WAIT_SECONDS.
+    chatbot_queue_wait_seconds: float = 45.0
+    # Optional worker offload (AC-703). OFF by default: in-process is simpler and the
+    # measured trigger for moving the turn off the API threads (beyond ~250 concurrent) has
+    # not arrived. When true the request enqueues on the `chat` queue and waits for the
+    # result, the pattern `/external/media` already uses. CHATBOT_TURN_ON_WORKER.
+    chatbot_turn_on_worker: bool = False
+    # How long the request waits for the offloaded turn before giving up on it.
+    # CHATBOT_TURN_WAIT_SECONDS.
+    chatbot_turn_wait_seconds: int = 60
     # Chatbot turn engine: run the ported business lane (resolve + gate, S6a) in process.
     # OFF by default, and that default is the strangler's whole point (D7). Until the n8n
     # edits in documentation/plans/chatbot/n8n-changes.md section S6a are made, n8n STILL

@@ -118,6 +118,13 @@ QUEUES = (
     ('respond_io', 'fast'),
     ('catalogue_render', 'batch'),
     ('media', 'fast'),
+    # `chat` is the chatbot turn engine's optional worker offload (S7 / AC-703,
+    # CHATBOT_TURN_ON_WORKER). Same latency class as `media` and for the same
+    # reason: the request that enqueued it is WAITING on it with a customer
+    # watching "typing...", so behind a 39-minute import is the one place it
+    # must never be. Drains next to `media` rather than at the end for that
+    # reason; the relative order of every other queue is unchanged.
+    ('chat', 'fast'),
     ('project_docs', 'batch'),
     ('flyer_read', 'batch'),
     ('notifications', 'fast'),
@@ -126,7 +133,7 @@ ROLES = ('batch', 'fast')
 
 # The no-env fallback (e2e-stack.sh, a bare `python worker.py` with neither
 # WORKER_QUEUES nor WORKER_ROLE set) drains everything, in the order above -
-# byte-identical to the pre-#569 default.
+# the pre-#569 default, in the pre-#569 order, plus `chat` inserted at S7.
 DEFAULT_QUEUES = tuple(name for name, _role in QUEUES)
 
 

@@ -1,0 +1,264 @@
+{
+  "source": {
+    "execution_id": "14108510",
+    "workflow_id": "9qVyfUxmRQqrpGRMDLRuz",
+    "node": "miss-roster-check",
+    "captured_at": "2026-08-29T05:49:18+00:00",
+    "expected_from": "runData",
+    "harvested_from": "live-spine-sorento-consume-main/compile-current-state/exec-14108510.json"
+  },
+  "ctx": {
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000041,
+              "firstName": "Person 68",
+              "lastName": "Person 69",
+              "phone": "+60100000022",
+              "email": "person18@example.com",
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/000576ca-18ff-4c93-87d8-52ba9164df1d"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1772721208
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "30eec715-f8d3-4b41-bec9-8c89787eab36",
+              "contact": {
+                "id": 900000041,
+                "firstName": "Person 68",
+                "lastName": "Person 69",
+                "phone": "+60100000022",
+                "email": "person18@example.com",
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1772721208
+              },
+              "message": {
+                "messageId": 1787814081000000,
+                "channelMessageId": "wamid.HBgUTVkuMjcxNzY2OTE3NzUyODc3ODIVFAASGBYzRUIwMUNCMjYwMEFFMkRGQUJFMTY2AA==",
+                "contactId": 900000041,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787814081000,
+                "message": {
+                  "type": "text",
+                  "text": "Hi"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": null,
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000041",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "marketing_product",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [],
+                  "ideation": null,
+                  "response": "Thanks for chatting! Have a great day!",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to end the chat",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": null,
+                  "intent_hint": null,
+                  "message_type": "casual",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTWC193"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "Thanks for chatting! Have a great day!"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to greet",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "marketing_product",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_none",
+                "entity_op_applied": "reuse",
+                "query_brands": []
+              },
+              "_parser_raw": {
+                "message_type": "casual",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to greet",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [],
+                "entity_op": "reuse",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            }
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "response": "Hello! How can I help you today?"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "response": "Hello! How can I help you today?",
+        "_offer": false
+      }
+    }
+  ],
+  "runIndex": 0
+}

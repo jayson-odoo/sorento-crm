@@ -49,11 +49,21 @@ class TestTheTwoConditions:
 
         This is the direction that matters: an owner adding `business_query` before S6
         ships must NOT get a turn answered by a lane that does not exist.
+
+        S6c is the slice that finished the migration: every kind in `BRANCH_KINDS` is now
+        in `CRM_COMPLETED_BRANCH_KINDS`, so the loop below has nothing left to walk. It
+        stays because the guarantee has not changed and a future lane would refill it -
+        and the code condition is graded on a kind outside the build's set either way,
+        which is exactly the "lane that does not exist" the docstring names.
         """
-        not_built = sorted(set(BRANCH_KINDS) - CRM_COMPLETED_BRANCH_KINDS)
-        assert not_built, "every lane is built - this test has outlived the migration"
-        for kind in not_built:
+        for kind in sorted(set(BRANCH_KINDS) - CRM_COMPLETED_BRANCH_KINDS):
             assert delegate_for(kind, frozenset({kind})) == kind, kind
+        assert CRM_COMPLETED_BRANCH_KINDS <= set(BRANCH_KINDS), (
+            "the build claims to complete a kind the router can never produce"
+        )
+        assert delegate_for("a_lane_from_the_future", frozenset({"a_lane_from_the_future"})) == (
+            "a_lane_from_the_future"
+        )
 
     def test_unreadable_settings_fail_towards_n8n(self):
         """`None` means "nothing enabled", never "everything"."""
