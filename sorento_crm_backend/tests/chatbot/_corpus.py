@@ -59,6 +59,24 @@ VENDORED_ROOT = BACKEND_ROOT / "tests" / "fixtures" / "chatbot" / "nodes"
 # by counting parents (which is how this silently skipped in every worktree).
 _CORPUS_SUFFIX = Path("sorento_crm_n8n") / "n8n-workflows-init" / "tests" / "fixtures"
 
+# ...and the CAPTURE lane's worktree first, when it is there. The capture runs land in
+# `captures-rs1a-parser` and reach the main n8n checkout only when that lane merges, so
+# auto-discovery that stops at the main checkout grades a port against a corpus that is
+# missing the captures the port was written from - measured: `miss-suggest-result` has
+# captures in the worktree and none in the main checkout, so
+# `test_full_corpus_has_at_least_one_capture[miss-suggest-result]` fails, and ONLY when
+# `CHATBOT_FIXTURES_DIR` is unset. An explicit `CHATBOT_FIXTURES_DIR` still wins over
+# both; this only changes what "found it myself" means.
+_CORPUS_WORKTREE_SUFFIX = (
+    Path("sorento_crm_n8n")
+    / ".claude"
+    / "worktrees"
+    / "captures-rs1a-parser"
+    / "n8n-workflows-init"
+    / "tests"
+    / "fixtures"
+)
+
 # Which capture slugs hold each ported node. A node can live under more than one slug
 # (the live spine and the fail-closed clone capture the same node names), so the loader
 # unions them and prefixes the fixture id with the slug to keep ids unique.
@@ -175,6 +193,65 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
         "live-spine-sorento-consume-main",
         "clone-spine-RS",
     ),
+    # S6c - the business lane's answer + miss half (AC-607, AC-608). Registered here so
+    # gate 0's report (`scripts/chatbot_fixture_coverage.py`) can SEE these cells; the
+    # replay itself is parametrised in `tests/chatbot/test_s6c_answer_lane.py`, which
+    # keeps its own copy of this map because it loads the same shape directly.
+    #
+    # Two slugs are deliberately absent from the pairs they look like they belong to:
+    # `sub-send-attachments{,-rs}` carries a DIFFERENT 12-line `central-exchange` (a
+    # name-preserving stub re-emitting `attachments_src`), and `sub-answer{-rs,-live}`
+    # carries a 12-line `build-result` that is a named-value carrier, not
+    # `sub-main-processing`'s real 88-line node. Same class as S6a's stand-in exclusions.
+    "validator": ("live-spine-sorento-consume-main",),
+    "promo-picker": ("live-spine-sorento-consume-main",),
+    "crossdomain-zeroset": ("live-spine-sorento-consume-main",),
+    "crossdomain-render": ("live-spine-sorento-consume-main",),
+    "not-found-error-message": ("live-spine-sorento-consume-main",),
+    "access-level-choice-message": ("clone-spine-RS", "live-spine-sorento-consume-main"),
+    "build-suggest-offer": ("live-spine-sorento-consume-main",),
+    "build-result": (
+        "clone-sub-main-processing",
+        "clone-spine-RS",
+        "live-spine-sorento-consume-main",
+    ),
+    "answer-input": ("sub-answer-rs", "sub-answer-live"),
+    "answer-result": ("sub-answer-rs", "sub-answer-live"),
+    "miss-roster-check": (
+        "clone-spine-RS",
+        "live-spine-sorento-consume-main",
+        "sub-answer",
+        "sub-answer-rs",
+        "sub-answer-live",
+    ),
+    "miss-roster-plan": ("live-spine-sorento-consume-main", "sub-answer-live"),
+    "build-miss-member-offer": ("live-spine-sorento-consume-main", "sub-answer-live"),
+    "dym-transform-partial": (
+        "live-spine-sorento-consume-main",
+        "sub-answer-rs",
+        "sub-answer-live",
+    ),
+    "dym-annotate-partial": ("live-spine-sorento-consume-main", "sub-answer-live"),
+    "dym-transform": (
+        "clone-spine-RS",
+        "live-spine-sorento-consume-main",
+        "sub-miss-suggest-rs",
+        "sub-miss-suggest-live",
+    ),
+    "dym-annotate": (
+        "clone-spine-RS",
+        "live-spine-sorento-consume-main",
+        "sub-miss-suggest-rs",
+        "sub-miss-suggest-live",
+    ),
+    # `sub-miss-suggest`'s OWN exit/carrier (RS-7 errata) - only ever captured inside the
+    # sub, never on the spine, which inlines everything and has no boundary to carry across.
+    "miss-suggest-result": ("sub-miss-suggest-live",),
+    # `promo-dym-plan` exists in the export and fired ZERO times in the scanned pool. It is
+    # a real zero cell, not an oversight: the promotion did-you-mean lane needs a promotion
+    # miss WITH candidates, and the 232-execution pool held none.
+    "promo-dym-plan": ("sub-miss-suggest-live",),
+    "sibling-transform": ("sub-miss-suggest-live", "sub-miss-suggest-rs"),
 }
 
 # Output keys the SHIPPING node bodies emit that the body an OLD capture was taken
@@ -365,9 +442,10 @@ def corpus_root() -> Path | None:
         root = Path(raw).expanduser()
         return root if (root / "nodes").is_dir() else None
     for ancestor in BACKEND_ROOT.parents:
-        candidate = ancestor / _CORPUS_SUFFIX
-        if (candidate / "nodes").is_dir():
-            return candidate
+        for suffix in (_CORPUS_WORKTREE_SUFFIX, _CORPUS_SUFFIX):
+            candidate = ancestor / suffix
+            if (candidate / "nodes").is_dir():
+                return candidate
     return None
 
 

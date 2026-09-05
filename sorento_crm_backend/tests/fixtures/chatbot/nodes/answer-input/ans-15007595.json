@@ -1,0 +1,778 @@
+{
+  "source": {
+    "execution_id": "15007595",
+    "workflow_id": "oIzFAzi3bGgn5mTH",
+    "workflow_version": "b1357c27-f515-4cda-9a3a-2a665f1a8057",
+    "node": "answer-input",
+    "captured_at": "2026-09-04T20:11:33+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "a3c96ded16b014f22b04e85cd7f2d518558da05ac72e6d0237cbc8402de9910f"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000064,
+              "firstName": "Person 80",
+              "lastName": "Person 81",
+              "phone": "+60100000032",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/23aaef94-6ff4-4d7f-9198-1eb9135814ed"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1775526461
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "c954816b-4d10-4f32-b5b5-5f5878716107",
+              "contact": {
+                "id": 900000064,
+                "firstName": "Person 80",
+                "lastName": "Person 81",
+                "phone": "+60100000032",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1775526461
+              },
+              "message": {
+                "messageId": 1788416535000000,
+                "channelMessageId": "wamid.HBgMNjAxMTM5OTE3ODAwFQIAEhgUM0FFNjg3REUyOUExODkyNEUzMkIA",
+                "contactId": 900000064,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788416535000,
+                "message": {
+                  "type": "text",
+                  "text": "Srtwt7203"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": null,
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000064",
+              "session_vars": {
+                "variables": {
+                  "response": "text"
+                },
+                "user_response": "text"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check the item Srtwt7203",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Srtwt7203",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "customer_service",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_none",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": []
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check the item Srtwt7203",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Srtwt7203",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          },
+          "item": {
+            "text": "{\n  \"response\": \"Could you please specify what information you need for item SRTWT7203?\"\n}"
+          },
+          "is_test": false
+        }
+      }
+    ],
+    "aggregate-gate": [],
+    "disallowed-entity-gate": [
+      {
+        "json": {}
+      }
+    ],
+    "resolve-entity": [
+      {
+        "json": {}
+      }
+    ],
+    "build-result": [
+      {
+        "json": {}
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000064,
+              "firstName": "Person 80",
+              "lastName": "Person 81",
+              "phone": "+60100000032",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/23aaef94-6ff4-4d7f-9198-1eb9135814ed"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1775526461
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "c954816b-4d10-4f32-b5b5-5f5878716107",
+              "contact": {
+                "id": 900000064,
+                "firstName": "Person 80",
+                "lastName": "Person 81",
+                "phone": "+60100000032",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1775526461
+              },
+              "message": {
+                "messageId": 1788416535000000,
+                "channelMessageId": "wamid.HBgMNjAxMTM5OTE3ODAwFQIAEhgUM0FFNjg3REUyOUExODkyNEUzMkIA",
+                "contactId": 900000064,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788416535000,
+                "message": {
+                  "type": "text",
+                  "text": "Srtwt7203"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": null,
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000064",
+              "session_vars": {
+                "variables": {
+                  "response": "text"
+                },
+                "user_response": "text"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check the item Srtwt7203",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Srtwt7203",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "customer_service",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_none",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": []
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check the item Srtwt7203",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Srtwt7203",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          }
+        }
+      }
+    ],
+    "answer-input": [
+      {
+        "json": {
+          "text": "{\n  \"response\": \"Could you please specify what information you need for item SRTWT7203?\"\n}"
+        }
+      }
+    ],
+    "central-exchange": [
+      {
+        "json": {
+          "response": "Could you please specify what information you need for item SRTWT7203?"
+        }
+      }
+    ],
+    "miss-roster-check": [
+      {
+        "json": {
+          "response": "Could you please specify what information you need for item SRTWT7203?",
+          "_offer": false
+        }
+      }
+    ],
+    "miss-roster-gate": [],
+    "dym-transform-partial": [
+      {
+        "json": {
+          "response": "Could you please specify what information you need for item SRTWT7203?",
+          "_offer": false,
+          "dym_probe_entities": [],
+          "dym_candidate_codes": [],
+          "dym_excluded_codes": [],
+          "dym_capped_codes": [],
+          "probe_cap_applied": false,
+          "probe_tool": null,
+          "probe_noun": null,
+          "probe_predicate": null,
+          "probe_needed": false,
+          "probe_skip_reason": "domain_not_enabled",
+          "probe_lane": "d1",
+          "_dym_probe_input": true
+        }
+      }
+    ],
+    "dym-gate-partial": [],
+    "answer-result": [
+      {
+        "json": {
+          "response": "Could you please specify what information you need for item SRTWT7203?",
+          "_offer": false,
+          "dym_probe_entities": [],
+          "dym_candidate_codes": [],
+          "dym_excluded_codes": [],
+          "dym_capped_codes": [],
+          "probe_cap_applied": false,
+          "probe_tool": null,
+          "probe_noun": null,
+          "probe_predicate": null,
+          "probe_needed": false,
+          "probe_skip_reason": "domain_not_enabled",
+          "probe_lane": "d1",
+          "_dym_probe_input": true,
+          "outcome_fragment": {
+            "central-exchange": {
+              "response": "Could you please specify what information you need for item SRTWT7203?"
+            },
+            "build-miss-member-offer": null,
+            "dym-annotate-partial": null
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "ctx": {
+          "contact": {
+            "id": 900000064,
+            "firstName": "Person 80",
+            "lastName": "Person 81",
+            "phone": "+60100000032",
+            "email": null,
+            "language": null,
+            "profilePic": null,
+            "locale": null,
+            "countryCode": "MY",
+            "status": "open",
+            "isBlocked": false,
+            "custom_fields": [
+              {
+                "name": "enquiry_type",
+                "value": null
+              },
+              {
+                "name": "user_type",
+                "value": null
+              },
+              {
+                "name": "complaint_id",
+                "value": null
+              },
+              {
+                "name": "is_allowed_stock",
+                "value": "true"
+              },
+              {
+                "name": "is_human_intervened",
+                "value": "false"
+              },
+              {
+                "name": "backend_id",
+                "value": "https://fe-sorento.foundryx.my/user-management/contacts/23aaef94-6ff4-4d7f-9198-1eb9135814ed"
+              },
+              {
+                "name": "is_allowed_ai",
+                "value": "true"
+              },
+              {
+                "name": "is_allowed_voice",
+                "value": "true"
+              }
+            ],
+            "tags": [
+              "imported_20260510_200514",
+              "imported_20260627_150636"
+            ],
+            "assignee": null,
+            "lifecycle": "New Lead",
+            "created_at": 1775526461
+          },
+          "text": {
+            "event_type": "message.received",
+            "event_id": "c954816b-4d10-4f32-b5b5-5f5878716107",
+            "contact": {
+              "id": 900000064,
+              "firstName": "Person 80",
+              "lastName": "Person 81",
+              "phone": "+60100000032",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "countryCode": "MY",
+              "status": "open",
+              "assignee": {
+                "id": null,
+                "firstName": null,
+                "lastName": null,
+                "email": null
+              },
+              "created_at": 1775526461
+            },
+            "message": {
+              "messageId": 1788416535000000,
+              "channelMessageId": "wamid.HBgMNjAxMTM5OTE3ODAwFQIAEhgUM0FFNjg3REUyOUExODkyNEUzMkIA",
+              "contactId": 900000064,
+              "channelId": 453209,
+              "traffic": "incoming",
+              "timestamp": 1788416535000,
+              "message": {
+                "type": "text",
+                "text": "Srtwt7203"
+              }
+            },
+            "channel": {
+              "id": 453209,
+              "name": "Internal (+60 11-1673 1179)",
+              "source": "whatsapp_business",
+              "meta": null,
+              "created_at": 1767682908
+            },
+            "sender": {
+              "source": "contact",
+              "userId": null,
+              "teamId": null,
+              "workflowId": null,
+              "broadcastHistoryId": null
+            }
+          },
+          "session": {
+            "respond_io_id": "900000064",
+            "session_vars": {
+              "variables": {
+                "response": "text"
+              },
+              "user_response": "text"
+            }
+          },
+          "parse": {
+            "output": {
+              "message_type": "business_query",
+              "intent_hint": null,
+              "domain_hint": null,
+              "scope_intent": null,
+              "is_affirmative": null,
+              "user_goal": "trying to check the item Srtwt7203",
+              "access_levels": [],
+              "broaden_axis": null,
+              "date_mode": null,
+              "date_filter_start": null,
+              "date_filter_end": null,
+              "match_mode": "and",
+              "demand_qty": null,
+              "entities": [
+                {
+                  "raw": "Srtwt7203",
+                  "hint": "product",
+                  "canonical_code": null,
+                  "current_message": true,
+                  "confident": true
+                }
+              ],
+              "entity_op": "replace_combine",
+              "scope_exclusive": false,
+              "requested_attributes": [],
+              "contains_flyer": false,
+              "reference_positions": [],
+              "reference_target": null,
+              "person_mention": null,
+              "is_active": null,
+              "order_status": null,
+              "correction": false,
+              "routing": {
+                "suggested_team": "customer_service",
+                "suggested_agent": "general_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "domain_signal_source": "intent_none",
+              "scope_exclusive_applied": false,
+              "entity_op_applied": "replace_combine",
+              "query_brands": []
+            },
+            "_parser_raw": {
+              "message_type": "business_query",
+              "intent_hint": null,
+              "domain_hint": null,
+              "scope_intent": null,
+              "is_affirmative": null,
+              "user_goal": "trying to check the item Srtwt7203",
+              "access_levels": [],
+              "broaden_axis": null,
+              "date_mode": null,
+              "date_filter_start": null,
+              "date_filter_end": null,
+              "match_mode": "and",
+              "demand_qty": null,
+              "entities": [
+                {
+                  "raw": "Srtwt7203",
+                  "hint": "product",
+                  "canonical_code": null,
+                  "current_message": true,
+                  "confident": true
+                }
+              ],
+              "entity_op": "replace_combine",
+              "scope_exclusive": false,
+              "requested_attributes": [],
+              "contains_flyer": false,
+              "reference_positions": [],
+              "reference_target": null,
+              "person_mention": null,
+              "is_active": null,
+              "order_status": null,
+              "correction": false,
+              "routing": {
+                "suggested_team": null,
+                "suggested_agent": null
+              },
+              "escalation": {
+                "is_escalation_confirmation": false,
+                "company_pick": null
+              }
+            }
+          },
+          "access": {
+            "allowed": true,
+            "decision": "allow",
+            "agent_name": "General Enquiries",
+            "attributes": null,
+            "all_attributes_allowed": null
+          },
+          "media": null
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "text": "{\n  \"response\": \"Could you please specify what information you need for item SRTWT7203?\"\n}"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "15007595"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "aggregate-gate",
+    "disallowed-entity-gate",
+    "resolve-entity",
+    "build-result",
+    "build-ctx",
+    "answer-input",
+    "central-exchange",
+    "miss-roster-check",
+    "miss-roster-gate",
+    "dym-transform-partial",
+    "dym-gate-partial",
+    "answer-result"
+  ]
+}

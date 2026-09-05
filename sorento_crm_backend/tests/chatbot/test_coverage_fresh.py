@@ -123,16 +123,19 @@ class TestGateStates:
         assert coverage._cell_state("route-turn", "business_query", 87) == ("met", False)
 
 
-# The cells gate 0 blocks on TODAY. EMPTY since the 5 Sep tail capture batch: 305 real
-# captures off `sub-output-live` (the body the port implements), and the pool that
-# produced them was scanned end to end - 760 of 760 on version `c32698c1` - so the arms
-# still reading zero are `exhausted`, not short.
+# The cells gate 0 blocks on TODAY. One, and it is on record rather than excused:
+# `access-level-choice-message` has 4 real captures of the 5 the gate asks for, and the
+# node runs on `live-spine-sorento-consume-main`, which has no pool row in
+# `CAPTURE_REPORT` at all - so its 4 cannot be read as `exhausted` either. What is owed
+# is a capture run over that pool, or a scan report proving the traffic does not exist.
+# COVERAGE.md says so in its own Gate 0 section. The bar stays at 5.
 #
 # Pinned as a SET rather than asserted empty, so both directions are failures worth
 # reading: a new short cell fails here instead of hiding in a table, and a cell that has
 # since been captured fails too, so the list shrinks rather than rotting. The fix for a
-# new entry is always more captures, never an entry added here.
-EXPECTED_BLOCKING: frozenset[str] = frozenset()
+# new entry is always more captures, never an entry added here - an entry is a DEBT
+# recorded, and gate 0 is not met while this set is non-empty.
+EXPECTED_BLOCKING: frozenset[str] = frozenset({"access-level-choice-message/all (4 of 5)"})
 
 
 class TestTheReportIsHonest:

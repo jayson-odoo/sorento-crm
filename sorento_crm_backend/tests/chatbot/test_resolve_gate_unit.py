@@ -315,14 +315,13 @@ class TestDelegateSeam:
         assert business.ENTRY_BY_BRANCH_KIND["business_query"] == "resolve"
 
     def test_the_routers_item_is_forwarded_unchanged_on_every_arm(self) -> None:
-        """No CRM-side `not_allowed_check_stock` stamp, and no mutation of the caller.
+        """The caller's item is never mutated, and the `Edit Fields2` stamp rides on the
+        PAYLOAD instead.
 
-        The stamp used to be applied here for `stock_denied`, mirroring the spine's
-        `Edit Fields2`. It reached nothing: inside the sub the item is read only by
-        `tier-gate`'s `$('item')`, which is on the `access_check` path `stock_denied` never
-        takes, and the node that consumes the field - `sub-main-processing`'s `validator` -
-        reads `$('Edit Fields2')` BY NAME. That Set node stays in n8n and keeps owning the
-        value (`n8n-changes.md` S6a step 2 item 4), so this asserts the CRM adds nothing.
+        `Edit Fields2` sits on the one edge `If7`'s TRUE output takes, so the
+        `stock_denied` arm - and only that arm - carries `not_allowed_check_stock`. At
+        S6c the CRM is the `validator` that reads it (off the payload, since there is no
+        `$('Edit Fields2')` to read by name), which is why the stamp is back.
         """
         seen_bodies: list[dict[str, Any]] = []
 
@@ -344,6 +343,9 @@ class TestDelegateSeam:
             assert original == {"branch_kind": branch_kind, "allowed": True}, (
                 "the router's item must reach the lane unmutated"
             )
+            assert fragment["payload"].get("not_allowed_check_stock") is (
+                True if branch_kind == "stock_denied" else None
+            ), "only the arm that passes Edit Fields2 carries its one field"
         assert len(seen_bodies) == 2
 
     def test_a_dry_run_turn_asks_the_resolver_not_to_write_its_usage_row(self) -> None:
