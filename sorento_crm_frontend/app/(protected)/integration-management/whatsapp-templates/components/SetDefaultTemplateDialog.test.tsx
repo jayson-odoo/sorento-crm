@@ -164,8 +164,10 @@ describe('SetDefaultTemplateDialog - chat message enforcement', () => {
     renderChatDialog(CHAT_CURRENT_NO_MESSAGE);
     expect(await screen.findByText('Message from {{1}}: {{2}}')).toBeInTheDocument();
 
-    expect(screen.getByTestId('chat-message-required')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /save default/i })).toBeDisabled();
+    expect(await screen.findByTestId('chat-message-required')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /save default/i })).toBeDisabled(),
+    );
   });
 
   it('enables Save once a slot is remapped to message', async () => {
@@ -184,6 +186,8 @@ describe('SetDefaultTemplateDialog - chat message enforcement', () => {
     await waitFor(() =>
       expect(screen.queryByTestId('chat-message-required')).not.toBeInTheDocument(),
     );
-    expect(screen.getByRole('button', { name: /save default/i })).toBeEnabled();
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /save default/i })).toBeEnabled(),
+    );
   });
 });
