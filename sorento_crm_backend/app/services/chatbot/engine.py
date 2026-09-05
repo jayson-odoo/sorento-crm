@@ -905,8 +905,11 @@ def _run_stages(  # noqa: PLR0915
                                 facts={
                                     "arm": fetch_fragment.get("_fetch_arm"),
                                     "outcome": fetch_fragment.get("outcome"),
+                                    # The reason belongs on the record either way; it is
+                                    # only an ERROR on the turn nobody answers.
+                                    "reason": fetch_error_text,
                                 },
-                                error=fetch_error_text,
+                                error=None if completes_here else fetch_error_text,
                                 raw={"fetch": fetch_fragment.get("fetch")},
                             )
                         else:
