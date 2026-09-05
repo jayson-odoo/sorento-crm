@@ -396,11 +396,14 @@ def complete_answer(
     fragments: dict[str, Any] = {"ctx": ctx, "resolved": resolved, "gate": gate}
     lane_item: dict[str, Any]
 
-    if exit_kind == "access_ask" or fetch.get("_fetch_arm") == "tier_ask":
+    # `fetch-result`'s own arm names, spelled the way IT spells them: `tier-ask` with a
+    # hyphen (`fetch.fetch_result`), `error` and `result` without one.
+    fetch_arm = fetch.get("_fetch_arm")
+    if exit_kind == "access_ask" or fetch_arm == "tier-ask":
         # The customer has to name an access tier before anything can be read.
         # `access-level-choice-message` renders the ask, and S6b's per-tier probe is what
         # makes it honest ("Dealer - has promotion").
-        tier_source = fetch if fetch.get("_fetch_arm") == "tier_ask" else payload
+        tier_source = fetch if fetch_arm == "tier-ask" else payload
         lane_item = answer_mod.access_level_choice_message(tier_source, parser=parser)
         fragments["access_choice"] = lane_item
 
@@ -409,7 +412,7 @@ def complete_answer(
         lane_item = dict(payload)
         fragments["incoming_picker"] = lane_item
 
-    elif exit_kind == "not_found" or fetch.get("_fetch_arm") == "error":
+    elif exit_kind == "not_found" or fetch_arm == "error":
         lane_item = _run_miss_half(
             payload,
             parser=parser,

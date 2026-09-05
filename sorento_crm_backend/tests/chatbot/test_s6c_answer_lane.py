@@ -881,6 +881,170 @@ class TestChatbotCompletedLanesEngineWiring:
         assert result.actions == canned_actions
 
 
+class TestAC604FetchErrorIsAnOutcomeNotAnEmptyTurn:
+    """H11 / AC-604: "no tool matched" and "the read did not come back" are answers.
+
+    `fetch-result`'s `error` arm used to leave `business_completes` False, so a turn on a
+    lane the owner had switched ON still closed `delegated` at `looked_up` and returned
+    `delegate = "business_query"` - and once n8n's Switch output is deleted (AC-610) that
+    is the empty turn H11 names. Both switch positions are graded.
+    """
+
+    @staticmethod
+    def _error_fragment() -> dict:
+        return {
+            "kind": "error",
+            "_fetch_arm": "error",
+            "error": "no MCP tool matched this question",
+            "outcome": "not_found",
+            "fetch": {"_fetch_arm": "error", "error": "no MCP tool matched this question"},
+        }
+
+    def _wire(self, engine_mod, monkeypatch, calls: list) -> None:
+        from app.config import settings
+
+        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", True)
+        bundle = TestChatbotCompletedLanesEngineWiring._stub_bundle([])
+        monkeypatch.setattr(
+            engine_mod.business_services,
+            "production_services",
+            lambda db, *, space_id=None: bundle,
+        )
+        monkeypatch.setattr(
+            engine_mod, "decide", lambda ctx, *, stock_denial_enabled: ("business_query", {})
+        )
+        monkeypatch.setattr(
+            engine_mod.business,
+            "run_until_exit",
+            lambda *args, **kwargs: {
+                "delegate": "business_query",
+                "payload": {"_exit_kind": "continue", "resolved": {}, "gate": {}},
+            },
+        )
+        monkeypatch.setattr(
+            engine_mod.business, "run_fetch", lambda *args, **kwargs: self._error_fragment()
+        )
+        monkeypatch.setattr(
+            engine_mod.business,
+            "complete_answer",
+            lambda payload, **kwargs: calls.append(payload)
+            or {"reply": {"text": "Couldn't find that.", "quick_replies": []}, "actions": []},
+            raising=False,
+        )
+
+    def test_with_the_lane_on_the_crm_answers_the_not_found_itself(
+        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        from app.models.user import SystemSetting
+        from app.services.chatbot import engine as engine_mod
+        from tests.chatbot.test_engine import _envelope
+
+        db = session_factory()
+        setting = db.query(SystemSetting).filter(SystemSetting.id == system_settings_row.id).one()
+        setting.chatbot_completed_lanes = ["business_query"]
+        db.commit()
+
+        answered: list[dict] = []
+        self._wire(engine_mod, monkeypatch, answered)
+        stub_parser()
+        stub_access()
+
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        assert answered, "the answer half never ran - the error arm is still an empty turn"
+        assert answered[0]["fetch"]["_fetch_arm"] == "error", (
+            "the miss lane is reached through the fetch item's own arm"
+        )
+        assert result.delegate is None
+        assert result.reply == {"text": "Couldn't find that.", "quick_replies": []}
+
+    def test_with_the_lane_off_it_still_delegates_and_records_the_reason(
+        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        from app.services.chatbot import engine as engine_mod
+        from tests.chatbot.test_engine import _envelope
+
+        assert (system_settings_row.chatbot_completed_lanes or []) == []
+        answered: list[dict] = []
+        self._wire(engine_mod, monkeypatch, answered)
+        stub_parser()
+        stub_access()
+
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        assert not answered, "the lane is switched off - n8n answers this turn"
+        assert result.delegate == "business_query"
+        assert result.stage == "looked_up", (
+            "a delegated fetch error stops at looked_up so the operator's query finds it"
+        )
+
+
+class TestErrorArmRendersTheMissLane:
+    """The other half of AC-604: what `complete_answer` DOES with the error arm.
+
+    The miss lane runs on it (`not-found-error-message` then `build-suggest-offer`), so
+    the customer gets the itemised miss and the escalate offer rather than silence.
+    """
+
+    def test_the_error_arm_reaches_the_miss_renderer(self, monkeypatch) -> None:
+        from app.services.chatbot import engine as engine_mod
+        from app.services.chatbot.lanes.business import complete_answer
+        from app.services.chatbot.lanes.business.services import AnswerServices
+
+        captured: dict[str, Any] = {}
+
+        class _Completed:
+            reply = {"text": "stub", "quick_replies": []}
+            actions: list = []
+            session_patch = None
+            status = "done"
+            stage = "remembered"
+
+        def _complete_turn(turn_id, fragments, *, session_factory):
+            captured["fragments"] = fragments
+            return _Completed()
+
+        monkeypatch.setattr(engine_mod, "complete_turn", _complete_turn)
+
+        ctx = {
+            "contact": {"id": "c1"},
+            "parse": {
+                "output": {
+                    "message_type": "business_query",
+                    "intent_hint": "check_stock",
+                    "domain_hint": "inventory",
+                    "user_goal": "stock for SRTWC8517",
+                    "entities": [{"raw": "SRTWC8517", "hint": "product"}],
+                    "access_levels": [],
+                }
+            },
+            "session": {},
+        }
+        payload = {
+            "_exit_kind": "continue",
+            "resolved": {"unresolved_tokens": ["SRTWC8517"], "resolutions": [], "by_entity_type": {}},
+            "gate": {"gate_passed": True, "gate_debug": {"domain": "inventory"}, "compatible_entities": []},
+            "fetch": {"_fetch_arm": "error", "error": "no MCP tool matched this question"},
+        }
+
+        complete_answer(
+            payload,
+            turn_id="t1",
+            ctx=ctx,
+            item={},
+            branch_kind="business_query",
+            services=AnswerServices(
+                mcp_probe=lambda name, args: {"answers": [], "has_result": False},
+                family_fetch=lambda query: {"data": []},
+            ),
+            session_factory=lambda: None,
+        )
+
+        fragments = captured["fragments"]
+        assert "not_found" in fragments, "the error arm must render the miss lane"
+        assert "SRTWC8517" in fragments["not_found"]["escalate_message"]
+
+
 # --------------------------------------------------------------------------- #
 # AC-607: crossdomain-probe, the SECOND MCP call the answer lane makes on a turn
 # (the first is the fetch itself, S6b). `semantic_input` shape is byte-for-byte the

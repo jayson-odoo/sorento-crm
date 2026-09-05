@@ -817,7 +817,13 @@ def _run_stages(  # noqa: PLR0915
                 )
             else:
                 payload: dict[str, Any] = fragment["payload"]
-                delegate = fragment["delegate"]
+                # The lane names the n8n lane that would run this turn (all three arms
+                # converge on `business_query`), and that is the right answer ONLY while
+                # the turn is being handed back. `delegate_for` has already decided the
+                # other case at the top of this block, and overwriting it there is what
+                # made a completed turn still report a delegate.
+                if not completes_here:
+                    delegate = fragment["delegate"]
                 delegate_payload = payload
                 gate_block = payload.get("gate") or {}
                 turn_trace.record(
@@ -858,6 +864,13 @@ def _run_stages(  # noqa: PLR0915
                     except Exception as fetch_error:  # noqa: BLE001 - shadow, like above
                         logger.exception("chatbot turn %s: fetch step failed", turn_id)
                         lane_error_text = f"{type(fetch_error).__name__}: {fetch_error}"
+                        # The CRM cannot answer this turn, so it goes to the n8n lane that
+                        # still can - on an arm the owner has switched ON as much as on one
+                        # he has not. A lane crash must not take a turn n8n can answer while
+                        # its Switch output exists (the same shadow rule the outer handler
+                        # states); after AC-610 deletes it, nothing answers either way and
+                        # the turn is findable by `stage = 'looked_up'`.
+                        delegate = fragment["delegate"]
                         turn_trace.record(
                             "looked_up",
                             status="failed",
@@ -870,13 +883,20 @@ def _run_stages(  # noqa: PLR0915
                     else:
                         delegate_payload = {**payload, "fetch": fetch_fragment.get("fetch")}
                         if fetch_fragment.get("kind") == "error":
-                            # H11 and every other fetch failure reach the trace and a
-                            # reply, instead of a turn that goes quiet. `delegate` is
-                            # unchanged: n8n still answers it while the lane is shadow.
-                            lane_error_text = jsc.js_string(fetch_fragment.get("error"))
+                            # AC-604 / H11: "no tool matched" and "the read did not come
+                            # back" are OUTCOMES, not silence. With the lane switched on
+                            # the CRM answers them itself - `complete_answer`'s
+                            # `_fetch_arm == "error"` branch renders the miss lane's
+                            # not_found reply - and only while it is off does n8n answer,
+                            # which is the case that still needs `lane_error_text` so
+                            # `WHERE stage = 'looked_up'` finds the turn.
+                            fetch_error_text = jsc.js_string(fetch_fragment.get("error"))
+                            business_completes = completes_here
+                            if not completes_here:
+                                lane_error_text = fetch_error_text
                             turn_trace.record(
                                 "looked_up",
-                                status="failed",
+                                status="ok" if completes_here else "failed",
                                 summary="Found nothing to look the answer up with.",
                                 why=(
                                     "No tool matched the question, or the read the answer "
@@ -886,7 +906,7 @@ def _run_stages(  # noqa: PLR0915
                                     "arm": fetch_fragment.get("_fetch_arm"),
                                     "outcome": fetch_fragment.get("outcome"),
                                 },
-                                error=lane_error_text,
+                                error=fetch_error_text,
                                 raw={"fetch": fetch_fragment.get("fetch")},
                             )
                         else:
