@@ -33,6 +33,7 @@ The pages and their menu paths:
 | Running Numbers | [Running Numbers](/system-management/numbering-rules) | `document_numbering_rules` |
 | Lookup Sets | [Lookup Sets](/master-data-management/lookup-sets) | `lookup_sets` (+ options / keywords / bindings) |
 | Respond.io Workspaces | [Respond.io Workspaces](/system-management/respond-workspaces) | `respond_workspaces` |
+| Chat History (Turn trace) | [Chat History](/system-management/chat-history) | `chatbot.turns` |
 
 ---
 
@@ -438,6 +439,68 @@ Respond.io workspace configuration (multi-workspace per deployment). **The per-w
 
 ---
 
+## Chat History (Turn trace) - `chatbot.turns`
+
+The **per-message record of what the WhatsApp bot did** for one incoming message ("turn"):
+which step it reached, whether that step succeeded, and what it eventually replied. One row per
+turn; a retried message is a *new* row (a higher `attempt`), and the original failed row is left
+untouched as history. Surfaces inside the **[Chat History](/system-management/chat-history)**
+thread drawer, under each incoming message, as the **Turn** line - there is no separate list page
+for this table.
+
+**Key fields**
+
+| Field | Meaning |
+|-------|---------|
+| `contact_respond_id` | The WhatsApp contact this turn belongs to (resolve to the contact's name/phone before quoting). |
+| `message_id` | The WhatsApp message this turn answers. Null for a turn driven from an internal console rather than a real message. |
+| `status` | Run state (enum below). |
+| `stage` | Where it stopped - the step it failed at, or the last step that ran. |
+| `branch_kind` | Which "lane" the bot decided this was (e.g. `access_denied`, `business_query`, `out_of_scope`) - shown in the UI as words, not this raw name. |
+| `attempt` | Which try this is for the same message. `1` unless someone pressed **Retry turn**. |
+| `is_test` | A rehearsal turn - no session write, no message sent to a real customer. |
+| `trace` (JSON) | The ordered, human-readable step-by-step record the Turn line renders - one entry per step plus any operator notes (e.g. a retry request). |
+| `response` (JSON) | What the turn answered with (the reply text/quick replies and any actions), when it finished. |
+| `retry_requested_at` | Set while a requested retry is on its way back in; cleared once the retried message arrives as its own new row. |
+| `created_at` / `started_at` / `finished_at` | Lifecycle timestamps. |
+
+**Status values (exact):** `queued`, `processing`, `delegated` (handed to the WhatsApp automation
+side and waiting for it to finish), `done`, `failed`.
+*A `delegated` row that never gets a reply back is automatically flipped to `failed` (`stage =
+delegated`) after a time limit, so the list never fills up with rows stuck looking like work in
+progress.*
+
+**Date columns:** `created_at` (**default sort, newest first**), `finished_at`. Shown on the Turn
+line as elapsed time, not raw timestamps.
+
+**Available filters (on the Chat History list, not a separate page):** date range, and **Failed
+turns only** - narrows the list to contacts with at least one failed turn in that range. Inside a
+thread, the drawer has its own **Failed turns only** toggle scoped to that one conversation.
+
+> **Which lanes the CRM answers itself is a `system_settings` switch, not this table.**
+> `system_settings.chatbot_completed_lanes` (a list of `branch_kind` values) says which lanes the
+> CRM is allowed to finish on its own; anything not listed there still gets handed to the WhatsApp
+> automation side to answer, even though the turn row above still gets written either way.
+> `system_settings.chatbot_stock_denial_enabled` and `system_settings.chatbot_unsupported_domains`
+> are two narrower switches of the same kind (see the troubleshooting guide below for what each
+> does). None of these three have an in-app settings screen today - they are changed by the
+> engineering / integrations team, not from this admin reference.
+
+**Example questions**
+
+* "What did the bot do for this customer's last message?" (open the thread, the Turn line under
+  that message)
+* "Which of today's WhatsApp conversations had a failed turn?" (**Failed turns only** filter,
+  today's date range)
+* "Has this failed message already been retried?" (`attempt` > 1 on a later row for the same
+  contact, or `retry_requested_at` set on the failed one)
+* "Is a turn actually stuck, or just slow?" (`status = delegated` for a long time means it is
+  waiting on the WhatsApp automation side, not the CRM)
+* "Did this test run actually message the customer?" (`is_test = true` means no - nothing was
+  written or sent)
+
+---
+
 ## Cross-entity notes
 
 * **Tracing one email end-to-end:** an in-app notification → its delivery shows in **Outgoing Mails** (`notification_deliveries`); the actual SMTP send + attempts live in **Email Outbox** (`email_outbox`); the drainer writes the outcome back to the Outgoing Mails row. For "why didn't it send", start at Email Outbox (`status`, `error_message`, `cancel_reason`), then check **Email Event Configs** if `cancel_reason = event_disabled`.
@@ -450,5 +513,4 @@ Respond.io workspace configuration (multi-workspace per deployment). **The per-w
 ## See also
 
 * [Troubleshoot a failed notification (email or WhatsApp)](troubleshoot-failed-notifications.md)
-</content>
-</invoke>
+* [Read a chatbot turn trace, and retry a failed one](troubleshoot-chatbot-turn-failures.md)
