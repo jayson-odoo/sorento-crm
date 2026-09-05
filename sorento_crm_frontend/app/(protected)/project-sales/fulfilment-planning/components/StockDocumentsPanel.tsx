@@ -812,6 +812,12 @@ export function StockDocumentsPanel({
           // The live book tops out at 501 rows for one product and location, which is one page:
           // paging it would hide the total that makes the header checkable.
           pageSize={1000}
+          // NO scrollport of its own, at any of the three places this panel opens: all three
+          // put it inside a dialog body that already scrolls. Stated here rather than left to
+          // `DataGrid`'s nested-grid default, because the outer table on the fulfilment board's
+          // cell breakdown is the hand-rolled `<table>` carve-out `CellStockTable` documents,
+          // not a `DataGrid` - so there is no grid context there for the default to read.
+          scrollerMaxHeight={false}
         />
       )}
     </div>

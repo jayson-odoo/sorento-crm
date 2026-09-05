@@ -2,7 +2,12 @@
 
 import { createContext, ReactNode, useContext, useEffect } from 'react';
 import { cn } from '@/lib/utils';
-import { ColumnFiltersState, RowData, SortingState, Table } from '@tanstack/react-table';
+import {
+  ColumnFiltersState,
+  RowData,
+  SortingState,
+  Table,
+} from '@tanstack/react-table';
 import { useListingColumnPreferences } from '@/lib/listing-column-preferences/useListingColumnPreferences';
 import { usePathname } from 'next/navigation';
 
@@ -125,7 +130,7 @@ export interface DataGridProps<TData extends object> {
    * Optional row grouping. Return a label when `row` starts a new group, or
    * null/undefined otherwise; the grid draws a divider row above it.
    *
-   * The caller owns the grouping rule. Members must already be contiguous - 
+   * The caller owns the grouping rule. Members must already be contiguous -
    * order them server-side - or the same group will render more than once.
    */
   renderGroupHeader?: (row: any, previousRow: any | null) => ReactNode | null;
@@ -172,6 +177,9 @@ export interface DataGridProps<TData extends object> {
      * bounded viewport passes its own class here instead, never both).
      * `false` removes the bound entirely (an unbounded list inside a page that
      * scrolls on its own, e.g. embedded in a dialog with its own scroll area).
+     *
+     * A grid rendered inside ANOTHER grid's body defaults to `false` on its own -
+     * see `isNested` in `DataGrid`. Pass a value here only to overrule that.
      */
     scrollerMaxHeight?: string | false;
   };
@@ -248,6 +256,22 @@ function DataGrid<TData extends object>({
   ...props
 }: DataGridProps<TData>) {
   const pathname = usePathname();
+  /**
+   * True when this grid renders inside ANOTHER grid's body: a row expansion
+   * (`meta.expandedContent`, which `DataGridTable` draws inside this provider), or
+   * a dialog / popover a cell opens. React context reaches the portalled ones too -
+   * a `PopoverContent` is a child of the cell in the REACT tree even though its DOM
+   * node lands on `document.body`.
+   *
+   * Why it has to be a default rather than a per-call-site prop: a grid must never
+   * open a scrollport inside a scrollport, and today fourteen call sites turn the
+   * bound off by hand, one comment each. The fifteenth forgot, and
+   * that is the defect this fixes - four nested `overflow-y: auto` boxes on the
+   * fulfilment board's cell breakdown dialog, the inner table's header clipped out
+   * of sight by the box above it, in production.
+   */
+  const enclosingGrid = useContext(DataGridContext);
+  const isNested = enclosingGrid !== undefined;
   const defaultProps: Partial<DataGridProps<TData>> = {
     loadingMode: 'skeleton',
     tableLayout: {
@@ -256,11 +280,6 @@ function DataGrid<TData extends object>({
       rowBorder: true,
       rowRounded: false,
       stripped: false,
-      // Absolute rule (user ruling, M5-05): every table is a DataGrid with a
-      // sticky header by default. `DataGridScroller`'s own default max-height
-      // (`scrollerMaxHeight`, driven by `--grid-max-h`) is what makes this
-      // observable - a sticky header needs a bounded ancestor to stick inside.
-      headerSticky: true,
       headerBackground: true,
       headerBorder: true,
       width: 'fixed',
@@ -301,12 +320,47 @@ function DataGrid<TData extends object>({
     standardToolbar: false,
   };
 
+  /**
+   * The layout keys the caller actually CHOSE.
+   *
+   * A wrapper that forwards an optional prop straight through (`PanelDataGrid` does
+   * this with `scrollerMaxHeight`) hands us the key with an `undefined` value, and a
+   * plain spread would let that undefined beat the default. Only a real value counts
+   * as "the caller set it".
+   */
+  const callerLayout = Object.fromEntries(
+    Object.entries(props.tableLayout ?? {}).filter(
+      ([, value]) => value !== undefined,
+    ),
+  ) as NonNullable<DataGridProps<TData>['tableLayout']>;
+
+  /**
+   * The scrollport, then the header that sticks inside it - in that order, because
+   * the second only means anything given the first.
+   *
+   * A grid nested in another grid's body renders UNBOUNDED: the ancestor already
+   * owns a scrollport, and a second one inside it is the defect (the reader's wheel
+   * moves whichever box the pointer happens to be over, and the inner table's header
+   * is clipped by the box above it). Otherwise the M5-05 default stands, which is
+   * `DataGridScroller`'s `--grid-max-h`.
+   *
+   * `headerSticky` then follows from it. Absolute rule (user ruling, M5-05): every
+   * table is a DataGrid with a sticky header - but a sticky header needs a bounded
+   * ancestor to stick INSIDE, so on an unbounded grid the class is dead weight that
+   * says the header does something it does not. Set it explicitly to keep it.
+   */
+  const scrollerMaxHeight =
+    callerLayout.scrollerMaxHeight ?? (isNested ? false : undefined);
+  const headerSticky = callerLayout.headerSticky ?? scrollerMaxHeight !== false;
+
   const mergedProps: DataGridProps<TData> = {
     ...defaultProps,
     ...props,
     tableLayout: {
       ...defaultProps.tableLayout,
-      ...(props.tableLayout || {}),
+      ...callerLayout,
+      scrollerMaxHeight,
+      headerSticky,
     },
     tableClassNames: {
       ...defaultProps.tableClassNames,
@@ -339,13 +393,16 @@ function DataGrid<TData extends object>({
   // when it arrives, which reorders the screen and names columns that are not there yet.
   // `undefined` keeps the pathname fallback, so every other listing is untouched.
   const persistenceDisabled = listingKey === null;
-  const effectiveListingKey = persistenceDisabled ? null : (listingKey ?? pathname);
+  const effectiveListingKey = persistenceDisabled
+    ? null
+    : (listingKey ?? pathname);
 
-  const { resetToDefaults, isLoading: isPrefsLoading } = useListingColumnPreferences({
-    table,
-    listingKey: effectiveListingKey,
-    suppressPersist,
-  });
+  const { resetToDefaults, isLoading: isPrefsLoading } =
+    useListingColumnPreferences({
+      table,
+      listingKey: effectiveListingKey,
+      suppressPersist,
+    });
 
   return (
     <DataGridProvider
@@ -369,10 +426,23 @@ function DataGridContainer({
   border?: boolean;
 }) {
   return (
-    <div data-slot="data-grid" className={cn('grid w-full', border && 'border border-border rounded-lg', className)}>
+    <div
+      data-slot="data-grid"
+      className={cn(
+        'grid w-full',
+        border && 'border border-border rounded-lg',
+        className,
+      )}
+    >
       {children}
     </div>
   );
 }
 
-export { useDataGrid, DataGridProvider, DataGrid, DataGridContainer, DataGridContext };
+export {
+  useDataGrid,
+  DataGridProvider,
+  DataGrid,
+  DataGridContainer,
+  DataGridContext,
+};

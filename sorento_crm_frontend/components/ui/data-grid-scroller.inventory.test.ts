@@ -70,7 +70,10 @@ function sourceFiles(): string[] {
       if (entry.isDirectory()) {
         if (entry.name === 'node_modules' || entry.name === '.next') continue;
         walk(full);
-      } else if (entry.name.endsWith('.tsx') && !entry.name.includes('.test.')) {
+      } else if (
+        entry.name.endsWith('.tsx') &&
+        !entry.name.includes('.test.')
+      ) {
         out.push(full);
       }
     }
@@ -166,6 +169,14 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
     1, // PanelDataGrid inside its DialogBody
   ],
   [
+    'app/(protected)/project-sales/fulfilment-planning/components/StockDocumentsPanel.tsx',
+    // Opens in three places, all of them a dialog body that already scrolls. Stated at the
+    // call site rather than left to `DataGrid`'s nested-grid default, because on the
+    // fulfilment board's cell breakdown the enclosing table is `CellStockTable`'s hand-rolled
+    // `<table>` carve-out, not a DataGrid - so there is no grid context there to read.
+    1,
+  ],
+  [
     'app/(protected)/project-sales/[projectId]/components/POIntakeLinesGrid.tsx',
     1, // bounded-height viewport (max-h) - same reason as its ScrollArea exemption above
   ],
@@ -209,7 +220,8 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
   ],
 ]);
 
-const SCROLLER_MAX_HEIGHT_FALSE = /scrollerMaxHeight:\s*false|scrollerMaxHeight=\{false\}/g;
+const SCROLLER_MAX_HEIGHT_FALSE =
+  /scrollerMaxHeight:\s*false|scrollerMaxHeight=\{false\}/g;
 
 describe('A grid inside a Dialog/Sheet body opts out of the bounded scroller (B2, M5 review run 1)', () => {
   it('every scrollerMaxHeight: false site is enumerated with a reason', () => {
@@ -219,7 +231,9 @@ describe('A grid inside a Dialog/Sheet body opts out of the bounded scroller (B2
       const matches = src.match(SCROLLER_MAX_HEIGHT_FALSE);
       if (matches) found.set(file, matches.length);
     }
-    expect(Object.fromEntries(found)).toEqual(Object.fromEntries(SCROLLER_MAX_HEIGHT_FALSE_SITES));
+    expect(Object.fromEntries(found)).toEqual(
+      Object.fromEntries(SCROLLER_MAX_HEIGHT_FALSE_SITES),
+    );
   });
 
   it('every enumerated file still exists', () => {
