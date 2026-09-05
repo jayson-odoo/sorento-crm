@@ -1,6 +1,6 @@
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react';
 
 import { SearchableSelect, type SearchableSelectOption } from './SearchableSelect';
 
@@ -192,5 +192,49 @@ describe('SearchableSelect shows the whole option', () => {
     const spans = [...document.querySelectorAll('[role="option"] span')];
     expect(spans.length).toBeGreaterThan(0);
     for (const span of spans) expect(span.className).not.toMatch(/\btruncate\b/);
+  });
+});
+
+// Same bug as SearchableMultiSelect: a `renderTrigger` caller previously left
+// `document.body[data-scroll-locked]` set with nothing open.
+describe('SearchableSelect scroll lock only while open (renderTrigger)', () => {
+  afterEach(() => {
+    cleanup();
+    document.body.removeAttribute('data-scroll-locked');
+  });
+
+  const renderWithCustomTrigger = () =>
+    render(
+      <SearchableSelect
+        value=""
+        onChange={vi.fn()}
+        options={OPTIONS}
+        renderTrigger={({ open }) => (
+          <button type="button" data-testid="custom-trigger">
+            {open ? 'Open' : 'Closed'}
+          </button>
+        )}
+      />,
+    );
+
+  it('does not lock the page scroll before the popover is opened', () => {
+    renderWithCustomTrigger();
+    expect(document.body.hasAttribute('data-scroll-locked')).toBe(false);
+  });
+
+  it('locks while the popover is open and releases it on Escape', async () => {
+    renderWithCustomTrigger();
+    fireEvent.click(screen.getByTestId('custom-trigger'));
+
+    await waitFor(() =>
+      expect(document.body.hasAttribute('data-scroll-locked')).toBe(true),
+    );
+
+    const content = document.querySelector('[data-slot="popover-content"]')!;
+    fireEvent.keyDown(content, { key: 'Escape' });
+
+    await waitFor(() =>
+      expect(document.body.hasAttribute('data-scroll-locked')).toBe(false),
+    );
   });
 });
