@@ -651,9 +651,14 @@ CRM owns the tail: `/turn/{id}/complete` answers 410 Gone, because a caller arri
 is about to answer a turn the CRM already answered (H6, one trigger). So the flag must not
 be turned on until every lane completes INSIDE the CRM - S6c deployed and every branch kind
 listed in `system_settings.chatbot_completed_lanes`. Turn it on while a lane still
-delegates and that lane has nobody left to finish it: the head answers
-`delegate: <lane>`, n8n's `/complete` call is refused, and the row sits `delegated` until
-the sweep fails it. Check the settings row before step 2.
+delegates and that lane has nobody left to finish it: the CRM refuses the turn rather than
+leaving a ghost - `failed` at the stage it reached, the error naming the lane and
+`chatbot_completed_lanes`, today's error reply to the customer, and Retry available on the
+trace screen once the lane is switched on. Check the settings row before step 2; the
+symptom of getting it wrong is every LIVE turn of that lane failing at `routed`,
+immediately and visibly, and the fix is the flag back off. A dry run (clone, console, load
+gate) still delegates and records the finding on its trace, so the shadow window is where
+this is meant to be caught.
 
 ### Which turns this covers
 

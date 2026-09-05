@@ -170,21 +170,53 @@ def _advance_done(redis: Any, contact: str, ticket: int) -> None:
     )
 
 
+# Compare-and-delete: clear the liveness key only when it is still MINE. A successor takes
+# its ticket - and stamps its own number on this key - while I am still working, so an
+# unconditional delete on my way out would erase a marker that belongs to a turn that is
+# very much alive, and hand the next waiter an absence to start its death timer on.
+_RELEASE_RUNNING_LUA = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
+
+
+def _release_running(redis: Any, contact: str, ticket: int) -> None:
+    """Drop the liveness key if this ticket is the one holding it."""
+    redis.eval(_RELEASE_RUNNING_LUA, 1, running_key(contact), str(int(ticket)))
+
+
+# INCR and the liveness stamp in ONE script rather than a pipeline, because the liveness
+# key has to carry the ticket NUMBER (see `_release_running`) and a pipeline cannot read
+# INCR's own reply. Lua runs to completion before redis serves anything else, so there is
+# no instant at which the ticket exists and its holder does not.
+_TAKE_TICKET_LUA = """
+local ticket = redis.call('INCR', KEYS[1])
+redis.call('EXPIRE', KEYS[1], ARGV[1])
+redis.call('SET', KEYS[2], ticket, 'EX', ARGV[2])
+return ticket
+"""
+
+
 def contact_ticket(redis: Any, contact: str) -> int:
     """This turn's place in the queue for this contact. Monotonic per contact.
 
-    The liveness key is set HERE, in the same pipeline as the INCR: the moment a ticket
+    The liveness key is stamped HERE, in the same script as the INCR: the moment a ticket
     exists, its holder is visibly alive. Doing it after the wait instead leaves a window -
     short, but a waiter's own probe is a network call - in which a live predecessor reads
     as a dead one and gets jumped.
     """
-    key = seq_key(contact)
-    pipe = redis.pipeline()
-    pipe.incr(key)
-    pipe.expire(key, TICKET_TTL_SECONDS)
-    pipe.set(running_key(contact), 1, ex=RUNNING_TTL_SECONDS)
-    ticket = int(pipe.execute()[0])
-    return ticket
+    return int(
+        redis.eval(
+            _TAKE_TICKET_LUA,
+            2,
+            seq_key(contact),
+            running_key(contact),
+            int(TICKET_TTL_SECONDS),
+            int(RUNNING_TTL_SECONDS),
+        )
+    )
 
 
 def mark_running(redis: Any, contact: str, ticket: int) -> None:
@@ -208,7 +240,7 @@ def mark_done(redis: Any, contact: str, ticket: int) -> None:
     (see the block comment above).
     """
     _advance_done(redis, contact, ticket)
-    redis.delete(running_key(contact))
+    _release_running(redis, contact, ticket)
 
 
 def wait_for_turn(redis: Any, contact: str, ticket: int, *, timeout_s: float) -> None:

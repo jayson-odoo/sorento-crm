@@ -173,11 +173,19 @@ Returning the data keeps egress with the caller and keeps the harness's containm
 **Per-contact ordering moves to the CRM at S7 (round 4, owner: 50 dealers, 100 questions at
 once).** The n8n dispatcher pops ONE contact per 1 s tick, so a 50-contact burst is served one
 per second regardless of what the CRM does. From S7 the request itself serialises per contact:
-on arrival `ticket = INCR chatbot:seq:{contact}` (expire 1 h); the request waits (200 ms poll,
-max `CHATBOT_QUEUE_WAIT_SECONDS` = 45) until `chatbot:done:{contact} == ticket - 1`, runs the
-turn, and advances `done` in `finally`. A waiter that sees `done` stalled with no
-`chatbot:running:{contact}` key for more than 2 s (predecessor process died) repairs the
-counter and proceeds; both paths are pytest-covered. Different contacts never wait on each
+on arrival `ticket = INCR chatbot:seq:{contact}` (expire 1 h, stamped with its holder's
+liveness in the same script); the request waits (200 ms poll, max
+`CHATBOT_QUEUE_WAIT_SECONDS` = 45) until `chatbot:done:{contact} >= ticket - 1`, runs the
+turn, and advances `done` monotonically in a `finally` that covers the wait as well as the
+stages. Two repairs, for two different deaths, and **both are kept on purpose**: giving up
+after the queue budget advances `done` to your own ticket, which is what unblocks the
+contact when a process died mid-turn with its `chatbot:running:{contact}` key still set (it
+looks alive for the key's whole TTL, so no absence can be seen); and a waiter that sees
+`done` stalled with the key ABSENT for `STALL_GRACE_SECONDS` repairs the counter and
+proceeds, which is what covers a holder whose key has since lapsed, or was lost, while its
+successors are still arriving - there the absence is the only evidence there is, and
+waiting out the full budget would fail a turn that could have been answered. Both paths are
+pytest-covered. Different contacts never wait on each
 other. The dispatcher and its redis lists are retired; n8n's ingress posts each message
 directly. Until S7 the dispatcher stays and bounds load at ~1 turn/s. The CRM inbox row stays a
 record and a trace, never a queue. Retry from the trace screen re-posts the envelope through

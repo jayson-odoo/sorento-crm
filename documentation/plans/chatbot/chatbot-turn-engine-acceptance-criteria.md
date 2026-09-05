@@ -719,6 +719,21 @@ contact inside the synchronous request. Different contacts run in parallel.
   run beside it - the failure the ordering exists to prevent, reached through its own repair.
   The second clause above is what now covers the death case the grace cannot see (a process
   killed with its `running` key still set looks alive for 300 s).
+- AC-715 `[BE][T]` (added 5 Sep 2026, S7 mode) Given S7 mode is on and a turn routes to a
+  lane the CRM does not complete (not in `CRM_COMPLETED_BRANCH_KINDS`, or not in
+  `system_settings.chatbot_completed_lanes`), when the head finishes routing, then the turn
+  is `failed` at the stage it reached with an error naming the lane and
+  `chatbot_completed_lanes`, the caller gets today's error reply as a `send_message` action,
+  the trace carries the reason, and R4's manual Retry applies - rather than the row being
+  left `delegated` for a `/complete` that S7 mode answers 410. With the flag off the same
+  turn delegates unchanged. (A6, D7)
+  **LIVE turns only (D14).** A dry run delegates as before and records the same finding as
+  a `skipped` trace note instead: nothing was going to complete it either way (the clone's
+  `test-guard` records actions and never calls `/complete`), there is no customer waiting,
+  and failing it would make the AC-711 load gate, the shadow window and the console unable
+  to run in the very mode they exist to prove out - measured, every turn of a gate run went
+  red on that arm. The harness therefore still SEES the lane that is not ready, which is
+  what makes a shadow run the place this gets caught before a customer meets it.
 - AC-712 `[BE][T]` Given the same respond `message_id` for one contact posted twice (webhook
   and poller, or a watermark re-list), when the second arrives, then no second turn runs, the
   response is 200 `{duplicate: true, turn_id: <original>, reply, actions}` and the n8n Switch

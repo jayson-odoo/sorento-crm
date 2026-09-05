@@ -111,9 +111,13 @@ class Settings(BaseSettings):
     #
     # **Precondition for turning it on: the CRM must complete every lane** - S6c landed
     # and every branch kind listed in `system_settings.chatbot_completed_lanes`. Flip it
-    # while a lane still delegates and that lane's turns have nobody to finish them: the
-    # head answers `delegate: <lane>`, n8n's `/complete` call is refused, and the row sits
-    # `delegated` until the sweep fails it. CHATBOT_ORDERING_ENABLED.
+    # while a lane still delegates and that lane's turns have nobody to finish them, so the
+    # engine refuses them rather than leaving ghosts: `failed` at the stage they reached,
+    # naming the lane and this setting, with today's error reply and Retry available
+    # (AC-715, LIVE turns only - a dry run delegates as before and records the finding on
+    # its trace, so the harness that exists to catch this can still run). The symptom is
+    # immediate and the fix is this flag back off.
+    # CHATBOT_ORDERING_ENABLED.
     chatbot_ordering_enabled: bool = False
     # The longest a turn waits for its contact's earlier turns. Past it the turn is failed
     # at stage `queued` with today's error reply rather than holding the request open: n8n's

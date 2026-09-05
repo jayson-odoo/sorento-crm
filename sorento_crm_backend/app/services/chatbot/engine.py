@@ -530,7 +530,7 @@ def run_turn(
     message_id = _message_id(envelope)
     dry_run = envelope.dry_run
 
-    ordered = bool(getattr(settings, "chatbot_ordering_enabled", False))
+    ordered = _s7_mode()
     ticket: int | None = None
     redis = None
     try:
@@ -1243,6 +1243,84 @@ def _run_stages(  # noqa: PLR0915
         # `_close_turn` is write-once). `_run_casual_lane` closes it after the clarifier
         # answers. With the lane switched off there is nothing to wait for and this closes
         # as `delegated`, exactly as it did before S4.
+        if delegate is not None and _s7_mode() and not dry_run:
+            # S7 mode retires the n8n tail: `/turn/{id}/complete` answers 410 Gone, so a
+            # turn that still delegates has NOBODY to finish it. Left `delegated` it would
+            # sit as a ghost until the TTL sweep - ten minutes of a customer waiting for a
+            # reply that no process is going to compose - so it is closed here, at the
+            # stage it actually reached, with the reason an operator can act on and the
+            # error reply the customer gets for every other failure.
+            #
+            # It is a MISCONFIGURATION, not a lane failure: the flag was turned on before
+            # the CRM could complete this lane. R4's manual Retry applies unchanged, and it
+            # is the right button - once the lane is in `chatbot_completed_lanes`, retrying
+            # the original message answers it properly.
+            #
+            # LIVE turns only, and the exception is load-bearing rather than convenient. A
+            # dry run has no customer waiting and nothing that would have completed it
+            # either way: the clone's `test-guard` records actions and never calls
+            # `/complete`, and the load gate posts `is_test` envelopes precisely to measure
+            # the plumbing - the ticket, the wait, the row writes - which happen before this
+            # point. Failing them would make the AC-711 gate, the shadow window and every
+            # console turn unable to run in the mode they exist to prove out (measured: all
+            # 30 turns of a gate run went red on this arm). The trace note below is written
+            # for a dry run too, so the harness still SEES the lane it could not complete.
+            stage[0] = "looked_up" if lane_error_text else "routed"
+            orphan_error = (
+                f"S7 mode is on (CHATBOT_ORDERING_ENABLED), so the CRM owns the tail and "
+                f"/complete is gone, but the {delegate!r} lane is not completed in the "
+                f"CRM. Add {delegate!r} to system_settings.chatbot_completed_lanes on a "
+                f"build that can complete it, or turn S7 mode off."
+            )
+            logger.error("chatbot turn %s: %s", turn_id, orphan_error)
+            turn_trace.record(
+                stage[0],  # type: ignore[arg-type]
+                status="failed",
+                summary="The turn was routed to a lane the CRM cannot finish.",
+                why=(
+                    "S7 mode retires the n8n tail, so a lane that still delegates has "
+                    "nobody left to complete it."
+                ),
+                facts={"lane": delegate, "s7_mode": True, "lane_completed_by_crm": False},
+                error=orphan_error,
+                raw={"item": item},
+            )
+            _close_turn(
+                db,
+                turn_id,
+                status="failed",
+                stage=stage[0],
+                branch_kind=branch_kind,
+                error=orphan_error,
+                records=turn_trace.records,
+                response={
+                    "ctx": ctx,
+                    "item": item,
+                    "actions": actions,
+                    "delegate_payload": delegate_payload,
+                    "delegate_error": lane_error_text,
+                },
+            )
+            return _failed_result(turn_id, stage[0], orphan_error, actions, dry_run)
+
+        if delegate is not None and _s7_mode() and dry_run:
+            # See above: the turn is NOT failed, but the harness is told what would have
+            # happened to a live one, so a shadow or clone run is what surfaces a lane that
+            # is not ready before the flag reaches a customer.
+            turn_trace.record(
+                "routed",
+                status="skipped",
+                summary="A live turn on this lane would have no tail to go to.",
+                why=(
+                    "S7 mode retires the n8n tail, and this lane is not completed in the "
+                    "CRM - a dry run is allowed through because nothing was going to "
+                    "complete it either way."
+                ),
+                facts={"lane": delegate, "s7_mode": True, "lane_completed_by_crm": False},
+                error=None,
+                raw=None,
+            )
+
         if not (branch_kind == "low_signal" and completes_here):
             _close_turn(
                 db,
@@ -1531,6 +1609,17 @@ def _failed_result(
         stage=stage,
         error=error,
     )
+
+
+def _s7_mode() -> bool:
+    """`CHATBOT_ORDERING_ENABLED` - the one flag that says the CRM owns the whole turn.
+
+    Ordering and tail-ownership are the same promote (the thin spine posts every message to
+    `/turn` and the CRM answers it), so they are one flag; `app/api/v1/external/chat.py`
+    reads it for the other half, the 410 on `/complete`. Its precondition is written next to
+    it in `app/config.py`: every lane completed by the CRM before it goes on.
+    """
+    return bool(getattr(settings, "chatbot_ordering_enabled", False))
 
 
 def _business_lane_enabled() -> bool:

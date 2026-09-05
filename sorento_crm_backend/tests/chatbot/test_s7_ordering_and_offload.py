@@ -564,7 +564,16 @@ class TestPollerBatchAndLiveMessageKeepOrder:
             f"six sequential same-contact turns took {elapsed}s - something is waiting "
             "on a ticket that should already be free"
         )
-        assert [r.status for r in results] == ["delegated"] * 6, [r.error for r in results]
+        # `failed`, not `delegated`, and the change is FORCED BY THE CONTRACT rather than
+        # by this test's subject: in S7 mode the CRM owns the tail (`/complete` answers
+        # 410), so a turn routed to a lane the CRM cannot complete has nobody to finish it
+        # and is closed `failed` at `routed` instead of left as a ghost
+        # (`TestS7ModeRefusesADelegatingLane` below). `business_query` is not in
+        # `CRM_COMPLETED_BRANCH_KINDS` on this build, so switching the lane on is not
+        # available; the ordering this test is about is unaffected - the ticket, the wait
+        # and the release all happen before the routing decision.
+        assert [r.status for r in results] == ["failed"] * 6, [r.error for r in results]
+        assert all("chatbot_completed_lanes" in (r.error or "") for r in results)
 
         client = _redis_client()
         try:
@@ -612,6 +621,77 @@ class TestEmptyOrMalformedEnvelopeIsExplicit422:
         )
         assert response.status_code == 422, response.text
         assert "message" in response.text
+
+
+class TestS7ModeRefusesADelegatingLane:
+    """The other half of the S7-mode contract: if the CRM owns the tail, nothing may be
+    left waiting for one.
+
+    `/complete` answers 410 in S7 mode, so a turn the head routes to a lane the CRM cannot
+    finish has nobody to compose its reply. Left `delegated` it would sit as a ghost until
+    the TTL sweep - ten minutes of a customer waiting for a reply no process is going to
+    write. It is closed `failed` at the stage it reached instead, with the reason an
+    operator can act on, and R4's manual Retry then works once the lane is switched on.
+
+    This is a MISCONFIGURATION guard: the promote precondition (every lane in
+    `system_settings.chatbot_completed_lanes`, on a build that can complete it) is written
+    in `app/config.py` next to the flag. `business_query` is not in
+    `CRM_COMPLETED_BRANCH_KINDS` on this build, so it is the natural subject.
+    """
+
+    def test_s7_mode_fails_a_lane_the_crm_cannot_complete(
+        self, real_contacts, stub_engine_seams, monkeypatch
+    ) -> None:
+        _enable_ordering(monkeypatch)
+        monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: _parser_output())
+        contact = real_contacts("s7-orphan")
+
+        result = engine_mod.run_turn(
+            _envelope_for(contact, "ZZT-msg-s7-orphan-1"), session_factory=SessionLocal
+        )
+
+        assert result.status == "failed"
+        assert result.stage == "routed"
+        assert result.delegate is None, "S7 mode must not hand the caller a lane to run"
+        # The customer still gets today's error reply to send, like every other failure.
+        assert [a["kind"] for a in result.actions] == ["send_message"]
+        assert result.actions[0]["text"] == engine_mod.GENERIC_ERROR_REPLY
+        # And the operator gets the two facts that let them fix it: which lane, and where
+        # to switch it on.
+        assert "business_query" in (result.error or "")
+        assert "chatbot_completed_lanes" in (result.error or "")
+
+        db = SessionLocal()
+        try:
+            row = db.query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
+            assert row is not None
+            assert row.status == "failed"
+            assert row.stage == "routed"
+            # The row keeps the lane it was routed to - the routing was correct, the
+            # configuration was not - and the trace carries the reason.
+            assert row.branch_kind == "business_query"
+            assert any(
+                r.get("status") == "failed" and "chatbot_completed_lanes" in (r.get("error") or "")
+                for r in (row.trace or [])
+            ), row.trace
+        finally:
+            db.close()
+
+    def test_with_the_flag_off_the_same_turn_still_delegates(
+        self, real_contacts, stub_engine_seams, monkeypatch
+    ) -> None:
+        """Flag off is production today: the lane delegates and n8n completes it."""
+        monkeypatch.setattr(settings, "chatbot_ordering_enabled", False, raising=False)
+        monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: _parser_output())
+        contact = real_contacts("s7-orphan-off")
+
+        result = engine_mod.run_turn(
+            _envelope_for(contact, "ZZT-msg-s7-orphan-off-1"), session_factory=SessionLocal
+        )
+
+        assert result.status == "delegated"
+        assert result.delegate == "business_query"
+        assert result.error is None
 
 
 class TestSingleTrigger:

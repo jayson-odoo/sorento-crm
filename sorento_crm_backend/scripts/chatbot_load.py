@@ -196,11 +196,16 @@ def _seed_contacts(contacts: list[str], run_id: str) -> None:
     finally:
         db.close()
     if inserted != len(contacts):
+        # The commit above already landed the rows that DID insert, so take them out again
+        # before giving up. A refusal that leaves its own half-seeded run behind makes the
+        # next run collide on the same numbers and refuse as well.
+        _delete_contacts(contacts)
         raise SystemExit(
             f"seeded {inserted} of {len(contacts)} contacts - a respond_io_id or a phone "
             "number collided and the insert was skipped. Every turn for the missing "
             "contact would fail at `received` and the run would grade the error path. "
-            "Clean up leftover ZZT-load- rows and try again."
+            "This run's own rows have been removed again; clean up any other leftover "
+            "ZZT-load- rows and try again."
         )
 
 
@@ -244,6 +249,21 @@ def _delete_contacts(contacts: list[str]) -> None:
         db.commit()
     finally:
         db.close()
+
+
+@dataclass
+class _OrderReport:
+    """What the rows said about order, including how much of them was readable.
+
+    `checked_pairs` and `skipped_pairs` are reported because a gate that cannot say how
+    much it examined is a gate that can pass by examining nothing.
+    """
+
+    out_of_order: list[str]
+    jitter: list[str]
+    missing: int
+    checked_pairs: int
+    skipped_pairs: int
 
 
 @dataclass
@@ -409,7 +429,7 @@ class _PoolGauge:
             self._thread.join(timeout=2)
 
 
-def _grade_order(run_id: str, messages: int) -> tuple[list[str], list[str], int]:
+def _grade_order(run_id: str, contacts_requested: int, messages: int) -> "_OrderReport":
     """Per contact, from the SERVER's own rows: in order, and never overlapping.
 
     Three questions, and the client's send order answers none of them - it fired the whole
@@ -419,6 +439,10 @@ def _grade_order(run_id: str, messages: int) -> tuple[list[str], list[str], int]
       dedup session's transaction start, i.e. the moment the request reached the engine,
       and the messages left `STAGGER_SECONDS` apart. An inversion here is the network or
       the client, not the ordering - it is reported separately for that reason;
+      (`created_at` is a proxy for the ticket, taken one statement earlier. Under heavy
+      contention the two can disagree, so a lone reply-order violation with everything
+      else clean is worth re-running before it is believed. Across 100 and 300 turn runs
+      on 5 Sep 2026 there were none.)
     * did the REPLIES come back in arrival order? `finished_at` ascending in `created_at`
       order. This is the customer-visible promise (journey A5) and the one that must be 0;
     * did any two turns for one contact RUN at the same time? The execution start is not a
@@ -445,6 +469,8 @@ def _grade_order(run_id: str, messages: int) -> tuple[list[str], list[str], int]
 
     out_of_order: list[str] = []
     jitter: list[str] = []
+    checked_pairs = 0
+    skipped_pairs = 0
     for contact, turns in by_contact.items():
         turns.sort(key=lambda r: r.created_at)
         indexes = [_index_of(r.message_id) for r in turns]
@@ -461,14 +487,31 @@ def _grade_order(run_id: str, messages: int) -> tuple[list[str], list[str], int]
             continue
         for earlier, later in zip(turns, turns[1:]):
             began = _execution_start(later)
-            if began is not None and earlier.finished_at > began:
+            if began is None or earlier.finished_at is None:
+                # COUNTED, not passed over. A pair that cannot be evaluated is a pair this
+                # gate did not check, and a silent skip is how a green run comes to mean
+                # less than it says - if the trace shape ever changes, every pair skips and
+                # the overlap clause quietly stops existing.
+                skipped_pairs += 1
+                continue
+            checked_pairs += 1
+            if earlier.finished_at > began:
                 out_of_order.append(
                     f"{contact} OVERLAPPED: turn {_index_of(earlier.message_id)} was "
                     f"still running when {_index_of(later.message_id)} started"
                 )
                 break
-    missing = len(by_contact) * messages - len(rows)
-    return out_of_order, jitter, missing
+    # From what was ASKED FOR, not from what came back: a contact with zero rows has no
+    # entry in `by_contact` at all, and counting its own keys would make it invisible -
+    # the one failure most worth catching.
+    missing = contacts_requested * messages - len(rows)
+    return _OrderReport(
+        out_of_order=out_of_order,
+        jitter=jitter,
+        missing=missing,
+        checked_pairs=checked_pairs,
+        skipped_pairs=skipped_pairs,
+    )
 
 
 def _execution_start(row: Any):
@@ -607,10 +650,14 @@ def main(argv: list[str] | None = None) -> int:
 
     # Order, per contact, graded from the SERVER's rows - see `_grade_order`. The client's
     # own send order cannot answer this: it fired the whole burst at once.
-    out_of_order, jitter, missing = _grade_order(run_id, args.messages)
+    report = _grade_order(run_id, args.contacts, args.messages)
+    out_of_order, jitter, missing = report.out_of_order, report.jitter, report.missing
 
     print(f"wall {wall:.1f}s  turns {len(outcomes)}  p50 {p50:.2f}s  p95 {p95:.2f}s")
     print(f"errors {len(errors)}  out-of-order contacts {len(out_of_order)}")
+    print(
+        f"overlap pairs checked {report.checked_pairs}  skipped {report.skipped_pairs}"
+    )
     print(
         f"db connections: baseline {gauge.baseline}  peak {gauge.peak}  "
         f"delta {gauge.peak - gauge.baseline} (pg_stat_activity, whole database)"
@@ -626,8 +673,19 @@ def main(argv: list[str] | None = None) -> int:
         )
     if missing:
         print(f"  {missing} turn row(s) missing - the burst did not all reach chatbot.turns")
+    if report.skipped_pairs:
+        print(
+            f"  {report.skipped_pairs} overlap pair(s) could not be evaluated (no "
+            "execution start on the trace) - the no-overlap clause did not cover them"
+        )
 
-    green = not errors and not out_of_order and not missing and p95 < P95_TARGET_SECONDS
+    green = (
+        not errors
+        and not out_of_order
+        and not missing
+        and not report.skipped_pairs
+        and p95 < P95_TARGET_SECONDS
+    )
     print("GREEN" if green else "RED")
     if not green and p95 >= P95_TARGET_SECONDS:
         print(f"  p95 {p95:.2f}s is over the {P95_TARGET_SECONDS}s target")
