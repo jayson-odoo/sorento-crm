@@ -123,6 +123,19 @@ def chat_turn(
                     "session state, not an attachment - send media by reference."
                 ),
             )
+        # The auth dependencies queried on THIS session and neither committed nor rolled
+        # back, so SQLAlchemy is holding their transaction - and with it one server
+        # connection out of PgBouncer's transaction-mode pool - for as long as the request
+        # runs. That is the whole turn: the parser call, the lookups, and (with ordering
+        # on) up to `chatbot_queue_wait_seconds` of waiting on top. At the burst this
+        # slice is built for, 100 concurrent turns would pin 100 connections from a pool
+        # of 50 before the engine has opened a single session of its own.
+        #
+        # One rollback ends it. Nothing above needs the transaction any more - the
+        # principal and its permission were read into plain dicts - and the integration
+        # log below simply begins a new one. `db.info` (the company scope `get_db` set)
+        # is session state, not transaction state, and survives.
+        db.rollback()
         result = run_turn(payload.envelope, session_factory=SessionLocal)
         response_payload = TurnResponse(**result.as_dict())
         if result.status == "failed":
@@ -201,6 +214,9 @@ def chat_turn_complete(
     to_reraise: HTTPException | None = None
 
     try:
+        # Same reason as `/turn`: end the auth dependencies' transaction before the tail
+        # runs, so the request is not pinning a pooled connection across it.
+        db.rollback()
         result = complete_turn(
             turn_id,
             payload.model_dump(mode="json"),
