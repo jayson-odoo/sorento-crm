@@ -406,8 +406,11 @@ suite on the shared DB.
   `n8n-changes.md` names) is the next step, not this fix's job.
   **Re-verified 6 Sep 2026** after the settle-wait and STRICT-gate fix, `--timeout 240`
   (load averages 4.16 5.16 6.27 before): `errors 100`,
-  `branch_kind: {'business_query': 25}`, `75 turn row(s) missing`, every landed row
-  `business_query / remembered / done` - zero stragglers this time, confirming the fix.
+  `branch_kind: {'business_query': 25}`, `75 turn row(s) missing`, every GRADED row
+  `business_query / remembered / done`. 16 more rows landed as `stage=received, status=
+  failed` about 10 minutes after grading and cleanup had already run - the settle-wait
+  narrows this race, it does not close it once the backlog outlives even its 180s window,
+  since a row not yet inserted is invisible to a poller (see `n8n-changes.md`'s Step 4).
   `db connections: baseline 19 peak 40` rules out Postgres; the single dev worker is
   still the ceiling.
 - **The seeded contact carries no `contact_access_types` row.** A real dealer holds at

@@ -1222,12 +1222,20 @@ branch_kind: {'business_query': 25}
 RED - p95 240.07s is over the 12.0s target
 ```
 
-Confirms the settle-wait fix directly: every one of the 25 landed rows is
-`business_query / stage=remembered / status=done` - zero of the 21-straggler shape the
-earlier run produced, because grading and cleanup now wait for the backend to finish
-first. The single dev worker is still the ceiling (25 of 100 landed even at a 240s client
-timeout; `db connections: baseline 19 peak 40`, so Postgres was not it), which is the
-same capacity finding as the first re-measurement, on a fully-drained sample this time.
+At grading time every one of the 25 landed rows was `business_query / stage=remembered /
+status=done` - zero of the earlier run's straggler shape in the graded report. **The
+settle-wait narrows the race, it does not close it under this much backlog**: a further 16
+rows landed as `branch_kind=None, stage=received, status=failed` roughly 10 minutes after
+the script exited (`_wait_for_turns_to_settle` had already reported 0 non-terminal and
+cleanup had already run). A row that has not been INSERTED yet is invisible to a poller
+that only checks existing rows' status, and a single dev worker holding 100 concurrent
+requests this far past even a 240s client timeout plus a 180s settle window can still have
+requests it has not started on yet. The mechanism is doing what it is built to do - wait
+out rows that exist and are still open - and a backlog this deep is itself the same
+single-worker capacity finding, not a defect in the wait. All 16 were cleaned up by hand
+after being read. The single dev worker is still the ceiling (25 of 100 graded even at a
+240s client timeout; `db connections: baseline 19 peak 40`, so Postgres was not it), which
+is the same capacity finding as the first re-measurement.
 Settings were flipped for this run and restored immediately after (before: `false` /
 `[]`; during: `true` / `["business_query"]`; after: `false` / `[]`, verified by re-read).
 

@@ -874,9 +874,13 @@ contact inside the synchronous request. Different contacts run in parallel.
   **Re-verified 6 Sep 2026** after the settle-wait and STRICT-gate fix, `--timeout 240`
   (load averages 4.16 5.16 6.27 before): `wall 240.2s p50 240.00s p95 240.07s`,
   `errors 100`, `branch_kind: {'business_query': 25}`, `75 turn row(s) missing`. Every one
-  of the 25 landed rows is `business_query / remembered / done` - zero of the earlier
-  run's 21-straggler shape, confirming the settle-wait fix. Still RED on timing (single
-  dev worker, unchanged finding); `db connections: baseline 19 peak 40` rules out Postgres
+  of the 25 GRADED rows is `business_query / remembered / done`. The settle-wait narrows
+  the race but does not close it at this much backlog: a further 16 rows landed as
+  `stage=received, status=failed` roughly 10 minutes after grading and cleanup had
+  already run, past even the 180s settle window - a row not yet inserted is invisible to
+  a poller, and cleaned up by hand once read (see `n8n-changes.md`'s Step 4 for the
+  detail). Still RED on timing (single dev worker, unchanged finding);
+  `db connections: baseline 19 peak 40` rules out Postgres
   as the ceiling here.
 - AC-707 `[E2E]` Given live traffic for one pilot contact routed through S7, when they send
   three messages quickly, then the three replies arrive in order and `chatbot.turns` shows
