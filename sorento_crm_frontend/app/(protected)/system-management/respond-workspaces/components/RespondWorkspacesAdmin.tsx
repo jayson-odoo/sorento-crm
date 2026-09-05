@@ -40,7 +40,9 @@ import {
   listRespondWorkspaces,
   setDefaultRespondWorkspace,
   updateRespondWorkspace,
+  updateRespondWorkspaceChatbotRetry,
   type RespondWorkspace,
+  type RespondWorkspaceChatbotRetryBody,
   type RespondWorkspaceCreateBody,
   type RespondWorkspaceUpdateBody,
 } from '../services/respondWorkspaceService';
@@ -87,6 +89,10 @@ export default function RespondWorkspacesAdmin() {
   const [editing, setEditing] = useState<RespondWorkspace | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  // The stored retry key is never sent to the browser, so the input is always blank and a
+  // blank input cannot mean "remove it". This flag is the explicit ask, and it is what
+  // makes the key sent as `''` on save.
+  const [clearRetryKey, setClearRetryKey] = useState(false);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   // Ideation-product dropdown state: fetched name cache (to resolve the stored id
   // to a human name) + the last upstream error surfaced under the select.
@@ -174,8 +180,21 @@ export default function RespondWorkspacesAdmin() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: RespondWorkspaceUpdateBody }) =>
-      updateRespondWorkspace(id, body),
+    // Two calls, because the two chatbot retry fields live behind their own route and
+    // their own permission. The row PUT goes first so a validation refusal on either one
+    // still leaves the operator in the dialog with what they typed.
+    mutationFn: async ({
+      id,
+      body,
+      retry,
+    }: {
+      id: string;
+      body: RespondWorkspaceUpdateBody;
+      retry: RespondWorkspaceChatbotRetryBody;
+    }) => {
+      await updateRespondWorkspace(id, body);
+      return updateRespondWorkspaceChatbotRetry(id, retry);
+    },
     onSuccess: () => {
       invalidate();
       toast.success('Workspace updated');
@@ -206,6 +225,7 @@ export default function RespondWorkspacesAdmin() {
   function openCreate() {
     setEditing(null);
     setForm(EMPTY_FORM);
+    setClearRetryKey(false);
     setIdeationProductError(null);
     setDialogOpen(true);
   }
@@ -213,6 +233,7 @@ export default function RespondWorkspacesAdmin() {
   function openEdit(row: RespondWorkspace) {
     setEditing(row);
     setIdeationProductError(null);
+    setClearRetryKey(false);
     setForm({
       space_id: row.space_id,
       name: row.name ?? '',
@@ -248,16 +269,24 @@ export default function RespondWorkspacesAdmin() {
         ideation_product_id: form.ideation_product_id.trim() || null,
         ideation_embed_connection_id: form.ideation_embed_connection_id.trim() || null,
         ideation_embed_fe_base_url: form.ideation_embed_fe_base_url.trim() || null,
-        chatbot_retry_ingress_url: form.chatbot_retry_ingress_url.trim() || null,
       };
       if (form.api_key.trim()) body.api_key = form.api_key.trim();
-      if (form.chatbot_retry_ingress_key.trim())
-        body.chatbot_retry_ingress_key = form.chatbot_retry_ingress_key.trim();
       if (form.ideation_intake_api_key.trim())
         body.ideation_intake_api_key = form.ideation_intake_api_key.trim();
       if (form.ideation_embed_signing_secret.trim())
         body.ideation_embed_signing_secret = form.ideation_embed_signing_secret.trim();
-      updateMutation.mutate({ id: editing.id, body });
+      // ALWAYS the trimmed string, never null: `''` is what clears the stored URL, and
+      // the field's own copy says leaving it blank turns Retry off.
+      const retry: RespondWorkspaceChatbotRetryBody = {
+        chatbot_retry_ingress_url: form.chatbot_retry_ingress_url.trim(),
+      };
+      // The key is only MENTIONED when there is something to say about it: a new value,
+      // or the explicit ask to remove the stored one. An untouched blank input leaves it
+      // alone, which is the only reading a write-only field can have.
+      if (form.chatbot_retry_ingress_key.trim())
+        retry.chatbot_retry_ingress_key = form.chatbot_retry_ingress_key.trim();
+      else if (clearRetryKey) retry.chatbot_retry_ingress_key = '';
+      updateMutation.mutate({ id: editing.id, body, retry });
     } else {
       if (!form.space_id.trim() || !form.api_key.trim()) {
         toast.error('Space ID and API key are required');
@@ -673,7 +702,7 @@ export default function RespondWorkspacesAdmin() {
             <div className="grid gap-2">
               <Label htmlFor="ws-retry-key">
                 Retry key{' '}
-                {editing && editing.has_chatbot_retry_key && (
+                {editing && editing.has_chatbot_retry_key && !clearRetryKey && (
                   <span className="text-muted-foreground">
                     (Key set - leave blank to keep current)
                   </span>
@@ -683,16 +712,43 @@ export default function RespondWorkspacesAdmin() {
                 id="ws-retry-key"
                 type="password"
                 value={form.chatbot_retry_ingress_key}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, chatbot_retry_ingress_key: e.target.value }))
-                }
+                onChange={(e) => {
+                  setClearRetryKey(false);
+                  setForm((f) => ({ ...f, chatbot_retry_ingress_key: e.target.value }));
+                }}
                 placeholder={
-                  editing && editing.has_chatbot_retry_key
+                  editing && editing.has_chatbot_retry_key && !clearRetryKey
                     ? '•••• (unchanged)'
                     : 'Sent with each retry so the receiving end can check it'
                 }
                 autoComplete="new-password"
               />
+              {editing && editing.has_chatbot_retry_key && !clearRetryKey && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="justify-self-start"
+                  onClick={() => {
+                    setClearRetryKey(true);
+                    setForm((f) => ({ ...f, chatbot_retry_ingress_key: '' }));
+                  }}
+                >
+                  Remove stored key
+                </Button>
+              )}
+              {clearRetryKey && (
+                <p className="text-xs text-destructive">
+                  The stored key will be removed when you save.{' '}
+                  <button
+                    type="button"
+                    className="underline"
+                    onClick={() => setClearRetryKey(false)}
+                  >
+                    Keep it
+                  </button>
+                </p>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <Checkbox

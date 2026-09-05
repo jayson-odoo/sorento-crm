@@ -26,6 +26,7 @@ import type { RespondWorkspace } from '../services/respondWorkspaceService';
 const listRespondWorkspaces = vi.fn();
 const listIdeationProducts = vi.fn();
 const updateRespondWorkspace = vi.fn();
+const updateRespondWorkspaceChatbotRetry = vi.fn();
 const createRespondWorkspace = vi.fn();
 const deleteRespondWorkspace = vi.fn();
 const setDefaultRespondWorkspace = vi.fn();
@@ -34,6 +35,8 @@ vi.mock('../services/respondWorkspaceService', () => ({
   listRespondWorkspaces: (...a: unknown[]) => listRespondWorkspaces(...a),
   listIdeationProducts: (...a: unknown[]) => listIdeationProducts(...a),
   updateRespondWorkspace: (...a: unknown[]) => updateRespondWorkspace(...a),
+  updateRespondWorkspaceChatbotRetry: (...a: unknown[]) =>
+    updateRespondWorkspaceChatbotRetry(...a),
   createRespondWorkspace: (...a: unknown[]) => createRespondWorkspace(...a),
   deleteRespondWorkspace: (...a: unknown[]) => deleteRespondWorkspace(...a),
   setDefaultRespondWorkspace: (...a: unknown[]) => setDefaultRespondWorkspace(...a),
@@ -71,6 +74,8 @@ beforeEach(() => {
   listRespondWorkspaces.mockReset().mockResolvedValue([ROW]);
   listIdeationProducts.mockReset().mockResolvedValue({ products: [], error: null });
   createRespondWorkspace.mockReset().mockResolvedValue(ROW);
+  updateRespondWorkspace.mockReset().mockResolvedValue(ROW);
+  updateRespondWorkspaceChatbotRetry.mockReset().mockResolvedValue(ROW);
   if (!window.matchMedia) {
     window.matchMedia = vi.fn().mockImplementation((query: string) => ({
       matches: false,
@@ -154,5 +159,50 @@ describe('RespondWorkspacesAdmin - chatbot retry ingress fields', () => {
     expect(document.body.textContent).not.toMatch(
       /automate-sorento\.foundryx\.my\/webhook\/sorento-main-inject/,
     );
+  });
+
+  it('blanking the URL sends an empty string, which is what turns Retry off', async () => {
+    // S8a review S2: the field's own copy promises "Leave blank to turn Retry off". The
+    // body used to send `null` for a blank field, and null means "no change" on the
+    // backend, so the stored URL survived and Retry could not be disabled at all.
+    renderWithClient(<RespondWorkspacesAdmin />);
+    await screen.findByRole('button', { name: /edit/i });
+    fireEvent.click(screen.getByRole('button', { name: /edit/i }));
+    await waitFor(() =>
+      expect(screen.getByText('Ideas embed (iframe SSO)')).toBeInTheDocument(),
+    );
+
+    const url = screen.getByLabelText(/Chatbot retry webhook URL/i) as HTMLInputElement;
+    expect(url.value).toBe(ROW.chatbot_retry_ingress_url);
+    fireEvent.change(url, { target: { value: '  ' } });
+    fireEvent.click(screen.getByRole('button', { name: /^update$/i }));
+
+    await waitFor(() => expect(updateRespondWorkspaceChatbotRetry).toHaveBeenCalled());
+    const [, retryBody] = updateRespondWorkspaceChatbotRetry.mock.calls[0];
+    expect(retryBody.chatbot_retry_ingress_url).toBe('');
+    // The key was neither typed nor explicitly removed, so it is not mentioned at all.
+    expect('chatbot_retry_ingress_key' in retryBody).toBe(false);
+    // And the two fields do NOT ride along on the row PUT any more: that route carries
+    // api_key / base_url / is_default and keeps its own stronger slug.
+    const [, rowBody] = updateRespondWorkspace.mock.calls[0];
+    expect('chatbot_retry_ingress_url' in rowBody).toBe(false);
+    expect('chatbot_retry_ingress_key' in rowBody).toBe(false);
+  });
+
+  it('"Remove stored key" is what revokes the key, and it sends an explicit blank', async () => {
+    renderWithClient(<RespondWorkspacesAdmin />);
+    await screen.findByRole('button', { name: /edit/i });
+    fireEvent.click(screen.getByRole('button', { name: /edit/i }));
+    await waitFor(() =>
+      expect(screen.getByText('Ideas embed (iframe SSO)')).toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /remove stored key/i }));
+    expect(screen.getByText(/will be removed when you save/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^update$/i }));
+
+    await waitFor(() => expect(updateRespondWorkspaceChatbotRetry).toHaveBeenCalled());
+    const [, retryBody] = updateRespondWorkspaceChatbotRetry.mock.calls[0];
+    expect(retryBody.chatbot_retry_ingress_key).toBe('');
   });
 });
