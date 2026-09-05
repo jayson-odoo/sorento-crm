@@ -1240,6 +1240,117 @@ class TestMissLaneProbesAndFamilyFetch:
 
 
 # --------------------------------------------------------------------------- #
+# R1 / H1: the demand-quantity answer. `Edit Fields2` stamps `not_allowed_check_stock`
+# on the ONE edge `If7`'s TRUE output takes, and `validator` reads it to replace the raw
+# stock rows with "Quantity of N for product X can/cannot be fulfilled." Both switch
+# positions are graded: with `chatbot_stock_denial_enabled` off no turn can reach the
+# arm at all, so nothing is stamped and nothing is rewritten.
+# --------------------------------------------------------------------------- #
+
+
+class TestR1DemandQuantityAnswer:
+    @staticmethod
+    def _ctx(demand_qty: Any) -> dict:
+        return {
+            "contact": {
+                "id": "ZZT-1",
+                "custom_fields": [{"name": "is_allowed_stock", "value": "false"}],
+            },
+            "text": {"message": {"message": {"type": "text", "text": "5 units of SRTWC8517"}}},
+            "session": {"session_vars": {"variables": {}}},
+            "parse": {
+                "output": {
+                    "message_type": "business_query",
+                    "intent_hint": "check_stock",
+                    "domain_hint": "inventory",
+                    "entities": [{"raw": "SRTWC8517", "hint": "product", "current_message": True}],
+                    "demand_qty": demand_qty,
+                }
+            },
+            "access": {"allowed": True, "decision": "allow"},
+            "media": None,
+        }
+
+    @staticmethod
+    def _lane(ctx: dict, branch_kind: str) -> dict:
+        from app.services.chatbot.lanes.business import run_until_exit
+        from app.services.chatbot.lanes.business.services import ResolveGateServices
+
+        services = ResolveGateServices(
+            access_types=lambda **_: [],
+            resolve_entity=lambda body: {"tokens": [], "resolutions": [], "unresolved_tokens": []},
+            probe=lambda **_: None,
+        )
+        return run_until_exit(
+            ctx, {"branch_kind": branch_kind}, branch_kind=branch_kind, services=services
+        )
+
+    _ANSWERS = {
+        "answers": [
+            {"product": "SRTWC8517", "stock_qty": 2},
+            {"product": "SRTWC8517", "stock_qty": 1},
+        ],
+        "response": "Warehouse A: 2\nWarehouse B: 1",
+        "has_result": True,
+    }
+
+    def test_with_the_switch_on_the_arm_stamps_and_the_answer_is_the_quantity_verdict(
+        self,
+    ) -> None:
+        from app.services.chatbot.head.route import decide
+        from app.services.chatbot.lanes.business.answer import validator
+
+        ctx = self._ctx(5)
+        branch_kind, _ = decide(ctx, stock_denial_enabled=True)
+        assert branch_kind == "stock_denied"
+
+        payload = self._lane(ctx, branch_kind)["payload"]
+        assert payload["not_allowed_check_stock"] is True
+
+        out = validator(
+            dict(self._ANSWERS),
+            semantic_parser=ctx["parse"],
+            not_allowed_check_stock=bool(payload.get("not_allowed_check_stock")),
+        )
+        assert out["response"] == (
+            "Quantity of 5 for product SRTWC8517 cannot be fulfilled. "
+            "Total available quantity is 3."
+        )
+
+    def test_a_demand_the_stock_covers_is_answered_can_be_fulfilled(self) -> None:
+        from app.services.chatbot.lanes.business.answer import validator
+
+        out = validator(
+            dict(self._ANSWERS),
+            semantic_parser=self._ctx(3)["parse"],
+            not_allowed_check_stock=True,
+        )
+        assert out["response"] == "Quantity of 3 for product SRTWC8517 can be fulfilled."
+
+    def test_with_the_switch_off_nothing_is_stamped_and_the_rows_stand(self) -> None:
+        """Default R1 position: the route cannot decide `stock_denied` at all, the
+        `business_query` arm carries no stamp, and `validator` leaves the fetched
+        response untouched."""
+        from app.services.chatbot.head.route import decide
+        from app.services.chatbot.lanes.business.answer import validator
+
+        ctx = self._ctx(5)
+        branch_kind, _ = decide(ctx, stock_denial_enabled=False)
+        assert branch_kind == "business_query"
+
+        payload = self._lane(ctx, branch_kind)["payload"]
+        assert payload.get("not_allowed_check_stock") is None
+
+        out = validator(
+            dict(self._ANSWERS),
+            semantic_parser=ctx["parse"],
+            not_allowed_check_stock=bool(payload.get("not_allowed_check_stock")),
+        )
+        assert out["response"] == self._ANSWERS["response"]
+        assert out["is_valid"] is True
+
+
+# --------------------------------------------------------------------------- #
 # AC-609 / H45: did-you-mean never re-offers a row the answer already showed.
 #
 # ONE outcome-level predicate, and it is the LIVE one: `build-suggest-offer.js:288-323`'s

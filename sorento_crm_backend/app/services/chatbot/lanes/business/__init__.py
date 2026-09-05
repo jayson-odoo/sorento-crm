@@ -63,13 +63,14 @@ def run_until_exit(
 
     `item` is the router's own item, forwarded UNCHANGED.
 
-    An earlier version stamped `not_allowed_check_stock: true` here for the `stock_denied`
-    arm, mirroring the spine's `Edit Fields2`. It was dead and is gone: inside the sub the
-    item reaches only `tier-gate`'s `$('item')` read, which is on the `access_check` path
-    that `stock_denied` never takes, and the node that actually consumes the field -
-    `sub-main-processing`'s `validator` - reads it off `$('Edit Fields2')` BY NAME, not off
-    the flowing item. That Set node stays in n8n and keeps owning the value; a CRM copy
-    would have been a second writer of something it cannot be read from.
+    `not_allowed_check_stock` is the spine's `Edit Fields2`, which sits on the ONE edge
+    `If7`'s TRUE output takes (`If7 -> Edit Fields2 -> If8`) and sets the single boolean
+    `validator` reads. S6a left it unstamped because the reader then was n8n's own
+    `validator`, which reads `$('Edit Fields2')` by name; at S6c the CRM IS the validator
+    and reads the flag off this payload, so the arm that carries it has to carry it here.
+    The route already gates the arm: `stock_denied` can only be decided when
+    `system_settings.chatbot_stock_denial_enabled` is on (R1), so no second flag read is
+    needed - with the switch off no turn reaches this branch at all.
     """
     entry = ENTRY_BY_BRANCH_KIND[branch_kind]
     payload = resolve_gate.run(
@@ -81,6 +82,8 @@ def run_until_exit(
         probe_default_start=probe_default_start,
         dry_run=dry_run,
     )
+    if branch_kind == "stock_denied":
+        payload["not_allowed_check_stock"] = True
     return {"delegate": DELEGATE, "payload": payload}
 
 

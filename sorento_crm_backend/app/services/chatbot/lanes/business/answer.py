@@ -164,7 +164,10 @@ def validator(
     parser_output = parser_node.get("output")
     if not isinstance(parser_output, dict):
         parser_output = parser_node
-    demand_qty = jsc.js_number(jsc.nullish_str(parser_output.get("demand_qty"), "0"))
+    # `Number(parserOutput.demand_qty ?? 0)` - the coercion is over the VALUE, not over
+    # its string form: `Number(true)` is 1 where `Number(String(true))` is NaN.
+    raw_demand = parser_output.get("demand_qty")
+    demand_qty = jsc.js_number(0 if raw_demand is None else raw_demand)
 
     answers = output.get("answers") if isinstance(output.get("answers"), list) else []
     grouped: dict[str, dict[str, Any]] = {}
