@@ -13,6 +13,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { Switch } from '@/components/ui/switch';
 import { useStatusGraph } from '@/app/(protected)/system-management/status-graphs/hooks/useStatusGraphs';
@@ -86,10 +87,14 @@ export function PipelineClient() {
 
   // Narrowing the set changes which rows exist, so page 3 of the old set is a page of
   // nothing in the new one. Now that the filters live in the grid toolbar, landing on a
-  // blank page would read as "the filter found nothing".
-  React.useEffect(() => {
-    setPagination((previous) => ({ ...previous, pageIndex: 0 }));
-  }, [debouncedSearch, developerFilter, typeFilter, onlyCritical]);
+  // blank page would read as "the filter found nothing". Only on a CHANGE - the mount run
+  // used to stamp page 1 over the page `useListStateFromUrl` had just restored.
+  useResetPageOnFilterChange(setPagination, [
+    debouncedSearch,
+    developerFilter,
+    typeFilter,
+    onlyCritical,
+  ]);
 
   const graph = useStatusGraph('project', null, false);
   const developers = useProjectParties({ party_type: 'developer', limit: 200 });

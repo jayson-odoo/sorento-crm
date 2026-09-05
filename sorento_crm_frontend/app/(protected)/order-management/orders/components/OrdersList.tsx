@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
@@ -52,6 +52,7 @@ import {
 import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import { useImportJobDrawer } from '@/components/upload-activity';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 
@@ -90,16 +91,9 @@ export default function OrdersList() {
     setAdvancedFilter(decodeAdvancedFilter<ListQueryFilterGroup>(state.filters.advFilter));
   });
 
-  // A search brings the reader back to page 0 to see the matches; the mounted
-  // guard keeps the URL-restored page from being clobbered on first render.
-  const searchMounted = useRef(false);
-  useEffect(() => {
-    if (!searchMounted.current) {
-      searchMounted.current = true;
-      return;
-    }
-    setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [searchQuery]);
+  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
+  useResetPageOnFilterChange(setPagination, [searchQuery]);
 
   const { data, isLoading, isPlaceholderData, isError, error, refetch, isFetching } = useOrders({
     pageIndex: pagination.pageIndex,

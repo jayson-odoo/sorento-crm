@@ -605,13 +605,15 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
               </Badge>
             ) : null}
           </div>
-          <p className="text-2xs text-muted-foreground">
-            {!data
-              ? 'Loading'
-              : data.as_of
+          {!data ? (
+            <Skeleton className="h-3 w-40" />
+          ) : (
+            <p className="text-2xs text-muted-foreground">
+              {data.as_of
                 ? `As of ${dayLabel(data.as_of)} · computed ${computedAtLabel(data.generated_at)}`
                 : 'No plan has been frozen yet, so there is nothing to state a date for'}
-          </p>
+            </p>
+          )}
           {lockReason ? (
             <p className="text-2xs text-muted-foreground" data-testid="grain-lock-note">
               {lockReason}

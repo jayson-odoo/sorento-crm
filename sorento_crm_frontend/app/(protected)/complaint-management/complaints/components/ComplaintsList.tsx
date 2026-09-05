@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -41,6 +41,7 @@ import { EntityDownloadsButton } from '@/components/my-downloads/EntityDownloads
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 
@@ -81,10 +82,10 @@ export default function ComplaintsList() {
   const [deleteTarget, setDeleteTarget] = useState<Complaint | null>(null);
   const exportPdfMutation = useExportComplaintPdf();
 
-  useEffect(() => {
-    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-    // Joined, not the arrays: a new array identity each render would loop this effect.
-  }, [
+  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
+  // Joined, not the arrays: a new array identity each render would read as a change.
+  useResetPageOnFilterChange(setPagination, [
     searchQuery,
     assignedToFilter,
     statusFilter,

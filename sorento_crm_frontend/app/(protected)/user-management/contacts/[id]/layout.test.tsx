@@ -209,7 +209,7 @@ describe('Contact detail shell - record navigation', () => {
     // The step keeps the tab AND names the page the record sits on, so the walk
     // survives it (S3-04).
     expect(h.push).toHaveBeenCalledWith(
-      `/user-management/contacts/${NEXT_ID}/chat?page=1&limit=50`,
+      `/user-management/contacts/${NEXT_ID}/chat?page=1&limit=50&from=${NEXT_ID}`,
     );
   });
 });

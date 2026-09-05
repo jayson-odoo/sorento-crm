@@ -50,6 +50,7 @@ import {
 } from '../../lib/purchaseOrderStatus';
 import type { PurchaseOrder } from '../../types/scm.types';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 
@@ -183,8 +184,19 @@ export default function PurchaseOrdersList() {
   // reason "Create DO" came off the sales-order list.
   const { confirm, bulkDelete } = usePurchaseOrderActions();
 
+  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
+  useResetPageOnFilterChange(setPagination, [
+    searchQuery,
+    statusFilter,
+    productFilter,
+    outstandingFilter,
+    allocatedFilter,
+    unclaimedProjectBinFilter,
+    documentsFilter,
+  ]);
+  // A tick on a row the new filter excludes is not a selection any more.
   useEffect(() => {
-    setPagination((p) => ({ ...p, pageIndex: 0 }));
     setRowSelection({});
   }, [
     searchQuery,

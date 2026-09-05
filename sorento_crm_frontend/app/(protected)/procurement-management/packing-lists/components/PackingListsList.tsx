@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
@@ -41,6 +41,7 @@ import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 
 export default function PackingListsList() {
   const router = useRouter();
@@ -76,16 +77,9 @@ export default function PackingListsList() {
     resetSearch(state.searchQuery);
   });
 
-  // A search brings the reader back to page 0 to see the matches; the mounted
-  // guard keeps the URL-restored page from being clobbered on first render.
-  const searchMounted = useRef(false);
-  useEffect(() => {
-    if (!searchMounted.current) {
-      searchMounted.current = true;
-      return;
-    }
-    setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [searchQuery]);
+  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
+  useResetPageOnFilterChange(setPagination, [searchQuery]);
   /**
    * Clearance columns are OFF by default. There are 17 of them; showing them all
    * would bury the eight columns everyone already uses. Each user turns on the ones

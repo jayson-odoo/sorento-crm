@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import {
   useProjectSponsorships,
   useSponsorshipRollup,

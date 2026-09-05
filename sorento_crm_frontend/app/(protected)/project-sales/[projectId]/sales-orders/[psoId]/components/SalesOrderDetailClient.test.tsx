@@ -821,7 +821,7 @@ describe('SalesOrderDetailClient header', () => {
 
     // The step names the page the record sits on, so the walk survives it.
     expect(push).toHaveBeenCalledWith(
-      '/project-sales/p1/sales-orders/so-2?page=1&limit=50',
+      '/project-sales/p1/sales-orders/so-2?page=1&limit=50&from=so-2',
     );
   });
 

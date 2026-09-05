@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
@@ -44,6 +44,7 @@ import PromotionBulkResubmitDialog from './PromotionBulkResubmitDialog';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 
@@ -121,18 +122,16 @@ export default function PromotionsList() {
     advancedFilter: advancedFilter ?? undefined,
   });
 
-  // Skip the first run. A filter CHANGE should send the reader back to page 1,
-  // but on mount this effect fires anyway and stamps pageIndex 0 over the page
-  // `useListStateFromUrl` just restored, so Back from page 3 landed on page 1
-  // and the whole round trip was silently undone.
-  const filtersMounted = useRef(false);
-  useEffect(() => {
-    if (!filtersMounted.current) {
-      filtersMounted.current = true;
-      return;
-    }
-    setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [advancedFilter, filterStatus, filterAccessLevel, filterAttachmentState, expiryNotifyBatchId, searchQuery]);
+  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
+  useResetPageOnFilterChange(setPagination, [
+    advancedFilter,
+    filterStatus,
+    filterAccessLevel,
+    filterAttachmentState,
+    expiryNotifyBatchId,
+    searchQuery,
+  ]);
 
   const columns = useMemo<ColumnDef<Promotion>[]>(
     () => [

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import AccessAgentFormModal from './AccessAgentFormModal';
 import {
   ColumnDef,
@@ -30,6 +30,7 @@ import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useAccessAgents } from '../hooks/useAccessAgents';
 import type { AccessAgent } from '../types/accessAgent.types';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import Link from 'next/link';
 
 export default function AccessAgentsList() {
@@ -53,15 +54,9 @@ export default function AccessAgentsList() {
   const [formModalOpen, setFormModalOpen] = useState(false);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
-  // A search brings the reader back to page 0 to see the matches.
-  const searchMounted = useRef(false);
-  useEffect(() => {
-    if (!searchMounted.current) {
-      searchMounted.current = true;
-      return;
-    }
-    setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [searchQuery]);
+  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
+  useResetPageOnFilterChange(setPagination, [searchQuery]);
 
   const { data, isLoading, isPlaceholderData, refetch, isFetching } = useAccessAgents({
     pageIndex: pagination.pageIndex,

@@ -25,6 +25,7 @@ import {
   DataGridTableHeadRowCell,
   DataGridTableHeadRowCellResize,
   DataGridTableRowSpacer,
+  skeletonRowCount,
   useBodySkeleton,
 } from '@/components/ui/data-grid-table';
 import { isFolderItem, type DriveItem } from '../../attachments/services/driveService';
@@ -256,7 +257,7 @@ export default function DriveListView({
 
         <DataGridTableBody>
           {showSkeleton && pagination?.pageSize ? (
-            Array.from({ length: pagination.pageSize }).map((_, rowIndex) => (
+            Array.from({ length: skeletonRowCount(pagination.pageSize) }).map((_, rowIndex) => (
               <DataGridTableBodyRowSkeleton key={rowIndex}>
                 {table.getVisibleFlatColumns().map((column, colIndex) => (
                   <DataGridTableBodyRowSkeletonCell column={column} key={colIndex}>

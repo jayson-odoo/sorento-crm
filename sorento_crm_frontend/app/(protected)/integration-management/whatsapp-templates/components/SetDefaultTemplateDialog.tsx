@@ -141,7 +141,7 @@ export default function SetDefaultTemplateDialog({
                 value: t.id,
                 label: `${t.name} (${t.language})`,
               }))}
-              placeholder={isLoading ? 'Loading…' : 'Select an approved template'}
+              placeholder={isLoading ? 'Loading templates…' : 'Select an approved template'}
             />
           </div>
 

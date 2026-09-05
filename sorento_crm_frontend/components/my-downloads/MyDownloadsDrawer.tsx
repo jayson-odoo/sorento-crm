@@ -19,6 +19,7 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 
 import { DownloadRow } from './DownloadRow';
 import { useMyDownloads } from './MyDownloadsContext';
@@ -47,14 +48,14 @@ export function MyDownloadsDrawer() {
         </SheetHeader>
         <SheetBody className="p-0">
           <ScrollArea className="h-[calc(100vh-12rem)] min-h-[200px]">
-            {downloads.length === 0 ? (
+            {isLoading ? (
+              <SectionSkeleton rows={3} className="p-4" />
+            ) : downloads.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-2 px-4 py-16 text-center">
                 <Download className="size-8 text-muted-foreground/50" />
                 <p className="text-sm font-medium">No downloads yet</p>
                 <p className="text-xs text-muted-foreground">
-                  {isLoading
-                    ? 'Loading…'
-                    : 'Exports you generate (e.g. complaint PDFs) will appear here.'}
+                  Exports you generate (e.g. complaint PDFs) will appear here.
                 </p>
               </div>
             ) : (

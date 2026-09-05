@@ -3486,6 +3486,30 @@ describe('BoardCellBreakdownDialog: the table scrolls inside its own container a
   });
 });
 
+/**
+ * M5 evidence run 1, review concern B2: the dialog's `DialogBody` already owns ONE scroll
+ * viewport (`overflow-y-auto`); the Contributing lines grid's OWN bounded scroller
+ * (`data-grid-scroller`, `max-h-(--grid-max-h) overflow-y-auto` by default) would be a
+ * SECOND, nested one - two independently-scrollable regions stacked, proved live in the
+ * evidence run by moving `DialogBody`'s own `scrollTop` and watching the grid's rows not
+ * move with it.
+ *
+ * `scrollerMaxHeight={false}` (890ac2622) is meant to opt the grid out of that default. This
+ * pins that the prop actually REACHES the rendered scroller element rather than being dropped
+ * somewhere in `PanelDataGrid`'s pass-through - the class that would reintroduce the bound
+ * (`max-h-`) must be absent.
+ */
+describe('BoardCellBreakdownDialog: the Contributing lines grid does not double-scroll inside DialogBody (B2)', () => {
+  it('scrollerMaxHeight={false} reaches the grid scroller: no max-h- class on it', () => {
+    renderDialog([demand({ qty: '71' })], { 'BRW-BB': '71' });
+    openLines();
+
+    const scroller = document.querySelector('[data-slot="data-grid-scroller"]');
+    expect(scroller).not.toBeNull();
+    expect(scroller!.className).not.toMatch(/\bmax-h-/);
+  });
+});
+
 describe('sourceAt names the DONOR for every borrow that has one', () => {
   it('names the donor order and line for a ladder v7.1 step-2 borrow', () => {
     // The gate used to be `rung === 'group_borrow'` - ladder v2's only borrow rung - so an

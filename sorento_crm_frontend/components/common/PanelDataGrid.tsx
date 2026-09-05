@@ -63,6 +63,8 @@ export function PanelDataGrid<TRow extends object>({
   expanded,
   onExpandedChange,
   pageSize = 10,
+  paginate = true,
+  scrollerMaxHeight,
 }: {
   /**
    * A plain heading, or a heading with an embedded link (e.g. the record's own number).
@@ -139,6 +141,22 @@ export function PanelDataGrid<TRow extends object>({
   expanded?: ExpandedState;
   onExpandedChange?: OnChangeFn<ExpandedState>;
   pageSize?: number;
+  /**
+   * SF-8 (M5 run 3 review): `false` renders every row and hides the pager - the
+   * ruling for a line table ON A DOCUMENT (an order's own lines, a GRN's own
+   * picking lines), where a page-2 hides rows the reader expects to see in one
+   * scroll. Default `true` (the 10-row page every other panel keeps) is
+   * unaffected - this is opt-in per caller, not a change to the shared default.
+   */
+  paginate?: boolean;
+  /**
+   * Pass `false` when the caller already renders this inside a `DialogBody` or
+   * `SheetBody` that owns its own `overflow-y-auto` viewport (B2, M5 review run 1) -
+   * without it the grid's own M5-05 bounded scroller nests a second scrollport
+   * inside the first. Omit it for a plain detail-page tab panel, which wants the
+   * default bounded, sticky-header scroller like every other list.
+   */
+  scrollerMaxHeight?: string | false;
 }) {
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
@@ -156,7 +174,7 @@ export function PanelDataGrid<TRow extends object>({
   const table = useReactTable({
     columns: columns as ColumnDef<TRow, unknown>[],
     data: filtered,
-    pageCount: Math.ceil(filtered.length / pagination.pageSize) || 0,
+    pageCount: paginate ? Math.ceil(filtered.length / pagination.pageSize) || 0 : 1,
     getRowId,
     state: {
       pagination,
@@ -178,7 +196,14 @@ export function PanelDataGrid<TRow extends object>({
       ? {}
       : { onExpandedChange, getExpandedRowModel: getExpandedRowModel() }),
     getCoreRowModel: getCoreRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
+    // `paginate={false}` renders EVERY row by leaving the pagination row model
+    // off entirely: without it TanStack's `getRowModel()` is the pre-pagination
+    // model, so nothing is sliced and the page size is never read. This used to
+    // be an oversized `pageSize` instead, and that is exactly what made the
+    // shared loading skeleton - which draws `pageSize` rows - throw
+    // `RangeError: Invalid array length` on every mount that still had
+    // preferences resolving.
+    ...(paginate ? { getPaginationRowModel: getPaginationRowModel() } : {}),
     columnResizeMode: 'onChange',
   });
 
@@ -188,7 +213,15 @@ export function PanelDataGrid<TRow extends object>({
       recordCount={filtered.length}
       isLoading={isLoading}
       listingKey={listingKey}
-      tableLayout={{ width: 'fixed', columnsResizable: true }}
+      tableLayout={{
+        width: 'fixed',
+        columnsResizable: true,
+        // Most callers are a plain detail-page tab and want M5-05's own bounded,
+        // sticky-header scroller. A caller embedded in a `DialogBody`/`SheetBody`
+        // that already owns the scroll viewport passes `false` here instead, or
+        // that ancestor's own `overflow-y-auto` would double-bound it.
+        scrollerMaxHeight,
+      }}
       onRowClick={onRowClick}
       renderGroupHeader={renderGroupHeader as never}
     >
@@ -251,7 +284,7 @@ export function PanelDataGrid<TRow extends object>({
           )}
         </CardTable>
 
-        {filtered.length > 0 && (
+        {paginate && filtered.length > 0 && (
           <CardFooter>
             <DataGridPagination />
           </CardFooter>

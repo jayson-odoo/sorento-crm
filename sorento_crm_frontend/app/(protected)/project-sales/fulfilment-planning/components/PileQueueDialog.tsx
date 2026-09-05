@@ -15,7 +15,7 @@ import {
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { usePileQueue } from '../../_shared/hooks/useFulfilmentPlanning';
 import { aheadFactorLabel } from '../../_shared/lib/fulfilmentBoard';
 import type { PileQueueLine } from '../../_shared/types/fulfilmentPlanning.types';
@@ -299,6 +299,8 @@ export function PileQueueDialog({
                 // where the running total passes what the pile holds, which is the one row the
                 // reader came for.
                 pageSize={500}
+                // The DialogBody above already owns the scroll viewport (overflow-y-auto).
+                scrollerMaxHeight={false}
               />
               {/* Said once, at the bottom, because it is a fact about the QUEUE rather than
                   about any row: a line a confirmed decision covers is not in it. */}

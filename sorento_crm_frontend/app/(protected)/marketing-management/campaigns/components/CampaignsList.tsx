@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
@@ -31,6 +31,7 @@ import { CAMPAIGN_STATUSES, campaignStatusLabel } from '../types/campaign.types'
 import { formatDate } from '@/lib/helpers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 
@@ -57,18 +58,9 @@ export default function CampaignsList() {
     setStatusFilter(state.filters.status ?? 'all');
   });
 
-  // Skip the first run. A filter CHANGE should send the reader back to page 1,
-  // but on mount this effect fires anyway and stamps pageIndex 0 over the page
-  // `useListStateFromUrl` just restored, so Back from page 3 landed on page 1
-  // and the whole round trip was silently undone.
-  const filtersMounted = useRef(false);
-  useEffect(() => {
-    if (!filtersMounted.current) {
-      filtersMounted.current = true;
-      return;
-    }
-    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-  }, [statusFilter, searchQuery]);
+  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
+  useResetPageOnFilterChange(setPagination, [statusFilter, searchQuery]);
 
   const { data, isLoading, isPlaceholderData, refetch, isFetching } = useCampaigns({
     pageIndex: pagination.pageIndex,

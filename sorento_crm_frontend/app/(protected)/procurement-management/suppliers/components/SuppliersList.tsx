@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
@@ -44,6 +44,7 @@ import type { ListQueryFilterGroup } from '@/lib/list-query/listQueryService';
 import { buildDetailSearch, decodeAdvancedFilter, encodeAdvancedFilter } from '@/lib/listNavQuery';
 import { SupplierRowActions } from '../actions';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 
 // Whitelist of bulk-editable fields for suppliers (the safety boundary - mirrors
 // the backend registry in app/services/bulk_update_registry.py). Only these
@@ -89,9 +90,9 @@ export default function SuppliersList() {
   });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
-  useEffect(() => {
-    setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [advancedFilter, searchQuery]);
+  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
+  useResetPageOnFilterChange(setPagination, [advancedFilter, searchQuery]);
 
   const { data, isLoading, isPlaceholderData, isFetching, isError, error } = useSuppliers({
     pageIndex: pagination.pageIndex,

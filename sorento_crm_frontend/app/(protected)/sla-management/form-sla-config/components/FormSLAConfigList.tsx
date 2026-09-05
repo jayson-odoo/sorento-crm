@@ -2,18 +2,12 @@
 
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
+import type { ColumnDef } from '@tanstack/react-table';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,6 +19,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Skeleton } from '@/components/ui/skeleton';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { toast } from '@/lib/toast';
 import {
   listFormSLAConfigs,
@@ -87,6 +82,136 @@ export default function FormSLAConfigList() {
     return map;
   }, [data]);
 
+  const columns = useMemo<ColumnDef<FormSLAConfig>[]>(
+    () => [
+      {
+        accessorKey: 'stage_code',
+        header: ({ column }) => <DataGridColumnHeader title="Stage" column={column} />,
+        cell: ({ row }) => <span className="font-medium">{row.original.stage_code}</span>,
+        size: 130,
+        meta: { headerTitle: 'Stage' },
+      },
+      {
+        id: 'policy',
+        // A policy row with neither a name nor a code says so. The first eight
+        // characters of its UUID told the reader nothing they could act on,
+        // and no UUID renders in the UI.
+        accessorFn: (row) => row.policy_name || row.policy_code || '',
+        header: ({ column }) => <DataGridColumnHeader title="Policy" column={column} />,
+        cell: ({ row }) =>
+          row.original.policy_name || row.original.policy_code || (
+            <span className="text-muted-foreground">(unnamed policy)</span>
+          ),
+        size: 170,
+        meta: { headerTitle: 'Policy' },
+      },
+      {
+        accessorKey: 'agent_code',
+        header: ({ column }) => <DataGridColumnHeader title="Agent" column={column} />,
+        size: 130,
+        meta: { headerTitle: 'Agent' },
+      },
+      {
+        id: 'team_set_code',
+        accessorFn: (row) => row.team_set_code || '',
+        header: ({ column }) => <DataGridColumnHeader title="Team set" column={column} />,
+        cell: ({ row }) => row.original.team_set_code || '-',
+        size: 130,
+        meta: { headerTitle: 'Team set' },
+      },
+      {
+        accessorKey: 'start_event',
+        header: ({ column }) => <DataGridColumnHeader title="Start" column={column} />,
+        cell: ({ row }) => (
+          <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
+            {row.original.start_event}
+          </code>
+        ),
+        size: 150,
+        meta: { headerTitle: 'Start' },
+      },
+      {
+        id: 'respond_event',
+        accessorFn: (row) => row.respond_event || '',
+        header: ({ column }) => <DataGridColumnHeader title="Respond" column={column} />,
+        cell: ({ row }) => <EventChips value={row.original.respond_event} />,
+        size: 170,
+        meta: { headerTitle: 'Respond' },
+      },
+      {
+        id: 'resolve_event',
+        accessorFn: (row) => row.resolve_event || '',
+        header: ({ column }) => <DataGridColumnHeader title="Resolve" column={column} />,
+        cell: ({ row }) => <EventChips value={row.original.resolve_event} />,
+        size: 170,
+        meta: { headerTitle: 'Resolve' },
+      },
+      {
+        id: 'next_stage_code',
+        accessorFn: (row) => row.next_stage_code || '',
+        header: ({ column }) => <DataGridColumnHeader title="Next stage" column={column} />,
+        cell: ({ row }) =>
+          row.original.next_stage_code ? (
+            <Badge variant="outline">{row.original.next_stage_code}</Badge>
+          ) : (
+            '-'
+          ),
+        size: 130,
+        meta: { headerTitle: 'Next stage' },
+      },
+      {
+        accessorKey: 'is_active',
+        header: ({ column }) => <DataGridColumnHeader title="Active" column={column} />,
+        cell: ({ row }) =>
+          row.original.is_active ? (
+            <Badge variant="outline" className="border-emerald-300 text-emerald-700">
+              Active
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="border-slate-300 text-slate-500">
+              Inactive
+            </Badge>
+          ),
+        size: 100,
+        meta: { headerTitle: 'Active' },
+      },
+      {
+        id: 'actions',
+        header: () => <span className="sr-only">Actions</span>,
+        cell: ({ row }) => (
+          <div className="flex justify-end gap-1">
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label="Edit"
+              onClick={(e) => {
+                e.stopPropagation();
+                setEditing(row.original);
+              }}
+            >
+              <Pencil className="size-4" />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label="Delete"
+              onClick={(e) => {
+                e.stopPropagation();
+                setDeleteTarget(row.original);
+              }}
+            >
+              <Trash2 className="size-4 text-destructive" />
+            </Button>
+          </div>
+        ),
+        size: 90,
+        enableResizing: false,
+        meta: { headerTitle: 'Actions' },
+      },
+    ],
+    [],
+  );
+
   if (isLoading) {
     return <Skeleton className="h-48 w-full" />;
   }
@@ -125,96 +250,15 @@ export default function FormSLAConfigList() {
         </Card>
       ) : (
         Array.from(grouped.entries()).map(([type, rows]) => (
-          <Card key={type}>
-            <CardContent className="space-y-2 pt-6">
-              <div className="text-base font-semibold">
-                {FORM_SLA_TYPE_LABELS[type] ?? type}
-              </div>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Stage</TableHead>
-                    <TableHead>Policy</TableHead>
-                    <TableHead>Agent</TableHead>
-                    <TableHead>Team set</TableHead>
-                    <TableHead>Start</TableHead>
-                    <TableHead>Respond</TableHead>
-                    <TableHead>Resolve</TableHead>
-                    <TableHead>Next stage</TableHead>
-                    <TableHead>Active</TableHead>
-                    <TableHead className="w-24 text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.map((c) => (
-                    <TableRow key={c.id}>
-                      <TableCell className="font-medium">{c.stage_code}</TableCell>
-                      {/* A policy row with neither a name nor a code says so.
-                          The first eight characters of its UUID told the reader
-                          nothing they could act on, and no UUID renders in the
-                          UI. */}
-                      <TableCell>
-                        {c.policy_name || c.policy_code || (
-                          <span className="text-muted-foreground">
-                            (unnamed policy)
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell>{c.agent_code}</TableCell>
-                      <TableCell>{c.team_set_code || '-'}</TableCell>
-                      <TableCell>
-                        <code className="rounded bg-muted px-1.5 py-0.5 text-xs">
-                          {c.start_event}
-                        </code>
-                      </TableCell>
-                      <TableCell>
-                        <EventChips value={c.respond_event} />
-                      </TableCell>
-                      <TableCell>
-                        <EventChips value={c.resolve_event} />
-                      </TableCell>
-                      <TableCell>
-                        {c.next_stage_code ? (
-                          <Badge variant="outline">{c.next_stage_code}</Badge>
-                        ) : (
-                          '-'
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {c.is_active ? (
-                          <Badge variant="outline" className="border-emerald-300 text-emerald-700">
-                            Active
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="border-slate-300 text-slate-500">
-                            Inactive
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          aria-label="Edit"
-                          onClick={() => setEditing(c)}
-                        >
-                          <Pencil className="size-4" />
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          aria-label="Delete"
-                          onClick={() => setDeleteTarget(c)}
-                        >
-                          <Trash2 className="size-4 text-destructive" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
+          <PanelDataGrid<FormSLAConfig>
+            key={type}
+            title={FORM_SLA_TYPE_LABELS[type] ?? type}
+            columns={columns}
+            rows={rows}
+            getRowId={(row) => row.id}
+            listingKey={`sla_management.form_sla_config.view::${type}`}
+            emptyTitle="No stages"
+          />
         ))
       )}
 

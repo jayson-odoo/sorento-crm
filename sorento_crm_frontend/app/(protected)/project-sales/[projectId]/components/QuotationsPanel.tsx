@@ -7,7 +7,7 @@ import { AlertTriangle, Plus, TriangleAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { quotationStanding } from '../../_shared/lib/quotationDecision';
 import { useQuotations } from '../../_shared/hooks/useProjects';

@@ -264,8 +264,11 @@ export default function ConversationListPane({
               disabled={isFetchingNextPage}
               onClick={loadMore}
             >
-              {isFetchingNextPage && <Loader2 className="size-3.5 animate-spin" />}
-              {isFetchingNextPage ? 'Loading' : 'Load more'}
+              {isFetchingNextPage ? (
+                <Loader2 className="size-3.5 animate-spin" aria-label="Loading" />
+              ) : (
+                'Load more'
+              )}
             </Button>
           </div>
         )}

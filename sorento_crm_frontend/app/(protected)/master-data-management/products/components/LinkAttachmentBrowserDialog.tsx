@@ -24,6 +24,7 @@ import type { Attachment } from '@/app/(protected)/resource-management/attachmen
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 
 function collectAllFolderIds(nodes: AttachmentDirectoryTreeNode[]): Set<string> {
   const ids = new Set<string>();
@@ -382,10 +383,7 @@ export default function LinkAttachmentBrowserDialog({
               <ScrollArea className="flex-1 min-h-0">
               <div className="p-2">
                 {isLoadingAttachments ? (
-                  <div className="flex items-center justify-center py-8 text-muted-foreground text-sm">
-                    <LoaderCircleIcon className="size-5 animate-spin mr-2" />
-                    Loading…
-                  </div>
+                  <SectionSkeleton rows={4} className="py-2" />
                 ) : availableAttachments.length === 0 ? (
                   <div className="py-8 text-center text-sm text-muted-foreground">
                     {attachments.length === 0

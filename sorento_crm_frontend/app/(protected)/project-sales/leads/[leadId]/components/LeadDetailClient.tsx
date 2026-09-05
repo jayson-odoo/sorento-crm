@@ -31,7 +31,7 @@ import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import DetailActions from '@/components/common/DetailActions';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
-import { PanelDataGrid } from '../../../_shared/components/PanelDataGrid';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { ProjectStatusPill } from '../../../[projectId]/components/ProjectStatusPill';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useStatusGraph } from '@/app/(protected)/system-management/status-graphs/hooks/useStatusGraphs';

@@ -26,6 +26,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { cn } from '@/lib/utils';
 
 import {
@@ -127,15 +128,13 @@ export function EntityDownloadsButton({
           </DialogHeader>
           <DialogBody className="p-0">
             <ScrollArea className="max-h-[60vh] min-h-[120px]">
-              {rows.length === 0 ? (
+              {query.isLoading ? (
+                <SectionSkeleton rows={3} className="p-4" />
+              ) : rows.length === 0 ? (
                 <div className="flex flex-col items-center justify-center gap-2 px-4 py-12 text-center">
                   <Printer className="size-7 text-muted-foreground/50" />
                   <p className="text-sm font-medium">No downloads yet</p>
-                  <p className="text-xs text-muted-foreground">
-                    {query.isLoading
-                      ? 'Loading…'
-                      : 'Generate a file and it will appear here.'}
-                  </p>
+                  <p className="text-xs text-muted-foreground">Generate a file and it will appear here.</p>
                 </div>
               ) : (
                 <div>

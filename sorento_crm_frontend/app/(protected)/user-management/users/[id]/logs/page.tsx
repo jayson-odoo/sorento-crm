@@ -1,11 +1,15 @@
 'use client';
 
-import { ContentLoader } from '@/components/common/content-loader';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { useUser } from '../components/user-context';
 import LogList from './components/log-list';
 
 export default function Page() {
   const { isLoading } = useUser();
 
-  return isLoading ? <ContentLoader className="mt-[10%]" /> : <LogList />;
+  return isLoading ? (
+    <SectionSkeleton rows={3} className="mx-auto max-w-md mt-[10%]" />
+  ) : (
+    <LogList />
+  );
 }

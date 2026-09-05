@@ -23,6 +23,7 @@ import { Input } from '@/components/ui/input';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { SearchableTextarea } from '@/components/common/find-in-text/SearchableTextarea';
 import {
   usePromptKeys,
@@ -137,9 +138,7 @@ export function PromptDetail({ name }: { name: string }) {
   if (versionsQuery.isLoading) {
     return (
       <Container>
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" /> Loading…
-        </div>
+        <SectionSkeleton rows={6} className="py-6" />
       </Container>
     );
   }
@@ -392,9 +391,7 @@ export function PromptDetail({ name }: { name: string }) {
                       bLabel={dirty ? 'current draft' : `v${baseVersion}`}
                     />
                   ) : (
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Loader2 className="size-3 animate-spin" /> Loading…
-                    </div>
+                    <SectionSkeleton rows={2} className="text-xs" />
                   )}
                 </div>
               ) : null}

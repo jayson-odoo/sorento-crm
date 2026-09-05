@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useEffect, useRef } from 'react';
+import { useMemo, useState } from 'react';
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -57,6 +57,7 @@ import { getUserStatusProps, UserStatusProps } from '../constants/status';
 import UserInviteDialog from './user-add-dialog';
 import { toast } from '@/lib/toast';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import type { Table as ReactTable } from '@tanstack/react-table';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
@@ -357,14 +358,9 @@ const UserList = () => {
     setSelectedTrashed(state.filters.trashed ?? 'exclude');
   });
 
-  const searchMounted = useRef(false);
-  useEffect(() => {
-    if (!searchMounted.current) {
-      searchMounted.current = true;
-      return;
-    }
-    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-  }, [searchQuery]);
+  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
+  useResetPageOnFilterChange(setPagination, [searchQuery]);
 
   /**
    * The daily-summary switch. Optimistic (S7-01): it moves on press and goes

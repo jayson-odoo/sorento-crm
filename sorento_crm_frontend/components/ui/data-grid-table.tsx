@@ -18,21 +18,69 @@ import { usePrefetchOnce } from '@/hooks/usePrefetchOnce';
 import { cn } from '@/lib/utils';
 
 /**
- * Appends the list state the grid is showing to a row's detail href.
+ * The id a row is named by for Back-to-list restore (M5-07, `from=`).
  *
- * The detail page's pager walks the page the user came FROM, so the URL has to
- * name that page. Param names come from `buildDetailSearch` (the same builder
- * the list GET uses), and anything the caller put in its own query string wins -
- * that is where a filter the list keeps outside TanStack rides along.
+ * ONE function for both directions - `appendListState` writes it into the
+ * detail href, `DataGridTable` reads it back on mount to find the row again -
+ * so read and write cannot silently name different things. Resolution order:
+ *
+ *   1. `row.id`, when the table itself resolves row identity (`getRowId` is
+ *      set) - the caller's own stable key, so it wins over anything else.
+ *   2. `row.original.id`, the record's own id field.
+ *   3. the last path segment of the row's own href - what every `rowHref` in
+ *      this app already embeds (`/module/entity/${id}`), for the rare row
+ *      whose shape carries neither. Caveat (S6, M5 review run 1): this
+ *      assumes the id is the LAST segment - a `rowHref` that ends in a
+ *      static word instead (`/module/${id}/edit`) would tag every row with
+ *      that same word, so this fallback only holds for the id-last shape
+ *      every current `rowHref` in the app uses.
+ *
+ * Returns `undefined` when none of the three resolves anything, which makes
+ * both callers no-ops rather than tagging a row with an empty string.
  */
-function appendListState<TData>(href: string, table: Table<TData>): string {
-  // A fragment has to survive, and it sits AFTER the query string - splitting on
-  // '?' alone turns `/orders/a1#lines` into a param named `a1#lines`.
+function rowRestoreId<TData>(
+  table: Table<TData>,
+  row: Row<TData>,
+  href?: string,
+): string | undefined {
+  if (typeof table.options.getRowId === 'function') return row.id;
+  const original = row.original as { id?: unknown };
+  if (typeof original?.id === 'string' && original.id) return original.id;
+  if (typeof original?.id === 'number') return String(original.id);
+  if (!href) return undefined;
+  const path = href.split('?')[0].split('#')[0];
+  const segments = path.split('/').filter(Boolean);
+  return segments.length ? segments[segments.length - 1] : undefined;
+}
+
+/**
+ * Splits a href into its path, query string (no leading `?`) and fragment
+ * (leading `#` kept, or `''`).
+ *
+ * A fragment has to survive, and it sits AFTER the query string - splitting on
+ * '?' alone turns `/orders/a1#lines` into a param named `a1#lines`. Shared by
+ * `appendListState` and `LinkableBodyRow`'s history rewrite (M5-07) so both
+ * parse a detail href the same way.
+ */
+function splitHref(href: string): { path: string; search: string; hash: string } {
   const hashAt = href.indexOf('#');
   const hash = hashAt === -1 ? '' : href.slice(hashAt);
-  const [path, ownSearch] = (hashAt === -1 ? href : href.slice(0, hashAt)).split('?');
+  const [path, search = ''] = (hashAt === -1 ? href : href.slice(0, hashAt)).split('?');
+  return { path, search, hash };
+}
+
+/**
+ * The only params `LinkableBodyRow`'s history rewrite (M5-07/BL-2) is allowed
+ * to touch on the LIST's own URL. Everything else already there (a filter the
+ * list reads off its own URL but never echoes into `rowHref` - e.g. GRNList's
+ * `spo_allocation_id`) survives untouched. `from` is the M5-07 restore id.
+ */
+const RESERVED_LIST_STATE_KEYS = ['page', 'limit', 'sort', 'dir', 'query', 'advFilter', 'from'];
+
+/** The list's own page/sort/query state, in the param shape `appendListState` writes into a detail href. */
+function listStateParams<TData>(table: Table<TData>): URLSearchParams {
   const state = table.getState();
-  const params = new URLSearchParams(
+  return new URLSearchParams(
     buildDetailSearch({
       pageIndex: state.pagination?.pageIndex ?? 0,
       pageSize: state.pagination?.pageSize ?? 50,
@@ -40,9 +88,27 @@ function appendListState<TData>(href: string, table: Table<TData>): string {
       searchQuery: typeof state.globalFilter === 'string' ? state.globalFilter : '',
     }),
   );
+}
+
+/**
+ * Appends the list state the grid is showing to a row's detail href.
+ *
+ * The detail page's pager walks the page the user came FROM, so the URL has to
+ * name that page. Param names come from `buildDetailSearch` (the same builder
+ * the list GET uses), and anything the caller put in its own query string wins -
+ * that is where a filter the list keeps outside TanStack rides along.
+ *
+ * Also appends `from=<row id>` (M5-07, `rowRestoreId`) so the list can scroll
+ * this exact row back into view and highlight it when the reader returns.
+ */
+function appendListState<TData>(href: string, table: Table<TData>, row: Row<TData>): string {
+  const { path, search: ownSearch, hash } = splitHref(href);
+  const params = listStateParams(table);
   if (ownSearch) {
     for (const [key, value] of new URLSearchParams(ownSearch)) params.set(key, value);
   }
+  const restoreId = rowRestoreId(table, row, href);
+  if (restoreId) params.set('from', restoreId);
   return `${path}?${params.toString()}${hash}`;
 }
 
@@ -360,8 +426,10 @@ function DataGridTableBody({ children }: { children: ReactNode }) {
  * (plain, column-drag, row-drag, and the drive's own list body) and every grid
  * built on them behave the same.
  *
- * The `pageSize` clause is what makes those render paths safe to write
- * `Array.from({ length: pagination.pageSize })` without re-testing it.
+ * The `pageSize` clause only ever ruled out `0`/`undefined`; it does NOT make
+ * `Array.from({ length: pagination.pageSize })` safe on its own, and a caller
+ * that handed the table an oversized page size proved it - see
+ * `skeletonRowCount`, which every body render path uses instead.
  */
 function useBodySkeleton(): boolean {
   const { table, isLoading, isColumnPreferencesLoading, props } = useDataGrid();
@@ -373,6 +441,35 @@ function useBodySkeleton(): boolean {
       table.getState().pagination?.pageSize &&
       (!hasRows || isColumnPreferencesLoading),
   );
+}
+
+/**
+ * The most skeleton rows any grid draws, whatever its page size is.
+ *
+ * It is the LARGEST page size the DataGrid offers (`DEFAULT_PAGE_SIZES` in
+ * `data-grid-pagination.tsx`, currently `[25, 50, 100]`), not the smallest -
+ * most lists open at 50, and a cap below the real page size draws a short
+ * skeleton that grows the moment the page lands, the layout jump M4 removed.
+ * A hundred grey bars still reads as "rows are coming"; only an unbounded
+ * page size (`paginate={false}`) gets clamped down to it. Not imported from
+ * `data-grid-pagination.tsx` directly - that file already imports
+ * `useBodySkeleton` from here, and importing back would cycle.
+ */
+export const SKELETON_ROWS_MAX = 100;
+
+/**
+ * How many skeleton rows to draw for a given page size.
+ *
+ * `Array.from({ length: n })` throws `RangeError: Invalid array length` for
+ * anything that is not a valid array length, and a grid that renders every row
+ * has no meaningful page size to draw a placeholder for. A skeleton is a
+ * placeholder for what is arriving, not a faithful copy of it, so the count is
+ * capped here - in ONE place, read by all four body render paths (plain,
+ * column-drag, row-drag, and the drive's own list body).
+ */
+export function skeletonRowCount(pageSize: number | undefined): number {
+  if (!pageSize || !Number.isFinite(pageSize) || pageSize < 1) return SKELETON_ROWS_MAX;
+  return Math.min(Math.floor(pageSize), SKELETON_ROWS_MAX);
 }
 
 function DataGridTableBodyRowSkeleton({ children }: { children: ReactNode }) {
@@ -524,9 +621,60 @@ function LinkableBodyRow({
   const openRecord = (newTab = false) => {
     if (newTab) {
       // `router.push` applies the deploy base path itself; `window.open` does not,
-      // so a sub-path deploy would open a 404 in the new tab.
+      // so a sub-path deploy would open a 404 in the new tab. A new tab leaves
+      // this tab's own history alone, so nothing below runs for it either.
       window.open(toAbsoluteUrl(href), '_blank', 'noopener,noreferrer');
     } else {
+      // M5-07 browser-Back gap (evidence run 1): `appendListState` only ever
+      // wrote page/sort/query/`from` into the DETAIL href. The in-app Back
+      // button (`useHrefWithListState`, `BackToList.tsx`) reads that href back
+      // and works; the browser's OWN Back button does not replay a `push` -
+      // it returns to whatever URL sits in the LIST's own history entry, which
+      // without this stayed the bare URL from first mount (no page, no `from`),
+      // so Back silently reset to page 1 with the row never highlighted.
+      //
+      // BL-2 (M5 run 3 review): a naive rewrite that just REPLACED the list's
+      // own URL search with `href`'s search (the DETAIL page's query) had two
+      // bugs. (a) it wiped any param the list reads off its own URL but never
+      // echoes into `rowHref` - GRNList's `spo_allocation_id`, for one - so
+      // Back landed on the unfiltered list. (b) it fired even when this grid
+      // is not this route's own list at all (a `PanelDataGrid` embedded on a
+      // detail page's own tab, e.g. `SeenInProductsTab` inside
+      // `SpecKeyRecordDetail`), clobbering THAT page's own pager state with
+      // the tab grid's page/limit.
+      //
+      // Two rules fix both, in one place:
+      //   (a) start from the list's CURRENT URL params, not an empty object,
+      //       and `.set()` only the reserved list-state keys
+      //       (`RESERVED_LIST_STATE_KEYS`, read off the already-built detail
+      //       href, which is where `appendListState` put them) plus `from` -
+      //       every other existing param survives.
+      //   (b) only rewrite when the detail href is a CHILD route of the
+      //       current page (`<pathname>/<id>`); anywhere else, this is not
+      //       "this page's list" and its row click must not touch this
+      //       page's history entry at all.
+      //
+      // `history.replaceState` (not `router.replace`, which would re-render
+      // and can refetch a list that is about to be left anyway) rewrites the
+      // entry in place, BEFORE the push. `history.state` is passed through
+      // unchanged so Next's own router state on this entry survives.
+      const { path: detailPath, search: detailSearch } = splitHref(href);
+      const isListsOwnRoute = detailPath.startsWith(`${window.location.pathname}/`);
+      if (isListsOwnRoute) {
+        const detailParams = new URLSearchParams(detailSearch);
+        const nextParams = new URLSearchParams(window.location.search);
+        for (const key of RESERVED_LIST_STATE_KEYS) {
+          const value = detailParams.get(key);
+          if (value !== null) nextParams.set(key, value);
+          else nextParams.delete(key);
+        }
+        const nextSearch = nextParams.toString();
+        window.history.replaceState(
+          window.history.state,
+          '',
+          `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ''}`,
+        );
+      }
       router.push(href);
     }
   };
@@ -558,9 +706,78 @@ function LinkableBodyRow({
   );
 }
 
+function subscribeToNothing() {
+  // No ongoing subscription: nothing in this feature listens for a LATER
+  // `from=` change, so there is nothing to re-subscribe to. `getSnapshot`
+  // (`currentLocationSearch` below) still re-reads `window.location.search`
+  // on every render the way any `useSyncExternalStore` snapshot does -
+  // "once" describes the URL param this feature acts on, not the read.
+  return () => {};
+}
+function currentLocationSearch(): string {
+  return window.location.search;
+}
+function emptyLocationSearch(): string {
+  return '';
+}
+
+/**
+ * The `from=` row id (M5-07), read once after hydration and cleared on the
+ * reader's first pointer OR key interaction with the page - "until the next
+ * pointer or key event", not for the life of the URL.
+ *
+ * Reads `window.location.search` through `useSyncExternalStore` rather than
+ * `next/navigation`'s `useSearchParams()`. That hook needs a router context
+ * every one of the grid's ~190 call sites (and their tests) would then have
+ * to provide for a feature most never exercise, and a test that mocks
+ * `next/navigation` for `usePathname`/`useRouter` without also stubbing it
+ * throws on the call itself (vitest's mock proxy flags the missing export) -
+ * real failures this file's own suite found
+ * (`components/common/onboarding/PeopleGrid.test.tsx`,
+ * `app/(protected)/project-sales/parties/components/PartiesClient.test.tsx`).
+ * `useSyncExternalStore`'s `getServerSnapshot` (`emptyLocationSearch`) is the
+ * React-native tool for exactly this shape: SSR, and the client's FIRST
+ * (hydrating) render, both see `''` - no `from`, no mismatch - and React
+ * re-renders with the REAL value (`getSnapshot`, which re-reads
+ * `window.location.search` on every render, same as any other snapshot)
+ * immediately after commit, entirely without a router dependency.
+ *
+ * Called ONCE per rendered grid (`DataGridTable`/`DataGridTableDnd`/
+ * `DataGridTableDndRows` - whichever path a given grid renders through), not
+ * per row (S5/S7, M5 review run 1): every row reads the same value off the
+ * same query string and clears on the same document-wide event, so N rows
+ * used to mean N listeners and N independent `cleared` states - a row that
+ * mounted AFTER the first pointer or key event (a paginated list still
+ * carries `from=` in the URL, so a later page's rows mount with the param
+ * still set) had its own `cleared` still `false` and re-ran `scrollIntoView`
+ * on mount. The caller now resolves this once and passes `returnedFromId`
+ * down as a prop.
+ */
+function useReturnedRowId(): string | null {
+  const search = React.useSyncExternalStore(
+    subscribeToNothing,
+    currentLocationSearch,
+    emptyLocationSearch,
+  );
+  const fromParam = new URLSearchParams(search).get('from');
+  const [cleared, setCleared] = React.useState(false);
+  React.useEffect(() => {
+    if (!fromParam || cleared) return;
+    const clear = () => setCleared(true);
+    document.addEventListener('pointerdown', clear, { once: true });
+    document.addEventListener('keydown', clear, { once: true });
+    return () => {
+      document.removeEventListener('pointerdown', clear);
+      document.removeEventListener('keydown', clear);
+    };
+  }, [fromParam, cleared]);
+  return cleared ? null : fromParam;
+}
+
 function DataGridTableBodyRow<TData>({
   children,
   row,
+  returnedFromId = null,
   dndRef,
   dndStyle,
   dndAttributes,
@@ -568,6 +785,13 @@ function DataGridTableBodyRow<TData>({
 }: {
   children: ReactNode;
   row: Row<TData>;
+  /**
+   * The row id the reader's Back should restore to (M5-07), resolved ONCE by the
+   * caller and passed down - see `useReturnedRowId`'s own doc for why (S5/S7, M5
+   * review run 1). Defaults to `null` for the drag-overlay's floating row clone
+   * (`data-grid-table-dnd-rows.tsx`), which is never the settled row to restore.
+   */
+  returnedFromId?: string | null;
   dndRef?: React.Ref<HTMLTableRowElement>;
   dndStyle?: CSSProperties;
   dndAttributes?: Record<string, unknown>;
@@ -577,7 +801,14 @@ function DataGridTableBodyRow<TData>({
 
   // The whole row opens the record, from anywhere on it, by mouse or by keyboard.
   // 78 of 193 lists did this and 26 had a detail route with no way to reach it.
-  const href = props.rowHref ? appendListState(props.rowHref(row.original), table) : undefined;
+  //
+  // Read ONCE (S6, M5 review run 1): `appendListState` and `rowRestoreId` below
+  // both want the raw href, and calling `props.rowHref(row.original)` a second
+  // time for the same row was wasted work at best - and a caller-supplied
+  // `rowHref` is not guaranteed pure (it can read from a ref, a Date, etc.), so a
+  // second call is not even guaranteed to return the same thing.
+  const rawHref = props.rowHref?.(row.original);
+  const href = rawHref ? appendListState(rawHref, table, row) : undefined;
 
   // A record on its way out stays visible and says so, rather than vanishing
   // before the reader can cancel (S6-07).
@@ -587,17 +818,37 @@ function DataGridTableBodyRow<TData>({
   const extraClassName = props.rowClassName?.(row.original);
   const extraAttributes = props.rowAttributes?.(row.original) ?? {};
 
+  // M5-07: the row Back should restore, on mount only - `returnedFromId` is
+  // read ONCE from `from=` (by the caller now, not this row - see
+  // `useReturnedRowId`) and cleared on the reader's first pointer OR key
+  // interaction with the page, so it highlights "until the next pointer or key
+  // event" rather than for the life of the URL.
+  const restoreId = href ? rowRestoreId(table, row, rawHref) : undefined;
+  const isReturned = Boolean(restoreId && returnedFromId && restoreId === returnedFromId);
+  const scrollRef = React.useRef<HTMLTableRowElement | null>(null);
+  React.useEffect(() => {
+    if (isReturned) scrollRef.current?.scrollIntoView({ block: 'center' });
+  }, [isReturned]);
+
   const rowProps: React.ComponentProps<'tr'> = {
-    ref: dndRef,
+    ref: (node: HTMLTableRowElement | null) => {
+      // Combines the caller-supplied ref (dnd-kit's, possibly) with our own.
+      if (typeof dndRef === 'function') dndRef(node);
+      else if (dndRef) (dndRef as React.MutableRefObject<HTMLTableRowElement | null>).current = node;
+      scrollRef.current = node;
+    },
     style: { ...(dndStyle ? dndStyle : null) },
     'data-state': table.options.enableRowSelection && row.getIsSelected() ? 'selected' : undefined,
     'data-pending': isPending ? 'true' : undefined,
+    'data-returned': isReturned ? 'true' : undefined,
     ...extraAttributes,
     ...(dndAttributes ?? {}),
     ...(dndListeners ?? {}),
     className: cn(
       'hover:bg-muted/40 data-[state=selected]:bg-muted/50',
       isPending && 'opacity-50',
+      // M5-07: the row Back restores, until the reader's next pointer event.
+      'data-[returned=true]:bg-primary/5',
       extraClassName,
       (href || props.onRowClick) && 'cursor-pointer',
       // The press cue belongs to the rows that take a press. It is not on the
@@ -833,7 +1084,7 @@ function DataGridTableLoader() {
             d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
           ></path>
         </svg>
-        {props.loadingMessage || 'Loading...'}
+        {props.loadingMessage || 'Loading results'}
       </div>
     </div>
   );
@@ -941,6 +1192,20 @@ export function moveColumnKeepingGroups(
  */
 function DataGridScroller({ children }: { children: ReactNode }) {
   const { ref, isFading } = useHorizontalOverflow<HTMLDivElement>();
+  const { props } = useDataGrid();
+
+  // The default keeps `headerSticky` observable: a sticky header needs a
+  // bounded ancestor to stick inside, and this scroller is the ONE scrollport
+  // for both axes (S1-05), so the bound has to live here rather than on a
+  // second wrapper. `false` opts a list out entirely (it already lives inside
+  // a bounded viewport of its own); a string swaps in the caller's class.
+  const scrollerMaxHeight = props.tableLayout?.scrollerMaxHeight;
+  const verticalScrollClasses =
+    scrollerMaxHeight === false
+      ? ''
+      : typeof scrollerMaxHeight === 'string'
+        ? scrollerMaxHeight
+        : 'max-h-(--grid-max-h) overflow-y-auto';
 
   return (
     <div className="relative min-w-0">
@@ -948,7 +1213,7 @@ function DataGridScroller({ children }: { children: ReactNode }) {
         ref={ref}
         data-slot="data-grid-scroller"
         data-fade={isFading}
-        className="min-w-0 overflow-x-auto overscroll-x-contain"
+        className={cn('min-w-0 overflow-x-auto overscroll-x-contain', verticalScrollClasses)}
       >
         {children}
       </div>
@@ -967,6 +1232,11 @@ function DataGridTable<TData>() {
   const { table, props } = useDataGrid();
   const pagination = table.getState().pagination;
   const showBodySkeleton = useBodySkeleton();
+  // ONCE per grid (S5/S7, M5 review run 1), unconditionally - before the branch
+  // below - so it runs exactly once regardless of which render path this grid
+  // takes. See `useReturnedRowId`'s own doc for why this used to be one call PER
+  // ROW instead.
+  const returnedFromId = useReturnedRowId();
   // A phone does NOT pin the identifier column. S1 pinned it under `sm` so the
   // row stayed labelled while the grid scrolled sideways; the user tried it and
   // found a column that refuses to move with the rest weirder than losing sight
@@ -1002,7 +1272,7 @@ function DataGridTable<TData>() {
 
     return (
       <DataGridScroller>
-        <DataGridTableDnd<TData> handleDragEnd={handleDragEnd} />
+        <DataGridTableDnd<TData> handleDragEnd={handleDragEnd} returnedFromId={returnedFromId} />
       </DataGridScroller>
     );
   }
@@ -1042,7 +1312,7 @@ function DataGridTable<TData>() {
 
         <DataGridTableBody>
           {showBodySkeleton ? (
-            Array.from({ length: pagination.pageSize }).map((_, rowIndex) => (
+            Array.from({ length: skeletonRowCount(pagination.pageSize) }).map((_, rowIndex) => (
               <DataGridTableBodyRowSkeleton key={rowIndex}>
                 {/* LEAF columns: the flat list includes a group PARENT, which is not a
                     cell, so every skeleton row came out one td wider than the table. */}
@@ -1084,7 +1354,7 @@ function DataGridTable<TData>() {
                       </td>
                     </tr>
                   )}
-                  <DataGridTableBodyRow row={row} key={index}>
+                  <DataGridTableBodyRow row={row} returnedFromId={returnedFromId} key={index}>
                     {row.getVisibleCells().map((cell: Cell<TData, unknown>, colIndex) => {
                       return (
                         <DataGridTableBodyRowCell cell={cell} key={colIndex}>
@@ -1147,4 +1417,5 @@ export {
   DataGridTableRowSelectAll,
   DataGridTableRowSpacer,
   useBodySkeleton,
+  useReturnedRowId,
 };

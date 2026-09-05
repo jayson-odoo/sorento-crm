@@ -204,7 +204,14 @@ export function LinkedComplaintsPanel({
       isLoading={isLoading}
       isPlaceholderData={isPlaceholderData}
       loadingMode="skeleton"
-      tableLayout={{ width: 'fixed', columnsResizable: true }}
+      tableLayout={{
+        width: 'fixed',
+        columnsResizable: true,
+        // The ScrollArea below is the caller's own vertical viewport
+        // (`maxHeightClassName`, when set) - M5-05's default max-height would
+        // double-bound it otherwise.
+        scrollerMaxHeight: false,
+      }}
     >
       <ScrollArea className={maxHeightClassName}>
         <DataGridTable />

@@ -2,7 +2,7 @@
 
 import { AlertCircle } from 'lucide-react';
 import { useEffect, useRef } from 'react';
-import { ContentLoader } from '@/components/common/content-loader';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { Button } from '@/components/ui/button';
 import { useIdeationEmbedSession } from '@/hooks/useIdeationEmbedSession';
 
@@ -64,7 +64,7 @@ export function IdeationEmbed({ ideaId, title }: IdeationEmbedProps) {
   if (isPending) {
     return (
       <div className="flex min-h-[70vh] flex-col">
-        <ContentLoader />
+        <SectionSkeleton rows={3} className="mx-auto max-w-md mt-[30%]" />
       </div>
     );
   }

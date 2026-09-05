@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { extractApiError } from '@/lib/api-client';
 
 import {
@@ -43,6 +43,7 @@ import { useRespondContactOutboundMutations } from '@/hooks/useRespondContactOut
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { contactsListQueryKey, fetchContactsPage } from '../lib/listQuery';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { contactActions } from '../actions';
 import { ContactImpersonateDialog } from './ContactImpersonateDialog';
@@ -68,16 +69,9 @@ export default function ContactsList() {
     resetSearch(state.searchQuery);
   });
 
-  // A search brings the reader back to page 0 to see the matches; the mounted
-  // guard keeps the URL-restored page from being clobbered on first render.
-  const searchMounted = useRef(false);
-  useEffect(() => {
-    if (!searchMounted.current) {
-      searchMounted.current = true;
-      return;
-    }
-    setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [searchQuery]);
+  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
+  useResetPageOnFilterChange(setPagination, [searchQuery]);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [contactToDelete, setContactToDelete] = useState<RespondContact | null>(null);

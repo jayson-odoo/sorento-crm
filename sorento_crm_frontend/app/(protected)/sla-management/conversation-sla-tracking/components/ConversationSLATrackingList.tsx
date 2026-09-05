@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -36,6 +36,7 @@ import { buildDetailSearch } from '@/lib/listNavQuery';
 import { CONVERSATION_SLA_TRACKING_PATH } from '../lib/historyLinks';
 import { slaHandler } from '../lib/slaHandler';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { useConversationSlaActions } from '../actions';
 import { useRowPending } from '@/hooks/useDeferredRowAction';
@@ -110,9 +111,15 @@ export default function ConversationSLATrackingList() {
     setAssignedToFilter(state.filters.assigned_to ?? '__all__');
   });
 
-  useEffect(() => {
-    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-  }, [searchQuery, assignedToFilter, contactFilter, resolvedParam, resolvedByFilter]);
+  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
+  useResetPageOnFilterChange(setPagination, [
+    searchQuery,
+    assignedToFilter,
+    contactFilter,
+    resolvedParam,
+    resolvedByFilter,
+  ]);
 
   const { data, isLoading, isPlaceholderData, isFetching } = useConversationSLATracking({
     pageIndex: pagination.pageIndex,

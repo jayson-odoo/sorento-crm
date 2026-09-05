@@ -39,6 +39,7 @@ import {
   deleteAllNotifications,
 } from '@/services/notificationService';
 import { toast } from '@/lib/toast';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import NotificationItem from './notifications/NotificationItem';
 
 const UNREAD_POLL_INTERVAL_MS = 10_000; // 10s so bell badge updates soon after job completion
@@ -289,9 +290,7 @@ export function NotificationsSheet({ trigger }: { trigger: ReactNode }) {
                 <TabsContent value="inbox" className="mt-0">
                   <div className="flex flex-col divide-y divide-border">
                     {isLoading ? (
-                      <div className="px-5 py-8 text-sm text-muted-foreground text-center">
-                        Loading…
-                      </div>
+                      <SectionSkeleton rows={4} className="px-5 py-8" />
                     ) : items.length === 0 ? (
                       <div className="px-5 py-8 text-sm text-muted-foreground text-center">
                         No notifications
@@ -317,9 +316,7 @@ export function NotificationsSheet({ trigger }: { trigger: ReactNode }) {
                 <TabsContent value="archived" className="mt-0">
                   <div className="flex flex-col divide-y divide-border">
                     {isLoading ? (
-                      <div className="px-5 py-8 text-sm text-muted-foreground text-center">
-                        Loading…
-                      </div>
+                      <SectionSkeleton rows={4} className="px-5 py-8" />
                     ) : items.length === 0 ? (
                       <div className="px-5 py-8 text-sm text-muted-foreground text-center">
                         No cleared notifications

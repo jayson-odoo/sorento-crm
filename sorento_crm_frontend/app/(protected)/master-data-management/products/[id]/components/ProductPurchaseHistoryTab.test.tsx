@@ -11,12 +11,19 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { ProductPurchaseHistory } from '../../services/productService';
 
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+}));
+
 const useProductPurchaseHistory = vi.fn();
 vi.mock('../../hooks/useProducts', () => ({
   useProductPurchaseHistory: (...args: unknown[]) => useProductPurchaseHistory(...args),
 }));
 const push = vi.fn();
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push }),
+  usePathname: () => '/master-data-management/products/p1',
+}));
 
 import ProductPurchaseHistoryTab from './ProductPurchaseHistoryTab';
 

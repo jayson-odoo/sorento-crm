@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { formatDateInMalaysia } from '@/lib/helpers';
-import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { useSampleMutations, useSamples } from '../../_shared/hooks/useProjects';
 import type { Project, ProjectSample } from '../../_shared/types/project.types';
 import { SampleDialog } from './SampleDialog';

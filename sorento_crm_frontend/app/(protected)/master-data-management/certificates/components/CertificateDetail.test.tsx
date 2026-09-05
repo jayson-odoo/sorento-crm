@@ -491,7 +491,7 @@ describe('CertificateDetail - record navigation', () => {
     fireEvent.click(screen.getByRole('button', { name: /Next certificate/i }));
     // The step names the page the record now sits on, so the walk survives it.
     expect(push).toHaveBeenCalledWith(
-      '/master-data-management/certificates/cert-2?page=1&limit=50',
+      '/master-data-management/certificates/cert-2?page=1&limit=50&from=cert-2',
     );
   });
 

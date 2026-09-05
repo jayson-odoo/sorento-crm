@@ -25,6 +25,7 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { buildDetailSearch } from '@/lib/listNavQuery';
@@ -126,8 +127,16 @@ export default function SPOAllocationsList() {
     warehouseId: warehouseFilter || null,
   });
 
+  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
+  useResetPageOnFilterChange(setPagination, [
+    searchQuery,
+    stateFilter,
+    productFilter,
+    warehouseFilter,
+  ]);
+  // A tick on a row the new filter excludes is not a selection any more.
   useEffect(() => {
-    setPagination((p) => ({ ...p, pageIndex: 0 }));
     setRowSelection({});
   }, [searchQuery, stateFilter, productFilter, warehouseFilter]);
 
