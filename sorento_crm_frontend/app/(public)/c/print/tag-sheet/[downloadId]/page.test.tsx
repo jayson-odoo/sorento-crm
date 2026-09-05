@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import TagSheetPrintPage from './page';
 
 vi.mock('@/lib/dealer-kit/fonts', () => ({
-  ensureFontsLoaded: vi.fn(async () => {}),
+  ensureFontsLoaded: vi.fn(async () => ({ failed: [] })),
   ensureSeedFontsLoaded: vi.fn(async () => {}),
 }));
 

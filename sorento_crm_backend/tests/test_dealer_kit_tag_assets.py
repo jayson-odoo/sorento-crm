@@ -464,7 +464,9 @@ def test_the_print_payload_carries_fonts_and_the_assets_the_doc_names(api):
     # carries a family NAME, not an asset id, so the page cannot know which
     # fonts it needs until the browser tries to lay the text out.
     assert [f["family"] for f in payload["fonts"]] == ["ZZT Brand"]
-    assert payload["fonts"][0]["url"].startswith("https://")
+    # A PATH, not a signed CDN link (S1): the signed URL had no CORS header and
+    # FontFace.load() silently rejected it in the browser.
+    assert payload["fonts"][0]["url"] == f"/api/v1/public/dealer-kit/fonts/{font['id']}"
 
 
 def test_asset_ids_are_read_off_the_document(api):

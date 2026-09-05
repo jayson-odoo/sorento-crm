@@ -81,3 +81,23 @@ export async function uploadAsset(input: {
 export async function listFontAssets(): Promise<KitAsset[]> {
   return listAssets({ kind: 'font', limit: 100 });
 }
+
+/**
+ * The same-origin URL `FontFace.load()` fetches an asset's bytes from.
+ *
+ * Built from the asset id rather than read off `KitAsset.url`: that field is a
+ * signed CDN link with no CORS header on some hosts, which `FontFace.load()`
+ * rejects outright (price-tag-r4 S1). `/api/v1/public/dealer-kit/fonts/{id}`
+ * is unauthenticated and same-origin, so there is nothing to sign and nothing
+ * for CORS to block.
+ *
+ * A bare relative path already resolves correctly with no explicit
+ * `NEXT_PUBLIC_API_URL` (Next's rewrite proxies `/api/v1` to the backend, same
+ * as production's nginx does) - the prefix only matters in local dev where
+ * that env var points at a different host/port than the page itself.
+ */
+export function fontAssetUrl(assetId: string): string {
+  const env = process.env.NEXT_PUBLIC_API_URL;
+  const base = env ? env.replace(/\/$/, '') : '';
+  return `${base}/api/v1/public/dealer-kit/fonts/${assetId}`;
+}

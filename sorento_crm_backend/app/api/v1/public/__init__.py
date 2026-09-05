@@ -5,6 +5,7 @@ from app.api.v1.public import (
     approval,
     branding,
     catalogue,
+    dealer_kit_fonts,
     geo,
     onboarding,
     portal,
@@ -57,3 +58,8 @@ router.include_router(
 router.include_router(branding.router, prefix="/branding", tags=["public-branding"])
 # Render payload for the PDF worker: /api/v1/public/print/{download_id}?token=
 router.include_router(print_route.router, prefix="/print", tags=["public-print"])
+# Font bytes, same-origin so FontFace.load() has no CORS to satisfy:
+# /api/v1/public/dealer-kit/fonts/{asset_id}
+router.include_router(
+    dealer_kit_fonts.router, prefix="/dealer-kit/fonts", tags=["public-dealer-kit-fonts"]
+)

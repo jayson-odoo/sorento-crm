@@ -75,18 +75,30 @@ export async function ensureSeedFontsLoaded(): Promise<void> {
   }
 }
 
+/** What `ensureFontsLoaded` reports back, so a caller who cares can say so. */
+export interface EnsureFontsResult {
+  /** Families whose face REJECTED this call. Empty when everything resolved
+   * (or every font was already loaded from an earlier call). */
+  failed: string[];
+}
+
 /**
  * Register every font with the document and wait for them.
  *
  * Idempotent per family+url: the editor calls this on every load of the font
  * list, and re-adding a `FontFace` would grow `document.fonts` without bound.
  * Resolves even when a face fails - a tag set in the fallback is worse than one
- * in the brand face, and far better than an editor that never renders.
+ * in the brand face, and far better than an editor that never renders - but the
+ * caller now learns WHICH families fell back, so a surface that can tell
+ * someone (the editor toasts) is not stuck silently rendering wrong.
  */
-export async function ensureFontsLoaded(fonts: TagFont[]): Promise<void> {
-  if (typeof document === 'undefined' || typeof FontFace === 'undefined') return;
+export async function ensureFontsLoaded(fonts: TagFont[]): Promise<EnsureFontsResult> {
+  if (typeof document === 'undefined' || typeof FontFace === 'undefined') {
+    return { failed: [] };
+  }
 
   const pending: Promise<unknown>[] = [];
+  const failed: string[] = [];
 
   for (const font of fonts) {
     const key = `${font.family}|${font.url}`;
@@ -102,12 +114,15 @@ export async function ensureFontsLoaded(fonts: TagFont[]): Promise<void> {
             document.fonts.add(result);
           })
           .catch(() => {
-            // A font that will not load leaves the layer in its fallback.
+            // A font that will not load leaves the layer in its fallback, and
+            // is eligible to try again on the next call.
             loaded.delete(key);
+            failed.push(font.family);
           }),
       );
     } catch {
       loaded.delete(key);
+      failed.push(font.family);
     }
   }
 
@@ -117,6 +132,7 @@ export async function ensureFontsLoaded(fonts: TagFont[]): Promise<void> {
   } catch {
     // `document.fonts.ready` rejecting is not a reason to hold up a render.
   }
+  return { failed: Array.from(new Set(failed)) };
 }
 
 /** Forget what has been loaded. For tests only. */

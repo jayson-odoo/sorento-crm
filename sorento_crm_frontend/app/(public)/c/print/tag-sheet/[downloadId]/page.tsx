@@ -102,10 +102,15 @@ export default function TagSheetPrintPage({
         // templates' stand-in faces come from a stylesheet rather than the
         // library, so they are waited for alongside the uploaded brand fonts
         // and not instead of them.
-        await Promise.all([
-          ensureFontsLoaded(body.fonts ?? []),
-          ensureSeedFontsLoaded(),
-        ]);
+        //
+        // `font.url` is a PATH (`/api/v1/public/dealer-kit/fonts/{id}`), not a
+        // host of its own (S1) - this page fetches it directly rather than
+        // through Next's rewrite, so it needs the same explicit prefix the
+        // payload URL above already gets.
+        const fonts = (body.fonts ?? []).map((font) =>
+          font.url.startsWith('/') ? { ...font, url: `${apiBase()}${font.url}` } : font,
+        );
+        await Promise.all([ensureFontsLoaded(fonts), ensureSeedFontsLoaded()]);
         if (live) setPayload(body);
       })
       .catch((error: unknown) => {

@@ -146,7 +146,7 @@ vi.mock('./KonvaTagLayer', () => ({
 }));
 
 vi.mock('@/lib/dealer-kit/fonts', () => ({
-  ensureFontsLoaded: vi.fn(async () => {}),
+  ensureFontsLoaded: vi.fn(async () => ({ failed: [] })),
   ensureSeedFontsLoaded: vi.fn(async () => {}),
   TAG_FONT_STYLESHEET: '',
   SEED_FONT_FAMILIES: [],
