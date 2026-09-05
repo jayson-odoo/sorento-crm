@@ -22,7 +22,7 @@ import { act, fireEvent, render } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CANVAS_PX_PER_MM } from '@/lib/dealer-kit/canvas-geometry';
-import type { TagLayer, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
+import type { TagLayer, TagTemplateDoc, TextLayerProps } from '@/lib/dealer-kit/tag-template-types';
 import { defaultTextProps } from '@/lib/dealer-kit/tag-template-types';
 
 // -- Fake Konva nodes, shared between the mock factory and the test body ----
@@ -171,7 +171,7 @@ vi.mock('../../services/tagDataService', () => ({
 
 import { TagCanvasEditor } from './TagCanvasEditor';
 
-function textLayerDoc(): TagTemplateDoc {
+function textLayerDoc(overrides: Partial<TextLayerProps> = {}): TagTemplateDoc {
   const layer: TagLayer = {
     id: 'text-1',
     type: 'text',
@@ -185,7 +185,7 @@ function textLayerDoc(): TagTemplateDoc {
     visible: true,
     slot_binding: null,
     text_override: null,
-    props: { ...defaultTextProps(), text: 'Hello', fontSize: 10 },
+    props: { ...defaultTextProps(), text: 'Hello', fontSize: 10, ...overrides },
   };
   return { width_mm: 60, height_mm: 40, layers: [layer] };
 }
@@ -272,5 +272,35 @@ describe('TagCanvasEditor live text reflow (AC-S6-2)', () => {
     expect(saved.width_mm).toBeCloseTo(20 * 2);
     expect(saved.height_mm).toBeCloseTo(6);
     expect(saved.props.kind === 'text' && saved.props.fontSize).toBe(10);
+  });
+
+  it('reflows the Text child to the PADDED box, not the raw one (S3, AC-S3-1)', () => {
+    render(
+      <TagCanvasEditor
+        doc={textLayerDoc({ padding: { top: 1, right: 1, bottom: 1, left: 1 } })}
+        onChange={vi.fn()}
+      />,
+    );
+
+    act(() => {
+      fireEvent.click(document.querySelector('[data-testid="layer-text-1"]')!);
+    });
+
+    const node = hoisted.nodesById.get('text-1')!;
+    node.scaleX(1.5);
+    node.scaleY(1.2);
+
+    act(() => {
+      hoisted.handlers.onTransform?.();
+    });
+
+    // The Group (the layer's own box) reflows to the raw scaled size...
+    expect(node.width()).toBeCloseTo(20 * CANVAS_PX_PER_MM * 1.5);
+    expect(node.height()).toBeCloseTo(6 * CANVAS_PX_PER_MM * 1.2);
+    // ...but the Text CHILD inside it is smaller by the 1mm pad on every
+    // side, converted at the same CANVAS_PX_PER_MM the Group itself uses.
+    const padPx = 1 * CANVAS_PX_PER_MM;
+    expect(node.textChild.width()).toBeCloseTo(node.width() - padPx * 2);
+    expect(node.textChild.height()).toBeCloseTo(node.height() - padPx * 2);
   });
 });

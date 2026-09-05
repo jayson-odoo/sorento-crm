@@ -99,7 +99,7 @@ import {
   wholeTagBlock,
   type PreviewMap,
 } from '@/lib/dealer-kit/preview';
-import { reflowedTextSize } from '@/lib/dealer-kit/text-reflow';
+import { paddedBox, reflowedTextSize } from '@/lib/dealer-kit/text-reflow';
 import {
   guideCrossedIntoRuler,
   guideForAxis,
@@ -1675,12 +1675,17 @@ export function TagCanvasEditor({
       // `transformer.nodes()` is typed as) is not one.
       const textNode = (node as unknown as Konva.Group).findOne('Text');
       if (textNode) {
-        textNode.width(width);
-        textNode.height(height);
+        // The Text CHILD wraps inside the PADDED box (S3), not the Group's
+        // raw one - `KonvaTagLayer`'s own render does the same fold on every
+        // commit, so a live drag has to fold it too or the wrap visibly
+        // widens for the length of the drag and then snaps back on release.
+        const padded = paddedBox(width, height, layer.props.padding, scale);
+        textNode.width(padded.width);
+        textNode.height(padded.height);
       }
     }
     transformer.getLayer()?.batchDraw();
-  }, [layers]);
+  }, [layers, scale]);
 
   const handleTransformEnd = useCallback(() => {
     const transformer = transformerRef.current;

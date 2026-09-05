@@ -31,6 +31,7 @@ import type { SearchableSelectOption } from '@/components/common/SearchableSelec
 import type {
   ImageFit,
   ImageMaskShape,
+  LayerPadding,
   PriceBadgeVariant,
   ShapeType,
   SlotBinding,
@@ -533,6 +534,7 @@ function TextInspector({
             align: props.align,
             lineHeight: props.lineHeight,
             letterSpacing: props.letterSpacing,
+            padding: props.padding ?? ZERO_PADDING,
           }}
           onChange={(changes) => onChange({ ...props, ...changes })}
           colour={props.color}
@@ -550,6 +552,9 @@ function TextInspector({
 // Typography controls, shared by the text and price badge sections (S6b)
 // ---------------------------------------------------------------------------
 
+/** Every side at 0mm - an absent `padding` reads as this (S3). */
+const ZERO_PADDING: LayerPadding = { top: 0, right: 0, bottom: 0, left: 0 };
+
 /** What the controls SHOW. Null = the layer has not named one. */
 interface TypographyValues {
   fontFamily: string;
@@ -561,6 +566,8 @@ interface TypographyValues {
   align: 'left' | 'center' | 'right';
   lineHeight: number | null;
   letterSpacing: number;
+  /** Absent on the layer reads as `ZERO_PADDING` (S3) - never null here. */
+  padding: LayerPadding;
 }
 
 /**
@@ -722,6 +729,39 @@ function TypographyControls({
           onChange={(v) => onChange({ letterSpacing: v })}
           step={0.1}
         />
+      </div>
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs text-muted-foreground">Padding (mm)</Label>
+        <div className="grid grid-cols-4 gap-2">
+          <NumberInput
+            label="Top"
+            value={values.padding.top}
+            onChange={(v) => onChange({ padding: { ...values.padding, top: v } })}
+            step={0.5}
+            min={0}
+          />
+          <NumberInput
+            label="Right"
+            value={values.padding.right}
+            onChange={(v) => onChange({ padding: { ...values.padding, right: v } })}
+            step={0.5}
+            min={0}
+          />
+          <NumberInput
+            label="Bottom"
+            value={values.padding.bottom}
+            onChange={(v) => onChange({ padding: { ...values.padding, bottom: v } })}
+            step={0.5}
+            min={0}
+          />
+          <NumberInput
+            label="Left"
+            value={values.padding.left}
+            onChange={(v) => onChange({ padding: { ...values.padding, left: v } })}
+            step={0.5}
+            min={0}
+          />
+        </div>
       </div>
     </>
   );
@@ -958,6 +998,7 @@ function PriceBadgeInspector({
             align: typo.align,
             lineHeight: typo.lineHeight,
             letterSpacing: typo.letterSpacing,
+            padding: props.padding ?? ZERO_PADDING,
           }}
           onChange={(changes) => onChange({ ...props, ...changes })}
           colour={props.textColor}

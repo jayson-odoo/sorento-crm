@@ -19,9 +19,43 @@
  * cannot drift from each other.
  */
 
+import type { LayerPadding } from './tag-template-types';
+
 export interface ReflowedSize {
   width: number;
   height: number;
+}
+
+/**
+ * The box a padded layer actually gets to draw into (S3, AC-S3-1/2/3/4).
+ *
+ * `width`/`height` and the returned box share whatever unit the CALLER is
+ * working in - canvas pixels or print millimetres - and `scale` converts
+ * `padding` (always mm) into that same unit; the print page passes no scale
+ * at all, because there the padding IS already in the unit it draws with.
+ * One function either way, so a live drag and a committed render cannot
+ * round differently.
+ *
+ * Clamped at zero on both axes (AC-S3-4): a padding wider than the box
+ * leaves no drawable area rather than a negative one, which neither Konva
+ * nor CSS accepts.
+ */
+export function paddedBox(
+  width: number,
+  height: number,
+  padding: LayerPadding | null | undefined,
+  scale = 1,
+): { x: number; y: number; width: number; height: number } {
+  const top = (padding?.top ?? 0) * scale;
+  const right = (padding?.right ?? 0) * scale;
+  const bottom = (padding?.bottom ?? 0) * scale;
+  const left = (padding?.left ?? 0) * scale;
+  return {
+    x: Math.min(left, width),
+    y: Math.min(top, height),
+    width: Math.max(width - left - right, 0),
+    height: Math.max(height - top - bottom, 0),
+  };
 }
 
 /**

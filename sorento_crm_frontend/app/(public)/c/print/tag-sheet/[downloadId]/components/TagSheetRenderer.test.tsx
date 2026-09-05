@@ -903,3 +903,142 @@ describe('polygon shape on the print page (S4, AC-S4-6)', () => {
     );
   });
 });
+
+describe('padding on text and price badge layers (S3, AC-S3-1/2/3/4)', () => {
+  it('adds no padding to a text layer when it is absent (AC-S3-3)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'text-1',
+            type: 'text',
+            props: {
+              kind: 'text',
+              text: 'Sale',
+              fontFamily: 'DM Sans',
+              fontSize: 10,
+              fontWeight: 400,
+              color: '#000',
+              align: 'left',
+              lineHeight: 1.2,
+              letterSpacing: 0,
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    expect(screen.getByText('Sale')).toHaveStyle({
+      padding: '0mm 0mm 0mm 0mm',
+      boxSizing: 'border-box',
+    });
+  });
+
+  it('prints the padding as one CSS shorthand, T R B L (AC-S3-1)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'text-1',
+            type: 'text',
+            props: {
+              kind: 'text',
+              text: 'Sale',
+              fontFamily: 'DM Sans',
+              fontSize: 10,
+              fontWeight: 400,
+              color: '#000',
+              align: 'left',
+              lineHeight: 1.2,
+              letterSpacing: 0,
+              padding: { top: 2, right: 4, bottom: 6, left: 8 },
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    expect(screen.getByText('Sale')).toHaveStyle({
+      padding: '2mm 4mm 6mm 8mm',
+      boxSizing: 'border-box',
+    });
+  });
+
+  it('pads the badge text container the same way, and the callout shrinks with it (AC-S3-2)', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            width_mm: 40,
+            height_mm: 20,
+            props: {
+              ...defaultPriceBadgeProps('list_only'),
+              showBox: true,
+              cornerRadius: 0,
+              padding: { top: 0, right: 0, bottom: 0, left: 10 },
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    // 40mm less the 10mm left pad leaves 30mm of drawable width, and the
+    // callout - the badge is the box (r4b, AC-S6-2) - shrinks with it.
+    const svg = container.querySelector('svg');
+    expect(svg?.getAttribute('viewBox')).toBe('0 0 30 20');
+    expect(svg?.querySelector('path')?.getAttribute('d')).toBe('M 0 0 L 30 0 L 30 20 L 0 20 Z');
+
+    const figure = screen.getByText('RM 1,599');
+    expect(figure.parentElement).toHaveStyle({
+      padding: '0mm 0mm 0mm 10mm',
+      boxSizing: 'border-box',
+    });
+  });
+
+  it('pads the unboxed list-only badge the same way (AC-S3-2)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            props: {
+              ...defaultPriceBadgeProps('list_only'),
+              padding: { top: 2, right: 2, bottom: 2, left: 2 },
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    expect(screen.getByText('RM 1,599').parentElement).toHaveStyle({
+      padding: '2mm 2mm 2mm 2mm',
+      boxSizing: 'border-box',
+    });
+  });
+
+  it('pads the promotional badge too, its filled box included (AC-S3-2)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            props: {
+              ...defaultPriceBadgeProps('promo'),
+              padding: { top: 1, right: 1, bottom: 1, left: 1 },
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    // amount span -> filled box div -> the padded text container.
+    const content = screen.getByText('RM 599').parentElement?.parentElement;
+    expect(content).toHaveStyle({ padding: '1mm 1mm 1mm 1mm', boxSizing: 'border-box' });
+  });
+});

@@ -283,6 +283,16 @@ class ImageLayerPropsDoc(_StrictProps):
     maskShape: Optional[Literal["none", "circle"]] = "none"
 
 
+class LayerPaddingDoc(_StrictProps):
+    """A layer's own internal margin, in millimetres (S3). Absent means zero
+    on every side, so a document saved before S3 validates unchanged."""
+
+    top: float
+    right: float
+    bottom: float
+    left: float
+
+
 class TextLayerPropsDoc(_StrictProps):
     kind: Literal["text"]
     text: str
@@ -293,6 +303,7 @@ class TextLayerPropsDoc(_StrictProps):
     align: Literal["left", "center", "right"]
     lineHeight: float
     letterSpacing: float
+    padding: Optional[LayerPaddingDoc] = None
 
 
 class PolygonPointDoc(_StrictProps):
@@ -344,6 +355,9 @@ class PriceBadgeLayerPropsDoc(_StrictProps):
     align: Optional[Literal["left", "center", "right"]] = None
     lineHeight: Optional[float] = None
     letterSpacing: Optional[float] = None
+    # Insets the figure AND, for a boxed variant, the callout itself (S3,
+    # AC-S3-2) - the callout IS the badge (r4b, AC-S6-2).
+    padding: Optional[LayerPaddingDoc] = None
 
 
 class BadgeLayerPropsDoc(_StrictProps):
