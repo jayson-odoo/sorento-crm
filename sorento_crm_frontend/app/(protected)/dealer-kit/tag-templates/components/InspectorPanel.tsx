@@ -1047,6 +1047,12 @@ function BarcodeInspector({
   // same way - value in, binding survives, Relink clears it again. The
   // product master stays the source of truth; the override lives in the doc
   // only.
+  //
+  // An EMPTY override is still an override (S5): `''` is not `null`, so
+  // clearing the box does not fall back to the product's barcode the way
+  // `null` does - only Relink does that. Before this an empty string was
+  // coerced to `null` on the way out, so deleting the text and typing
+  // something new snapped straight back to the product value every time.
   const overridden = layer.text_override != null;
   const shown = layer.text_override ?? resolvedText ?? '';
 
@@ -1075,7 +1081,7 @@ function BarcodeInspector({
           <Input
             value={shown}
             placeholder={resolvedText ?? 'No barcode on the product'}
-            onChange={(e) => onUpdate({ text_override: e.target.value || null })}
+            onChange={(e) => onUpdate({ text_override: e.target.value })}
           />
           {overridden && (
             <span className="flex items-center gap-1 text-2xs text-amber-600">

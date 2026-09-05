@@ -525,6 +525,20 @@ describe('barcode on the print page', () => {
     expect(screen.getByText('4 006381 333931')).toBeInTheDocument();
   });
 
+  it('an empty override draws nothing, never falling back to a real product barcode (S5)', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([{ ...barcodeLayer(), text_override: '' }])}
+        resolvedData={{ [LINE_ID]: resolved({ barcode: VALID_EAN13 }) }}
+        assets={{}}
+        images={{}}
+      />,
+    );
+
+    expect(container.querySelector('[style*="border-radius"]')).toBeNull();
+    expect(screen.queryByText('4 006381 333931')).not.toBeInTheDocument();
+  });
+
   it('sizes the code-strip and human-readable text in pt, proportional to the plate (AC-S7-4/6)', () => {
     // A 40x22mm plate - the toolbar's default insert size. Against the BUG
     // (`Math.max(6, strip * 0.6)}mm`) this reads as a 6mm floor (~17pt): a

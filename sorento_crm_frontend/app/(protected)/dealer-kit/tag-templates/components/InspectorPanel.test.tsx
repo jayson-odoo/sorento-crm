@@ -1,11 +1,18 @@
 /**
- * The barcode inspector's value override + Relink (D23, S9 review S7).
+ * The barcode inspector's value override + Relink (D23, S9 review S7; S5).
  *
  * Mirrors the text layer's `text_override` pattern one-for-one: typing sets
- * the override, Relink is offered only while one exists and clears it back
- * to the bound value, and clearing the field by hand writes `null` (no
- * override, fall back to the bound barcode) rather than an empty string
- * (which would otherwise read as "this product's barcode IS blank").
+ * the override, and Relink - the ONLY way back to the bound value - is
+ * offered only while one exists.
+ *
+ * Clearing the field by hand writes an EMPTY STRING, not `null` (S5,
+ * reversing S9 review S7's original call): `''` is still an override, so the
+ * canvas draws no barcode rather than snapping back to the product's - "I
+ * should be able to delete and write whatever I want; if I want to relink I
+ * should just click the Relink button we already have" (user, 5 Sep). Writing
+ * `null` here used to mean "no override, follow the product", so deleting the
+ * text and typing something new silently reverted to the product's barcode on
+ * every keystroke.
  */
 
 import { fireEvent, render, screen } from '@testing-library/react';
@@ -254,7 +261,7 @@ describe('InspectorPanel - barcode value override (D23, S9 review S7)', () => {
     expect(screen.getByDisplayValue('4006381333931')).toBeInTheDocument();
   });
 
-  it('clearing the field by hand writes null, not an empty string', () => {
+  it('clearing the field by hand writes an empty string, not null (S5)', () => {
     const onUpdate = vi.fn();
     render(
       <InspectorPanel
@@ -267,6 +274,40 @@ describe('InspectorPanel - barcode value override (D23, S9 review S7)', () => {
 
     fireEvent.change(screen.getByDisplayValue('111222333'), { target: { value: '' } });
 
-    expect(onUpdate).toHaveBeenCalledWith('bc1', { text_override: null });
+    expect(onUpdate).toHaveBeenCalledWith('bc1', { text_override: '' });
+  });
+
+  it('the Relink button and the amber note stay while the override is an empty string (S5, AC-S5-1)', () => {
+    render(
+      <InspectorPanel
+        layer={barcodeLayer({ text_override: '' })}
+        onUpdate={vi.fn()}
+        onUpdateProps={vi.fn()}
+        resolvedText="4006381333931"
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /relink/i })).toBeInTheDocument();
+    expect(screen.getByText('Unlinked from product data')).toBeInTheDocument();
+    // The box itself stays empty - it must not fall back to the resolved value.
+    expect(screen.getByPlaceholderText('4006381333931')).toHaveValue('');
+  });
+
+  it('typing a new value after clearing writes that value, never reverting to the product barcode (S5, AC-S5-2)', () => {
+    const onUpdate = vi.fn();
+    render(
+      <InspectorPanel
+        layer={barcodeLayer({ text_override: '' })}
+        onUpdate={onUpdate}
+        onUpdateProps={vi.fn()}
+        resolvedText="4006381333931"
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('4006381333931'), {
+      target: { value: '999888777' },
+    });
+
+    expect(onUpdate).toHaveBeenCalledWith('bc1', { text_override: '999888777' });
   });
 });
