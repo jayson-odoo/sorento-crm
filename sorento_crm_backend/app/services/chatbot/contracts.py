@@ -552,6 +552,16 @@ CRM_COMPLETED_BRANCH_KINDS: frozenset[str] = frozenset(
         "out_of_scope",
     }
 )
+# The kinds that have a lane MODULE of their own and close their own turn row once that
+# lane has answered: `low_signal` is `lanes/casual.py` (S4) and `out_of_scope` is
+# `lanes/escalation.py` (S5). Every other kind the CRM completes is composed by
+# `lanes/canned.py`, which projects its own set off the two above rather than repeating
+# either, and closes in `_run_stages`' canned block. Declared HERE because the engine and
+# the canned module both need the answer, and two literals would drift the moment a slice
+# adds a lane - which is exactly what S5 landing on S3 would otherwise have done.
+SELF_CLOSING_BRANCH_KINDS: frozenset[str] = frozenset({"low_signal", "out_of_scope"})
+
+
 # `DELEGATED_BRANCH_KINDS` used to be the complement of the set above and is GONE: with
 # `system_settings.chatbot_completed_lanes` in the decision, "delegated" is no longer a
 # property of the build at all - the same kind delegates or completes depending on data -

@@ -29,15 +29,19 @@ from typing import Any, Mapping
 
 from app.services.chatbot import jsc
 from app.services.chatbot.tail.compile_state import EM_DASH
-from app.services.chatbot.contracts import CRM_COMPLETED_BRANCH_KINDS
+from app.services.chatbot.contracts import (
+    CRM_COMPLETED_BRANCH_KINDS,
+    SELF_CLOSING_BRANCH_KINDS,
+)
 from app.services.chatbot.copy import CannedCopy
 
 # The eight `branch_kind`s S3 answers, PROJECTED off the one declaration rather than
 # repeated: `contracts.CRM_COMPLETED_BRANCH_KINDS` is what the code can finish across every
 # slice, and `delegate_for` reads it together with `system_settings.chatbot_completed_lanes`
-# to decide a turn. This subset only says which of them THIS module knows how to compose;
-# `low_signal` is S4's and is answered by `lanes/casual.py`.
-COMPLETED_BRANCH_KINDS: frozenset[str] = CRM_COMPLETED_BRANCH_KINDS - {"low_signal"}
+# to decide a turn. This subset only says which of them THIS module knows how to compose,
+# so the kinds with a lane module of their own come off: `low_signal` is answered by
+# `lanes/casual.py` (S4) and `out_of_scope` by `lanes/escalation.py` (S5).
+COMPLETED_BRANCH_KINDS: frozenset[str] = CRM_COMPLETED_BRANCH_KINDS - SELF_CLOSING_BRANCH_KINDS
 
 # The one lane that answers WITHOUT the tail, and therefore without a session write.
 NO_SESSION_WRITE_BRANCH_KINDS: frozenset[str] = frozenset({"access_denied"})

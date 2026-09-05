@@ -32,7 +32,11 @@ from sqlalchemy.orm import Session
 
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import jsc, trace as trace_mod
-from app.services.chatbot.contracts import TURN_FAILURE_STAGES, Envelope
+from app.services.chatbot.contracts import (
+    SELF_CLOSING_BRANCH_KINDS,
+    TURN_FAILURE_STAGES,
+    Envelope,
+)
 from app.services.chatbot.delegate import delegate_for, enabled_lanes_from
 from app.services.error_handler import AppException
 from app.services.chatbot.head import parser
@@ -54,8 +58,9 @@ logger = logging.getLogger(__name__)
 SessionFactory = Callable[[], Session]
 
 # The branch kinds whose arm closes its OWN row, after its lane has produced an answer.
-# Everything else closes at `routed` in the block below.
-_CRM_FINISHED_HERE: frozenset[str] = frozenset({"low_signal", "out_of_scope"})
+# Everything else closes at `routed` in the block below. `contracts` owns the list because
+# `lanes/canned.py` subtracts the same one to know which kinds are ITS to compose.
+_CRM_FINISHED_HERE: frozenset[str] = SELF_CLOSING_BRANCH_KINDS
 
 # "the caller did not pass a row", which `None` cannot mean here: `None` is the real value
 # when the settings singleton does not exist yet.

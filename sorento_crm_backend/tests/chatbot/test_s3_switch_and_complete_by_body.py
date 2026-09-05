@@ -123,10 +123,19 @@ class TestTheCompletedLaneSwitch:
         """ONE place answers "does this turn complete here": `delegate_for`, reading the
         code half (`contracts.CRM_COMPLETED_BRANCH_KINDS`) and the data half (the settings
         list) together. `lanes.canned` only says which of them IT knows how to compose."""
-        from app.services.chatbot.contracts import CRM_COMPLETED_BRANCH_KINDS
+        from app.services.chatbot.contracts import (
+            CRM_COMPLETED_BRANCH_KINDS,
+            SELF_CLOSING_BRANCH_KINDS,
+        )
         from app.services.chatbot.delegate import delegate_for
 
-        assert canned_lanes.COMPLETED_BRANCH_KINDS == CRM_COMPLETED_BRANCH_KINDS - {"low_signal"}
+        # The kinds with a lane module of their own come off: `low_signal` (S4) and, once
+        # S5 landed, `out_of_scope`. The eight below are still exactly what this module
+        # composes, which is the assertion that matters.
+        assert (
+            canned_lanes.COMPLETED_BRANCH_KINDS
+            == CRM_COMPLETED_BRANCH_KINDS - SELF_CLOSING_BRANCH_KINDS
+        )
         assert canned_lanes.COMPLETED_BRANCH_KINDS == {
             "access_denied",
             "escalate_offer",
@@ -284,21 +293,13 @@ class TestCompleteByBody:
         """R4's manual retry: completing the OLDER attempt would fold the lane's result
         into the row nobody is watching, and leave the live one delegated forever.
 
-        The unique index on `(contact_respond_id, message_id)` is what normally makes two
-        rows for one message impossible, so it is DROPPED inside this test's transaction
-        to reach the case at all - the ordering is defence for the day that index is
-        relaxed (a console turn already carries a NULL message id, which Postgres treats
-        as distinct), not for a shape production can produce today. Dropping it inside the
-        savepoint means it comes back on rollback.
+        Two rows for one message is a shape production CAN produce since S2b: the unique
+        key is `(contact_respond_id, message_id, attempt)`, so a retry of a failed message
+        is a legal second row rather than a collision. The second row is therefore written
+        here as the retry writes it, with no constraint surgery.
         """
         monkeypatch.setattr("app.api.v1.external.chat.SessionLocal", session_factory)
-        from tests import _pg_fixture
-
-        schema = f'{_pg_fixture._BLANK["name"]}_chatbot'
         db = session_factory()
-        db.execute(
-            text(f'ALTER TABLE "{schema}".turns DROP CONSTRAINT uq_chatbot_turns_contact_message')
-        )
         first = db.query(ChatbotTurn).filter(ChatbotTurn.id == delegated_turn.turn_id).one()
         retry = ChatbotTurn(
             contact_respond_id=first.contact_respond_id,

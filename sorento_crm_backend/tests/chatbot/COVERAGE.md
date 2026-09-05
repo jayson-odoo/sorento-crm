@@ -158,9 +158,9 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `escalation-context` | `all` | 22 | 0 | met |
 | `escalation-input` | `all` | 22 | 0 | met |
 | `escalation-result` | `all` | 22 | 0 | met |
-| `fetch-result` | `tier-ask` | 5 | 0 | met |
-| `fetch-result` | `result` | 37 | 0 | met |
 | `fetch-result` | `error` | 1 | 0 | exhausted (1) |
+| `fetch-result` | `result` | 37 | 0 | met |
+| `fetch-result` | `tier-ask` | 5 | 0 | met |
 | `item` | `no_domain` | 11 | 0 | met |
 | `output-structurer` | `crm_incoming_stock_list` | 5 | 0 | met |
 | `output-structurer` | `crm_inventory_stock_balance_list` | 10 | 0 | met |

@@ -6,7 +6,20 @@ specific branch. Postgres only (`tests/_pg_fixture.blank_session`), never sqlite
 """
 from __future__ import annotations
 
+import importlib.util
+import sys
+from pathlib import Path
+
 from tests._pg_fixture import blank_session
+
+# The MCP server is a SIBLING package in this monorepo, not a backend dependency:
+# `requirements.txt` does not carry it and CI installs nothing else, so without this the
+# three tests below fail with `ModuleNotFoundError` on the runner while passing on a dev
+# machine where `pip install -e ../sorento_crm_mcp` has been run. `catalog` and
+# `module_loader` are stdlib-only, so the path is all they need. An already-installed
+# copy wins, so a machine that HAS it reads exactly what it runs.
+if importlib.util.find_spec("sorento_crm_mcp") is None:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "sorento_crm_mcp"))
 
 
 def _ideation_spec():

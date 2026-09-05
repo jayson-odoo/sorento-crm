@@ -506,8 +506,15 @@ def test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state(
     # "what was last offered" state the migration-window offer-open read still uses, and
     # the offer here is still the one the previous turn made.
     assert variables["response"] == "Which company should take this?"
-    # R3's marker is a TURN-ROW fact, not a session one: `compile_state` writes
-    # `variables.pending` from `pending_marker.derive`, which only ever emits
-    # `escalation_offer`. The next turn reads `selection_context` + `last_result_set`
-    # instead, which is what the two assertions above are protecting.
-    assert variables.get("pending") is None
+    # The clarify arm's OWN `company_clarify` marker is a TURN-ROW fact, not a session
+    # one, and it is asserted on `row.response` above. What `compile_state` writes into
+    # `variables.pending` comes from `pending_marker.derive`, and since S3 an open member
+    # offer is one of the two kinds it emits - the roster this turn re-persisted is still
+    # on the customer's screen, so the marker says so. The next turn still resolves a
+    # number against `selection_context` + `last_result_set`, which the assertions above
+    # are what protect.
+    assert variables.get("pending") == {
+        "kind": "member_offer",
+        "team": "customer_service",
+        "domain": None,
+    }
