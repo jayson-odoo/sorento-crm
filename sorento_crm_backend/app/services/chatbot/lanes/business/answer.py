@@ -94,44 +94,12 @@ def aggregate_response_intro(result: dict[str, Any] | None) -> list[Any]:
 
 
 # --------------------------------------------------------------------------- #
-# The per-lane completion switch.
+# The per-lane completion switch lives in ONE place and it is not here: the engine
+# reads `system_settings.chatbot_completed_lanes` once per turn (`engine._enabled_lanes`)
+# and asks `delegate.delegate_for` whether this arm completes. This lane used to carry
+# thin wrappers over both; nothing in `app/` called them, and a second surface for a
+# decision with one real caller is how the two drift.
 # --------------------------------------------------------------------------- #
-
-def completed_lanes(settings_reader: Any) -> list[str]:
-    """`system_settings.chatbot_completed_lanes`, as a list, default EMPTY.
-
-    A thin adapter over S4's own reader (`engine._enabled_lanes`, itself over
-    `delegate.enabled_lanes_from`) so this lane has no second copy of the parsing rules -
-    hostile input tolerance included. The engine reads the settings ROW once per turn and
-    should pass that row down; this wrapper is for a caller holding only a session.
-
-    The parameter is NOT called `db`: this lane must hold no database handle, and the ban
-    that enforces that is a mechanical scan of every public signature in the three answer
-    modules. Naming it for what it is (something that can read the settings row) keeps the
-    scan honest instead of needing an exception list.
-    """
-    from app.services.chatbot.engine import _enabled_lanes
-
-    return sorted(_enabled_lanes(settings_reader))
-
-
-def lane_disposition(
-    branch_kind: str | None, *, completed_lanes: Any
-) -> Literal["complete", "delegate"]:
-    """Does the CRM finish this turn, or hand it back to n8n?
-
-    The same TWO conditions `delegate.delegate_for` applies, phrased for this lane: the
-    CODE must be able to complete the arm, and the OWNER must have turned it on. Expressed
-    through `delegate_for` itself rather than re-implemented, so the two can never drift
-    about a lane's disposition - that drift is the whole reason the pair is checked in one
-    place.
-    """
-    from app.services.chatbot.delegate import delegate_for
-
-    if branch_kind is None:
-        return "delegate"
-    enabled = frozenset(jsc.array(completed_lanes))
-    return "complete" if delegate_for(branch_kind, enabled) is None else "delegate"
 
 
 # --------------------------------------------------------------------------- #

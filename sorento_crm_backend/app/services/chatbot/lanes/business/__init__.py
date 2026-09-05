@@ -138,7 +138,7 @@ def _fetch_semantic_input(
         "user_goal": parse_output.get("user_goal"),
         "access_levels": access_levels,
         "contact_id": jsc.js_string(contact_id) if contact_id is not None else None,
-        "space_id": space_id or fetch_mod.SPACE_ID,
+        "space_id": fetch_mod.space_id_or_default(space_id),
         "date_mode": parse_output.get("date_mode"),
         "date_filter_start": parse_output.get("date_filter_start"),
         "date_filter_end": parse_output.get("date_filter_end"),

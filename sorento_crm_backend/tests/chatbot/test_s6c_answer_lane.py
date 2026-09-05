@@ -28,13 +28,11 @@ n8n node whose by-name reads it reproduces)**:
                         sibling_probe=None, sibling_transform=None) -> dict
     dispatch(result) -> Literal["sub_answer", "miss_suggest"]           # If6
     aggregate_response_intro(result) -> list[str]                       # Aggregate1
-    completed_lanes(db) -> list[str]              # system_settings.chatbot_completed_lanes, default []
-    lane_disposition(branch_kind, *, completed_lanes) -> Literal["complete", "delegate"]
 
 `app/services/chatbot/lanes/business/__init__.py` (new seam beside `run_until_exit`)
     complete_answer(...) -> {"reply": dict, "actions": list}   # engine.run_turn calls this
-        when `lane_disposition(branch_kind, completed_lanes=completed_lanes(db)) == "complete"`,
-        and sets `delegate = None` from its `{reply, actions}` return instead of delegating.
+        when `delegate.delegate_for(branch_kind, engine._enabled_lanes(db))` is None, and
+        sets `delegate = None` from its `{reply, actions}` return instead of delegating.
 
 `app/services/chatbot/lanes/business/sub_answer.py`
     answer_input(trigger) -> dict                                        # raises if trigger.item is not an object
@@ -731,52 +729,20 @@ class TestIf6Dispatch:
 # (`settings.chatbot_business_lane_enabled`) and delegates with `delegate_payload`
 # attached, exactly as `test_s6a_gate_dry_run_and_seams.py` already covers - this is
 # the SAME decision, gated by a second, independent flag rather than replacing the
-# first. `answer.completed_lanes(db)` mirrors `engine._stock_denial_enabled`'s own
-# `getattr(row, ..., default)` idiom (LESSONS: a new system_settings column needs the
-# two manual dict builders too, but that is the FE-facing settings read, not this
-# turn-time gate). `answer.lane_disposition` is the pure predicate; the engine-level
-# tests below pin the NEW seam `lanes.business.complete_answer` engine.py calls when
-# the branch is completed - the coder is free to refine that function's internals, but
-# `run_turn` must call it and use its `{reply, actions}` return.
+# first. `engine._enabled_lanes(db, row)` reads the column off the row the turn already
+# read (LESSONS: a new system_settings column needs the two manual dict builders too,
+# but that is the FE-facing settings read, not this turn-time gate) and
+# `delegate.delegate_for` is the pure predicate over it. The engine-level tests below
+# pin the NEW seam `lanes.business.complete_answer` engine.py calls when the branch is
+# completed - the coder is free to refine that function's internals, but `run_turn`
+# must call it and use its `{reply, actions}` return.
 # --------------------------------------------------------------------------- #
 
 
-class TestChatbotCompletedLanesGate:
-    def test_lane_disposition_is_delegate_by_default(self) -> None:
-        from app.services.chatbot.lanes.business.answer import lane_disposition
-
-        for branch_kind in ("business_query", "check_promotion", "stock_denied"):
-            assert lane_disposition(branch_kind, completed_lanes=[]) == "delegate"
-
-    def test_lane_disposition_completes_only_the_seeded_kinds(self) -> None:
-        from app.services.chatbot.lanes.business.answer import lane_disposition
-
-        assert lane_disposition("business_query", completed_lanes=["business_query"]) == "complete"
-        # check_promotion is NOT in the seeded list - it still delegates.
-        assert lane_disposition("check_promotion", completed_lanes=["business_query"]) == "delegate"
-
-    def test_completed_lanes_reads_the_system_settings_column_default_empty(
-        self, session_factory, system_settings_row
-    ) -> None:
-        from app.services.chatbot.lanes.business.answer import completed_lanes
-
-        db = session_factory()
-        assert completed_lanes(db) == []
-
-    def test_completed_lanes_reads_the_seeded_list(self, session_factory, system_settings_row) -> None:
-        """Same idiom as `test_engine.py`'s `test_flipped_on_the_same_contact_is_denied`
-        (R1's `chatbot_stock_denial_enabled` flip): re-query the row on a FRESH session
-        rather than re-attaching the fixture's own instance, which is still bound to the
-        session that created it."""
-        from app.models.user import SystemSetting
-        from app.services.chatbot.lanes.business.answer import completed_lanes
-
-        db = session_factory()
-        setting = db.query(SystemSetting).filter(SystemSetting.id == system_settings_row.id).one()
-        setting.chatbot_completed_lanes = ["business_query", "check_promotion"]
-        db.commit()
-
-        assert completed_lanes(session_factory()) == ["business_query", "check_promotion"]
+# The gate's own unit tests live in `test_completed_lanes_switch.py`, against the ONE
+# implementation the engine uses (`delegate.delegate_for` over
+# `engine._enabled_lanes`). What is pinned HERE is the wiring below: that `run_turn`
+# calls `lanes.business.complete_answer` when the branch is enabled and uses its return.
 
 
 class TestChatbotCompletedLanesEngineWiring:

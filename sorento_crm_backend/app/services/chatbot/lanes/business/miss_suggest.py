@@ -1266,9 +1266,13 @@ def _probe_args(
     """`dym-probe` / `sibling-probe` / `promo-dym-probe`'s `workflowInputs`, one shape.
 
     The three probe nodes carry byte-identical `semantic_input` expressions; only `entities`
-    and `tool` differ. `space_id` comes from the workspace row (D5), never n8n's hard-coded
-    `364817`.
+    and `tool` differ. `space_id` comes from the workspace row (D5) through the ONE fallback
+    every tool call site uses (`fetch.space_id_or_default`), so an install with no workspace
+    row still sends n8n's literal here rather than `null` on this path and the literal on
+    the fetch's.
     """
+    from app.services.chatbot.lanes.business.fetch import space_id_or_default
+
     q = parser if isinstance(parser, dict) else {}
     return {
         "contact_id": contact_id,
@@ -1280,7 +1284,7 @@ def _probe_args(
             "user_goal": q.get("user_goal") if jsc.has(q, "user_goal") else None,
             "access_levels": jsc.array(q.get("access_levels")),
             "contact_id": None if contact_id is None else jsc.js_string(contact_id),
-            "space_id": space_id,
+            "space_id": space_id_or_default(space_id),
             "date_mode": q.get("date_mode") if jsc.has(q, "date_mode") else None,
             "date_filter_start": q.get("date_filter_start") if jsc.has(q, "date_filter_start") else None,
             "date_filter_end": q.get("date_filter_end") if jsc.has(q, "date_filter_end") else None,
