@@ -296,7 +296,11 @@ describe('SubmissionForm - sponsorship registered-project field', () => {
   it('hides the picker for a contact without requires_registered_project', async () => {
     (fetchMe as ReturnType<typeof vi.fn>).mockResolvedValue(CONTACT);
     render(<SubmissionForm kind="sponsorship_form" />);
-    await waitForLoaded();
+    // A CREATE form never renders "Loading...", so `waitForLoaded` waits for nothing
+    // here - and the picker is absent before the contact arrives too, so the assertion
+    // below would pass on a form that had simply not read the flag yet. The name the
+    // contact seeds into Requested by is what says it has.
+    await screen.findByText(CONTACT.name as string);
 
     expect(screen.getByText('Project title')).toBeInTheDocument();
     expect(screen.queryByText('Registered project')).toBeNull();
@@ -308,7 +312,6 @@ describe('SubmissionForm - sponsorship registered-project field', () => {
       requires_registered_project: true,
     } satisfies PortalContact);
     render(<SubmissionForm kind="sponsorship_form" />);
-    await waitForLoaded();
 
     const label = await screen.findByText('Registered project');
     expect(label).toBeInTheDocument();
