@@ -165,6 +165,22 @@ describe('ChatbotSettingsPage - lane checkboxes (AC-809)', () => {
     const checkbox = screen.getByRole('checkbox', { name: /low_signal/i });
     expect(checkbox).not.toBeDisabled();
   });
+
+  it('renders the lane grid with exactly one checkbox per branch kind in the vocabulary, at 375px', () => {
+    // jsdom does not lay out CSS, so this cannot assert the grid does not clip at
+    // 375px - only that the same markup (one checkbox per kind, nothing dropped or
+    // duplicated) is what would be laid out there. `window.innerWidth` is set for
+    // any matchMedia-driven responsive logic the component might add later; the grid
+    // itself is plain Tailwind classes and renders identically regardless.
+    Object.defineProperty(window, 'innerWidth', { writable: true, configurable: true, value: 375 });
+    renderPage();
+
+    const checkboxes = screen.getAllByRole('checkbox');
+    expect(checkboxes).toHaveLength(ALL_KINDS.length);
+    for (const kind of ALL_KINDS) {
+      expect(screen.getByRole('checkbox', { name: new RegExp(kind, 'i') })).toBeInTheDocument();
+    }
+  });
 });
 
 describe('ChatbotSettingsPage - the three switches (AC-810)', () => {
@@ -284,6 +300,33 @@ describe('ChatbotSettingsPage - ordering confirm dialog (AC-810)', () => {
     fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
 
     expect(screen.getByLabelText(/ordering/i).getAttribute('aria-checked')).toBe('false');
+  });
+
+  it('renders the Confirm and Cancel buttons in the document, both focusable, while the dialog is open', () => {
+    mockSettingsQuery.mockReturnValue({
+      data: settings({ chatbot_ordering_enabled: false }),
+      isLoading: false,
+      isError: false,
+    });
+    renderPage();
+
+    fireEvent.click(screen.getByLabelText(/ordering/i));
+
+    const confirmButton = screen.getByRole('button', { name: /turn it on/i });
+    const cancelButton = screen.getByRole('button', { name: /cancel/i });
+
+    expect(confirmButton).toBeInTheDocument();
+    expect(cancelButton).toBeInTheDocument();
+    expect(confirmButton).not.toBeDisabled();
+    expect(cancelButton).not.toBeDisabled();
+
+    // Focusable, not just present: a disabled or aria-hidden button would still pass
+    // the two assertions above but could never actually receive focus.
+    cancelButton.focus();
+    expect(document.activeElement).toBe(cancelButton);
+
+    confirmButton.focus();
+    expect(document.activeElement).toBe(confirmButton);
   });
 });
 
