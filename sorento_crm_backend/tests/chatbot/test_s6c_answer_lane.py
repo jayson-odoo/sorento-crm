@@ -966,7 +966,7 @@ class TestErrorArmRendersTheMissLane:
             status = "done"
             stage = "remembered"
 
-        def _complete_turn(turn_id, fragments, *, session_factory):
+        def _complete_turn(turn_id, fragments, *, session_factory, compose_send_action=False):
             captured["fragments"] = fragments
             return _Completed()
 
@@ -990,7 +990,14 @@ class TestErrorArmRendersTheMissLane:
             "_exit_kind": "continue",
             "resolved": {"unresolved_tokens": ["SRTWC8517"], "resolutions": [], "by_entity_type": {}},
             "gate": {"gate_passed": True, "gate_debug": {"domain": "inventory"}, "compatible_entities": []},
-            "fetch": {"_fetch_arm": "error", "error": "no MCP tool matched this question"},
+            "fetch": {
+                "_fetch_arm": "error",
+                "error": "no MCP tool matched this question",
+                # R2-S2: a genuine ABSENCE (zero tools matched), not an outage - without
+                # this key `complete_answer` now reads the arm as an infrastructure
+                # failure and raises instead of rendering the miss lane.
+                "outcome": "not_found",
+            },
         }
 
         complete_answer(
