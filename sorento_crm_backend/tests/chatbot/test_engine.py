@@ -352,6 +352,8 @@ class TestDryRun:
         result = engine_mod.run_turn(envelope, session_factory=session_factory)
         assert result.actions
         assert all(a["dry_run"] is True for a in result.actions)
+        assert result.is_test is True
+        assert result.as_dict()["is_test"] is True
 
     @pytest.mark.parametrize(
         "overrides",

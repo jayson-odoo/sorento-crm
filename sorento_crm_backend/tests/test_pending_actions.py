@@ -674,7 +674,9 @@ def test_settings_get_carries_both_windows_with_their_defaults(client):
 
 def test_saving_the_windows_changes_the_next_pending_action(client):
     c, db, _actor, allowed = client
+    # Read and write are separate slugs; this test does both.
     allowed.add("user_management.settings.view")
+    allowed.add("user_management.settings.edit")
     _settings(db)
     product = _product(db)
 
@@ -692,7 +694,7 @@ def test_a_window_of_zero_is_refused(client):
     """Zero would apply the action with no way back, which is the confirmation
     dialog's failure mode wearing the new model's clothes."""
     c, db, _actor, allowed = client
-    allowed.add("user_management.settings.view")
+    allowed.add("user_management.settings.edit")
     _settings(db)
 
     response = c.post(SETTINGS_GENERAL, json={"deferred_delete_seconds": 0})

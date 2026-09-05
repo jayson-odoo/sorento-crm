@@ -247,12 +247,23 @@ IDEATE_TOOL_RESULT = {
 }
 
 
+# Every call the scenario's stub took, so the D14 test below can assert the WRITE tool
+# was never reached rather than only that nothing local was written. `ideate`'s side
+# effects (a real idea record, a respond.io media pull, an `integration_log` row) all
+# happen on the far side of this seam and none of them is visible in `respond_contacts`.
+IDEATE_TOOL_CALLS: list[dict[str, Any]] = []
+
+
 def _setup_ideate(session_factory, monkeypatch) -> tuple[dict, Any, str]:
     from app.services.chatbot.lanes import ideate as ideate_mod
 
-    monkeypatch.setattr(
-        ideate_mod, "call_ideation_tool", lambda **kwargs: dict(IDEATE_TOOL_RESULT)
-    )
+    IDEATE_TOOL_CALLS.clear()
+
+    def _record(**kwargs: Any) -> dict[str, Any]:
+        IDEATE_TOOL_CALLS.append(kwargs)
+        return dict(IDEATE_TOOL_RESULT)
+
+    monkeypatch.setattr(ideate_mod, "call_ideation_tool", _record)
     overrides = _parser_output(
         message_type="business_query",
         intent_hint="submit_idea",
@@ -932,6 +943,63 @@ class TestCannedLanesDryRun:
         assert all(a.get("dry_run") is True for a in result.actions), (
             f"{kind}: every action must carry dry_run true"
         )
+        assert result.is_test is True, f"{kind}: the response must say it was a dry run"
+        if kind == "ideate":
+            # The kill assertion for this lane. `ideate` is the only canned kind with a
+            # seam, and its seam WRITES outside `chatbot.turns` - a real idea record, a
+            # respond.io media pull and an `integration_log` row - so "session_vars is
+            # unchanged" above proves nothing about it. D14 is zero writes, and the only
+            # way to have zero here is not to call the tool at all.
+            assert IDEATE_TOOL_CALLS == [], (
+                "dry run called the ideation write tool: D14 says an is_test envelope "
+                "writes nothing outside chatbot.turns, and this tool mints a real idea"
+            )
+
+    def test_ideate_dry_run_previews_the_reply_it_would_have_sent(
+        self,
+        session_factory,
+        seeded,
+        system_settings_row,
+        stub_parser,
+        stub_access,
+        monkeypatch,
+    ):
+        """AC-507's shape on the ideate lane: same actions, seam values stood in for.
+
+        The reply text is the tool's OWN words on a live turn, so there is nothing here
+        that does not depend on the seam - unlike escalation, whose two sentences are
+        fixed and interpolate state the turn already resolved. The whole reply is
+        therefore a placeholder, and the action says so with `preview: true` beside its
+        `dry_run`, so a reader of the preview cannot mistake `<preview>` for copy the
+        customer would have received.
+        """
+        from app.services.chatbot import contracts
+
+        _seed_completed_lanes(session_factory, system_settings_row)
+        envelope, parser_overrides, _ = _build_scenario("ideate", session_factory, monkeypatch)
+        envelope = Envelope(**{**envelope.model_dump(mode="json"), "is_test": True})
+        stub_parser(parser_overrides)
+        stub_access()
+
+        result = engine_mod.run_turn(envelope, session_factory=session_factory)
+
+        assert IDEATE_TOOL_CALLS == []
+        assert result.branch_kind == "ideate"
+        assert result.delegate is None
+        assert result.reply["text"] == contracts.PREVIEW
+        assert result.actions == [
+            {
+                "kind": "send_message",
+                "text": contracts.PREVIEW,
+                "quick_replies": result.reply.get("quick_replies"),
+                "result_set": result.reply.get("result_set"),
+                "dry_run": True,
+                "preview": True,
+            }
+        ]
+        assert result.session_patch is not None
+        row = _turn_row(session_factory, result.turn_id)
+        assert row.status == "done"
 
     def test_access_denied_dry_run_write_nothing(
         self, session_factory, seeded, system_settings_row, stub_parser, stub_access
@@ -945,6 +1013,7 @@ class TestCannedLanesDryRun:
 
         after = _session_vars_raw(session_factory)
         assert after == before
+        assert result.is_test is True
         assert result.delegate is None
         assert result.actions, "access_denied must still hand the caller a reply to send"
         assert all(a.get("dry_run") is True for a in result.actions)

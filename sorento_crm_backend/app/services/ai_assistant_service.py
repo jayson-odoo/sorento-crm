@@ -122,8 +122,25 @@ _WRITE_TOOL_SUFFIXES = (
 )
 
 
+# Write tools whose NAME does not end in a write verb, listed by hand.
+#
+# `crm_ideation_turn` is the whole reason this exists (security review S2b-S5,
+# B1b). It ends in `_turn`, so the suffix rule read it as a read tool and BOTH
+# controls below silently did not apply: the write-confirm gate never halted it,
+# and the prompt dry-run suppression never stripped it - so testing a prompt in
+# the admin registry could mint a real ideation draft against a real respond.io
+# contact. The tool NAME is a published contract (D6: it is in the MCP catalog
+# and n8n references it), so the name stays and write-ness is stated here.
+#
+# Add a name here only when it genuinely mutates state; a tool that ends in a
+# verb is already covered and does not need a second declaration.
+_WRITE_TOOL_NAMES = frozenset({"crm_ideation_turn"})
+
+
 def _is_write_tool(tool_name: str) -> bool:
     name = (tool_name or "").lower()
+    if name in _WRITE_TOOL_NAMES:
+        return True
     return name.endswith(_WRITE_TOOL_SUFFIXES) or "_ticket_create" in name
 
 
@@ -1780,6 +1797,13 @@ class AIAssistantChatService:
         # crm_order_cancel: no extra permission - `update_order` (the UI cancel
         # path) is gated only by authentication, so requiring more here would make
         # chat stricter than the UI. The Confirm click is the gate.
+        #
+        # The ideation turn endpoint itself is external-key gated and carries no
+        # user permission of its own, so the module's only user-facing slug is the
+        # gate: a user who cannot see the Ideas board must not be able to write to
+        # it through the assistant. No new slug, so no grant sweep - migration 411
+        # already grants this to superadmin and admin.
+        "crm_ideation_turn": "ideation.board.view",
     }
     # Args that are plumbing, not user intent - never shown in a confirm summary.
     _WRITE_INTERNAL_ARGS = frozenset({

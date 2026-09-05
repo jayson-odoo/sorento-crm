@@ -558,6 +558,9 @@ class TestLowSignalLaneIntegration:
         assert after_turns == before_turns + 1, "only the turn's own row may be written"
         assert result.actions
         assert all(a["dry_run"] is True for a in result.actions)
+        # The TOP-LEVEL flag too: this arm builds its own TurnResult and used to omit
+        # it, so the response said `is_test: false` on a turn that wrote nothing.
+        assert result.is_test is True
 
     def test_no_session_across_clarifier_call(
         self,

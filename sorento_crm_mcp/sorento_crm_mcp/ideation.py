@@ -22,13 +22,17 @@ in particular is behaviourally significant: the endpoint reads its ABSENCE as
 for exactly that reason), and a null would be one more shape for the service to
 have to read the same way.
 
-**Not covered by the in-app assistant's write-confirm gate.** That gate matches
-a write-verb SUFFIX (``_create`` / ``_submit`` / ``_close`` ...) and this tool is
-named for the turn it runs, per AC-307 and the lane that calls it. It is a WRITE
-tool (it creates and updates an idea record), so an admin who assigns it to an
-in-app assistant is assigning an unconfirmed write; the chatbot's ``ideate``
-lane, which is what it exists for, calls it directly and has no such gate to
-begin with.
+**It IS a write tool, and the in-app assistant is told so by name.** The
+assistant's gate matched a write-verb SUFFIX (``_create`` / ``_submit`` /
+``_close`` ...) and this tool is named for the turn it runs, per AC-307 and the
+lane that calls it - so it read as a read tool and neither the write-confirm gate
+nor the prompt dry-run suppression applied to it. The NAME is a published
+contract (this catalog and n8n both reference it), so it stays and write-ness is
+declared instead: ``ai_assistant_service._WRITE_TOOL_NAMES`` lists it, and
+``_WRITE_TOOL_PERMISSIONS`` requires ``ideation.board.view`` of the confirming
+user. The chatbot's ``ideate`` lane, which is what this exists for, calls it
+without a confirm because there is no user there to ask - its own guard is D14:
+a dry-run turn does not call it at all.
 """
 
 from __future__ import annotations

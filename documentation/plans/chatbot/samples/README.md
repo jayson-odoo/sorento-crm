@@ -47,10 +47,10 @@ one set of expressions against both files:
 
 `assign_conversation` is always present here even though a live run omits it when the contact
 is already assigned: only the seam knows that, so a preview cannot honestly leave it out.
-`session_patch` carries what the tail would have written. (The top-level `is_test` field
-reads `false` on this lane today - a known gap in `_run_escalation_arm`'s own `TurnResult`,
-tracked separately; every action's own `dry_run`, which is what the executor actually reads,
-is correct.)
+`session_patch` carries what the tail would have written, and the top-level `is_test` reads
+`true`. It used to read `false` here: three arms built their own `TurnResult` and none set
+the field, so a response could say "live turn" about a turn that wrote nothing. It is now
+stamped once, at `run_turn`'s single exit.
 
 ## `chat-turn-out_of_scope.assigned.json`
 

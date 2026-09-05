@@ -560,10 +560,23 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
 @router.put("/general", status_code=status.HTTP_200_OK)
 async def update_general_settings(
     settings_data: SystemSettingUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.settings.edit")),
     db: Session = Depends(get_db)
 ):
-    """Update general system settings."""
+    """Update general system settings.
+
+    Gated on the EDIT slug, the same one `/upload-logo` and `/signin-background`
+    already use. Reading this blob has required `user_management.settings.view`
+    since the read-gate slice, and writing it required only authentication - so
+    any authenticated session could rewrite the tenant's settings. That gap
+    became load-bearing when the chatbot lane switches moved in here: clearing
+    `chatbot_unsupported_domains` makes the bot answer questions it is
+    deliberately not allowed to answer, and `chatbot_completed_lanes` decides
+    what a production turn does for a real customer.
+
+    No new slug and no grant sweep: every role holding `.view` today also holds
+    `.edit` (admin, warehouse_manager and the three integration roles).
+    """
     try:
         return _update_general_settings_impl(settings_data, db)
     except HTTPException:
@@ -575,10 +588,15 @@ async def update_general_settings(
 @router.post("/general", status_code=status.HTTP_200_OK)
 async def update_general_settings_post(
     settings_data: SystemSettingUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.settings.edit")),
     db: Session = Depends(get_db)
 ):
-    """Update general system settings (POST allowed for frontend form submit)."""
+    """Update general system settings (POST allowed for frontend form submit).
+
+    Same gate as the PUT above, and it has to be: the two write the same blob
+    through the same implementation, so gating only one would leave the other as
+    the way around it.
+    """
     try:
         return _update_general_settings_impl(settings_data, db)
     except HTTPException:

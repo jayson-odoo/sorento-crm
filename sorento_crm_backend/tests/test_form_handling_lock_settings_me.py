@@ -52,12 +52,14 @@ def client(db, monkeypatch):
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user] = lambda: dict(_ACTOR)
     app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(_ACTOR)
-    # The settings read is permission-gated; this suite is about the field
-    # round-trip, not the gate (tests/test_settings_app_config_gate.py owns that).
+    # The settings read and write are permission-gated (`.view` / `.edit`); this
+    # suite is about the field round-trip, not the gate
+    # (tests/test_settings_app_config_gate.py owns that), so it holds both.
     monkeypatch.setattr(
         UserPermissionService,
         "check_user_has_permission",
-        lambda self, uid, slug: slug == "user_management.settings.view",
+        lambda self, uid, slug: slug
+        in {"user_management.settings.view", "user_management.settings.edit"},
     )
     try:
         yield TestClient(app)
