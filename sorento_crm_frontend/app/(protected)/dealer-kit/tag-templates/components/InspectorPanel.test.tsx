@@ -369,7 +369,7 @@ describe('InspectorPanel - polygon shape (S4, AC-S4-1)', () => {
     );
 
     const select = screen
-      .getByRole('option', { name: 'Polygon (free corners)' })
+      .getByRole('option', { name: 'Polygon' })
       .closest('select') as HTMLSelectElement;
     fireEvent.change(select, { target: { value: 'polygon' } });
 
@@ -407,6 +407,15 @@ describe('InspectorPanel - polygon shape (S4, AC-S4-1)', () => {
     const changes = onUpdateProps.mock.calls.at(-1)?.[1] as Record<string, unknown>;
     expect(changes.shape).toBe('rect');
     expect(changes.points).toBeUndefined();
+  });
+
+  it('names the shape plainly - "Polygon", not a parenthetical (AC-S4-12)', () => {
+    render(
+      <InspectorPanel layer={shapeLayer('rect')} onUpdate={vi.fn()} onUpdateProps={vi.fn()} />,
+    );
+
+    expect(screen.getByRole('option', { name: 'Polygon' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /free corners/i })).toBeNull();
   });
 
   it('keeps the corner radius available on a polygon (AC-S4-4)', () => {

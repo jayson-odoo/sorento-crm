@@ -61,6 +61,7 @@ import {
   moveEdge,
   movePoint,
   polygonPoints,
+  refitPolygon,
   scalePolygonPoints,
 } from '@/lib/dealer-kit/polygon-path';
 import {
@@ -356,14 +357,6 @@ export function TagCanvasEditor({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   /** The text layer the inline editor (S2, D5) is currently open on, if any. */
   const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
-  /**
-   * The polygon layer whose corners are being edited (S4), if any.
-   *
-   * Entered by double-clicking the polygon, left by Escape or by the
-   * selection moving anywhere else - see the effect below, which is also what
-   * makes a click on empty canvas leave, since that clears the selection.
-   */
-  const [editingShapeId, setEditingShapeId] = useState<string | null>(null);
   /**
    * The corners a handle drag is CURRENTLY at, so the shape follows the
    * cursor. Never committed here: `handlePolygonDragEnd` writes once, so one
@@ -1204,13 +1197,11 @@ export function TagCanvasEditor({
         setEditingLayerId(target.id);
         return;
       }
-      // A polygon opens its corner handles (S4); every other shape has
-      // nothing a second click could mean.
+      // A shape has nothing a second click could mean any more: a polygon
+      // shows its corner handles on SELECTION (r4b, AC-S4-10), so a
+      // double-click is just the click that selected it, twice.
       if (target.props.kind === 'shape') {
-        if (target.props.shape === 'polygon' && !target.locked) {
-          setSelectedIds(new Set([target.id]));
-          setEditingShapeId(target.id);
-        }
+        setSelectedIds(new Set([target.id]));
         return;
       }
       if (target.props.kind !== 'group') return;
@@ -1227,51 +1218,40 @@ export function TagCanvasEditor({
     [layers, resolveTarget, pointerMm],
   );
 
-  // -- Polygon corner editing (S4) -------------------------------------------
-
-  /** The polygon being corner-edited, or null the moment it stops being one. */
-  const editingShapeLayer = useMemo(() => {
-    if (!editingShapeId) return null;
-    const layer = layers.find((l) => l.id === editingShapeId);
-    if (!layer || layer.props.kind !== 'shape' || layer.props.shape !== 'polygon') return null;
-    return layer;
-  }, [editingShapeId, layers]);
+  // -- Polygon corner handles (S4, r4b) --------------------------------------
 
   /**
-   * Corner editing ends the moment its layer stops being the one selected
-   * polygon: clicking empty canvas, selecting something else, locking or
-   * deleting it, or switching the shape back to a rectangle. One rule rather
-   * than a setter on every one of those paths, none of which would otherwise
-   * remember the handles were up.
+   * The polygon the corner handles belong to: the SOLE selection, whenever it
+   * is an unlocked, visible polygon.
+   *
+   * Selection alone, no double-click (r4b, AC-S4-10). The user picked Polygon
+   * from the shape list and dragged at the corner they wanted to move;
+   * nothing on screen said a second click was needed first, and a handle
+   * nobody can find is a feature nobody has. Derived rather than held in
+   * state, so there is one source of truth: clicking empty canvas, selecting
+   * something else, locking it or switching the shape back to a rectangle all
+   * take the handles away without a single setter.
    */
-  useEffect(() => {
-    if (!editingShapeId) return;
-    const layer = layers.find((l) => l.id === editingShapeId);
-    const editable =
-      layer &&
-      layer.props.kind === 'shape' &&
-      layer.props.shape === 'polygon' &&
-      !layer.locked &&
-      layer.visible;
-    const soleSelection = selectedIds.size === 1 && selectedIds.has(editingShapeId);
-    if (!editable || !soleSelection) {
-      setEditingShapeId(null);
-      setPolygonPreview(null);
-    }
-  }, [editingShapeId, layers, selectedIds]);
+  const cornerHandleLayer = useMemo(() => {
+    if (selectedIds.size !== 1) return null;
+    const layer = layers.find((l) => selectedIds.has(l.id));
+    if (!layer || layer.locked || !layer.visible) return null;
+    if (layer.props.kind !== 'shape' || layer.props.shape !== 'polygon') return null;
+    return layer;
+  }, [selectedIds, layers]);
 
   /** Where every handle sits, in the layer's own pixel space. */
   const polygonHandles = useMemo(() => {
-    if (!editingShapeLayer || editingShapeLayer.props.kind !== 'shape') return null;
-    const width = editingShapeLayer.width_mm * scale;
-    const height = editingShapeLayer.height_mm * scale;
+    if (!cornerHandleLayer || cornerHandleLayer.props.kind !== 'shape') return null;
+    const width = cornerHandleLayer.width_mm * scale;
+    const height = cornerHandleLayer.height_mm * scale;
     const vertices = scalePolygonPoints(
-      polygonPreview ?? polygonPoints(editingShapeLayer.props),
+      polygonPreview ?? polygonPoints(cornerHandleLayer.props),
       width,
       height,
     );
     return {
-      layer: editingShapeLayer,
+      layer: cornerHandleLayer,
       width,
       height,
       vertices,
@@ -1280,11 +1260,11 @@ export function TagCanvasEditor({
         return { x: (point.x + next.x) / 2, y: (point.y + next.y) / 2 };
       }),
     };
-  }, [editingShapeLayer, polygonPreview, scale]);
+  }, [cornerHandleLayer, polygonPreview, scale]);
 
   const startPolygonDrag = useCallback(
     (kind: 'vertex' | 'edge', index: number) => {
-      const layer = editingShapeLayer;
+      const layer = cornerHandleLayer;
       if (!layer || layer.props.kind !== 'shape') return;
       // The BASE is read once, at the start: every tick of the drag is a
       // delta from where the handle began, so a clamped tick cannot ratchet
@@ -1302,13 +1282,13 @@ export function TagCanvasEditor({
           kind === 'vertex' ? from : { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 },
       };
     },
-    [editingShapeLayer, scale],
+    [cornerHandleLayer, scale],
   );
 
   const polygonPointsFromDrag = useCallback(
     (node: Konva.Node) => {
       const drag = polygonDragRef.current;
-      const layer = editingShapeLayer;
+      const layer = cornerHandleLayer;
       if (!drag || !layer) return null;
       const width = layer.width_mm * scale;
       const height = layer.height_mm * scale;
@@ -1319,7 +1299,7 @@ export function TagCanvasEditor({
         ? movePoint(drag.base, drag.index, dx, dy)
         : moveEdge(drag.base, drag.index, dx, dy);
     },
-    [editingShapeLayer, scale],
+    [cornerHandleLayer, scale],
   );
 
   const handlePolygonDragMove = useCallback(
@@ -1330,38 +1310,66 @@ export function TagCanvasEditor({
     [polygonPointsFromDrag],
   );
 
+  /**
+   * Release: re-fit the BOX around wherever the corners ended up (r4b).
+   *
+   * A corner is normalized against the layer box, so a drag past the wall
+   * leaves a coordinate outside [0, 1]. `refitPolygon` turns that back into a
+   * box that actually contains the shape, which is what keeps the
+   * Transformer, the snap guides and the Inspector's W/H describing the thing
+   * on screen (AC-S4-11).
+   *
+   * ONE `updateLayer` call, carrying the geometry AND the props: `updateLayer`
+   * pushes one history entry, so one drag stays one undo (AC-S4-7) even
+   * though it changed four numbers and every corner.
+   */
   const handlePolygonDragEnd = useCallback(
     (e: Konva.KonvaEventObject<DragEvent>) => {
+      const drag = polygonDragRef.current;
       const next = polygonPointsFromDrag(e.target);
+      const layer = cornerHandleLayer;
       polygonDragRef.current = null;
       setPolygonPreview(null);
-      if (next && editingShapeId) updateLayerProps(editingShapeId, { points: next });
-    },
-    [polygonPointsFromDrag, editingShapeId, updateLayerProps],
-  );
+      if (!next || !layer || layer.props.kind !== 'shape') return;
 
-  /**
-   * Hold a handle inside the layer box for the whole drag (AC-S4-3).
-   *
-   * Konva drives a drag from the pointer, not from the `x`/`y` React hands
-   * back, so clamping the committed points alone would leave the handle
-   * itself out in the margin while the corner it stands for had already
-   * stopped. The box is a rectangle in the PARENT group's space, which is
-   * where the layer's rotation already lives, so the clamp is a plain
-   * min/max once the absolute point is taken back through that transform.
-   */
-  const polygonHandleBound = useCallback(
-    function boundToLayerBox(this: Konva.Node, pos: { x: number; y: number }) {
-      const parent = this.getParent();
-      if (!parent || !polygonHandles) return pos;
-      const transform = parent.getAbsoluteTransform();
-      const local = transform.copy().invert().point(pos);
-      return transform.point({
-        x: Math.min(polygonHandles.width, Math.max(0, local.x)),
-        y: Math.min(polygonHandles.height, Math.max(0, local.y)),
+      const refit = refitPolygon({
+        x: layer.x_mm,
+        y: layer.y_mm,
+        width: layer.width_mm,
+        height: layer.height_mm,
+        rotation: layer.rotation_deg,
+        points: next,
       });
+      updateLayer(layer.id, {
+        x_mm: refit.x,
+        y_mm: refit.y,
+        width_mm: refit.width,
+        height_mm: refit.height,
+        props: { ...layer.props, points: refit.points },
+      });
+
+      // The handles re-derive from the REFITTED props, but Konva left this
+      // node wherever the pointer dropped it - in the old box's coordinates,
+      // inside a group that has just moved. Put it back by hand or it strands
+      // a handle's width away from the corner it stands for.
+      if (drag) {
+        const vertices = scalePolygonPoints(
+          refit.points,
+          refit.width * scale,
+          refit.height * scale,
+        );
+        const from = vertices[drag.index];
+        const to = vertices[(drag.index + 1) % vertices.length];
+        if (from && to) {
+          e.target.position(
+            drag.kind === 'vertex'
+              ? { x: from.x, y: from.y }
+              : { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 },
+          );
+        }
+      }
     },
-    [polygonHandles],
+    [polygonPointsFromDrag, cornerHandleLayer, updateLayer, scale],
   );
 
   /**
@@ -1370,11 +1378,11 @@ export function TagCanvasEditor({
    */
   const withPolygonPreview = useCallback(
     (layer: TagLayer): TagLayer => {
-      if (!polygonPreview || layer.id !== editingShapeId) return layer;
+      if (!polygonPreview || layer.id !== cornerHandleLayer?.id) return layer;
       if (layer.props.kind !== 'shape') return layer;
       return { ...layer, props: { ...layer.props, points: polygonPreview } };
     },
-    [polygonPreview, editingShapeId],
+    [polygonPreview, cornerHandleLayer],
   );
 
   /** Escape climbs one level, and deselects at the top. */
@@ -1515,15 +1523,11 @@ export function TagCanvasEditor({
     const nodes = Array.from(selectedIds)
       .map((id) => layers.find((layer) => layer.id === id))
       .filter((layer): layer is TagLayer => Boolean(layer) && !layer!.locked && layer!.visible)
-      // A polygon whose corners are being edited answers to its own handles
-      // (S4): leaving the resize box on top of them would put two grips in
-      // the same corner, and the box's would win the click.
-      .filter((layer) => layer.id !== editingShapeId)
       .map((layer) => stage.findOne(`#${layer.id}`))
       .filter((node): node is Konva.Node => Boolean(node));
     transformer.nodes(nodes);
     transformer.getLayer()?.batchDraw();
-  }, [selectedIds, layers, scale, view, editingShapeId]);
+  }, [selectedIds, layers, scale, view]);
 
   /**
    * Live reflow while a TEXT layer is being resized (D8, S6).
@@ -2274,15 +2278,6 @@ export function TagCanvasEditor({
 
       if (isInput) return;
 
-      // Corner editing owns Escape first (S4, AC-S4-7). The Escape below
-      // climbs out of a group instead, which would leave the handles up.
-      if (e.key === 'Escape' && editingShapeId) {
-        e.preventDefault();
-        setEditingShapeId(null);
-        setPolygonPreview(null);
-        return;
-      }
-
       if (e.key === ' ' && !modifier) {
         e.preventDefault();
         setSpaceHeld(true);
@@ -2398,7 +2393,6 @@ export function TagCanvasEditor({
     selectedIds,
     selectedGuideId,
     editingLayerId,
-    editingShapeId,
     applyTextFormat,
     deleteSelectedLayers,
     duplicateSelectedLayers,
@@ -2987,16 +2981,24 @@ export function TagCanvasEditor({
                       listening={!handMode}
                       onTransform={handleTransform}
                       onTransformEnd={handleTransformEnd}
-                      enabledAnchors={[
-                        'top-left',
-                        'top-right',
-                        'bottom-left',
-                        'bottom-right',
-                        'middle-left',
-                        'middle-right',
-                        'top-center',
-                        'bottom-center',
-                      ]}
+                      // A polygon keeps the ROTATION anchor and nothing else
+                      // (r4b, AC-S4-10): a resize anchor sits exactly where a
+                      // corner handle sits, and the anchor would win every
+                      // click meant for the corner.
+                      enabledAnchors={
+                        polygonHandles
+                          ? []
+                          : [
+                              'top-left',
+                              'top-right',
+                              'bottom-left',
+                              'bottom-right',
+                              'middle-left',
+                              'middle-right',
+                              'top-center',
+                              'bottom-center',
+                            ]
+                      }
                       boundBoxFunc={(_oldBox, newBox) => {
                         // Minimum size = 2mm in pixels.
                         const minSize = 2 * scale;
@@ -3037,7 +3039,6 @@ export function TagCanvasEditor({
                             stroke="#3b82f6"
                             strokeWidth={1}
                             draggable={!handMode}
-                            dragBoundFunc={polygonHandleBound}
                             onDragStart={() => startPolygonDrag('edge', index)}
                             onDragMove={handlePolygonDragMove}
                             onDragEnd={handlePolygonDragEnd}
@@ -3054,7 +3055,6 @@ export function TagCanvasEditor({
                             stroke="#3b82f6"
                             strokeWidth={1.5}
                             draggable={!handMode}
-                            dragBoundFunc={polygonHandleBound}
                             onDragStart={() => startPolygonDrag('vertex', index)}
                             onDragMove={handlePolygonDragMove}
                             onDragEnd={handlePolygonDragEnd}

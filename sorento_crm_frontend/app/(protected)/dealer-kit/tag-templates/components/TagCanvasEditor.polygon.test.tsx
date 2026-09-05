@@ -1,17 +1,20 @@
 /**
- * Free-corner polygon editing on the canvas (S4, AC-S4-2/3/7).
+ * Free-corner polygon editing on the canvas (S4, AC-S4-2/7; r4b AC-S4-10/11).
  *
  * The geometry itself is pinned in `lib/dealer-kit/polygon-path.test.ts`.
- * This is the WIRING: a double-click puts the layer into corner editing,
- * every corner and every edge midpoint gets a handle, a drag commits ONE new
- * set of normalized points, and Escape leaves again.
+ * This is the WIRING: SELECTING a polygon puts a handle on every corner and
+ * every edge midpoint (r4b - the first cut hid them behind a double-click and
+ * the user, having picked Polygon and dragged, saw nothing at all), the
+ * Transformer gives up its resize anchors so they cannot sit on top of those
+ * handles, a drag commits ONE new set of normalized points plus the box that
+ * now contains them, and deselecting takes the handles away again.
  *
  * Konva does not run in jsdom, so `react-konva` is stood in for by divs that
  * carry the props a handle is identified and driven by - the same pattern
  * `TagCanvasEditor.guides.test.tsx` uses for a ruler guide's `stroke`. A
  * Konva drag reports the node's position through `e.target.x()/y()`, so the
  * stand-in turns the press / move / release it is driven by into exactly
- * that.
+ * that, and records `position()` so the drag-end snap-back can be asserted.
  */
 
 import { fireEvent, render, screen } from '@testing-library/react';
@@ -21,6 +24,12 @@ import type { TagLayer, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-typ
 import { polygonPoints } from '@/lib/dealer-kit/polygon-path';
 
 // -- Stand-ins ---------------------------------------------------------------
+
+/** What the stand-in records for the test, hoisted with the mock factory. */
+const konva = vi.hoisted(() => ({
+  positions: [] as { x: number; y: number }[],
+  anchors: [] as unknown[],
+}));
 
 vi.mock('konva/lib/Global', () => ({ Konva: { dragButtons: [0, 1] } }));
 
@@ -37,7 +46,13 @@ vi.mock('react-konva', () => {
     children?: React.ReactNode;
     onDragStart?: (e: { target: { x: () => number; y: () => number } }) => void;
     onDragMove?: (e: { target: { x: () => number; y: () => number } }) => void;
-    onDragEnd?: (e: { target: { x: () => number; y: () => number } }) => void;
+    onDragEnd?: (e: {
+      target: {
+        x: () => number;
+        y: () => number;
+        position: (p: { x: number; y: number }) => void;
+      };
+    }) => void;
   }
 
   // A Konva drag hands the handler the NODE; everything this component reads
@@ -46,7 +61,11 @@ vi.mock('react-konva', () => {
   // has no DragEvent that carries coordinates, and Konva's drag is built out
   // of these three anyway.
   const dragged = (event: { clientX: number; clientY: number }) => ({
-    target: { x: () => event.clientX, y: () => event.clientY },
+    target: {
+      x: () => event.clientX,
+      y: () => event.clientY,
+      position: (p: { x: number; y: number }) => konva.positions.push(p),
+    },
   });
 
   const draggable = (kind: string) =>
@@ -73,7 +92,10 @@ vi.mock('react-konva', () => {
     Rect: draggable('rect'),
     Circle: draggable('circle'),
     Line: passthrough('line'),
-    Transformer: passthrough('transformer'),
+    Transformer: function TransformerStandIn(props: { enabledAnchors?: unknown[] }) {
+      konva.anchors.push(props.enabledAnchors);
+      return <div data-konva="transformer" data-anchors={JSON.stringify(props.enabledAnchors)} />;
+    },
   };
 });
 
@@ -89,6 +111,10 @@ vi.mock('./KonvaTagLayer', () => ({
   }) => (
     <div
       data-testid={`layer-${layer.id}`}
+      data-x={layer.x_mm}
+      data-y={layer.y_mm}
+      data-w={layer.width_mm}
+      data-h={layer.height_mm}
       data-points={
         layer.props.kind === 'shape' && layer.props.shape === 'polygon'
           ? JSON.stringify(polygonPoints(layer.props))
@@ -176,23 +202,40 @@ function pointsOf(layerId = 'sh1') {
   return JSON.parse(screen.getByTestId(`layer-${layerId}`).getAttribute('data-points') ?? 'null');
 }
 
-function enterCornerEditing() {
-  fireEvent.doubleClick(screen.getByTestId('layer-sh1'));
+function boxOf(layerId = 'sh1') {
+  const node = screen.getByTestId(`layer-${layerId}`);
+  return {
+    x: Number(node.getAttribute('data-x')),
+    y: Number(node.getAttribute('data-y')),
+    width: Number(node.getAttribute('data-w')),
+    height: Number(node.getAttribute('data-h')),
+  };
 }
 
-describe('TagCanvasEditor polygon corner editing (S4)', () => {
+/** Selection is all it takes now (r4b, AC-S4-10). */
+function selectShape() {
+  fireEvent.click(screen.getByTestId('layer-sh1'));
+}
+
+function lastAnchors() {
+  return konva.anchors.at(-1);
+}
+
+describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    konva.positions.length = 0;
+    konva.anchors.length = 0;
   });
 
-  it('double-clicking a polygon shows a handle on every corner and every edge (AC-S4-2)', () => {
+  it('SELECTING a polygon shows a handle on every corner and every edge (AC-S4-10)', () => {
     const { container } = render(
       <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
     );
 
     expect(container.querySelector('[data-name="polygon-vertex-0"]')).toBeNull();
 
-    enterCornerEditing();
+    selectShape();
 
     for (let i = 0; i < 4; i += 1) {
       expect(handle(container, `polygon-vertex-${i}`)).toBeTruthy();
@@ -205,14 +248,37 @@ describe('TagCanvasEditor polygon corner editing (S4)', () => {
     expect(handle(container, 'polygon-edge-0').getAttribute('data-y')).toBe('0');
   });
 
+  it('gives the Transformer no box anchors while a polygon is selected (AC-S4-10)', () => {
+    render(<TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />);
+
+    expect(lastAnchors()).toEqual(expect.arrayContaining(['top-left']));
+
+    selectShape();
+
+    // Empty, not absent: react-konva keeps the rotater, which is the one grip
+    // a polygon still wants.
+    expect(lastAnchors()).toEqual([]);
+  });
+
+  it('a double-click is harmless - it just selects, same as the click', () => {
+    const { container } = render(
+      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+    );
+
+    fireEvent.doubleClick(screen.getByTestId('layer-sh1'));
+
+    expect(handle(container, 'polygon-vertex-0')).toBeTruthy();
+  });
+
   it('leaves a rectangle alone - only a polygon has corners to edit', () => {
     const { container } = render(
       <TagCanvasEditor doc={docWith(shapeLayer('rect'))} onChange={vi.fn()} />,
     );
 
-    fireEvent.doubleClick(screen.getByTestId('layer-sh1'));
+    selectShape();
 
     expect(container.querySelector('[data-name="polygon-vertex-0"]')).toBeNull();
+    expect(lastAnchors()).toEqual(expect.arrayContaining(['top-left']));
   });
 
   it('dragging a corner writes the new normalized point, and only that one (AC-S4-2)', () => {
@@ -220,7 +286,7 @@ describe('TagCanvasEditor polygon corner editing (S4)', () => {
     const { container } = render(
       <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={onChange} />,
     );
-    enterCornerEditing();
+    selectShape();
 
     const vertex = handle(container, 'polygon-vertex-1');
     fireEvent.mouseDown(vertex);
@@ -248,7 +314,7 @@ describe('TagCanvasEditor polygon corner editing (S4)', () => {
     const { container } = render(
       <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
     );
-    enterCornerEditing();
+    selectShape();
 
     const vertex = handle(container, 'polygon-vertex-1');
     fireEvent.mouseDown(vertex);
@@ -257,43 +323,87 @@ describe('TagCanvasEditor polygon corner editing (S4)', () => {
     expect(pointsOf()[1]).toEqual({ x: 0.25, y: 0 });
   });
 
-  it('keeps a dragged corner inside the layer box (AC-S4-3)', () => {
+  it('GROWS the box when a corner is dragged past its right wall (AC-S4-11)', () => {
     const { container } = render(
       <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
     );
-    enterCornerEditing();
+    selectShape();
+
+    // 180px is 60mm: 20mm past the 40mm box.
+    const vertex = handle(container, 'polygon-vertex-1');
+    fireEvent.mouseDown(vertex);
+    fireEvent.mouseUp(vertex, { clientX: 180, clientY: 0 });
+
+    expect(boxOf()).toEqual({ x: 0, y: 0, width: 60, height: 20 });
+    expect(pointsOf()).toEqual([
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 0.666667, y: 1 },
+      { x: 0, y: 1 },
+    ]);
+  });
+
+  it('moves the layer origin when the growth is off the left wall (AC-S4-11)', () => {
+    const { container } = render(
+      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+    );
+    selectShape();
 
     const vertex = handle(container, 'polygon-vertex-0');
     fireEvent.mouseDown(vertex);
-    fireEvent.mouseUp(vertex, { clientX: -400, clientY: 400 });
+    fireEvent.mouseUp(vertex, { clientX: -60, clientY: 0 });
 
-    expect(pointsOf()[0]).toEqual({ x: 0, y: 1 });
+    expect(boxOf()).toEqual({ x: -20, y: 0, width: 60, height: 20 });
+    expect(pointsOf()[0]).toEqual({ x: 0, y: 0 });
+    expect(pointsOf()[3]).toEqual({ x: 0.333333, y: 1 });
+    // The handle itself was dropped at -60px, in the OLD box's coordinates.
+    // Without this it would strand out in the margin while the corner it
+    // stands for had already moved to the new box's origin.
+    expect(konva.positions.at(-1)).toEqual({ x: 0, y: 0 });
+  });
+
+  it('snaps a dragged EDGE handle back onto the recomputed midpoint', () => {
+    const { container } = render(
+      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+    );
+    selectShape();
+
+    // Edge 0 is the top edge; its midpoint starts at (60, 0). Drag it 30mm
+    // (90px) up, so the whole box moves up and the midpoint is back at y 0.
+    const edge = handle(container, 'polygon-edge-0');
+    fireEvent.mouseDown(edge);
+    fireEvent.mouseUp(edge, { clientX: W_PX / 2, clientY: -90 });
+
+    expect(boxOf()).toEqual({ x: 0, y: -30, width: 40, height: 50 });
+    expect(konva.positions.at(-1)).toEqual({ x: W_PX / 2, y: 0 });
   });
 
   it('dragging an edge midpoint moves both of its endpoints (AC-S4-2)', () => {
     const { container } = render(
       <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
     );
-    enterCornerEditing();
+    selectShape();
 
-    // Edge 0 is the top edge; its midpoint starts at (60, 0).
+    // Edge 0 is the top edge; its midpoint starts at (60, 0). Half the box
+    // down leaves the shape in the bottom half, so the box refits to it.
     const edge = handle(container, 'polygon-edge-0');
     fireEvent.mouseDown(edge);
     fireEvent.mouseUp(edge, { clientX: W_PX / 2, clientY: H_PX / 2 });
 
+    expect(boxOf()).toEqual({ x: 0, y: 10, width: 40, height: 10 });
     expect(pointsOf()).toEqual([
-      { x: 0, y: 0.5 },
-      { x: 1, y: 0.5 },
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
       { x: 1, y: 1 },
       { x: 0, y: 1 },
     ]);
   });
 
-  it('Escape leaves corner editing (AC-S4-7)', () => {
+  it('deselecting takes the handles away (AC-S4-7)', () => {
     const { container } = render(
       <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
     );
-    enterCornerEditing();
+    selectShape();
     expect(container.querySelector('[data-name="polygon-vertex-0"]')).toBeTruthy();
 
     fireEvent.keyDown(window, { key: 'Escape' });
@@ -305,15 +415,16 @@ describe('TagCanvasEditor polygon corner editing (S4)', () => {
     const { container } = render(
       <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
     );
-    enterCornerEditing();
+    selectShape();
 
     const vertex = handle(container, 'polygon-vertex-1');
     fireEvent.mouseDown(vertex);
-    fireEvent.mouseUp(vertex, { clientX: W_PX / 2, clientY: 0 });
-    expect(pointsOf()[1]).toEqual({ x: 0.5, y: 0 });
+    fireEvent.mouseUp(vertex, { clientX: 180, clientY: 0 });
+    expect(boxOf().width).toBe(60);
 
     fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
 
+    expect(boxOf().width).toBe(40);
     expect(pointsOf()[1]).toEqual({ x: 1, y: 0 });
   });
 });

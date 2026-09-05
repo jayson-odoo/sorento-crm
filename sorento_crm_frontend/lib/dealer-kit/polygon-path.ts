@@ -35,10 +35,6 @@ export function defaultPolygonPoints(): PolygonPoint[] {
   return DEFAULT_POLYGON_POINTS.map((point) => ({ x: point.x, y: point.y }));
 }
 
-function clamp01(value: number) {
-  return Math.min(1, Math.max(0, value));
-}
-
 /** Trim the float noise a division leaves, so a path string stays readable. */
 function round(value: number) {
   return Number(value.toFixed(3));
@@ -139,7 +135,93 @@ export function roundedPolygonPath(points: PolygonPoint[], radiusPx: number): st
   return `M ${round(corners[0].enter.x)} ${round(corners[0].enter.y)} ${segments.join(' ')} Z`;
 }
 
-/** One corner moved by a normalized delta, clamped to the layer box. */
+/**
+ * The smallest a refit will let either axis of a layer box become, in mm.
+ *
+ * A polygon whose corners all line up has a zero-width bounding box, and a
+ * zero-width box is a division by zero one line later - and a layer nobody can
+ * grab again.
+ */
+export const MIN_POLYGON_BOX_MM = 1;
+
+export interface PolygonBox {
+  /** The layer's own position and size, in millimetres. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Degrees, the layer's `rotation_deg`. */
+  rotation: number;
+  /** Corners normalized against the CURRENT box - possibly outside [0, 1]. */
+  points: PolygonPoint[];
+}
+
+/** Round to micrometres, so a rotation's float noise never reaches the doc. */
+function roundMm(value: number) {
+  return Number(value.toFixed(3));
+}
+
+/** Round a normalized coordinate, same reason, one more digit of room. */
+function roundUnit(value: number) {
+  return Number(value.toFixed(6));
+}
+
+/**
+ * Re-fit a layer's BOX around corners that have been dragged out of it (r4b).
+ *
+ * A corner is normalized against the box, so a drag past the wall means a
+ * coordinate outside [0, 1] - which would otherwise draw outside the layer,
+ * where the Transformer, the snap guides and the Inspector's W/H all still
+ * describe the old box. Growing the box instead keeps every one of those
+ * telling the truth, and is what the user asked for: "dragging a corner past
+ * the layer box grows the box".
+ *
+ * The origin moves along the layer's OWN axes, not the page's: a rotated
+ * polygon whose x/y were shifted in page space visibly jumped on release,
+ * because the box grew in one frame of reference and moved in another.
+ */
+export function refitPolygon(box: PolygonBox): {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  points: PolygonPoint[];
+} {
+  const local = box.points.map((point) => ({
+    x: point.x * box.width,
+    y: point.y * box.height,
+  }));
+  const xs = local.map((point) => point.x);
+  const ys = local.map((point) => point.y);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const width = Math.max(Math.max(...xs) - minX, MIN_POLYGON_BOX_MM);
+  const height = Math.max(Math.max(...ys) - minY, MIN_POLYGON_BOX_MM);
+
+  const radians = (box.rotation * Math.PI) / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+
+  return {
+    x: roundMm(box.x + minX * cos - minY * sin),
+    y: roundMm(box.y + minX * sin + minY * cos),
+    width: roundMm(width),
+    height: roundMm(height),
+    points: local.map((point) => ({
+      x: roundUnit((point.x - minX) / width),
+      y: roundUnit((point.y - minY) / height),
+    })),
+  };
+}
+
+/**
+ * One corner moved by a normalized delta.
+ *
+ * NOT clamped to [0, 1] (r4b): a corner dragged past the wall grows the box
+ * instead of stopping at it - `refitPolygon` above is where that happens, on
+ * drag end. The clamp was the first design, and the user's test of it was
+ * simply that the corner stopped following the cursor.
+ */
 export function movePoint(
   points: PolygonPoint[],
   index: number,
@@ -148,9 +230,7 @@ export function movePoint(
 ): PolygonPoint[] {
   if (index < 0 || index >= points.length) return points.map((p) => ({ x: p.x, y: p.y }));
   return points.map((point, i) =>
-    i === index
-      ? { x: clamp01(point.x + dx), y: clamp01(point.y + dy) }
-      : { x: point.x, y: point.y },
+    i === index ? { x: point.x + dx, y: point.y + dy } : { x: point.x, y: point.y },
   );
 }
 
@@ -158,10 +238,11 @@ export function movePoint(
  * Edge `index` (vertex `index` to the next one, wrapping) moved by a
  * normalized delta.
  *
- * The DELTA is clamped, not each endpoint on its own: clamping them
- * separately would let one corner hit the wall while the other kept
- * travelling, which turns a parallel move into a rotation the user never
- * asked for (AC-S4-2 "moves that edge parallel to itself").
+ * Both endpoints take the SAME delta and neither is clamped, so the edge
+ * stays parallel to itself (AC-S4-2) and the box grows to follow it exactly
+ * as it does for a single corner. Clamping each endpoint on its own would
+ * have let one corner hit a wall while the other kept travelling, which turns
+ * a parallel move into a rotation nobody asked for.
  */
 export function moveEdge(
   points: PolygonPoint[],
@@ -171,13 +252,9 @@ export function moveEdge(
 ): PolygonPoint[] {
   if (index < 0 || index >= points.length) return points.map((p) => ({ x: p.x, y: p.y }));
   const nextIndex = (index + 1) % points.length;
-  const a = points[index];
-  const b = points[nextIndex];
-  const clampedX = Math.min(Math.min(1 - a.x, 1 - b.x), Math.max(Math.max(-a.x, -b.x), dx));
-  const clampedY = Math.min(Math.min(1 - a.y, 1 - b.y), Math.max(Math.max(-a.y, -b.y), dy));
   return points.map((point, i) =>
     i === index || i === nextIndex
-      ? { x: clamp01(point.x + clampedX), y: clamp01(point.y + clampedY) }
+      ? { x: point.x + dx, y: point.y + dy }
       : { x: point.x, y: point.y },
   );
 }

@@ -98,7 +98,7 @@ const SHAPE_TYPE_OPTIONS = [
   { value: 'rounded_rect', label: 'Rounded Rect' },
   { value: 'ellipse', label: 'Ellipse' },
   { value: 'line', label: 'Line' },
-  { value: 'polygon', label: 'Polygon (free corners)' },
+  { value: 'polygon', label: 'Polygon' },
 ];
 
 const FIELD_KEY_OPTIONS = [
