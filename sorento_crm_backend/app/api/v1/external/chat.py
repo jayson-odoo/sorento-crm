@@ -52,6 +52,46 @@ from app.services.integration_service import IntegrationLogService
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# A real turn is a WhatsApp message plus a session blob: a few KB, and the largest capture
+# in the 1,535-fixture corpus is well under one hundred. 256 KB is therefore three orders
+# of magnitude of headroom AND a bound on what one caller can push into `chatbot.turns`,
+# which is written once per customer message and never pruned.
+#
+# Measured on the PARSED payload, not on `content-length`. Two reasons, and both were
+# defects in the first version:
+#
+# * a chunked request carries no `content-length` at all, so a header check is skippable
+#   by the caller - exactly the caller a size guard exists for;
+# * by the time this route function runs FastAPI has already read, parsed and validated
+#   the body into `TurnRequest` (that is what resolving the `payload` parameter does), so
+#   the guard cannot protect the parse however it is measured. What it CAN bound is the
+#   write: `chatbot.turns` keeps the envelope, is written once per customer message and is
+#   never pruned, and the integration log copies it. STORED is the honest claim.
+#
+# Bounding the socket read is a server-level concern (`client_max_body_size`), and saying
+# so is better than implying a protection this cannot give.
+MAX_TURN_BODY_BYTES = 256 * 1024
+
+# The integration log records the CALL. A payload that was rejected for its size must not
+# be copied into `integration_logs` in full - that would move the problem one table over.
+MAX_LOGGED_PAYLOAD_BYTES = 64 * 1024
+
+
+def _logged_payload(payload: TurnRequest) -> str:
+    """The request body for the integration log, bounded."""
+    body = payload.model_dump_json()
+    if len(body) <= MAX_LOGGED_PAYLOAD_BYTES:
+        return body
+    return json.dumps(
+        {
+            "note": (
+                f"payload omitted: {len(body)} bytes exceeds the "
+                f"{MAX_LOGGED_PAYLOAD_BYTES} byte log cap"
+            ),
+            "contact_id": str(payload.envelope.contact.get("id") or ""),
+        }
+    )
+
 # What the customer reads when the tail could not finish. The SAME declaration the head's
 # parser reads, in a core module the package does not own, so the two can never drift
 # into two different apologies for the same silence and the package keeps exporting
@@ -81,6 +121,18 @@ def chat_turn(
     to_reraise: HTTPException | None = None
 
     try:
+        # The serialised payload, so a chunked request with no `content-length` is bounded
+        # too. See MAX_TURN_BODY_BYTES: this is a bound on what gets STORED.
+        body_bytes = len(payload.model_dump_json().encode("utf-8"))
+        if body_bytes > MAX_TURN_BODY_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"The turn body is {body_bytes} bytes, over the "
+                    f"{MAX_TURN_BODY_BYTES} byte limit. A turn carries one message and the "
+                    "session state, not an attachment - send media by reference."
+                ),
+            )
         result = run_turn(payload.envelope, session_factory=SessionLocal)
         response_payload = TurnResponse(**result.as_dict())
         if result.status == "failed":
@@ -111,7 +163,7 @@ def chat_turn(
                 endpoint=str(request.url.path),
                 http_method=request.method,
                 request_headers=json.dumps(request_headers),
-                request_payload=payload.model_dump_json(),
+                request_payload=_logged_payload(payload),
                 status_code=response_status,
                 status="success" if response_status < 400 else "failed",
                 error_message=error_message,

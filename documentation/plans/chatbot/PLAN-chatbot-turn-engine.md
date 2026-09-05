@@ -112,8 +112,10 @@ tests/chatbot/                   # replay + unit + endpoint + inbox + boundary
 tests/fixtures/chatbot/          # vendored golden subset (< 3 MB)
 ```
 
-Boundary rule (guardrail test): nothing outside `app/api/v1/external/chat.py`,
-`app/tasks/chat_turns.py`, `app/modules/chatbot/`, `tests/chatbot/` imports
+Boundary rule (guardrail test): nothing outside the module's own ROUTERS
+(`app/api/v1/external/chat.py`, the n8n-facing turn endpoint, and
+`app/api/v1/system/chatbot.py`, the admin turn-trace endpoint added at S2b),
+`app/tasks/chat_turns.py`, `app/modules/chatbot/` or `tests/chatbot/` imports
 `app.services.chatbot`. The package imports core services freely. That is the whole
 "liftable later" story: the day a measured trigger fires, the package moves behind an HTTP
 boundary with the same contracts. **Lift trigger (named, not built):** p95 turn latency above
@@ -548,7 +550,57 @@ Cleared memory rows; a "Failed turns only" filter on the list. Built against a m
 agent-browser from `/` via System > Chat History at 375 and 1280. **Phase 2:**
 `GET /api/v1/system/chatbot/turns` + `POST .../{id}/retry` (`app/api/v1/system/chatbot.py`,
 reads `chatbot.turns`, slugs `system.chat_history.view` / `.manage`), mock swapped at the
-service boundary. AC-251 to AC-259. Mockup: review page section 10.
+service boundary. AC-251 to AC-260. Mockup: review page section 10.
+
+**Delegated TTL (AC-260).** A turn handed to an n8n lane is `delegated` until that lane calls
+`/complete`. When the lane dies mid-turn the call never comes, so a minute-ly sweep
+(`app/services/chatbot_turn_sweep.py`, registered next to the existing ticks in
+`app/scheduler/task_scheduler.py`) fails every `delegated` row older than
+`CHATBOT_DELEGATED_TTL_MINUTES` (default 10) with a trace note. Two reasons it cannot wait for
+S7: the trace list otherwise fills with ghosts that read as work in progress, and R4 makes
+Retry available on FAILED turns only, so a stuck row is unrecoverable from the screen that
+exists to recover it. The sweep lives in core, not in `app/services/chatbot/`, because the
+scheduler is core and AC-002 forbids core importing the package - it settles a ROW, and the
+model is core.
+
+#### AC-259 evidence run (agent-browser, 5 Sep 2026)
+
+Against the REAL endpoints: dev server :3000 and the lane backend :8002 (`--reload`,
+`ENABLE_SCHEDULER=true`), isolated browser session `chatbot-s2b`. Data was three `ZZT9001`
+chat rows plus three turns (answered / failed-at-understood / stale delegated), seeded and
+deleted again in the same session; the screenshots are in the coder's scratchpad, and the
+run is written here so it can be re-walked.
+
+Steps, and what each one proved:
+
+1. `open http://localhost:3000`, sign in, then **sidebar only**: System > Messaging > Chat
+   History (never a deep URL, so the nav config and the permission gate are exercised).
+2. List loads: `GET /api/v1/system/chat-history?date_from=..&date_to=..&page=1&limit=50`.
+3. Filters > "Failed turns only: off" -> on. Two calls follow, in order:
+   `GET /api/v1/system/chatbot/turns/failed-contacts?from=..&to=..` then
+   `GET /api/v1/system/chat-history?...&contact_id=ZZT9001&contact_id=445239397&page=1...`.
+   That second call IS B1: the contacts the aggregate named are sent back as repeated
+   `contact_id`, so the rows, the total and the pager describe one set. Each row carries the
+   "failed at understood" badge.
+4. Row click opens the drawer: `GET /api/v1/system/chatbot/turns?contact_respond_id=ZZT9001&limit=200`.
+   Three turn panels, each with the short id chip (`#6791`, `#f713`, `#780a`).
+5. Expand the failed turn: Received ok, Understood failed with the provider error, the
+   collapsed "Access, Routed, Looked up, Replied, Remembered, Sent / not reached" row, and
+   `tokens 0` on the Understood facts (SEC2). "Technical details" opens the searchable raw
+   payload viewer.
+6. Retry is DISABLED with the reason "Retry is not configured in this environment.", read off
+   `retry_available` / `retry_unavailable_reason` on the LIST response (S7: no second route).
+7. AC-260 observed live rather than simulated: a turn left `delegated` since 4 Sep and a
+   seeded stale one were both flipped to `failed` / `Failed at Handover` by the minute-ly
+   sweep while the run was open, and the panel shows the sweep note as a FOOTER line under
+   the timeline ("Gave up waiting: n8n lane did not complete within 10 minutes.") rather than
+   as a ninth stage row (S8).
+8. Drawer's own "Failed turns only" toggle: 3 panels -> 1.
+9. 1280x800 and 375x812: `scrollWidth - clientWidth == 0` on both, drawer 375 wide at 375, no
+   panel overflow; drawer closed and reopened (end state, not a mid-transition frame).
+10. Console: zero errors, and zero warnings after the drawer was given
+    `aria-describedby={undefined}` (Radix warns for a `SheetContent` with no description; the
+    alternative, a sentence on screen, is an on-screen explanation).
 
 ### S3 - Canned lanes, offer-hold, ideation (150 lines + bridge)
 

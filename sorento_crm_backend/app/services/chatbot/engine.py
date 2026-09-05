@@ -22,6 +22,7 @@ state; the tail (S2) is what fills it.
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterator
@@ -45,6 +46,7 @@ from app.services.chatbot.head.output_exchange import (
 from app.services.chatbot.head.route import decide
 from app.services.chatbot.lanes import business, casual
 from app.services.chatbot.lanes.business import resolve_gate, services as business_services
+from app.services.chatbot.usage import record_parser_usage
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,7 @@ class TurnResult:
 
     __slots__ = (
         "turn_id",
+        "is_test",
         "ctx",
         "item",
         "branch_kind",
@@ -93,6 +96,7 @@ class TurnResult:
     def as_dict(self) -> dict[str, Any]:
         return {
             "turn_id": self.turn_id,
+            "is_test": bool(self.is_test),
             "ctx": self.ctx,
             "item": self.item,
             "branch_kind": self.branch_kind,
@@ -306,9 +310,22 @@ def _select_turn(db: Session, *, contact_respond_id: str, message_id: str | None
             ChatbotTurn.contact_respond_id == contact_respond_id,
             ChatbotTurn.message_id == message_id,
         )
-        .order_by(ChatbotTurn.created_at.asc())
+        # NEWEST first: with a retry there can be several rows for one message, and the
+        # one that matters is the last one - the earlier attempts are settled history.
+        .order_by(ChatbotTurn.created_at.desc(), ChatbotTurn.attempt.desc())
         .first()
     )
+
+
+def _awaiting_retry(row) -> bool:
+    """Is this row a FAILED turn an operator asked to re-run (S2b)?
+
+    D15 says a respond message already turned into a turn is a duplicate, and a retry
+    re-posts that same message - same `message_id` - so without this it would come back
+    as `duplicate: true` and Retry would be a no-op that reported success. The marker is
+    what tells the two apart: an operator asked for this one.
+    """
+    return row is not None and row.status == "failed" and row.retry_requested_at is not None
 
 
 def _existing_turn(db: Session, *, contact_respond_id: str, message_id: str | None):
@@ -322,21 +339,37 @@ def _existing_turn(db: Session, *, contact_respond_id: str, message_id: str | No
     return _select_turn(db, contact_respond_id=contact_respond_id, message_id=message_id)
 
 
-def _insert_turn(db: Session, *, envelope: Envelope, contact_respond_id: str) -> ChatbotTurn:
+def _insert_turn(
+    db: Session,
+    *,
+    envelope: Envelope,
+    contact_respond_id: str,
+    retrying: ChatbotTurn | None = None,
+) -> ChatbotTurn:
+    """The turn row. `retrying` is the failed row an operator asked to re-run (S2b).
+
+    A retry is a NEW turn, not an edit of the old one: same message, next attempt, ingress
+    `retry`. The old row keeps its trace and its failure - that is the record the operator
+    was reading - and only loses its retry marker, so a second failure can be retried too.
+    """
     row = ChatbotTurn(
         contact_respond_id=contact_respond_id,
         message_id=_message_id(envelope),
-        ingress=envelope.ingress,
-        envelope=envelope.model_dump(mode="json"),
+        ingress="retry" if retrying is not None else envelope.ingress,
+        envelope=trace_mod.cap_document(envelope.model_dump(mode="json")),
         is_test=envelope.dry_run,
         status="processing",
         stage="received",
-        attempt=1,
+        attempt=(retrying.attempt + 1) if retrying is not None else 1,
         trace=[],
         shadow_of=getattr(envelope, "shadow_of", None),
         started_at=_now(),
     )
     db.add(row)
+    if retrying is not None:
+        # Consumed. Leaving it set would make the NEXT delivery of this message look like
+        # another requested re-run rather than the duplicate it is.
+        retrying.retry_requested_at = None
     db.commit()
     db.refresh(row)
     return row
@@ -369,9 +402,35 @@ def _close_turn(
     # delivery replays this, and n8n's `build-ctx` / `route-turn` re-emitters would throw
     # on a null. It is also what S2b's Retry reads. Written HERE, at close, which is what
     # bounds the guarantee - see `_duplicate_result`.
-    row.response = response
+    row.response = trace_mod.cap_document(response)
     row.finished_at = _now()
     db.commit()
+
+
+def _record_parser_usage(
+    db: Session,
+    *,
+    usage: dict[str, Any],
+    started: float,
+    contact_respond_id: str,
+    dry_run: bool,
+    answered: bool,
+) -> None:
+    """One `ai_assistant_usage_logs` row for the turn's parser call.
+
+    LIVE turns only (D14: a test envelope writes nothing outside `chatbot.turns`), and
+    only when the provider reported something - a stubbed parse has no spend to record.
+    Written on the session that is open anyway, so it costs no extra connection.
+    """
+    if dry_run or not usage:
+        return
+    record_parser_usage(
+        db,
+        usage=usage,
+        response_time_ms=int((time.perf_counter() - started) * 1000),
+        contact_respond_id=contact_respond_id,
+        answered=answered,
+    )
 
 
 def _duplicate_result(row: ChatbotTurn) -> TurnResult:
@@ -401,6 +460,7 @@ def _duplicate_result(row: ChatbotTurn) -> TurnResult:
     response = row.response if isinstance(row.response, dict) else {}
     return TurnResult(
         turn_id=str(row.id),
+        is_test=bool(row.is_test),
         ctx=response.get("ctx"),
         item=response.get("item"),
         branch_kind=row.branch_kind,
@@ -446,13 +506,19 @@ def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResu
         existing = _existing_turn(
             db, contact_respond_id=contact_respond_id, message_id=message_id
         )
-        if existing is not None:
+        retrying = existing if _awaiting_retry(existing) else None
+        if existing is not None and retrying is None:
             # D15: the two injectors delivered the same respond message. No second turn
             # runs, no second LLM call, and the caller's Switch on `duplicate` sends
             # nothing.
             return _duplicate_result(existing)
         try:
-            row = _insert_turn(db, envelope=envelope, contact_respond_id=contact_respond_id)
+            row = _insert_turn(
+                db,
+                envelope=envelope,
+                contact_respond_id=contact_respond_id,
+                retrying=retrying,
+            )
         except IntegrityError:
             # The SELECT above is a TOCTOU window, not a lock: a webhook delivery racing a
             # poller re-delivery can both miss and both insert. The unique index is the
@@ -461,7 +527,10 @@ def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResu
             winner = _select_turn(
                 db, contact_respond_id=contact_respond_id, message_id=message_id
             )
-            if winner is None:  # pragma: no cover - some OTHER constraint failed
+            if winner is None or _awaiting_retry(winner):
+                # Either some OTHER constraint failed, or two retries of one message
+                # raced - neither is a duplicate, and guessing would answer the customer
+                # from a turn that never ran.
                 raise
             return _duplicate_result(winner)
         turn_id = str(row.id)
@@ -613,11 +682,14 @@ def _run_stages(  # noqa: PLR0915
     # `ParserOutputError` from `post_process` and lands on the failed-`understood` arm
     # below, exactly as a malformed model answer does (R5 / H44).
     parser_bypassed = dry_run and "mock_reformulator_output" in harness_present
+    parse_started = time.perf_counter()
     try:
         if parser_bypassed:
             parser_raw = _harness_value(envelope, "mock_reformulator_output")
         else:
             parser_raw = parser.parse(parser_config, user_block)
+        # Empty on a bypassed parse: no call, no spend to record.
+        parser_usage = getattr(parser_raw, "usage", {}) or {}
         parse_block = post_process({"output": parser_raw}, {}, parent_input)
         parse_block = suggest_follow_up(parse_block, parent_input)
     except (parser.ParserError, ParserOutputError) as exc:
@@ -634,6 +706,16 @@ def _run_stages(  # noqa: PLR0915
             raw={"user_block": user_block},
         )
         with _session(session_factory) as db:
+            # The provider bills a truncated or non-JSON emission too, so a failed parse
+            # is a spend the usage table has to carry.
+            _record_parser_usage(
+                db,
+                usage=getattr(exc, "usage", {}) or {},
+                started=parse_started,
+                contact_respond_id=contact_respond_id,
+                dry_run=dry_run,
+                answered=False,
+            )
             _close_turn(
                 db,
                 turn_id,
@@ -665,6 +747,9 @@ def _run_stages(  # noqa: PLR0915
             "intent": qf.get("intent_hint"),
             "entities": len(qf.get("entities") or []),
             "prompt_version": parser_config.prompt_version,
+            # Always present, 0 when the parse was bypassed or the provider reported
+            # nothing: a missing row reads as "free", which no LLM call is.
+            "tokens": int(parser_usage.get("total_tokens") or 0),
             "parser_bypassed": parser_bypassed,
         },
         raw={"parser_raw": parse_block.get("_parser_raw"), "derived": qf},
@@ -673,6 +758,14 @@ def _run_stages(  # noqa: PLR0915
     # -- access + routed ---------------------------------------------------- #
     stage[0] = "access"
     with _session(session_factory) as db:
+        _record_parser_usage(
+            db,
+            usage=parser_usage,
+            started=parse_started,
+            contact_respond_id=contact_respond_id,
+            dry_run=dry_run,
+            answered=True,
+        )
         suggested_agent = jsc.get(qf.get("routing"), "suggested_agent")
         access = check_access(
             db,
@@ -947,6 +1040,7 @@ def _run_stages(  # noqa: PLR0915
 
     return TurnResult(
         turn_id=turn_id,
+        is_test=dry_run,
         ctx=ctx,
         item=item,
         branch_kind=branch_kind,
@@ -1176,6 +1270,7 @@ def _failed_result(
     """A failed turn still hands the caller today's error reply to send (AC-105, AC-107)."""
     return TurnResult(
         turn_id=turn_id,
+        is_test=dry_run,
         ctx=None,
         item=None,
         branch_kind=None,

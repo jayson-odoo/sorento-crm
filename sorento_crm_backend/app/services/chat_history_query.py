@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import or_
+from sqlalchemy import false, or_
 from sqlalchemy.orm import Session
 
 from app.models.chat_history import ChatHistory
@@ -155,7 +155,7 @@ def _apply_filters(
     *,
     date_from: Optional[datetime],
     date_to: Optional[datetime],
-    contact_id: Optional[str],
+    contact_id: Optional[str] | Optional[list[str]],
     direction: Optional[str],
     search: Optional[str],
 ):
@@ -163,8 +163,26 @@ def _apply_filters(
         q = q.filter(ChatHistory.sent_at >= date_from)
     if date_to is not None:
         q = q.filter(ChatHistory.sent_at <= date_to)
-    if contact_id:
-        q = q.filter(ChatHistory.contact_id == contact_id)
+    # One contact or several. The several case is S2b's "Failed turns only": the caller
+    # already knows WHICH contacts failed (the turn aggregate answered that) and asks for
+    # their messages, so the page and its total are the filtered ones. Narrowing the page
+    # in the browser instead left the pager counting rows it had just hidden.
+    #
+    # An EMPTY list is a filter that matched nobody, not an absent filter. `None` is
+    # absent. The difference decides whether the screen shows nothing or shows every
+    # message in the range, so it is spelled out rather than left to truthiness.
+    if isinstance(contact_id, (list, tuple, set)):
+        contact_ids = [c for c in contact_id if c]
+        if not contact_ids:
+            return q.filter(false())
+    elif contact_id:
+        contact_ids = [contact_id]
+    else:
+        contact_ids = []
+    if len(contact_ids) == 1:
+        q = q.filter(ChatHistory.contact_id == contact_ids[0])
+    elif contact_ids:
+        q = q.filter(ChatHistory.contact_id.in_(contact_ids))
     if direction in ("incoming", "outgoing"):
         q = q.filter(ChatHistory.type == direction)
     if search:
@@ -205,7 +223,7 @@ def list_messages_page(
     *,
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
-    contact_id: Optional[str] = None,
+    contact_id: Optional[str] | Optional[list[str]] = None,
     direction: Optional[str] = None,
     search: Optional[str] = None,
     breached_only: bool = False,
@@ -295,7 +313,7 @@ def list_messages(
     *,
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
-    contact_id: Optional[str] = None,
+    contact_id: Optional[str] | Optional[list[str]] = None,
     direction: Optional[str] = None,
     search: Optional[str] = None,
     breached_only: bool = False,

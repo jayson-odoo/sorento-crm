@@ -11,6 +11,7 @@ Nothing here reaches an LLM, n8n, respond.io or the MCP server.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -406,6 +407,82 @@ class TestIdempotency:
         result = engine_mod.run_turn(other, session_factory=session_factory)
         assert result.duplicate is False
         assert result.branch_kind == "business_query"
+
+
+class TestRetryReinjection:
+    """S2b (AC-705, corrected 5 Sep): the trace screen's Retry re-posts the ORIGINAL
+    respond.io webhook body to n8n's inject webhook, which re-enters the engine at
+    `run_turn` with the SAME `message_id` a live message used. Without a marker, D15's
+    dedup would read that re-delivery as the same duplicate a webhook/poller race
+    produces and Retry would silently no-op. `retry_requested_at` (migration 474) is
+    that marker, set by the retry endpoint and consumed here."""
+
+    def test_retried_message_reruns_not_duplicate(
+        self, session_factory, seeded, stub_parser, stub_access
+    ):
+        stub_parser(error=parser_mod.ParserError("provider timeout"))
+        stub_access()
+        first = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+        assert first.duplicate is False
+        assert first.status == "failed"
+
+        db = session_factory()
+        row = db.query(ChatbotTurn).filter(ChatbotTurn.id == first.turn_id).first()
+        row.retry_requested_at = datetime.now(timezone.utc)  # what the S2b retry endpoint sets
+        db.commit()
+
+        stub_parser()  # the retried turn succeeds this time
+        retried = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        assert retried.duplicate is False
+        assert retried.turn_id != first.turn_id
+        assert retried.branch_kind == "business_query"
+
+        rows = (
+            session_factory()
+            .query(ChatbotTurn)
+            .filter(ChatbotTurn.contact_respond_id == CONTACT_ID)
+            # NOT created_at: two inserts in the same test can tie on Postgres's `now()`
+            # within one transaction (see LESSONS-LEARNT), and `attempt` is the column
+            # that actually orders these deterministically.
+            .order_by(ChatbotTurn.attempt.asc())
+            .all()
+        )
+        assert len(rows) == 2
+        original_row, retried_row = rows
+        assert original_row.id == first.turn_id
+        assert original_row.attempt == 1
+        assert retried_row.id == retried.turn_id
+        assert retried_row.attempt == 2
+        assert retried_row.ingress == "retry"
+        # Consumed: a THIRD delivery of this message must be an ordinary duplicate, not
+        # read as another requested re-run.
+        assert original_row.retry_requested_at is None
+
+    def test_a_failed_message_without_retry_requested_is_still_a_duplicate(
+        self, session_factory, seeded, stub_parser, stub_access
+    ):
+        """The D15 guarantee still holds for an UNRETRIED failure: two deliveries of the
+        same message racing on their own (webhook + poller) run once, whether the first
+        one succeeded or failed. Nobody asked for a re-run, so it is not one."""
+        stub_parser(error=parser_mod.ParserError("provider timeout"))
+        stub_access()
+        first = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+        assert first.status == "failed"
+
+        second = engine_mod.run_turn(
+            _envelope(ingress="poller"), session_factory=session_factory
+        )
+        assert second.duplicate is True
+        assert second.turn_id == first.turn_id
+
+        rows = (
+            session_factory()
+            .query(ChatbotTurn)
+            .filter(ChatbotTurn.contact_respond_id == CONTACT_ID)
+            .all()
+        )
+        assert len(rows) == 1
 
 
 class TestSessionDiscipline:
