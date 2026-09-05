@@ -138,6 +138,25 @@ export function hasMergeField(text: string | null | undefined): boolean {
 }
 
 /**
+ * The one `{{path}}` this text is, if the trimmed text is EXACTLY one token
+ * and nothing else - `null` for mixed text ("Code {{product.code}}"), plain
+ * text, or no text at all.
+ *
+ * What this exists for (S3): the inline editor opens on `props.text` verbatim
+ * for an unbound layer, so a layer whose whole content is `{{product.code}}`
+ * showed the raw token rather than the code it resolves to on the canvas. A
+ * layer is only a candidate for showing the RESOLVED value when it is a sole
+ * token - mixed text still opens raw, exactly as before, because there is no
+ * single value to show in its place.
+ */
+export function soleMergeField(text: string | null | undefined): string | null {
+  if (!text) return null;
+  const trimmed = text.trim();
+  const match = trimmed.match(/^\{\{\s*([A-Za-z0-9_.]+)\s*\}\}$/);
+  return match ? trimmed : null;
+}
+
+/**
  * Replace every `{{path}}` in `text` with what the bound data says.
  *
  * Called by `layerText` for the canvas and by the print page for the PDF, so

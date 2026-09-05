@@ -26,6 +26,14 @@
  * B/I/U/Shift+X are NOT handled here - `TagCanvasEditor`'s own keydown
  * handler answers them ahead of its `isInput`/`editingLayerId` guards, so
  * they work whether this editor is open or not (AC-S2-4).
+ *
+ * `readOnly` (S3, AC-S3-1/S3-2): a sole-token layer (`{{product.code}}` and
+ * nothing else) opens on the RESOLVED value instead of the raw token, so a
+ * salesperson can Cmd/Ctrl+C the code without reading braces. There is
+ * nothing to save back to `props.text` here - the value shown is derived, not
+ * the template - so every exit path (Enter, Escape, blur) is a cancel; typing
+ * is blocked at the DOM level (`readOnly`), and the value stays fully
+ * selected the whole time it is open.
  */
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
@@ -47,6 +55,9 @@ interface InlineTextEditorProps {
    *  flush the live value if the selection moves away before this editor's
    *  own commit path (blur/Esc/Cmd+Enter) gets a chance to run. */
   onChangeText?: (value: string) => void;
+  /** A sole-token layer previewing its resolved value (S3) - see the module
+   *  docstring. Every exit is a cancel; nothing can be typed. */
+  readOnly?: boolean;
 }
 
 export function InlineTextEditor({
@@ -58,25 +69,35 @@ export function InlineTextEditor({
   onCommit,
   onCancel,
   onChangeText,
+  readOnly = false,
 }: InlineTextEditorProps) {
   const props = layer.props as Extract<TagLayerProps, { kind: 'text' }>;
   const [text, setText] = useState(value);
   const ref = useRef<HTMLTextAreaElement>(null);
   const committedRef = useRef(false);
 
-  // Focused, caret at the end (AC-S2-1).
+  // Focused, and selected all (readOnly, AC-S3-1) or caret at the end
+  // (ordinary edit, AC-S2-1).
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     el.focus();
-    el.setSelectionRange(el.value.length, el.value.length);
+    if (readOnly) {
+      el.select();
+    } else {
+      el.setSelectionRange(el.value.length, el.value.length);
+    }
     // Only on mount - re-focusing on every keystroke would fight the caret.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const commit = () => {
     if (committedRef.current) return;
     committedRef.current = true;
-    if (text === value) {
+    // readOnly never has anything to save back (the value is derived, not
+    // the template) - every exit is the same cancel `text === value` already
+    // produces, made explicit rather than relying on typing being blocked.
+    if (readOnly || text === value) {
       onCancel?.();
       return;
     }
@@ -86,6 +107,13 @@ export function InlineTextEditor({
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     const modifier = e.ctrlKey || e.metaKey;
     if (e.key === 'Escape') {
+      e.preventDefault();
+      commit();
+      return;
+    }
+    // readOnly closes on plain Enter too (AC-S3-2) - there is no newline to
+    // insert into a value nothing here can edit.
+    if (readOnly && e.key === 'Enter') {
       e.preventDefault();
       commit();
       return;
@@ -133,7 +161,9 @@ export function InlineTextEditor({
       data-testid="inline-text-editor"
       aria-label="Edit text"
       value={text}
+      readOnly={readOnly}
       onChange={(e) => {
+        if (readOnly) return;
         setText(e.target.value);
         onChangeText?.(e.target.value);
       }}

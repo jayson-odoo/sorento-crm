@@ -55,6 +55,7 @@ import {
   PRODUCT_BLOCK_SIZE,
   SET_BLOCK_SIZE,
 } from '@/lib/dealer-kit/product-block';
+import { renderMergeFields, soleMergeField } from '@/lib/dealer-kit/merge-fields';
 import {
   actualSizeView,
   ancestorsOf,
@@ -2306,6 +2307,31 @@ export function TagCanvasEditor({
   /** The seed value the inline editor opened with - stable for the whole edit. */
   const editingContent = editingLayer ? contentFor(editingLayer) : '';
 
+  /**
+   * A sole-token layer opens the inline editor on its RESOLVED value instead
+   * of the raw token (S3, AC-S3-1): `{{product.code}}` shows
+   * `SRTWT8267-GM`, selected, so Cmd/Ctrl+C copies it - reading `{{product.
+   * code}}` off the canvas and typing braces into a search box is the bug
+   * this closes.
+   *
+   * Three things all have to hold, or the raw content opens exactly as
+   * before:
+   *  - the layer is UNBOUND (`slot_binding` is null) - a bound layer edits
+   *    `text_override`, a different value with nothing to preview here;
+   *  - the whole (trimmed) content is exactly one token, never mixed text
+   *    ("Code {{product.code}}") - there is no single value to substitute;
+   *  - something actually resolves it. With no bound data (the template
+   *    editor's own preview-less state, AC-S3-4) `renderMergeFields` hands
+   *    the token straight back, and that equality is the signal there was
+   *    nothing to resolve against.
+   */
+  const editingResolvedValue = useMemo(() => {
+    if (!editingLayer || editingLayer.slot_binding) return null;
+    if (!soleMergeField(editingContent)) return null;
+    const resolved = renderMergeFields(editingContent, dataOf(editingLayer), 'print');
+    return resolved && resolved !== editingContent ? resolved : null;
+  }, [editingLayer, editingContent, dataOf]);
+
   /** Mirrors the inline editor's live (uncommitted) text, for the effect below. */
   const editingTextRef = useRef('');
 
@@ -2865,7 +2891,8 @@ export function TagCanvasEditor({
                 <InlineTextEditor
                   key={editingLayer.id}
                   layer={editingLayer}
-                  value={editingContent}
+                  value={editingResolvedValue ?? editingContent}
+                  readOnly={editingResolvedValue != null}
                   scale={scale}
                   originX={RULER_THICKNESS + view.panX}
                   originY={RULER_THICKNESS + view.panY}

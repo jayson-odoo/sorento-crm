@@ -16,7 +16,12 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { TagLayer, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
+import type {
+  LineTagData,
+  TagBindingData,
+  TagLayer,
+  TagTemplateDoc,
+} from '@/lib/dealer-kit/tag-template-types';
 import { defaultTextProps } from '@/lib/dealer-kit/tag-template-types';
 
 // -- Stand-ins for everything that needs a browser or a server ---------------
@@ -161,5 +166,119 @@ describe('TagCanvasEditor inline edit - clicking a different layer (S1, AC-S2-2)
     const saved = onChange.mock.calls.at(-1)?.[0] as TagTemplateDoc;
     const savedA = saved.layers.find((l) => l.id === 'a');
     expect(savedA?.props.kind === 'text' ? savedA.props.text : null).toBe('Original A');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A sole-token layer opens on its RESOLVED value (S3, AC-S3-1/S3-2/S3-4).
+// ---------------------------------------------------------------------------
+
+function lineTagData(overrides: Partial<LineTagData> = {}): LineTagData {
+  return {
+    line_id: 'line-1',
+    code: 'SRTWT8267-GM',
+    name: 'Kitchen Sink',
+    dimensions: '800 x 500 x 220 mm',
+    spec_lines: 'Stainless steel',
+    specs: [],
+    set_members: '',
+    images: [],
+    list_price: 1599,
+    sell_price: null,
+    show_promo_price: false,
+    included_accessories: '',
+    quantity: 1,
+    barcode: null,
+    ...overrides,
+  };
+}
+
+const LINE_BOUND_DATA: TagBindingData = { kind: 'line', line: lineTagData() };
+
+function docWithLayers(layers: TagLayer[]): TagTemplateDoc {
+  return { width_mm: 60, height_mm: 40, layers };
+}
+
+describe('TagCanvasEditor inline edit - sole-token layer opens resolved (S3)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('opens a whole-token layer on the resolved code, fully selected (AC-S3-1)', async () => {
+    const doc = docWithLayers([textLayer('code', '{{product.code}}')]);
+    render(<TagCanvasEditor doc={doc} onChange={vi.fn()} boundData={LINE_BOUND_DATA} />);
+
+    fireEvent.doubleClick(screen.getByTestId('layer-code'));
+    const editor = (await screen.findByTestId(
+      'inline-text-editor',
+    )) as HTMLTextAreaElement;
+
+    expect(editor.value).toBe('SRTWT8267-GM');
+    expect(editor).toHaveAttribute('readonly');
+    expect(editor.selectionStart).toBe(0);
+    expect(editor.selectionEnd).toBe('SRTWT8267-GM'.length);
+  });
+
+  it('typing does nothing, and Escape/blur leave the layer text as the token (AC-S3-2)', async () => {
+    const onChange = vi.fn();
+    const doc = docWithLayers([textLayer('code', '{{product.code}}')]);
+    render(<TagCanvasEditor doc={doc} onChange={onChange} boundData={LINE_BOUND_DATA} />);
+
+    fireEvent.doubleClick(screen.getByTestId('layer-code'));
+    const editor = (await screen.findByTestId(
+      'inline-text-editor',
+    )) as HTMLTextAreaElement;
+
+    fireEvent.change(editor, { target: { value: 'typed over it' } });
+    expect(editor.value).toBe('SRTWT8267-GM');
+
+    fireEvent.keyDown(editor, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByTestId('inline-text-editor')).toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    const saved = onChange.mock.calls.at(-1)?.[0] as TagTemplateDoc;
+    const savedLayer = saved.layers.find((l) => l.id === 'code');
+    expect(savedLayer?.props.kind === 'text' ? savedLayer.props.text : null).toBe(
+      '{{product.code}}',
+    );
+  });
+
+  it('a layer with mixed text still opens raw and editable (AC-S3-3)', async () => {
+    const doc = docWithLayers([textLayer('mixed', 'Code {{product.code}}')]);
+    render(<TagCanvasEditor doc={doc} onChange={vi.fn()} boundData={LINE_BOUND_DATA} />);
+
+    fireEvent.doubleClick(screen.getByTestId('layer-mixed'));
+    const editor = (await screen.findByTestId(
+      'inline-text-editor',
+    )) as HTMLTextAreaElement;
+
+    expect(editor.value).toBe('Code {{product.code}}');
+    expect(editor).not.toHaveAttribute('readonly');
+  });
+
+  it('a plain text layer still opens raw and editable (AC-S3-3)', async () => {
+    const doc = docWithLayers([textLayer('plain', 'Plain words')]);
+    render(<TagCanvasEditor doc={doc} onChange={vi.fn()} boundData={LINE_BOUND_DATA} />);
+
+    fireEvent.doubleClick(screen.getByTestId('layer-plain'));
+    const editor = (await screen.findByTestId(
+      'inline-text-editor',
+    )) as HTMLTextAreaElement;
+
+    expect(editor.value).toBe('Plain words');
+    expect(editor).not.toHaveAttribute('readonly');
+  });
+
+  it('with no bound data (template editor, no preview), a sole-token layer opens raw (AC-S3-4)', async () => {
+    const doc = docWithLayers([textLayer('code', '{{product.code}}')]);
+    render(<TagCanvasEditor doc={doc} onChange={vi.fn()} />);
+
+    fireEvent.doubleClick(screen.getByTestId('layer-code'));
+    const editor = (await screen.findByTestId(
+      'inline-text-editor',
+    )) as HTMLTextAreaElement;
+
+    expect(editor.value).toBe('{{product.code}}');
+    expect(editor).not.toHaveAttribute('readonly');
   });
 });
