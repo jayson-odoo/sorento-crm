@@ -1091,6 +1091,10 @@ def test_out_of_scope_dry_run_carries_session_patch_and_writes_nothing(
     assert assign["respond_user_id"] is None
     assert comment["mention_user_ids"] == []
     assert result.session_patch is not None and isinstance(result.session_patch, dict)
+    # The TOP-LEVEL flag, not just the per-action one. It read false on this lane
+    # because the arm built its own TurnResult and never set it, so a caller that
+    # switched on the response's `is_test` (which is what it is for) saw a live turn.
+    assert result.is_test is True
 
     after_session_vars = session_factory().execute(
         text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),

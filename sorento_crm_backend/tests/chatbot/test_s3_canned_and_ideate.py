@@ -943,6 +943,7 @@ class TestCannedLanesDryRun:
         assert all(a.get("dry_run") is True for a in result.actions), (
             f"{kind}: every action must carry dry_run true"
         )
+        assert result.is_test is True, f"{kind}: the response must say it was a dry run"
         if kind == "ideate":
             # The kill assertion for this lane. `ideate` is the only canned kind with a
             # seam, and its seam WRITES outside `chatbot.turns` - a real idea record, a
@@ -1012,6 +1013,7 @@ class TestCannedLanesDryRun:
 
         after = _session_vars_raw(session_factory)
         assert after == before
+        assert result.is_test is True
         assert result.delegate is None
         assert result.actions, "access_denied must still hand the caller a reply to send"
         assert all(a.get("dry_run") is True for a in result.actions)

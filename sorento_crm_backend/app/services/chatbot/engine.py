@@ -577,7 +577,7 @@ def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResu
     stage: list[str] = ["received"]
     actions: list[dict[str, Any]] = []
     try:
-        return _run_stages(
+        result = _run_stages(
             envelope,
             session_factory=session_factory,
             turn_trace=turn_trace,
@@ -587,6 +587,14 @@ def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResu
             actions=actions,
             stage=stage,
         )
+        # D14: `is_test` is decided on the ENVELOPE, so it belongs on every answer the
+        # head returns, whichever arm produced it. Stamped at this ONE exit rather than
+        # on each arm's own `TurnResult`, which is exactly how three arms - the canned
+        # block, `_run_casual_lane` and `_run_escalation_arm` - came to leave it false on
+        # a turn that wrote nothing. Every action already carried its own `dry_run`; this
+        # is the top-level field a caller switches the whole turn on.
+        result.is_test = dry_run
+        return result
     except Exception as exc:  # noqa: BLE001 - a failed turn is recorded, never dropped
         message = f"{type(exc).__name__}: {exc}"
         logger.exception("chatbot turn %s failed at stage %s", turn_id, stage[0])
