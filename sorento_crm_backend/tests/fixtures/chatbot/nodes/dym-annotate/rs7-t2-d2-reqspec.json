@@ -1,0 +1,3267 @@
+{
+  "source": {
+    "execution_id": "14594330",
+    "workflow_id": "5yKLI5Qz7i8lRXli",
+    "workflow_version": "028874f1-3e62-4496-b3bc-aed5ffdea0a1",
+    "node": "dym-annotate",
+    "captured_at": "2026-08-31T02:47:44.193Z",
+    "expected_from": "runData",
+    "dedupe_sig": "a70b33d23a974630ff484e04d59d42d4da4964e6dd7cb6a64add4206530f2329",
+    "dev_contact": true
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "ctx_resolved": {
+            "tokens": [
+              "Ibks6245blng"
+            ],
+            "elapsed_ms": 666.18,
+            "resolutions": [
+              {
+                "token": "Ibks6245blng",
+                "resolved": false,
+                "ambiguous": false,
+                "matches": [],
+                "alternatives": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "IBKS6245-NG-BL",
+                    "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                    "match_field": "product_code",
+                    "match_tier": "trgm",
+                    "similarity": 0.44444445,
+                    "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                    "company_name": "Mocha",
+                    "display": {
+                      "product_name": "IBKS6245-NG-BL",
+                      "is_variant": false,
+                      "brand": null
+                    }
+                  },
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "IBKS6245-NG-SS",
+                    "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                    "match_field": "product_code",
+                    "match_tier": "trgm",
+                    "similarity": 0.44444445,
+                    "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                    "company_name": "Mocha",
+                    "display": {
+                      "product_name": "IBKS6245-NG-SS",
+                      "is_variant": false,
+                      "brand": null
+                    }
+                  },
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "IBKS6045-BL",
+                    "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                    "match_field": "product_code",
+                    "match_tier": "trgm",
+                    "similarity": 0.4117647,
+                    "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                    "company_name": "Mocha",
+                    "display": {
+                      "product_name": "IBKS6045-BL",
+                      "is_variant": false,
+                      "brand": null
+                    }
+                  }
+                ]
+              }
+            ],
+            "unresolved_tokens": [
+              "Ibks6245blng"
+            ],
+            "fallback_match_mode": "or",
+            "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+            "gate_passed": false,
+            "require_specific": false,
+            "resolved_company": null,
+            "company_team": null,
+            "resolved_companies": [],
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_companies": [],
+            "routing_company": null,
+            "access_denied_levels": [],
+            "access_notice": "",
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "gate_reason": "no entities and 'inventory' requires a scoping entity",
+            "gate_clarification": "",
+            "compatible_entities": [],
+            "gate_debug": {
+              "domain": "inventory",
+              "allowed_lookup": [
+                "product",
+                "category",
+                "brand"
+              ],
+              "entities_count": 0
+            },
+            "ctx": {
+              "contact": {
+                "id": 437264483,
+                "firstName": "Jayson",
+                "lastName": "Canary",
+                "phone": "60100000000",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "isBlocked": false,
+                "custom_fields": [
+                  {
+                    "name": "enquiry_type",
+                    "value": null
+                  },
+                  {
+                    "name": "user_type",
+                    "value": null
+                  },
+                  {
+                    "name": "complaint_id",
+                    "value": null
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_ai",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ],
+                "tags": [],
+                "assignee": null,
+                "lifecycle": null,
+                "created_at": 1782546255
+              },
+              "text": {
+                "event_type": "message.received",
+                "event_id": "rs7-t2-d2-reqspec-20260831",
+                "contact": {
+                  "id": 437264483,
+                  "firstName": "Jayson",
+                  "lastName": "Canary",
+                  "phone": "60100000000",
+                  "email": null,
+                  "language": null,
+                  "profilePic": null,
+                  "countryCode": "MY",
+                  "status": "open",
+                  "isBlocked": false,
+                  "custom_fields": [
+                    {
+                      "name": "enquiry_type",
+                      "value": null
+                    },
+                    {
+                      "name": "user_type",
+                      "value": null
+                    },
+                    {
+                      "name": "complaint_id",
+                      "value": null
+                    },
+                    {
+                      "name": "is_allowed_stock",
+                      "value": "true"
+                    },
+                    {
+                      "name": "is_human_intervened",
+                      "value": "false"
+                    },
+                    {
+                      "name": "is_allowed_ai",
+                      "value": "true"
+                    },
+                    {
+                      "name": "is_allowed_voice",
+                      "value": "true"
+                    }
+                  ],
+                  "tags": [],
+                  "assignee": null,
+                  "lifecycle": null,
+                  "created_at": 1782546255
+                },
+                "message": {
+                  "messageId": 1788144364819154,
+                  "channelMessageId": "rs7-t2-d2-reqspec-20260831",
+                  "contactId": 437264483,
+                  "channelId": 453209,
+                  "traffic": "incoming",
+                  "timestamp": 1788144364819154,
+                  "message": {
+                    "type": "text",
+                    "text": "Ibks6245-bl-ng got stock"
+                  }
+                },
+                "channel": {
+                  "id": 453209,
+                  "name": "Internal (+60 11-1673 1179)",
+                  "source": "whatsapp_business",
+                  "created_at": 1767682908
+                },
+                "sender": {
+                  "source": "contact",
+                  "userId": null,
+                  "teamId": null,
+                  "workflowId": null,
+                  "broadcastHistoryId": null
+                }
+              },
+              "session": {
+                "respond_io_id": "437264483",
+                "session_vars": {
+                  "variables": {
+                    "routing": {
+                      "suggested_team": "marketing_promotion",
+                      "suggested_agent": "general_enquiries"
+                    },
+                    "entities": [
+                      {
+                        "raw": "srtwc286",
+                        "hint": "product",
+                        "confident": true,
+                        "canonical_code": null,
+                        "current_message": false
+                      }
+                    ],
+                    "ideation": null,
+                    "response": "Previous turn (promotion): returned 1 records",
+                    "date_mode": null,
+                    "dym_offer": null,
+                    "user_goal": "trying to select the first result",
+                    "escalation": {
+                      "is_escalation_confirmation": false
+                    },
+                    "match_mode": "and",
+                    "domain_hint": "promotion",
+                    "intent_hint": "check_promotion",
+                    "message_type": "business_query",
+                    "query_brands": [
+                      "sorento"
+                    ],
+                    "access_levels": [
+                      "dealer"
+                    ],
+                    "routing_brand": "sorento",
+                    "contains_flyer": false,
+                    "dym_candidates": [],
+                    "date_filter_end": null,
+                    "last_result_set": [
+                      {
+                        "idx": 1,
+                        "uuid": null,
+                        "label": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                        "value": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                        "filename": "UPDATED SORENTO A3 FLYER  2026 (DEALER)_21072026.pdf",
+                        "entity_type": "promotion"
+                      },
+                      {
+                        "idx": 2,
+                        "uuid": null,
+                        "label": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                        "value": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                        "filename": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                        "entity_type": "promotion"
+                      },
+                      {
+                        "idx": 3,
+                        "uuid": null,
+                        "label": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                        "value": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                        "filename": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                        "entity_type": "promotion"
+                      }
+                    ],
+                    "routing_company": "00000000-0000-0000-0000-000000000001",
+                    "date_filter_start": null,
+                    "routing_companies": [
+                      {
+                        "codes": [
+                          "SRTWC286-SH-200",
+                          "SRTWC286-SH-P",
+                          "SRTWC286-SH-PP",
+                          "SRTWC286-SH",
+                          "SRTWC286-SH-UF",
+                          "SRTWC286-SH-NEW-150",
+                          "SRTWC286-SH-150",
+                          "SRTWC286-SH-NEW-P",
+                          "SRTWC286-SH-NEW-200",
+                          "SRTWC286-SH-NEW"
+                        ],
+                        "labels": [
+                          "SRTWC286-SH-200",
+                          "SRTWC286-SH-P",
+                          "SRTWC286-SH-PP",
+                          "SRTWC286-SH",
+                          "SRTWC286-SH-UF",
+                          "SRTWC286-SH-NEW-150",
+                          "SRTWC286-SH-150",
+                          "SRTWC286-SH-NEW-P",
+                          "SRTWC286-SH-NEW-200",
+                          "SRTWC286-SH-NEW"
+                        ],
+                        "brand_code": "sorento",
+                        "company_id": "00000000-0000-0000-0000-000000000001",
+                        "company_name": "Sorento"
+                      }
+                    ],
+                    "selection_context": "suggest_offer",
+                    "routing_roster_plan": null,
+                    "requested_attributes": [],
+                    "routing_brand_source": "resolved"
+                  },
+                  "user_response": "I have attached the file(s) below.\n\n1. *Promotion:* UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf\n*Start Date:* 2026-06-01\n*End Date:* 2026-09-30"
+                }
+              },
+              "parse": {
+                "output": {
+                  "message_type": "business_query",
+                  "intent_hint": "check_stock",
+                  "domain_hint": "inventory",
+                  "scope_intent": "specific",
+                  "is_affirmative": null,
+                  "user_goal": "trying to check whether IBKS6245-BL-NG is in stock",
+                  "access_levels": [],
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "Ibks6245-bl-ng",
+                      "hint": "product",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "domain_signal_source": "intent_explicit",
+                  "scope_exclusive_applied": false,
+                  "entity_op_applied": "replace_combine",
+                  "query_brands": [],
+                  "entities_filtered": false,
+                  "entities_emptied_by_filter": false
+                }
+              },
+              "access": {
+                "allowed": true,
+                "decision": "allow",
+                "agent_name": "General Enquiries",
+                "attributes": null,
+                "all_attributes_allowed": null
+              },
+              "media": null,
+              "resolved": {
+                "tokens": [
+                  "Ibks6245blng"
+                ],
+                "elapsed_ms": 666.18,
+                "resolutions": [
+                  {
+                    "token": "Ibks6245blng",
+                    "resolved": false,
+                    "ambiguous": false,
+                    "matches": [],
+                    "alternatives": [
+                      {
+                        "entity_type": "product",
+                        "canonical_code": "IBKS6245-NG-BL",
+                        "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                        "match_field": "product_code",
+                        "match_tier": "trgm",
+                        "similarity": 0.44444445,
+                        "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                        "company_name": "Mocha",
+                        "display": {
+                          "product_name": "IBKS6245-NG-BL",
+                          "is_variant": false,
+                          "brand": null
+                        }
+                      },
+                      {
+                        "entity_type": "product",
+                        "canonical_code": "IBKS6245-NG-SS",
+                        "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                        "match_field": "product_code",
+                        "match_tier": "trgm",
+                        "similarity": 0.44444445,
+                        "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                        "company_name": "Mocha",
+                        "display": {
+                          "product_name": "IBKS6245-NG-SS",
+                          "is_variant": false,
+                          "brand": null
+                        }
+                      },
+                      {
+                        "entity_type": "product",
+                        "canonical_code": "IBKS6045-BL",
+                        "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                        "match_field": "product_code",
+                        "match_tier": "trgm",
+                        "similarity": 0.4117647,
+                        "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                        "company_name": "Mocha",
+                        "display": {
+                          "product_name": "IBKS6045-BL",
+                          "is_variant": false,
+                          "brand": null
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "unresolved_tokens": [
+                  "Ibks6245blng"
+                ],
+                "fallback_match_mode": "or",
+                "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens."
+              },
+              "entities": null,
+              "gate": {
+                "tokens": [
+                  "Ibks6245blng"
+                ],
+                "elapsed_ms": 666.18,
+                "resolutions": [
+                  {
+                    "token": "Ibks6245blng",
+                    "resolved": false,
+                    "ambiguous": false,
+                    "matches": [],
+                    "alternatives": [
+                      {
+                        "entity_type": "product",
+                        "canonical_code": "IBKS6245-NG-BL",
+                        "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                        "match_field": "product_code",
+                        "match_tier": "trgm",
+                        "similarity": 0.44444445,
+                        "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                        "company_name": "Mocha",
+                        "display": {
+                          "product_name": "IBKS6245-NG-BL",
+                          "is_variant": false,
+                          "brand": null
+                        }
+                      },
+                      {
+                        "entity_type": "product",
+                        "canonical_code": "IBKS6245-NG-SS",
+                        "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                        "match_field": "product_code",
+                        "match_tier": "trgm",
+                        "similarity": 0.44444445,
+                        "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                        "company_name": "Mocha",
+                        "display": {
+                          "product_name": "IBKS6245-NG-SS",
+                          "is_variant": false,
+                          "brand": null
+                        }
+                      },
+                      {
+                        "entity_type": "product",
+                        "canonical_code": "IBKS6045-BL",
+                        "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                        "match_field": "product_code",
+                        "match_tier": "trgm",
+                        "similarity": 0.4117647,
+                        "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                        "company_name": "Mocha",
+                        "display": {
+                          "product_name": "IBKS6045-BL",
+                          "is_variant": false,
+                          "brand": null
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "unresolved_tokens": [
+                  "Ibks6245blng"
+                ],
+                "fallback_match_mode": "or",
+                "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+                "gate_passed": false,
+                "require_specific": false,
+                "resolved_company": null,
+                "company_team": null,
+                "resolved_companies": [],
+                "routing_brand": null,
+                "routing_brand_source": null,
+                "routing_companies": [],
+                "routing_company": null,
+                "access_denied_levels": [],
+                "access_notice": "",
+                "brand_gate_empty": false,
+                "brand_unheld": false,
+                "gate_reason": "no entities and 'inventory' requires a scoping entity",
+                "gate_clarification": "",
+                "compatible_entities": [],
+                "gate_debug": {
+                  "domain": "inventory",
+                  "allowed_lookup": [
+                    "product",
+                    "category",
+                    "brand"
+                  ],
+                  "entities_count": 0
+                }
+              }
+            }
+          },
+          "item": {
+            "tokens": [
+              "Ibks6245blng"
+            ],
+            "elapsed_ms": 666.18,
+            "resolutions": [
+              {
+                "token": "Ibks6245blng",
+                "resolved": false,
+                "ambiguous": false,
+                "matches": [],
+                "alternatives": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "IBKS6245-NG-BL",
+                    "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                    "match_field": "product_code",
+                    "match_tier": "trgm",
+                    "similarity": 0.44444445,
+                    "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                    "company_name": "Mocha",
+                    "display": {
+                      "product_name": "IBKS6245-NG-BL",
+                      "is_variant": false,
+                      "brand": null
+                    }
+                  },
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "IBKS6245-NG-SS",
+                    "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                    "match_field": "product_code",
+                    "match_tier": "trgm",
+                    "similarity": 0.44444445,
+                    "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                    "company_name": "Mocha",
+                    "display": {
+                      "product_name": "IBKS6245-NG-SS",
+                      "is_variant": false,
+                      "brand": null
+                    }
+                  },
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "IBKS6045-BL",
+                    "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                    "match_field": "product_code",
+                    "match_tier": "trgm",
+                    "similarity": 0.4117647,
+                    "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                    "company_name": "Mocha",
+                    "display": {
+                      "product_name": "IBKS6045-BL",
+                      "is_variant": false,
+                      "brand": null
+                    }
+                  }
+                ]
+              }
+            ],
+            "unresolved_tokens": [
+              "Ibks6245blng"
+            ],
+            "fallback_match_mode": "or",
+            "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+            "gate_passed": false,
+            "require_specific": false,
+            "resolved_company": null,
+            "company_team": null,
+            "resolved_companies": [],
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_companies": [],
+            "routing_company": null,
+            "access_denied_levels": [],
+            "access_notice": "",
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "gate_reason": "no entities and 'inventory' requires a scoping entity",
+            "gate_clarification": "",
+            "compatible_entities": [],
+            "gate_debug": {
+              "domain": "inventory",
+              "allowed_lookup": [
+                "product",
+                "category",
+                "brand"
+              ],
+              "entities_count": 0
+            },
+            "escalate_message": "Couldn't find: \"Ibks6245-bl-ng\" (product). Would you like me to escalate to warehouse team?",
+            "is_clarification": false,
+            "found_summary": ""
+          },
+          "is_test": true
+        }
+      }
+    ],
+    "result-gate": [
+      {
+        "json": {
+          "ctx_resolved": {
+            "tokens": [
+              "Ibks6245blng"
+            ],
+            "elapsed_ms": 666.18,
+            "resolutions": [
+              {
+                "token": "Ibks6245blng",
+                "resolved": false,
+                "ambiguous": false,
+                "matches": [],
+                "alternatives": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "IBKS6245-NG-BL",
+                    "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                    "match_field": "product_code",
+                    "match_tier": "trgm",
+                    "similarity": 0.44444445,
+                    "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                    "company_name": "Mocha",
+                    "display": {
+                      "product_name": "IBKS6245-NG-BL",
+                      "is_variant": false,
+                      "brand": null
+                    }
+                  },
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "IBKS6245-NG-SS",
+                    "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                    "match_field": "product_code",
+                    "match_tier": "trgm",
+                    "similarity": 0.44444445,
+                    "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                    "company_name": "Mocha",
+                    "display": {
+                      "product_name": "IBKS6245-NG-SS",
+                      "is_variant": false,
+                      "brand": null
+                    }
+                  },
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "IBKS6045-BL",
+                    "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                    "match_field": "product_code",
+                    "match_tier": "trgm",
+                    "similarity": 0.4117647,
+                    "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                    "company_name": "Mocha",
+                    "display": {
+                      "product_name": "IBKS6045-BL",
+                      "is_variant": false,
+                      "brand": null
+                    }
+                  }
+                ]
+              }
+            ],
+            "unresolved_tokens": [
+              "Ibks6245blng"
+            ],
+            "fallback_match_mode": "or",
+            "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+            "gate_passed": false,
+            "require_specific": false,
+            "resolved_company": null,
+            "company_team": null,
+            "resolved_companies": [],
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_companies": [],
+            "routing_company": null,
+            "access_denied_levels": [],
+            "access_notice": "",
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "gate_reason": "no entities and 'inventory' requires a scoping entity",
+            "gate_clarification": "",
+            "compatible_entities": [],
+            "gate_debug": {
+              "domain": "inventory",
+              "allowed_lookup": [
+                "product",
+                "category",
+                "brand"
+              ],
+              "entities_count": 0
+            },
+            "ctx": {
+              "contact": {
+                "id": 437264483,
+                "firstName": "Jayson",
+                "lastName": "Canary",
+                "phone": "60100000000",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "isBlocked": false,
+                "custom_fields": [
+                  {
+                    "name": "enquiry_type",
+                    "value": null
+                  },
+                  {
+                    "name": "user_type",
+                    "value": null
+                  },
+                  {
+                    "name": "complaint_id",
+                    "value": null
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_ai",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ],
+                "tags": [],
+                "assignee": null,
+                "lifecycle": null,
+                "created_at": 1782546255
+              },
+              "text": {
+                "event_type": "message.received",
+                "event_id": "rs7-t2-d2-reqspec-20260831",
+                "contact": {
+                  "id": 437264483,
+                  "firstName": "Jayson",
+                  "lastName": "Canary",
+                  "phone": "60100000000",
+                  "email": null,
+                  "language": null,
+                  "profilePic": null,
+                  "countryCode": "MY",
+                  "status": "open",
+                  "isBlocked": false,
+                  "custom_fields": [
+                    {
+                      "name": "enquiry_type",
+                      "value": null
+                    },
+                    {
+                      "name": "user_type",
+                      "value": null
+                    },
+                    {
+                      "name": "complaint_id",
+                      "value": null
+                    },
+                    {
+                      "name": "is_allowed_stock",
+                      "value": "true"
+                    },
+                    {
+                      "name": "is_human_intervened",
+                      "value": "false"
+                    },
+                    {
+                      "name": "is_allowed_ai",
+                      "value": "true"
+                    },
+                    {
+                      "name": "is_allowed_voice",
+                      "value": "true"
+                    }
+                  ],
+                  "tags": [],
+                  "assignee": null,
+                  "lifecycle": null,
+                  "created_at": 1782546255
+                },
+                "message": {
+                  "messageId": 1788144364819154,
+                  "channelMessageId": "rs7-t2-d2-reqspec-20260831",
+                  "contactId": 437264483,
+                  "channelId": 453209,
+                  "traffic": "incoming",
+                  "timestamp": 1788144364819154,
+                  "message": {
+                    "type": "text",
+                    "text": "Ibks6245-bl-ng got stock"
+                  }
+                },
+                "channel": {
+                  "id": 453209,
+                  "name": "Internal (+60 11-1673 1179)",
+                  "source": "whatsapp_business",
+                  "created_at": 1767682908
+                },
+                "sender": {
+                  "source": "contact",
+                  "userId": null,
+                  "teamId": null,
+                  "workflowId": null,
+                  "broadcastHistoryId": null
+                }
+              },
+              "session": {
+                "respond_io_id": "437264483",
+                "session_vars": {
+                  "variables": {
+                    "routing": {
+                      "suggested_team": "marketing_promotion",
+                      "suggested_agent": "general_enquiries"
+                    },
+                    "entities": [
+                      {
+                        "raw": "srtwc286",
+                        "hint": "product",
+                        "confident": true,
+                        "canonical_code": null,
+                        "current_message": false
+                      }
+                    ],
+                    "ideation": null,
+                    "response": "Previous turn (promotion): returned 1 records",
+                    "date_mode": null,
+                    "dym_offer": null,
+                    "user_goal": "trying to select the first result",
+                    "escalation": {
+                      "is_escalation_confirmation": false
+                    },
+                    "match_mode": "and",
+                    "domain_hint": "promotion",
+                    "intent_hint": "check_promotion",
+                    "message_type": "business_query",
+                    "query_brands": [
+                      "sorento"
+                    ],
+                    "access_levels": [
+                      "dealer"
+                    ],
+                    "routing_brand": "sorento",
+                    "contains_flyer": false,
+                    "dym_candidates": [],
+                    "date_filter_end": null,
+                    "last_result_set": [
+                      {
+                        "idx": 1,
+                        "uuid": null,
+                        "label": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                        "value": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                        "filename": "UPDATED SORENTO A3 FLYER  2026 (DEALER)_21072026.pdf",
+                        "entity_type": "promotion"
+                      },
+                      {
+                        "idx": 2,
+                        "uuid": null,
+                        "label": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                        "value": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                        "filename": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                        "entity_type": "promotion"
+                      },
+                      {
+                        "idx": 3,
+                        "uuid": null,
+                        "label": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                        "value": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                        "filename": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                        "entity_type": "promotion"
+                      }
+                    ],
+                    "routing_company": "00000000-0000-0000-0000-000000000001",
+                    "date_filter_start": null,
+                    "routing_companies": [
+                      {
+                        "codes": [
+                          "SRTWC286-SH-200",
+                          "SRTWC286-SH-P",
+                          "SRTWC286-SH-PP",
+                          "SRTWC286-SH",
+                          "SRTWC286-SH-UF",
+                          "SRTWC286-SH-NEW-150",
+                          "SRTWC286-SH-150",
+                          "SRTWC286-SH-NEW-P",
+                          "SRTWC286-SH-NEW-200",
+                          "SRTWC286-SH-NEW"
+                        ],
+                        "labels": [
+                          "SRTWC286-SH-200",
+                          "SRTWC286-SH-P",
+                          "SRTWC286-SH-PP",
+                          "SRTWC286-SH",
+                          "SRTWC286-SH-UF",
+                          "SRTWC286-SH-NEW-150",
+                          "SRTWC286-SH-150",
+                          "SRTWC286-SH-NEW-P",
+                          "SRTWC286-SH-NEW-200",
+                          "SRTWC286-SH-NEW"
+                        ],
+                        "brand_code": "sorento",
+                        "company_id": "00000000-0000-0000-0000-000000000001",
+                        "company_name": "Sorento"
+                      }
+                    ],
+                    "selection_context": "suggest_offer",
+                    "routing_roster_plan": null,
+                    "requested_attributes": [],
+                    "routing_brand_source": "resolved"
+                  },
+                  "user_response": "I have attached the file(s) below.\n\n1. *Promotion:* UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf\n*Start Date:* 2026-06-01\n*End Date:* 2026-09-30"
+                }
+              },
+              "parse": {
+                "output": {
+                  "message_type": "business_query",
+                  "intent_hint": "check_stock",
+                  "domain_hint": "inventory",
+                  "scope_intent": "specific",
+                  "is_affirmative": null,
+                  "user_goal": "trying to check whether IBKS6245-BL-NG is in stock",
+                  "access_levels": [],
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "Ibks6245-bl-ng",
+                      "hint": "product",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "domain_signal_source": "intent_explicit",
+                  "scope_exclusive_applied": false,
+                  "entity_op_applied": "replace_combine",
+                  "query_brands": [],
+                  "entities_filtered": false,
+                  "entities_emptied_by_filter": false
+                }
+              },
+              "access": {
+                "allowed": true,
+                "decision": "allow",
+                "agent_name": "General Enquiries",
+                "attributes": null,
+                "all_attributes_allowed": null
+              },
+              "media": null,
+              "resolved": {
+                "tokens": [
+                  "Ibks6245blng"
+                ],
+                "elapsed_ms": 666.18,
+                "resolutions": [
+                  {
+                    "token": "Ibks6245blng",
+                    "resolved": false,
+                    "ambiguous": false,
+                    "matches": [],
+                    "alternatives": [
+                      {
+                        "entity_type": "product",
+                        "canonical_code": "IBKS6245-NG-BL",
+                        "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                        "match_field": "product_code",
+                        "match_tier": "trgm",
+                        "similarity": 0.44444445,
+                        "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                        "company_name": "Mocha",
+                        "display": {
+                          "product_name": "IBKS6245-NG-BL",
+                          "is_variant": false,
+                          "brand": null
+                        }
+                      },
+                      {
+                        "entity_type": "product",
+                        "canonical_code": "IBKS6245-NG-SS",
+                        "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                        "match_field": "product_code",
+                        "match_tier": "trgm",
+                        "similarity": 0.44444445,
+                        "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                        "company_name": "Mocha",
+                        "display": {
+                          "product_name": "IBKS6245-NG-SS",
+                          "is_variant": false,
+                          "brand": null
+                        }
+                      },
+                      {
+                        "entity_type": "product",
+                        "canonical_code": "IBKS6045-BL",
+                        "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                        "match_field": "product_code",
+                        "match_tier": "trgm",
+                        "similarity": 0.4117647,
+                        "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                        "company_name": "Mocha",
+                        "display": {
+                          "product_name": "IBKS6045-BL",
+                          "is_variant": false,
+                          "brand": null
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "unresolved_tokens": [
+                  "Ibks6245blng"
+                ],
+                "fallback_match_mode": "or",
+                "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens."
+              },
+              "entities": null,
+              "gate": {
+                "tokens": [
+                  "Ibks6245blng"
+                ],
+                "elapsed_ms": 666.18,
+                "resolutions": [
+                  {
+                    "token": "Ibks6245blng",
+                    "resolved": false,
+                    "ambiguous": false,
+                    "matches": [],
+                    "alternatives": [
+                      {
+                        "entity_type": "product",
+                        "canonical_code": "IBKS6245-NG-BL",
+                        "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                        "match_field": "product_code",
+                        "match_tier": "trgm",
+                        "similarity": 0.44444445,
+                        "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                        "company_name": "Mocha",
+                        "display": {
+                          "product_name": "IBKS6245-NG-BL",
+                          "is_variant": false,
+                          "brand": null
+                        }
+                      },
+                      {
+                        "entity_type": "product",
+                        "canonical_code": "IBKS6245-NG-SS",
+                        "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                        "match_field": "product_code",
+                        "match_tier": "trgm",
+                        "similarity": 0.44444445,
+                        "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                        "company_name": "Mocha",
+                        "display": {
+                          "product_name": "IBKS6245-NG-SS",
+                          "is_variant": false,
+                          "brand": null
+                        }
+                      },
+                      {
+                        "entity_type": "product",
+                        "canonical_code": "IBKS6045-BL",
+                        "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                        "match_field": "product_code",
+                        "match_tier": "trgm",
+                        "similarity": 0.4117647,
+                        "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                        "company_name": "Mocha",
+                        "display": {
+                          "product_name": "IBKS6045-BL",
+                          "is_variant": false,
+                          "brand": null
+                        }
+                      }
+                    ]
+                  }
+                ],
+                "unresolved_tokens": [
+                  "Ibks6245blng"
+                ],
+                "fallback_match_mode": "or",
+                "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+                "gate_passed": false,
+                "require_specific": false,
+                "resolved_company": null,
+                "company_team": null,
+                "resolved_companies": [],
+                "routing_brand": null,
+                "routing_brand_source": null,
+                "routing_companies": [],
+                "routing_company": null,
+                "access_denied_levels": [],
+                "access_notice": "",
+                "brand_gate_empty": false,
+                "brand_unheld": false,
+                "gate_reason": "no entities and 'inventory' requires a scoping entity",
+                "gate_clarification": "",
+                "compatible_entities": [],
+                "gate_debug": {
+                  "domain": "inventory",
+                  "allowed_lookup": [
+                    "product",
+                    "category",
+                    "brand"
+                  ],
+                  "entities_count": 0
+                }
+              }
+            }
+          },
+          "item": {
+            "tokens": [
+              "Ibks6245blng"
+            ],
+            "elapsed_ms": 666.18,
+            "resolutions": [
+              {
+                "token": "Ibks6245blng",
+                "resolved": false,
+                "ambiguous": false,
+                "matches": [],
+                "alternatives": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "IBKS6245-NG-BL",
+                    "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                    "match_field": "product_code",
+                    "match_tier": "trgm",
+                    "similarity": 0.44444445,
+                    "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                    "company_name": "Mocha",
+                    "display": {
+                      "product_name": "IBKS6245-NG-BL",
+                      "is_variant": false,
+                      "brand": null
+                    }
+                  },
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "IBKS6245-NG-SS",
+                    "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                    "match_field": "product_code",
+                    "match_tier": "trgm",
+                    "similarity": 0.44444445,
+                    "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                    "company_name": "Mocha",
+                    "display": {
+                      "product_name": "IBKS6245-NG-SS",
+                      "is_variant": false,
+                      "brand": null
+                    }
+                  },
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "IBKS6045-BL",
+                    "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                    "match_field": "product_code",
+                    "match_tier": "trgm",
+                    "similarity": 0.4117647,
+                    "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                    "company_name": "Mocha",
+                    "display": {
+                      "product_name": "IBKS6045-BL",
+                      "is_variant": false,
+                      "brand": null
+                    }
+                  }
+                ]
+              }
+            ],
+            "unresolved_tokens": [
+              "Ibks6245blng"
+            ],
+            "fallback_match_mode": "or",
+            "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+            "gate_passed": false,
+            "require_specific": false,
+            "resolved_company": null,
+            "company_team": null,
+            "resolved_companies": [],
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_companies": [],
+            "routing_company": null,
+            "access_denied_levels": [],
+            "access_notice": "",
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "gate_reason": "no entities and 'inventory' requires a scoping entity",
+            "gate_clarification": "",
+            "compatible_entities": [],
+            "gate_debug": {
+              "domain": "inventory",
+              "allowed_lookup": [
+                "product",
+                "category",
+                "brand"
+              ],
+              "entities_count": 0
+            },
+            "escalate_message": "Couldn't find: \"Ibks6245-bl-ng\" (product). Would you like me to escalate to warehouse team?",
+            "is_clarification": false,
+            "found_summary": ""
+          },
+          "is_test": true
+        }
+      }
+    ],
+    "build-ctx-resolved": [
+      {
+        "json": {
+          "tokens": [
+            "Ibks6245blng"
+          ],
+          "elapsed_ms": 666.18,
+          "resolutions": [
+            {
+              "token": "Ibks6245blng",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6245-NG-BL",
+                  "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.44444445,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6245-NG-BL",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6245-NG-SS",
+                  "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.44444445,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6245-NG-SS",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6045-BL",
+                  "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.4117647,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6045-BL",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                }
+              ]
+            }
+          ],
+          "unresolved_tokens": [
+            "Ibks6245blng"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities and 'inventory' requires a scoping entity",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "inventory",
+            "allowed_lookup": [
+              "product",
+              "category",
+              "brand"
+            ],
+            "entities_count": 0
+          },
+          "ctx": {
+            "contact": {
+              "id": 437264483,
+              "firstName": "Jayson",
+              "lastName": "Canary",
+              "phone": "60100000000",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ],
+              "tags": [],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1782546255
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "rs7-t2-d2-reqspec-20260831",
+              "contact": {
+                "id": 437264483,
+                "firstName": "Jayson",
+                "lastName": "Canary",
+                "phone": "60100000000",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "isBlocked": false,
+                "custom_fields": [
+                  {
+                    "name": "enquiry_type",
+                    "value": null
+                  },
+                  {
+                    "name": "user_type",
+                    "value": null
+                  },
+                  {
+                    "name": "complaint_id",
+                    "value": null
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_ai",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ],
+                "tags": [],
+                "assignee": null,
+                "lifecycle": null,
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1788144364819154,
+                "channelMessageId": "rs7-t2-d2-reqspec-20260831",
+                "contactId": 437264483,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788144364819154,
+                "message": {
+                  "type": "text",
+                  "text": "Ibks6245-bl-ng got stock"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "437264483",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "marketing_promotion",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "srtwc286",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": false
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Previous turn (promotion): returned 1 records",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to select the first result",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "promotion",
+                  "intent_hint": "check_promotion",
+                  "message_type": "business_query",
+                  "query_brands": [
+                    "sorento"
+                  ],
+                  "access_levels": [
+                    "dealer"
+                  ],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": null,
+                      "label": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                      "value": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                      "filename": "UPDATED SORENTO A3 FLYER  2026 (DEALER)_21072026.pdf",
+                      "entity_type": "promotion"
+                    },
+                    {
+                      "idx": 2,
+                      "uuid": null,
+                      "label": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                      "value": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                      "filename": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                      "entity_type": "promotion"
+                    },
+                    {
+                      "idx": 3,
+                      "uuid": null,
+                      "label": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                      "value": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                      "filename": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                      "entity_type": "promotion"
+                    }
+                  ],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTWC286-SH-200",
+                        "SRTWC286-SH-P",
+                        "SRTWC286-SH-PP",
+                        "SRTWC286-SH",
+                        "SRTWC286-SH-UF",
+                        "SRTWC286-SH-NEW-150",
+                        "SRTWC286-SH-150",
+                        "SRTWC286-SH-NEW-P",
+                        "SRTWC286-SH-NEW-200",
+                        "SRTWC286-SH-NEW"
+                      ],
+                      "labels": [
+                        "SRTWC286-SH-200",
+                        "SRTWC286-SH-P",
+                        "SRTWC286-SH-PP",
+                        "SRTWC286-SH",
+                        "SRTWC286-SH-UF",
+                        "SRTWC286-SH-NEW-150",
+                        "SRTWC286-SH-150",
+                        "SRTWC286-SH-NEW-P",
+                        "SRTWC286-SH-NEW-200",
+                        "SRTWC286-SH-NEW"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": "suggest_offer",
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "I have attached the file(s) below.\n\n1. *Promotion:* UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf\n*Start Date:* 2026-06-01\n*End Date:* 2026-09-30"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check whether IBKS6245-BL-NG is in stock",
+                "access_levels": [],
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Ibks6245-bl-ng",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null,
+            "resolved": {
+              "tokens": [
+                "Ibks6245blng"
+              ],
+              "elapsed_ms": 666.18,
+              "resolutions": [
+                {
+                  "token": "Ibks6245blng",
+                  "resolved": false,
+                  "ambiguous": false,
+                  "matches": [],
+                  "alternatives": [
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "IBKS6245-NG-BL",
+                      "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                      "match_field": "product_code",
+                      "match_tier": "trgm",
+                      "similarity": 0.44444445,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha",
+                      "display": {
+                        "product_name": "IBKS6245-NG-BL",
+                        "is_variant": false,
+                        "brand": null
+                      }
+                    },
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "IBKS6245-NG-SS",
+                      "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                      "match_field": "product_code",
+                      "match_tier": "trgm",
+                      "similarity": 0.44444445,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha",
+                      "display": {
+                        "product_name": "IBKS6245-NG-SS",
+                        "is_variant": false,
+                        "brand": null
+                      }
+                    },
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "IBKS6045-BL",
+                      "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                      "match_field": "product_code",
+                      "match_tier": "trgm",
+                      "similarity": 0.4117647,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha",
+                      "display": {
+                        "product_name": "IBKS6045-BL",
+                        "is_variant": false,
+                        "brand": null
+                      }
+                    }
+                  ]
+                }
+              ],
+              "unresolved_tokens": [
+                "Ibks6245blng"
+              ],
+              "fallback_match_mode": "or",
+              "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens."
+            },
+            "entities": null,
+            "gate": {
+              "tokens": [
+                "Ibks6245blng"
+              ],
+              "elapsed_ms": 666.18,
+              "resolutions": [
+                {
+                  "token": "Ibks6245blng",
+                  "resolved": false,
+                  "ambiguous": false,
+                  "matches": [],
+                  "alternatives": [
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "IBKS6245-NG-BL",
+                      "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                      "match_field": "product_code",
+                      "match_tier": "trgm",
+                      "similarity": 0.44444445,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha",
+                      "display": {
+                        "product_name": "IBKS6245-NG-BL",
+                        "is_variant": false,
+                        "brand": null
+                      }
+                    },
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "IBKS6245-NG-SS",
+                      "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                      "match_field": "product_code",
+                      "match_tier": "trgm",
+                      "similarity": 0.44444445,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha",
+                      "display": {
+                        "product_name": "IBKS6245-NG-SS",
+                        "is_variant": false,
+                        "brand": null
+                      }
+                    },
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "IBKS6045-BL",
+                      "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                      "match_field": "product_code",
+                      "match_tier": "trgm",
+                      "similarity": 0.4117647,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha",
+                      "display": {
+                        "product_name": "IBKS6045-BL",
+                        "is_variant": false,
+                        "brand": null
+                      }
+                    }
+                  ]
+                }
+              ],
+              "unresolved_tokens": [
+                "Ibks6245blng"
+              ],
+              "fallback_match_mode": "or",
+              "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+              "gate_passed": false,
+              "require_specific": false,
+              "resolved_company": null,
+              "company_team": null,
+              "resolved_companies": [],
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_companies": [],
+              "routing_company": null,
+              "access_denied_levels": [],
+              "access_notice": "",
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "gate_reason": "no entities and 'inventory' requires a scoping entity",
+              "gate_clarification": "",
+              "compatible_entities": [],
+              "gate_debug": {
+                "domain": "inventory",
+                "allowed_lookup": [
+                  "product",
+                  "category",
+                  "brand"
+                ],
+                "entities_count": 0
+              }
+            }
+          }
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 437264483,
+              "firstName": "Jayson",
+              "lastName": "Canary",
+              "phone": "60100000000",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ],
+              "tags": [],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1782546255
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "rs7-t2-d2-reqspec-20260831",
+              "contact": {
+                "id": 437264483,
+                "firstName": "Jayson",
+                "lastName": "Canary",
+                "phone": "60100000000",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "isBlocked": false,
+                "custom_fields": [
+                  {
+                    "name": "enquiry_type",
+                    "value": null
+                  },
+                  {
+                    "name": "user_type",
+                    "value": null
+                  },
+                  {
+                    "name": "complaint_id",
+                    "value": null
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_ai",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ],
+                "tags": [],
+                "assignee": null,
+                "lifecycle": null,
+                "created_at": 1782546255
+              },
+              "message": {
+                "messageId": 1788144364819154,
+                "channelMessageId": "rs7-t2-d2-reqspec-20260831",
+                "contactId": 437264483,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788144364819154,
+                "message": {
+                  "type": "text",
+                  "text": "Ibks6245-bl-ng got stock"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "437264483",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "marketing_promotion",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "srtwc286",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": false
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Previous turn (promotion): returned 1 records",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to select the first result",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "promotion",
+                  "intent_hint": "check_promotion",
+                  "message_type": "business_query",
+                  "query_brands": [
+                    "sorento"
+                  ],
+                  "access_levels": [
+                    "dealer"
+                  ],
+                  "routing_brand": "sorento",
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": null,
+                      "label": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                      "value": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+                      "filename": "UPDATED SORENTO A3 FLYER  2026 (DEALER)_21072026.pdf",
+                      "entity_type": "promotion"
+                    },
+                    {
+                      "idx": 2,
+                      "uuid": null,
+                      "label": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                      "value": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                      "filename": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                      "entity_type": "promotion"
+                    },
+                    {
+                      "idx": 3,
+                      "uuid": null,
+                      "label": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                      "value": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                      "filename": "JULY SORENTO WATER CLOSET PROMO_06072026 DEALER.pdf",
+                      "entity_type": "promotion"
+                    }
+                  ],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRTWC286-SH-200",
+                        "SRTWC286-SH-P",
+                        "SRTWC286-SH-PP",
+                        "SRTWC286-SH",
+                        "SRTWC286-SH-UF",
+                        "SRTWC286-SH-NEW-150",
+                        "SRTWC286-SH-150",
+                        "SRTWC286-SH-NEW-P",
+                        "SRTWC286-SH-NEW-200",
+                        "SRTWC286-SH-NEW"
+                      ],
+                      "labels": [
+                        "SRTWC286-SH-200",
+                        "SRTWC286-SH-P",
+                        "SRTWC286-SH-PP",
+                        "SRTWC286-SH",
+                        "SRTWC286-SH-UF",
+                        "SRTWC286-SH-NEW-150",
+                        "SRTWC286-SH-150",
+                        "SRTWC286-SH-NEW-P",
+                        "SRTWC286-SH-NEW-200",
+                        "SRTWC286-SH-NEW"
+                      ],
+                      "brand_code": "sorento",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": "suggest_offer",
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": "resolved"
+                },
+                "user_response": "I have attached the file(s) below.\n\n1. *Promotion:* UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf\n*Start Date:* 2026-06-01\n*End Date:* 2026-09-30"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check whether IBKS6245-BL-NG is in stock",
+                "access_levels": [],
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Ibks6245-bl-ng",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null,
+            "resolved": {
+              "tokens": [
+                "Ibks6245blng"
+              ],
+              "elapsed_ms": 666.18,
+              "resolutions": [
+                {
+                  "token": "Ibks6245blng",
+                  "resolved": false,
+                  "ambiguous": false,
+                  "matches": [],
+                  "alternatives": [
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "IBKS6245-NG-BL",
+                      "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                      "match_field": "product_code",
+                      "match_tier": "trgm",
+                      "similarity": 0.44444445,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha",
+                      "display": {
+                        "product_name": "IBKS6245-NG-BL",
+                        "is_variant": false,
+                        "brand": null
+                      }
+                    },
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "IBKS6245-NG-SS",
+                      "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                      "match_field": "product_code",
+                      "match_tier": "trgm",
+                      "similarity": 0.44444445,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha",
+                      "display": {
+                        "product_name": "IBKS6245-NG-SS",
+                        "is_variant": false,
+                        "brand": null
+                      }
+                    },
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "IBKS6045-BL",
+                      "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                      "match_field": "product_code",
+                      "match_tier": "trgm",
+                      "similarity": 0.4117647,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha",
+                      "display": {
+                        "product_name": "IBKS6045-BL",
+                        "is_variant": false,
+                        "brand": null
+                      }
+                    }
+                  ]
+                }
+              ],
+              "unresolved_tokens": [
+                "Ibks6245blng"
+              ],
+              "fallback_match_mode": "or",
+              "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens."
+            },
+            "entities": null,
+            "gate": {
+              "tokens": [
+                "Ibks6245blng"
+              ],
+              "elapsed_ms": 666.18,
+              "resolutions": [
+                {
+                  "token": "Ibks6245blng",
+                  "resolved": false,
+                  "ambiguous": false,
+                  "matches": [],
+                  "alternatives": [
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "IBKS6245-NG-BL",
+                      "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                      "match_field": "product_code",
+                      "match_tier": "trgm",
+                      "similarity": 0.44444445,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha",
+                      "display": {
+                        "product_name": "IBKS6245-NG-BL",
+                        "is_variant": false,
+                        "brand": null
+                      }
+                    },
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "IBKS6245-NG-SS",
+                      "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                      "match_field": "product_code",
+                      "match_tier": "trgm",
+                      "similarity": 0.44444445,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha",
+                      "display": {
+                        "product_name": "IBKS6245-NG-SS",
+                        "is_variant": false,
+                        "brand": null
+                      }
+                    },
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "IBKS6045-BL",
+                      "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                      "match_field": "product_code",
+                      "match_tier": "trgm",
+                      "similarity": 0.4117647,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha",
+                      "display": {
+                        "product_name": "IBKS6045-BL",
+                        "is_variant": false,
+                        "brand": null
+                      }
+                    }
+                  ]
+                }
+              ],
+              "unresolved_tokens": [
+                "Ibks6245blng"
+              ],
+              "fallback_match_mode": "or",
+              "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+              "gate_passed": false,
+              "require_specific": false,
+              "resolved_company": null,
+              "company_team": null,
+              "resolved_companies": [],
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_companies": [],
+              "routing_company": null,
+              "access_denied_levels": [],
+              "access_notice": "",
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "gate_reason": "no entities and 'inventory' requires a scoping entity",
+              "gate_clarification": "",
+              "compatible_entities": [],
+              "gate_debug": {
+                "domain": "inventory",
+                "allowed_lookup": [
+                  "product",
+                  "category",
+                  "brand"
+                ],
+                "entities_count": 0
+              }
+            }
+          }
+        }
+      }
+    ],
+    "not-found-error-message": [
+      {
+        "json": {
+          "tokens": [
+            "Ibks6245blng"
+          ],
+          "elapsed_ms": 666.18,
+          "resolutions": [
+            {
+              "token": "Ibks6245blng",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6245-NG-BL",
+                  "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.44444445,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6245-NG-BL",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6245-NG-SS",
+                  "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.44444445,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6245-NG-SS",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6045-BL",
+                  "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.4117647,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6045-BL",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                }
+              ]
+            }
+          ],
+          "unresolved_tokens": [
+            "Ibks6245blng"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities and 'inventory' requires a scoping entity",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "inventory",
+            "allowed_lookup": [
+              "product",
+              "category",
+              "brand"
+            ],
+            "entities_count": 0
+          },
+          "escalate_message": "Couldn't find: \"Ibks6245-bl-ng\" (product). Would you like me to escalate to warehouse team?",
+          "is_clarification": false,
+          "found_summary": ""
+        }
+      }
+    ],
+    "sibling-gate": [
+      {
+        "json": {
+          "tokens": [
+            "Ibks6245blng"
+          ],
+          "elapsed_ms": 666.18,
+          "resolutions": [
+            {
+              "token": "Ibks6245blng",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6245-NG-BL",
+                  "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.44444445,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6245-NG-BL",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6245-NG-SS",
+                  "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.44444445,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6245-NG-SS",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6045-BL",
+                  "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.4117647,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6045-BL",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                }
+              ]
+            }
+          ],
+          "unresolved_tokens": [
+            "Ibks6245blng"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities and 'inventory' requires a scoping entity",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "inventory",
+            "allowed_lookup": [
+              "product",
+              "category",
+              "brand"
+            ],
+            "entities_count": 0
+          },
+          "escalate_message": "Couldn't find: \"Ibks6245-bl-ng\" (product). Would you like me to escalate to warehouse team?",
+          "is_clarification": false,
+          "found_summary": ""
+        }
+      }
+    ],
+    "dym-transform": [
+      {
+        "json": {
+          "tokens": [
+            "Ibks6245blng"
+          ],
+          "elapsed_ms": 666.18,
+          "resolutions": [
+            {
+              "token": "Ibks6245blng",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6245-NG-BL",
+                  "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.44444445,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6245-NG-BL",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6245-NG-SS",
+                  "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.44444445,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6245-NG-SS",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6045-BL",
+                  "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.4117647,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6045-BL",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                }
+              ]
+            }
+          ],
+          "unresolved_tokens": [
+            "Ibks6245blng"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities and 'inventory' requires a scoping entity",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "inventory",
+            "allowed_lookup": [
+              "product",
+              "category",
+              "brand"
+            ],
+            "entities_count": 0
+          },
+          "escalate_message": "Couldn't find: \"Ibks6245-bl-ng\" (product). Would you like me to escalate to warehouse team?",
+          "is_clarification": false,
+          "found_summary": "",
+          "dym_probe_entities": [
+            {
+              "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+              "entity_type": "product",
+              "code": "IBKS6245-NG-BL"
+            },
+            {
+              "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+              "entity_type": "product",
+              "code": "IBKS6245-NG-SS"
+            },
+            {
+              "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+              "entity_type": "product",
+              "code": "IBKS6045-BL"
+            }
+          ],
+          "dym_candidate_codes": [
+            "IBKS6245-NG-BL",
+            "IBKS6245-NG-SS",
+            "IBKS6045-BL"
+          ],
+          "dym_excluded_codes": [],
+          "dym_capped_codes": [],
+          "probe_cap_applied": false,
+          "probe_tool": "crm_inventory_stock_balance_list",
+          "probe_noun": "stock details",
+          "probe_predicate": "qty_gt_zero",
+          "probe_needed": true,
+          "probe_skip_reason": null,
+          "probe_lane": "d1",
+          "_dym_probe_input": true
+        }
+      }
+    ],
+    "dym-gate": [
+      {
+        "json": {
+          "tokens": [
+            "Ibks6245blng"
+          ],
+          "elapsed_ms": 666.18,
+          "resolutions": [
+            {
+              "token": "Ibks6245blng",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6245-NG-BL",
+                  "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.44444445,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6245-NG-BL",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6245-NG-SS",
+                  "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.44444445,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6245-NG-SS",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6045-BL",
+                  "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.4117647,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6045-BL",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                }
+              ]
+            }
+          ],
+          "unresolved_tokens": [
+            "Ibks6245blng"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities and 'inventory' requires a scoping entity",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "inventory",
+            "allowed_lookup": [
+              "product",
+              "category",
+              "brand"
+            ],
+            "entities_count": 0
+          },
+          "escalate_message": "Couldn't find: \"Ibks6245-bl-ng\" (product). Would you like me to escalate to warehouse team?",
+          "is_clarification": false,
+          "found_summary": "",
+          "dym_probe_entities": [
+            {
+              "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+              "entity_type": "product",
+              "code": "IBKS6245-NG-BL"
+            },
+            {
+              "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+              "entity_type": "product",
+              "code": "IBKS6245-NG-SS"
+            },
+            {
+              "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+              "entity_type": "product",
+              "code": "IBKS6045-BL"
+            }
+          ],
+          "dym_candidate_codes": [
+            "IBKS6245-NG-BL",
+            "IBKS6245-NG-SS",
+            "IBKS6045-BL"
+          ],
+          "dym_excluded_codes": [],
+          "dym_capped_codes": [],
+          "probe_cap_applied": false,
+          "probe_tool": "crm_inventory_stock_balance_list",
+          "probe_noun": "stock details",
+          "probe_predicate": "qty_gt_zero",
+          "probe_needed": true,
+          "probe_skip_reason": null,
+          "probe_lane": "d1",
+          "_dym_probe_input": true
+        }
+      }
+    ],
+    "if-promo-dym": [
+      {
+        "json": {
+          "tokens": [
+            "Ibks6245blng"
+          ],
+          "elapsed_ms": 666.18,
+          "resolutions": [
+            {
+              "token": "Ibks6245blng",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6245-NG-BL",
+                  "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.44444445,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6245-NG-BL",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6245-NG-SS",
+                  "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.44444445,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6245-NG-SS",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6045-BL",
+                  "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.4117647,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6045-BL",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                }
+              ]
+            }
+          ],
+          "unresolved_tokens": [
+            "Ibks6245blng"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities and 'inventory' requires a scoping entity",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "inventory",
+            "allowed_lookup": [
+              "product",
+              "category",
+              "brand"
+            ],
+            "entities_count": 0
+          },
+          "escalate_message": "Couldn't find: \"Ibks6245-bl-ng\" (product). Would you like me to escalate to warehouse team?",
+          "is_clarification": false,
+          "found_summary": "",
+          "dym_probe_entities": [
+            {
+              "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+              "entity_type": "product",
+              "code": "IBKS6245-NG-BL"
+            },
+            {
+              "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+              "entity_type": "product",
+              "code": "IBKS6245-NG-SS"
+            },
+            {
+              "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+              "entity_type": "product",
+              "code": "IBKS6045-BL"
+            }
+          ],
+          "dym_candidate_codes": [
+            "IBKS6245-NG-BL",
+            "IBKS6245-NG-SS",
+            "IBKS6045-BL"
+          ],
+          "dym_excluded_codes": [],
+          "dym_capped_codes": [],
+          "probe_cap_applied": false,
+          "probe_tool": "crm_inventory_stock_balance_list",
+          "probe_noun": "stock details",
+          "probe_predicate": "qty_gt_zero",
+          "probe_needed": true,
+          "probe_skip_reason": null,
+          "probe_lane": "d1",
+          "_dym_probe_input": true
+        }
+      }
+    ],
+    "dym-probe": [
+      {
+        "json": {
+          "response": "Stock summary for the requested products.\n\n1. *Product Code:* IBKS6045-BL\n*Total:* 2\n*MOCHA-WH:* 2\n\n2. *Product Code:* IBKS6245-NG-BL\n*Total:* 0\n\n3. *Product Code:* IBKS6245-NG-SS\n*Total:* 0\n\n_Data last updated: 28/08/2026 17:43:01_",
+          "response_intro": "Stock summary for the requested products.",
+          "answers": [
+            {
+              "title": "IBKS6045-BL",
+              "fields": [
+                {
+                  "key": "product_code",
+                  "label": "Product Code",
+                  "value": "IBKS6045-BL"
+                },
+                {
+                  "label": "Total",
+                  "value": 2
+                },
+                {
+                  "label": "MOCHA-WH",
+                  "value": 2
+                }
+              ],
+              "flags": {
+                "discontinued": false
+              }
+            },
+            {
+              "title": "IBKS6245-NG-BL",
+              "fields": [
+                {
+                  "key": "product_code",
+                  "label": "Product Code",
+                  "value": "IBKS6245-NG-BL"
+                },
+                {
+                  "label": "Total",
+                  "value": 0
+                }
+              ],
+              "flags": {
+                "discontinued": false
+              }
+            },
+            {
+              "title": "IBKS6245-NG-SS",
+              "fields": [
+                {
+                  "key": "product_code",
+                  "label": "Product Code",
+                  "value": "IBKS6245-NG-SS"
+                },
+                {
+                  "label": "Total",
+                  "value": 0
+                }
+              ],
+              "flags": {
+                "discontinued": false
+              }
+            }
+          ],
+          "attachments": [],
+          "action_links": [],
+          "last_updated_at": "2026-08-28T17:43:01.218052",
+          "has_result": true,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false
+        }
+      }
+    ],
+    "dym-annotate": [
+      {
+        "json": {
+          "tokens": [
+            "Ibks6245blng"
+          ],
+          "elapsed_ms": 666.18,
+          "resolutions": [
+            {
+              "token": "Ibks6245blng",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6245-NG-BL",
+                  "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.44444445,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6245-NG-BL",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6245-NG-SS",
+                  "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.44444445,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6245-NG-SS",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6045-BL",
+                  "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.4117647,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6045-BL",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                }
+              ]
+            }
+          ],
+          "unresolved_tokens": [
+            "Ibks6245blng"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities and 'inventory' requires a scoping entity",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "inventory",
+            "allowed_lookup": [
+              "product",
+              "category",
+              "brand"
+            ],
+            "entities_count": 0
+          },
+          "escalate_message": "Couldn't find: \"Ibks6245-bl-ng\" (product). Would you like me to escalate to warehouse team?",
+          "is_clarification": false,
+          "found_summary": "",
+          "dym_available_codes": [],
+          "dym_probe_meta": {
+            "ok": true,
+            "tool": "crm_inventory_stock_balance_list",
+            "noun": "stock details",
+            "predicate": "qty_gt_zero",
+            "probed": [
+              "ibks6245-ng-bl",
+              "ibks6245-ng-ss",
+              "ibks6045-bl"
+            ],
+            "answer_count": 3,
+            "reason": null
+          }
+        }
+      }
+    ],
+    "miss-suggest-result": [
+      {
+        "json": {
+          "tokens": [
+            "Ibks6245blng"
+          ],
+          "elapsed_ms": 666.18,
+          "resolutions": [
+            {
+              "token": "Ibks6245blng",
+              "resolved": false,
+              "ambiguous": false,
+              "matches": [],
+              "alternatives": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6245-NG-BL",
+                  "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.44444445,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6245-NG-BL",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6245-NG-SS",
+                  "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.44444445,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6245-NG-SS",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                },
+                {
+                  "entity_type": "product",
+                  "canonical_code": "IBKS6045-BL",
+                  "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                  "match_field": "product_code",
+                  "match_tier": "trgm",
+                  "similarity": 0.4117647,
+                  "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                  "company_name": "Mocha",
+                  "display": {
+                    "product_name": "IBKS6045-BL",
+                    "is_variant": false,
+                    "brand": null
+                  }
+                }
+              ]
+            }
+          ],
+          "unresolved_tokens": [
+            "Ibks6245blng"
+          ],
+          "fallback_match_mode": "or",
+          "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+          "gate_passed": false,
+          "require_specific": false,
+          "resolved_company": null,
+          "company_team": null,
+          "resolved_companies": [],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [],
+          "routing_company": null,
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "no entities and 'inventory' requires a scoping entity",
+          "gate_clarification": "",
+          "compatible_entities": [],
+          "gate_debug": {
+            "domain": "inventory",
+            "allowed_lookup": [
+              "product",
+              "category",
+              "brand"
+            ],
+            "entities_count": 0
+          },
+          "escalate_message": "Couldn't find: \"Ibks6245-bl-ng\" (product). Would you like me to escalate to warehouse team?",
+          "is_clarification": false,
+          "found_summary": "",
+          "dym_available_codes": [],
+          "dym_probe_meta": {
+            "ok": true,
+            "tool": "crm_inventory_stock_balance_list",
+            "noun": "stock details",
+            "predicate": "qty_gt_zero",
+            "probed": [
+              "ibks6245-ng-bl",
+              "ibks6245-ng-ss",
+              "ibks6045-bl"
+            ],
+            "answer_count": 3,
+            "reason": null
+          },
+          "outcome_fragment": {
+            "dym-annotate": {
+              "tokens": [
+                "Ibks6245blng"
+              ],
+              "elapsed_ms": 666.18,
+              "resolutions": [
+                {
+                  "token": "Ibks6245blng",
+                  "resolved": false,
+                  "ambiguous": false,
+                  "matches": [],
+                  "alternatives": [
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "IBKS6245-NG-BL",
+                      "uuid": "80ba8735-0343-438a-ba17-aebd1ccaae2d",
+                      "match_field": "product_code",
+                      "match_tier": "trgm",
+                      "similarity": 0.44444445,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha",
+                      "display": {
+                        "product_name": "IBKS6245-NG-BL",
+                        "is_variant": false,
+                        "brand": null
+                      }
+                    },
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "IBKS6245-NG-SS",
+                      "uuid": "737f23cf-13a3-4b9e-8e9b-10192cabde06",
+                      "match_field": "product_code",
+                      "match_tier": "trgm",
+                      "similarity": 0.44444445,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha",
+                      "display": {
+                        "product_name": "IBKS6245-NG-SS",
+                        "is_variant": false,
+                        "brand": null
+                      }
+                    },
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "IBKS6045-BL",
+                      "uuid": "ad4e3333-0346-4d57-ba4e-d91c9c0aaa57",
+                      "match_field": "product_code",
+                      "match_tier": "trgm",
+                      "similarity": 0.4117647,
+                      "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                      "company_name": "Mocha",
+                      "display": {
+                        "product_name": "IBKS6045-BL",
+                        "is_variant": false,
+                        "brand": null
+                      }
+                    }
+                  ]
+                }
+              ],
+              "unresolved_tokens": [
+                "Ibks6245blng"
+              ],
+              "fallback_match_mode": "or",
+              "fallback_reason": "AND-mode produced zero intersection; switched to OR-mode under the whitelist so per-token fallback can apply only to unresolved tokens.",
+              "gate_passed": false,
+              "require_specific": false,
+              "resolved_company": null,
+              "company_team": null,
+              "resolved_companies": [],
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_companies": [],
+              "routing_company": null,
+              "access_denied_levels": [],
+              "access_notice": "",
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "gate_reason": "no entities and 'inventory' requires a scoping entity",
+              "gate_clarification": "",
+              "compatible_entities": [],
+              "gate_debug": {
+                "domain": "inventory",
+                "allowed_lookup": [
+                  "product",
+                  "category",
+                  "brand"
+                ],
+                "entities_count": 0
+              },
+              "escalate_message": "Couldn't find: \"Ibks6245-bl-ng\" (product). Would you like me to escalate to warehouse team?",
+              "is_clarification": false,
+              "found_summary": "",
+              "dym_available_codes": [],
+              "dym_probe_meta": {
+                "ok": true,
+                "tool": "crm_inventory_stock_balance_list",
+                "noun": "stock details",
+                "predicate": "qty_gt_zero",
+                "probed": [
+                  "ibks6245-ng-bl",
+                  "ibks6245-ng-ss",
+                  "ibks6045-bl"
+                ],
+                "answer_count": 3,
+                "reason": null
+              }
+            },
+            "sibling-transform": null,
+            "sibling-probe": null
+          }
+        }
+      }
+    ]
+  }
+}

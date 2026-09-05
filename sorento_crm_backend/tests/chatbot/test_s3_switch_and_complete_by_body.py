@@ -109,7 +109,13 @@ class TestTheCompletedLaneSwitch:
     def test_a_lane_the_code_cannot_finish_is_never_completed_however_it_is_configured(
         self, session_factory, seeded, stub_parser, stub_access
     ):
-        """The CODE half is a wall: `business_query` is S6's and no list may claim it."""
+        """The CODE half is a wall, and after S6c the wall is the DEPLOYMENT switch.
+
+        `business_query` is now in `CRM_COMPLETED_BRANCH_KINDS` - the lane shipped - but it
+        only runs when `CHATBOT_BUSINESS_LANE_ENABLED` is on, and that is off by default
+        (and off here). Naming the arm in `chatbot_completed_lanes` first must therefore
+        still delegate, not close a turn nothing composed.
+        """
         _set_completed_lanes(session_factory, ["business_query", "check_promotion"])
         stub_parser(_parser_output())
         stub_access()
@@ -129,9 +135,11 @@ class TestTheCompletedLaneSwitch:
         )
         from app.services.chatbot.delegate import delegate_for
 
-        # The kinds with a lane module of their own come off: `low_signal` (S4) and, once
-        # S5 landed, `out_of_scope`. The eight below are still exactly what this module
-        # composes, which is the assertion that matters.
+        # The kinds with a lane module of their own come off: `low_signal` (S4),
+        # `out_of_scope` (S5) and, once S6c landed, the three business arms. The eight
+        # below are still exactly what this module composes, which is the assertion that
+        # matters - and it is the one that catches a new lane leaking into the canned
+        # composer, which is how S6c first broke this file.
         assert (
             canned_lanes.COMPLETED_BRANCH_KINDS
             == CRM_COMPLETED_BRANCH_KINDS - SELF_CLOSING_BRANCH_KINDS
@@ -146,8 +154,16 @@ class TestTheCompletedLaneSwitch:
             "offer_hold",
             "ideate",
         }
-        # A lane the CODE cannot finish is delegated however the list is configured.
-        assert delegate_for("business_query", frozenset({"business_query"})) == "business_query"
+        # A lane the CODE cannot finish is delegated however the list is configured. After
+        # S6c that is no longer `business_query` (the lane shipped), so the assertion moves
+        # to a kind no build claims - `delegate_for` reads the code half either way.
+        assert delegate_for("a_lane_from_the_future", frozenset({"a_lane_from_the_future"})) == (
+            "a_lane_from_the_future"
+        )
+        # `business_query` now passes the CODE half; the engine's second switch
+        # (`CHATBOT_BUSINESS_LANE_ENABLED`) is what still delegates it, and the end-to-end
+        # test above is where that is graded.
+        assert delegate_for("business_query", frozenset({"business_query"})) is None
         # A lane the code CAN finish is still delegated until the list names it.
         assert delegate_for("clarify_menu", frozenset()) == "clarify_menu"
         assert delegate_for("clarify_menu", frozenset({"clarify_menu"})) is None

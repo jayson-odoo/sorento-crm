@@ -63,6 +63,70 @@ DIVERGENCES: list[Divergence] = [
             ("variables", "pending"),  # a pre-RS-3 capture, unwrapped by the runner
         ),
     ),
+    # ------------------------------------------------------------------ #
+    # S6c.
+    # ------------------------------------------------------------------ #
+    Divergence(
+        node="build-suggest-offer",
+        fixture="exec-14001140",
+        hazard="D4 (AC-607) - the offer's identity is the TURN id",
+        reason=(
+            "the did-you-mean offer stamps `$execution.id` as its identity, and in the CRM "
+            "that identity is the turn id. The offer only has to be stable WITHIN the "
+            "session, so the successor is correct, but the value can never equal a captured "
+            "n8n execution id - the same permanent difference already registered for the "
+            "world replay as `worlds.WORLD_DROP_PATHS = (('dym_offer', 'id'),)`. This is "
+            "the ONE graded `build-suggest-offer` capture whose only disagreement is that "
+            "id (measured: 19 of 19 equal once the turn id is supplied), so the entry is "
+            "per-fixture rather than node-wide - a node-wide one would pass every other "
+            "capture unread."
+        ),
+        strip_paths=((("dym_offer", "id")),),
+    ),
+    *(
+        Divergence(
+            node="dym-transform",
+            fixture=name,
+            hazard="capture predates the body (S6a's CAPTURE_BODY_ADDITIONS class)",
+            reason=(
+                "the LIVE SPINE ships a STALE inline copy of `dym-transform` (421 lines, "
+                "pre-Fix-4) while `sub-miss-suggest-live@f42de9c6` ships the 561-line body "
+                "this port was made from and the 33 `sub-miss-suggest-live` captures were "
+                "graded against. The three keys Fix 4 added - `dym_candidate_uuids`, "
+                "`dym_probe_row_keys`, `probe_uuid_keyed` - do not exist in the older body, "
+                "so this capture's `expected` cannot carry them. Measured: they are the "
+                "ONLY disagreement on all three of these captures, and every other key is "
+                "byte-equal. Retire the entry when the spine's inline copy is re-captured "
+                "against the shipping body."
+            ),
+            strip_paths=(
+                ("dym_candidate_uuids",),
+                ("dym_probe_row_keys",),
+                ("probe_uuid_keyed",),
+            ),
+        )
+        for name in ("exec-13462354", "exec-13469053", "exec-13479632")
+    ),
+    Divergence(
+        node="dym-annotate",
+        fixture="exec-13469053",
+        hazard="capture predates the body (S6a's CAPTURE_BODY_ADDITIONS class)",
+        reason=(
+            "the same stale-spine pair as the three `dym-transform` entries above: the live "
+            "spine's inline `dym-annotate` is 169 lines (pre-Fix-4 / F1 / F8) while "
+            "`sub-miss-suggest-live@f42de9c6` ships the 247-line body this port was made "
+            "from. The older body emits neither `dym_ambiguous_codes` nor "
+            "`dym_ambiguous_uuids` and stamps no `key_mode` on `dym_probe_meta`. Measured: "
+            "those three keys are the ONLY disagreement, and the other 15 graded "
+            "`dym-annotate` captures are byte-equal once the node's two by-name upstreams "
+            "are supplied. Retire the entry when the spine's inline copy is re-captured."
+        ),
+        strip_paths=(
+            ("dym_ambiguous_codes",),
+            ("dym_ambiguous_uuids",),
+            ("dym_probe_meta", "key_mode"),
+        ),
+    ),
 ]
 
 
@@ -126,6 +190,64 @@ CASUAL_SETUP_FAILURE_HAS_A_REPLY = Divergence(
         "AI config, resolver error): the credential is node-bound, so nothing reaches "
         "sub-error-logger2 and the customer is told nothing. The port fails the turn at "
         "stage=casual_llm and sends a fixed sentence, never str(exc)."
+    ),
+)
+
+
+# S6c. `crossdomain-zeroset`'s DOMAIN GUARD, and WHICH body it came from.
+#
+# Two live workflows ship a node called `crossdomain-zeroset` and they differ:
+#
+#   * `sub-main-processing-live` (id 53RxDSON8P3QSN22, version
+#     53ca1c6b-a6b3-48ed-b094-2cddafb3185c) ships 151 lines, sha256
+#     fb9d41cf64ea320bd016ef516fb4b0edd903cc1da9996fd01eabb4a00fc1c06d, and CARRIES the
+#     guard ("DOMAIN GUARD (2026-09-01, exec 14769923)"). This is the body the plan's
+#     S6c line count (151) names and the one the port was made from.
+#   * `live-spine-sorento-consume-main` (id 9qVyfUxmRQqrpGRMDLRuz, version
+#     c9fe3e68-b732-460d-b968-c1b4a5e5f038) ships 143 lines, sha256
+#     a880d01e3629538bdde874f60875b481af7415acb6c7f12d4795171074518f92, and does NOT.
+#     The spine is `active: true` and has no `Call 'sub-main-processing'` node, so IT is
+#     the body answering turns today.
+#
+# So relative to the shipping path the guard is a CRM behaviour change, not parity, and
+# it is registered as one rather than left to a comment. It only ever REMOVES codes from
+# `_xd.requested` (a pick made under an order or promotion offer stops naming a product
+# on an inventory turn, which printed "No stock records found for: CG-202608-051."), so
+# the direction is fail-quiet, and the pick made THIS turn is unaffected.
+#
+# Not fixture-visible: all five graded `crossdomain-zeroset` captures predate the guard
+# (22 Aug 2026) and none carries a foreign-domain `dym_offer`, so no replay changes.
+# Pinned by tests/chatbot/test_s6c_answer_lane.py::TestH22H23DymOfferDomainCleared.
+CROSSDOMAIN_DYM_OFFER_DOMAIN_GUARD = Divergence(
+    node="crossdomain-zeroset",
+    fixture=None,
+    hazard="H22 / H23",
+    reason=(
+        "carried did-you-mean picks ride into the cross-domain read only when the offer's "
+        "own domain is inventory / incoming. Present in sub-main-processing-live's 151-line "
+        "body (sha fb9d41cf64ea320b), absent from the ACTIVE spine's 143-line one "
+        "(sha a880d01e3629538b). Not fixture-visible: the five captures predate it."
+    ),
+)
+
+
+# S6c. `build-suggest-offer`'s sibling picker breaks a has-incoming tie with
+# `String(a.code).localeCompare(String(b.code))`; the port uses Python's code-point
+# order. ICU treats punctuation and case differently: node sorts
+# `SRT_100, SRT-100, SRT1, srt100, SRT100, SRTA`, Python sorts
+# `SRT-100, SRT1, SRT100, SRTA, SRT_100, srt100`. Only reachable when one product family
+# holds two codes differing solely in punctuation or case, which no captured turn does -
+# every graded `build-suggest-offer` replay is byte-equal. Recorded rather than fixed
+# because the fix is a new dependency (PyICU) for a tiebreak inside one family; the
+# trigger to pay for it is a real family of that shape.
+SIBLING_TIEBREAK_IS_CODE_POINT = Divergence(
+    node="build-suggest-offer",
+    fixture=None,
+    hazard="platform (localeCompare vs code-point order)",
+    reason=(
+        "the sibling picker's tiebreak is ICU collation in n8n and code-point order in "
+        "Python. Not fixture-visible: no captured family holds two codes differing only "
+        "in punctuation or case."
     ),
 )
 

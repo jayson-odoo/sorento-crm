@@ -337,6 +337,17 @@ ORDER_TOOLS: frozenset[str] = frozenset(
 # The replay pins the literal, so no fixture moves; production passes the workspace row's.
 SPACE_ID = "364817"
 
+
+def space_id_or_default(space_id: Any) -> str:
+    """The ONE workspace fallback, so the four tool call sites cannot disagree.
+
+    `entity-ids-transformer`, `Call 'sub-get-results'`, `crossdomain-probe` and the three
+    did-you-mean probes all send the same workspace, and an install with no default
+    respond workspace row must not have some of them send `null` while the others send
+    n8n's literal - the MCP read is scoped by it.
+    """
+    return space_id if space_id else SPACE_ID
+
 # `tier-probe`'s own tool. The per-tier question is "are there any promotions at this tier
 # at all", so it is the promotions read, asked once per entitled tier - promotion rows carry
 # no access level, so there is no key a single batched answer could be matched back on.
@@ -459,7 +470,7 @@ def entity_ids_transformer(
     if raw_contact is None:
         raw_contact = jsc.get(semantic_input, "contact_id")
     out["contact_id"] = jsc.nullish_str(raw_contact).strip()
-    out["space_id"] = space_id if space_id else SPACE_ID
+    out["space_id"] = space_id_or_default(space_id)
     return out
 
 
