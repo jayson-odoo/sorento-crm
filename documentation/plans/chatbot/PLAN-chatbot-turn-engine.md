@@ -337,18 +337,18 @@ suite on the shared DB.
   The gate then ran, with `CHATBOT_ORDERING_ENABLED=true` on ONE uvicorn worker, mocked
   parser, against a local backend:
   - 50 contacts x 2 messages fired at once (100 turns): zero errors, zero contacts answered
-    out of arrival order, no overlapping turns, p50 0.79 s, **p95 1.15 s** (target 12 s);
-  - the 300-turn repeat (50 x 6): zero errors, zero out of order, p50 2.15 s, **p95 3.81 s**;
-  - database connections: the burst added **19** on top of the idle baseline, and with the
-    other processes on the shared dev database subtracted (6 with this backend stopped) the
-    worker held about **26 of its own 30** (`pool_size=10, max_overflow=20`) at peak. No
-    request ever waited for a connection - zero `QueuePool` timeouts in the log - but that
-    is 87%, not AC-711's "below 60%", on a single-worker lane box. Production runs
-    `WEB_CONCURRENCY: 8`, so the same burst spreads across eight pools; the number to watch
-    there is PgBouncer's 50 server connections, which the rollback above now frees between
-    transactions instead of holding for the whole turn. **Open with the owner: either the
-    60% clause is measured per production worker (where it holds) or the lane box needs a
-    bigger pool for the gate to mean it.**
+    out of arrival order, no overlapping turns, p50 0.88 s, **p95 1.24 s** (target 12 s);
+  - the 300-turn repeat (50 x 6): zero errors, zero out of order, p50 1.89 s, **p95 3.77 s**;
+  - database connections: with the other processes on the shared dev database subtracted
+    (6 remained with this backend stopped), the burst drove the worker to roughly **29 of
+    its own 30** (`pool_size=10, max_overflow=20`) at peak - the ceiling. No request ever
+    waited long enough to fail (zero `QueuePool` timeouts), but that is not AC-711's "below
+    60%" on a single-worker lane box. Production runs `WEB_CONCURRENCY: 8`, so the same
+    burst spreads across eight pools; the number to watch there is PgBouncer's 50 server
+    connections, which the rollback above now frees between transactions instead of holding
+    for the whole turn. **Open with the owner: either the 60% clause is measured per
+    production worker (where it holds) or the lane box needs a bigger pool for the gate to
+    mean it.**
   - the real limit at this size is uvicorn's 40-thread pool for sync routes, not the
     database. At 300 concurrent, 25 to 48 of the 50 contacts had their two messages reach
     the ENGINE out of send order, because 300 requests contend for 40 threads before any

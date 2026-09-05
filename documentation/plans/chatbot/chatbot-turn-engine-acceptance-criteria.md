@@ -743,7 +743,7 @@ contact inside the synchronous request. Different contacts run in parallel.
   graded from `chatbot.turns` after the run, never from the client's send order - AC-709's
   guarantee is arrival order); repeated at 300 turns. (A5)
   **Measured 5 Sep 2026** (ordering on, one uvicorn worker, mocked parser): 100 turns, zero
-  errors, zero out of order, p95 1.15 s; 300-turn repeat p95 3.81 s. The pool clause is the
+  errors, zero out of order, p95 1.24 s; 300-turn repeat p95 3.77 s. The pool clause is the
   one that did not hold as written - see the plan's capacity section, where the number and
   the question for the owner are recorded.
 - AC-707 `[E2E]` Given live traffic for one pilot contact routed through S7, when they send

@@ -729,7 +729,7 @@ seeded through the CHECKOUT's `DATABASE_URL` and nothing can prove it is the dat
 backend reads.
 
 Measured on this branch, 5 Sep 2026, ordering ON, one uvicorn worker, mocked parser: 100
-turns, zero errors, zero out of order, p95 1.15 s; the 300-turn repeat p95 3.81 s. Pool
+turns, zero errors, zero out of order, p95 1.24 s; the 300-turn repeat p95 3.77 s. Pool
 detail and the one number that missed its target are in the plan's capacity section.
 
 ### Step 5 - the switchover proof (AC-714), on the clone
