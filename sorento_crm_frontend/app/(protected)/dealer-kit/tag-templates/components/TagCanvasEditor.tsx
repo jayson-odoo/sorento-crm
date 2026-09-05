@@ -29,6 +29,7 @@ import { Konva as KonvaGlobal } from 'konva/lib/Global';
 import type {
   GroupBinding,
   ImageSource,
+  PolygonPoint,
   TagBindingData,
   TagLayer,
   TagLayerProps,
@@ -56,6 +57,12 @@ import {
   SET_BLOCK_SIZE,
 } from '@/lib/dealer-kit/product-block';
 import { renderMergeFields, soleMergeField } from '@/lib/dealer-kit/merge-fields';
+import {
+  moveEdge,
+  movePoint,
+  polygonPoints,
+  scalePolygonPoints,
+} from '@/lib/dealer-kit/polygon-path';
 import {
   actualSizeView,
   ancestorsOf,
@@ -171,7 +178,7 @@ interface PreviewChoice {
 }
 
 // This component is loaded with ssr:false by the page, so direct imports are safe.
-import { Stage, Layer as KonvaLayer, Group, Rect, Line, Transformer } from 'react-konva';
+import { Stage, Layer as KonvaLayer, Circle, Group, Rect, Line, Transformer } from 'react-konva';
 import { KonvaTagLayer } from './KonvaTagLayer';
 
 // ---------------------------------------------------------------------------
@@ -262,6 +269,16 @@ const MARQUEE_SLOP_PX = 3;
 /** How far a duplicate or a paste lands from its original, in mm. */
 const CLONE_OFFSET_MM = 5;
 
+/**
+ * Polygon corner-editing handles, in SCREEN pixels (S4).
+ *
+ * A constant, not a zoom-derived size: the Konva Layer here is never scaled
+ * (every coordinate is multiplied by `scale` by hand), so a fixed radius
+ * already IS a fixed size on screen at any zoom.
+ */
+const POLYGON_VERTEX_HANDLE_RADIUS_PX = 5;
+const POLYGON_EDGE_HANDLE_SIZE_PX = 7;
+
 const ZOOM_LIMITS = { min: CANVAS_MIN_ZOOM, max: CANVAS_MAX_ZOOM };
 
 // ---------------------------------------------------------------------------
@@ -339,6 +356,20 @@ export function TagCanvasEditor({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   /** The text layer the inline editor (S2, D5) is currently open on, if any. */
   const [editingLayerId, setEditingLayerId] = useState<string | null>(null);
+  /**
+   * The polygon layer whose corners are being edited (S4), if any.
+   *
+   * Entered by double-clicking the polygon, left by Escape or by the
+   * selection moving anywhere else - see the effect below, which is also what
+   * makes a click on empty canvas leave, since that clears the selection.
+   */
+  const [editingShapeId, setEditingShapeId] = useState<string | null>(null);
+  /**
+   * The corners a handle drag is CURRENTLY at, so the shape follows the
+   * cursor. Never committed here: `handlePolygonDragEnd` writes once, so one
+   * drag is one undo.
+   */
+  const [polygonPreview, setPolygonPreview] = useState<PolygonPoint[] | null>(null);
   const [view, setView] = useState<CanvasView>({ zoom: 1, panX: 0, panY: 0 });
   const [tool, setTool] = useState<CanvasTool>('select');
   const [spaceHeld, setSpaceHeld] = useState(false);
@@ -419,6 +450,13 @@ export function TagCanvasEditor({
   const stageRef = useRef<Konva.Stage | null>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
   const dragRef = useRef<DragSession | null>(null);
+  /** What a polygon handle drag started from (S4), so it can move by a delta. */
+  const polygonDragRef = useRef<{
+    kind: 'vertex' | 'edge';
+    index: number;
+    base: PolygonPoint[];
+    origin: { x: number; y: number };
+  } | null>(null);
   const panRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
   const marqueeRef = useRef<{
     start: { x_mm: number; y_mm: number };
@@ -1166,6 +1204,15 @@ export function TagCanvasEditor({
         setEditingLayerId(target.id);
         return;
       }
+      // A polygon opens its corner handles (S4); every other shape has
+      // nothing a second click could mean.
+      if (target.props.kind === 'shape') {
+        if (target.props.shape === 'polygon' && !target.locked) {
+          setSelectedIds(new Set([target.id]));
+          setEditingShapeId(target.id);
+        }
+        return;
+      }
       if (target.props.kind !== 'group') return;
       const point = pointerMm();
       const childId = point
@@ -1178,6 +1225,156 @@ export function TagCanvasEditor({
       if (pick) setSelectedIds(new Set([pick]));
     },
     [layers, resolveTarget, pointerMm],
+  );
+
+  // -- Polygon corner editing (S4) -------------------------------------------
+
+  /** The polygon being corner-edited, or null the moment it stops being one. */
+  const editingShapeLayer = useMemo(() => {
+    if (!editingShapeId) return null;
+    const layer = layers.find((l) => l.id === editingShapeId);
+    if (!layer || layer.props.kind !== 'shape' || layer.props.shape !== 'polygon') return null;
+    return layer;
+  }, [editingShapeId, layers]);
+
+  /**
+   * Corner editing ends the moment its layer stops being the one selected
+   * polygon: clicking empty canvas, selecting something else, locking or
+   * deleting it, or switching the shape back to a rectangle. One rule rather
+   * than a setter on every one of those paths, none of which would otherwise
+   * remember the handles were up.
+   */
+  useEffect(() => {
+    if (!editingShapeId) return;
+    const layer = layers.find((l) => l.id === editingShapeId);
+    const editable =
+      layer &&
+      layer.props.kind === 'shape' &&
+      layer.props.shape === 'polygon' &&
+      !layer.locked &&
+      layer.visible;
+    const soleSelection = selectedIds.size === 1 && selectedIds.has(editingShapeId);
+    if (!editable || !soleSelection) {
+      setEditingShapeId(null);
+      setPolygonPreview(null);
+    }
+  }, [editingShapeId, layers, selectedIds]);
+
+  /** Where every handle sits, in the layer's own pixel space. */
+  const polygonHandles = useMemo(() => {
+    if (!editingShapeLayer || editingShapeLayer.props.kind !== 'shape') return null;
+    const width = editingShapeLayer.width_mm * scale;
+    const height = editingShapeLayer.height_mm * scale;
+    const vertices = scalePolygonPoints(
+      polygonPreview ?? polygonPoints(editingShapeLayer.props),
+      width,
+      height,
+    );
+    return {
+      layer: editingShapeLayer,
+      width,
+      height,
+      vertices,
+      edges: vertices.map((point, index) => {
+        const next = vertices[(index + 1) % vertices.length];
+        return { x: (point.x + next.x) / 2, y: (point.y + next.y) / 2 };
+      }),
+    };
+  }, [editingShapeLayer, polygonPreview, scale]);
+
+  const startPolygonDrag = useCallback(
+    (kind: 'vertex' | 'edge', index: number) => {
+      const layer = editingShapeLayer;
+      if (!layer || layer.props.kind !== 'shape') return;
+      // The BASE is read once, at the start: every tick of the drag is a
+      // delta from where the handle began, so a clamped tick cannot ratchet
+      // the corner along by re-basing on its own clamped result.
+      const base = polygonPoints(layer.props);
+      const points = scalePolygonPoints(base, layer.width_mm * scale, layer.height_mm * scale);
+      const from = points[index];
+      const to = points[(index + 1) % points.length];
+      if (!from || !to) return;
+      polygonDragRef.current = {
+        kind,
+        index,
+        base,
+        origin:
+          kind === 'vertex' ? from : { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 },
+      };
+    },
+    [editingShapeLayer, scale],
+  );
+
+  const polygonPointsFromDrag = useCallback(
+    (node: Konva.Node) => {
+      const drag = polygonDragRef.current;
+      const layer = editingShapeLayer;
+      if (!drag || !layer) return null;
+      const width = layer.width_mm * scale;
+      const height = layer.height_mm * scale;
+      if (width <= 0 || height <= 0) return null;
+      const dx = (node.x() - drag.origin.x) / width;
+      const dy = (node.y() - drag.origin.y) / height;
+      return drag.kind === 'vertex'
+        ? movePoint(drag.base, drag.index, dx, dy)
+        : moveEdge(drag.base, drag.index, dx, dy);
+    },
+    [editingShapeLayer, scale],
+  );
+
+  const handlePolygonDragMove = useCallback(
+    (e: Konva.KonvaEventObject<DragEvent>) => {
+      const next = polygonPointsFromDrag(e.target);
+      if (next) setPolygonPreview(next);
+    },
+    [polygonPointsFromDrag],
+  );
+
+  const handlePolygonDragEnd = useCallback(
+    (e: Konva.KonvaEventObject<DragEvent>) => {
+      const next = polygonPointsFromDrag(e.target);
+      polygonDragRef.current = null;
+      setPolygonPreview(null);
+      if (next && editingShapeId) updateLayerProps(editingShapeId, { points: next });
+    },
+    [polygonPointsFromDrag, editingShapeId, updateLayerProps],
+  );
+
+  /**
+   * Hold a handle inside the layer box for the whole drag (AC-S4-3).
+   *
+   * Konva drives a drag from the pointer, not from the `x`/`y` React hands
+   * back, so clamping the committed points alone would leave the handle
+   * itself out in the margin while the corner it stands for had already
+   * stopped. The box is a rectangle in the PARENT group's space, which is
+   * where the layer's rotation already lives, so the clamp is a plain
+   * min/max once the absolute point is taken back through that transform.
+   */
+  const polygonHandleBound = useCallback(
+    function boundToLayerBox(this: Konva.Node, pos: { x: number; y: number }) {
+      const parent = this.getParent();
+      if (!parent || !polygonHandles) return pos;
+      const transform = parent.getAbsoluteTransform();
+      const local = transform.copy().invert().point(pos);
+      return transform.point({
+        x: Math.min(polygonHandles.width, Math.max(0, local.x)),
+        y: Math.min(polygonHandles.height, Math.max(0, local.y)),
+      });
+    },
+    [polygonHandles],
+  );
+
+  /**
+   * The layer as the canvas should DRAW it mid-drag: the committed corners
+   * everywhere else, the dragged ones on the polygon being edited.
+   */
+  const withPolygonPreview = useCallback(
+    (layer: TagLayer): TagLayer => {
+      if (!polygonPreview || layer.id !== editingShapeId) return layer;
+      if (layer.props.kind !== 'shape') return layer;
+      return { ...layer, props: { ...layer.props, points: polygonPreview } };
+    },
+    [polygonPreview, editingShapeId],
   );
 
   /** Escape climbs one level, and deselects at the top. */
@@ -1318,11 +1515,15 @@ export function TagCanvasEditor({
     const nodes = Array.from(selectedIds)
       .map((id) => layers.find((layer) => layer.id === id))
       .filter((layer): layer is TagLayer => Boolean(layer) && !layer!.locked && layer!.visible)
+      // A polygon whose corners are being edited answers to its own handles
+      // (S4): leaving the resize box on top of them would put two grips in
+      // the same corner, and the box's would win the click.
+      .filter((layer) => layer.id !== editingShapeId)
       .map((layer) => stage.findOne(`#${layer.id}`))
       .filter((node): node is Konva.Node => Boolean(node));
     transformer.nodes(nodes);
     transformer.getLayer()?.batchDraw();
-  }, [selectedIds, layers, scale, view]);
+  }, [selectedIds, layers, scale, view, editingShapeId]);
 
   /**
    * Live reflow while a TEXT layer is being resized (D8, S6).
@@ -2073,6 +2274,15 @@ export function TagCanvasEditor({
 
       if (isInput) return;
 
+      // Corner editing owns Escape first (S4, AC-S4-7). The Escape below
+      // climbs out of a group instead, which would leave the handles up.
+      if (e.key === 'Escape' && editingShapeId) {
+        e.preventDefault();
+        setEditingShapeId(null);
+        setPolygonPreview(null);
+        return;
+      }
+
       if (e.key === ' ' && !modifier) {
         e.preventDefault();
         setSpaceHeld(true);
@@ -2188,6 +2398,7 @@ export function TagCanvasEditor({
     selectedIds,
     selectedGuideId,
     editingLayerId,
+    editingShapeId,
     applyTextFormat,
     deleteSelectedLayers,
     duplicateSelectedLayers,
@@ -2665,7 +2876,7 @@ export function TagCanvasEditor({
                       {sortedLayers.map((layer) => (
                         <KonvaTagLayer
                           key={layer.id}
-                          layer={layer}
+                          layer={withPolygonPreview(layer)}
                           scale={scale}
                           display={layerDisplay(layer, dataOf(layer), library.assetUrls)}
                           draggable={!handMode}
@@ -2790,6 +3001,58 @@ export function TagCanvasEditor({
                         return newBox;
                       }}
                     />
+
+                    {/* Polygon corner handles (S4): a circle on every
+                        corner and a smaller square on every edge midpoint,
+                        inside a Group carrying the layer's own transform so
+                        they stay on the shape when it is rotated. Edges are
+                        drawn first so a corner handle wins an overlapping
+                        click. */}
+                    {polygonHandles && (
+                      <Group
+                        x={polygonHandles.layer.x_mm * scale}
+                        y={polygonHandles.layer.y_mm * scale}
+                        rotation={polygonHandles.layer.rotation_deg}
+                      >
+                        {polygonHandles.edges.map((point, index) => (
+                          <Rect
+                            key={`polygon-edge-${index}`}
+                            name={`polygon-edge-${index}`}
+                            x={point.x}
+                            y={point.y}
+                            width={POLYGON_EDGE_HANDLE_SIZE_PX}
+                            height={POLYGON_EDGE_HANDLE_SIZE_PX}
+                            offsetX={POLYGON_EDGE_HANDLE_SIZE_PX / 2}
+                            offsetY={POLYGON_EDGE_HANDLE_SIZE_PX / 2}
+                            fill="#ffffff"
+                            stroke="#3b82f6"
+                            strokeWidth={1}
+                            draggable={!handMode}
+                            dragBoundFunc={polygonHandleBound}
+                            onDragStart={() => startPolygonDrag('edge', index)}
+                            onDragMove={handlePolygonDragMove}
+                            onDragEnd={handlePolygonDragEnd}
+                          />
+                        ))}
+                        {polygonHandles.vertices.map((point, index) => (
+                          <Circle
+                            key={`polygon-vertex-${index}`}
+                            name={`polygon-vertex-${index}`}
+                            x={point.x}
+                            y={point.y}
+                            radius={POLYGON_VERTEX_HANDLE_RADIUS_PX}
+                            fill="#ffffff"
+                            stroke="#3b82f6"
+                            strokeWidth={1.5}
+                            draggable={!handMode}
+                            dragBoundFunc={polygonHandleBound}
+                            onDragStart={() => startPolygonDrag('vertex', index)}
+                            onDragMove={handlePolygonDragMove}
+                            onDragEnd={handlePolygonDragEnd}
+                          />
+                        ))}
+                      </Group>
+                    )}
 
                     {/* Marquee band */}
                     {marquee && (

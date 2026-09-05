@@ -79,7 +79,7 @@ User test on live, 5 Sep 2026, after #625. Four findings, one lane, one PR, four
   inline-edit.test.tsx` token layer + `boundData` opens on the resolved code, and a mixed text
   ("Code {{product.code}}") still opens raw.
 
-## S4 - Polygon shape with draggable corners and edges (FE)
+## S4 - Polygon shape with draggable corners and edges (FE + doc schema)
 
 - `ShapeType` gains `'polygon'`. `ShapeLayerProps` gains `points?: {x: number; y: number}[]`,
   each in [0, 1] relative to the layer box (so the Transformer's resize still scales the
@@ -98,10 +98,17 @@ User test on live, 5 Sep 2026, after #625. Four findings, one lane, one PR, four
   detached from that layer; Escape or click on empty canvas exits. Inspector shape select
   lists "Polygon (free corners)"; switching a rect / rounded rect to polygon seeds the four
   corners; switching away drops `points`. Toolbar "Add Shape" behaviour unchanged.
+- Backend, added during implementation: `ShapeLayerPropsDoc` in `app/schemas/price_tag.py`
+  is `extra='forbid'` and mirrors `tag-template-types.ts`, so it gains `'polygon'` and an
+  optional `points`. Nothing in the request path validates a doc through it today (every
+  `doc` field is a plain `dict`) - it is the type check the SEEDED templates are held to -
+  but leaving it behind would make the mirror a lie and would reject the first seeded layout
+  that used a polygon. No migration, no route change.
 - Tests: `polygon-path.test.ts` (square r=0 -> M/L/L/L/Z, radius clamp, clamps on move);
   `TagCanvasEditor.polygon.test.tsx` (double-click enters edit mode, vertex drag end writes
   the new normalized point, Escape exits); `TagSheetRenderer` renders an `<svg><path>` for a
-  polygon layer.
+  polygon layer; `test_tag_template_seed_docs.py` (a polygon doc with and without `points`
+  validates, an unknown shape still does not).
 
 ## Verification
 

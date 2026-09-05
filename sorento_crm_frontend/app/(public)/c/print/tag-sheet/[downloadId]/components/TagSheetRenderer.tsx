@@ -32,6 +32,11 @@ import {
 } from '@/lib/dealer-kit/product-block';
 import { priceBadgeParts } from '@/lib/dealer-kit/price-badge';
 import {
+  polygonPoints,
+  roundedPolygonPath,
+  scalePolygonPoints,
+} from '@/lib/dealer-kit/polygon-path';
+import {
   barcodePlateGeometry,
   barcodeSymbologyFor,
   humanReadableBarcode,
@@ -164,6 +169,40 @@ function renderTextLayer(layer: TagLayer, resolved: ResolvedLineData | null) {
 function renderShapeLayer(layer: TagLayer) {
   const props = layer.props;
   if (props.kind !== 'shape') return null;
+
+  // A polygon is the one shape CSS cannot express, so it prints as an inline
+  // SVG whose user units ARE millimetres (the viewBox is the layer's own mm
+  // box): `strokeWidth` and `cornerRadius` then mean the same here as on
+  // every other shape, and the `d` comes from the SAME builder the Konva
+  // canvas draws with (S4, AC-S4-6).
+  if (props.shape === 'polygon') {
+    const points = scalePolygonPoints(
+      polygonPoints(props),
+      layer.width_mm,
+      layer.height_mm,
+    );
+    return (
+      <svg
+        viewBox={`0 0 ${layer.width_mm} ${layer.height_mm}`}
+        width={`${layer.width_mm}mm`}
+        height={`${layer.height_mm}mm`}
+        style={{
+          position: 'absolute',
+          left: `${layer.x_mm}mm`,
+          top: `${layer.y_mm}mm`,
+          transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
+          overflow: 'visible',
+        }}
+      >
+        <path
+          d={roundedPolygonPath(points, props.cornerRadius)}
+          fill={props.fill === 'transparent' ? 'none' : props.fill}
+          stroke={props.stroke === 'transparent' ? 'none' : props.stroke}
+          strokeWidth={props.strokeWidth}
+        />
+      </svg>
+    );
+  }
 
   const isEllipse = props.shape === 'ellipse';
   const isLine = props.shape === 'line';

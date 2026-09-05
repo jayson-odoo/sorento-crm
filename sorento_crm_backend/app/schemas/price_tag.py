@@ -295,13 +295,24 @@ class TextLayerPropsDoc(_StrictProps):
     letterSpacing: float
 
 
+class PolygonPointDoc(_StrictProps):
+    """One polygon corner, normalized to [0, 1] against the layer's own box (S4)."""
+
+    x: float
+    y: float
+
+
 class ShapeLayerPropsDoc(_StrictProps):
     kind: Literal["shape"]
-    shape: Literal["rect", "rounded_rect", "ellipse", "line"]
+    shape: Literal["rect", "rounded_rect", "ellipse", "line", "polygon"]
     fill: str
     stroke: str
     strokeWidth: float
     cornerRadius: float
+    # Only a polygon carries corners, and only once one has been moved: absent
+    # means the box's own four (S4, AC-S4-8), which is why no old document
+    # needs migrating.
+    points: Optional[list[PolygonPointDoc]] = None
 
 
 class ProductSlotLayerPropsDoc(_StrictProps):

@@ -38,7 +38,19 @@ export type SlotBinding =
   | 'barcode'
   | null;
 
-export type ShapeType = 'rect' | 'rounded_rect' | 'ellipse' | 'line';
+export type ShapeType = 'rect' | 'rounded_rect' | 'ellipse' | 'line' | 'polygon';
+
+/**
+ * A polygon corner, normalized to [0, 1] against the layer's own box (S4).
+ *
+ * Normalized so the Transformer keeps resizing a polygon exactly as it
+ * resizes a rectangle, and so a document saved before S4 needs no migration:
+ * a shape with no `points` is the box's four corners.
+ */
+export interface PolygonPoint {
+  x: number;
+  y: number;
+}
 
 export type ImageFit = 'cover' | 'contain';
 
@@ -125,6 +137,12 @@ export interface ShapeLayerProps {
   stroke: string;
   strokeWidth: number;
   cornerRadius: number;
+  /**
+   * The polygon's own corners (S4), absent for every other shape and for a
+   * polygon nobody has moved a corner on yet. `polygonPoints()` in
+   * `polygon-path.ts` is the one place that resolves absent to the box.
+   */
+  points?: PolygonPoint[];
 }
 
 export interface ProductSlotLayerProps {

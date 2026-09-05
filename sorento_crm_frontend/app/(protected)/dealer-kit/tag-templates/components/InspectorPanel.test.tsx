@@ -21,6 +21,29 @@ import { describe, expect, it, vi } from 'vitest';
 import type { TagLayer } from '@/lib/dealer-kit/tag-template-types';
 import { InspectorPanel } from './InspectorPanel';
 
+// The real select is a Radix popover + cmdk list, which jsdom cannot open.
+// A native <select> carrying the same options is enough to choose one, and
+// every select in this panel is static-option mode (no `fetchOptions`).
+vi.mock('@/components/common/SearchableSelect', () => ({
+  SearchableSelect: ({
+    value,
+    onChange,
+    options,
+  }: {
+    value: string;
+    onChange: (v: string) => void;
+    options: { value: string; label: string }[];
+  }) => (
+    <select value={value} onChange={(e) => onChange(e.target.value)}>
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
 function barcodeLayer(overrides: Partial<TagLayer> = {}): TagLayer {
   return {
     id: 'bc1',
@@ -309,5 +332,88 @@ describe('InspectorPanel - barcode value override (D23, S9 review S7)', () => {
     });
 
     expect(onUpdate).toHaveBeenCalledWith('bc1', { text_override: '999888777' });
+  });
+});
+
+describe('InspectorPanel - polygon shape (S4, AC-S4-1)', () => {
+  function shapeLayer(shape: string, points?: { x: number; y: number }[]): TagLayer {
+    return {
+      id: 'sh1',
+      type: 'shape',
+      x_mm: 0,
+      y_mm: 0,
+      width_mm: 40,
+      height_mm: 20,
+      rotation_deg: 0,
+      z_index: 1,
+      locked: false,
+      visible: true,
+      slot_binding: null,
+      text_override: null,
+      props: {
+        kind: 'shape',
+        shape,
+        fill: '#e0e0e0',
+        stroke: '#999999',
+        strokeWidth: 0.5,
+        cornerRadius: 0,
+        ...(points ? { points } : {}),
+      },
+    } as TagLayer;
+  }
+
+  it('offers Polygon and seeds the four corners, so it still looks like the rectangle', () => {
+    const onUpdateProps = vi.fn();
+    render(
+      <InspectorPanel layer={shapeLayer('rect')} onUpdate={vi.fn()} onUpdateProps={onUpdateProps} />,
+    );
+
+    const select = screen
+      .getByRole('option', { name: 'Polygon (free corners)' })
+      .closest('select') as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'polygon' } });
+
+    expect(onUpdateProps).toHaveBeenCalledWith('sh1', expect.objectContaining({
+      shape: 'polygon',
+      points: [
+        { x: 0, y: 0 },
+        { x: 1, y: 0 },
+        { x: 1, y: 1 },
+        { x: 0, y: 1 },
+      ],
+    }));
+  });
+
+  it('drops the points again when the shape goes back to a rectangle', () => {
+    const onUpdateProps = vi.fn();
+    render(
+      <InspectorPanel
+        layer={shapeLayer('polygon', [
+          { x: 0.25, y: 0 },
+          { x: 1, y: 0 },
+          { x: 1, y: 1 },
+          { x: 0, y: 1 },
+        ])}
+        onUpdate={vi.fn()}
+        onUpdateProps={onUpdateProps}
+      />,
+    );
+
+    const select = screen
+      .getByRole('option', { name: 'Rectangle' })
+      .closest('select') as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'rect' } });
+
+    const changes = onUpdateProps.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+    expect(changes.shape).toBe('rect');
+    expect(changes.points).toBeUndefined();
+  });
+
+  it('keeps the corner radius available on a polygon (AC-S4-4)', () => {
+    render(
+      <InspectorPanel layer={shapeLayer('polygon')} onUpdate={vi.fn()} onUpdateProps={vi.fn()} />,
+    );
+
+    expect(screen.getByText('Corner Radius')).toBeInTheDocument();
   });
 });

@@ -38,6 +38,7 @@ import type {
   TagLayerProps,
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
+import { DEFAULT_POLYGON_POINTS } from '@/lib/dealer-kit/polygon-path';
 import { isDynamic } from '@/lib/dealer-kit/product-block';
 import { tagColours } from '@/lib/dealer-kit/colour';
 import { ColorPicker } from './ColorPicker';
@@ -97,6 +98,7 @@ const SHAPE_TYPE_OPTIONS = [
   { value: 'rounded_rect', label: 'Rounded Rect' },
   { value: 'ellipse', label: 'Ellipse' },
   { value: 'line', label: 'Line' },
+  { value: 'polygon', label: 'Polygon (free corners)' },
 ];
 
 const FIELD_KEY_OPTIONS = [
@@ -639,6 +641,29 @@ function TextInspector({
 // Shape inspector
 // ---------------------------------------------------------------------------
 
+/**
+ * The shape select's write, with the polygon's corners seeded and dropped
+ * alongside it (S4, AC-S4-1).
+ *
+ * Turning a rectangle into a polygon seeds the box's own four corners, so it
+ * keeps looking exactly like the rectangle until a corner is moved; turning
+ * it back drops them, so a later switch to polygon starts from the box again
+ * rather than from corners the user cannot see.
+ */
+function withShape(
+  props: Extract<TagLayerProps, { kind: 'shape' }>,
+  shape: ShapeType,
+): Extract<TagLayerProps, { kind: 'shape' }> {
+  return {
+    ...props,
+    shape,
+    // Explicitly undefined, not omitted: the caller MERGES this over the
+    // layer's current props, so an omitted key would leave the old corners
+    // in place.
+    points: shape === 'polygon' ? (props.points ?? DEFAULT_POLYGON_POINTS) : undefined,
+  };
+}
+
 function ShapeInspector({
   props,
   onChange,
@@ -658,7 +683,7 @@ function ShapeInspector({
           <Label className="text-xs text-muted-foreground">Shape Type</Label>
           <SearchableSelect
             value={props.shape}
-            onChange={(v: string) => onChange({ ...props, shape: v as ShapeType })}
+            onChange={(v: string) => onChange(withShape(props, v as ShapeType))}
             options={SHAPE_TYPE_OPTIONS}
           />
         </div>

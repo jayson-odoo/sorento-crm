@@ -354,3 +354,70 @@ def test_a_price_badge_is_clear_of_the_text_above_it(family, doc):
     for badge in badges:
         for text in texts:
             assert not _overlaps(badge, text), (family, badge["id"], text["id"])
+
+
+# ---------------------------------------------------------------------------
+# The polygon shape (S4)
+# ---------------------------------------------------------------------------
+
+
+def _polygon_doc(props: dict) -> dict:
+    return {
+        "width_mm": 60,
+        "height_mm": 40,
+        "layers": [
+            {
+                "id": "sh1",
+                "type": "shape",
+                "x_mm": 0,
+                "y_mm": 0,
+                "width_mm": 40,
+                "height_mm": 20,
+                "rotation_deg": 0,
+                "z_index": 1,
+                "locked": False,
+                "visible": True,
+                "slot_binding": None,
+                "text_override": None,
+                "props": props,
+            }
+        ],
+    }
+
+
+def _shape_props(**overrides) -> dict:
+    return {
+        "kind": "shape",
+        "shape": "rect",
+        "fill": "#e0e0e0",
+        "stroke": "#999999",
+        "strokeWidth": 0.5,
+        "cornerRadius": 0,
+        **overrides,
+    }
+
+
+def test_a_polygon_layer_with_free_corners_is_a_valid_document():
+    """S4: the editor writes normalized corners, so the mirror must accept them."""
+    doc = _polygon_doc(
+        _shape_props(
+            shape="polygon",
+            points=[
+                {"x": 0.25, "y": 0},
+                {"x": 1, "y": 0},
+                {"x": 1, "y": 1},
+                {"x": 0, "y": 1},
+            ],
+        )
+    )
+    TagTemplateDocModel.model_validate(doc)
+
+
+def test_a_polygon_saved_before_a_corner_moved_needs_no_points():
+    """AC-S4-8: absent points mean the box's own four corners."""
+    TagTemplateDocModel.model_validate(_polygon_doc(_shape_props(shape="polygon")))
+
+
+def test_a_shape_that_is_not_one_of_the_five_is_still_rejected():
+    with pytest.raises(Exception):
+        TagTemplateDocModel.model_validate(_polygon_doc(_shape_props(shape="hexagon")))

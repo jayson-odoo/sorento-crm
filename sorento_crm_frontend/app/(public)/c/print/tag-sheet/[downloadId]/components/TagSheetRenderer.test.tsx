@@ -590,3 +590,78 @@ describe('barcode on the print page', () => {
     );
   });
 });
+
+describe('polygon shape on the print page (S4, AC-S4-6)', () => {
+  it('prints an SVG path built by the same helper the canvas draws with', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'poly-1',
+            type: 'shape',
+            width_mm: 40,
+            height_mm: 20,
+            props: {
+              kind: 'shape',
+              shape: 'polygon',
+              fill: '#ff0000',
+              stroke: '#000000',
+              strokeWidth: 0.5,
+              cornerRadius: 0,
+              points: [
+                { x: 0.25, y: 0 },
+                { x: 1, y: 0 },
+                { x: 1, y: 1 },
+                { x: 0, y: 1 },
+              ],
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+        assets={{}}
+        images={{}}
+      />,
+    );
+
+    const svg = container.querySelector('svg');
+    expect(svg).toBeTruthy();
+    // The viewBox is the layer's own mm box, so the path data is in mm and
+    // `strokeWidth` means the same thing here as on every other shape.
+    expect(svg?.getAttribute('viewBox')).toBe('0 0 40 20');
+    const path = svg?.querySelector('path');
+    expect(path?.getAttribute('d')).toBe('M 10 0 L 40 0 L 40 20 L 0 20 Z');
+    expect(path?.getAttribute('fill')).toBe('#ff0000');
+    expect(path?.getAttribute('stroke')).toBe('#000000');
+    expect(path?.getAttribute('stroke-width')).toBe('0.5');
+  });
+
+  it('draws the four corners for a polygon saved without points (AC-S4-8)', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'poly-2',
+            type: 'shape',
+            width_mm: 40,
+            height_mm: 20,
+            props: {
+              kind: 'shape',
+              shape: 'polygon',
+              fill: '#ff0000',
+              stroke: 'transparent',
+              strokeWidth: 0,
+              cornerRadius: 0,
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+        assets={{}}
+        images={{}}
+      />,
+    );
+
+    expect(container.querySelector('path')?.getAttribute('d')).toBe(
+      'M 0 0 L 40 0 L 40 20 L 0 20 Z',
+    );
+  });
+});

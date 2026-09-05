@@ -14,7 +14,7 @@
  */
 
 import { useEffect, useState } from 'react';
-import { Ellipse, Group, Image as KonvaImage, Line, Rect, Text } from 'react-konva';
+import { Ellipse, Group, Image as KonvaImage, Line, Path, Rect, Text } from 'react-konva';
 import type Konva from 'konva';
 import JsBarcode from 'jsbarcode';
 import type { TagLayer, TagLayerProps } from '@/lib/dealer-kit/tag-template-types';
@@ -26,6 +26,11 @@ import {
   barcodeSymbologyFor,
   humanReadableBarcode,
 } from '@/lib/dealer-kit/barcode';
+import {
+  polygonPoints,
+  roundedPolygonPath,
+  scalePolygonPoints,
+} from '@/lib/dealer-kit/polygon-path';
 
 // `TagLayerDisplay` is resolved by whoever owns the data (the editor, the
 // designer) and handed DOWN: the canvas draws layers and knows nothing about
@@ -243,7 +248,7 @@ function LayerContent({
       );
 
     case 'shape':
-      return <ShapeContent shape={props.shape} w={w} h={h} props={props} />;
+      return <ShapeContent shape={props.shape} w={w} h={h} scale={scale} props={props} />;
 
     case 'image':
       return (
@@ -379,14 +384,31 @@ function ShapeContent({
   shape,
   w,
   h,
+  scale,
   props,
 }: {
   shape: string;
   w: number;
   h: number;
+  scale: number;
   props: Extract<TagLayerProps, { kind: 'shape' }>;
 }) {
   switch (shape) {
+    case 'polygon':
+      return (
+        <Path
+          // The SAME builder the print page draws with, so the canvas and the
+          // PDF cannot disagree about a corner (S4). The radius is converted
+          // mm -> px here because the path is built in canvas pixels.
+          data={roundedPolygonPath(
+            scalePolygonPoints(polygonPoints(props), w, h),
+            mm2px(props.cornerRadius, scale),
+          )}
+          fill={props.fill === 'transparent' ? undefined : props.fill}
+          stroke={props.stroke === 'transparent' ? undefined : props.stroke}
+          strokeWidth={props.strokeWidth}
+        />
+      );
     case 'ellipse':
       return (
         <Ellipse
