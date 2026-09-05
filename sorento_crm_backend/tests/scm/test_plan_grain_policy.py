@@ -22,8 +22,8 @@ Two fixture idioms, matching what each section actually needs:
 
 * **Settings** (blank, isolated schema): `tests/test_settings_app_config_gate.py`'s pattern -
   `tests._pg_fixture.blank_session()` + a monkeypatched `UserPermissionService
-  .check_user_has_permission` (route-level view gate; the POST route only needs a caller,
-  no permission check).
+  .check_user_has_permission` (route-level gates: `user_management.settings.view` to read
+  the blob and `user_management.settings.edit` to write it).
 * **SCM run/decision guards** (real, rolled-back savepoint DB, because `scm.*` views need the
   live schema): `tests/scm/conftest.py`'s `scm_app` + the `_company` / `_principal` idiom from
   `tests/scm/test_order_summary_routes.py`, and the marker-prefixed product/run/recommendation
@@ -78,6 +78,9 @@ def _code(stem: str = "") -> str:
 SETTINGS_ENDPOINT = "/api/v1/user-management/settings/"
 SETTINGS_GENERAL_ENDPOINT = "/api/v1/user-management/settings/general"
 _SETTINGS_PERMISSION = "user_management.settings.view"
+# The write half of the same blob is gated separately
+# (tests/test_settings_app_config_gate.py owns that gate); this suite POSTs.
+_SETTINGS_EDIT_PERMISSION = "user_management.settings.edit"
 
 
 @pytest.fixture()
@@ -96,7 +99,7 @@ def settings_api(blank_db, monkeypatch):
     from app.services.user_service import UserPermissionService
 
     user = {"id": str(uuid.uuid4()), "email": "plan-grain-caller@zzt.test"}
-    allow: set[str] = {_SETTINGS_PERMISSION}
+    allow: set[str] = {_SETTINGS_PERMISSION, _SETTINGS_EDIT_PERMISSION}
 
     def _override_db():
         yield blank_db
