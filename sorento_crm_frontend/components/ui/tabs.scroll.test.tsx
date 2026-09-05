@@ -103,6 +103,25 @@ describe('TabsList scroll affordances (prod defect, 5 Sep)', () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
+  it('a line-based wheel (deltaMode 1) still moves the strip a usable distance', () => {
+    render(<Harness />);
+    const list = screen.getByTestId('list');
+    setMetrics(list, { scrollWidth: 900, clientWidth: 300, scrollLeft: 0 });
+    act(() => {
+      fireEvent(window, new Event('resize'));
+    });
+
+    // Firefox / some Windows wheel settings report a handful of lines
+    // rather than pixels; deltaY: 5 unscaled would barely move the strip.
+    const event = new WheelEvent('wheel', { deltaY: 5, deltaX: 0, deltaMode: 1, cancelable: true, bubbles: true });
+    act(() => {
+      list.dispatchEvent(event);
+    });
+
+    expect(list.scrollLeft).toBe(80);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
   it('does nothing on a list that fits', () => {
     render(<Harness />);
     const list = screen.getByTestId('list');
@@ -157,6 +176,24 @@ describe('TabsList scroll affordances (prod defect, 5 Sep)', () => {
     });
     expect(screen.getByRole('button', { name: 'Scroll tabs left' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Scroll tabs right' })).not.toBeInTheDocument();
+  });
+
+  it('S1-10 (44px hit area, 5 Sep evidence check 5b): a chevron carries a 44px interactive box beyond its 28px circle', () => {
+    render(<Harness />);
+    const list = screen.getByTestId('list');
+    setMetrics(list, { scrollWidth: 900, clientWidth: 300, scrollLeft: 0 });
+    act(() => {
+      fireEvent(window, new Event('resize'));
+    });
+
+    const chevron = screen.getByRole('button', { name: 'Scroll tabs right' });
+    // The visible circle itself is untouched...
+    expect(chevron.className).toContain('size-7');
+    // ...an invisible `::before` widens only the interactive box (-inset-2 =
+    // 8px each side, 28 + 8 + 8 = 44).
+    expect(chevron.className).toContain('before:absolute');
+    expect(chevron.className).toContain('before:-inset-2');
+    expect(chevron.className).toContain("before:content-['']");
   });
 
   it('a chevron click scrolls by 80% of the visible width, in its own direction', () => {

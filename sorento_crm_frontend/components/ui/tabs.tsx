@@ -153,6 +153,18 @@ const tabsContentVariants = cva(
   },
 );
 
+// The edge chevron's own box stays the design's 28px circle (`size-7`); this
+// widens only the INTERACTIVE box to the DESIGN-LANGUAGE 44px minimum
+// (`-inset-2` = 8px each side, 28 + 8 + 8 = 44) via an invisible `::before`.
+// `COARSE_HIT_TARGET_CLASS` (baked into `Button size="icon"`) only fires
+// under `pointer-coarse` - deliberately, so a mouse's precision is not
+// spent on every icon button in a dense cluster (documented on that class).
+// The chevron is not that case: it is a single control at a fading edge,
+// not packed against neighbours, so it gets the wider box for a mouse too;
+// the extra reach lands inside the zone the fade mask already de-emphasises.
+// Evidence: documentation/evidence/tabs-overflow-5sep/README.md check 5b.
+const CHEVRON_HIT_AREA_CLASS = "before:absolute before:-inset-2 before:content-['']";
+
 // Context
 type TabsContextType = {
   variant?: 'default' | 'button' | 'line';
@@ -203,8 +215,15 @@ function TabsList({
     if (!el) return;
     const onWheel = (event: WheelEvent) => {
       if (el.scrollWidth - el.clientWidth <= 1) return;
-      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
-      el.scrollLeft += event.deltaY;
+      // `deltaMode` 1 (DOM_DELTA_LINE) reports a handful of lines rather
+      // than pixels - some Windows mouse-wheel settings and Firefox use it
+      // - so a raw deltaY of e.g. 3 barely moves the strip. 16 matches the
+      // browser's own line-height assumption for a native vertical scroll.
+      const scale = event.deltaMode === 1 ? 16 : 1;
+      const deltaY = event.deltaY * scale;
+      const deltaX = event.deltaX * scale;
+      if (Math.abs(deltaY) <= Math.abs(deltaX)) return;
+      el.scrollLeft += deltaY;
       event.preventDefault();
     };
     el.addEventListener('wheel', onWheel, { passive: false });
@@ -247,7 +266,10 @@ function TabsList({
             size="icon"
             aria-label="Scroll tabs left"
             onClick={() => scrollByChevron(-1)}
-            className="absolute left-0.5 top-1/2 z-10 size-7 -translate-y-1/2 rounded-full"
+            className={cn(
+              'absolute left-0.5 top-1/2 z-10 size-7 -translate-y-1/2 rounded-full',
+              CHEVRON_HIT_AREA_CLASS,
+            )}
           >
             <ChevronLeft />
           </Button>
@@ -267,7 +289,10 @@ function TabsList({
             size="icon"
             aria-label="Scroll tabs right"
             onClick={() => scrollByChevron(1)}
-            className="absolute right-0.5 top-1/2 z-10 size-7 -translate-y-1/2 rounded-full"
+            className={cn(
+              'absolute right-0.5 top-1/2 z-10 size-7 -translate-y-1/2 rounded-full',
+              CHEVRON_HIT_AREA_CLASS,
+            )}
           >
             <ChevronRight />
           </Button>
