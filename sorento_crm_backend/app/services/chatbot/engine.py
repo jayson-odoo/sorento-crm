@@ -342,6 +342,11 @@ def _insert_turn(db: Session, *, envelope: Envelope, contact_respond_id: str) ->
     return row
 
 
+# The two states a turn ENDS in. `delegated` is not one of them: it is the handover the
+# tail runs from, and the tail closes the row a second time when it finishes.
+_TERMINAL_STATUSES = frozenset({"done", "failed"})
+
+
 def _close_turn(
     db: Session,
     turn_id: str,
@@ -353,12 +358,38 @@ def _close_turn(
     records: list[dict[str, Any]],
     response: dict[str, Any] | None = None,
 ) -> None:
+    """Write the turn's outcome. FIRST terminal write wins.
+
+    Not tidiness: a failure inside the tail closes the row itself (`failed` at
+    `remembered`, where it really stopped) and then RE-RAISES, and the lane handler that
+    called it catches that same exception and closes again (`failed` at `replied`). The
+    second write is strictly less true than the first - it names the stage of the caller
+    rather than the stage of the failure - so it is refused rather than allowed to win.
+
+    The `delegated` handover is deliberately NOT terminal: `close_turn_for_tail` writes it
+    before the tail runs and `complete_turn` supersedes it with `done`, which is the
+    two-phase close every completed lane makes.
+    """
     assert stage is None or stage in TURN_FAILURE_STAGES, (
         f"{stage!r} is not a declared turn stage - a typo here lands in the column and "
         f"reads as an unknown state on the trace screen. Declared: {TURN_FAILURE_STAGES}"
     )
     row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
     if row is None:  # pragma: no cover - the row was inserted two lines earlier
+        return
+    if row.finished_at is not None and row.status in _TERMINAL_STATUSES:
+        # Debug, not warning: this is an EXPECTED sequence on the failure path (the tail
+        # closes, re-raises, the lane handler catches), and an operator reading warnings
+        # would be sent to look for a bug that is not there. What matters is that the row
+        # keeps the first record; the second is only interesting when reading the log.
+        logger.debug(
+            "chatbot turn %s is already %s at %s; refused a second close as %s at %s",
+            turn_id,
+            row.status,
+            row.stage,
+            status,
+            stage,
+        )
         return
     row.status = status
     row.stage = stage
@@ -384,7 +415,13 @@ def _duplicate_result(row: ChatbotTurn) -> TurnResult:
     * the first turn is still `processing` - which is the LIKELY timing, not the edge
       case: a webhook delivery and a poller re-delivery arrive within the same second or
       two, well inside the 5 to 10 seconds a parse plus an access check takes;
-    * the first turn `failed`, so it produced no answer to replay at all.
+    * the first turn `failed` BEFORE a lane owned it - the early stages (`intake`,
+      `received`, `understood`, `access`) close the row with no `response` at all, so
+      there is nothing to replay. A failure AFTER a lane owns the turn is different and
+      deliberately so: both lane failure paths (`_run_business_answer`'s catch-all and
+      the fetch-outage close in `_run_stages`) store the full shape, error reply
+      included, so a duplicate of one of those replays the words the caller has already
+      sent - which is exactly what stops it sending them twice.
 
     Making the second caller WAIT for the first would put a poll loop on a synchronous
     request for a message the caller must not answer twice anyway, which buys nothing:
@@ -494,6 +531,11 @@ def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResu
             raw=None,
         )
         with _session(session_factory) as db:
+            # NO `response`, and the asymmetry with the lane failure paths is deliberate:
+            # this fails before any lane produced a `ctx`, an `item` or a reply, so there
+            # is nothing to store and a duplicate delivery replays nulls with
+            # `status: failed` beside them (`_duplicate_result`). The lane paths, which
+            # DO have all three by the time they fail, store the full shape instead.
             _close_turn(
                 db,
                 turn_id,
@@ -977,9 +1019,9 @@ def _run_stages(  # noqa: PLR0915
         # the operator's query, and `response.delegate_error` beside it carries the reason
         # (`ENTITY_PIN_MISMATCH` included, which arrives here as an AppException).
         # The lane the CRM is finishing is the exception: its turn is not over yet, so
-        # closing it here would record a `done` turn before the reply exists (and
-        # `_close_turn` is write-once). `_run_casual_lane` closes it after the clarifier
-        # answers. With the lane switched off there is nothing to wait for and this closes
+        # closing it here would record a `done` turn before the reply exists - and that
+        # record would STAND, because `_close_turn` refuses a second terminal write.
+        # `_run_casual_lane` closes it after the clarifier answers. With the lane switched off there is nothing to wait for and this closes
         # as `delegated`, exactly as it did before S4.
         if fetch_failed_hard is not None:
             # The CRM owns this turn and cannot answer it. Recorded `failed` at the stage

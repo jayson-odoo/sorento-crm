@@ -551,3 +551,85 @@ class TestTheBusinessLaneWithTheSwitchOn:
         assert (row.response or {}).get("delegate_error"), (
             "the operator's query needs the reason beside the delegated row"
         )
+
+
+class TestTheRowKeepsTheFirstOutcome:
+    """`_close_turn` is write-once for a TERMINAL status, and first-write-wins.
+
+    The sequence is real, not hypothetical: a failure inside the tail closes the row
+    itself (`failed` at `remembered`, where it actually stopped) and re-raises, and the
+    lane handler that called it catches the same exception and closes again (`failed` at
+    `replied`). The second write names the CALLER's stage, so letting it win loses the
+    only fact an operator needs. `delegated` is deliberately not terminal: it is the
+    handover `close_turn_for_tail` writes and `complete_turn` supersedes with `done`.
+    """
+
+    def test_a_second_terminal_close_is_refused(
+        self, session_factory, seeded, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        stub_parser()
+        stub_access()
+        monkeypatch.setattr(
+            parser_mod,
+            "resolve_config",
+            lambda db, *, current_date: (_ for _ in ()).throw(RuntimeError("boom")),
+        )
+
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+        row = _only_row(session_factory)
+        assert (row.status, row.stage) == ("failed", "received")
+        first_error, first_finished = row.error, row.finished_at
+
+        db = session_factory()
+        engine_mod._close_turn(
+            db,
+            result.turn_id,
+            status="failed",
+            stage="replied",
+            branch_kind="business_query",
+            error="the caller's own message",
+            records=[],
+            response={"reply": {"text": "later"}},
+        )
+
+        row = _only_row(session_factory)
+        assert (row.status, row.stage) == ("failed", "received"), (
+            "the first close records where the turn actually stopped; a later one names "
+            "the stage of whoever caught the exception"
+        )
+        assert row.error == first_error
+        assert row.finished_at == first_finished
+        assert row.response is None
+
+    def test_the_delegated_handover_is_still_superseded_by_the_tail(
+        self, session_factory, seeded, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        """The two-phase close every completed lane makes must keep working: `delegated`
+        at `routed` first, `done` at `remembered` when the tail has folded the result in.
+        """
+        from app.services.chatbot.lanes import casual
+
+        from tests.chatbot.test_s4_casual_lane import _install_stub_lane
+
+        stub_parser(
+            _parser_output(
+                message_type="casual",
+                domain_hint=None,
+                intent_hint=None,
+                user_goal="hi there",
+                entities=[],
+            )
+        )
+        stub_access()
+        monkeypatch.setattr(
+            engine_mod, "_enabled_lanes", lambda db, row=None: frozenset({"low_signal"})
+        )
+        _install_stub_lane(monkeypatch, casual, response_json='{"response": "Hi there!"}')
+
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        assert result.status == "done", result.error
+        row = _only_row(session_factory)
+        assert (row.status, row.stage) == ("done", "remembered"), (
+            "the tail's own close must still supersede the delegated handover"
+        )
