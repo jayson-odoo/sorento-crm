@@ -22,12 +22,12 @@ Plan: `PLAN-price-tag-r4.md`
 
 ## S4 polygon shape
 - AC-S4-1 Inspector shape select offers Polygon; choosing it on a rectangle keeps the rectangle's look until a corner is moved.
-- AC-S4-2 Double-click a polygon shows a handle on every corner and every edge midpoint; dragging a corner moves only that corner, dragging an edge midpoint moves that edge (both endpoints) parallel to itself.
-- AC-S4-3 Handles cannot leave the layer box; resizing the box with the Transformer scales the polygon with it.
+- AC-S4-2 Selecting a polygon (sole selection) shows a handle on every corner and every edge midpoint at once; dragging a corner moves only that corner, dragging an edge midpoint moves that edge (both endpoints) parallel to itself. (Superseded the double-click design in round 4b.)
+- AC-S4-3 Corners may leave the layer box: on release the box grows or shrinks to fit the shape and the Inspector W/H update. The Transformer shows only the rotation anchor for a polygon; changing W/H in the Inspector scales the polygon with the box.
 - AC-S4-4 Corner radius rounds every vertex and a large radius never draws artefacts (clamped).
 - AC-S4-5 Fill, stroke, stroke width, rotation, opacity and z-index work as for a rectangle.
 - AC-S4-6 The PDF prints the same polygon (SVG path), matching the canvas.
-- AC-S4-7 Escape or clicking empty canvas leaves corner editing; undo reverts one drag.
+- AC-S4-7 Deselecting (Escape, click on empty canvas, selecting another layer) hides the handles; a drag interrupted that way leaves the canvas showing the committed shape, never a half-dragged preview; one undo reverts one drag including the box change.
 - AC-S4-8 A saved document from before this change opens unchanged (no `points` field is required).
 - AC-S4-9 Works at 1280px; the handles are usable with a mouse.
 
