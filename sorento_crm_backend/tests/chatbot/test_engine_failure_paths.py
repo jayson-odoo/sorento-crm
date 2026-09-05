@@ -21,6 +21,7 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.contracts import Envelope, TurnRequest
 from app.services.chatbot.head import parser as parser_mod
+from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_engine import (  # noqa: F401  - fixtures are used by name
     CONTACT_ID,
     _envelope,
@@ -55,7 +56,7 @@ class TestNothingEscapesRunTurn:
         stub_parser()
         stub_access()
 
-        def _boom(db, *, current_date):
+        def _boom(db, *, current_date, override_version_id=None):
             raise parser_mod.ParserError("AI assistant configuration is not set")
 
         monkeypatch.setattr(parser_mod, "resolve_config", _boom)
@@ -177,7 +178,7 @@ class TestDuplicateReplaysTheAnswer:
         # S6a added `delegate_payload`: a duplicate delivery must replay the business
         # lane's resolve+gate result too, or the caller re-enters `resolve-arm` with
         # nothing and n8n's presence gates all take their FALSE arms. Null here because
-        # `CHATBOT_BUSINESS_LANE_ENABLED` is off by default; the KEY is the contract.
+        # `chatbot_business_lane_enabled` is off by default; the KEY is the contract.
         assert set(stored) == {
             "ctx",
             "item",
@@ -373,12 +374,11 @@ class TestTheBusinessLaneWithTheSwitchOn:
         setting.chatbot_completed_lanes = lanes
         db.commit()
 
-    def _wire(self, monkeypatch, *, fetch=None, resolve_raises=False):
+    def _wire(self, session_factory, monkeypatch, *, fetch=None, resolve_raises=False):
         """Route the turn into the business lane and stub the two lane seams."""
-        from app.config import settings
         from app.services.chatbot.lanes.business.services import ResolveGateServices
 
-        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", True)
+        set_chatbot_switches(session_factory, business_lane=True)
         monkeypatch.setattr(
             engine_mod, "decide", lambda ctx, *, stock_denial_enabled, **_: ("business_query", {})
         )
@@ -433,7 +433,7 @@ class TestTheBusinessLaneWithTheSwitchOn:
         self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
     ) -> None:
         self._enable(session_factory, system_settings_row, ["business_query"])
-        self._wire(monkeypatch, resolve_raises=True)
+        self._wire(session_factory, monkeypatch, resolve_raises=True)
         stub_parser()
         stub_access()
 
@@ -453,7 +453,7 @@ class TestTheBusinessLaneWithTheSwitchOn:
         self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
     ) -> None:
         assert (system_settings_row.chatbot_completed_lanes or []) == []
-        self._wire(monkeypatch, resolve_raises=True)
+        self._wire(session_factory, monkeypatch, resolve_raises=True)
         stub_parser()
         stub_access()
 
@@ -470,6 +470,7 @@ class TestTheBusinessLaneWithTheSwitchOn:
     ) -> None:
         self._enable(session_factory, system_settings_row, ["business_query"])
         answered = self._wire(
+            session_factory,
             monkeypatch,
             fetch=self._error_fragment("no MCP tool matched this question", "not_found"),
         )
@@ -489,6 +490,7 @@ class TestTheBusinessLaneWithTheSwitchOn:
         self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
     ) -> None:
         answered = self._wire(
+            session_factory,
             monkeypatch,
             fetch=self._error_fragment("no MCP tool matched this question", "not_found"),
         )
@@ -508,6 +510,7 @@ class TestTheBusinessLaneWithTheSwitchOn:
     ) -> None:
         self._enable(session_factory, system_settings_row, ["business_query"])
         answered = self._wire(
+            session_factory,
             monkeypatch,
             fetch=self._error_fragment("MCP tool crm_master_products_list failed: timeout"),
         )
@@ -534,6 +537,7 @@ class TestTheBusinessLaneWithTheSwitchOn:
         self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
     ) -> None:
         answered = self._wire(
+            session_factory,
             monkeypatch,
             fetch=self._error_fragment("MCP tool crm_master_products_list failed: timeout"),
         )

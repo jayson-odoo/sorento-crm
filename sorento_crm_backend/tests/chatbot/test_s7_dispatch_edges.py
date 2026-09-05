@@ -13,7 +13,8 @@ Covers, each naming its AC:
   turn, so the outage guard must not swallow it too.
 * H6 / AC-701 - `/complete` answers 410 `CHATBOT_S7_MODE_OWNS_THE_TAIL` through the FULL
   `app.main` app, with a real issued `X-API-Key` and a role holding exactly
-  `integration.chat_turn.submit`, when `CHATBOT_ORDERING_ENABLED` is on; unchanged (200) when
+  `integration.chat_turn.submit`, when `system_settings.chatbot_ordering_enabled` is on;
+  unchanged (200) when
   off.
 * D15 - a duplicate delivery (same `contact_respond_id` + `message_id`) arriving mid-burst
   takes no ticket: after the burst, `chatbot:seq:{contact}` equals the number of DISTINCT
@@ -40,6 +41,7 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import dispatch
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.head import parser as parser_mod
+from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_chat_turn_endpoint import api_key, client  # noqa: F401 - fixtures used by name
 from tests.chatbot.test_engine import (  # noqa: F401 - fixtures used by name
     CONTACT_ID,
@@ -413,13 +415,14 @@ class TestRedisOutageDuringOrdering:
 class TestCompleteGoneInS7ModeFullApp:
     """`POST /chat/turn/{id}/complete` answers 410 `CHATBOT_S7_MODE_OWNS_THE_TAIL` through the
     full `app.main` app with a real `X-API-Key` and a role holding exactly
-    `integration.chat_turn.submit`, when `CHATBOT_ORDERING_ENABLED` is on; unchanged when
+    `integration.chat_turn.submit`, when `system_settings.chatbot_ordering_enabled` is on;
+    unchanged when
     off."""
 
     def test_complete_answers_410_with_the_s7_code_when_ordering_is_on(
-        self, client, api_key, monkeypatch
+        self, client, api_key, session_factory
     ) -> None:
-        monkeypatch.setattr(settings, "chatbot_ordering_enabled", True, raising=False)
+        set_chatbot_switches(session_factory, ordering=True)
 
         turn_id = "33333333-3333-3333-3333-333333333333"
         resp = client.post(
@@ -433,9 +436,9 @@ class TestCompleteGoneInS7ModeFullApp:
         assert body.get("code") == "CHATBOT_S7_MODE_OWNS_THE_TAIL", body
 
     def test_complete_still_answers_200_when_ordering_is_off(
-        self, client, api_key, monkeypatch
+        self, client, api_key, session_factory, monkeypatch
     ) -> None:
-        monkeypatch.setattr(settings, "chatbot_ordering_enabled", False, raising=False)
+        set_chatbot_switches(session_factory, ordering=False)
 
         canned = {
             "turn_id": "44444444-4444-4444-4444-444444444444",

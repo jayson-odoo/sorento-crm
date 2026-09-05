@@ -866,3 +866,81 @@ contact inside the synchronous request. Different contacts run in parallel.
   into deleted nodes. (C1)
 - AC-803 `[BE]` The plan's hazard table has every row marked `fixed (AC-x)`, `reproduced (AC-x)`,
   or `backlog (#issue)`. (C1)
+- AC-804 `[BE][FE][T]` Retry ingress config lives on the respond workspace row
+  (`chatbot_retry_ingress_url`, `chatbot_retry_ingress_key_ciphertext`, Fernet like the ideation
+  intake key), editable on the Respond Workspaces screen. The two fields have their OWN route,
+  `PUT /respond-workspaces/{id}/chatbot-retry`, accepting `user_management.settings.edit` OR
+  `system.respond_workspaces.edit` and carrying those two fields and nothing else; the row PUT
+  keeps its single `system.respond_workspaces.edit`, so a holder of the Settings slug alone
+  cannot change `api_key`, `base_url`, `space_id` or `is_default` (S8a security review: the
+  first shape widened the row PUT, which handed that slug the respond.io credential for the
+  whole install). Key write-only (never echoed). Omitting a field leaves it alone; sending it
+  blank or null CLEARS it, so blanking the URL turns Retry off and the key has a revoke path.
+  Given a workspace with no URL, when an operator clicks Retry,
+  then the response is 409 "retry not configured" and no outbound call is made. Given a URL
+  that is not https, or whose host resolves to loopback, a private range, or the CRM's own
+  host, when saved or used, then it is rejected with a 422 naming the RULE and not the address
+  it resolved to; an IPv6 literal carrying a v4 address (`[::ffff:10.0.0.1]`, 6to4, Teredo) is
+  unwrapped by the same normalisation a resolved address goes through, and userinfo in the URL
+  is refused. Given a valid URL, when Retry runs, then the POST follows no redirects and sends
+  the key as `X-Chatbot-Retry-Key`, and when the ingress refuses, the 502 reports the status
+  code and a fixed message, never the ingress response body. `CHATBOT_RETRY_INGRESS_URL` and `CHATBOT_RETRY_INGRESS_KEY` no longer
+  exist in `config.py` or `.env.example`. (A4, C1)
+- AC-805 `[BE][T]` After the S7 spine is PUT: `POST /turn/{id}/complete`, the id-less
+  `/turn/complete` and `app/services/chatbot/delegate.py` are deleted; the route inventory test
+  asserts exactly one turn-creating route; `complete_turn` keeps its single caller. Gated on
+  the owner's S7 promote. (H6)
+- AC-806 `[BE][T]` Security nits closed: the header-masking guardrail matches every
+  hand-rolled mask shape (bracket assignment, `.get`, dict literal), `_CREDENTIAL_NAME_PARTS`
+  includes `auth`, the `is_test` comment at the duplicate path is corrected, and the archived
+  plan no longer carries the real phone number. (C1)
+- AC-807 `[BE][FE][T]` Prompts screen: for `chatbot_semantic_parser` and `chatbot_clarifier`
+  the Test action posts a dry-run turn (`is_test: true`, chosen prompt version pinned via
+  `prompt_overrides`) and renders the turn trace inline; zero writes outside `chatbot.turns`
+  (D14); other keys keep the assistant dry run. **The contact is CALLER-SUPPLIED**
+  (`contact_respond_id` on the request, blank is a 422), not read from the workspace: the
+  workspace has no dev-contact column, and adding one would be a new config surface for a test
+  button. Because that turn reads THAT contact's access level and remembered session state and
+  hands back the trace, the endpoint requires `system.chat_history.view` - the slug the Chat
+  History trace screen uses to show a contact's turn trace - IN ADDITION to
+  `system.ai_assistant_settings.edit`, so nobody reads a contact's remembered state with a
+  weaker slug. Both slugs, caller-named contact (owner ruling, S8a security review S3). (D5, D13)
+- AC-808 `[T]` S2's `tier_menu` STALE_FIXTURES entries are migrated to
+  CAPTURE_BODY_ADDITIONS with the live body cited; STALE_FIXTURES is empty. (D8)
+- AC-809 `[BE][FE][T]` Chatbot settings screen (System > Settings > Chatbot, issue #679),
+  admin-only under `user_management.settings.edit`, saving through the existing
+  PUT /settings/general. Given the page, when it loads, then `chatbot_completed_lanes` renders
+  as a checkbox list over the branch-kind vocabulary served by GET /settings/chatbot-lanes
+  (single source `contracts.CRM_COMPLETED_BRANCH_KINDS`, each with a built/not-built flag from
+  the engine), the current list is checked, and `chatbot_stock_denial_enabled` and
+  `chatbot_unsupported_domains` are editable beside it. Given a branch kind outside
+  `contracts.CRM_COMPLETED_BRANCH_KINDS`, when saved, then the save is refused with a 422
+  naming the kind. No feature explanation text inside the UI. Usable at 375px and 1280px. (D5)
+
+  **`built` is a UI hint, and the 422 is scoped to the vocabulary** (amended 5 Sep 2026,
+  at implementation; security review round 2 asked for the line to say what shipped).
+  Two conditions were folded into one sentence here and they are not the same thing:
+
+  - **Not in `CRM_COMPLETED_BRANCH_KINDS`** means no code in this build can finish that
+    kind, so the save is a 422 naming it. That is the sentence above, and
+    `tests/chatbot/test_s8_settings_screen.py` grades it.
+  - **`built == false`** means the kind ships but its second switch
+    (`chatbot_business_lane_enabled`, which only the three business arms have) is off. That
+    combination is NOT refused, because the promote sequence requires it: AC-810's own
+    `test_business_lane_off_via_the_row_still_delegates` lists `business_query` with the
+    switch off and asserts the turn DELEGATES, and `engine.py` restores the delegate for
+    exactly that case so the turn is never left silent. Refusing the save would forbid a
+    state the engine is built to handle, and would make "add the lane, then turn the
+    switch on" unorderable.
+
+  So the screen carries `built` rather than the server: an unbuilt kind's checkbox is
+  disabled and labelled "Not built", and a kind already listed when the switch went off
+  stays enabled so it can be UNCHECKED (a disabled checkbox the owner cannot clear would
+  be a trap, not a guard).
+- AC-810 `[BE][FE][T]` The owner-operated switches leave the environment: `CHATBOT_BUSINESS_LANE_ENABLED`
+  and `CHATBOT_ORDERING_ENABLED` become system_settings columns `chatbot_business_lane_enabled`
+  and `chatbot_ordering_enabled` (default false, additive migration), read by the engine per
+  turn, toggled on the same screen; the env names are removed from config. `CHATBOT_TURN_ON_WORKER`
+  stays a deployment property and is not on the screen. Given ordering on, when saved, then the
+  screen shows the S7-mode consequence (every /complete answers 410) as the confirm dialog's
+  text, and the setting round-trips through GET /settings/general. (D4, D5)

@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import time
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterator, Mapping
 
@@ -241,18 +242,42 @@ def build_latest_user_message(envelope: Envelope, session_block: Any = None) -> 
     return f"{line1}\n{line2}\n"
 
 
-# O2 / AC-112: the three keys a DRY-RUN envelope may carry so a harness can drive a turn
-# with no LLM and none of the contact's real memory. Declared in ONE order, and that order
-# is what `harness_keys_ignored` reports, so two traces diff readably.
+# O2 / AC-112: the keys a DRY-RUN envelope may carry so a harness can drive a turn with no
+# LLM and none of the contact's real memory. Declared in ONE order, and that order is what
+# `harness_keys_ignored` reports, so two traces diff readably.
 #
 # `Envelope` is `extra="allow"`, so they arrive as extras rather than as declared fields -
 # deliberately: they are a HARNESS contract, not part of the envelope every injector sends,
 # and declaring them would invite a live producer to start setting them.
+#
+# `prompt_overrides` (S8a, AC-807) joined at the end: `{prompt_key: version_id}`, so the
+# Prompts screen can run a real turn against the version an operator is EDITING rather than
+# the published one. It belongs here and not on the envelope proper for the same reason the
+# other three do, plus one of its own - pinning an unpublished prompt version is exactly a
+# live producer must never be able to do, and being dry-run-only is what guarantees it.
 HARNESS_KEYS = (
     "mock_reformulator_output",
     "previous_conversation_state",
     "referenced_result_set",
+    "prompt_overrides",
 )
+
+
+def _prompt_override(envelope: Envelope, prompt_key: str, *, dry_run: bool) -> str | None:
+    """The version id this dry run pins for `prompt_key`, or None.
+
+    Returns None on a LIVE turn whatever the envelope says. The harness keys are already
+    ignored when `dry_run` is false, and this is the one whose leak would mean a customer
+    answered by an unpublished prompt, so it is checked here as well rather than relying on
+    the caller having checked.
+    """
+    if not dry_run:
+        return None
+    overrides = _harness_value(envelope, "prompt_overrides")
+    if not isinstance(overrides, dict):
+        return None
+    value = overrides.get(prompt_key)
+    return str(value) if value else None
 
 
 def _harness_keys_present(envelope: Envelope) -> list[str]:
@@ -551,6 +576,19 @@ def _duplicate_result(row: ChatbotTurn) -> TurnResult:
     `status` is the row's own, so `processing` (in flight), `failed` and `delegated` /
     `done` are all distinguishable: a caller that sees `duplicate: true, status:
     processing` knows the nulls mean "not finished yet", not "nothing to say".
+
+    **`is_test` here is the ORIGINAL ROW's flag, not this call's envelope, and that is
+    deliberate** (security review round 2, N5). Everywhere else the head stamps
+    `result.is_test` from the CURRENT envelope, because the flag describes the call; on
+    this path the whole answer describes the first turn, so its flag has to come from the
+    same place its `reply` and `actions` do. Stamping the caller's flag on somebody else's
+    answer would produce a result whose top-level field and whose per-action `dry_run`
+    disagreed. The consequence, stated rather than left implicit: a TEST envelope
+    duplicating a LIVE message reads back `is_test: false` with live-flagged actions.
+    Containment does not rest on it - `duplicate: true` is set here and the caller's
+    Switch on `duplicate` sits ahead of every send (AC-110), so nothing is sent either
+    way - and the trigger to revisit is a caller that executes `actions` WITHOUT reading
+    `duplicate` first.
     """
     response = row.response if isinstance(row.response, dict) else {}
     return TurnResult(
@@ -612,11 +650,20 @@ def run_turn(
     message_id = _message_id(envelope)
     dry_run = envelope.dry_run
 
-    ordered = _s7_mode()
+    # ONE read of the settings singleton for the whole turn, and it happens HERE rather
+    # than at routing because S7 mode is a settings column now (AC-810) and the ticket is
+    # taken before the row insert. The snapshot travels into `_run_stages`, which used to
+    # do this read itself: two reads would be a second round trip for no new information,
+    # and worse, a turn could order itself under S7 mode and then route as though it were
+    # off. Read on the session the dedup already needs, never on one of its own.
+    switches = _TurnSwitches()
+    ordered = False
     ticket: int | None = None
     redis = None
     try:
         with _session(session_factory) as db:
+            switches = _read_switches(db)
+            ordered = _s7_mode(db, switches)
             existing = _existing_turn(
                 db, contact_respond_id=contact_respond_id, message_id=message_id
             )
@@ -722,6 +769,7 @@ def run_turn(
                 dry_run=dry_run,
                 actions=actions,
                 stage=stage,
+                switches=switches,
             )
             # D14: `is_test` is decided on the ENVELOPE, so it belongs on every answer the
             # head returns, whichever arm produced it. Stamped at this ONE exit rather than
@@ -919,8 +967,14 @@ def _run_stages(  # noqa: PLR0915
     dry_run: bool,
     actions: list[dict[str, Any]],
     stage: list[str],
+    switches: _TurnSwitches,
 ) -> TurnResult:
-    """received -> understood -> access -> routed. Wrapped by `run_turn`."""
+    """received -> understood -> access -> routed. Wrapped by `run_turn`.
+
+    `switches` is the settings snapshot `run_turn` already read (AC-810): this function
+    does not read the singleton itself, because S7 mode is needed before the ticket, which
+    is before this runs.
+    """
     with _session(session_factory) as db:
         # AC-108: today's `set-human-intervened` path. The turn CONTINUES; the caller
         # clears the flag on the contact.
@@ -978,7 +1032,11 @@ def _run_stages(  # noqa: PLR0915
             jsc.get(session_block, "session_vars"), "referenced_result_set"
         )
         latest_user_message = build_latest_user_message(envelope, session_block)
-        parser_config = parser.resolve_config(db, current_date=_current_date_directive())
+        parser_config = parser.resolve_config(
+            db,
+            current_date=_current_date_directive(),
+            override_version_id=_prompt_override(envelope, parser.PROMPT_KEY, dry_run=dry_run),
+        )
 
     turn_trace.record(
         "received",
@@ -1137,11 +1195,17 @@ def _run_stages(  # noqa: PLR0915
             media=getattr(envelope, "media", None),
         )[0]["json"]["ctx"]
 
-        # ONE read of the settings singleton for the whole turn, on the session routing
-        # already holds: no extra session, no second query, and nothing read again later.
-        settings_row = _settings_row(db)
+        # The settings snapshot `run_turn` read on its first session. Named
+        # `settings_row` because every helper below reads it with `getattr` and does not
+        # care whether it was handed the ORM row or the snapshot of it.
+        settings_row = switches
         stock_denial_enabled = _stock_denial_enabled(db, settings_row)
         enabled_lanes = _enabled_lanes(db, settings_row)
+        # AC-810: both switches come off that same row, so the turn decides once and every
+        # branch below reads a local boolean. Re-reading per branch would mean a query per
+        # decision and, worse, a turn that could see the switch change halfway through it.
+        s7_mode = _s7_mode(db, settings_row)
+        business_lane_enabled = _business_lane_enabled(db, settings_row)
         # D5, once per turn: the respond workspace's own `space_id`, never n8n's hard-coded
         # 364817. Read HERE because S6c's probes run after this session has closed.
         space_id_for_turn = business_services.fetch_space_id(db)
@@ -1184,9 +1248,9 @@ def _run_stages(  # noqa: PLR0915
         # and is where the split belongs, because it adds the MCP call this lane does not
         # yet make.
         delegate = delegate_for(branch_kind, enabled_lanes)
-        if delegate is None and business.handles(branch_kind) and not _business_lane_enabled():
-            # The settings row named a business arm, but `CHATBOT_BUSINESS_LANE_ENABLED`
-            # (the lane's DEPLOYMENT switch, S6a) is off, so the block below never runs and
+        if delegate is None and business.handles(branch_kind) and not business_lane_enabled:
+            # The settings row named a business arm, but `chatbot_business_lane_enabled`
+            # (the lane's own switch, S6a) is off, so the block below never runs and
             # nothing in this build would answer the turn. Without this the turn closes
             # `done` at `routed` with no reply and no delegate - the silent turn H11 names,
             # reached through the settings form instead of through a bug. The two switches
@@ -1211,7 +1275,12 @@ def _run_stages(  # noqa: PLR0915
             try:
                 resolved = casual.resolve_for_prompt(db, ctx=ctx)
                 clarifier_prompt = casual.construct_user_prompt(ctx, resolved)
-                clarifier_config = casual.resolve_clarifier_config(db)
+                clarifier_config = casual.resolve_clarifier_config(
+                    db,
+                    override_version_id=_prompt_override(
+                        envelope, casual.PROMPT_KEY, dry_run=dry_run
+                    ),
+                )
             except Exception as exc:  # noqa: BLE001 - see below
                 # Everything in this block exists to make the clarifier call possible: the
                 # entities that go into its prompt, and the prompt / model / key it runs
@@ -1233,11 +1302,11 @@ def _run_stages(  # noqa: PLR0915
         fetch_failed_hard: str | None = None
         # S6c: does the CRM FINISH this business turn, or hand the payload back to n8n?
         # Both switches are required, and they are independent on purpose:
-        # `CHATBOT_BUSINESS_LANE_ENABLED` says the lane may RUN (S6a's shadow switch), and
-        # `system_settings.chatbot_completed_lanes` says this arm may ANSWER. Deploy,
+        # `system_settings.chatbot_business_lane_enabled` says the lane may RUN (S6a's
+        # shadow switch), and `system_settings.chatbot_completed_lanes` says it may ANSWER. Deploy,
         # compare, switch on, cut n8n stays four reversible steps.
         business_completes = False
-        if business.handles(branch_kind) and _business_lane_enabled():
+        if business.handles(branch_kind) and business_lane_enabled:
             stage[0] = "looked_up"
             try:
                 fragment = business.run_until_exit(
@@ -1521,7 +1590,7 @@ def _run_stages(  # noqa: PLR0915
                     "delegate_error": fetch_failed_hard,
                 },
             )
-        elif delegate is not None and _s7_mode() and not dry_run:
+        elif delegate is not None and s7_mode and not dry_run:
             # S7 mode retires the n8n tail: `/turn/{id}/complete` answers 410 Gone, so a
             # turn that still delegates has NOBODY to finish it. Left `delegated` it would
             # sit as a ghost until the TTL sweep - ten minutes of a customer waiting for a
@@ -1552,22 +1621,22 @@ def _run_stages(  # noqa: PLR0915
             # still waiting.
             if (
                 business.handles(branch_kind)
-                and not _business_lane_enabled()
+                and not business_lane_enabled
                 and branch_kind in enabled_lanes
             ):
                 orphan_error = (
-                    f"S7 mode is on (CHATBOT_ORDERING_ENABLED), so the CRM owns the tail "
-                    f"and /complete is gone. {branch_kind!r} IS in "
+                    f"S7 mode is on (system_settings.chatbot_ordering_enabled), so the "
+                    f"CRM owns the tail and /complete is gone. {branch_kind!r} IS in "
                     f"system_settings.chatbot_completed_lanes, but the business lane's "
-                    f"deployment switch CHATBOT_BUSINESS_LANE_ENABLED is off, so nothing "
-                    f"in this build runs it. Turn CHATBOT_BUSINESS_LANE_ENABLED on, or "
-                    f"turn S7 mode off."
+                    f"own switch chatbot_business_lane_enabled is off, so nothing in this "
+                    f"build runs it. Turn the business lane on under Settings > Chatbot, "
+                    f"or turn S7 mode off."
                 )
             else:
                 orphan_error = (
-                    f"S7 mode is on (CHATBOT_ORDERING_ENABLED), so the CRM owns the tail "
-                    f"and /complete is gone, but the {delegate!r} lane is not completed in "
-                    f"the CRM. Add {branch_kind!r} to "
+                    f"S7 mode is on (system_settings.chatbot_ordering_enabled), so the "
+                    f"CRM owns the tail and /complete is gone, but the {delegate!r} lane "
+                    f"is not completed in the CRM. Add {branch_kind!r} to "
                     f"system_settings.chatbot_completed_lanes on a build that can complete "
                     f"it, or turn S7 mode off."
                 )
@@ -1626,7 +1695,7 @@ def _run_stages(  # noqa: PLR0915
             )
             return orphan_failure
 
-        if delegate is not None and _s7_mode() and dry_run:
+        if delegate is not None and s7_mode and dry_run:
             # See above: the turn is NOT failed, but the harness is told what would have
             # happened to a live one, so a shadow or clone run is what surfaces a lane that
             # is not ready before the flag reaches a customer.
@@ -2274,38 +2343,90 @@ def _failed_result(
     )
 
 
-def _s7_mode() -> bool:
-    """`CHATBOT_ORDERING_ENABLED` - the one flag that says the CRM owns the whole turn.
+def _s7_mode(db: Session, row: Any = _UNSET) -> bool:
+    """`system_settings.chatbot_ordering_enabled` - the CRM owns the whole turn.
 
     Ordering and tail-ownership are the same promote (the thin spine posts every message to
-    `/turn` and the CRM answers it), so they are one flag; `app/api/v1/external/chat.py`
-    reads it for the other half, the 410 on `/complete`. Its precondition is written next to
-    it in `app/config.py`: every lane completed by the CRM before it goes on.
+    `/turn` and the CRM answers it), so they are one switch; `app/api/v1/external/chat.py`
+    reads the same column for the other half, the 410 on `/complete`. Its precondition is
+    on the settings screen next to it: every lane the owner has switched on has to be one
+    this build can complete before this goes on.
+
+    A settings COLUMN since AC-810, read per turn off the row the turn has already read
+    (`row`), because the owner flips it while watching live turns and an environment
+    variable makes that a deploy. Same `db`-first signature as `_stock_denial_enabled`
+    below, for the same reason: a caller with no row in hand still gets a correct answer.
     """
-    return bool(getattr(settings, "chatbot_ordering_enabled", False))
+    if row is _UNSET:
+        row = _settings_row(db)
+    return bool(getattr(row, "chatbot_ordering_enabled", False)) if row is not None else False
 
 
-def _business_lane_enabled() -> bool:
-    """`CHATBOT_BUSINESS_LANE_ENABLED`, default FALSE.
+def _business_lane_enabled(db: Session, row: Any = _UNSET) -> bool:
+    """`system_settings.chatbot_business_lane_enabled`, default FALSE.
 
     Off, the head behaves exactly as it did in S1: the three business arms delegate by
     name and carry no payload. On, they run the ported `sub-resolve-and-gate` in process
-    and hand n8n its output item. It is a config flag rather than a `system_settings`
-    column because it is a DEPLOYMENT step, not a tenant preference: it is turned on once
-    per environment, in the same change that rewires n8n, and never again.
+    and hand n8n its output item. It stays independent of `chatbot_completed_lanes` (which
+    says an arm may ANSWER) so deploy, compare, switch on and cut n8n remain four
+    separately reversible steps.
     """
-    return bool(getattr(settings, "chatbot_business_lane_enabled", False))
+    if row is _UNSET:
+        row = _settings_row(db)
+    return (
+        bool(getattr(row, "chatbot_business_lane_enabled", False)) if row is not None else False
+    )
 
 
 def _settings_row(db: Session) -> Any:
     """The `system_settings` singleton, read ONCE per turn.
 
-    Both chatbot switches live on it, and both predicates below take the ROW rather than a
-    session so the turn makes one query for the pair instead of one each.
+    Every chatbot switch lives on it, and each predicate below takes the ROW rather than a
+    session so the turn makes one query for all of them instead of one each.
     """
     from app.models.user import SystemSetting
 
     return db.query(SystemSetting).first()
+
+
+@dataclass(frozen=True)
+class _TurnSwitches:
+    """The settings values one turn reads, snapshotted off the row at the first session.
+
+    A SNAPSHOT rather than the ORM row, because the turn needs S7 mode before the ticket
+    (in the dedup session) and the other four while routing (in a later one), and the row
+    would be detached by then. Field names match the columns on purpose: every predicate
+    below reads them with `getattr`, so the snapshot and the row are interchangeable and a
+    caller with only a session still gets a correct answer.
+
+    Read once means the switches cannot change halfway through a turn, which is the more
+    important half: a turn that ordered itself under S7 mode and then routed as though it
+    were off would have taken a ticket nobody releases.
+    """
+
+    chatbot_stock_denial_enabled: bool = False
+    chatbot_unsupported_domains: Any = None
+    chatbot_completed_lanes: Any = None
+    chatbot_business_lane_enabled: bool = False
+    chatbot_ordering_enabled: bool = False
+
+
+def _read_switches(db: Session) -> _TurnSwitches:
+    """One query for every switch the turn will consult. No row = every default."""
+    row = _settings_row(db)
+    if row is None:
+        return _TurnSwitches()
+    return _TurnSwitches(
+        chatbot_stock_denial_enabled=bool(
+            getattr(row, "chatbot_stock_denial_enabled", False)
+        ),
+        chatbot_unsupported_domains=getattr(row, "chatbot_unsupported_domains", None),
+        chatbot_completed_lanes=getattr(row, "chatbot_completed_lanes", None),
+        chatbot_business_lane_enabled=bool(
+            getattr(row, "chatbot_business_lane_enabled", False)
+        ),
+        chatbot_ordering_enabled=bool(getattr(row, "chatbot_ordering_enabled", False)),
+    )
 
 
 def _stock_denial_enabled(db: Session, row: Any = _UNSET) -> bool:

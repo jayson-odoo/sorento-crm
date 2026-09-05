@@ -309,7 +309,7 @@ class TestRetryFailureRollback:
 
         monkeypatch.setattr(
             "app.api.v1.system.chatbot.reinject_envelope",
-            lambda row: (_ for _ in ()).throw(exc),
+            lambda db, row: (_ for _ in ()).throw(exc),
         )
 
         resp = client.post(f"{TURNS_BASE}/{turn.id}/retry")
@@ -355,7 +355,7 @@ class TestRetryOrderB2:
 
         seen: dict[str, object] = {}
 
-        def _stub(row):
+        def _stub(_db, row):
             second_session = session_factory()
             try:
                 reread = (
@@ -389,7 +389,7 @@ class TestRetryStaleWindow:
         _GRANTS.add(MANAGE)
         monkeypatch.setattr(settings, "chatbot_retry_stale_minutes", 5, raising=False)
         monkeypatch.setattr(
-            "app.api.v1.system.chatbot.reinject_envelope", lambda row: None
+            "app.api.v1.system.chatbot.reinject_envelope", lambda db, row: None
         )
 
         stale_contact = _contact("retry-stale")

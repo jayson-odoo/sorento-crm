@@ -51,6 +51,20 @@ class RespondWorkspace(Base):
     ideation_embed_connection_id = Column(String(128), nullable=True)
     ideation_embed_signing_secret_ciphertext = Column(Text, nullable=True)
     ideation_embed_fe_base_url = Column(String(512), nullable=True)
+    # Chatbot retry ingress (AC-804). The trace screen's Retry re-posts a failed turn's
+    # ORIGINAL respond.io body here, so it re-enters at the same ingress a live message
+    # uses. Config lives on the workspace ROW, not the environment: it is per tenant, and
+    # `.env` does not scale past one (owner ruling, 5 Sep 2026).
+    #
+    # URL in plain text, key Fernet-encrypted, the same split the ideation intake pair
+    # above uses. Blank URL = Retry is off for this workspace and the endpoint answers
+    # 409 rather than guessing; a dev machine that silently injected into production n8n
+    # would answer a real customer from a developer's click.
+    #
+    # The URL is validated by `app/services/outbound_url_guard.py` on save AND on use,
+    # because an admin-editable outbound URL is an SSRF primitive otherwise.
+    chatbot_retry_ingress_url = Column(String(512), nullable=True)
+    chatbot_retry_ingress_key_ciphertext = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, server_default="true")
     is_default = Column(Boolean, nullable=False, server_default="false")
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)

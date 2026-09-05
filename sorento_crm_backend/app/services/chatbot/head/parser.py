@@ -194,16 +194,26 @@ PARSE_OUTPUT_SCHEMA_NAME = "chatbot_parse_output"
 DECLARED_KEYS: frozenset[str] = frozenset(PARSE_OUTPUT_JSON_SCHEMA["required"])
 
 
-def resolve_config(db: Session, *, current_date: str) -> ParserConfig:
+def resolve_config(
+    db: Session, *, current_date: str, override_version_id: str | None = None
+) -> ParserConfig:
     """Read the prompt, the per-key model override and the API key. Session-bound.
 
     Call this, then CLOSE the session, then call `parse`. Everything that needs the
     database happens here so nothing needs it while the provider is answering.
+
+    `override_version_id` runs a specific prompt VERSION instead of the published one, and
+    the name is `ai_prompt_registry.render`'s own so there is one word for one thing all
+    the way down. It exists for the Prompts screen's "Run a turn" test (AC-807), which is
+    dry-run only: the engine refuses to read it off a live envelope, so a customer can
+    never be answered by an unpublished prompt.
     """
     from app.services.ai_assistant_service import AIAssistantConfigService
     from app.services.llm_provider import resolve_api_key
 
-    system_prompt, prompt_version = render(db, PROMPT_KEY, current_date=current_date)
+    system_prompt, prompt_version = render(
+        db, PROMPT_KEY, current_date=current_date, override_version_id=override_version_id
+    )
     provider_override, model_override = agent_model(db, PROMPT_KEY)
 
     config = AIAssistantConfigService(db).get()

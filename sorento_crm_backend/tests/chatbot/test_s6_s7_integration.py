@@ -8,7 +8,8 @@ fakes `dispatch`.
 
 1. **The `_run_stages` exit matrix (AC-715).** A `business_query` turn against all four
    combinations of `chatbot_completed_lanes` containing `business_query` and
-   `CHATBOT_BUSINESS_LANE_ENABLED`, crossed with `CHATBOT_ORDERING_ENABLED` on and off -
+   `system_settings.chatbot_business_lane_enabled`, crossed with
+   `system_settings.chatbot_ordering_enabled` on and off -
    eight cells. Exactly one of three outcomes per cell: `done` with a real reply (both
    switches on, the CRM answers - AC-604's zero-tool wiring gives the fastest real
    in-CRM answer, the miss lane's `not_found`), `delegated` with `delegate` set (ordering
@@ -61,6 +62,7 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.models.user import SystemSetting
 from app.services.chatbot import dispatch, engine as engine_mod
 from app.services.chatbot.lanes.business.services import FetchServices
+from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_engine import (  # noqa: F401 - fixtures used by name
     CONTACT_ID,
     _envelope,
@@ -123,7 +125,7 @@ def redis_client():
 
 
 def _wire_business_lane(engine_mod_ref: Any, monkeypatch: Any) -> None:
-    """The bundle every matrix cell wires when `CHATBOT_BUSINESS_LANE_ENABLED` is on: a
+    """The bundle every matrix cell wires when `chatbot_business_lane_enabled` is on: a
     resolved-empty gate bundle plus a zero-tool fetch, so the shadow run (lane on, arm not
     in `chatbot_completed_lanes`) and the CRM-answered run (both switches on) reach the
     SAME `not_found` outcome through `run_until_exit` + `run_fetch`, run for real - the
@@ -191,8 +193,7 @@ class TestBusinessQueryExitMatrixAc715:
         _set_completed_lanes(
             session_factory, system_settings_row, ["business_query"] if lane_in_settings else []
         )
-        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", business_on)
-        monkeypatch.setattr(settings, "chatbot_ordering_enabled", ordering_on, raising=False)
+        set_chatbot_switches(session_factory, business_lane=business_on, ordering=ordering_on)
         monkeypatch.setattr(settings, "chatbot_queue_wait_seconds", 5.0, raising=False)
         _wire_business_lane(engine_mod, monkeypatch)
 
@@ -240,8 +241,7 @@ class TestBusinessQueryExitMatrixAc715:
         so a harness turn is let through rather than failed, and the trace records why."""
         _clear_contact_keys(redis_client, CONTACT_ID)
         _set_completed_lanes(session_factory, system_settings_row, [])
-        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", False)
-        monkeypatch.setattr(settings, "chatbot_ordering_enabled", True, raising=False)
+        set_chatbot_switches(session_factory, business_lane=False, ordering=True)
         monkeypatch.setattr(settings, "chatbot_queue_wait_seconds", 5.0, raising=False)
 
         stub_parser(_parser_output(domain_hint="forms", entities=[], user_goal="checking a form"))
@@ -315,7 +315,7 @@ class TestSendActionsAttachmentsAndDuplicateAc507D15:
     @staticmethod
     def _prepare(session_factory, system_settings_row, stub_parser, stub_access, monkeypatch) -> dict[str, Any]:
         _set_completed_lanes(session_factory, system_settings_row, ["business_query"])
-        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", True)
+        set_chatbot_switches(session_factory, business_lane=True)
         call_count = _wire_answered_business_turn(monkeypatch)
         stub_parser(
             _parser_output(
@@ -383,8 +383,10 @@ class TestTicketReleaseUnderS6cClosesAc705:
     same shape AC-705's re-injected Retry arrives as) never waits past it."""
 
     @staticmethod
-    def _enable_ordering(monkeypatch: Any, *, queue_wait_seconds: float = 5.0) -> None:
-        monkeypatch.setattr(settings, "chatbot_ordering_enabled", True, raising=False)
+    def _enable_ordering(
+        session_factory: Any, monkeypatch: Any, *, queue_wait_seconds: float = 5.0
+    ) -> None:
+        set_chatbot_switches(session_factory, ordering=True)
         monkeypatch.setattr(settings, "chatbot_queue_wait_seconds", queue_wait_seconds, raising=False)
 
     @staticmethod
@@ -392,7 +394,7 @@ class TestTicketReleaseUnderS6cClosesAc705:
         """The follow-up message: business lane switched off so it cannot re-raise, only
         used to prove the ticket a moment earlier is free - `elapsed` is what AC-705's own
         re-injected Retry depends on staying small."""
-        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", False)
+        set_chatbot_switches(session_factory, business_lane=False)
         started = time.monotonic()
         result = engine_mod.run_turn(
             _second_message_envelope(CONTACT_ID, "ZZT-msg-s6s7-followup"),
@@ -405,8 +407,8 @@ class TestTicketReleaseUnderS6cClosesAc705:
     ) -> None:
         _clear_contact_keys(redis_client, CONTACT_ID)
         _set_completed_lanes(session_factory, system_settings_row, ["business_query"])
-        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", True)
-        self._enable_ordering(monkeypatch)
+        set_chatbot_switches(session_factory, business_lane=True)
+        self._enable_ordering(session_factory, monkeypatch)
 
         bundle = _srtwc8517_resolved_bundle()
         monkeypatch.setattr(
@@ -454,8 +456,8 @@ class TestTicketReleaseUnderS6cClosesAc705:
     ) -> None:
         _clear_contact_keys(redis_client, CONTACT_ID)
         _set_completed_lanes(session_factory, system_settings_row, ["business_query"])
-        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", True)
-        self._enable_ordering(monkeypatch)
+        set_chatbot_switches(session_factory, business_lane=True)
+        self._enable_ordering(session_factory, monkeypatch)
         _wire_answered_business_turn(monkeypatch)
 
         def _boom_complete_answer(*args: Any, **kwargs: Any) -> Any:
