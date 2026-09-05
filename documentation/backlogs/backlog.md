@@ -124,3 +124,24 @@ removed copy, for whoever restores a UI for them:
   query + `line_cbm` over every line) whose result is discarded; the update recomputes it at the
   end and the delete never needs it. Wasted queries only. Split the read into a bare loader and a
   `with_capacity` wrapper.
+
+- **BL-048** (2026-09-04, chatbot turn engine, `PLAN-chatbot-turn-engine.md`): turn inbox UI beyond
+  the Chat History drawer (a standalone `chatbot.turns` list with filters) - only if the drawer's
+  "Failed turns only" filter proves insufficient.
+- **BL-049** (2026-09-04, same plan, R6): port `live-respond-send-user`, `live-respond-close-convo`
+  and the human-intervened timeout sweeper out of n8n (hazards H33 to H36, H53 SLA raw SQL, the
+  phone-number SQL interpolation in close-convo). Own plan.
+- **BL-050** (2026-09-04, same plan): n8n outbound fixes that stay n8n-side - `sub-sendmsg`
+  delivery-status / template fallback branch is orphaned (H8), `get-presigned-url` error output
+  unwired (H9), attachment `mimeType` absent on live so image/video branches never fire (H47).
+- **BL-051** (2026-09-04, same plan): resolver and MCP data bugs recorded in the n8n repo's
+  LESSONS 66 to 85 (H17 AND-mode labelling, H18 unordered LIMIT caps, H19 pagination totals,
+  H20 two "delivered" predicates, H21 silent param drop, H24 wrong-customer attribution, H25
+  multi-company aggregate leak). CRM-side, one issue each when the business lane (S6) reaches them.
+- **BL-052** (2026-09-04, same plan): scope continuity across turns (product survives a customer
+  rename, customer survives a new product; n8n issue #57, H55) - deliver after parity.
+- **BL-053** (2026-09-04, same plan): parser prompt weak points H41 (number words) and H48
+  ("sales" read as promotion) - candidates for S1b or a later prompt version.
+- **BL-054** (2026-09-04, same plan): `chatbot.turns` retention sweep (90 days) via the existing
+  scheduler pattern; and the text-sniffing sites inventoried in the plan (`tierRepick`,
+  `_CO_ALIASES`, keyword domain switches) to move into the parser after parity (D11).

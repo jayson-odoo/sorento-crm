@@ -1,0 +1,157 @@
+{
+  "source": {
+    "hand_crafted": true,
+    "expected_from": "reasoned",
+    "rationale": "The other side of `if (positionalPicks > 1) match_mode = 'or'`: ONE resolved position must leave match_mode at the LLM's 'and'. This item also keeps its own domain_hint, so the inherit-for-position block is skipped and the SEPARATE disambiguation rule - a positional reply the LLM tagged 'casual' under selection_context 'disambiguation' is a business_query - is the thing that flips message_type. Those two paths both write message_type and only this shape isolates the second one.",
+    "amended": [
+      {
+        "at": "2026-09-04T01:19:34Z",
+        "to_version": "ab3ec985-5371-4ee3-b6e5-8a23e3aef7df",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[0].json.output.routing.suggested_team"
+        ]
+      }
+    ]
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "latest_user_message": "3",
+          "contact_id": 900000003,
+          "previous_conversation_state": {
+            "domain_hint": "master_products",
+            "intent_hint": "check_product",
+            "selection_context": "disambiguation",
+            "routing": {
+              "suggested_team": "purchasing_product",
+              "suggested_agent": "general_enquiries"
+            },
+            "response": "Which one?",
+            "entities": [],
+            "last_result_set": [
+              {
+                "idx": 1,
+                "label": "product: ABC-1",
+                "uuid": "u1",
+                "product": "ABC-1",
+                "entity_type": "product"
+              },
+              {
+                "idx": 3,
+                "label": "product: GHI-3",
+                "uuid": "u3",
+                "product": "GHI-3",
+                "entity_type": "product"
+              }
+            ]
+          },
+          "is_test": null,
+          "mock_reformulator_output": null
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "output": "{\"message_type\":\"casual\",\"intent_hint\":null,\"domain_hint\":\"master_products\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[3],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "expected": [
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "check_product",
+          "domain_hint": "master_products",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "GHI-3",
+              "hint": "product",
+              "ordinal": 3,
+              "current_message": true,
+              "uuid": "u3",
+              "canonical_code": "GHI-3"
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [
+            3
+          ],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "purchasing",
+            "suggested_agent": "general_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "domain_signal_source": "intent_none",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "positions_resolved": 1,
+          "positions_out_of_range": [],
+          "domain_inherited_compatible": true,
+          "entities_filtered": false,
+          "entities_emptied_by_filter": false,
+          "_pending_pick": true
+        },
+        "_parser_raw": {
+          "message_type": "casual",
+          "intent_hint": null,
+          "domain_hint": "master_products",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [
+            3
+          ],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": null,
+            "suggested_agent": null
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          }
+        }
+      }
+    }
+  ]
+}

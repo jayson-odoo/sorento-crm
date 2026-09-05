@@ -1,0 +1,138 @@
+{
+  "source": {
+    "hand_crafted": true,
+    "expected_from": "reasoned",
+    "rationale": "The THIRD disjunct of _isNewQuery. This turn has NO domain_hint and is not a business_query - it is a 'clarification', which must be enough on its own to abandon the roster (tier 3): no member_pick_context, no reprompt. Its sibling 'member-offer-domain-alone-counts-as-a-new-query' covers the first disjunct, so between them each arm of the three-way test is load-bearing.",
+    "amended": [
+      {
+        "at": "2026-09-03T06:52:28Z",
+        "to_version": "7671ebe7-d6db-4687-818f-c2e88df802a4",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[0].json.output.routing.suggested_team"
+        ]
+      }
+    ]
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "latest_user_message": "hmm ok then",
+          "contact_id": 900000003,
+          "previous_conversation_state": {
+            "selection_context": "member_offer",
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "general_enquiries"
+            },
+            "response": "Who should I assign this to?",
+            "entities": [],
+            "last_result_set": [
+              {
+                "idx": 1,
+                "label": "Aisyah Binti Ali",
+                "uuid": "m1"
+              },
+              {
+                "idx": 2,
+                "label": "Nur Hidayah",
+                "uuid": "m2"
+              },
+              {
+                "idx": 3,
+                "label": "Ravi Kumar",
+                "uuid": "m3"
+              }
+            ]
+          },
+          "is_test": null,
+          "mock_reformulator_output": null
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "output": "{\"message_type\":\"clarification\",\"intent_hint\":null,\"domain_hint\":null,\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "expected": [
+    {
+      "json": {
+        "output": {
+          "message_type": "clarification",
+          "intent_hint": null,
+          "domain_hint": null,
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": null,
+            "suggested_agent": "general_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "domain_signal_source": "intent_none",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "_pending_pick": true
+        },
+        "_parser_raw": {
+          "message_type": "clarification",
+          "intent_hint": null,
+          "domain_hint": null,
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": null,
+            "suggested_agent": null
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          }
+        }
+      }
+    }
+  ]
+}

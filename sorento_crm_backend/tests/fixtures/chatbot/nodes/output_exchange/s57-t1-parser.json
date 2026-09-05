@@ -1,0 +1,527 @@
+{
+  "source": {
+    "execution_id": "14403903",
+    "workflow_id": "XTODTw-dJcV0uRdC056hG",
+    "workflow_version": "7671ebe7-d6db-4687-818f-c2e88df802a4",
+    "node": "output_exchange",
+    "captured_at": "2026-08-29T14:42:26+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "93c5a90b55ec8d0dbe8d60474d84139eed377ecf51565d9051617377574e952f",
+    "dev_contact": true
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "latest_user_message": "hmm show me the DO to hanlim\n\n",
+          "contact_id": "900000009",
+          "previous_conversation_state": {
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "entities": [
+              {
+                "raw": "srtwc286",
+                "hint": "product",
+                "confident": true,
+                "canonical_code": null,
+                "current_message": true
+              },
+              {
+                "raw": "Hanlim",
+                "hint": "customer",
+                "confident": true,
+                "canonical_code": null,
+                "current_message": true
+              }
+            ],
+            "ideation": null,
+            "response": "Customer: Hanlim\nProduct: srtwc286\nDates: all dates\n\nHere's what you want:\n\u2022 product: SRTWC286-SH-200 (+9 more)\n\u2022 customer: HANLIM TRADING SDN BHD [A/C II] (+5 more)\n\nBut no order matched these. Would you like me to escalate to *Sorento* customer service team?\n\nPlease choose who to route to (reply with the number):\n1. Person 21\n2. Person 22\n3. Person 26\n4. Person 28\n5. Person 29\n6. Person 30\n\nIf you have no preference, just reply 'yes' and we'll assign automatically.",
+            "date_mode": null,
+            "dym_offer": null,
+            "user_goal": "trying to check the delivery order for srtwc286 for Hanlim",
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "match_mode": "and",
+            "domain_hint": "order",
+            "intent_hint": "check_order",
+            "message_type": "business_query",
+            "query_brands": [],
+            "access_levels": [],
+            "routing_brand": "sorento",
+            "contains_flyer": false,
+            "dym_candidates": [],
+            "date_filter_end": null,
+            "last_result_set": [
+              {
+                "idx": 1,
+                "uuid": "0d69dfb7-dcf7-41fe-8457-f45897895182",
+                "label": "Person 21",
+                "companies": [
+                  "Sorento"
+                ],
+                "brand_code": "sorento",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "respond_user_id": "1144607"
+              },
+              {
+                "idx": 2,
+                "uuid": "12246ae8-59e0-46a1-9cf0-fd80f45c1db9",
+                "label": "Person 22",
+                "companies": [
+                  "Sorento"
+                ],
+                "brand_code": "sorento",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "respond_user_id": "1144556"
+              },
+              {
+                "idx": 3,
+                "uuid": "70578600-0cc5-4040-ac81-c27bb31e917b",
+                "label": "Person 26",
+                "companies": [
+                  "Sorento"
+                ],
+                "brand_code": "sorento",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "respond_user_id": "1144561"
+              },
+              {
+                "idx": 4,
+                "uuid": "a41fbc80-db8c-4c4d-bbe1-7006fb438a06",
+                "label": "Person 28",
+                "companies": [
+                  "Sorento"
+                ],
+                "brand_code": "sorento",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "respond_user_id": "1144558"
+              },
+              {
+                "idx": 5,
+                "uuid": "b69bb614-afed-49a2-ae1f-f0351c325bfd",
+                "label": "Person 29",
+                "companies": [
+                  "Sorento"
+                ],
+                "brand_code": "sorento",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "respond_user_id": "1144554"
+              },
+              {
+                "idx": 6,
+                "uuid": "c483d959-f8b5-488a-bb9d-168fa0292d75",
+                "label": "Person 30",
+                "companies": [
+                  "Sorento"
+                ],
+                "brand_code": "sorento",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_ids": [
+                  "00000000-0000-0000-0000-000000000001"
+                ],
+                "company_name": "Sorento",
+                "respond_user_id": "1144604"
+              }
+            ],
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "date_filter_start": null,
+            "routing_companies": [
+              {
+                "codes": [
+                  "SRTWC286-SH-200",
+                  "SRTWC286-SH-P",
+                  "SRTWC286-SH-PP",
+                  "SRTWC286-SH",
+                  "SRTWC286-SH-UF",
+                  "SRTWC286-SH-NEW-150",
+                  "SRTWC286-SH-150",
+                  "SRTWC286-SH-NEW-P",
+                  "SRTWC286-SH-NEW-200",
+                  "SRTWC286-SH-NEW",
+                  "300-H070",
+                  "300-H030",
+                  "300-H118",
+                  "300-H119",
+                  "HANLIM TRADING SDN BHD [A/C IV]",
+                  "HANLIM TRADING SDN BHD",
+                  "HANLIM TRADING SDN BHD (CERAMIC & ELLECI)",
+                  "HANLIM TRADING SDN BHD [A/C III]",
+                  "HANLIM TRADING SDN BHD [A/C I]"
+                ],
+                "labels": [
+                  "SRTWC286-SH-200",
+                  "SRTWC286-SH-P",
+                  "SRTWC286-SH-PP",
+                  "SRTWC286-SH",
+                  "SRTWC286-SH-UF",
+                  "SRTWC286-SH-NEW-150",
+                  "SRTWC286-SH-150",
+                  "SRTWC286-SH-NEW-P",
+                  "SRTWC286-SH-NEW-200",
+                  "SRTWC286-SH-NEW",
+                  "HANLIM TRADING SDN BHD [A/C II]",
+                  "HANLIM TRADING SDN BHD [A/C I]",
+                  "HANLIM TRADING SDN BHD [A/C III]",
+                  "HANLIM TRADING SDN BHD [A/C IV]",
+                  "HANLIM TRADING SDN BHD",
+                  "HANLIM TRADING SDN BHD (CERAMIC & ELLECI)"
+                ],
+                "brand_code": "sorento",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento"
+              }
+            ],
+            "selection_context": "member_offer",
+            "routing_roster_plan": [
+              {
+                "plan_idx": 0,
+                "brand_code": "sorento",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento"
+              }
+            ],
+            "requested_attributes": [],
+            "routing_brand_source": "resolved"
+          },
+          "is_test": true
+        }
+      }
+    ],
+    "test-reformulator-bypass": [],
+    "OpenAI Chat Model": [],
+    "AI Agent": [
+      {
+        "json": {
+          "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_order\",\"domain_hint\":\"order\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"trying to show the delivery order to Hanlim\",\"access_levels\":[],\"broaden_axis\":null,\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"Hanlim\",\"hint\":\"customer\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"customer_service\",\"suggested_agent\":\"order_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false,\"company_pick\":null}}"
+        }
+      }
+    ],
+    "output_exchange": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to show the delivery order to Hanlim",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "Hanlim",
+                "hint": "customer",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "scope_exclusive_applied": false,
+            "entity_op_applied": "replace_combine",
+            "query_brands": [],
+            "entities_filtered": false,
+            "entities_emptied_by_filter": false
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to show the delivery order to Hanlim",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "Hanlim",
+                "hint": "customer",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ],
+    "suggest-follow-up": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to show the delivery order to Hanlim",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "Hanlim",
+                "hint": "customer",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "scope_exclusive_applied": false,
+            "entity_op_applied": "replace_combine",
+            "query_brands": [],
+            "entities_filtered": false,
+            "entities_emptied_by_filter": false
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to show the delivery order to Hanlim",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "Hanlim",
+                "hint": "customer",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "order_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_order\",\"domain_hint\":\"order\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"trying to show the delivery order to Hanlim\",\"access_levels\":[],\"broaden_axis\":null,\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"Hanlim\",\"hint\":\"customer\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"customer_service\",\"suggested_agent\":\"order_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false,\"company_pick\":null}}"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "check_order",
+          "domain_hint": "order",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "trying to show the delivery order to Hanlim",
+          "access_levels": [],
+          "broaden_axis": null,
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "Hanlim",
+              "hint": "customer",
+              "canonical_code": null,
+              "current_message": true,
+              "confident": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "customer_service",
+            "suggested_agent": "order_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "domain_signal_source": "intent_explicit",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "entities_filtered": false,
+          "entities_emptied_by_filter": false
+        },
+        "_parser_raw": {
+          "message_type": "business_query",
+          "intent_hint": "check_order",
+          "domain_hint": "order",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "trying to show the delivery order to Hanlim",
+          "access_levels": [],
+          "broaden_axis": null,
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "Hanlim",
+              "hint": "customer",
+              "canonical_code": null,
+              "current_message": true,
+              "confident": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "customer_service",
+            "suggested_agent": "order_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false,
+            "company_pick": null
+          }
+        }
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "14403903"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "test-reformulator-bypass",
+    "OpenAI Chat Model",
+    "AI Agent",
+    "output_exchange",
+    "suggest-follow-up"
+  ]
+}

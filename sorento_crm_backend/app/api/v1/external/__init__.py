@@ -12,6 +12,8 @@ prefix has an entry.
 """
 from fastapi import APIRouter, Depends
 
+from app.modules.runtime.guards import require_module_enabled_with_api_key
+
 from app.api.v1.external.permissions import (
     EXTERNAL_ENDPOINT_PERMISSIONS,
     require_external_permission,
@@ -48,6 +50,7 @@ from app.api.v1.external import (
     ideation,
     ingest,
     media,
+    chat,
 )
 
 router = APIRouter()
@@ -245,4 +248,16 @@ router.include_router(
     prefix="/media",
     tags=["external"],
     dependencies=[Depends(require_external_permission(EXTERNAL_ENDPOINT_PERMISSIONS["media"]))],
+)
+router.include_router(
+    chat.router,
+    prefix="/chat",
+    tags=["external"],
+    dependencies=[
+        Depends(require_external_permission(EXTERNAL_ENDPOINT_PERMISSIONS["chat"])),
+        # The turn engine is an installable module (D3), so the router is gated on it as
+        # well as on the slug. Under strict mode a tenant without `chatbot` gets
+        # 403 "Module not enabled: chatbot" (AC-006).
+        Depends(require_module_enabled_with_api_key("chatbot")),
+    ],
 )

@@ -1,0 +1,234 @@
+{
+ "source": {
+  "hand_crafted": true,
+  "expected_from": "reasoned",
+  "rationale": "Two independent blocklists. Item 0: domain 'order', scope_intent 'specific'. DOMAIN_BLOCKED_HINTS.order contains 'brand' and 'category' but NOT 'customer', so the carried brand+category entities are dropped, the customer survives, entities_filtered flips true, entities_emptied_by_filter stays false (one entity left) and broaden_dropped names the two removed as 'hint:raw'. Item 1: the SAME domain/entities but scope_intent 'broaden', which additionally unions DOMAIN_BROADEN_BLOCKED_HINTS.order = ['order','customer'] - so the customer goes too, entities empties and entities_emptied_by_filter becomes true. The pair is what makes `isBroaden` killable: without item 1 the broaden union is never exercised."
+ },
+ "ctx": {
+  "When Executed by Another Workflow": [
+   {
+    "json": {
+     "latest_user_message": "orders for acme",
+     "contact_id": 900000003,
+     "previous_conversation_state": {},
+     "is_test": null,
+     "mock_reformulator_output": null
+    }
+   }
+  ]
+ },
+ "input": [
+  {
+   "json": {
+    "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_order\",\"domain_hint\":\"order\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"acme orders\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"ACME\",\"hint\":\"customer\",\"current_message\":true},{\"raw\":\"sorento\",\"hint\":\"brand\",\"current_message\":true},{\"raw\":\"sinks\",\"hint\":\"category\",\"current_message\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+   }
+  },
+  {
+   "json": {
+    "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_order\",\"domain_hint\":\"order\",\"scope_intent\":\"broaden\",\"is_affirmative\":null,\"user_goal\":\"all orders\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"ACME\",\"hint\":\"customer\",\"current_message\":true},{\"raw\":\"sorento\",\"hint\":\"brand\",\"current_message\":true},{\"raw\":\"sinks\",\"hint\":\"category\",\"current_message\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+   }
+  }
+ ],
+ "runIndex": 0,
+ "expected": [
+  {
+   "json": {
+    "output": {
+     "message_type": "business_query",
+     "intent_hint": "check_order",
+     "domain_hint": "order",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "acme orders",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [
+      {
+       "raw": "ACME",
+       "hint": "customer",
+       "current_message": true
+      }
+     ],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": "customer_service",
+      "suggested_agent": "order_enquiries"
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     },
+     "domain_signal_source": "intent_explicit",
+     "scope_exclusive_applied": false,
+     "entity_op_applied": "replace_combine",
+     "query_brands": [
+      "sorento"
+     ],
+     "entities_filtered": true,
+     "entities_emptied_by_filter": false,
+     "broaden_dropped": [
+      "brand:sorento",
+      "category:sinks"
+     ]
+    },
+    "_parser_raw": {
+     "message_type": "business_query",
+     "intent_hint": "check_order",
+     "domain_hint": "order",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "acme orders",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [
+      {
+       "raw": "ACME",
+       "hint": "customer",
+       "current_message": true
+      },
+      {
+       "raw": "sorento",
+       "hint": "brand",
+       "current_message": true
+      },
+      {
+       "raw": "sinks",
+       "hint": "category",
+       "current_message": true
+      }
+     ],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": null,
+      "suggested_agent": null
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     }
+    }
+   }
+  },
+  {
+   "json": {
+    "output": {
+     "message_type": "business_query",
+     "intent_hint": "check_order",
+     "domain_hint": "order",
+     "scope_intent": "broaden",
+     "is_affirmative": null,
+     "user_goal": "all orders",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": "customer_service",
+      "suggested_agent": "order_enquiries"
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     },
+     "domain_signal_source": "intent_explicit",
+     "scope_exclusive_applied": false,
+     "entity_op_applied": "replace_combine",
+     "query_brands": [
+      "sorento"
+     ],
+     "entities_filtered": true,
+     "entities_emptied_by_filter": true,
+     "broaden_dropped": [
+      "customer:ACME",
+      "brand:sorento",
+      "category:sinks"
+     ]
+    },
+    "_parser_raw": {
+     "message_type": "business_query",
+     "intent_hint": "check_order",
+     "domain_hint": "order",
+     "scope_intent": "broaden",
+     "is_affirmative": null,
+     "user_goal": "all orders",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [
+      {
+       "raw": "ACME",
+       "hint": "customer",
+       "current_message": true
+      },
+      {
+       "raw": "sorento",
+       "hint": "brand",
+       "current_message": true
+      },
+      {
+       "raw": "sinks",
+       "hint": "category",
+       "current_message": true
+      }
+     ],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": null,
+      "suggested_agent": null
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     }
+    }
+   }
+  }
+ ]
+}

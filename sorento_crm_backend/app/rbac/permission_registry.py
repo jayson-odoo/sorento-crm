@@ -337,6 +337,7 @@ PERMISSION_REGISTRY.extend([
     # automatically allowed to charge a photo read to a dealer's allowance.
     # Granted to already-provisioned roles by migration 357.
     {"slug": "integration.chatbot_media.process", "name": "Process chatbot media", "description": "Submit an inbound WhatsApp photo or voice note for gating, metering and extraction."},
+    {"slug": "integration.chat_turn.submit", "name": "Submit chatbot turns", "description": "Post one inbound WhatsApp turn to the chatbot engine and receive the reply and the actions to execute."},
 ])
 
 # System

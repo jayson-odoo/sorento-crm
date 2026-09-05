@@ -1,0 +1,686 @@
+{
+  "source": {
+    "execution_id": "14472806",
+    "workflow_id": "Hnd4S8SVH6pftjxs",
+    "workflow_version": "d673a0ec-7458-4d47-8c02-cf3b7cbd0d0e",
+    "node": "route-turn",
+    "captured_at": "2026-08-30T03:44:20+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "75298369fdf6ab5e36b083bbd862efcda3c8f930f2d5c62e41c4b5bc22fedfc3",
+    "dev_contact": true
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "test": "obs",
+          "test_run_id": "rs1b4-04-access-denied",
+          "started_at": "2026-08-29T23:43:24.787-04:00",
+          "contact": "457216562"
+        }
+      }
+    ],
+    "redis-pop-main-message-list": [
+      {
+        "json": {
+          "message": {
+            "mode": "uac",
+            "test_run_id": "rs1b4-04-access-denied",
+            "contact": {
+              "id": "900000087",
+              "firstName": "Person 131",
+              "lastName": "Person 130",
+              "phone": "900000087",
+              "countryCode": "60",
+              "status": "open",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ]
+            },
+            "message": {
+              "event_type": "message.received",
+              "contact": {
+                "id": "900000087",
+                "firstName": "Person 131",
+                "lastName": "Person 130",
+                "phone": "900000087",
+                "countryCode": "60",
+                "status": "open",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ]
+              },
+              "message": {
+                "messageId": "rs1b4-04-msg",
+                "contactId": "900000087",
+                "channelId": "whatsapp",
+                "traffic": "incoming",
+                "timestamp": 1788060400000,
+                "message": {
+                  "type": "text",
+                  "text": "check stock SRTWT5800"
+                }
+              }
+            }
+          }
+        }
+      }
+    ],
+    "detect-media": [
+      {
+        "json": {
+          "message": {
+            "mode": "uac",
+            "test_run_id": "rs1b4-04-access-denied",
+            "contact": {
+              "id": "900000087",
+              "firstName": "Person 131",
+              "lastName": "Person 130",
+              "phone": "900000087",
+              "countryCode": "60",
+              "status": "open",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ]
+            },
+            "message": {
+              "event_type": "message.received",
+              "contact": {
+                "id": "900000087",
+                "firstName": "Person 131",
+                "lastName": "Person 130",
+                "phone": "900000087",
+                "countryCode": "60",
+                "status": "open",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ]
+              },
+              "message": {
+                "messageId": "rs1b4-04-msg",
+                "contactId": "900000087",
+                "channelId": "whatsapp",
+                "traffic": "incoming",
+                "timestamp": 1788060400000,
+                "message": {
+                  "type": "text",
+                  "text": "check stock SRTWT5800"
+                }
+              }
+            }
+          },
+          "_media": {
+            "modality": null,
+            "attachment_type": null,
+            "media_url": null,
+            "mime_type": null,
+            "caption": "check stock SRTWT5800",
+            "bytes": null,
+            "duration_ms": null,
+            "duration_source": null,
+            "message_id": "rs1b4-04-msg",
+            "respond_io_id": "900000087",
+            "test_run_id": "rs1b4-04-access-denied",
+            "scope": null
+          }
+        }
+      }
+    ],
+    "if-media-in": [],
+    "tf-message": [
+      {
+        "json": {
+          "event_type": "message.received",
+          "contact": {
+            "id": "900000087",
+            "firstName": "Person 131",
+            "lastName": "Person 130",
+            "phone": "900000087",
+            "countryCode": "60",
+            "status": "open",
+            "custom_fields": [
+              {
+                "name": "is_human_intervened",
+                "value": "false"
+              },
+              {
+                "name": "is_allowed_stock",
+                "value": "true"
+              },
+              {
+                "name": "is_allowed_voice",
+                "value": "true"
+              }
+            ]
+          },
+          "message": {
+            "messageId": "rs1b4-04-msg",
+            "contactId": "900000087",
+            "channelId": "whatsapp",
+            "traffic": "incoming",
+            "timestamp": 1788060400000,
+            "message": {
+              "type": "text",
+              "text": "check stock SRTWT5800"
+            }
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": "900000087",
+          "firstName": "Person 131",
+          "lastName": "Person 130",
+          "phone": "900000087",
+          "countryCode": "60",
+          "status": "open",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ]
+        }
+      }
+    ],
+    "is-human-intervened": [
+      {
+        "json": {
+          "id": "900000087",
+          "firstName": "Person 131",
+          "lastName": "Person 130",
+          "phone": "900000087",
+          "countryCode": "60",
+          "status": "open",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ]
+        }
+      }
+    ],
+    "if-message-is-audio": [],
+    "Call 'sub-respond-save-message-redis'2": [
+      {
+        "json": {
+          "contact_id": "900000087",
+          "phone_number": "900000087",
+          "message": "check stock SRTWT5800",
+          "sent_at": 1788061405325,
+          "turn_id": "14472806",
+          "data": "{\"contact_id\":\"900000087\",\"phone_number\":\"900000087\",\"message\":\"check stock SRTWT5800\",\"sent_at\":null,\"first_name\":\"Person 131\",\"last_name\":\"Person 130\",\"reply_to_message_id\":null,\"reply_to_message\":null,\"type\":\"incoming\",\"message_id\":\"rs1b4-04-msg\",\"turn_id\":\"14472806\",\"state_trace\":{\"v\":1,\"before\":null,\"parser_raw\":null,\"parser_applied\":null,\"after\":null}}"
+        }
+      }
+    ],
+    "sim-inject-gate": [],
+    "session-get-gate": [],
+    "get-session-vars-http": [
+      {
+        "json": {
+          "respond_io_id": "900000087",
+          "session_vars": {}
+        }
+      }
+    ],
+    "get-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000087",
+          "session_vars": {}
+        }
+      }
+    ],
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_stock",
+            "domain_hint": "inventory",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check stock for SRTWT5800",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "SRTWT5800",
+                "hint": "product",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "warehouse",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "scope_exclusive_applied": false,
+            "entity_op_applied": "replace_combine",
+            "query_brands": [],
+            "entities_filtered": false,
+            "entities_emptied_by_filter": false
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "check_stock",
+            "domain_hint": "inventory",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check stock for SRTWT5800",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "SRTWT5800",
+                "hint": "product",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "warehouse",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ],
+    "check-access": [
+      {
+        "json": {
+          "allowed": false,
+          "decision": "deny_no_access",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "route-turn": [
+      {
+        "json": {
+          "allowed": false,
+          "decision": "deny_no_access",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "access_denied"
+        }
+      }
+    ],
+    "route": [
+      {
+        "json": {
+          "allowed": false,
+          "decision": "deny_no_access",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "access_denied"
+        }
+      }
+    ],
+    "sorento-sub-respond-sendmsg-respond5": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "Execution Data": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "guard-h-record": [
+      {
+        "json": {
+          "id": "900000087",
+          "firstName": "Person 131",
+          "lastName": "Person 130",
+          "phone": "900000087",
+          "countryCode": "60",
+          "status": "open",
+          "custom_fields": [
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ]
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": "900000087",
+              "firstName": "Person 131",
+              "lastName": "Person 130",
+              "phone": "900000087",
+              "countryCode": "60",
+              "status": "open",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ]
+            },
+            "text": {
+              "event_type": "message.received",
+              "contact": {
+                "id": "900000087",
+                "firstName": "Person 131",
+                "lastName": "Person 130",
+                "phone": "900000087",
+                "countryCode": "60",
+                "status": "open",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ]
+              },
+              "message": {
+                "messageId": "rs1b4-04-msg",
+                "contactId": "900000087",
+                "channelId": "whatsapp",
+                "traffic": "incoming",
+                "timestamp": 1788060400000,
+                "message": {
+                  "type": "text",
+                  "text": "check stock SRTWT5800"
+                }
+              }
+            },
+            "session": {
+              "respond_io_id": "900000087",
+              "session_vars": {}
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check stock for SRTWT5800",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "SRTWT5800",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check stock for SRTWT5800",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "SRTWT5800",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": false,
+              "decision": "deny_no_access",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            }
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "allowed": false,
+        "decision": "deny_no_access",
+        "agent_name": "General Enquiries",
+        "attributes": null,
+        "all_attributes_allowed": null
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "allowed": false,
+        "decision": "deny_no_access",
+        "agent_name": "General Enquiries",
+        "attributes": null,
+        "all_attributes_allowed": null,
+        "branch_kind": "access_denied"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "14472806"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "redis-pop-main-message-list",
+    "detect-media",
+    "if-media-in",
+    "tf-message",
+    "sorento-sub-respond-findcontact-respond",
+    "is-human-intervened",
+    "if-message-is-audio",
+    "Call 'sub-respond-save-message-redis'2",
+    "sim-inject-gate",
+    "session-get-gate",
+    "get-session-vars-http",
+    "get-session-vars",
+    "Call 'sub-query-reformulator'",
+    "check-access",
+    "build-ctx",
+    "route-turn",
+    "route",
+    "sorento-sub-respond-sendmsg-respond5",
+    "Execution Data",
+    "guard-h-record"
+  ]
+}

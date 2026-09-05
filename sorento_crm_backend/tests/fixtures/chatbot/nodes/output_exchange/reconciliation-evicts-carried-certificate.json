@@ -1,0 +1,152 @@
+{
+ "source": {
+  "hand_crafted": true,
+  "expected_from": "reasoned",
+  "rationale": "B2' part 4 (F-CARRY-NARROW) plus the C1 unrecognised-hint fallback, in one turn. Prior state holds a certificate INSTANCE, a product, and an entity whose hint is the DOMAIN NAME 'product_attachment' (the immortal-hint bug's own signature). This turn names a new product. Reasoned: the executor evicts both product-axis priors (the real product by its known axis, the domain-named one via C1's two-step fallback to DOMAIN_SUBJECT_AXIS.product_attachment = product_scope) and keeps the certificate, which sits on attachment_scope. The post-merge pass then sees a NON-carried product contribution, so it evicts the CARRIED certificate - an instance-bound filter that is stale the moment product scope changes - and records carried_attachment_evicted. C1's residual diagnostic must report the one hint that reached the fallback: unknown_entity_hints ['product_attachment']."
+ },
+ "ctx": {
+  "When Executed by Another Workflow": [
+   {
+    "json": {
+     "latest_user_message": "cert for XYZ-2",
+     "contact_id": 900000003,
+     "previous_conversation_state": {
+      "domain_hint": "product_attachment",
+      "intent_hint": "check_product_attachment",
+      "routing": {
+       "suggested_team": "purchasing_certification",
+       "suggested_agent": "general_enquiries"
+      },
+      "response": "Here is the certificate.",
+      "entities": [
+       {
+        "raw": "CERT-9",
+        "hint": "certificate",
+        "canonical_code": "CERT-9",
+        "current_message": true
+       },
+       {
+        "raw": "ABC-1",
+        "hint": "product",
+        "canonical_code": "ABC-1",
+        "current_message": true
+       },
+       {
+        "raw": "M2399",
+        "hint": "product_attachment",
+        "canonical_code": "M2399",
+        "current_message": true
+       }
+      ]
+     },
+     "is_test": null,
+     "mock_reformulator_output": null
+    }
+   }
+  ]
+ },
+ "input": [
+  {
+   "json": {
+    "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_product_attachment\",\"domain_hint\":\"product_attachment\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"certificate for XYZ-2\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"XYZ-2\",\"hint\":\"product\",\"canonical_code\":null,\"current_message\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+   }
+  }
+ ],
+ "runIndex": 0,
+ "expected": [
+  {
+   "json": {
+    "output": {
+     "message_type": "business_query",
+     "intent_hint": "check_product_attachment",
+     "domain_hint": "product_attachment",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "certificate for XYZ-2",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [
+      {
+       "raw": "XYZ-2",
+       "hint": "product",
+       "canonical_code": null,
+       "current_message": true
+      }
+     ],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": "purchasing_certification",
+      "suggested_agent": "general_enquiries"
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     },
+     "domain_signal_source": "intent_explicit",
+     "scope_exclusive_applied": false,
+     "entity_op_applied": "replace_combine",
+     "query_brands": [],
+     "carried_attachment_evicted": [
+      "certificate:CERT-9"
+     ],
+     "unknown_entity_hints": [
+      "product_attachment"
+     ],
+     "entities_filtered": false,
+     "entities_emptied_by_filter": false
+    },
+    "_parser_raw": {
+     "message_type": "business_query",
+     "intent_hint": "check_product_attachment",
+     "domain_hint": "product_attachment",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "certificate for XYZ-2",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [
+      {
+       "raw": "XYZ-2",
+       "hint": "product",
+       "canonical_code": null,
+       "current_message": true
+      }
+     ],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": null,
+      "suggested_agent": null
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     }
+    }
+   }
+  }
+ ]
+}

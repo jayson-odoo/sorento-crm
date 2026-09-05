@@ -1,0 +1,405 @@
+{
+  "source": {
+    "hand_crafted": true,
+    "expected_from": "reasoned",
+    "rationale": "Pins deriveRouting's domain->team/agent map and PROVES the node is executed per-item: four input items with four different domain_hints must produce four output items, each routed independently off its own domain. Reasoned from deriveRouting's switch: master_products -> purchasing_product/general_enquiries; forms -> marketing_form/marketing_form; inventory -> warehouse/general_enquiries; ideate -> {null, 'ideation'}, and because the final `?? ` chain ends in 'customer_service' the ideate item's team lands on customer_service, NOT null (see MUTATION-BASELINE.md finding 1). Also pins that the blocklist block is SKIPPED entirely when the domain has no DOMAIN_BLOCKED_HINTS entry (ideate) - so entities_filtered is absent there and present on the other three.",
+    "amended": [
+      {
+        "at": "2026-09-03T06:52:28Z",
+        "to_version": "7671ebe7-d6db-4687-818f-c2e88df802a4",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[3].json.output.routing.suggested_team"
+        ]
+      },
+      {
+        "at": "2026-09-04T01:19:34Z",
+        "to_version": "ab3ec985-5371-4ee3-b6e5-8a23e3aef7df",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[0].json.output.routing.suggested_team"
+        ]
+      }
+    ]
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "latest_user_message": "",
+          "contact_id": 900000003,
+          "previous_conversation_state": {},
+          "is_test": null,
+          "mock_reformulator_output": null
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_product\",\"domain_hint\":\"master_products\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"spec of ABC-1\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"ABC-1\",\"hint\":\"product\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+      }
+    },
+    {
+      "json": {
+        "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"get_forms\",\"domain_hint\":\"forms\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"warranty form\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"warranty\",\"hint\":\"form\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+      }
+    },
+    {
+      "json": {
+        "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_stock\",\"domain_hint\":\"inventory\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"stock of ABC-1\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"ABC-1\",\"hint\":\"product\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+      }
+    },
+    {
+      "json": {
+        "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"submit_idea\",\"domain_hint\":\"ideate\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"I have an idea\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "expected": [
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "check_product",
+          "domain_hint": "master_products",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "spec of ABC-1",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "ABC-1",
+              "hint": "product",
+              "canonical_code": null,
+              "current_message": true,
+              "confident": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "purchasing",
+            "suggested_agent": "general_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "domain_signal_source": "intent_explicit",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "entities_filtered": false,
+          "entities_emptied_by_filter": false
+        },
+        "_parser_raw": {
+          "message_type": "business_query",
+          "intent_hint": "check_product",
+          "domain_hint": "master_products",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "spec of ABC-1",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "ABC-1",
+              "hint": "product",
+              "canonical_code": null,
+              "current_message": true,
+              "confident": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": null,
+            "suggested_agent": null
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          }
+        }
+      }
+    },
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "get_forms",
+          "domain_hint": "forms",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "warranty form",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "warranty",
+              "hint": "form",
+              "canonical_code": null,
+              "current_message": true,
+              "confident": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "marketing_form",
+            "suggested_agent": "marketing_form"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "domain_signal_source": "intent_explicit",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "entities_filtered": false,
+          "entities_emptied_by_filter": false
+        },
+        "_parser_raw": {
+          "message_type": "business_query",
+          "intent_hint": "get_forms",
+          "domain_hint": "forms",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "warranty form",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "warranty",
+              "hint": "form",
+              "canonical_code": null,
+              "current_message": true,
+              "confident": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": null,
+            "suggested_agent": null
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          }
+        }
+      }
+    },
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "check_stock",
+          "domain_hint": "inventory",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "stock of ABC-1",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "ABC-1",
+              "hint": "product",
+              "canonical_code": null,
+              "current_message": true,
+              "confident": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "warehouse",
+            "suggested_agent": "general_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "domain_signal_source": "intent_explicit",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "entities_filtered": false,
+          "entities_emptied_by_filter": false
+        },
+        "_parser_raw": {
+          "message_type": "business_query",
+          "intent_hint": "check_stock",
+          "domain_hint": "inventory",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "stock of ABC-1",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "ABC-1",
+              "hint": "product",
+              "canonical_code": null,
+              "current_message": true,
+              "confident": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": null,
+            "suggested_agent": null
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          }
+        }
+      }
+    },
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "submit_idea",
+          "domain_hint": "ideate",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "I have an idea",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": null,
+            "suggested_agent": "ideation"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "domain_signal_source": "intent_explicit",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": []
+        },
+        "_parser_raw": {
+          "message_type": "business_query",
+          "intent_hint": "submit_idea",
+          "domain_hint": "ideate",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "I have an idea",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": null,
+            "suggested_agent": null
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          }
+        }
+      }
+    }
+  ]
+}

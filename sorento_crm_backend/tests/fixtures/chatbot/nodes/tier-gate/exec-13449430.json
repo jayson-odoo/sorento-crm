@@ -1,0 +1,3278 @@
+{
+  "source": {
+    "execution_id": "13449430",
+    "workflow_id": "9qVyfUxmRQqrpGRMDLRuz",
+    "node": "tier-gate",
+    "captured_at": "2026-08-22T12:01:51+00:00",
+    "expected_from": "runData"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "test": null,
+          "test_run_id": null,
+          "started_at": null,
+          "contact": "900000004"
+        }
+      }
+    ],
+    "redis-pop-main-message-list": [
+      {
+        "json": {
+          "message": {
+            "message": {
+              "event_type": "message.received",
+              "event_id": "2a6cd2c5-f850-4016-91fc-ff3ca6f7fb4a",
+              "contact": {
+                "id": 900000004,
+                "firstName": "<redacted>",
+                "lastName": "<redacted>",
+                "phone": "<redacted>",
+                "email": "<redacted>",
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": "<redacted>",
+                  "lastName": "<redacted>",
+                  "email": "<redacted>"
+                },
+                "created_at": 1772721415
+              },
+              "message": {
+                "messageId": 1787373499000000,
+                "channelMessageId": "wamid.HBgLNjAxNjIwMjExNzkVAgASGBQzQUYyNjYwNjI1RTdEQ0UxNjA2RQA=",
+                "contactId": 900000004,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787373499000,
+                "message": {
+                  "type": "text",
+                  "text": "promotion SRT5732"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": null,
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "contact": {
+              "id": 900000004,
+              "firstName": "<redacted>",
+              "lastName": "<redacted>",
+              "phone": "<redacted>",
+              "email": "<redacted>",
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": "dealer"
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/ef6744dc-7b9a-4a80-a63b-6c7d16d5977e"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1772721415
+            }
+          }
+        }
+      }
+    ],
+    "if-audio-in": [],
+    "tf-message": [
+      {
+        "json": {
+          "event_type": "message.received",
+          "event_id": "2a6cd2c5-f850-4016-91fc-ff3ca6f7fb4a",
+          "contact": {
+            "id": 900000004,
+            "firstName": "<redacted>",
+            "lastName": "<redacted>",
+            "phone": "<redacted>",
+            "email": "<redacted>",
+            "language": null,
+            "profilePic": null,
+            "countryCode": "MY",
+            "status": "open",
+            "assignee": {
+              "id": null,
+              "firstName": "<redacted>",
+              "lastName": "<redacted>",
+              "email": "<redacted>"
+            },
+            "created_at": 1772721415
+          },
+          "message": {
+            "messageId": 1787373499000000,
+            "channelMessageId": "wamid.HBgLNjAxNjIwMjExNzkVAgASGBQzQUYyNjYwNjI1RTdEQ0UxNjA2RQA=",
+            "contactId": 900000004,
+            "channelId": 453209,
+            "traffic": "incoming",
+            "timestamp": 1787373499000,
+            "message": {
+              "type": "text",
+              "text": "promotion SRT5732"
+            }
+          },
+          "channel": {
+            "id": 453209,
+            "name": "Internal (+60 11-1673 1179)",
+            "source": "whatsapp_business",
+            "meta": null,
+            "created_at": 1767682908
+          },
+          "sender": {
+            "source": "contact",
+            "userId": null,
+            "teamId": null,
+            "workflowId": null,
+            "broadcastHistoryId": null
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": 900000004,
+          "firstName": "<redacted>",
+          "lastName": "<redacted>",
+          "phone": "<redacted>",
+          "email": "<redacted>",
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": "dealer"
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/ef6744dc-7b9a-4a80-a63b-6c7d16d5977e"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [],
+          "assignee": null,
+          "lifecycle": null,
+          "created_at": 1772721415
+        }
+      }
+    ],
+    "if-transcribed-confirm": [],
+    "is-human-intervened": [
+      {
+        "json": {
+          "id": 900000004,
+          "firstName": "<redacted>",
+          "lastName": "<redacted>",
+          "phone": "<redacted>",
+          "email": "<redacted>",
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": "dealer"
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/ef6744dc-7b9a-4a80-a63b-6c7d16d5977e"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": null
+            }
+          ],
+          "tags": [],
+          "assignee": null,
+          "lifecycle": null,
+          "created_at": 1772721415
+        }
+      }
+    ],
+    "if-message-is-audio": [],
+    "get-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000004",
+          "session_vars": {
+            "variables": {
+              "routing": {
+                "suggested_team": "warehouse",
+                "suggested_agent": "general_enquiries"
+              },
+              "entities": [
+                {
+                  "raw": "SRT5732",
+                  "hint": "product",
+                  "confident": true,
+                  "canonical_code": "SRT5732",
+                  "current_message": true
+                }
+              ],
+              "ideation": null,
+              "response": "Previous turn (inventory): returned 11 records",
+              "date_mode": null,
+              "dym_offer": null,
+              "user_goal": "trying to check stock for SRT5732",
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "match_mode": "and",
+              "domain_hint": "inventory",
+              "intent_hint": "check_stock",
+              "message_type": "business_query",
+              "query_brands": [],
+              "access_levels": [],
+              "routing_brand": null,
+              "contains_flyer": false,
+              "dym_candidates": [],
+              "date_filter_end": null,
+              "last_result_set": [
+                {
+                  "idx": 1,
+                  "uuid": null,
+                  "label": "SRT5732",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 2,
+                  "uuid": null,
+                  "label": "SRT5732",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 3,
+                  "uuid": null,
+                  "label": "SRT5732",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 4,
+                  "uuid": null,
+                  "label": "SRT5732",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 5,
+                  "uuid": null,
+                  "label": "SRT5732",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 6,
+                  "uuid": null,
+                  "label": "SRT5732",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 7,
+                  "uuid": null,
+                  "label": "SRT5732",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 8,
+                  "uuid": null,
+                  "label": "SRT5732",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 9,
+                  "uuid": null,
+                  "label": "SRT5732",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 10,
+                  "uuid": null,
+                  "label": "SRT5732",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                },
+                {
+                  "idx": 11,
+                  "uuid": null,
+                  "label": "SRT5732",
+                  "product": null,
+                  "filename": null,
+                  "entity_type": null,
+                  "attachment_type": null
+                }
+              ],
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "date_filter_start": null,
+              "routing_companies": [
+                {
+                  "codes": [
+                    "SRT5732-NL",
+                    "SRT5732"
+                  ],
+                  "brand_code": null,
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento"
+                }
+              ],
+              "selection_context": null,
+              "routing_roster_plan": null,
+              "routing_brand_source": null
+            },
+            "user_response": "Stock details found for the requested products.\n\n1. *Product Code:* SRT5732\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 94\n\n2. *Product Code:* SRT5732\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-AM\n*Quantity On Hand:* 1\n\n3. *Product Code:* SRT5732\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 89\n\n4. *Product Code:* SRT5732\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IB\n*Quantity On Hand:* 8\n\n5. *Product Code:* SRT5732\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IR\n*Quantity On Hand:* 2\n\n6. *Product Code:* SRT5732\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-NTC\n*Quantity On Hand:* 10\n\n7. *Product Code:* SRT5732\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-S/L\n*Quantity On Hand:* 0\n\n8. *Product Code:* SRT5732\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 1\n\n9. *Product Code:* SRT5732\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SYNT\n*Quantity On Hand:* 0\n\n10. *Product Code:* SRT5732\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-BB\n*Quantity On Hand:* 14\n\n11. *Product Code:* SRT5732\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-IB\n*Quantity On Hand:* 6\n\n_Data last updated: 21/08/2026 17:13:25_"
+          }
+        }
+      }
+    ],
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_promotion",
+            "domain_hint": "promotion",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check the promotion for SRT5732",
+            "access_levels": [],
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "SRT5732",
+                "hint": "product",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "marketing_promotion",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "scope_exclusive_applied": false,
+            "entity_op_applied": "replace_combine",
+            "query_brands": [],
+            "entities_filtered": false,
+            "entities_emptied_by_filter": false
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "check_promotion",
+            "domain_hint": "promotion",
+            "scope_intent": "specific",
+            "is_affirmative": null,
+            "user_goal": "trying to check the promotion for SRT5732",
+            "access_levels": [],
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "SRT5732",
+                "hint": "product",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "marketing_promotion",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            }
+          }
+        }
+      }
+    ],
+    "check-access": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "If5": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "If2": [],
+    "If-ideate": [],
+    "If10": [],
+    "is-escalation-declined": [],
+    "If9": [],
+    "If1": [],
+    "not-supported-domain": [],
+    "If": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "get-access-types": [
+      {
+        "json": {
+          "name": "Sorento Office",
+          "keywords": [
+            "sorento office",
+            "office"
+          ]
+        }
+      },
+      {
+        "json": {
+          "name": "Sorento Dealer",
+          "keywords": [
+            "sorento dealer",
+            "dealer"
+          ]
+        }
+      },
+      {
+        "json": {
+          "name": "Mocha Dealer",
+          "keywords": [
+            "mocha dealer"
+          ]
+        }
+      },
+      {
+        "json": {
+          "name": "Mocha Office",
+          "keywords": [
+            "mocha office",
+            "office"
+          ]
+        }
+      },
+      {
+        "json": {
+          "name": "Cabana Dealer",
+          "keywords": [
+            "cabana dealer"
+          ]
+        }
+      },
+      {
+        "json": {
+          "name": "End User",
+          "keywords": [
+            "customer",
+            "consumer",
+            "homeowner",
+            "b2c",
+            "end-user",
+            "enduser",
+            "user",
+            "client"
+          ]
+        }
+      }
+    ],
+    "Aggregate": [
+      {
+        "json": {
+          "name": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Dealer",
+            "End User"
+          ]
+        }
+      }
+    ],
+    "tier-gate": [
+      {
+        "json": {
+          "name": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_stated": [],
+          "entitled_tiers": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "entitled_unknown": [],
+          "query_brands": [],
+          "pending_pick": false,
+          "tier_ask": true,
+          "tier_proceed": false,
+          "access_levels_recomposed": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_probe_plan": [
+            {
+              "tier": "dealer",
+              "access_levels": [
+                "Sorento Dealer",
+                "Mocha Dealer",
+                "Cabana Dealer"
+              ]
+            },
+            {
+              "tier": "office",
+              "access_levels": [
+                "Sorento Office",
+                "Mocha Office"
+              ]
+            },
+            {
+              "tier": "end_user",
+              "access_levels": [
+                "End User"
+              ]
+            }
+          ],
+          "brand_gate_empty": false,
+          "brand_unheld": false
+        }
+      }
+    ],
+    "If4": [
+      {
+        "json": {
+          "name": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_stated": [],
+          "entitled_tiers": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "entitled_unknown": [],
+          "query_brands": [],
+          "pending_pick": false,
+          "tier_ask": true,
+          "tier_proceed": false,
+          "access_levels_recomposed": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_probe_plan": [
+            {
+              "tier": "dealer",
+              "access_levels": [
+                "Sorento Dealer",
+                "Mocha Dealer",
+                "Cabana Dealer"
+              ]
+            },
+            {
+              "tier": "office",
+              "access_levels": [
+                "Sorento Office",
+                "Mocha Office"
+              ]
+            },
+            {
+              "tier": "end_user",
+              "access_levels": [
+                "End User"
+              ]
+            }
+          ],
+          "brand_gate_empty": false,
+          "brand_unheld": false
+        }
+      }
+    ],
+    "resolve-entity": [
+      {
+        "json": {
+          "match_mode": "and",
+          "tokens": [
+            "SRT5732"
+          ],
+          "elapsed_ms": 71.16,
+          "intersection": [
+            {
+              "entity_type": "promotion",
+              "canonical_code": "057c76a1-12d3-40a5-9238-b0fb6ebfbab2",
+              "uuid": "057c76a1-12d3-40a5-9238-b0fb6ebfbab2",
+              "match_field": "promotion_membership",
+              "match_tier": "via_product",
+              "similarity": null,
+              "display": {
+                "description": "SORENTO GRAB BAR PROMO_07072026 DEALER.pdf",
+                "is_active": true,
+                "start_date": "2026-07-07",
+                "end_date": "2026-10-07",
+                "products": [
+                  "SRT5732"
+                ],
+                "promotion_type_code": "standard",
+                "promotion_type_name": "Standard Promo",
+                "is_expired": false,
+                "expired_but_usable": false
+              }
+            },
+            {
+              "entity_type": "promotion",
+              "canonical_code": "3f7087e1-8bd1-46b4-b5ae-7526d4ee29a1",
+              "uuid": "3f7087e1-8bd1-46b4-b5ae-7526d4ee29a1",
+              "match_field": "promotion_membership",
+              "match_tier": "via_product",
+              "similarity": null,
+              "display": {
+                "description": "SORENTO GRAB BAR PROMO_07072026 END USER.pdf",
+                "is_active": true,
+                "start_date": "2026-07-07",
+                "end_date": "2026-10-07",
+                "products": [
+                  "SRT5732"
+                ],
+                "promotion_type_code": "standard",
+                "promotion_type_name": "Standard Promo",
+                "is_expired": false,
+                "expired_but_usable": false
+              }
+            },
+            {
+              "entity_type": "promotion",
+              "canonical_code": "46e98ced-8e93-46e5-b866-96c85c99bf9d",
+              "uuid": "46e98ced-8e93-46e5-b866-96c85c99bf9d",
+              "match_field": "promotion_membership",
+              "match_tier": "via_product",
+              "similarity": null,
+              "display": {
+                "description": "SORENTO GRAB BAR PROMO_07072026 OFFICE.pdf",
+                "is_active": true,
+                "start_date": "2026-07-07",
+                "end_date": "2026-10-07",
+                "products": [
+                  "SRT5732"
+                ],
+                "promotion_type_code": "standard",
+                "promotion_type_name": "Standard Promo",
+                "is_expired": false,
+                "expired_but_usable": false
+              }
+            },
+            {
+              "entity_type": "promotion",
+              "canonical_code": "462c9f19-ecee-4a2d-9168-42b972a5475b",
+              "uuid": "462c9f19-ecee-4a2d-9168-42b972a5475b",
+              "match_field": "promotion_membership",
+              "match_tier": "via_product",
+              "similarity": null,
+              "display": {
+                "description": "UPDATED SORENTO A3 FLYER  2026 (DEALER)_21072026.pdf",
+                "is_active": true,
+                "start_date": "2026-06-01",
+                "end_date": "2026-09-30",
+                "products": [
+                  "SRT5732"
+                ],
+                "promotion_type_code": "a3_flyer",
+                "promotion_type_name": "A3 Flyer",
+                "is_expired": false,
+                "expired_but_usable": false
+              }
+            },
+            {
+              "entity_type": "promotion",
+              "canonical_code": "746d72b7-bfb4-4ccf-a15b-7a291856dcc5",
+              "uuid": "746d72b7-bfb4-4ccf-a15b-7a291856dcc5",
+              "match_field": "promotion_membership",
+              "match_tier": "via_product",
+              "similarity": null,
+              "display": {
+                "description": "UPDATED SORENTO A3 FLYER  2026 (OFFICE)_21072026.pdf",
+                "is_active": true,
+                "start_date": "2026-06-01",
+                "end_date": "2026-09-30",
+                "products": [
+                  "SRT5732"
+                ],
+                "promotion_type_code": "a3_flyer",
+                "promotion_type_name": "A3 Flyer",
+                "is_expired": false,
+                "expired_but_usable": false
+              }
+            },
+            {
+              "entity_type": "promotion",
+              "canonical_code": "e265f3b5-0e0d-4b1b-a601-781b75f695fd",
+              "uuid": "e265f3b5-0e0d-4b1b-a601-781b75f695fd",
+              "match_field": "promotion_membership",
+              "match_tier": "via_product",
+              "similarity": null,
+              "display": {
+                "description": "@ SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                "is_active": true,
+                "start_date": "2026-06-01",
+                "end_date": "2026-09-30",
+                "products": [
+                  "SRT5732"
+                ],
+                "promotion_type_code": "a3_flyer",
+                "promotion_type_name": "A3 Flyer",
+                "is_expired": false,
+                "expired_but_usable": false
+              }
+            },
+            {
+              "entity_type": "promotion",
+              "canonical_code": "0a75b2e9-a436-4dcb-af1c-4b73cd8778c3",
+              "uuid": "0a75b2e9-a436-4dcb-af1c-4b73cd8778c3",
+              "match_field": "promotion_membership",
+              "match_tier": "via_product",
+              "similarity": null,
+              "display": {
+                "description": "@ SORENTO A3 FLYER_OFFICE USE_11062026.pdf",
+                "is_active": true,
+                "start_date": "2026-06-01",
+                "end_date": "2026-09-30",
+                "products": [
+                  "SRT5732"
+                ],
+                "promotion_type_code": "a3_flyer",
+                "promotion_type_name": "A3 Flyer",
+                "is_expired": false,
+                "expired_but_usable": false
+              }
+            },
+            {
+              "entity_type": "product",
+              "canonical_code": "SRT5732-NL",
+              "uuid": "673a0f01-8359-48cb-9208-426083657f91",
+              "match_field": "product_code",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "product_name": "SRT5732-NL",
+                "is_active": true,
+                "brand": {
+                  "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                  "brand_code": "NO LOGO",
+                  "brand_name": "NO LOGO"
+                }
+              }
+            },
+            {
+              "entity_type": "product",
+              "canonical_code": "SRT5732",
+              "uuid": "8e111ff7-2050-41cb-8ea4-127bd7e3bb0f",
+              "match_field": "product_code",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "product_name": "SRT5732",
+                "is_active": true,
+                "brand": {
+                  "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                  "brand_code": "SORENTO",
+                  "brand_name": "SORENTO"
+                }
+              }
+            }
+          ],
+          "by_entity_type": {
+            "promotion": [
+              {
+                "entity_type": "promotion",
+                "canonical_code": "057c76a1-12d3-40a5-9238-b0fb6ebfbab2",
+                "uuid": "057c76a1-12d3-40a5-9238-b0fb6ebfbab2",
+                "match_field": "promotion_membership",
+                "match_tier": "via_product",
+                "similarity": null,
+                "display": {
+                  "description": "SORENTO GRAB BAR PROMO_07072026 DEALER.pdf",
+                  "is_active": true,
+                  "start_date": "2026-07-07",
+                  "end_date": "2026-10-07",
+                  "products": [
+                    "SRT5732"
+                  ],
+                  "promotion_type_code": "standard",
+                  "promotion_type_name": "Standard Promo",
+                  "is_expired": false,
+                  "expired_but_usable": false
+                }
+              },
+              {
+                "entity_type": "promotion",
+                "canonical_code": "3f7087e1-8bd1-46b4-b5ae-7526d4ee29a1",
+                "uuid": "3f7087e1-8bd1-46b4-b5ae-7526d4ee29a1",
+                "match_field": "promotion_membership",
+                "match_tier": "via_product",
+                "similarity": null,
+                "display": {
+                  "description": "SORENTO GRAB BAR PROMO_07072026 END USER.pdf",
+                  "is_active": true,
+                  "start_date": "2026-07-07",
+                  "end_date": "2026-10-07",
+                  "products": [
+                    "SRT5732"
+                  ],
+                  "promotion_type_code": "standard",
+                  "promotion_type_name": "Standard Promo",
+                  "is_expired": false,
+                  "expired_but_usable": false
+                }
+              },
+              {
+                "entity_type": "promotion",
+                "canonical_code": "46e98ced-8e93-46e5-b866-96c85c99bf9d",
+                "uuid": "46e98ced-8e93-46e5-b866-96c85c99bf9d",
+                "match_field": "promotion_membership",
+                "match_tier": "via_product",
+                "similarity": null,
+                "display": {
+                  "description": "SORENTO GRAB BAR PROMO_07072026 OFFICE.pdf",
+                  "is_active": true,
+                  "start_date": "2026-07-07",
+                  "end_date": "2026-10-07",
+                  "products": [
+                    "SRT5732"
+                  ],
+                  "promotion_type_code": "standard",
+                  "promotion_type_name": "Standard Promo",
+                  "is_expired": false,
+                  "expired_but_usable": false
+                }
+              },
+              {
+                "entity_type": "promotion",
+                "canonical_code": "462c9f19-ecee-4a2d-9168-42b972a5475b",
+                "uuid": "462c9f19-ecee-4a2d-9168-42b972a5475b",
+                "match_field": "promotion_membership",
+                "match_tier": "via_product",
+                "similarity": null,
+                "display": {
+                  "description": "UPDATED SORENTO A3 FLYER  2026 (DEALER)_21072026.pdf",
+                  "is_active": true,
+                  "start_date": "2026-06-01",
+                  "end_date": "2026-09-30",
+                  "products": [
+                    "SRT5732"
+                  ],
+                  "promotion_type_code": "a3_flyer",
+                  "promotion_type_name": "A3 Flyer",
+                  "is_expired": false,
+                  "expired_but_usable": false
+                }
+              },
+              {
+                "entity_type": "promotion",
+                "canonical_code": "746d72b7-bfb4-4ccf-a15b-7a291856dcc5",
+                "uuid": "746d72b7-bfb4-4ccf-a15b-7a291856dcc5",
+                "match_field": "promotion_membership",
+                "match_tier": "via_product",
+                "similarity": null,
+                "display": {
+                  "description": "UPDATED SORENTO A3 FLYER  2026 (OFFICE)_21072026.pdf",
+                  "is_active": true,
+                  "start_date": "2026-06-01",
+                  "end_date": "2026-09-30",
+                  "products": [
+                    "SRT5732"
+                  ],
+                  "promotion_type_code": "a3_flyer",
+                  "promotion_type_name": "A3 Flyer",
+                  "is_expired": false,
+                  "expired_but_usable": false
+                }
+              },
+              {
+                "entity_type": "promotion",
+                "canonical_code": "e265f3b5-0e0d-4b1b-a601-781b75f695fd",
+                "uuid": "e265f3b5-0e0d-4b1b-a601-781b75f695fd",
+                "match_field": "promotion_membership",
+                "match_tier": "via_product",
+                "similarity": null,
+                "display": {
+                  "description": "@ SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                  "is_active": true,
+                  "start_date": "2026-06-01",
+                  "end_date": "2026-09-30",
+                  "products": [
+                    "SRT5732"
+                  ],
+                  "promotion_type_code": "a3_flyer",
+                  "promotion_type_name": "A3 Flyer",
+                  "is_expired": false,
+                  "expired_but_usable": false
+                }
+              },
+              {
+                "entity_type": "promotion",
+                "canonical_code": "0a75b2e9-a436-4dcb-af1c-4b73cd8778c3",
+                "uuid": "0a75b2e9-a436-4dcb-af1c-4b73cd8778c3",
+                "match_field": "promotion_membership",
+                "match_tier": "via_product",
+                "similarity": null,
+                "display": {
+                  "description": "@ SORENTO A3 FLYER_OFFICE USE_11062026.pdf",
+                  "is_active": true,
+                  "start_date": "2026-06-01",
+                  "end_date": "2026-09-30",
+                  "products": [
+                    "SRT5732"
+                  ],
+                  "promotion_type_code": "a3_flyer",
+                  "promotion_type_name": "A3 Flyer",
+                  "is_expired": false,
+                  "expired_but_usable": false
+                }
+              }
+            ],
+            "product": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRT5732-NL",
+                "uuid": "673a0f01-8359-48cb-9208-426083657f91",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRT5732-NL",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                    "brand_code": "NO LOGO",
+                    "brand_name": "NO LOGO"
+                  }
+                }
+              },
+              {
+                "entity_type": "product",
+                "canonical_code": "SRT5732",
+                "uuid": "8e111ff7-2050-41cb-8ea4-127bd7e3bb0f",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRT5732",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ]
+          },
+          "empty": false,
+          "unresolved_tokens": [],
+          "alternatives": [],
+          "token_coverage": [
+            {
+              "token": "SRT5732",
+              "match_semantics": "max_coverage",
+              "coverage": [
+                {
+                  "entity_type": "product",
+                  "matched_words": [
+                    "SRT5732"
+                  ],
+                  "unmatched_words": [],
+                  "truncated": false
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "disallowed-entity-gate": [
+      {
+        "json": {
+          "match_mode": "and",
+          "tokens": [
+            "SRT5732"
+          ],
+          "elapsed_ms": 71.16,
+          "intersection": [
+            {
+              "entity_type": "promotion",
+              "canonical_code": "057c76a1-12d3-40a5-9238-b0fb6ebfbab2",
+              "uuid": "057c76a1-12d3-40a5-9238-b0fb6ebfbab2",
+              "match_field": "promotion_membership",
+              "match_tier": "via_product",
+              "similarity": null,
+              "display": {
+                "description": "SORENTO GRAB BAR PROMO_07072026 DEALER.pdf",
+                "is_active": true,
+                "start_date": "2026-07-07",
+                "end_date": "2026-10-07",
+                "products": [
+                  "SRT5732"
+                ],
+                "promotion_type_code": "standard",
+                "promotion_type_name": "Standard Promo",
+                "is_expired": false,
+                "expired_but_usable": false
+              }
+            },
+            {
+              "entity_type": "promotion",
+              "canonical_code": "3f7087e1-8bd1-46b4-b5ae-7526d4ee29a1",
+              "uuid": "3f7087e1-8bd1-46b4-b5ae-7526d4ee29a1",
+              "match_field": "promotion_membership",
+              "match_tier": "via_product",
+              "similarity": null,
+              "display": {
+                "description": "SORENTO GRAB BAR PROMO_07072026 END USER.pdf",
+                "is_active": true,
+                "start_date": "2026-07-07",
+                "end_date": "2026-10-07",
+                "products": [
+                  "SRT5732"
+                ],
+                "promotion_type_code": "standard",
+                "promotion_type_name": "Standard Promo",
+                "is_expired": false,
+                "expired_but_usable": false
+              }
+            },
+            {
+              "entity_type": "promotion",
+              "canonical_code": "46e98ced-8e93-46e5-b866-96c85c99bf9d",
+              "uuid": "46e98ced-8e93-46e5-b866-96c85c99bf9d",
+              "match_field": "promotion_membership",
+              "match_tier": "via_product",
+              "similarity": null,
+              "display": {
+                "description": "SORENTO GRAB BAR PROMO_07072026 OFFICE.pdf",
+                "is_active": true,
+                "start_date": "2026-07-07",
+                "end_date": "2026-10-07",
+                "products": [
+                  "SRT5732"
+                ],
+                "promotion_type_code": "standard",
+                "promotion_type_name": "Standard Promo",
+                "is_expired": false,
+                "expired_but_usable": false
+              }
+            },
+            {
+              "entity_type": "promotion",
+              "canonical_code": "462c9f19-ecee-4a2d-9168-42b972a5475b",
+              "uuid": "462c9f19-ecee-4a2d-9168-42b972a5475b",
+              "match_field": "promotion_membership",
+              "match_tier": "via_product",
+              "similarity": null,
+              "display": {
+                "description": "UPDATED SORENTO A3 FLYER  2026 (DEALER)_21072026.pdf",
+                "is_active": true,
+                "start_date": "2026-06-01",
+                "end_date": "2026-09-30",
+                "products": [
+                  "SRT5732"
+                ],
+                "promotion_type_code": "a3_flyer",
+                "promotion_type_name": "A3 Flyer",
+                "is_expired": false,
+                "expired_but_usable": false
+              }
+            },
+            {
+              "entity_type": "promotion",
+              "canonical_code": "746d72b7-bfb4-4ccf-a15b-7a291856dcc5",
+              "uuid": "746d72b7-bfb4-4ccf-a15b-7a291856dcc5",
+              "match_field": "promotion_membership",
+              "match_tier": "via_product",
+              "similarity": null,
+              "display": {
+                "description": "UPDATED SORENTO A3 FLYER  2026 (OFFICE)_21072026.pdf",
+                "is_active": true,
+                "start_date": "2026-06-01",
+                "end_date": "2026-09-30",
+                "products": [
+                  "SRT5732"
+                ],
+                "promotion_type_code": "a3_flyer",
+                "promotion_type_name": "A3 Flyer",
+                "is_expired": false,
+                "expired_but_usable": false
+              }
+            },
+            {
+              "entity_type": "promotion",
+              "canonical_code": "e265f3b5-0e0d-4b1b-a601-781b75f695fd",
+              "uuid": "e265f3b5-0e0d-4b1b-a601-781b75f695fd",
+              "match_field": "promotion_membership",
+              "match_tier": "via_product",
+              "similarity": null,
+              "display": {
+                "description": "@ SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                "is_active": true,
+                "start_date": "2026-06-01",
+                "end_date": "2026-09-30",
+                "products": [
+                  "SRT5732"
+                ],
+                "promotion_type_code": "a3_flyer",
+                "promotion_type_name": "A3 Flyer",
+                "is_expired": false,
+                "expired_but_usable": false
+              }
+            },
+            {
+              "entity_type": "promotion",
+              "canonical_code": "0a75b2e9-a436-4dcb-af1c-4b73cd8778c3",
+              "uuid": "0a75b2e9-a436-4dcb-af1c-4b73cd8778c3",
+              "match_field": "promotion_membership",
+              "match_tier": "via_product",
+              "similarity": null,
+              "display": {
+                "description": "@ SORENTO A3 FLYER_OFFICE USE_11062026.pdf",
+                "is_active": true,
+                "start_date": "2026-06-01",
+                "end_date": "2026-09-30",
+                "products": [
+                  "SRT5732"
+                ],
+                "promotion_type_code": "a3_flyer",
+                "promotion_type_name": "A3 Flyer",
+                "is_expired": false,
+                "expired_but_usable": false
+              }
+            },
+            {
+              "entity_type": "product",
+              "canonical_code": "SRT5732-NL",
+              "uuid": "673a0f01-8359-48cb-9208-426083657f91",
+              "match_field": "product_code",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "product_name": "SRT5732-NL",
+                "is_active": true,
+                "brand": {
+                  "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                  "brand_code": "NO LOGO",
+                  "brand_name": "NO LOGO"
+                }
+              }
+            },
+            {
+              "entity_type": "product",
+              "canonical_code": "SRT5732",
+              "uuid": "8e111ff7-2050-41cb-8ea4-127bd7e3bb0f",
+              "match_field": "product_code",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "product_name": "SRT5732",
+                "is_active": true,
+                "brand": {
+                  "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                  "brand_code": "SORENTO",
+                  "brand_name": "SORENTO"
+                }
+              }
+            }
+          ],
+          "by_entity_type": {
+            "promotion": [
+              {
+                "entity_type": "promotion",
+                "canonical_code": "057c76a1-12d3-40a5-9238-b0fb6ebfbab2",
+                "uuid": "057c76a1-12d3-40a5-9238-b0fb6ebfbab2",
+                "match_field": "promotion_membership",
+                "match_tier": "via_product",
+                "similarity": null,
+                "display": {
+                  "description": "SORENTO GRAB BAR PROMO_07072026 DEALER.pdf",
+                  "is_active": true,
+                  "start_date": "2026-07-07",
+                  "end_date": "2026-10-07",
+                  "products": [
+                    "SRT5732"
+                  ],
+                  "promotion_type_code": "standard",
+                  "promotion_type_name": "Standard Promo",
+                  "is_expired": false,
+                  "expired_but_usable": false
+                }
+              },
+              {
+                "entity_type": "promotion",
+                "canonical_code": "3f7087e1-8bd1-46b4-b5ae-7526d4ee29a1",
+                "uuid": "3f7087e1-8bd1-46b4-b5ae-7526d4ee29a1",
+                "match_field": "promotion_membership",
+                "match_tier": "via_product",
+                "similarity": null,
+                "display": {
+                  "description": "SORENTO GRAB BAR PROMO_07072026 END USER.pdf",
+                  "is_active": true,
+                  "start_date": "2026-07-07",
+                  "end_date": "2026-10-07",
+                  "products": [
+                    "SRT5732"
+                  ],
+                  "promotion_type_code": "standard",
+                  "promotion_type_name": "Standard Promo",
+                  "is_expired": false,
+                  "expired_but_usable": false
+                }
+              },
+              {
+                "entity_type": "promotion",
+                "canonical_code": "46e98ced-8e93-46e5-b866-96c85c99bf9d",
+                "uuid": "46e98ced-8e93-46e5-b866-96c85c99bf9d",
+                "match_field": "promotion_membership",
+                "match_tier": "via_product",
+                "similarity": null,
+                "display": {
+                  "description": "SORENTO GRAB BAR PROMO_07072026 OFFICE.pdf",
+                  "is_active": true,
+                  "start_date": "2026-07-07",
+                  "end_date": "2026-10-07",
+                  "products": [
+                    "SRT5732"
+                  ],
+                  "promotion_type_code": "standard",
+                  "promotion_type_name": "Standard Promo",
+                  "is_expired": false,
+                  "expired_but_usable": false
+                }
+              },
+              {
+                "entity_type": "promotion",
+                "canonical_code": "462c9f19-ecee-4a2d-9168-42b972a5475b",
+                "uuid": "462c9f19-ecee-4a2d-9168-42b972a5475b",
+                "match_field": "promotion_membership",
+                "match_tier": "via_product",
+                "similarity": null,
+                "display": {
+                  "description": "UPDATED SORENTO A3 FLYER  2026 (DEALER)_21072026.pdf",
+                  "is_active": true,
+                  "start_date": "2026-06-01",
+                  "end_date": "2026-09-30",
+                  "products": [
+                    "SRT5732"
+                  ],
+                  "promotion_type_code": "a3_flyer",
+                  "promotion_type_name": "A3 Flyer",
+                  "is_expired": false,
+                  "expired_but_usable": false
+                }
+              },
+              {
+                "entity_type": "promotion",
+                "canonical_code": "746d72b7-bfb4-4ccf-a15b-7a291856dcc5",
+                "uuid": "746d72b7-bfb4-4ccf-a15b-7a291856dcc5",
+                "match_field": "promotion_membership",
+                "match_tier": "via_product",
+                "similarity": null,
+                "display": {
+                  "description": "UPDATED SORENTO A3 FLYER  2026 (OFFICE)_21072026.pdf",
+                  "is_active": true,
+                  "start_date": "2026-06-01",
+                  "end_date": "2026-09-30",
+                  "products": [
+                    "SRT5732"
+                  ],
+                  "promotion_type_code": "a3_flyer",
+                  "promotion_type_name": "A3 Flyer",
+                  "is_expired": false,
+                  "expired_but_usable": false
+                }
+              },
+              {
+                "entity_type": "promotion",
+                "canonical_code": "e265f3b5-0e0d-4b1b-a601-781b75f695fd",
+                "uuid": "e265f3b5-0e0d-4b1b-a601-781b75f695fd",
+                "match_field": "promotion_membership",
+                "match_tier": "via_product",
+                "similarity": null,
+                "display": {
+                  "description": "@ SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+                  "is_active": true,
+                  "start_date": "2026-06-01",
+                  "end_date": "2026-09-30",
+                  "products": [
+                    "SRT5732"
+                  ],
+                  "promotion_type_code": "a3_flyer",
+                  "promotion_type_name": "A3 Flyer",
+                  "is_expired": false,
+                  "expired_but_usable": false
+                }
+              },
+              {
+                "entity_type": "promotion",
+                "canonical_code": "0a75b2e9-a436-4dcb-af1c-4b73cd8778c3",
+                "uuid": "0a75b2e9-a436-4dcb-af1c-4b73cd8778c3",
+                "match_field": "promotion_membership",
+                "match_tier": "via_product",
+                "similarity": null,
+                "display": {
+                  "description": "@ SORENTO A3 FLYER_OFFICE USE_11062026.pdf",
+                  "is_active": true,
+                  "start_date": "2026-06-01",
+                  "end_date": "2026-09-30",
+                  "products": [
+                    "SRT5732"
+                  ],
+                  "promotion_type_code": "a3_flyer",
+                  "promotion_type_name": "A3 Flyer",
+                  "is_expired": false,
+                  "expired_but_usable": false
+                }
+              }
+            ],
+            "product": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRT5732-NL",
+                "uuid": "673a0f01-8359-48cb-9208-426083657f91",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRT5732-NL",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "f2ca6703-3aff-4431-87a2-6aa5e86eb747",
+                    "brand_code": "NO LOGO",
+                    "brand_name": "NO LOGO"
+                  }
+                }
+              },
+              {
+                "entity_type": "product",
+                "canonical_code": "SRT5732",
+                "uuid": "8e111ff7-2050-41cb-8ea4-127bd7e3bb0f",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRT5732",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ]
+          },
+          "empty": false,
+          "unresolved_tokens": [],
+          "alternatives": [],
+          "token_coverage": [
+            {
+              "token": "SRT5732",
+              "match_semantics": "max_coverage",
+              "coverage": [
+                {
+                  "entity_type": "product",
+                  "matched_words": [
+                    "SRT5732"
+                  ],
+                  "unmatched_words": [],
+                  "truncated": false
+                }
+              ]
+            }
+          ],
+          "gate_passed": true,
+          "require_specific": false,
+          "resolved_company": "sorento",
+          "company_team": "marketing_promotion_sorento",
+          "resolved_companies": [
+            "sorento"
+          ],
+          "routing_brand": null,
+          "routing_brand_source": null,
+          "routing_companies": [
+            {
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "brand_code": null,
+              "codes": [
+                "SRT5732-NL",
+                "SRT5732"
+              ]
+            }
+          ],
+          "routing_company": "00000000-0000-0000-0000-000000000001",
+          "access_denied_levels": [],
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "access_notice": "",
+          "gate_reason": "ok",
+          "gate_clarification": "",
+          "compatible_entities": [
+            {
+              "uuid": "057c76a1-12d3-40a5-9238-b0fb6ebfbab2",
+              "entity_type": "promotion",
+              "code": "057c76a1-12d3-40a5-9238-b0fb6ebfbab2"
+            },
+            {
+              "uuid": "3f7087e1-8bd1-46b4-b5ae-7526d4ee29a1",
+              "entity_type": "promotion",
+              "code": "3f7087e1-8bd1-46b4-b5ae-7526d4ee29a1"
+            },
+            {
+              "uuid": "46e98ced-8e93-46e5-b866-96c85c99bf9d",
+              "entity_type": "promotion",
+              "code": "46e98ced-8e93-46e5-b866-96c85c99bf9d"
+            },
+            {
+              "uuid": "462c9f19-ecee-4a2d-9168-42b972a5475b",
+              "entity_type": "promotion",
+              "code": "462c9f19-ecee-4a2d-9168-42b972a5475b"
+            },
+            {
+              "uuid": "746d72b7-bfb4-4ccf-a15b-7a291856dcc5",
+              "entity_type": "promotion",
+              "code": "746d72b7-bfb4-4ccf-a15b-7a291856dcc5"
+            },
+            {
+              "uuid": "e265f3b5-0e0d-4b1b-a601-781b75f695fd",
+              "entity_type": "promotion",
+              "code": "e265f3b5-0e0d-4b1b-a601-781b75f695fd"
+            },
+            {
+              "uuid": "0a75b2e9-a436-4dcb-af1c-4b73cd8778c3",
+              "entity_type": "promotion",
+              "code": "0a75b2e9-a436-4dcb-af1c-4b73cd8778c3"
+            },
+            {
+              "uuid": "673a0f01-8359-48cb-9208-426083657f91",
+              "entity_type": "product",
+              "code": "SRT5732-NL"
+            },
+            {
+              "uuid": "8e111ff7-2050-41cb-8ea4-127bd7e3bb0f",
+              "entity_type": "product",
+              "code": "SRT5732"
+            }
+          ],
+          "gate_debug": {
+            "domain": "promotion",
+            "allowed_lookup": [
+              "product",
+              "promotion",
+              "category",
+              "brand"
+            ],
+            "entities_count": 9
+          }
+        }
+      }
+    ],
+    "If3": [],
+    "Execute 'sub-get-rag'": [
+      {
+        "json": {
+          "tools": [
+            {
+              "name": "crm_marketing_promotions_list",
+              "similarity": 0.48180257500441814
+            }
+          ]
+        }
+      }
+    ],
+    "tool-filter": [
+      {
+        "json": {
+          "name": "crm_marketing_promotions_list",
+          "similarity": 0.48180257500441814,
+          "_tool_pick": {
+            "chosen": "crm_marketing_promotions_list",
+            "rejected": [],
+            "count": 1,
+            "has_product": true
+          }
+        }
+      }
+    ],
+    "if-tier-ask": [
+      {
+        "json": {
+          "name": "crm_marketing_promotions_list",
+          "similarity": 0.48180257500441814,
+          "_tool_pick": {
+            "chosen": "crm_marketing_promotions_list",
+            "rejected": [],
+            "count": 1,
+            "has_product": true
+          }
+        }
+      }
+    ],
+    "tier-probe-plan": [
+      {
+        "json": {
+          "name": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_stated": [],
+          "entitled_tiers": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "entitled_unknown": [],
+          "query_brands": [],
+          "pending_pick": false,
+          "tier_ask": true,
+          "tier_proceed": false,
+          "access_levels_recomposed": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_probe_plan": [
+            {
+              "tier": "dealer",
+              "access_levels": [
+                "Sorento Dealer",
+                "Mocha Dealer",
+                "Cabana Dealer"
+              ]
+            },
+            {
+              "tier": "office",
+              "access_levels": [
+                "Sorento Office",
+                "Mocha Office"
+              ]
+            },
+            {
+              "tier": "end_user",
+              "access_levels": [
+                "End User"
+              ]
+            }
+          ],
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "probe_tier": "dealer",
+          "probe_access_levels": [
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Cabana Dealer"
+          ],
+          "probe_skipped": false
+        }
+      },
+      {
+        "json": {
+          "name": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_stated": [],
+          "entitled_tiers": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "entitled_unknown": [],
+          "query_brands": [],
+          "pending_pick": false,
+          "tier_ask": true,
+          "tier_proceed": false,
+          "access_levels_recomposed": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_probe_plan": [
+            {
+              "tier": "dealer",
+              "access_levels": [
+                "Sorento Dealer",
+                "Mocha Dealer",
+                "Cabana Dealer"
+              ]
+            },
+            {
+              "tier": "office",
+              "access_levels": [
+                "Sorento Office",
+                "Mocha Office"
+              ]
+            },
+            {
+              "tier": "end_user",
+              "access_levels": [
+                "End User"
+              ]
+            }
+          ],
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "probe_tier": "office",
+          "probe_access_levels": [
+            "Sorento Office",
+            "Mocha Office"
+          ],
+          "probe_skipped": false
+        }
+      },
+      {
+        "json": {
+          "name": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_stated": [],
+          "entitled_tiers": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "entitled_unknown": [],
+          "query_brands": [],
+          "pending_pick": false,
+          "tier_ask": true,
+          "tier_proceed": false,
+          "access_levels_recomposed": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_probe_plan": [
+            {
+              "tier": "dealer",
+              "access_levels": [
+                "Sorento Dealer",
+                "Mocha Dealer",
+                "Cabana Dealer"
+              ]
+            },
+            {
+              "tier": "office",
+              "access_levels": [
+                "Sorento Office",
+                "Mocha Office"
+              ]
+            },
+            {
+              "tier": "end_user",
+              "access_levels": [
+                "End User"
+              ]
+            }
+          ],
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "probe_tier": "end_user",
+          "probe_access_levels": [
+            "End User"
+          ],
+          "probe_skipped": false
+        }
+      }
+    ],
+    "tier-probe": [
+      {
+        "json": {
+          "response": "I have attached the file(s) below.\n\n1. *Promotion:* UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf\n*Start Date:* 2026-06-01\n*End Date:* 2026-09-30\n\n2. *Promotion:* SORENTO GRAB BAR PROMO_07072026 DEALER.pdf\n*Start Date:* 2026-07-07\n*End Date:* 2026-10-07\n\n3. *Promotion:* SORENTO A3 FLYER_DEALER USE_11062026.pdf\n*Start Date:* 2026-06-01\n*End Date:* 2026-09-30\n\n_Data last updated: 06/08/2026 16:49:17_",
+          "response_intro": "I have attached the file(s) below.",
+          "answers": [
+            {
+              "title": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+              "fields": [
+                {
+                  "label": "Promotion",
+                  "value": "UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf"
+                },
+                {
+                  "label": "Start Date",
+                  "value": "2026-06-01"
+                },
+                {
+                  "label": "End Date",
+                  "value": "2026-09-30"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            },
+            {
+              "title": "SORENTO GRAB BAR PROMO_07072026 DEALER.pdf",
+              "fields": [
+                {
+                  "label": "Promotion",
+                  "value": "SORENTO GRAB BAR PROMO_07072026 DEALER.pdf"
+                },
+                {
+                  "label": "Start Date",
+                  "value": "2026-07-07"
+                },
+                {
+                  "label": "End Date",
+                  "value": "2026-10-07"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            },
+            {
+              "title": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+              "fields": [
+                {
+                  "label": "Promotion",
+                  "value": "SORENTO A3 FLYER_DEALER USE_11062026.pdf"
+                },
+                {
+                  "label": "Start Date",
+                  "value": "2026-06-01"
+                },
+                {
+                  "label": "End Date",
+                  "value": "2026-09-30"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            }
+          ],
+          "attachments": [
+            {
+              "url": "https://cdn-sorento.com/promotion/fba70095-04ed-43f7-9a74-f110a8c8bd33/UPDATED SORENTO A3 FLYER  2026 DEALER_21072026.pdf",
+              "filename": "UPDATED SORENTO A3 FLYER  2026 (DEALER)_21072026.pdf",
+              "mimeType": "application/pdf",
+              "attachmentType": "Promotion",
+              "uploadedAt": "2026-07-21T10:16:13.951700"
+            },
+            {
+              "url": "https://cdn-sorento.com/promotion/6c058d47-b21b-4102-9907-9aebee3bb7fa/SORENTO GRAB BAR PROMO_07072026 DEALER.pdf",
+              "filename": "SORENTO GRAB BAR PROMO_07072026 DEALER.pdf",
+              "mimeType": "application/pdf",
+              "attachmentType": "Promotion",
+              "uploadedAt": "2026-08-06T16:49:17.342814"
+            },
+            {
+              "url": "https://cdn-sorento.com/promotion/506bc1a9-c6ea-4b74-8ea4-e02ce45afa36/SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+              "filename": "SORENTO A3 FLYER_DEALER USE_11062026.pdf",
+              "mimeType": "application/pdf",
+              "attachmentType": "Promotion",
+              "uploadedAt": "2026-07-07T10:52:28.225605"
+            }
+          ],
+          "action_links": [],
+          "last_updated_at": "2026-08-06T16:49:17.342814",
+          "has_result": true,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false
+        }
+      },
+      {
+        "json": {
+          "response": "I have attached the file(s) below.\n\n1. *Promotion:* UPDATED SORENTO A3 FLYER  2026 OFFICE_21072026.pdf\n*Start Date:* 2026-06-01\n*End Date:* 2026-09-30\n\n2. *Promotion:* SORENTO GRAB BAR PROMO_07072026 OFFICE.pdf\n*Start Date:* 2026-07-07\n*End Date:* 2026-10-07\n\n3. *Promotion:* SORENTO A3 FLYER_OFFICE USE_11062026.pdf\n*Start Date:* 2026-06-01\n*End Date:* 2026-09-30\n\n_Data last updated: 06/08/2026 16:50:17_",
+          "response_intro": "I have attached the file(s) below.",
+          "answers": [
+            {
+              "title": "UPDATED SORENTO A3 FLYER  2026 OFFICE_21072026.pdf",
+              "fields": [
+                {
+                  "label": "Promotion",
+                  "value": "UPDATED SORENTO A3 FLYER  2026 OFFICE_21072026.pdf"
+                },
+                {
+                  "label": "Start Date",
+                  "value": "2026-06-01"
+                },
+                {
+                  "label": "End Date",
+                  "value": "2026-09-30"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            },
+            {
+              "title": "SORENTO GRAB BAR PROMO_07072026 OFFICE.pdf",
+              "fields": [
+                {
+                  "label": "Promotion",
+                  "value": "SORENTO GRAB BAR PROMO_07072026 OFFICE.pdf"
+                },
+                {
+                  "label": "Start Date",
+                  "value": "2026-07-07"
+                },
+                {
+                  "label": "End Date",
+                  "value": "2026-10-07"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            },
+            {
+              "title": "SORENTO A3 FLYER_OFFICE USE_11062026.pdf",
+              "fields": [
+                {
+                  "label": "Promotion",
+                  "value": "SORENTO A3 FLYER_OFFICE USE_11062026.pdf"
+                },
+                {
+                  "label": "Start Date",
+                  "value": "2026-06-01"
+                },
+                {
+                  "label": "End Date",
+                  "value": "2026-09-30"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            }
+          ],
+          "attachments": [
+            {
+              "url": "https://cdn-sorento.com/promotion/7832d8f6-a30e-4794-ba84-8edabcd4f493/UPDATED SORENTO A3 FLYER  2026 OFFICE_21072026.pdf",
+              "filename": "UPDATED SORENTO A3 FLYER  2026 (OFFICE)_21072026.pdf",
+              "mimeType": "application/pdf",
+              "attachmentType": "Promotion",
+              "uploadedAt": "2026-07-21T10:16:42.020223"
+            },
+            {
+              "url": "https://cdn-sorento.com/promotion/38dd5106-68c5-418d-96c1-7179170c7fde/SORENTO GRAB BAR PROMO_07072026 OFFICE.pdf",
+              "filename": "SORENTO GRAB BAR PROMO_07072026 OFFICE.pdf",
+              "mimeType": "application/pdf",
+              "attachmentType": "Promotion",
+              "uploadedAt": "2026-08-06T16:50:17.997291"
+            },
+            {
+              "url": "https://cdn-sorento.com/promotion/9451c419-ddc1-42d0-ab53-79f9ef1082ec/SORENTO A3 FLYER_OFFICE USE_11062026.pdf",
+              "filename": "@ SORENTO A3 FLYER_OFFICE USE_11062026.pdf",
+              "mimeType": "application/pdf",
+              "attachmentType": "Promotion",
+              "uploadedAt": "2026-07-07T10:54:04.074561"
+            }
+          ],
+          "action_links": [],
+          "last_updated_at": "2026-08-06T16:50:17.997291",
+          "has_result": true,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false
+        }
+      },
+      {
+        "json": {
+          "response": "I have attached the file(s) below.\n\n1. *Promotion:* _SORENTO A3 FLYER 2025-2026_compressed.pdf\n*Start Date:* 2025-12-01\n*End Date:* 2026-05-31\n\u26a0\ufe0f  *(EXPIRED)*\n\n2. *Promotion:* SORENTO GRAB BAR PROMO_07072026 END USER.pdf\n*Start Date:* 2026-07-07\n*End Date:* 2026-10-07\n\n3. *Promotion:* _SORENTO A3 FLYER 2025-2026_compressed.pdf\n*Start Date:* 2025-12-01\n*End Date:* 2026-05-31\n\u26a0\ufe0f  *(EXPIRED)*\n\n_Data last updated: 06/08/2026 16:49:43_",
+          "response_intro": "I have attached the file(s) below.",
+          "answers": [
+            {
+              "title": "_SORENTO A3 FLYER 2025-2026_compressed.pdf",
+              "fields": [
+                {
+                  "label": "Promotion",
+                  "value": "_SORENTO A3 FLYER 2025-2026_compressed.pdf"
+                },
+                {
+                  "label": "Start Date",
+                  "value": "2025-12-01"
+                },
+                {
+                  "label": "End Date",
+                  "value": "2026-05-31"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": true,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            },
+            {
+              "title": "SORENTO GRAB BAR PROMO_07072026 END USER.pdf",
+              "fields": [
+                {
+                  "label": "Promotion",
+                  "value": "SORENTO GRAB BAR PROMO_07072026 END USER.pdf"
+                },
+                {
+                  "label": "Start Date",
+                  "value": "2026-07-07"
+                },
+                {
+                  "label": "End Date",
+                  "value": "2026-10-07"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": false,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            },
+            {
+              "title": "_SORENTO A3 FLYER 2025-2026_compressed.pdf",
+              "fields": [
+                {
+                  "label": "Promotion",
+                  "value": "_SORENTO A3 FLYER 2025-2026_compressed.pdf"
+                },
+                {
+                  "label": "Start Date",
+                  "value": "2025-12-01"
+                },
+                {
+                  "label": "End Date",
+                  "value": "2026-05-31"
+                }
+              ],
+              "flags": {
+                "discontinued": false,
+                "expired": true,
+                "expiring_soon": false,
+                "unallocated": false,
+                "partially_allocated": false
+              }
+            }
+          ],
+          "attachments": [
+            {
+              "url": "https://cdn-sorento.com/promotion/180abf0c-4353-4ce6-8d5a-1ff68e650a7d/_SORENTO A3 FLYER 2025-2026_compressed.pdf",
+              "filename": "_SORENTO A3 FLYER 2025-2026_compressed.pdf",
+              "mimeType": "application/pdf",
+              "attachmentType": "Promotion",
+              "uploadedAt": "2026-05-14T16:43:10.387748"
+            },
+            {
+              "url": "https://cdn-sorento.com/promotion/94dee4ca-c245-401d-bb48-3cd45b4fd72f/SORENTO GRAB BAR PROMO_07072026 END USER.pdf",
+              "filename": "SORENTO GRAB BAR PROMO_07072026 END USER.pdf",
+              "mimeType": "application/pdf",
+              "attachmentType": "Promotion",
+              "uploadedAt": "2026-08-06T16:49:43.417893"
+            }
+          ],
+          "action_links": [],
+          "last_updated_at": "2026-08-06T16:49:43.417893",
+          "has_result": true,
+          "alternatives": [],
+          "relaxed_axis": null,
+          "field_access": null,
+          "requested_attributes": [],
+          "keys_served": false
+        }
+      }
+    ],
+    "tier-probe-collect": [
+      {
+        "json": {
+          "name": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_stated": [],
+          "entitled_tiers": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "entitled_unknown": [],
+          "query_brands": [],
+          "pending_pick": false,
+          "tier_ask": true,
+          "tier_proceed": false,
+          "access_levels_recomposed": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_probe_plan": [
+            {
+              "tier": "dealer",
+              "access_levels": [
+                "Sorento Dealer",
+                "Mocha Dealer",
+                "Cabana Dealer"
+              ]
+            },
+            {
+              "tier": "office",
+              "access_levels": [
+                "Sorento Office",
+                "Mocha Office"
+              ]
+            },
+            {
+              "tier": "end_user",
+              "access_levels": [
+                "End User"
+              ]
+            }
+          ],
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "tier_availability": {
+            "dealer": true,
+            "office": true,
+            "end_user": true
+          },
+          "tier_available_list": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "tier_any_available": true,
+          "_tier_probe_count": 3,
+          "_tier_probe_planned": 3
+        }
+      }
+    ],
+    "if-tier-has-any": [
+      {
+        "json": {
+          "name": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_stated": [],
+          "entitled_tiers": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "entitled_unknown": [],
+          "query_brands": [],
+          "pending_pick": false,
+          "tier_ask": true,
+          "tier_proceed": false,
+          "access_levels_recomposed": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_probe_plan": [
+            {
+              "tier": "dealer",
+              "access_levels": [
+                "Sorento Dealer",
+                "Mocha Dealer",
+                "Cabana Dealer"
+              ]
+            },
+            {
+              "tier": "office",
+              "access_levels": [
+                "Sorento Office",
+                "Mocha Office"
+              ]
+            },
+            {
+              "tier": "end_user",
+              "access_levels": [
+                "End User"
+              ]
+            }
+          ],
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "tier_availability": {
+            "dealer": true,
+            "office": true,
+            "end_user": true
+          },
+          "tier_available_list": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "tier_any_available": true,
+          "_tier_probe_count": 3,
+          "_tier_probe_planned": 3
+        }
+      }
+    ],
+    "access-level-choice-message": [
+      {
+        "json": {
+          "name": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_stated": [],
+          "entitled_tiers": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "entitled_unknown": [],
+          "query_brands": [],
+          "pending_pick": false,
+          "tier_ask": true,
+          "tier_proceed": false,
+          "access_levels_recomposed": [
+            "Sorento Office",
+            "Sorento Dealer",
+            "Mocha Dealer",
+            "Mocha Office",
+            "Cabana Dealer",
+            "End User"
+          ],
+          "tier_probe_plan": [
+            {
+              "tier": "dealer",
+              "access_levels": [
+                "Sorento Dealer",
+                "Mocha Dealer",
+                "Cabana Dealer"
+              ]
+            },
+            {
+              "tier": "office",
+              "access_levels": [
+                "Sorento Office",
+                "Mocha Office"
+              ]
+            },
+            {
+              "tier": "end_user",
+              "access_levels": [
+                "End User"
+              ]
+            }
+          ],
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "tier_availability": {
+            "dealer": true,
+            "office": true,
+            "end_user": true
+          },
+          "tier_available_list": [
+            "dealer",
+            "office",
+            "end_user"
+          ],
+          "tier_any_available": true,
+          "_tier_probe_count": 3,
+          "_tier_probe_planned": 3,
+          "tier_offer": true,
+          "tier_last_result_set": [
+            {
+              "idx": 1,
+              "label": "Office",
+              "value": "office",
+              "tier": "office",
+              "uuid": null,
+              "entity_type": "access_tier",
+              "product": null,
+              "filename": null
+            },
+            {
+              "idx": 2,
+              "label": "Dealer",
+              "value": "dealer",
+              "tier": "dealer",
+              "uuid": null,
+              "entity_type": "access_tier",
+              "product": null,
+              "filename": null
+            },
+            {
+              "idx": 3,
+              "label": "End user",
+              "value": "end_user",
+              "tier": "end_user",
+              "uuid": null,
+              "entity_type": "access_tier",
+              "product": null,
+              "filename": null
+            }
+          ],
+          "escalate_message": "Which access level do you need for SRT5732?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+          "is_clarification": true,
+          "quick_reply": ""
+        }
+      }
+    ],
+    "tag-access-choice": [
+      {
+        "json": {
+          "branch_kind": "access_choice"
+        }
+      }
+    ],
+    "escalate-catalog": [
+      {
+        "json": {
+          "branch_kind": "access_choice",
+          "response": "Which access level do you need for SRT5732?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+          "manualResponse": true,
+          "includeResponse": true,
+          "is_escalate_offer": false
+        }
+      }
+    ],
+    "cs-offer-gate": [],
+    "compile-current-state": [
+      {
+        "json": {
+          "variables": {
+            "message_type": "business_query",
+            "intent_hint": "check_promotion",
+            "domain_hint": "promotion",
+            "user_goal": "trying to check the promotion for SRT5732",
+            "query_brands": [],
+            "access_levels": [],
+            "entities": [
+              {
+                "raw": "SRT5732",
+                "hint": "product",
+                "canonical_code": "SRT5732",
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "routing": {
+              "suggested_team": "marketing_promotion",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "response": "Which access level do you need for SRT5732?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+            "last_result_set": [
+              {
+                "idx": 1,
+                "label": "Office",
+                "value": "office",
+                "tier": "office",
+                "uuid": null,
+                "entity_type": "access_tier",
+                "product": null,
+                "filename": null
+              },
+              {
+                "idx": 2,
+                "label": "Dealer",
+                "value": "dealer",
+                "tier": "dealer",
+                "uuid": null,
+                "entity_type": "access_tier",
+                "product": null,
+                "filename": null
+              },
+              {
+                "idx": 3,
+                "label": "End user",
+                "value": "end_user",
+                "tier": "end_user",
+                "uuid": null,
+                "entity_type": "access_tier",
+                "product": null,
+                "filename": null
+              }
+            ],
+            "selection_context": "tier_offer",
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "date_mode": null,
+            "match_mode": "and",
+            "contains_flyer": false,
+            "dym_offer": null,
+            "dym_candidates": [],
+            "ideation": null,
+            "routing_roster_plan": null,
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "routing_companies": [
+              {
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "brand_code": null,
+                "codes": [
+                  "SRT5732-NL",
+                  "SRT5732"
+                ]
+              }
+            ]
+          },
+          "user_response": "Which access level do you need for SRT5732?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+          "quick_reply": null
+        }
+      }
+    ],
+    "crossdomain-compose": [
+      {
+        "json": {
+          "variables": {
+            "message_type": "business_query",
+            "intent_hint": "check_promotion",
+            "domain_hint": "promotion",
+            "user_goal": "trying to check the promotion for SRT5732",
+            "query_brands": [],
+            "access_levels": [],
+            "entities": [
+              {
+                "raw": "SRT5732",
+                "hint": "product",
+                "canonical_code": "SRT5732",
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "routing": {
+              "suggested_team": "marketing_promotion",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "response": "Which access level do you need for SRT5732?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+            "last_result_set": [
+              {
+                "idx": 1,
+                "label": "Office",
+                "value": "office",
+                "tier": "office",
+                "uuid": null,
+                "entity_type": "access_tier",
+                "product": null,
+                "filename": null
+              },
+              {
+                "idx": 2,
+                "label": "Dealer",
+                "value": "dealer",
+                "tier": "dealer",
+                "uuid": null,
+                "entity_type": "access_tier",
+                "product": null,
+                "filename": null
+              },
+              {
+                "idx": 3,
+                "label": "End user",
+                "value": "end_user",
+                "tier": "end_user",
+                "uuid": null,
+                "entity_type": "access_tier",
+                "product": null,
+                "filename": null
+              }
+            ],
+            "selection_context": "tier_offer",
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "date_mode": null,
+            "match_mode": "and",
+            "contains_flyer": false,
+            "dym_offer": null,
+            "dym_candidates": [],
+            "ideation": null,
+            "routing_roster_plan": null,
+            "routing_brand": null,
+            "routing_brand_source": null,
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "routing_companies": [
+              {
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "brand_code": null,
+                "codes": [
+                  "SRT5732-NL",
+                  "SRT5732"
+                ]
+              }
+            ]
+          },
+          "user_response": "Which access level do you need for SRT5732?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+          "quick_reply": null
+        }
+      }
+    ],
+    "sorento-sub-respond-sendmsg-respond2": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "Execution Data": [
+      {
+        "json": {
+          "success": true
+        }
+      }
+    ],
+    "attach-merge": [
+      {
+        "json": {
+          "attachments": []
+        }
+      }
+    ],
+    "if-got-attachments": [],
+    "save-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000004",
+          "session_vars": {
+            "variables": {
+              "message_type": "business_query",
+              "intent_hint": "check_promotion",
+              "domain_hint": "promotion",
+              "user_goal": "trying to check the promotion for SRT5732",
+              "query_brands": [],
+              "access_levels": [],
+              "entities": [
+                {
+                  "raw": "SRT5732",
+                  "hint": "product",
+                  "canonical_code": "SRT5732",
+                  "current_message": true,
+                  "confident": true
+                }
+              ],
+              "routing": {
+                "suggested_team": "marketing_promotion",
+                "suggested_agent": "general_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "response": "Which access level do you need for SRT5732?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+              "last_result_set": [
+                {
+                  "idx": 1,
+                  "label": "Office",
+                  "value": "office",
+                  "tier": "office",
+                  "uuid": null,
+                  "entity_type": "access_tier",
+                  "product": null,
+                  "filename": null
+                },
+                {
+                  "idx": 2,
+                  "label": "Dealer",
+                  "value": "dealer",
+                  "tier": "dealer",
+                  "uuid": null,
+                  "entity_type": "access_tier",
+                  "product": null,
+                  "filename": null
+                },
+                {
+                  "idx": 3,
+                  "label": "End user",
+                  "value": "end_user",
+                  "tier": "end_user",
+                  "uuid": null,
+                  "entity_type": "access_tier",
+                  "product": null,
+                  "filename": null
+                }
+              ],
+              "selection_context": "tier_offer",
+              "date_filter_start": null,
+              "date_filter_end": null,
+              "date_mode": null,
+              "match_mode": "and",
+              "contains_flyer": false,
+              "dym_offer": null,
+              "dym_candidates": [],
+              "ideation": null,
+              "routing_roster_plan": null,
+              "routing_brand": null,
+              "routing_brand_source": null,
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "routing_companies": [
+                {
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "brand_code": null,
+                  "codes": [
+                    "SRT5732-NL",
+                    "SRT5732"
+                  ]
+                }
+              ]
+            },
+            "user_response": "Which access level do you need for SRT5732?\n1. Office - has promotion\n2. Dealer - has promotion\n3. End user - has promotion\nReply with the number(s), e.g. \"1\", \"1 and 2\", or \"all\".",
+            "quick_reply": null
+          }
+        }
+      }
+    ],
+    "Call 'sub-respond-save-message-redis'2": [
+      {
+        "json": {
+          "contact_id": 900000004,
+          "phone_number": "<redacted>",
+          "message": "promotion SRT5732",
+          "sent_at": 1787373509357,
+          "turn_id": "13449430",
+          "data": "{\"contact_id\":\"900000004\",\"phone_number\":\"+60100000003\",\"message\":\"promotion SRT5732\",\"sent_at\":1787373499000,\"first_name\":\"Person 20\",\"last_name\":\"Person 19\",\"reply_to_message_id\":null,\"reply_to_message\":null,\"type\":\"incoming\",\"message_id\":\"1787373499000000\",\"turn_id\":\"13449430\",\"state_trace\":{\"v\":1,\"before\":{\"routing\":{\"suggested_team\":\"warehouse\",\"suggested_agent\":\"general_enquiries\"},\"entities\":[{\"raw\":\"SRT5732\",\"hint\":\"product\",\"confident\":true,\"canonical_code\":\"SRT5732\",\"current_message\":true}],\"ideation\":null,\"response\":\"Previous turn (inventory): returned 11 records\",\"date_mode\":null,\"dym_offer\":null,\"user_goal\":\"trying to check stock for SRT5732\",\"escalation\":{\"is_escalation_confirmation\":false},\"match_mode\":\"and\",\"domain_hint\":\"inventory\",\"intent_hint\":\"check_stock\",\"message_type\":\"business_query\",\"query_brands\":[],\"access_levels\":[],\"routing_brand\":null,\"contains_flyer\":false,\"dym_candidates\":{\"n\":0,\"first\":null},\"date_filter_end\":null,\"last_result_set\":{\"n\":11,\"first\":\"SRT5732\"},\"routing_company\":\"00000000-0000-0000-0000-000000000001\",\"date_filter_start\":null,\"routing_companies\":[{\"codes\":[\"SRT5732-NL\",\"SRT5732\"],\"brand_code\":null,\"company_id\":\"00000000-0000-0000-0000-000000000001\",\"company_name\":\"Sorento\"}],\"selection_context\":null,\"routing_roster_plan\":null,\"routing_brand_source\":null},\"parser_raw\":{\"message_type\":\"business_query\",\"intent_hint\":\"check_promotion\",\"domain_hint\":\"promotion\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"trying to check the promotion for SRT5732\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"SRT5732\",\"hint\":\"product\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"marketing_promotion\",\"suggested_agent\":\"general_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false}},\"parser_applied\":{\"message_type\":\"business_query\",\"intent_hint\":\"check_promotion\",\"domain_hint\":\"promotion\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"trying to check the promotion for SRT5732\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"SRT5732\",\"hint\":\"product\",\"canonical_code\":null,\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"marketing_promotion\",\"suggested_agent\":\"general_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false},\"domain_signal_source\":\"intent_explicit\",\"scope_exclusive_applied\":false,\"entity_op_applied\":\"replace_combine\",\"query_brands\":[],\"entities_filtered\":false,\"entities_emptied_by_filter\":false},\"after\":{\"message_type\":\"business_query\",\"intent_hint\":\"check_promotion\",\"domain_hint\":\"promotion\",\"user_goal\":\"trying to check the promotion for SRT5732\",\"query_brands\":[],\"access_levels\":[],\"entities\":[{\"raw\":\"SRT5732\",\"hint\":\"product\",\"canonical_code\":\"SRT5732\",\"current_message\":true,\"confident\":true}],\"routing\":{\"suggested_team\":\"marketing_promotion\",\"suggested_agent\":\"general_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false},\"response\":\"Which access level do you need for SRT5732?\\n1. Office - has promotion\\n2. Dealer - has promotion\\n3. End user - has promotion\\nReply with the number(s), e.g. \\\"1\\\", \\\"1 and 2\\\", or \\\"all\\\".\",\"last_result_set\":{\"n\":3,\"first\":\"Office\"},\"selection_context\":\"tier_offer\",\"date_filter_start\":null,\"date_filter_end\":null,\"date_mode\":null,\"match_mode\":\"and\",\"contains_flyer\":false,\"dym_offer\":null,\"dym_candidates\":{\"n\":0,\"first\":null},\"ideation\":null,\"routing_roster_plan\":null,\"routing_brand\":null,\"routing_brand_source\":null,\"routing_company\":\"00000000-0000-0000-0000-000000000001\",\"routing_companies\":[{\"company_id\":\"00000000-0000-0000-0000-000000000001\",\"company_name\":\"Sorento\",\"brand_code\":null,\"codes\":[\"SRT5732-NL\",\"SRT5732\"]}]}}}"
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000004,
+              "firstName": "<redacted>",
+              "lastName": "<redacted>",
+              "phone": "<redacted>",
+              "email": "<redacted>",
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": "dealer"
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/ef6744dc-7b9a-4a80-a63b-6c7d16d5977e"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": null
+                }
+              ],
+              "tags": [],
+              "assignee": null,
+              "lifecycle": null,
+              "created_at": 1772721415
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "2a6cd2c5-f850-4016-91fc-ff3ca6f7fb4a",
+              "contact": {
+                "id": 900000004,
+                "firstName": "<redacted>",
+                "lastName": "<redacted>",
+                "phone": "<redacted>",
+                "email": "<redacted>",
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": "<redacted>",
+                  "lastName": "<redacted>",
+                  "email": "<redacted>"
+                },
+                "created_at": 1772721415
+              },
+              "message": {
+                "messageId": 1787373499000000,
+                "channelMessageId": "wamid.HBgLNjAxNjIwMjExNzkVAgASGBQzQUYyNjYwNjI1RTdEQ0UxNjA2RQA=",
+                "contactId": 900000004,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1787373499000,
+                "message": {
+                  "type": "text",
+                  "text": "promotion SRT5732"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": null,
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000004",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "entities": [
+                    {
+                      "raw": "SRT5732",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": "SRT5732",
+                      "current_message": true
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Previous turn (inventory): returned 11 records",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to check stock for SRT5732",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": "inventory",
+                  "intent_hint": "check_stock",
+                  "message_type": "business_query",
+                  "query_brands": [],
+                  "access_levels": [],
+                  "routing_brand": null,
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [
+                    {
+                      "idx": 1,
+                      "uuid": null,
+                      "label": "SRT5732",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 2,
+                      "uuid": null,
+                      "label": "SRT5732",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 3,
+                      "uuid": null,
+                      "label": "SRT5732",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 4,
+                      "uuid": null,
+                      "label": "SRT5732",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 5,
+                      "uuid": null,
+                      "label": "SRT5732",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 6,
+                      "uuid": null,
+                      "label": "SRT5732",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 7,
+                      "uuid": null,
+                      "label": "SRT5732",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 8,
+                      "uuid": null,
+                      "label": "SRT5732",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 9,
+                      "uuid": null,
+                      "label": "SRT5732",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 10,
+                      "uuid": null,
+                      "label": "SRT5732",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    },
+                    {
+                      "idx": 11,
+                      "uuid": null,
+                      "label": "SRT5732",
+                      "product": null,
+                      "filename": null,
+                      "entity_type": null,
+                      "attachment_type": null
+                    }
+                  ],
+                  "routing_company": "00000000-0000-0000-0000-000000000001",
+                  "date_filter_start": null,
+                  "routing_companies": [
+                    {
+                      "codes": [
+                        "SRT5732-NL",
+                        "SRT5732"
+                      ],
+                      "brand_code": null,
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento"
+                    }
+                  ],
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "routing_brand_source": null
+                },
+                "user_response": "Stock details found for the requested products.\n\n1. *Product Code:* SRT5732\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW\n*Quantity On Hand:* 94\n\n2. *Product Code:* SRT5732\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-AM\n*Quantity On Hand:* 1\n\n3. *Product Code:* SRT5732\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-BB\n*Quantity On Hand:* 89\n\n4. *Product Code:* SRT5732\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IB\n*Quantity On Hand:* 8\n\n5. *Product Code:* SRT5732\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-IR\n*Quantity On Hand:* 2\n\n6. *Product Code:* SRT5732\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-NTC\n*Quantity On Hand:* 10\n\n7. *Product Code:* SRT5732\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-S/L\n*Quantity On Hand:* 0\n\n8. *Product Code:* SRT5732\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SMC\n*Quantity On Hand:* 1\n\n9. *Product Code:* SRT5732\n*Warehouse:* BUKIT RAJA\n*System Location:* BRW-SYNT\n*Quantity On Hand:* 0\n\n10. *Product Code:* SRT5732\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-BB\n*Quantity On Hand:* 14\n\n11. *Product Code:* SRT5732\n*Warehouse:* WH3 (PSM)\n*System Location:* WH3-IB\n*Quantity On Hand:* 6\n\n_Data last updated: 21/08/2026 17:13:25_"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_promotion",
+                "domain_hint": "promotion",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check the promotion for SRT5732",
+                "access_levels": [],
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "SRT5732",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "marketing_promotion",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_promotion",
+                "domain_hint": "promotion",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check the promotion for SRT5732",
+                "access_levels": [],
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "SRT5732",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "marketing_promotion",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            }
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "name": [
+          "Sorento Office",
+          "Sorento Dealer",
+          "Mocha Dealer",
+          "Mocha Office",
+          "Cabana Dealer",
+          "End User"
+        ]
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "name": [
+          "Sorento Office",
+          "Sorento Dealer",
+          "Mocha Dealer",
+          "Mocha Office",
+          "Cabana Dealer",
+          "End User"
+        ],
+        "tier_stated": [],
+        "entitled_tiers": [
+          "dealer",
+          "office",
+          "end_user"
+        ],
+        "entitled_unknown": [],
+        "query_brands": [],
+        "pending_pick": false,
+        "tier_ask": true,
+        "tier_proceed": false,
+        "access_levels_recomposed": [
+          "Sorento Office",
+          "Sorento Dealer",
+          "Mocha Dealer",
+          "Mocha Office",
+          "Cabana Dealer",
+          "End User"
+        ],
+        "tier_probe_plan": [
+          {
+            "tier": "dealer",
+            "access_levels": [
+              "Sorento Dealer",
+              "Mocha Dealer",
+              "Cabana Dealer"
+            ]
+          },
+          {
+            "tier": "office",
+            "access_levels": [
+              "Sorento Office",
+              "Mocha Office"
+            ]
+          },
+          {
+            "tier": "end_user",
+            "access_levels": [
+              "End User"
+            ]
+          }
+        ],
+        "brand_gate_empty": false,
+        "brand_unheld": false
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "13449430"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "redis-pop-main-message-list",
+    "if-audio-in",
+    "tf-message",
+    "sorento-sub-respond-findcontact-respond",
+    "if-transcribed-confirm",
+    "is-human-intervened",
+    "if-message-is-audio",
+    "get-session-vars",
+    "Call 'sub-query-reformulator'",
+    "check-access",
+    "If5",
+    "If2",
+    "If-ideate",
+    "If10",
+    "is-escalation-declined",
+    "If9",
+    "If1",
+    "not-supported-domain",
+    "If",
+    "get-access-types",
+    "Aggregate",
+    "tier-gate",
+    "If4",
+    "resolve-entity",
+    "disallowed-entity-gate",
+    "If3",
+    "Execute 'sub-get-rag'",
+    "tool-filter",
+    "if-tier-ask",
+    "tier-probe-plan",
+    "tier-probe",
+    "tier-probe-collect",
+    "if-tier-has-any",
+    "access-level-choice-message",
+    "tag-access-choice",
+    "escalate-catalog",
+    "cs-offer-gate",
+    "compile-current-state",
+    "crossdomain-compose",
+    "sorento-sub-respond-sendmsg-respond2",
+    "Execution Data",
+    "attach-merge",
+    "if-got-attachments",
+    "save-session-vars",
+    "Call 'sub-respond-save-message-redis'2"
+  ]
+}

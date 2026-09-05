@@ -1,0 +1,1260 @@
+{
+  "source": {
+    "execution_id": "15007575",
+    "workflow_id": "S4N1LiisAqA4hpMC",
+    "workflow_version": "51f7b0d2-8027-4a7d-920b-6762226dac1f",
+    "node": "route-turn",
+    "captured_at": "2026-09-04T14:58:05+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "b95e980c43a91e160019a7182fa9b245c5a5bc3f20f1621434f735ec04fdb2e8"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "test": null,
+          "test_run_id": null,
+          "started_at": null,
+          "contact": "900000020"
+        }
+      }
+    ],
+    "redis-pop-main-message-list": [
+      {
+        "json": {
+          "message": {
+            "message": {
+              "event_type": "message.received",
+              "event_id": "c954816b-4d10-4f32-b5b5-5f5878716107",
+              "contact": {
+                "id": 900000020,
+                "firstName": "Person 38",
+                "lastName": "Person 39",
+                "phone": "+60100000011",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1775526461
+              },
+              "message": {
+                "messageId": 1788416535000000,
+                "channelMessageId": "wamid.HBgMNjAxMTM5OTE3ODAwFQIAEhgUM0FFNjg3REUyOUExODkyNEUzMkIA",
+                "contactId": 900000020,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788416535000,
+                "message": {
+                  "type": "text",
+                  "text": "Srtwt7203"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": null,
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "contact": {
+              "id": 900000020,
+              "firstName": "Person 38",
+              "lastName": "Person 39",
+              "phone": "+60100000011",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/23aaef94-6ff4-4d7f-9198-1eb9135814ed"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1775526461
+            }
+          }
+        }
+      }
+    ],
+    "media-intake": [
+      {
+        "json": {
+          "handled": false,
+          "item": {
+            "message": {
+              "message": {
+                "event_type": "message.received",
+                "event_id": "c954816b-4d10-4f32-b5b5-5f5878716107",
+                "contact": {
+                  "id": 900000020,
+                  "firstName": "Person 38",
+                  "lastName": "Person 39",
+                  "phone": "+60100000011",
+                  "email": null,
+                  "language": null,
+                  "profilePic": null,
+                  "countryCode": "MY",
+                  "status": "open",
+                  "assignee": {
+                    "id": null,
+                    "firstName": null,
+                    "lastName": null,
+                    "email": null
+                  },
+                  "created_at": 1775526461
+                },
+                "message": {
+                  "messageId": 1788416535000000,
+                  "channelMessageId": "wamid.HBgMNjAxMTM5OTE3ODAwFQIAEhgUM0FFNjg3REUyOUExODkyNEUzMkIA",
+                  "contactId": 900000020,
+                  "channelId": 453209,
+                  "traffic": "incoming",
+                  "timestamp": 1788416535000,
+                  "message": {
+                    "type": "text",
+                    "text": "Srtwt7203"
+                  }
+                },
+                "channel": {
+                  "id": 453209,
+                  "name": "Internal (+60 11-1673 1179)",
+                  "source": "whatsapp_business",
+                  "meta": null,
+                  "created_at": 1767682908
+                },
+                "sender": {
+                  "source": "contact",
+                  "userId": null,
+                  "teamId": null,
+                  "workflowId": null,
+                  "broadcastHistoryId": null
+                }
+              },
+              "contact": {
+                "id": 900000020,
+                "firstName": "Person 38",
+                "lastName": "Person 39",
+                "phone": "+60100000011",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "locale": null,
+                "countryCode": "MY",
+                "status": "open",
+                "isBlocked": false,
+                "custom_fields": [
+                  {
+                    "name": "enquiry_type",
+                    "value": null
+                  },
+                  {
+                    "name": "user_type",
+                    "value": null
+                  },
+                  {
+                    "name": "complaint_id",
+                    "value": null
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "backend_id",
+                    "value": "https://fe-sorento.foundryx.my/user-management/contacts/23aaef94-6ff4-4d7f-9198-1eb9135814ed"
+                  },
+                  {
+                    "name": "is_allowed_ai",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ],
+                "tags": [
+                  "imported_20260510_200514",
+                  "imported_20260627_150636"
+                ],
+                "assignee": null,
+                "lifecycle": "New Lead",
+                "created_at": 1775526461
+              }
+            },
+            "_media": {
+              "modality": null,
+              "attachment_type": null,
+              "media_url": null,
+              "mime_type": null,
+              "caption": "Srtwt7203",
+              "bytes": null,
+              "duration_ms": null,
+              "duration_source": null,
+              "message_id": "1788416535000000",
+              "respond_io_id": "900000020",
+              "test_run_id": null,
+              "scope": null
+            }
+          },
+          "media": null
+        }
+      }
+    ],
+    "media-gate": [
+      {
+        "json": {
+          "message": {
+            "message": {
+              "event_type": "message.received",
+              "event_id": "c954816b-4d10-4f32-b5b5-5f5878716107",
+              "contact": {
+                "id": 900000020,
+                "firstName": "Person 38",
+                "lastName": "Person 39",
+                "phone": "+60100000011",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1775526461
+              },
+              "message": {
+                "messageId": 1788416535000000,
+                "channelMessageId": "wamid.HBgMNjAxMTM5OTE3ODAwFQIAEhgUM0FFNjg3REUyOUExODkyNEUzMkIA",
+                "contactId": 900000020,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788416535000,
+                "message": {
+                  "type": "text",
+                  "text": "Srtwt7203"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": null,
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "contact": {
+              "id": 900000020,
+              "firstName": "Person 38",
+              "lastName": "Person 39",
+              "phone": "+60100000011",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/23aaef94-6ff4-4d7f-9198-1eb9135814ed"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1775526461
+            }
+          },
+          "_media": {
+            "modality": null,
+            "attachment_type": null,
+            "media_url": null,
+            "mime_type": null,
+            "caption": "Srtwt7203",
+            "bytes": null,
+            "duration_ms": null,
+            "duration_source": null,
+            "message_id": "1788416535000000",
+            "respond_io_id": "900000020",
+            "test_run_id": null,
+            "scope": null
+          }
+        }
+      }
+    ],
+    "tf-message": [
+      {
+        "json": {
+          "event_type": "message.received",
+          "event_id": "c954816b-4d10-4f32-b5b5-5f5878716107",
+          "contact": {
+            "id": 900000020,
+            "firstName": "Person 38",
+            "lastName": "Person 39",
+            "phone": "+60100000011",
+            "email": null,
+            "language": null,
+            "profilePic": null,
+            "countryCode": "MY",
+            "status": "open",
+            "assignee": {
+              "id": null,
+              "firstName": null,
+              "lastName": null,
+              "email": null
+            },
+            "created_at": 1775526461
+          },
+          "message": {
+            "messageId": 1788416535000000,
+            "channelMessageId": "wamid.HBgMNjAxMTM5OTE3ODAwFQIAEhgUM0FFNjg3REUyOUExODkyNEUzMkIA",
+            "contactId": 900000020,
+            "channelId": 453209,
+            "traffic": "incoming",
+            "timestamp": 1788416535000,
+            "message": {
+              "type": "text",
+              "text": "Srtwt7203"
+            }
+          },
+          "channel": {
+            "id": 453209,
+            "name": "Internal (+60 11-1673 1179)",
+            "source": "whatsapp_business",
+            "meta": null,
+            "created_at": 1767682908
+          },
+          "sender": {
+            "source": "contact",
+            "userId": null,
+            "teamId": null,
+            "workflowId": null,
+            "broadcastHistoryId": null
+          }
+        }
+      }
+    ],
+    "sorento-sub-respond-findcontact-respond": [
+      {
+        "json": {
+          "id": 900000020,
+          "firstName": "Person 38",
+          "lastName": "Person 39",
+          "phone": "+60100000011",
+          "email": null,
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/23aaef94-6ff4-4d7f-9198-1eb9135814ed"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "tags": [
+            "imported_20260510_200514",
+            "imported_20260627_150636"
+          ],
+          "assignee": null,
+          "lifecycle": "New Lead",
+          "created_at": 1775526461
+        }
+      }
+    ],
+    "Execution Data": [
+      {
+        "json": {
+          "id": 900000020,
+          "firstName": "Person 38",
+          "lastName": "Person 39",
+          "phone": "+60100000011",
+          "email": null,
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/23aaef94-6ff4-4d7f-9198-1eb9135814ed"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "tags": [
+            "imported_20260510_200514",
+            "imported_20260627_150636"
+          ],
+          "assignee": null,
+          "lifecycle": "New Lead",
+          "created_at": 1775526461
+        }
+      }
+    ],
+    "is-human-intervened": [
+      {
+        "json": {
+          "id": 900000020,
+          "firstName": "Person 38",
+          "lastName": "Person 39",
+          "phone": "+60100000011",
+          "email": null,
+          "language": null,
+          "profilePic": null,
+          "locale": null,
+          "countryCode": "MY",
+          "status": "open",
+          "isBlocked": false,
+          "custom_fields": [
+            {
+              "name": "enquiry_type",
+              "value": null
+            },
+            {
+              "name": "user_type",
+              "value": null
+            },
+            {
+              "name": "complaint_id",
+              "value": null
+            },
+            {
+              "name": "is_allowed_stock",
+              "value": "true"
+            },
+            {
+              "name": "is_human_intervened",
+              "value": "false"
+            },
+            {
+              "name": "backend_id",
+              "value": "https://fe-sorento.foundryx.my/user-management/contacts/23aaef94-6ff4-4d7f-9198-1eb9135814ed"
+            },
+            {
+              "name": "is_allowed_ai",
+              "value": "true"
+            },
+            {
+              "name": "is_allowed_voice",
+              "value": "true"
+            }
+          ],
+          "tags": [
+            "imported_20260510_200514",
+            "imported_20260627_150636"
+          ],
+          "assignee": null,
+          "lifecycle": "New Lead",
+          "created_at": 1775526461
+        }
+      }
+    ],
+    "if-message-is-audio": [],
+    "Call 'sub-respond-save-message-redis'2": [
+      {
+        "json": {
+          "contact_id": 900000020,
+          "phone_number": "+60100000011",
+          "message": "Srtwt7203",
+          "sent_at": 1788416541135,
+          "turn_id": "15007575",
+          "data": "{\"contact_id\":\"900000020\",\"phone_number\":\"+60100000011\",\"message\":\"Srtwt7203\",\"sent_at\":1788416535000,\"first_name\":\"Person 38\",\"last_name\":\"Person 39\",\"reply_to_message_id\":null,\"reply_to_message\":null,\"type\":\"incoming\",\"message_id\":\"1788416535000000\",\"turn_id\":\"15007575\",\"state_trace\":{\"v\":1,\"before\":null,\"parser_raw\":null,\"parser_applied\":null,\"after\":null}}"
+        }
+      }
+    ],
+    "get-session-vars": [
+      {
+        "json": {
+          "respond_io_id": "900000020",
+          "session_vars": {
+            "variables": {
+              "response": "text"
+            },
+            "user_response": "text"
+          }
+        }
+      }
+    ],
+    "Call 'sub-query-reformulator'": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": null,
+            "domain_hint": null,
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to check the item Srtwt7203",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "Srtwt7203",
+                "hint": "product",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "customer_service",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_none",
+            "scope_exclusive_applied": false,
+            "entity_op_applied": "replace_combine",
+            "query_brands": []
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": null,
+            "domain_hint": null,
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to check the item Srtwt7203",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "Srtwt7203",
+                "hint": "product",
+                "canonical_code": null,
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": null,
+              "suggested_agent": null
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ],
+    "check-access": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000020,
+              "firstName": "Person 38",
+              "lastName": "Person 39",
+              "phone": "+60100000011",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "locale": null,
+              "countryCode": "MY",
+              "status": "open",
+              "isBlocked": false,
+              "custom_fields": [
+                {
+                  "name": "enquiry_type",
+                  "value": null
+                },
+                {
+                  "name": "user_type",
+                  "value": null
+                },
+                {
+                  "name": "complaint_id",
+                  "value": null
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "backend_id",
+                  "value": "https://fe-sorento.foundryx.my/user-management/contacts/23aaef94-6ff4-4d7f-9198-1eb9135814ed"
+                },
+                {
+                  "name": "is_allowed_ai",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ],
+              "tags": [
+                "imported_20260510_200514",
+                "imported_20260627_150636"
+              ],
+              "assignee": null,
+              "lifecycle": "New Lead",
+              "created_at": 1775526461
+            },
+            "text": {
+              "event_type": "message.received",
+              "event_id": "c954816b-4d10-4f32-b5b5-5f5878716107",
+              "contact": {
+                "id": 900000020,
+                "firstName": "Person 38",
+                "lastName": "Person 39",
+                "phone": "+60100000011",
+                "email": null,
+                "language": null,
+                "profilePic": null,
+                "countryCode": "MY",
+                "status": "open",
+                "assignee": {
+                  "id": null,
+                  "firstName": null,
+                  "lastName": null,
+                  "email": null
+                },
+                "created_at": 1775526461
+              },
+              "message": {
+                "messageId": 1788416535000000,
+                "channelMessageId": "wamid.HBgMNjAxMTM5OTE3ODAwFQIAEhgUM0FFNjg3REUyOUExODkyNEUzMkIA",
+                "contactId": 900000020,
+                "channelId": 453209,
+                "traffic": "incoming",
+                "timestamp": 1788416535000,
+                "message": {
+                  "type": "text",
+                  "text": "Srtwt7203"
+                }
+              },
+              "channel": {
+                "id": 453209,
+                "name": "Internal (+60 11-1673 1179)",
+                "source": "whatsapp_business",
+                "meta": null,
+                "created_at": 1767682908
+              },
+              "sender": {
+                "source": "contact",
+                "userId": null,
+                "teamId": null,
+                "workflowId": null,
+                "broadcastHistoryId": null
+              }
+            },
+            "session": {
+              "respond_io_id": "900000020",
+              "session_vars": {
+                "variables": {
+                  "response": "text"
+                },
+                "user_response": "text"
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check the item Srtwt7203",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Srtwt7203",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "customer_service",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_none",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": []
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": null,
+                "domain_hint": null,
+                "scope_intent": null,
+                "is_affirmative": null,
+                "user_goal": "trying to check the item Srtwt7203",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "Srtwt7203",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": null,
+                  "suggested_agent": null
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          }
+        }
+      }
+    ],
+    "route-turn": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "low_signal"
+        }
+      }
+    ],
+    "route": [],
+    "Call 'sub-casual-llm'": [
+      {
+        "json": {
+          "text": "{\n  \"response\": \"Could you please specify what information you need for item SRTWT7203?\"\n}"
+        }
+      }
+    ],
+    "casual-gate": [],
+    "Call 'sub-answer'1": [
+      {
+        "json": {
+          "response": "Could you please specify what information you need for item SRTWT7203?",
+          "_offer": false,
+          "dym_probe_entities": [],
+          "dym_candidate_codes": [],
+          "dym_excluded_codes": [],
+          "dym_capped_codes": [],
+          "probe_cap_applied": false,
+          "probe_tool": null,
+          "probe_noun": null,
+          "probe_predicate": null,
+          "probe_needed": false,
+          "probe_skip_reason": "domain_not_enabled",
+          "probe_lane": "d1",
+          "_dym_probe_input": true,
+          "outcome_fragment": {
+            "central-exchange": {
+              "response": "Could you please specify what information you need for item SRTWT7203?"
+            },
+            "build-miss-member-offer": null,
+            "dym-annotate-partial": null
+          }
+        }
+      }
+    ],
+    "Call 'sub-output'6": []
+  },
+  "input": [
+    {
+      "json": {
+        "ctx": {
+          "contact": {
+            "id": 900000020,
+            "firstName": "Person 38",
+            "lastName": "Person 39",
+            "phone": "+60100000011",
+            "email": null,
+            "language": null,
+            "profilePic": null,
+            "locale": null,
+            "countryCode": "MY",
+            "status": "open",
+            "isBlocked": false,
+            "custom_fields": [
+              {
+                "name": "enquiry_type",
+                "value": null
+              },
+              {
+                "name": "user_type",
+                "value": null
+              },
+              {
+                "name": "complaint_id",
+                "value": null
+              },
+              {
+                "name": "is_allowed_stock",
+                "value": "true"
+              },
+              {
+                "name": "is_human_intervened",
+                "value": "false"
+              },
+              {
+                "name": "backend_id",
+                "value": "https://fe-sorento.foundryx.my/user-management/contacts/23aaef94-6ff4-4d7f-9198-1eb9135814ed"
+              },
+              {
+                "name": "is_allowed_ai",
+                "value": "true"
+              },
+              {
+                "name": "is_allowed_voice",
+                "value": "true"
+              }
+            ],
+            "tags": [
+              "imported_20260510_200514",
+              "imported_20260627_150636"
+            ],
+            "assignee": null,
+            "lifecycle": "New Lead",
+            "created_at": 1775526461
+          },
+          "text": {
+            "event_type": "message.received",
+            "event_id": "c954816b-4d10-4f32-b5b5-5f5878716107",
+            "contact": {
+              "id": 900000020,
+              "firstName": "Person 38",
+              "lastName": "Person 39",
+              "phone": "+60100000011",
+              "email": null,
+              "language": null,
+              "profilePic": null,
+              "countryCode": "MY",
+              "status": "open",
+              "assignee": {
+                "id": null,
+                "firstName": null,
+                "lastName": null,
+                "email": null
+              },
+              "created_at": 1775526461
+            },
+            "message": {
+              "messageId": 1788416535000000,
+              "channelMessageId": "wamid.HBgMNjAxMTM5OTE3ODAwFQIAEhgUM0FFNjg3REUyOUExODkyNEUzMkIA",
+              "contactId": 900000020,
+              "channelId": 453209,
+              "traffic": "incoming",
+              "timestamp": 1788416535000,
+              "message": {
+                "type": "text",
+                "text": "Srtwt7203"
+              }
+            },
+            "channel": {
+              "id": 453209,
+              "name": "Internal (+60 11-1673 1179)",
+              "source": "whatsapp_business",
+              "meta": null,
+              "created_at": 1767682908
+            },
+            "sender": {
+              "source": "contact",
+              "userId": null,
+              "teamId": null,
+              "workflowId": null,
+              "broadcastHistoryId": null
+            }
+          },
+          "session": {
+            "respond_io_id": "900000020",
+            "session_vars": {
+              "variables": {
+                "response": "text"
+              },
+              "user_response": "text"
+            }
+          },
+          "parse": {
+            "output": {
+              "message_type": "business_query",
+              "intent_hint": null,
+              "domain_hint": null,
+              "scope_intent": null,
+              "is_affirmative": null,
+              "user_goal": "trying to check the item Srtwt7203",
+              "access_levels": [],
+              "broaden_axis": null,
+              "date_mode": null,
+              "date_filter_start": null,
+              "date_filter_end": null,
+              "match_mode": "and",
+              "demand_qty": null,
+              "entities": [
+                {
+                  "raw": "Srtwt7203",
+                  "hint": "product",
+                  "canonical_code": null,
+                  "current_message": true,
+                  "confident": true
+                }
+              ],
+              "entity_op": "replace_combine",
+              "scope_exclusive": false,
+              "requested_attributes": [],
+              "contains_flyer": false,
+              "reference_positions": [],
+              "reference_target": null,
+              "person_mention": null,
+              "is_active": null,
+              "order_status": null,
+              "correction": false,
+              "routing": {
+                "suggested_team": "customer_service",
+                "suggested_agent": "general_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "domain_signal_source": "intent_none",
+              "scope_exclusive_applied": false,
+              "entity_op_applied": "replace_combine",
+              "query_brands": []
+            },
+            "_parser_raw": {
+              "message_type": "business_query",
+              "intent_hint": null,
+              "domain_hint": null,
+              "scope_intent": null,
+              "is_affirmative": null,
+              "user_goal": "trying to check the item Srtwt7203",
+              "access_levels": [],
+              "broaden_axis": null,
+              "date_mode": null,
+              "date_filter_start": null,
+              "date_filter_end": null,
+              "match_mode": "and",
+              "demand_qty": null,
+              "entities": [
+                {
+                  "raw": "Srtwt7203",
+                  "hint": "product",
+                  "canonical_code": null,
+                  "current_message": true,
+                  "confident": true
+                }
+              ],
+              "entity_op": "replace_combine",
+              "scope_exclusive": false,
+              "requested_attributes": [],
+              "contains_flyer": false,
+              "reference_positions": [],
+              "reference_target": null,
+              "person_mention": null,
+              "is_active": null,
+              "order_status": null,
+              "correction": false,
+              "routing": {
+                "suggested_team": null,
+                "suggested_agent": null
+              },
+              "escalation": {
+                "is_escalation_confirmation": false,
+                "company_pick": null
+              }
+            }
+          },
+          "access": {
+            "allowed": true,
+            "decision": "allow",
+            "agent_name": "General Enquiries",
+            "attributes": null,
+            "all_attributes_allowed": null
+          },
+          "media": null
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "allowed": true,
+        "decision": "allow",
+        "agent_name": "General Enquiries",
+        "attributes": null,
+        "all_attributes_allowed": null,
+        "branch_kind": "low_signal"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "15007575"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "redis-pop-main-message-list",
+    "media-intake",
+    "media-gate",
+    "tf-message",
+    "sorento-sub-respond-findcontact-respond",
+    "Execution Data",
+    "is-human-intervened",
+    "if-message-is-audio",
+    "Call 'sub-respond-save-message-redis'2",
+    "get-session-vars",
+    "Call 'sub-query-reformulator'",
+    "check-access",
+    "build-ctx",
+    "route-turn",
+    "route",
+    "Call 'sub-casual-llm'",
+    "casual-gate",
+    "Call 'sub-answer'1",
+    "Call 'sub-output'6"
+  ]
+}

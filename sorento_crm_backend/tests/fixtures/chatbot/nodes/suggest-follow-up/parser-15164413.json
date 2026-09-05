@@ -1,0 +1,535 @@
+{
+  "source": {
+    "execution_id": "15164413",
+    "workflow_id": "XTODTw-dJcV0uRdC056hG",
+    "workflow_version": "ab3ec985-5371-4ee3-b6e5-8a23e3aef7df",
+    "node": "suggest-follow-up",
+    "captured_at": "2026-09-04T15:04:42+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "93c5a90b55ec8d0dbe8d60474d84139eed377ecf51565d9051617377574e952f"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "latest_user_message": "Container status\n\n",
+          "contact_id": 900000021,
+          "previous_conversation_state": {
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "entities": [
+              {
+                "raw": "SRTWC8518-SH",
+                "hint": "inbound_shipment",
+                "confident": true,
+                "canonical_code": null,
+                "current_message": true
+              }
+            ],
+            "ideation": null,
+            "response": "Previous turn (incoming): returned 5 records",
+            "date_mode": null,
+            "dym_offer": null,
+            "user_goal": "trying to check incoming for SRTWC8518-SH",
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "match_mode": "and",
+            "domain_hint": "incoming",
+            "intent_hint": "check_incoming",
+            "message_type": "business_query",
+            "query_brands": [],
+            "access_levels": [],
+            "routing_brand": "sorento",
+            "contains_flyer": false,
+            "dym_candidates": [],
+            "date_filter_end": null,
+            "last_result_set": [
+              {
+                "idx": 1,
+                "uuid": null,
+                "label": "SRTWC8518-SH",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 2,
+                "uuid": null,
+                "label": "SRTWC8518-SH",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 3,
+                "uuid": null,
+                "label": "SRTWC8518-SH",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 4,
+                "uuid": null,
+                "label": "SRTWC8518-SH",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              },
+              {
+                "idx": 5,
+                "uuid": null,
+                "label": "SRTWC8518-SH",
+                "product": null,
+                "filename": null,
+                "entity_type": null,
+                "attachment_type": null
+              }
+            ],
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "date_filter_start": null,
+            "routing_companies": [
+              {
+                "codes": [
+                  "SRTWC8518-SH"
+                ],
+                "labels": [
+                  "SRTWC8518-SH"
+                ],
+                "brand_code": "sorento",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento"
+              }
+            ],
+            "selection_context": null,
+            "routing_roster_plan": null,
+            "requested_attributes": [],
+            "routing_brand_source": "resolved"
+          },
+          "is_test": null,
+          "mock_reformulator_output": null
+        }
+      }
+    ],
+    "test-reformulator-bypass": [],
+    "OpenAI Chat Model": [],
+    "AI Agent": [
+      {
+        "json": {
+          "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"get_resource_attachment\",\"domain_hint\":\"resource_attachment\",\"scope_intent\":null,\"is_affirmative\":null,\"user_goal\":\"trying to get the container status file\",\"access_levels\":[],\"broaden_axis\":null,\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"Container status\",\"hint\":\"attachment\",\"canonical_code\":\"container status\",\"current_message\":true,\"confident\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"warehouse\",\"suggested_agent\":\"general_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false,\"company_pick\":null}}"
+        }
+      }
+    ],
+    "output_exchange": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "get_resource_attachment",
+            "domain_hint": "resource_attachment",
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to get the container status file",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "Container status",
+                "hint": "attachment",
+                "canonical_code": "container status",
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "scope_exclusive_applied": false,
+            "entity_op_applied": "replace_combine",
+            "query_brands": [],
+            "entities_filtered": true,
+            "entities_emptied_by_filter": false,
+            "broaden_dropped": [
+              "inbound_shipment:SRTWC8518-SH"
+            ]
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "get_resource_attachment",
+            "domain_hint": "resource_attachment",
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to get the container status file",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "Container status",
+                "hint": "attachment",
+                "canonical_code": "container status",
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "warehouse",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ],
+    "suggest-follow-up": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "get_resource_attachment",
+            "domain_hint": "resource_attachment",
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to get the container status file",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "Container status",
+                "hint": "attachment",
+                "canonical_code": "container status",
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_explicit",
+            "scope_exclusive_applied": false,
+            "entity_op_applied": "replace_combine",
+            "query_brands": [],
+            "entities_filtered": true,
+            "entities_emptied_by_filter": false,
+            "broaden_dropped": [
+              "inbound_shipment:SRTWC8518-SH"
+            ]
+          },
+          "_parser_raw": {
+            "message_type": "business_query",
+            "intent_hint": "get_resource_attachment",
+            "domain_hint": "resource_attachment",
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to get the container status file",
+            "access_levels": [],
+            "broaden_axis": null,
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "Container status",
+                "hint": "attachment",
+                "canonical_code": "container status",
+                "current_message": true,
+                "confident": true
+              }
+            ],
+            "entity_op": "replace_combine",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [],
+            "reference_target": null,
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "warehouse",
+              "suggested_agent": "general_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false,
+              "company_pick": null
+            }
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "get_resource_attachment",
+          "domain_hint": "resource_attachment",
+          "scope_intent": null,
+          "is_affirmative": null,
+          "user_goal": "trying to get the container status file",
+          "access_levels": [],
+          "broaden_axis": null,
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "Container status",
+              "hint": "attachment",
+              "canonical_code": "container status",
+              "current_message": true,
+              "confident": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "purchasing",
+            "suggested_agent": "incoming_stock_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "domain_signal_source": "intent_explicit",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "entities_filtered": true,
+          "entities_emptied_by_filter": false,
+          "broaden_dropped": [
+            "inbound_shipment:SRTWC8518-SH"
+          ]
+        },
+        "_parser_raw": {
+          "message_type": "business_query",
+          "intent_hint": "get_resource_attachment",
+          "domain_hint": "resource_attachment",
+          "scope_intent": null,
+          "is_affirmative": null,
+          "user_goal": "trying to get the container status file",
+          "access_levels": [],
+          "broaden_axis": null,
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "Container status",
+              "hint": "attachment",
+              "canonical_code": "container status",
+              "current_message": true,
+              "confident": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "warehouse",
+            "suggested_agent": "general_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false,
+            "company_pick": null
+          }
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "get_resource_attachment",
+          "domain_hint": "resource_attachment",
+          "scope_intent": null,
+          "is_affirmative": null,
+          "user_goal": "trying to get the container status file",
+          "access_levels": [],
+          "broaden_axis": null,
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "Container status",
+              "hint": "attachment",
+              "canonical_code": "container status",
+              "current_message": true,
+              "confident": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "purchasing",
+            "suggested_agent": "incoming_stock_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "domain_signal_source": "intent_explicit",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "entities_filtered": true,
+          "entities_emptied_by_filter": false,
+          "broaden_dropped": [
+            "inbound_shipment:SRTWC8518-SH"
+          ]
+        },
+        "_parser_raw": {
+          "message_type": "business_query",
+          "intent_hint": "get_resource_attachment",
+          "domain_hint": "resource_attachment",
+          "scope_intent": null,
+          "is_affirmative": null,
+          "user_goal": "trying to get the container status file",
+          "access_levels": [],
+          "broaden_axis": null,
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "Container status",
+              "hint": "attachment",
+              "canonical_code": "container status",
+              "current_message": true,
+              "confident": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "warehouse",
+            "suggested_agent": "general_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false,
+            "company_pick": null
+          }
+        }
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "15164413"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "test-reformulator-bypass",
+    "OpenAI Chat Model",
+    "AI Agent",
+    "output_exchange",
+    "suggest-follow-up"
+  ]
+}

@@ -1,0 +1,441 @@
+{
+  "source": {
+    "execution_id": "13488927",
+    "workflow_id": "XTODTw-dJcV0uRdC056hG",
+    "node": "output_exchange",
+    "captured_at": "2026-08-22T11:43:43+00:00",
+    "expected_from": "runData"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "latest_user_message": "1\n\n",
+          "contact_id": 900000003,
+          "previous_conversation_state": {
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "entities": [
+              {
+                "raw": "MWC7625-SH",
+                "hint": "product",
+                "confident": true,
+                "canonical_code": "MWC7625-SH-S10",
+                "current_message": true
+              }
+            ],
+            "ideation": null,
+            "response": "Previous turn (incoming): returned 6 records",
+            "date_mode": null,
+            "dym_offer": null,
+            "user_goal": "trying to check incoming for MWC7625-SH",
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "match_mode": "and",
+            "domain_hint": "incoming",
+            "intent_hint": "check_incoming",
+            "message_type": "business_query",
+            "query_brands": [],
+            "access_levels": [],
+            "routing_brand": "mocha",
+            "contains_flyer": false,
+            "dym_candidates": [],
+            "date_filter_end": null,
+            "last_result_set": [
+              {
+                "idx": 1,
+                "uuid": "0f2fe976-c76c-417a-a7ce-e2ca7b6ad1b8",
+                "label": "MWC7625-SH-S10",
+                "product": "MWC7625-SH-S10",
+                "filename": null,
+                "entity_type": "product",
+                "attachment_type": null
+              },
+              {
+                "idx": 2,
+                "uuid": "096a7e93-ed3e-46e5-9ca9-7514ed8a0f2c",
+                "label": "MWC7625-SH-S12",
+                "product": "MWC7625-SH-S12",
+                "filename": null,
+                "entity_type": "product",
+                "attachment_type": null
+              },
+              {
+                "idx": 3,
+                "uuid": "7e301257-09f6-45ac-9167-35dc65eb78b5",
+                "label": "MWC7625-SH-S8",
+                "product": "MWC7625-SH-S8",
+                "filename": null,
+                "entity_type": "product",
+                "attachment_type": null
+              },
+              {
+                "idx": 4,
+                "uuid": "9c6ec42c-b177-4e3e-8f48-4352fc9a73af",
+                "label": "MWC7625-SH-S6",
+                "product": "MWC7625-SH-S6",
+                "filename": null,
+                "entity_type": "product",
+                "attachment_type": null
+              },
+              {
+                "idx": 5,
+                "uuid": "a7dfc428-f106-4367-8a59-3be98d2510e4",
+                "label": "MWC7625-SH-S10",
+                "product": "MWC7625-SH-S10",
+                "filename": null,
+                "entity_type": "product",
+                "attachment_type": null
+              },
+              {
+                "idx": 6,
+                "uuid": "ba22c2ba-99f9-4ee5-8311-959f79050afa",
+                "label": "MWC7625-SH-P",
+                "product": "MWC7625-SH-P",
+                "filename": null,
+                "entity_type": "product",
+                "attachment_type": null
+              }
+            ],
+            "routing_company": null,
+            "date_filter_start": null,
+            "routing_companies": [
+              {
+                "codes": [
+                  "MWC7625-SH-S12",
+                  "MWC7625-SH-S8",
+                  "MWC7625-SH-S6",
+                  "MWC7625-SH-S10",
+                  "MWC7625-SH-P"
+                ],
+                "brand_code": null,
+                "company_id": "38db4f20-ab6b-4bd0-a6fc-3a6728f0dee2",
+                "company_name": "Mocha"
+              },
+              {
+                "codes": [
+                  "MWC7625-SH-S10"
+                ],
+                "brand_code": "mocha",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento"
+              }
+            ],
+            "selection_context": "disambiguation",
+            "routing_roster_plan": null,
+            "routing_brand_source": "resolved"
+          },
+          "is_test": null,
+          "mock_reformulator_output": null
+        }
+      }
+    ],
+    "test-reformulator-bypass": [],
+    "OpenAI Chat Model": [],
+    "AI Agent": [
+      {
+        "json": {
+          "output": "{\"message_type\":\"clarification\",\"intent_hint\":null,\"domain_hint\":null,\"scope_intent\":null,\"is_affirmative\":null,\"user_goal\":\"trying to select the first result from the previous list\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"reuse\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[1],\"reference_target\":\"result\",\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+        }
+      }
+    ],
+    "output_exchange": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_incoming",
+            "domain_hint": "incoming",
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to select the first result from the previous list",
+            "access_levels": [],
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "MWC7625-SH-S10",
+                "hint": "product",
+                "ordinal": 1,
+                "current_message": true,
+                "uuid": "0f2fe976-c76c-417a-a7ce-e2ca7b6ad1b8",
+                "canonical_code": "MWC7625-SH-S10"
+              }
+            ],
+            "entity_op": "reuse",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [
+              1
+            ],
+            "reference_target": "result",
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_none",
+            "domain_reused_entityless": true,
+            "entity_op_applied": "reuse",
+            "query_brands": [],
+            "positions_resolved": 1,
+            "positions_out_of_range": [],
+            "domain_inherited_compatible": true,
+            "entities_filtered": false,
+            "entities_emptied_by_filter": false,
+            "_pending_pick": true
+          },
+          "_parser_raw": {
+            "message_type": "clarification",
+            "intent_hint": null,
+            "domain_hint": null,
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to select the first result from the previous list",
+            "access_levels": [],
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [],
+            "entity_op": "reuse",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [
+              1
+            ],
+            "reference_target": "result",
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": null,
+              "suggested_agent": null
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            }
+          }
+        }
+      }
+    ],
+    "suggest-follow-up": [
+      {
+        "json": {
+          "output": {
+            "message_type": "business_query",
+            "intent_hint": "check_incoming",
+            "domain_hint": "incoming",
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to select the first result from the previous list",
+            "access_levels": [],
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [
+              {
+                "raw": "MWC7625-SH-S10",
+                "hint": "product",
+                "ordinal": 1,
+                "current_message": true,
+                "uuid": "0f2fe976-c76c-417a-a7ce-e2ca7b6ad1b8",
+                "canonical_code": "MWC7625-SH-S10"
+              }
+            ],
+            "entity_op": "reuse",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [
+              1
+            ],
+            "reference_target": "result",
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            },
+            "domain_signal_source": "intent_none",
+            "domain_reused_entityless": true,
+            "entity_op_applied": "reuse",
+            "query_brands": [],
+            "positions_resolved": 1,
+            "positions_out_of_range": [],
+            "domain_inherited_compatible": true,
+            "entities_filtered": false,
+            "entities_emptied_by_filter": false,
+            "_pending_pick": true
+          },
+          "_parser_raw": {
+            "message_type": "clarification",
+            "intent_hint": null,
+            "domain_hint": null,
+            "scope_intent": null,
+            "is_affirmative": null,
+            "user_goal": "trying to select the first result from the previous list",
+            "access_levels": [],
+            "date_mode": null,
+            "date_filter_start": null,
+            "date_filter_end": null,
+            "match_mode": "and",
+            "demand_qty": null,
+            "entities": [],
+            "entity_op": "reuse",
+            "scope_exclusive": false,
+            "requested_attributes": [],
+            "contains_flyer": false,
+            "reference_positions": [
+              1
+            ],
+            "reference_target": "result",
+            "person_mention": null,
+            "is_active": null,
+            "order_status": null,
+            "correction": false,
+            "routing": {
+              "suggested_team": null,
+              "suggested_agent": null
+            },
+            "escalation": {
+              "is_escalation_confirmation": false
+            }
+          }
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "output": "{\"message_type\":\"clarification\",\"intent_hint\":null,\"domain_hint\":null,\"scope_intent\":null,\"is_affirmative\":null,\"user_goal\":\"trying to select the first result from the previous list\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"reuse\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[1],\"reference_target\":\"result\",\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "check_incoming",
+          "domain_hint": "incoming",
+          "scope_intent": null,
+          "is_affirmative": null,
+          "user_goal": "trying to select the first result from the previous list",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "MWC7625-SH-S10",
+              "hint": "product",
+              "ordinal": 1,
+              "current_message": true,
+              "uuid": "0f2fe976-c76c-417a-a7ce-e2ca7b6ad1b8",
+              "canonical_code": "MWC7625-SH-S10"
+            }
+          ],
+          "entity_op": "reuse",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [
+            1
+          ],
+          "reference_target": "result",
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "purchasing",
+            "suggested_agent": "incoming_stock_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "domain_signal_source": "intent_none",
+          "domain_reused_entityless": true,
+          "entity_op_applied": "reuse",
+          "query_brands": [],
+          "positions_resolved": 1,
+          "positions_out_of_range": [],
+          "domain_inherited_compatible": true,
+          "entities_filtered": false,
+          "entities_emptied_by_filter": false,
+          "_pending_pick": true
+        },
+        "_parser_raw": {
+          "message_type": "clarification",
+          "intent_hint": null,
+          "domain_hint": null,
+          "scope_intent": null,
+          "is_affirmative": null,
+          "user_goal": "trying to select the first result from the previous list",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [],
+          "entity_op": "reuse",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [
+            1
+          ],
+          "reference_target": "result",
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": null,
+            "suggested_agent": null
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          }
+        }
+      }
+    }
+  ],
+  "runIndex": 0,
+  "ran": [
+    "When Executed by Another Workflow",
+    "test-reformulator-bypass",
+    "OpenAI Chat Model",
+    "AI Agent",
+    "output_exchange",
+    "suggest-follow-up"
+  ]
+}

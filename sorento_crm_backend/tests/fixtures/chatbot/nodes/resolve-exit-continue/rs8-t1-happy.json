@@ -1,0 +1,4085 @@
+{
+  "source": {
+    "execution_id": "14605826",
+    "workflow_id": "1txF4azSeYlmBnJH",
+    "workflow_version": "70fa92bf-2af6-443a-b61c-1fe28063f24e",
+    "node": "resolve-exit-continue",
+    "captured_at": "2026-08-31T05:14:08+00:00",
+    "expected_from": "runData",
+    "dedupe_sig": "b37bd4dd922ae7d5a517e782d306e7ed51e87fec03e4a87b3ab70ed06715be6b"
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "ctx": {
+            "ctx": {
+              "contact": {
+                "id": 900000009,
+                "firstName": "Person 134",
+                "lastName": "Person 125",
+                "phone": "+900000009",
+                "countryCode": "MY",
+                "status": "active",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ]
+              },
+              "text": {
+                "event_type": "message.received",
+                "contact": {
+                  "id": 900000009,
+                  "firstName": "Person 134",
+                  "lastName": "Person 125",
+                  "phone": "+900000009",
+                  "countryCode": "MY",
+                  "status": "active",
+                  "custom_fields": [
+                    {
+                      "name": "is_human_intervened",
+                      "value": "false"
+                    },
+                    {
+                      "name": "is_allowed_stock",
+                      "value": "true"
+                    },
+                    {
+                      "name": "is_allowed_voice",
+                      "value": "true"
+                    }
+                  ]
+                },
+                "message": {
+                  "messageId": "qa-rs8-t1-happy-20260831b",
+                  "contactId": 900000009,
+                  "channelId": "whatsapp",
+                  "traffic": "incoming",
+                  "timestamp": 1788152309644,
+                  "message": {
+                    "type": "text",
+                    "text": "check srtwb7096"
+                  }
+                }
+              },
+              "session": {
+                "respond_io_id": "900000009",
+                "session_vars": {
+                  "variables": {
+                    "routing": {
+                      "suggested_team": "it_admin",
+                      "suggested_agent": "it_support"
+                    },
+                    "entities": [
+                      {
+                        "raw": "srtwc286",
+                        "hint": "product",
+                        "confident": true,
+                        "canonical_code": null,
+                        "current_message": false
+                      }
+                    ],
+                    "ideation": null,
+                    "response": "Informed the user that request is out of scope and will proceed to escalate to the it_admin team",
+                    "date_mode": null,
+                    "dym_offer": null,
+                    "user_goal": "trying to raise an IT ticket",
+                    "escalation": {
+                      "is_escalation_confirmation": false
+                    },
+                    "match_mode": "and",
+                    "domain_hint": null,
+                    "intent_hint": null,
+                    "message_type": "request_for_help",
+                    "query_brands": [
+                      "sorento"
+                    ],
+                    "access_levels": [
+                      "dealer"
+                    ],
+                    "routing_brand": null,
+                    "contains_flyer": false,
+                    "dym_candidates": [],
+                    "date_filter_end": null,
+                    "last_result_set": [],
+                    "routing_company": null,
+                    "date_filter_start": null,
+                    "routing_companies": null,
+                    "selection_context": null,
+                    "routing_roster_plan": null,
+                    "requested_attributes": [],
+                    "routing_brand_source": null
+                  }
+                }
+              },
+              "parse": {
+                "output": {
+                  "message_type": "business_query",
+                  "intent_hint": "check_stock",
+                  "domain_hint": "inventory",
+                  "scope_intent": "specific",
+                  "is_affirmative": null,
+                  "user_goal": "trying to check stock for SRTWB7096",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "SRTWB7096",
+                      "hint": "product",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "domain_signal_source": "intent_explicit",
+                  "scope_exclusive_applied": false,
+                  "entity_op_applied": "replace_combine",
+                  "query_brands": [],
+                  "entities_filtered": false,
+                  "entities_emptied_by_filter": false
+                },
+                "_parser_raw": {
+                  "message_type": "business_query",
+                  "intent_hint": "check_stock",
+                  "domain_hint": "inventory",
+                  "scope_intent": "specific",
+                  "is_affirmative": null,
+                  "user_goal": "trying to check stock for SRTWB7096",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "SRTWB7096",
+                      "hint": "product",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false,
+                    "company_pick": null
+                  }
+                }
+              },
+              "access": {
+                "allowed": true,
+                "decision": "allow",
+                "agent_name": "General Enquiries",
+                "attributes": null,
+                "all_attributes_allowed": null
+              },
+              "media": null
+            }
+          },
+          "entry": "resolve",
+          "item": {
+            "allowed": true,
+            "decision": "allow",
+            "agent_name": "General Enquiries",
+            "attributes": null,
+            "all_attributes_allowed": null,
+            "branch_kind": "business_query",
+            "entry": "resolve"
+          },
+          "is_test": true
+        }
+      }
+    ],
+    "build-ctx": [
+      {
+        "json": {
+          "ctx": {
+            "contact": {
+              "id": 900000009,
+              "firstName": "Person 134",
+              "lastName": "Person 125",
+              "phone": "+900000009",
+              "countryCode": "MY",
+              "status": "active",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ]
+            },
+            "text": {
+              "event_type": "message.received",
+              "contact": {
+                "id": 900000009,
+                "firstName": "Person 134",
+                "lastName": "Person 125",
+                "phone": "+900000009",
+                "countryCode": "MY",
+                "status": "active",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ]
+              },
+              "message": {
+                "messageId": "qa-rs8-t1-happy-20260831b",
+                "contactId": 900000009,
+                "channelId": "whatsapp",
+                "traffic": "incoming",
+                "timestamp": 1788152309644,
+                "message": {
+                  "type": "text",
+                  "text": "check srtwb7096"
+                }
+              }
+            },
+            "session": {
+              "respond_io_id": "900000009",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "it_admin",
+                    "suggested_agent": "it_support"
+                  },
+                  "entities": [
+                    {
+                      "raw": "srtwc286",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": false
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Informed the user that request is out of scope and will proceed to escalate to the it_admin team",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to raise an IT ticket",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": null,
+                  "intent_hint": null,
+                  "message_type": "request_for_help",
+                  "query_brands": [
+                    "sorento"
+                  ],
+                  "access_levels": [
+                    "dealer"
+                  ],
+                  "routing_brand": null,
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": null,
+                  "date_filter_start": null,
+                  "routing_companies": null,
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": null
+                }
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check stock for SRTWB7096",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "SRTWB7096",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check stock for SRTWB7096",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "SRTWB7096",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null
+          }
+        }
+      }
+    ],
+    "item": [
+      {
+        "json": {
+          "allowed": true,
+          "decision": "allow",
+          "agent_name": "General Enquiries",
+          "attributes": null,
+          "all_attributes_allowed": null,
+          "branch_kind": "business_query",
+          "entry": "resolve"
+        }
+      }
+    ],
+    "entry-gate": [],
+    "resolve-entity": [
+      {
+        "json": {
+          "match_mode": "and",
+          "tokens": [
+            "SRTWB7096"
+          ],
+          "elapsed_ms": 76.73,
+          "intersection": [
+            {
+              "entity_type": "product",
+              "canonical_code": "SRTWB7096",
+              "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+              "match_field": "product_code",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "product_name": "SRTWB7096",
+                "is_active": true,
+                "brand": {
+                  "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                  "brand_code": "SORENTO",
+                  "brand_name": "SORENTO"
+                }
+              }
+            }
+          ],
+          "by_entity_type": {
+            "product": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTWB7096",
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTWB7096",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ]
+          },
+          "empty": false,
+          "unresolved_tokens": [],
+          "alternatives": [],
+          "token_coverage": [
+            {
+              "token": "SRTWB7096",
+              "match_semantics": "max_coverage",
+              "coverage": [
+                {
+                  "entity_type": "product",
+                  "matched_words": [
+                    "SRTWB7096"
+                  ],
+                  "unmatched_words": [],
+                  "truncated": false
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "disallowed-entity-gate": [
+      {
+        "json": {
+          "match_mode": "and",
+          "tokens": [
+            "SRTWB7096"
+          ],
+          "elapsed_ms": 76.73,
+          "intersection": [
+            {
+              "entity_type": "product",
+              "canonical_code": "SRTWB7096",
+              "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+              "match_field": "product_code",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "product_name": "SRTWB7096",
+                "is_active": true,
+                "brand": {
+                  "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                  "brand_code": "SORENTO",
+                  "brand_name": "SORENTO"
+                }
+              }
+            }
+          ],
+          "by_entity_type": {
+            "product": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTWB7096",
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTWB7096",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ]
+          },
+          "empty": false,
+          "unresolved_tokens": [],
+          "alternatives": [],
+          "token_coverage": [
+            {
+              "token": "SRTWB7096",
+              "match_semantics": "max_coverage",
+              "coverage": [
+                {
+                  "entity_type": "product",
+                  "matched_words": [
+                    "SRTWB7096"
+                  ],
+                  "unmatched_words": [],
+                  "truncated": false
+                }
+              ]
+            }
+          ],
+          "gate_passed": true,
+          "require_specific": false,
+          "resolved_company": "sorento",
+          "company_team": null,
+          "resolved_companies": [
+            "sorento"
+          ],
+          "routing_brand": "sorento",
+          "routing_brand_source": "resolved",
+          "routing_companies": [
+            {
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "brand_code": "sorento",
+              "codes": [
+                "SRTWB7096"
+              ],
+              "labels": [
+                "SRTWB7096"
+              ]
+            }
+          ],
+          "routing_company": "00000000-0000-0000-0000-000000000001",
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "ok",
+          "gate_clarification": "",
+          "compatible_entities": [
+            {
+              "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+              "entity_type": "product",
+              "code": "SRTWB7096"
+            }
+          ],
+          "gate_debug": {
+            "domain": "inventory",
+            "allowed_lookup": [
+              "product",
+              "category",
+              "brand"
+            ],
+            "entities_count": 1
+          }
+        }
+      }
+    ],
+    "build-ctx-resolved": [
+      {
+        "json": {
+          "match_mode": "and",
+          "tokens": [
+            "SRTWB7096"
+          ],
+          "elapsed_ms": 76.73,
+          "intersection": [
+            {
+              "entity_type": "product",
+              "canonical_code": "SRTWB7096",
+              "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+              "match_field": "product_code",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "product_name": "SRTWB7096",
+                "is_active": true,
+                "brand": {
+                  "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                  "brand_code": "SORENTO",
+                  "brand_name": "SORENTO"
+                }
+              }
+            }
+          ],
+          "by_entity_type": {
+            "product": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTWB7096",
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTWB7096",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ]
+          },
+          "empty": false,
+          "unresolved_tokens": [],
+          "alternatives": [],
+          "token_coverage": [
+            {
+              "token": "SRTWB7096",
+              "match_semantics": "max_coverage",
+              "coverage": [
+                {
+                  "entity_type": "product",
+                  "matched_words": [
+                    "SRTWB7096"
+                  ],
+                  "unmatched_words": [],
+                  "truncated": false
+                }
+              ]
+            }
+          ],
+          "gate_passed": true,
+          "require_specific": false,
+          "resolved_company": "sorento",
+          "company_team": null,
+          "resolved_companies": [
+            "sorento"
+          ],
+          "routing_brand": "sorento",
+          "routing_brand_source": "resolved",
+          "routing_companies": [
+            {
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "brand_code": "sorento",
+              "codes": [
+                "SRTWB7096"
+              ],
+              "labels": [
+                "SRTWB7096"
+              ]
+            }
+          ],
+          "routing_company": "00000000-0000-0000-0000-000000000001",
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "ok",
+          "gate_clarification": "",
+          "compatible_entities": [
+            {
+              "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+              "entity_type": "product",
+              "code": "SRTWB7096"
+            }
+          ],
+          "gate_debug": {
+            "domain": "inventory",
+            "allowed_lookup": [
+              "product",
+              "category",
+              "brand"
+            ],
+            "entities_count": 1
+          },
+          "ctx": {
+            "contact": {
+              "id": 900000009,
+              "firstName": "Person 134",
+              "lastName": "Person 125",
+              "phone": "+900000009",
+              "countryCode": "MY",
+              "status": "active",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ]
+            },
+            "text": {
+              "event_type": "message.received",
+              "contact": {
+                "id": 900000009,
+                "firstName": "Person 134",
+                "lastName": "Person 125",
+                "phone": "+900000009",
+                "countryCode": "MY",
+                "status": "active",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ]
+              },
+              "message": {
+                "messageId": "qa-rs8-t1-happy-20260831b",
+                "contactId": 900000009,
+                "channelId": "whatsapp",
+                "traffic": "incoming",
+                "timestamp": 1788152309644,
+                "message": {
+                  "type": "text",
+                  "text": "check srtwb7096"
+                }
+              }
+            },
+            "session": {
+              "respond_io_id": "900000009",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "it_admin",
+                    "suggested_agent": "it_support"
+                  },
+                  "entities": [
+                    {
+                      "raw": "srtwc286",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": false
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Informed the user that request is out of scope and will proceed to escalate to the it_admin team",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to raise an IT ticket",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": null,
+                  "intent_hint": null,
+                  "message_type": "request_for_help",
+                  "query_brands": [
+                    "sorento"
+                  ],
+                  "access_levels": [
+                    "dealer"
+                  ],
+                  "routing_brand": null,
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": null,
+                  "date_filter_start": null,
+                  "routing_companies": null,
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": null
+                }
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check stock for SRTWB7096",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "SRTWB7096",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check stock for SRTWB7096",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "SRTWB7096",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null,
+            "resolved": {
+              "match_mode": "and",
+              "tokens": [
+                "SRTWB7096"
+              ],
+              "elapsed_ms": 76.73,
+              "intersection": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTWB7096",
+                  "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTWB7096",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ],
+              "by_entity_type": {
+                "product": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "SRTWB7096",
+                    "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "SRTWB7096",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                        "brand_code": "SORENTO",
+                        "brand_name": "SORENTO"
+                      }
+                    }
+                  }
+                ]
+              },
+              "empty": false,
+              "unresolved_tokens": [],
+              "alternatives": [],
+              "token_coverage": [
+                {
+                  "token": "SRTWB7096",
+                  "match_semantics": "max_coverage",
+                  "coverage": [
+                    {
+                      "entity_type": "product",
+                      "matched_words": [
+                        "SRTWB7096"
+                      ],
+                      "unmatched_words": [],
+                      "truncated": false
+                    }
+                  ]
+                }
+              ]
+            },
+            "entities": null,
+            "gate": {
+              "match_mode": "and",
+              "tokens": [
+                "SRTWB7096"
+              ],
+              "elapsed_ms": 76.73,
+              "intersection": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTWB7096",
+                  "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTWB7096",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ],
+              "by_entity_type": {
+                "product": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "SRTWB7096",
+                    "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "SRTWB7096",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                        "brand_code": "SORENTO",
+                        "brand_name": "SORENTO"
+                      }
+                    }
+                  }
+                ]
+              },
+              "empty": false,
+              "unresolved_tokens": [],
+              "alternatives": [],
+              "token_coverage": [
+                {
+                  "token": "SRTWB7096",
+                  "match_semantics": "max_coverage",
+                  "coverage": [
+                    {
+                      "entity_type": "product",
+                      "matched_words": [
+                        "SRTWB7096"
+                      ],
+                      "unmatched_words": [],
+                      "truncated": false
+                    }
+                  ]
+                }
+              ],
+              "gate_passed": true,
+              "require_specific": false,
+              "resolved_company": "sorento",
+              "company_team": null,
+              "resolved_companies": [
+                "sorento"
+              ],
+              "routing_brand": "sorento",
+              "routing_brand_source": "resolved",
+              "routing_companies": [
+                {
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "brand_code": "sorento",
+                  "codes": [
+                    "SRTWB7096"
+                  ],
+                  "labels": [
+                    "SRTWB7096"
+                  ]
+                }
+              ],
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "access_denied_levels": [],
+              "access_notice": "",
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "gate_reason": "ok",
+              "gate_clarification": "",
+              "compatible_entities": [
+                {
+                  "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                  "entity_type": "product",
+                  "code": "SRTWB7096"
+                }
+              ],
+              "gate_debug": {
+                "domain": "inventory",
+                "allowed_lookup": [
+                  "product",
+                  "category",
+                  "brand"
+                ],
+                "entities_count": 1
+              }
+            }
+          }
+        }
+      }
+    ],
+    "If3": [],
+    "resolve-exit-continue": [
+      {
+        "json": {
+          "match_mode": "and",
+          "tokens": [
+            "SRTWB7096"
+          ],
+          "elapsed_ms": 76.73,
+          "intersection": [
+            {
+              "entity_type": "product",
+              "canonical_code": "SRTWB7096",
+              "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+              "match_field": "product_code",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "product_name": "SRTWB7096",
+                "is_active": true,
+                "brand": {
+                  "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                  "brand_code": "SORENTO",
+                  "brand_name": "SORENTO"
+                }
+              }
+            }
+          ],
+          "by_entity_type": {
+            "product": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTWB7096",
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTWB7096",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ]
+          },
+          "empty": false,
+          "unresolved_tokens": [],
+          "alternatives": [],
+          "token_coverage": [
+            {
+              "token": "SRTWB7096",
+              "match_semantics": "max_coverage",
+              "coverage": [
+                {
+                  "entity_type": "product",
+                  "matched_words": [
+                    "SRTWB7096"
+                  ],
+                  "unmatched_words": [],
+                  "truncated": false
+                }
+              ]
+            }
+          ],
+          "gate_passed": true,
+          "require_specific": false,
+          "resolved_company": "sorento",
+          "company_team": null,
+          "resolved_companies": [
+            "sorento"
+          ],
+          "routing_brand": "sorento",
+          "routing_brand_source": "resolved",
+          "routing_companies": [
+            {
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "brand_code": "sorento",
+              "codes": [
+                "SRTWB7096"
+              ],
+              "labels": [
+                "SRTWB7096"
+              ]
+            }
+          ],
+          "routing_company": "00000000-0000-0000-0000-000000000001",
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "ok",
+          "gate_clarification": "",
+          "compatible_entities": [
+            {
+              "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+              "entity_type": "product",
+              "code": "SRTWB7096"
+            }
+          ],
+          "gate_debug": {
+            "domain": "inventory",
+            "allowed_lookup": [
+              "product",
+              "category",
+              "brand"
+            ],
+            "entities_count": 1
+          },
+          "ctx": {
+            "contact": {
+              "id": 900000009,
+              "firstName": "Person 134",
+              "lastName": "Person 125",
+              "phone": "+900000009",
+              "countryCode": "MY",
+              "status": "active",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ]
+            },
+            "text": {
+              "event_type": "message.received",
+              "contact": {
+                "id": 900000009,
+                "firstName": "Person 134",
+                "lastName": "Person 125",
+                "phone": "+900000009",
+                "countryCode": "MY",
+                "status": "active",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ]
+              },
+              "message": {
+                "messageId": "qa-rs8-t1-happy-20260831b",
+                "contactId": 900000009,
+                "channelId": "whatsapp",
+                "traffic": "incoming",
+                "timestamp": 1788152309644,
+                "message": {
+                  "type": "text",
+                  "text": "check srtwb7096"
+                }
+              }
+            },
+            "session": {
+              "respond_io_id": "900000009",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "it_admin",
+                    "suggested_agent": "it_support"
+                  },
+                  "entities": [
+                    {
+                      "raw": "srtwc286",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": false
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Informed the user that request is out of scope and will proceed to escalate to the it_admin team",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to raise an IT ticket",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": null,
+                  "intent_hint": null,
+                  "message_type": "request_for_help",
+                  "query_brands": [
+                    "sorento"
+                  ],
+                  "access_levels": [
+                    "dealer"
+                  ],
+                  "routing_brand": null,
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": null,
+                  "date_filter_start": null,
+                  "routing_companies": null,
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": null
+                }
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check stock for SRTWB7096",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "SRTWB7096",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check stock for SRTWB7096",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "SRTWB7096",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null,
+            "resolved": {
+              "match_mode": "and",
+              "tokens": [
+                "SRTWB7096"
+              ],
+              "elapsed_ms": 76.73,
+              "intersection": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTWB7096",
+                  "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTWB7096",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ],
+              "by_entity_type": {
+                "product": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "SRTWB7096",
+                    "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "SRTWB7096",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                        "brand_code": "SORENTO",
+                        "brand_name": "SORENTO"
+                      }
+                    }
+                  }
+                ]
+              },
+              "empty": false,
+              "unresolved_tokens": [],
+              "alternatives": [],
+              "token_coverage": [
+                {
+                  "token": "SRTWB7096",
+                  "match_semantics": "max_coverage",
+                  "coverage": [
+                    {
+                      "entity_type": "product",
+                      "matched_words": [
+                        "SRTWB7096"
+                      ],
+                      "unmatched_words": [],
+                      "truncated": false
+                    }
+                  ]
+                }
+              ]
+            },
+            "entities": null,
+            "gate": {
+              "match_mode": "and",
+              "tokens": [
+                "SRTWB7096"
+              ],
+              "elapsed_ms": 76.73,
+              "intersection": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTWB7096",
+                  "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTWB7096",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ],
+              "by_entity_type": {
+                "product": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "SRTWB7096",
+                    "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "SRTWB7096",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                        "brand_code": "SORENTO",
+                        "brand_name": "SORENTO"
+                      }
+                    }
+                  }
+                ]
+              },
+              "empty": false,
+              "unresolved_tokens": [],
+              "alternatives": [],
+              "token_coverage": [
+                {
+                  "token": "SRTWB7096",
+                  "match_semantics": "max_coverage",
+                  "coverage": [
+                    {
+                      "entity_type": "product",
+                      "matched_words": [
+                        "SRTWB7096"
+                      ],
+                      "unmatched_words": [],
+                      "truncated": false
+                    }
+                  ]
+                }
+              ],
+              "gate_passed": true,
+              "require_specific": false,
+              "resolved_company": "sorento",
+              "company_team": null,
+              "resolved_companies": [
+                "sorento"
+              ],
+              "routing_brand": "sorento",
+              "routing_brand_source": "resolved",
+              "routing_companies": [
+                {
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "brand_code": "sorento",
+                  "codes": [
+                    "SRTWB7096"
+                  ],
+                  "labels": [
+                    "SRTWB7096"
+                  ]
+                }
+              ],
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "access_denied_levels": [],
+              "access_notice": "",
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "gate_reason": "ok",
+              "gate_clarification": "",
+              "compatible_entities": [
+                {
+                  "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                  "entity_type": "product",
+                  "code": "SRTWB7096"
+                }
+              ],
+              "gate_debug": {
+                "domain": "inventory",
+                "allowed_lookup": [
+                  "product",
+                  "category",
+                  "brand"
+                ],
+                "entities_count": 1
+              }
+            }
+          },
+          "resolved": {
+            "match_mode": "and",
+            "tokens": [
+              "SRTWB7096"
+            ],
+            "elapsed_ms": 76.73,
+            "intersection": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTWB7096",
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTWB7096",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ],
+            "by_entity_type": {
+              "product": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTWB7096",
+                  "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTWB7096",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ]
+            },
+            "empty": false,
+            "unresolved_tokens": [],
+            "alternatives": [],
+            "token_coverage": [
+              {
+                "token": "SRTWB7096",
+                "match_semantics": "max_coverage",
+                "coverage": [
+                  {
+                    "entity_type": "product",
+                    "matched_words": [
+                      "SRTWB7096"
+                    ],
+                    "unmatched_words": [],
+                    "truncated": false
+                  }
+                ]
+              }
+            ]
+          },
+          "gate": {
+            "match_mode": "and",
+            "tokens": [
+              "SRTWB7096"
+            ],
+            "elapsed_ms": 76.73,
+            "intersection": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTWB7096",
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTWB7096",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ],
+            "by_entity_type": {
+              "product": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTWB7096",
+                  "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTWB7096",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ]
+            },
+            "empty": false,
+            "unresolved_tokens": [],
+            "alternatives": [],
+            "token_coverage": [
+              {
+                "token": "SRTWB7096",
+                "match_semantics": "max_coverage",
+                "coverage": [
+                  {
+                    "entity_type": "product",
+                    "matched_words": [
+                      "SRTWB7096"
+                    ],
+                    "unmatched_words": [],
+                    "truncated": false
+                  }
+                ]
+              }
+            ],
+            "gate_passed": true,
+            "require_specific": false,
+            "resolved_company": "sorento",
+            "company_team": null,
+            "resolved_companies": [
+              "sorento"
+            ],
+            "routing_brand": "sorento",
+            "routing_brand_source": "resolved",
+            "routing_companies": [
+              {
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "brand_code": "sorento",
+                "codes": [
+                  "SRTWB7096"
+                ],
+                "labels": [
+                  "SRTWB7096"
+                ]
+              }
+            ],
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "access_denied_levels": [],
+            "access_notice": "",
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "gate_reason": "ok",
+            "gate_clarification": "",
+            "compatible_entities": [
+              {
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                "entity_type": "product",
+                "code": "SRTWB7096"
+              }
+            ],
+            "gate_debug": {
+              "domain": "inventory",
+              "allowed_lookup": [
+                "product",
+                "category",
+                "brand"
+              ],
+              "entities_count": 1
+            }
+          },
+          "ctx_resolved": {
+            "match_mode": "and",
+            "tokens": [
+              "SRTWB7096"
+            ],
+            "elapsed_ms": 76.73,
+            "intersection": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTWB7096",
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTWB7096",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ],
+            "by_entity_type": {
+              "product": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTWB7096",
+                  "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTWB7096",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ]
+            },
+            "empty": false,
+            "unresolved_tokens": [],
+            "alternatives": [],
+            "token_coverage": [
+              {
+                "token": "SRTWB7096",
+                "match_semantics": "max_coverage",
+                "coverage": [
+                  {
+                    "entity_type": "product",
+                    "matched_words": [
+                      "SRTWB7096"
+                    ],
+                    "unmatched_words": [],
+                    "truncated": false
+                  }
+                ]
+              }
+            ],
+            "gate_passed": true,
+            "require_specific": false,
+            "resolved_company": "sorento",
+            "company_team": null,
+            "resolved_companies": [
+              "sorento"
+            ],
+            "routing_brand": "sorento",
+            "routing_brand_source": "resolved",
+            "routing_companies": [
+              {
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "brand_code": "sorento",
+                "codes": [
+                  "SRTWB7096"
+                ],
+                "labels": [
+                  "SRTWB7096"
+                ]
+              }
+            ],
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "access_denied_levels": [],
+            "access_notice": "",
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "gate_reason": "ok",
+            "gate_clarification": "",
+            "compatible_entities": [
+              {
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                "entity_type": "product",
+                "code": "SRTWB7096"
+              }
+            ],
+            "gate_debug": {
+              "domain": "inventory",
+              "allowed_lookup": [
+                "product",
+                "category",
+                "brand"
+              ],
+              "entities_count": 1
+            },
+            "ctx": {
+              "contact": {
+                "id": 900000009,
+                "firstName": "Person 134",
+                "lastName": "Person 125",
+                "phone": "+900000009",
+                "countryCode": "MY",
+                "status": "active",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ]
+              },
+              "text": {
+                "event_type": "message.received",
+                "contact": {
+                  "id": 900000009,
+                  "firstName": "Person 134",
+                  "lastName": "Person 125",
+                  "phone": "+900000009",
+                  "countryCode": "MY",
+                  "status": "active",
+                  "custom_fields": [
+                    {
+                      "name": "is_human_intervened",
+                      "value": "false"
+                    },
+                    {
+                      "name": "is_allowed_stock",
+                      "value": "true"
+                    },
+                    {
+                      "name": "is_allowed_voice",
+                      "value": "true"
+                    }
+                  ]
+                },
+                "message": {
+                  "messageId": "qa-rs8-t1-happy-20260831b",
+                  "contactId": 900000009,
+                  "channelId": "whatsapp",
+                  "traffic": "incoming",
+                  "timestamp": 1788152309644,
+                  "message": {
+                    "type": "text",
+                    "text": "check srtwb7096"
+                  }
+                }
+              },
+              "session": {
+                "respond_io_id": "900000009",
+                "session_vars": {
+                  "variables": {
+                    "routing": {
+                      "suggested_team": "it_admin",
+                      "suggested_agent": "it_support"
+                    },
+                    "entities": [
+                      {
+                        "raw": "srtwc286",
+                        "hint": "product",
+                        "confident": true,
+                        "canonical_code": null,
+                        "current_message": false
+                      }
+                    ],
+                    "ideation": null,
+                    "response": "Informed the user that request is out of scope and will proceed to escalate to the it_admin team",
+                    "date_mode": null,
+                    "dym_offer": null,
+                    "user_goal": "trying to raise an IT ticket",
+                    "escalation": {
+                      "is_escalation_confirmation": false
+                    },
+                    "match_mode": "and",
+                    "domain_hint": null,
+                    "intent_hint": null,
+                    "message_type": "request_for_help",
+                    "query_brands": [
+                      "sorento"
+                    ],
+                    "access_levels": [
+                      "dealer"
+                    ],
+                    "routing_brand": null,
+                    "contains_flyer": false,
+                    "dym_candidates": [],
+                    "date_filter_end": null,
+                    "last_result_set": [],
+                    "routing_company": null,
+                    "date_filter_start": null,
+                    "routing_companies": null,
+                    "selection_context": null,
+                    "routing_roster_plan": null,
+                    "requested_attributes": [],
+                    "routing_brand_source": null
+                  }
+                }
+              },
+              "parse": {
+                "output": {
+                  "message_type": "business_query",
+                  "intent_hint": "check_stock",
+                  "domain_hint": "inventory",
+                  "scope_intent": "specific",
+                  "is_affirmative": null,
+                  "user_goal": "trying to check stock for SRTWB7096",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "SRTWB7096",
+                      "hint": "product",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "domain_signal_source": "intent_explicit",
+                  "scope_exclusive_applied": false,
+                  "entity_op_applied": "replace_combine",
+                  "query_brands": [],
+                  "entities_filtered": false,
+                  "entities_emptied_by_filter": false
+                },
+                "_parser_raw": {
+                  "message_type": "business_query",
+                  "intent_hint": "check_stock",
+                  "domain_hint": "inventory",
+                  "scope_intent": "specific",
+                  "is_affirmative": null,
+                  "user_goal": "trying to check stock for SRTWB7096",
+                  "access_levels": [],
+                  "broaden_axis": null,
+                  "date_mode": null,
+                  "date_filter_start": null,
+                  "date_filter_end": null,
+                  "match_mode": "and",
+                  "demand_qty": null,
+                  "entities": [
+                    {
+                      "raw": "SRTWB7096",
+                      "hint": "product",
+                      "canonical_code": null,
+                      "current_message": true,
+                      "confident": true
+                    }
+                  ],
+                  "entity_op": "replace_combine",
+                  "scope_exclusive": false,
+                  "requested_attributes": [],
+                  "contains_flyer": false,
+                  "reference_positions": [],
+                  "reference_target": null,
+                  "person_mention": null,
+                  "is_active": null,
+                  "order_status": null,
+                  "correction": false,
+                  "routing": {
+                    "suggested_team": "warehouse",
+                    "suggested_agent": "general_enquiries"
+                  },
+                  "escalation": {
+                    "is_escalation_confirmation": false,
+                    "company_pick": null
+                  }
+                }
+              },
+              "access": {
+                "allowed": true,
+                "decision": "allow",
+                "agent_name": "General Enquiries",
+                "attributes": null,
+                "all_attributes_allowed": null
+              },
+              "media": null,
+              "resolved": {
+                "match_mode": "and",
+                "tokens": [
+                  "SRTWB7096"
+                ],
+                "elapsed_ms": 76.73,
+                "intersection": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "SRTWB7096",
+                    "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "SRTWB7096",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                        "brand_code": "SORENTO",
+                        "brand_name": "SORENTO"
+                      }
+                    }
+                  }
+                ],
+                "by_entity_type": {
+                  "product": [
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "SRTWB7096",
+                      "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                      "match_field": "product_code",
+                      "match_tier": "and",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento",
+                      "display": {
+                        "product_name": "SRTWB7096",
+                        "is_active": true,
+                        "brand": {
+                          "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                          "brand_code": "SORENTO",
+                          "brand_name": "SORENTO"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "empty": false,
+                "unresolved_tokens": [],
+                "alternatives": [],
+                "token_coverage": [
+                  {
+                    "token": "SRTWB7096",
+                    "match_semantics": "max_coverage",
+                    "coverage": [
+                      {
+                        "entity_type": "product",
+                        "matched_words": [
+                          "SRTWB7096"
+                        ],
+                        "unmatched_words": [],
+                        "truncated": false
+                      }
+                    ]
+                  }
+                ]
+              },
+              "entities": null,
+              "gate": {
+                "match_mode": "and",
+                "tokens": [
+                  "SRTWB7096"
+                ],
+                "elapsed_ms": 76.73,
+                "intersection": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "SRTWB7096",
+                    "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "SRTWB7096",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                        "brand_code": "SORENTO",
+                        "brand_name": "SORENTO"
+                      }
+                    }
+                  }
+                ],
+                "by_entity_type": {
+                  "product": [
+                    {
+                      "entity_type": "product",
+                      "canonical_code": "SRTWB7096",
+                      "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                      "match_field": "product_code",
+                      "match_tier": "and",
+                      "company_id": "00000000-0000-0000-0000-000000000001",
+                      "company_name": "Sorento",
+                      "display": {
+                        "product_name": "SRTWB7096",
+                        "is_active": true,
+                        "brand": {
+                          "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                          "brand_code": "SORENTO",
+                          "brand_name": "SORENTO"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "empty": false,
+                "unresolved_tokens": [],
+                "alternatives": [],
+                "token_coverage": [
+                  {
+                    "token": "SRTWB7096",
+                    "match_semantics": "max_coverage",
+                    "coverage": [
+                      {
+                        "entity_type": "product",
+                        "matched_words": [
+                          "SRTWB7096"
+                        ],
+                        "unmatched_words": [],
+                        "truncated": false
+                      }
+                    ]
+                  }
+                ],
+                "gate_passed": true,
+                "require_specific": false,
+                "resolved_company": "sorento",
+                "company_team": null,
+                "resolved_companies": [
+                  "sorento"
+                ],
+                "routing_brand": "sorento",
+                "routing_brand_source": "resolved",
+                "routing_companies": [
+                  {
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "brand_code": "sorento",
+                    "codes": [
+                      "SRTWB7096"
+                    ],
+                    "labels": [
+                      "SRTWB7096"
+                    ]
+                  }
+                ],
+                "routing_company": "00000000-0000-0000-0000-000000000001",
+                "access_denied_levels": [],
+                "access_notice": "",
+                "brand_gate_empty": false,
+                "brand_unheld": false,
+                "gate_reason": "ok",
+                "gate_clarification": "",
+                "compatible_entities": [
+                  {
+                    "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                    "entity_type": "product",
+                    "code": "SRTWB7096"
+                  }
+                ],
+                "gate_debug": {
+                  "domain": "inventory",
+                  "allowed_lookup": [
+                    "product",
+                    "category",
+                    "brand"
+                  ],
+                  "entities_count": 1
+                }
+              }
+            }
+          },
+          "aggregate": null,
+          "tier_gate": null,
+          "annotate_incoming": null,
+          "_exit_kind": "continue"
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "match_mode": "and",
+        "tokens": [
+          "SRTWB7096"
+        ],
+        "elapsed_ms": 76.73,
+        "intersection": [
+          {
+            "entity_type": "product",
+            "canonical_code": "SRTWB7096",
+            "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+            "match_field": "product_code",
+            "match_tier": "and",
+            "company_id": "00000000-0000-0000-0000-000000000001",
+            "company_name": "Sorento",
+            "display": {
+              "product_name": "SRTWB7096",
+              "is_active": true,
+              "brand": {
+                "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                "brand_code": "SORENTO",
+                "brand_name": "SORENTO"
+              }
+            }
+          }
+        ],
+        "by_entity_type": {
+          "product": [
+            {
+              "entity_type": "product",
+              "canonical_code": "SRTWB7096",
+              "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+              "match_field": "product_code",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "product_name": "SRTWB7096",
+                "is_active": true,
+                "brand": {
+                  "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                  "brand_code": "SORENTO",
+                  "brand_name": "SORENTO"
+                }
+              }
+            }
+          ]
+        },
+        "empty": false,
+        "unresolved_tokens": [],
+        "alternatives": [],
+        "token_coverage": [
+          {
+            "token": "SRTWB7096",
+            "match_semantics": "max_coverage",
+            "coverage": [
+              {
+                "entity_type": "product",
+                "matched_words": [
+                  "SRTWB7096"
+                ],
+                "unmatched_words": [],
+                "truncated": false
+              }
+            ]
+          }
+        ],
+        "gate_passed": true,
+        "require_specific": false,
+        "resolved_company": "sorento",
+        "company_team": null,
+        "resolved_companies": [
+          "sorento"
+        ],
+        "routing_brand": "sorento",
+        "routing_brand_source": "resolved",
+        "routing_companies": [
+          {
+            "company_id": "00000000-0000-0000-0000-000000000001",
+            "company_name": "Sorento",
+            "brand_code": "sorento",
+            "codes": [
+              "SRTWB7096"
+            ],
+            "labels": [
+              "SRTWB7096"
+            ]
+          }
+        ],
+        "routing_company": "00000000-0000-0000-0000-000000000001",
+        "access_denied_levels": [],
+        "access_notice": "",
+        "brand_gate_empty": false,
+        "brand_unheld": false,
+        "gate_reason": "ok",
+        "gate_clarification": "",
+        "compatible_entities": [
+          {
+            "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+            "entity_type": "product",
+            "code": "SRTWB7096"
+          }
+        ],
+        "gate_debug": {
+          "domain": "inventory",
+          "allowed_lookup": [
+            "product",
+            "category",
+            "brand"
+          ],
+          "entities_count": 1
+        },
+        "ctx": {
+          "contact": {
+            "id": 900000009,
+            "firstName": "Person 134",
+            "lastName": "Person 125",
+            "phone": "+900000009",
+            "countryCode": "MY",
+            "status": "active",
+            "custom_fields": [
+              {
+                "name": "is_human_intervened",
+                "value": "false"
+              },
+              {
+                "name": "is_allowed_stock",
+                "value": "true"
+              },
+              {
+                "name": "is_allowed_voice",
+                "value": "true"
+              }
+            ]
+          },
+          "text": {
+            "event_type": "message.received",
+            "contact": {
+              "id": 900000009,
+              "firstName": "Person 134",
+              "lastName": "Person 125",
+              "phone": "+900000009",
+              "countryCode": "MY",
+              "status": "active",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ]
+            },
+            "message": {
+              "messageId": "qa-rs8-t1-happy-20260831b",
+              "contactId": 900000009,
+              "channelId": "whatsapp",
+              "traffic": "incoming",
+              "timestamp": 1788152309644,
+              "message": {
+                "type": "text",
+                "text": "check srtwb7096"
+              }
+            }
+          },
+          "session": {
+            "respond_io_id": "900000009",
+            "session_vars": {
+              "variables": {
+                "routing": {
+                  "suggested_team": "it_admin",
+                  "suggested_agent": "it_support"
+                },
+                "entities": [
+                  {
+                    "raw": "srtwc286",
+                    "hint": "product",
+                    "confident": true,
+                    "canonical_code": null,
+                    "current_message": false
+                  }
+                ],
+                "ideation": null,
+                "response": "Informed the user that request is out of scope and will proceed to escalate to the it_admin team",
+                "date_mode": null,
+                "dym_offer": null,
+                "user_goal": "trying to raise an IT ticket",
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "match_mode": "and",
+                "domain_hint": null,
+                "intent_hint": null,
+                "message_type": "request_for_help",
+                "query_brands": [
+                  "sorento"
+                ],
+                "access_levels": [
+                  "dealer"
+                ],
+                "routing_brand": null,
+                "contains_flyer": false,
+                "dym_candidates": [],
+                "date_filter_end": null,
+                "last_result_set": [],
+                "routing_company": null,
+                "date_filter_start": null,
+                "routing_companies": null,
+                "selection_context": null,
+                "routing_roster_plan": null,
+                "requested_attributes": [],
+                "routing_brand_source": null
+              }
+            }
+          },
+          "parse": {
+            "output": {
+              "message_type": "business_query",
+              "intent_hint": "check_stock",
+              "domain_hint": "inventory",
+              "scope_intent": "specific",
+              "is_affirmative": null,
+              "user_goal": "trying to check stock for SRTWB7096",
+              "access_levels": [],
+              "broaden_axis": null,
+              "date_mode": null,
+              "date_filter_start": null,
+              "date_filter_end": null,
+              "match_mode": "and",
+              "demand_qty": null,
+              "entities": [
+                {
+                  "raw": "SRTWB7096",
+                  "hint": "product",
+                  "canonical_code": null,
+                  "current_message": true,
+                  "confident": true
+                }
+              ],
+              "entity_op": "replace_combine",
+              "scope_exclusive": false,
+              "requested_attributes": [],
+              "contains_flyer": false,
+              "reference_positions": [],
+              "reference_target": null,
+              "person_mention": null,
+              "is_active": null,
+              "order_status": null,
+              "correction": false,
+              "routing": {
+                "suggested_team": "warehouse",
+                "suggested_agent": "general_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "domain_signal_source": "intent_explicit",
+              "scope_exclusive_applied": false,
+              "entity_op_applied": "replace_combine",
+              "query_brands": [],
+              "entities_filtered": false,
+              "entities_emptied_by_filter": false
+            },
+            "_parser_raw": {
+              "message_type": "business_query",
+              "intent_hint": "check_stock",
+              "domain_hint": "inventory",
+              "scope_intent": "specific",
+              "is_affirmative": null,
+              "user_goal": "trying to check stock for SRTWB7096",
+              "access_levels": [],
+              "broaden_axis": null,
+              "date_mode": null,
+              "date_filter_start": null,
+              "date_filter_end": null,
+              "match_mode": "and",
+              "demand_qty": null,
+              "entities": [
+                {
+                  "raw": "SRTWB7096",
+                  "hint": "product",
+                  "canonical_code": null,
+                  "current_message": true,
+                  "confident": true
+                }
+              ],
+              "entity_op": "replace_combine",
+              "scope_exclusive": false,
+              "requested_attributes": [],
+              "contains_flyer": false,
+              "reference_positions": [],
+              "reference_target": null,
+              "person_mention": null,
+              "is_active": null,
+              "order_status": null,
+              "correction": false,
+              "routing": {
+                "suggested_team": "warehouse",
+                "suggested_agent": "general_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false,
+                "company_pick": null
+              }
+            }
+          },
+          "access": {
+            "allowed": true,
+            "decision": "allow",
+            "agent_name": "General Enquiries",
+            "attributes": null,
+            "all_attributes_allowed": null
+          },
+          "media": null,
+          "resolved": {
+            "match_mode": "and",
+            "tokens": [
+              "SRTWB7096"
+            ],
+            "elapsed_ms": 76.73,
+            "intersection": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTWB7096",
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTWB7096",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ],
+            "by_entity_type": {
+              "product": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTWB7096",
+                  "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTWB7096",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ]
+            },
+            "empty": false,
+            "unresolved_tokens": [],
+            "alternatives": [],
+            "token_coverage": [
+              {
+                "token": "SRTWB7096",
+                "match_semantics": "max_coverage",
+                "coverage": [
+                  {
+                    "entity_type": "product",
+                    "matched_words": [
+                      "SRTWB7096"
+                    ],
+                    "unmatched_words": [],
+                    "truncated": false
+                  }
+                ]
+              }
+            ]
+          },
+          "entities": null,
+          "gate": {
+            "match_mode": "and",
+            "tokens": [
+              "SRTWB7096"
+            ],
+            "elapsed_ms": 76.73,
+            "intersection": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTWB7096",
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTWB7096",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ],
+            "by_entity_type": {
+              "product": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTWB7096",
+                  "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTWB7096",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ]
+            },
+            "empty": false,
+            "unresolved_tokens": [],
+            "alternatives": [],
+            "token_coverage": [
+              {
+                "token": "SRTWB7096",
+                "match_semantics": "max_coverage",
+                "coverage": [
+                  {
+                    "entity_type": "product",
+                    "matched_words": [
+                      "SRTWB7096"
+                    ],
+                    "unmatched_words": [],
+                    "truncated": false
+                  }
+                ]
+              }
+            ],
+            "gate_passed": true,
+            "require_specific": false,
+            "resolved_company": "sorento",
+            "company_team": null,
+            "resolved_companies": [
+              "sorento"
+            ],
+            "routing_brand": "sorento",
+            "routing_brand_source": "resolved",
+            "routing_companies": [
+              {
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "brand_code": "sorento",
+                "codes": [
+                  "SRTWB7096"
+                ],
+                "labels": [
+                  "SRTWB7096"
+                ]
+              }
+            ],
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "access_denied_levels": [],
+            "access_notice": "",
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "gate_reason": "ok",
+            "gate_clarification": "",
+            "compatible_entities": [
+              {
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                "entity_type": "product",
+                "code": "SRTWB7096"
+              }
+            ],
+            "gate_debug": {
+              "domain": "inventory",
+              "allowed_lookup": [
+                "product",
+                "category",
+                "brand"
+              ],
+              "entities_count": 1
+            }
+          }
+        }
+      }
+    }
+  ],
+  "expected": [
+    {
+      "json": {
+        "match_mode": "and",
+        "tokens": [
+          "SRTWB7096"
+        ],
+        "elapsed_ms": 76.73,
+        "intersection": [
+          {
+            "entity_type": "product",
+            "canonical_code": "SRTWB7096",
+            "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+            "match_field": "product_code",
+            "match_tier": "and",
+            "company_id": "00000000-0000-0000-0000-000000000001",
+            "company_name": "Sorento",
+            "display": {
+              "product_name": "SRTWB7096",
+              "is_active": true,
+              "brand": {
+                "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                "brand_code": "SORENTO",
+                "brand_name": "SORENTO"
+              }
+            }
+          }
+        ],
+        "by_entity_type": {
+          "product": [
+            {
+              "entity_type": "product",
+              "canonical_code": "SRTWB7096",
+              "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+              "match_field": "product_code",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "product_name": "SRTWB7096",
+                "is_active": true,
+                "brand": {
+                  "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                  "brand_code": "SORENTO",
+                  "brand_name": "SORENTO"
+                }
+              }
+            }
+          ]
+        },
+        "empty": false,
+        "unresolved_tokens": [],
+        "alternatives": [],
+        "token_coverage": [
+          {
+            "token": "SRTWB7096",
+            "match_semantics": "max_coverage",
+            "coverage": [
+              {
+                "entity_type": "product",
+                "matched_words": [
+                  "SRTWB7096"
+                ],
+                "unmatched_words": [],
+                "truncated": false
+              }
+            ]
+          }
+        ],
+        "gate_passed": true,
+        "require_specific": false,
+        "resolved_company": "sorento",
+        "company_team": null,
+        "resolved_companies": [
+          "sorento"
+        ],
+        "routing_brand": "sorento",
+        "routing_brand_source": "resolved",
+        "routing_companies": [
+          {
+            "company_id": "00000000-0000-0000-0000-000000000001",
+            "company_name": "Sorento",
+            "brand_code": "sorento",
+            "codes": [
+              "SRTWB7096"
+            ],
+            "labels": [
+              "SRTWB7096"
+            ]
+          }
+        ],
+        "routing_company": "00000000-0000-0000-0000-000000000001",
+        "access_denied_levels": [],
+        "access_notice": "",
+        "brand_gate_empty": false,
+        "brand_unheld": false,
+        "gate_reason": "ok",
+        "gate_clarification": "",
+        "compatible_entities": [
+          {
+            "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+            "entity_type": "product",
+            "code": "SRTWB7096"
+          }
+        ],
+        "gate_debug": {
+          "domain": "inventory",
+          "allowed_lookup": [
+            "product",
+            "category",
+            "brand"
+          ],
+          "entities_count": 1
+        },
+        "ctx": {
+          "contact": {
+            "id": 900000009,
+            "firstName": "Person 134",
+            "lastName": "Person 125",
+            "phone": "+900000009",
+            "countryCode": "MY",
+            "status": "active",
+            "custom_fields": [
+              {
+                "name": "is_human_intervened",
+                "value": "false"
+              },
+              {
+                "name": "is_allowed_stock",
+                "value": "true"
+              },
+              {
+                "name": "is_allowed_voice",
+                "value": "true"
+              }
+            ]
+          },
+          "text": {
+            "event_type": "message.received",
+            "contact": {
+              "id": 900000009,
+              "firstName": "Person 134",
+              "lastName": "Person 125",
+              "phone": "+900000009",
+              "countryCode": "MY",
+              "status": "active",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ]
+            },
+            "message": {
+              "messageId": "qa-rs8-t1-happy-20260831b",
+              "contactId": 900000009,
+              "channelId": "whatsapp",
+              "traffic": "incoming",
+              "timestamp": 1788152309644,
+              "message": {
+                "type": "text",
+                "text": "check srtwb7096"
+              }
+            }
+          },
+          "session": {
+            "respond_io_id": "900000009",
+            "session_vars": {
+              "variables": {
+                "routing": {
+                  "suggested_team": "it_admin",
+                  "suggested_agent": "it_support"
+                },
+                "entities": [
+                  {
+                    "raw": "srtwc286",
+                    "hint": "product",
+                    "confident": true,
+                    "canonical_code": null,
+                    "current_message": false
+                  }
+                ],
+                "ideation": null,
+                "response": "Informed the user that request is out of scope and will proceed to escalate to the it_admin team",
+                "date_mode": null,
+                "dym_offer": null,
+                "user_goal": "trying to raise an IT ticket",
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "match_mode": "and",
+                "domain_hint": null,
+                "intent_hint": null,
+                "message_type": "request_for_help",
+                "query_brands": [
+                  "sorento"
+                ],
+                "access_levels": [
+                  "dealer"
+                ],
+                "routing_brand": null,
+                "contains_flyer": false,
+                "dym_candidates": [],
+                "date_filter_end": null,
+                "last_result_set": [],
+                "routing_company": null,
+                "date_filter_start": null,
+                "routing_companies": null,
+                "selection_context": null,
+                "routing_roster_plan": null,
+                "requested_attributes": [],
+                "routing_brand_source": null
+              }
+            }
+          },
+          "parse": {
+            "output": {
+              "message_type": "business_query",
+              "intent_hint": "check_stock",
+              "domain_hint": "inventory",
+              "scope_intent": "specific",
+              "is_affirmative": null,
+              "user_goal": "trying to check stock for SRTWB7096",
+              "access_levels": [],
+              "broaden_axis": null,
+              "date_mode": null,
+              "date_filter_start": null,
+              "date_filter_end": null,
+              "match_mode": "and",
+              "demand_qty": null,
+              "entities": [
+                {
+                  "raw": "SRTWB7096",
+                  "hint": "product",
+                  "canonical_code": null,
+                  "current_message": true,
+                  "confident": true
+                }
+              ],
+              "entity_op": "replace_combine",
+              "scope_exclusive": false,
+              "requested_attributes": [],
+              "contains_flyer": false,
+              "reference_positions": [],
+              "reference_target": null,
+              "person_mention": null,
+              "is_active": null,
+              "order_status": null,
+              "correction": false,
+              "routing": {
+                "suggested_team": "warehouse",
+                "suggested_agent": "general_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false
+              },
+              "domain_signal_source": "intent_explicit",
+              "scope_exclusive_applied": false,
+              "entity_op_applied": "replace_combine",
+              "query_brands": [],
+              "entities_filtered": false,
+              "entities_emptied_by_filter": false
+            },
+            "_parser_raw": {
+              "message_type": "business_query",
+              "intent_hint": "check_stock",
+              "domain_hint": "inventory",
+              "scope_intent": "specific",
+              "is_affirmative": null,
+              "user_goal": "trying to check stock for SRTWB7096",
+              "access_levels": [],
+              "broaden_axis": null,
+              "date_mode": null,
+              "date_filter_start": null,
+              "date_filter_end": null,
+              "match_mode": "and",
+              "demand_qty": null,
+              "entities": [
+                {
+                  "raw": "SRTWB7096",
+                  "hint": "product",
+                  "canonical_code": null,
+                  "current_message": true,
+                  "confident": true
+                }
+              ],
+              "entity_op": "replace_combine",
+              "scope_exclusive": false,
+              "requested_attributes": [],
+              "contains_flyer": false,
+              "reference_positions": [],
+              "reference_target": null,
+              "person_mention": null,
+              "is_active": null,
+              "order_status": null,
+              "correction": false,
+              "routing": {
+                "suggested_team": "warehouse",
+                "suggested_agent": "general_enquiries"
+              },
+              "escalation": {
+                "is_escalation_confirmation": false,
+                "company_pick": null
+              }
+            }
+          },
+          "access": {
+            "allowed": true,
+            "decision": "allow",
+            "agent_name": "General Enquiries",
+            "attributes": null,
+            "all_attributes_allowed": null
+          },
+          "media": null,
+          "resolved": {
+            "match_mode": "and",
+            "tokens": [
+              "SRTWB7096"
+            ],
+            "elapsed_ms": 76.73,
+            "intersection": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTWB7096",
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTWB7096",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ],
+            "by_entity_type": {
+              "product": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTWB7096",
+                  "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTWB7096",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ]
+            },
+            "empty": false,
+            "unresolved_tokens": [],
+            "alternatives": [],
+            "token_coverage": [
+              {
+                "token": "SRTWB7096",
+                "match_semantics": "max_coverage",
+                "coverage": [
+                  {
+                    "entity_type": "product",
+                    "matched_words": [
+                      "SRTWB7096"
+                    ],
+                    "unmatched_words": [],
+                    "truncated": false
+                  }
+                ]
+              }
+            ]
+          },
+          "entities": null,
+          "gate": {
+            "match_mode": "and",
+            "tokens": [
+              "SRTWB7096"
+            ],
+            "elapsed_ms": 76.73,
+            "intersection": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTWB7096",
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTWB7096",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ],
+            "by_entity_type": {
+              "product": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTWB7096",
+                  "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTWB7096",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ]
+            },
+            "empty": false,
+            "unresolved_tokens": [],
+            "alternatives": [],
+            "token_coverage": [
+              {
+                "token": "SRTWB7096",
+                "match_semantics": "max_coverage",
+                "coverage": [
+                  {
+                    "entity_type": "product",
+                    "matched_words": [
+                      "SRTWB7096"
+                    ],
+                    "unmatched_words": [],
+                    "truncated": false
+                  }
+                ]
+              }
+            ],
+            "gate_passed": true,
+            "require_specific": false,
+            "resolved_company": "sorento",
+            "company_team": null,
+            "resolved_companies": [
+              "sorento"
+            ],
+            "routing_brand": "sorento",
+            "routing_brand_source": "resolved",
+            "routing_companies": [
+              {
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "brand_code": "sorento",
+                "codes": [
+                  "SRTWB7096"
+                ],
+                "labels": [
+                  "SRTWB7096"
+                ]
+              }
+            ],
+            "routing_company": "00000000-0000-0000-0000-000000000001",
+            "access_denied_levels": [],
+            "access_notice": "",
+            "brand_gate_empty": false,
+            "brand_unheld": false,
+            "gate_reason": "ok",
+            "gate_clarification": "",
+            "compatible_entities": [
+              {
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                "entity_type": "product",
+                "code": "SRTWB7096"
+              }
+            ],
+            "gate_debug": {
+              "domain": "inventory",
+              "allowed_lookup": [
+                "product",
+                "category",
+                "brand"
+              ],
+              "entities_count": 1
+            }
+          }
+        },
+        "resolved": {
+          "match_mode": "and",
+          "tokens": [
+            "SRTWB7096"
+          ],
+          "elapsed_ms": 76.73,
+          "intersection": [
+            {
+              "entity_type": "product",
+              "canonical_code": "SRTWB7096",
+              "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+              "match_field": "product_code",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "product_name": "SRTWB7096",
+                "is_active": true,
+                "brand": {
+                  "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                  "brand_code": "SORENTO",
+                  "brand_name": "SORENTO"
+                }
+              }
+            }
+          ],
+          "by_entity_type": {
+            "product": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTWB7096",
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTWB7096",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ]
+          },
+          "empty": false,
+          "unresolved_tokens": [],
+          "alternatives": [],
+          "token_coverage": [
+            {
+              "token": "SRTWB7096",
+              "match_semantics": "max_coverage",
+              "coverage": [
+                {
+                  "entity_type": "product",
+                  "matched_words": [
+                    "SRTWB7096"
+                  ],
+                  "unmatched_words": [],
+                  "truncated": false
+                }
+              ]
+            }
+          ]
+        },
+        "gate": {
+          "match_mode": "and",
+          "tokens": [
+            "SRTWB7096"
+          ],
+          "elapsed_ms": 76.73,
+          "intersection": [
+            {
+              "entity_type": "product",
+              "canonical_code": "SRTWB7096",
+              "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+              "match_field": "product_code",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "product_name": "SRTWB7096",
+                "is_active": true,
+                "brand": {
+                  "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                  "brand_code": "SORENTO",
+                  "brand_name": "SORENTO"
+                }
+              }
+            }
+          ],
+          "by_entity_type": {
+            "product": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTWB7096",
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTWB7096",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ]
+          },
+          "empty": false,
+          "unresolved_tokens": [],
+          "alternatives": [],
+          "token_coverage": [
+            {
+              "token": "SRTWB7096",
+              "match_semantics": "max_coverage",
+              "coverage": [
+                {
+                  "entity_type": "product",
+                  "matched_words": [
+                    "SRTWB7096"
+                  ],
+                  "unmatched_words": [],
+                  "truncated": false
+                }
+              ]
+            }
+          ],
+          "gate_passed": true,
+          "require_specific": false,
+          "resolved_company": "sorento",
+          "company_team": null,
+          "resolved_companies": [
+            "sorento"
+          ],
+          "routing_brand": "sorento",
+          "routing_brand_source": "resolved",
+          "routing_companies": [
+            {
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "brand_code": "sorento",
+              "codes": [
+                "SRTWB7096"
+              ],
+              "labels": [
+                "SRTWB7096"
+              ]
+            }
+          ],
+          "routing_company": "00000000-0000-0000-0000-000000000001",
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "ok",
+          "gate_clarification": "",
+          "compatible_entities": [
+            {
+              "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+              "entity_type": "product",
+              "code": "SRTWB7096"
+            }
+          ],
+          "gate_debug": {
+            "domain": "inventory",
+            "allowed_lookup": [
+              "product",
+              "category",
+              "brand"
+            ],
+            "entities_count": 1
+          }
+        },
+        "ctx_resolved": {
+          "match_mode": "and",
+          "tokens": [
+            "SRTWB7096"
+          ],
+          "elapsed_ms": 76.73,
+          "intersection": [
+            {
+              "entity_type": "product",
+              "canonical_code": "SRTWB7096",
+              "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+              "match_field": "product_code",
+              "match_tier": "and",
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "display": {
+                "product_name": "SRTWB7096",
+                "is_active": true,
+                "brand": {
+                  "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                  "brand_code": "SORENTO",
+                  "brand_name": "SORENTO"
+                }
+              }
+            }
+          ],
+          "by_entity_type": {
+            "product": [
+              {
+                "entity_type": "product",
+                "canonical_code": "SRTWB7096",
+                "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                "match_field": "product_code",
+                "match_tier": "and",
+                "company_id": "00000000-0000-0000-0000-000000000001",
+                "company_name": "Sorento",
+                "display": {
+                  "product_name": "SRTWB7096",
+                  "is_active": true,
+                  "brand": {
+                    "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                    "brand_code": "SORENTO",
+                    "brand_name": "SORENTO"
+                  }
+                }
+              }
+            ]
+          },
+          "empty": false,
+          "unresolved_tokens": [],
+          "alternatives": [],
+          "token_coverage": [
+            {
+              "token": "SRTWB7096",
+              "match_semantics": "max_coverage",
+              "coverage": [
+                {
+                  "entity_type": "product",
+                  "matched_words": [
+                    "SRTWB7096"
+                  ],
+                  "unmatched_words": [],
+                  "truncated": false
+                }
+              ]
+            }
+          ],
+          "gate_passed": true,
+          "require_specific": false,
+          "resolved_company": "sorento",
+          "company_team": null,
+          "resolved_companies": [
+            "sorento"
+          ],
+          "routing_brand": "sorento",
+          "routing_brand_source": "resolved",
+          "routing_companies": [
+            {
+              "company_id": "00000000-0000-0000-0000-000000000001",
+              "company_name": "Sorento",
+              "brand_code": "sorento",
+              "codes": [
+                "SRTWB7096"
+              ],
+              "labels": [
+                "SRTWB7096"
+              ]
+            }
+          ],
+          "routing_company": "00000000-0000-0000-0000-000000000001",
+          "access_denied_levels": [],
+          "access_notice": "",
+          "brand_gate_empty": false,
+          "brand_unheld": false,
+          "gate_reason": "ok",
+          "gate_clarification": "",
+          "compatible_entities": [
+            {
+              "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+              "entity_type": "product",
+              "code": "SRTWB7096"
+            }
+          ],
+          "gate_debug": {
+            "domain": "inventory",
+            "allowed_lookup": [
+              "product",
+              "category",
+              "brand"
+            ],
+            "entities_count": 1
+          },
+          "ctx": {
+            "contact": {
+              "id": 900000009,
+              "firstName": "Person 134",
+              "lastName": "Person 125",
+              "phone": "+900000009",
+              "countryCode": "MY",
+              "status": "active",
+              "custom_fields": [
+                {
+                  "name": "is_human_intervened",
+                  "value": "false"
+                },
+                {
+                  "name": "is_allowed_stock",
+                  "value": "true"
+                },
+                {
+                  "name": "is_allowed_voice",
+                  "value": "true"
+                }
+              ]
+            },
+            "text": {
+              "event_type": "message.received",
+              "contact": {
+                "id": 900000009,
+                "firstName": "Person 134",
+                "lastName": "Person 125",
+                "phone": "+900000009",
+                "countryCode": "MY",
+                "status": "active",
+                "custom_fields": [
+                  {
+                    "name": "is_human_intervened",
+                    "value": "false"
+                  },
+                  {
+                    "name": "is_allowed_stock",
+                    "value": "true"
+                  },
+                  {
+                    "name": "is_allowed_voice",
+                    "value": "true"
+                  }
+                ]
+              },
+              "message": {
+                "messageId": "qa-rs8-t1-happy-20260831b",
+                "contactId": 900000009,
+                "channelId": "whatsapp",
+                "traffic": "incoming",
+                "timestamp": 1788152309644,
+                "message": {
+                  "type": "text",
+                  "text": "check srtwb7096"
+                }
+              }
+            },
+            "session": {
+              "respond_io_id": "900000009",
+              "session_vars": {
+                "variables": {
+                  "routing": {
+                    "suggested_team": "it_admin",
+                    "suggested_agent": "it_support"
+                  },
+                  "entities": [
+                    {
+                      "raw": "srtwc286",
+                      "hint": "product",
+                      "confident": true,
+                      "canonical_code": null,
+                      "current_message": false
+                    }
+                  ],
+                  "ideation": null,
+                  "response": "Informed the user that request is out of scope and will proceed to escalate to the it_admin team",
+                  "date_mode": null,
+                  "dym_offer": null,
+                  "user_goal": "trying to raise an IT ticket",
+                  "escalation": {
+                    "is_escalation_confirmation": false
+                  },
+                  "match_mode": "and",
+                  "domain_hint": null,
+                  "intent_hint": null,
+                  "message_type": "request_for_help",
+                  "query_brands": [
+                    "sorento"
+                  ],
+                  "access_levels": [
+                    "dealer"
+                  ],
+                  "routing_brand": null,
+                  "contains_flyer": false,
+                  "dym_candidates": [],
+                  "date_filter_end": null,
+                  "last_result_set": [],
+                  "routing_company": null,
+                  "date_filter_start": null,
+                  "routing_companies": null,
+                  "selection_context": null,
+                  "routing_roster_plan": null,
+                  "requested_attributes": [],
+                  "routing_brand_source": null
+                }
+              }
+            },
+            "parse": {
+              "output": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check stock for SRTWB7096",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "SRTWB7096",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false
+                },
+                "domain_signal_source": "intent_explicit",
+                "scope_exclusive_applied": false,
+                "entity_op_applied": "replace_combine",
+                "query_brands": [],
+                "entities_filtered": false,
+                "entities_emptied_by_filter": false
+              },
+              "_parser_raw": {
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "scope_intent": "specific",
+                "is_affirmative": null,
+                "user_goal": "trying to check stock for SRTWB7096",
+                "access_levels": [],
+                "broaden_axis": null,
+                "date_mode": null,
+                "date_filter_start": null,
+                "date_filter_end": null,
+                "match_mode": "and",
+                "demand_qty": null,
+                "entities": [
+                  {
+                    "raw": "SRTWB7096",
+                    "hint": "product",
+                    "canonical_code": null,
+                    "current_message": true,
+                    "confident": true
+                  }
+                ],
+                "entity_op": "replace_combine",
+                "scope_exclusive": false,
+                "requested_attributes": [],
+                "contains_flyer": false,
+                "reference_positions": [],
+                "reference_target": null,
+                "person_mention": null,
+                "is_active": null,
+                "order_status": null,
+                "correction": false,
+                "routing": {
+                  "suggested_team": "warehouse",
+                  "suggested_agent": "general_enquiries"
+                },
+                "escalation": {
+                  "is_escalation_confirmation": false,
+                  "company_pick": null
+                }
+              }
+            },
+            "access": {
+              "allowed": true,
+              "decision": "allow",
+              "agent_name": "General Enquiries",
+              "attributes": null,
+              "all_attributes_allowed": null
+            },
+            "media": null,
+            "resolved": {
+              "match_mode": "and",
+              "tokens": [
+                "SRTWB7096"
+              ],
+              "elapsed_ms": 76.73,
+              "intersection": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTWB7096",
+                  "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTWB7096",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ],
+              "by_entity_type": {
+                "product": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "SRTWB7096",
+                    "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "SRTWB7096",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                        "brand_code": "SORENTO",
+                        "brand_name": "SORENTO"
+                      }
+                    }
+                  }
+                ]
+              },
+              "empty": false,
+              "unresolved_tokens": [],
+              "alternatives": [],
+              "token_coverage": [
+                {
+                  "token": "SRTWB7096",
+                  "match_semantics": "max_coverage",
+                  "coverage": [
+                    {
+                      "entity_type": "product",
+                      "matched_words": [
+                        "SRTWB7096"
+                      ],
+                      "unmatched_words": [],
+                      "truncated": false
+                    }
+                  ]
+                }
+              ]
+            },
+            "entities": null,
+            "gate": {
+              "match_mode": "and",
+              "tokens": [
+                "SRTWB7096"
+              ],
+              "elapsed_ms": 76.73,
+              "intersection": [
+                {
+                  "entity_type": "product",
+                  "canonical_code": "SRTWB7096",
+                  "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                  "match_field": "product_code",
+                  "match_tier": "and",
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "display": {
+                    "product_name": "SRTWB7096",
+                    "is_active": true,
+                    "brand": {
+                      "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                      "brand_code": "SORENTO",
+                      "brand_name": "SORENTO"
+                    }
+                  }
+                }
+              ],
+              "by_entity_type": {
+                "product": [
+                  {
+                    "entity_type": "product",
+                    "canonical_code": "SRTWB7096",
+                    "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                    "match_field": "product_code",
+                    "match_tier": "and",
+                    "company_id": "00000000-0000-0000-0000-000000000001",
+                    "company_name": "Sorento",
+                    "display": {
+                      "product_name": "SRTWB7096",
+                      "is_active": true,
+                      "brand": {
+                        "brand_id": "438cab0b-ec83-4eae-bbcf-e1dc5bf7943c",
+                        "brand_code": "SORENTO",
+                        "brand_name": "SORENTO"
+                      }
+                    }
+                  }
+                ]
+              },
+              "empty": false,
+              "unresolved_tokens": [],
+              "alternatives": [],
+              "token_coverage": [
+                {
+                  "token": "SRTWB7096",
+                  "match_semantics": "max_coverage",
+                  "coverage": [
+                    {
+                      "entity_type": "product",
+                      "matched_words": [
+                        "SRTWB7096"
+                      ],
+                      "unmatched_words": [],
+                      "truncated": false
+                    }
+                  ]
+                }
+              ],
+              "gate_passed": true,
+              "require_specific": false,
+              "resolved_company": "sorento",
+              "company_team": null,
+              "resolved_companies": [
+                "sorento"
+              ],
+              "routing_brand": "sorento",
+              "routing_brand_source": "resolved",
+              "routing_companies": [
+                {
+                  "company_id": "00000000-0000-0000-0000-000000000001",
+                  "company_name": "Sorento",
+                  "brand_code": "sorento",
+                  "codes": [
+                    "SRTWB7096"
+                  ],
+                  "labels": [
+                    "SRTWB7096"
+                  ]
+                }
+              ],
+              "routing_company": "00000000-0000-0000-0000-000000000001",
+              "access_denied_levels": [],
+              "access_notice": "",
+              "brand_gate_empty": false,
+              "brand_unheld": false,
+              "gate_reason": "ok",
+              "gate_clarification": "",
+              "compatible_entities": [
+                {
+                  "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                  "entity_type": "product",
+                  "code": "SRTWB7096"
+                }
+              ],
+              "gate_debug": {
+                "domain": "inventory",
+                "allowed_lookup": [
+                  "product",
+                  "category",
+                  "brand"
+                ],
+                "entities_count": 1
+              }
+            }
+          }
+        },
+        "aggregate": null,
+        "tier_gate": null,
+        "annotate_incoming": null,
+        "_exit_kind": "continue"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "execution": {
+    "id": "14605826"
+  },
+  "ran": [
+    "When Executed by Another Workflow",
+    "build-ctx",
+    "item",
+    "entry-gate",
+    "resolve-entity",
+    "disallowed-entity-gate",
+    "build-ctx-resolved",
+    "If3",
+    "resolve-exit-continue"
+  ]
+}

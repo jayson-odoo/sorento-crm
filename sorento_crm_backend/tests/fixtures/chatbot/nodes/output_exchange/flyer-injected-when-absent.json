@@ -1,0 +1,125 @@
+{
+ "source": {
+  "hand_crafted": true,
+  "expected_from": "reasoned",
+  "rationale": "contains_flyer:true with no entity whose raw is 'flyer' must push {raw:'flyer', hint:'flyer', current_message:true} onto entities BEFORE the op executor runs, so the flyer lands on its own promo_scope axis and survives. Under domain promotion the brand entity and the flyer both map to promo_scope, but both are CURRENT so neither evicts the other - keptPrior is empty (no prior state) and finalEntities is [brand, flyer] in that order (current spread first, injected last). promotion is not in DOMAIN_BROADEN_BLOCKED_HINTS' reach here because scope_intent is 'specific', and 'flyer'/'brand' are not in DOMAIN_BLOCKED_HINTS.promotion, so nothing is filtered."
+ },
+ "ctx": {
+  "When Executed by Another Workflow": [
+   {
+    "json": {
+     "latest_user_message": "sorento flyer promo",
+     "contact_id": 900000003,
+     "previous_conversation_state": {},
+     "is_test": null,
+     "mock_reformulator_output": null
+    }
+   }
+  ]
+ },
+ "input": [
+  {
+   "json": {
+    "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_promotion\",\"domain_hint\":\"promotion\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"sorento flyer\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"sorento\",\"hint\":\"brand\",\"canonical_code\":null,\"current_message\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":true,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+   }
+  }
+ ],
+ "runIndex": 0,
+ "expected": [
+  {
+   "json": {
+    "output": {
+     "message_type": "business_query",
+     "intent_hint": "check_promotion",
+     "domain_hint": "promotion",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "sorento flyer",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [
+      {
+       "raw": "sorento",
+       "hint": "brand",
+       "canonical_code": null,
+       "current_message": true
+      },
+      {
+       "raw": "flyer",
+       "hint": "flyer",
+       "current_message": true
+      }
+     ],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": true,
+     "reference_positions": [],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": "marketing_promotion",
+      "suggested_agent": "general_enquiries"
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     },
+     "domain_signal_source": "intent_explicit",
+     "scope_exclusive_applied": false,
+     "entity_op_applied": "replace_combine",
+     "query_brands": [
+      "sorento"
+     ],
+     "entities_filtered": false,
+     "entities_emptied_by_filter": false
+    },
+    "_parser_raw": {
+     "message_type": "business_query",
+     "intent_hint": "check_promotion",
+     "domain_hint": "promotion",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "sorento flyer",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [
+      {
+       "raw": "sorento",
+       "hint": "brand",
+       "canonical_code": null,
+       "current_message": true
+      }
+     ],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": true,
+     "reference_positions": [],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": null,
+      "suggested_agent": null
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     }
+    }
+   }
+  }
+ ]
+}

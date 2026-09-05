@@ -1396,6 +1396,20 @@ class ResolveReferenceRequest(BaseModel):
             "Only used when `spec_fallback` is true."
         ),
     )
+    dry_run: bool = Field(
+        default=False,
+        description=(
+            "The caller is a TEST or console run and must leave no trace. The resolution "
+            "itself is UNCHANGED - same probes, same spec search, same model call, same "
+            "response - and the only thing this suppresses is the "
+            "`ai_assistant_usage_logs` bookkeeping row the spec-search reader writes.\n\n"
+            "Exists for the chatbot turn engine's D14 rule (a turn flagged `is_test` or "
+            "carrying a `test_run_id` writes ZERO rows outside `chatbot.turns`); this "
+            "endpoint was the one write its business lane could still reach. Deliberately "
+            "NOT a 'skip the work' flag: a dry run has to answer identically to a live "
+            "one, or the shadow comparison it exists for compares two behaviours."
+        ),
+    )
     domain_hint: str | None = Field(
         default=None,
         validation_alias=AliasChoices("domain_hint", "domain"),
@@ -2326,6 +2340,9 @@ def resolve_reference_post(
                 allow_model=payload.understand_phrase,
                 user_id=current_user.get("id"),
                 registry_rows=registry_rows,
+                # D14: a dry run reads the sentence exactly the same way and simply does
+                # not write the usage row for it.
+                log_usage=not payload.dry_run,
             )
         )
         semantic_used = bool(understanding and understanding.source == "semantic")

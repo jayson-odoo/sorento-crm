@@ -1,0 +1,157 @@
+{
+ "source": {
+  "hand_crafted": true,
+  "expected_from": "reasoned",
+  "rationale": "PP-7. The customer quote-replied an OLDER list, so the trigger carries referenced_result_set and the positions block has ALREADY resolved '2' against the QUOTED roster. _quoted therefore empties _prevScope, and the scope-reuse must NOT overwrite that resolution with the previous turn's query - doing so returns the wrong promotion. So _promo_pick_scope_reused is absent and the entity is the quoted row's, not the prior scope's. The referenced set also drives _promo_pick_labels' roster choice, which is unobservable here precisely because the block does not run."
+ },
+ "ctx": {
+  "When Executed by Another Workflow": [
+   {
+    "json": {
+     "latest_user_message": "2",
+     "contact_id": 900000003,
+     "previous_conversation_state": {
+      "domain_hint": "promotion",
+      "intent_hint": "check_promotion",
+      "selection_context": null,
+      "routing": {
+       "suggested_team": "marketing_promotion",
+       "suggested_agent": "general_enquiries"
+      },
+      "response": "Here are the promos.",
+      "last_result_set": [
+       {
+        "idx": 1,
+        "label": "Raya Sale"
+       },
+       {
+        "idx": 2,
+        "label": "Merdeka Deal"
+       }
+      ],
+      "entities": [
+       {
+        "raw": "CBS212-WH",
+        "hint": "product",
+        "canonical_code": "CBS212-WH",
+        "current_message": true
+       }
+      ]
+     },
+     "is_test": null,
+     "mock_reformulator_output": null,
+     "referenced_result_set": [
+      {
+       "idx": 1,
+       "label": "Old Promo A"
+      },
+      {
+       "idx": 2,
+       "label": "Old Promo B"
+      }
+     ]
+    }
+   }
+  ]
+ },
+ "input": [
+  {
+   "json": {
+    "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_promotion\",\"domain_hint\":\"promotion\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"that one\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[2],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+   }
+  }
+ ],
+ "runIndex": 0,
+ "expected": [
+  {
+   "json": {
+    "output": {
+     "message_type": "business_query",
+     "intent_hint": "check_promotion",
+     "domain_hint": "promotion",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "that one",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [
+      {
+       "raw": "Old Promo B",
+       "hint": "promotion",
+       "ordinal": 2,
+       "current_message": true,
+       "uuid": null,
+       "canonical_code": "Old Promo B"
+      }
+     ],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [
+      2
+     ],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": "marketing_promotion",
+      "suggested_agent": "general_enquiries"
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     },
+     "domain_signal_source": "intent_explicit",
+     "scope_exclusive_applied": false,
+     "entity_op_applied": "replace_combine",
+     "query_brands": [],
+     "positions_resolved": 1,
+     "positions_out_of_range": [],
+     "entities_filtered": false,
+     "entities_emptied_by_filter": false,
+     "_pending_pick": true
+    },
+    "_parser_raw": {
+     "message_type": "business_query",
+     "intent_hint": "check_promotion",
+     "domain_hint": "promotion",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "that one",
+     "access_levels": [],
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [
+      2
+     ],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": null,
+      "suggested_agent": null
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     }
+    }
+   }
+  }
+ ]
+}

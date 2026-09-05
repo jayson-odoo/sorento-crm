@@ -1,0 +1,129 @@
+{
+  "source": {
+    "hand_crafted": true,
+    "expected_from": "reasoned",
+    "rationale": "The SECOND trigger of the same correction, which the fixture above cannot reach: entity_op 'reuse' with NO prior state at all. There is nothing to reuse, so even though the LLM's entities are flagged current_message FALSE the op is promoted to replace_combine AND every entity is re-flagged current_message:true (the `_priorEnts0.length === 0` arm is the only place that rewrite happens). Separating the two arms is what makes the `||` between them killable.",
+    "amended": [
+      {
+        "at": "2026-09-04T01:19:34Z",
+        "to_version": "ab3ec985-5371-4ee3-b6e5-8a23e3aef7df",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[0].json.output.routing.suggested_team"
+        ]
+      }
+    ]
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "latest_user_message": "DEF-2",
+          "contact_id": 900000003,
+          "previous_conversation_state": {},
+          "is_test": null,
+          "mock_reformulator_output": null
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_product\",\"domain_hint\":\"master_products\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"DEF-2\",\"hint\":\"product\",\"canonical_code\":null,\"current_message\":false}],\"entity_op\":\"reuse\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "expected": [
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "check_product",
+          "domain_hint": "master_products",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "DEF-2",
+              "hint": "product",
+              "canonical_code": null,
+              "current_message": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "purchasing",
+            "suggested_agent": "general_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "entity_op_corrected": "reuse->replace_combine",
+          "domain_signal_source": "intent_explicit",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "entities_filtered": false,
+          "entities_emptied_by_filter": false
+        },
+        "_parser_raw": {
+          "message_type": "business_query",
+          "intent_hint": "check_product",
+          "domain_hint": "master_products",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "DEF-2",
+              "hint": "product",
+              "canonical_code": null,
+              "current_message": false
+            }
+          ],
+          "entity_op": "reuse",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": null,
+            "suggested_agent": null
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          }
+        }
+      }
+    }
+  ]
+}

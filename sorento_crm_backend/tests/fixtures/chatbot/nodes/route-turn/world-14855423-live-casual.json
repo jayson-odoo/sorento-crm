@@ -1,0 +1,298 @@
+{
+ "source": {
+  "execution_id": "14855423",
+  "node": "route-turn",
+  "expected_from": "runData",
+  "world": "exec-14855423-live-casual",
+  "rationale": "assembled from the committed world so the low_signal arm has a real capture"
+ },
+ "ctx": {
+  "build-ctx": [
+   {
+    "json": {
+     "ctx": {
+      "access": {
+       "agent_name": "Order Enquiries",
+       "all_attributes_allowed": null,
+       "allowed": true,
+       "attributes": null,
+       "decision": "allow"
+      },
+      "contact": {
+       "assignee": null,
+       "countryCode": "MY",
+       "created_at": 1778415976,
+       "custom_fields": [
+        {
+         "name": "enquiry_type",
+         "value": null
+        },
+        {
+         "name": "user_type",
+         "value": null
+        },
+        {
+         "name": "complaint_id",
+         "value": null
+        },
+        {
+         "name": "is_allowed_stock",
+         "value": "true"
+        },
+        {
+         "name": "is_human_intervened",
+         "value": null
+        },
+        {
+         "name": "backend_id",
+         "value": "https://fe-sorento.foundryx.my/user-management/contacts/de238698-9415-4f5d-b423-6c67aaec2653"
+        },
+        {
+         "name": "is_allowed_ai",
+         "value": "true"
+        },
+        {
+         "name": "is_allowed_voice",
+         "value": null
+        }
+       ],
+       "email": "admin.warehouse@sorento.com.my",
+       "firstName": "Ili",
+       "id": 445239390,
+       "isBlocked": false,
+       "language": null,
+       "lastName": "Mahfuzah",
+       "lifecycle": "New Lead",
+       "locale": null,
+       "phone": "+60149361178",
+       "profilePic": null,
+       "status": "open",
+       "tags": [
+        "imported_20260510_200514",
+        "imported_20260627_150636"
+       ]
+      },
+      "media": null,
+      "parse": {
+       "_parser_raw": {
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "entities": [],
+        "entity_op": "reuse",
+        "escalation": {
+         "company_pick": null,
+         "is_escalation_confirmation": false
+        },
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [],
+        "routing": {
+         "suggested_agent": null,
+         "suggested_team": null
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "user_goal": "trying to thank the assistant"
+       },
+       "output": {
+        "_pending_pick": true,
+        "access_levels": [],
+        "broaden_axis": null,
+        "contains_flyer": false,
+        "correction": false,
+        "date_filter_end": null,
+        "date_filter_start": null,
+        "date_mode": null,
+        "demand_qty": null,
+        "domain_hint": null,
+        "domain_signal_source": "intent_none",
+        "entities": [],
+        "entity_op": "reuse",
+        "entity_op_applied": "reuse",
+        "escalation": {
+         "is_escalation_confirmation": false
+        },
+        "intent_hint": null,
+        "is_active": null,
+        "is_affirmative": null,
+        "match_mode": "and",
+        "message_type": "casual",
+        "order_status": null,
+        "person_mention": null,
+        "query_brands": [],
+        "reference_positions": [],
+        "reference_target": null,
+        "requested_attributes": [
+         "delivery"
+        ],
+        "routing": {
+         "suggested_agent": "order_enquiries",
+         "suggested_team": "customer_service"
+        },
+        "scope_exclusive": false,
+        "scope_intent": null,
+        "user_goal": "trying to thank the assistant"
+       }
+      },
+      "session": {
+       "respond_io_id": "445239390",
+       "session_vars": {
+        "user_response": "Customer: all customers\nProduct: all products\nOrder: rma-cg2608-022\nDates: all dates\n\nHere are the orders I found.\n\n1. *Order Number:* RMA-CG2608-022\n*Customer:* TROPICANA BUILDING MATERIAL SDN BHD (PROJECT)\n*Order Date:* 26/08/2026\n*Actual Delivery Date:* 28/08/2026\n*Status:* Picked Up / In Transit\n*Pickup Time:* 10:04:00\n*Transporter:* SVIND ENTERPRISE\n*Driver:* CHANGAN\n*Lorry Plate:* BQJ8632\n*Warehouse:* BRW\n\n_Data last updated: 02/09/2026 10:44:48_",
+        "variables": {
+         "access_levels": [],
+         "contains_flyer": false,
+         "date_filter_end": null,
+         "date_filter_start": null,
+         "date_mode": null,
+         "domain_hint": "order",
+         "dym_candidates": [],
+         "dym_offer": null,
+         "entities": [
+          {
+           "canonical_code": "RMA-CG2608-022",
+           "confident": true,
+           "current_message": true,
+           "hint": "customer_order",
+           "raw": "rma-cg2608-022"
+          }
+         ],
+         "escalation": {
+          "is_escalation_confirmation": false
+         },
+         "ideation": null,
+         "intent_hint": "check_order",
+         "last_result_set": [
+          {
+           "attachment_type": null,
+           "entity_type": null,
+           "filename": null,
+           "idx": 1,
+           "label": "RMA-CG2608-022",
+           "product": null,
+           "uuid": null
+          }
+         ],
+         "match_mode": "and",
+         "message_type": "business_query",
+         "query_brands": [],
+         "requested_attributes": [
+          "delivery"
+         ],
+         "response": "Previous turn (order): returned 1 records",
+         "routing": {
+          "suggested_agent": "order_enquiries",
+          "suggested_team": "customer_service"
+         },
+         "routing_brand": null,
+         "routing_brand_source": null,
+         "routing_companies": [
+          {
+           "brand_code": null,
+           "codes": [
+            "RMA-CG2608-022"
+           ],
+           "company_id": "00000000-0000-0000-0000-000000000001",
+           "company_name": "Sorento",
+           "labels": [
+            "RMA-CG2608-022"
+           ]
+          }
+         ],
+         "routing_company": "00000000-0000-0000-0000-000000000001",
+         "routing_roster_plan": null,
+         "selection_context": null,
+         "user_goal": "trying to check the delivery status of rma-cg2608-022"
+        }
+       }
+      },
+      "text": {
+       "channel": {
+        "created_at": 1767682908,
+        "id": 453209,
+        "meta": "{\"meta\":{\"profile\":{\"name\":\"Ili Sorento\"},\"wa_id\":\"60149361178\",\"user_id\":\"MY.27221486210808338\",\"firstName\":\"Ili\",\"lastName\":\"Sorento\"}}",
+        "name": "Internal (+60 11-1673 1179)",
+        "source": "whatsapp_business"
+       },
+       "contact": {
+        "assignee": {
+         "email": null,
+         "firstName": null,
+         "id": null,
+         "lastName": null
+        },
+        "countryCode": "MY",
+        "created_at": 1778415976,
+        "email": "admin.warehouse@sorento.com.my",
+        "firstName": "Ili",
+        "id": 445239390,
+        "language": null,
+        "lastName": "Mahfuzah",
+        "phone": "+60149361178",
+        "profilePic": null,
+        "status": "open"
+       },
+       "event_id": "f7157446-1b57-40c2-8f90-df8389f59e22",
+       "event_type": "message.received",
+       "message": {
+        "channelId": 453209,
+        "channelMessageId": "wamid.HBgLNjAxNDkzNjExNzgVAgASGBYzRUIwNTgwNzAwNDQ5QzUwQ0IwNEI3AA==",
+        "contactId": 445239390,
+        "message": {
+         "text": "thankyou",
+         "type": "text"
+        },
+        "messageId": 1788317840000000,
+        "timestamp": 1788317840000,
+        "traffic": "incoming"
+       },
+       "sender": {
+        "broadcastHistoryId": null,
+        "source": "contact",
+        "teamId": null,
+        "userId": null,
+        "workflowId": null
+       }
+      }
+     }
+    }
+   }
+  ]
+ },
+ "input": [
+  {
+   "json": {
+    "agent_name": "Order Enquiries",
+    "all_attributes_allowed": null,
+    "allowed": true,
+    "attributes": null,
+    "decision": "allow"
+   }
+  }
+ ],
+ "expected": [
+  {
+   "json": {
+    "agent_name": "Order Enquiries",
+    "all_attributes_allowed": null,
+    "allowed": true,
+    "attributes": null,
+    "branch_kind": "low_signal",
+    "decision": "allow"
+   }
+  }
+ ]
+}

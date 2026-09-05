@@ -1,0 +1,193 @@
+{
+  "source": {
+    "hand_crafted": true,
+    "expected_from": "reasoned",
+    "rationale": "The `(_reqHelp ? _llmTeamN : null) ?? derived ?? prior ?? default` chain. On a request_for_help turn WITH a domain, deriveRouting would say warehouse/general_enquiries for 'inventory', but the LLM named purchasing_certification and that must win. The mirror item is the same LLM team on a NON-request_for_help turn, where the ternary yields null and deriveRouting's warehouse wins instead - that pair is what pins the ternary rather than a plain `_reqHelp && _llmTeamN`.",
+    "amended": [
+      {
+        "at": "2026-09-03T06:52:28Z",
+        "to_version": "7671ebe7-d6db-4687-818f-c2e88df802a4",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[0].json.output.routing.suggested_team"
+        ]
+      }
+    ]
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "latest_user_message": "I need help with certificates",
+          "contact_id": 900000003,
+          "previous_conversation_state": {},
+          "is_test": null,
+          "mock_reformulator_output": null
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "output": "{\"message_type\":\"request_for_help\",\"intent_hint\":\"check_stock\",\"domain_hint\":\"inventory\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"help\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"purchasing_certification\",\"suggested_agent\":\"general_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false}}"
+      }
+    },
+    {
+      "json": {
+        "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_stock\",\"domain_hint\":\"inventory\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"stock\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":\"purchasing_certification\",\"suggested_agent\":\"general_enquiries\"},\"escalation\":{\"is_escalation_confirmation\":false}}"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "expected": [
+    {
+      "json": {
+        "output": {
+          "message_type": "request_for_help",
+          "intent_hint": "check_stock",
+          "domain_hint": "inventory",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "help",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "warehouse",
+            "suggested_agent": "general_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "domain_signal_source": "intent_explicit",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "entities_filtered": false,
+          "entities_emptied_by_filter": false
+        },
+        "_parser_raw": {
+          "message_type": "request_for_help",
+          "intent_hint": "check_stock",
+          "domain_hint": "inventory",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "help",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "purchasing_certification",
+            "suggested_agent": "general_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          }
+        }
+      }
+    },
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "check_stock",
+          "domain_hint": "inventory",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "stock",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "warehouse",
+            "suggested_agent": "general_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "domain_signal_source": "intent_explicit",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "entities_filtered": false,
+          "entities_emptied_by_filter": false
+        },
+        "_parser_raw": {
+          "message_type": "business_query",
+          "intent_hint": "check_stock",
+          "domain_hint": "inventory",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "stock",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "purchasing_certification",
+            "suggested_agent": "general_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          }
+        }
+      }
+    }
+  ]
+}

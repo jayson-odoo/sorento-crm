@@ -1,0 +1,137 @@
+{
+  "source": {
+    "hand_crafted": true,
+    "expected_from": "reasoned",
+    "rationale": "The SECOND dedupe key. These two entities have DIFFERENT canonical codes, so _ceKey does not collide - what collides is hint|uuid, which is the other half of the dedupe. The retained twin is the first one, which carries the uuid but NO canonical_code, so the rule 'never lose a resolution to the dedupe' has to find it through the UUID lookup (the key lookup cannot match) and backfill the duplicate's canonical_code onto it. That backfill is the only observable effect of the uuid branch, and it is what this fixture pins.",
+    "amended": [
+      {
+        "at": "2026-09-04T01:19:34Z",
+        "to_version": "ab3ec985-5371-4ee3-b6e5-8a23e3aef7df",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[0].json.output.routing.suggested_team"
+        ]
+      }
+    ]
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "latest_user_message": "ABC-1",
+          "contact_id": 900000003,
+          "previous_conversation_state": {},
+          "is_test": null,
+          "mock_reformulator_output": null
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_product\",\"domain_hint\":\"master_products\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"ABC-1\",\"hint\":\"product\",\"uuid\":\"u9\",\"current_message\":true},{\"raw\":\"variant\",\"hint\":\"product\",\"canonical_code\":\"ABC-1-ALT\",\"uuid\":\"u9\",\"current_message\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "expected": [
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "check_product",
+          "domain_hint": "master_products",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "ABC-1",
+              "hint": "product",
+              "uuid": "u9",
+              "current_message": true,
+              "canonical_code": "ABC-1-ALT"
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "purchasing",
+            "suggested_agent": "general_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "domain_signal_source": "intent_explicit",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "entities_deduped": 1,
+          "entities_filtered": false,
+          "entities_emptied_by_filter": false
+        },
+        "_parser_raw": {
+          "message_type": "business_query",
+          "intent_hint": "check_product",
+          "domain_hint": "master_products",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "ABC-1",
+              "hint": "product",
+              "uuid": "u9",
+              "current_message": true
+            },
+            {
+              "raw": "variant",
+              "hint": "product",
+              "canonical_code": "ABC-1-ALT",
+              "uuid": "u9",
+              "current_message": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": null,
+            "suggested_agent": null
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          }
+        }
+      }
+    }
+  ]
+}
