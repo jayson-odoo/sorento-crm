@@ -545,6 +545,7 @@ class TestPollerBatchAndLiveMessageKeepOrder:
     def test_poller_batch_and_live_message_keep_order(
         self, real_contacts, stub_engine_seams, monkeypatch
     ) -> None:
+        monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: _parser_output())
         _enable_ordering(monkeypatch, queue_wait_seconds=5.0)
         contact = real_contacts("batch-order")
 
