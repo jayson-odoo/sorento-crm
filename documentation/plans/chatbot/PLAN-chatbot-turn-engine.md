@@ -832,11 +832,31 @@ assign / comment nodes; `N8N_CONCURRENCY_PRODUCTION_LIMIT` raised; old monolith 
 the clone calls the same endpoint with `is_test: true` (AC-706). H6, H12, H30, H31, H54 land
 here. Pilot on one contact first (AC-707), console containment proven (AC-708), then all.
 
-### S8 - Retire (small)
+### S8 - Retire and settle (two halves)
 
-Legacy regex readers removed (AC-801), disabled n8n nodes deleted and exports refreshed
-(AC-802), hazard table closed out (AC-803), n8n repo `CLAUDE.md` updated to say the turn path
-is the CRM. Worktree GC.
+**S8a, no promote needed (starts after #674 merges).** Chatbot config leaves the environment
+(owner ruling 5 Sep: nothing chatbot-shaped in `.env`, it does not scale past one tenant).
+The retry ingress URL and key move to the respond workspace row, the same shape the ideation
+intake already uses there (`ideation_shared_service_url` + Fernet ciphertext), edited on the
+Respond Workspaces screen under `user_management.settings.edit` (AC-804). The URL is validated
+on save and on use: https only, no redirects followed, host must not resolve to the CRM
+itself, loopback or a private range, so an admin-editable outbound URL is not an SSRF vector.
+`CHATBOT_RETRY_INGRESS_URL` / `_KEY` are deleted from `config.py`; the Retry button reads the
+workspace row and says "not configured" when it is empty. Security nits from the S2-S5
+review close (AC-806). The Prompts screen gets a "Run a turn" test for the two chatbot keys,
+a dry-run envelope with the chosen prompt version whose trace renders inline (AC-807). S2's
+`tier_menu` STALE_FIXTURES entries migrate to CAPTURE_BODY_ADDITIONS (AC-808). Hazard table
+closed out (AC-803). Worktree GC.
+
+**S8b, after the S7 spine is PUT and order measurement passes.** `/turn/{id}/complete`, the
+id-less `/turn/complete` and `delegate.py` are deleted (AC-805; S7 answers 410 until then),
+legacy regex readers removed (AC-801), disabled n8n nodes deleted and exports refreshed
+(AC-802, n8n side), n8n repo `CLAUDE.md` updated to say the turn path is the CRM.
+
+Deferred to the backlog, not S8: the capacity split (service bundles taking a session factory)
+and the S9 idea of retargeting the corpus to turn-level behaviour and redesigning lane by lane
+behind it (owner, 5 Sep: the n8n code is not a design to keep; the characterization suite is
+what makes a rewrite safe).
 
 ## Hazard disposition
 

@@ -837,3 +837,27 @@ contact inside the synchronous request. Different contacts run in parallel.
   into deleted nodes. (C1)
 - AC-803 `[BE]` The plan's hazard table has every row marked `fixed (AC-x)`, `reproduced (AC-x)`,
   or `backlog (#issue)`. (C1)
+- AC-804 `[BE][FE][T]` Retry ingress config lives on the respond workspace row
+  (`chatbot_retry_ingress_url`, `chatbot_retry_ingress_key_ciphertext`, Fernet like the ideation
+  intake key), editable on the Respond Workspaces screen under `user_management.settings.edit`,
+  key write-only (never echoed). Given a workspace with no URL, when an operator clicks Retry,
+  then the response is 409 "retry not configured" and no outbound call is made. Given a URL
+  that is not https, or whose host resolves to loopback, a private range, or the CRM's own
+  host, when saved or used, then it is rejected with a 422 naming the rule. Given a valid URL,
+  when Retry runs, then the POST follows no redirects and sends the key as
+  `X-Chatbot-Retry-Key`. `CHATBOT_RETRY_INGRESS_URL` and `CHATBOT_RETRY_INGRESS_KEY` no longer
+  exist in `config.py` or `.env.example`. (A4, C1)
+- AC-805 `[BE][T]` After the S7 spine is PUT: `POST /turn/{id}/complete`, the id-less
+  `/turn/complete` and `app/services/chatbot/delegate.py` are deleted; the route inventory test
+  asserts exactly one turn-creating route; `complete_turn` keeps its single caller. Gated on
+  the owner's S7 promote. (H6)
+- AC-806 `[BE][T]` Security nits closed: the header-masking guardrail matches every
+  hand-rolled mask shape (bracket assignment, `.get`, dict literal), `_CREDENTIAL_NAME_PARTS`
+  includes `auth`, the `is_test` comment at the duplicate path is corrected, and the archived
+  plan no longer carries the real phone number. (C1)
+- AC-807 `[BE][FE][T]` Prompts screen: for `chatbot_semantic_parser` and `chatbot_clarifier`
+  the Test action posts a dry-run turn (`is_test: true`, chosen prompt version pinned via
+  `prompt_overrides`, dev contact from the workspace) and renders the turn trace inline; zero
+  writes outside `chatbot.turns` (D14); other keys keep the assistant dry run. (D5, D13)
+- AC-808 `[T]` S2's `tier_menu` STALE_FIXTURES entries are migrated to
+  CAPTURE_BODY_ADDITIONS with the live body cited; STALE_FIXTURES is empty. (D8)
