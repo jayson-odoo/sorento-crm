@@ -30,6 +30,7 @@ would cost it a second round trip. See ``company_anchor.py``.
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Optional
 
@@ -118,6 +119,59 @@ DELETE_PERMISSIONS = {
 # silently truncating (AC-AC-20): a partial response the caller believes is
 # complete is worse than a refusal.
 MAX_BATCH = 1000
+
+# Fix round 6 (live need): the batch summary line names how many records
+# failed or stayed retryable, but not WHICH ones - so a record retryable
+# across several pushes had no server-side trail at all beyond that count.
+# Capped so one pathological batch (every record failing the same way)
+# cannot turn this into its own flood.
+MAX_RECORD_LOG_LINES = 50
+# Error VALUES are free text (a resolver's own message, or a raw exception
+# string on the sanitized paths) - capped so one long one cannot blow out a
+# log line; the KEYS (field names) are never truncated, they are the whole
+# point of a machine-readable error.
+_ERROR_VALUE_LOG_LIMIT = 200
+
+
+def _log_record_outcomes(
+    entity: str, integration_name, company_id: str, result
+) -> None:
+    """One INFO line per FAILED/RETRYABLE record, capped at `MAX_RECORD_LOG_LINES`.
+
+    Never logs a payload field beyond `source_ref` and the record's own
+    `errors` dict - no line bodies, no customer/agent/product names, nothing
+    that was actually sent. Skipped entirely for a dry run: a preview never
+    happened as far as the operational log is concerned, the same reason the
+    batch summary line's own counts are for the real run only in spirit
+    (dry-run callers read the response body, not the server log).
+    """
+    logged = 0
+    suppressed = 0
+    for record in result.records:
+        if record.outcome.value not in ("failed", "retryable"):
+            continue
+        if logged >= MAX_RECORD_LOG_LINES:
+            suppressed += 1
+            continue
+        errors = {
+            field: (reason[:_ERROR_VALUE_LOG_LIMIT] if isinstance(reason, str) else reason)
+            for field, reason in record.errors.items()
+        }
+        logger.info(
+            "ingest.record entity=%s integration=%s company=%s source_ref=%s "
+            "outcome=%s errors=%s",
+            entity,
+            integration_name,
+            company_id,
+            record.source_ref,
+            record.outcome.value,
+            json.dumps(errors),
+        )
+        logged += 1
+    if suppressed:
+        logger.info(
+            "ingest.record_overflow entity=%s suppressed=%d", entity, suppressed
+        )
 
 
 # Masters, documents and shipping orders on one surface. The set is built from
@@ -341,6 +395,10 @@ async def ingest_masters(
         result.failed,
         result.retryable,
     )
+    if not dry_run:
+        _log_record_outcomes(
+            entity, current_user.get("integration_name"), company_id, result
+        )
     return result.as_dict()
 
 
