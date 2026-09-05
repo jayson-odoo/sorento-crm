@@ -47,13 +47,17 @@ vi.mock('react-konva', async () => {
     y?: number;
     children?: React.ReactNode;
     onDragStart?: (e: { target: { x: () => number; y: () => number } }) => void;
-    onDragMove?: (e: { target: { x: () => number; y: () => number } }) => void;
+    onDragMove?: (e: {
+      target: { x: () => number; y: () => number };
+      evt: { shiftKey: boolean };
+    }) => void;
     onDragEnd?: (e: {
       target: {
         x: () => number;
         y: () => number;
         position: (p: { x: number; y: number }) => void;
       };
+      evt: { shiftKey: boolean };
     }) => void;
   }
 
@@ -61,13 +65,15 @@ vi.mock('react-konva', async () => {
   // off it is its position, so the stand-in answers the pointer's own client
   // coordinates. Press / move / release stands in for the drag itself: jsdom
   // has no DragEvent that carries coordinates, and Konva's drag is built out
-  // of these three anyway.
-  const dragged = (event: { clientX: number; clientY: number }) => ({
+  // of these three anyway. `evt.shiftKey` carries the fireEvent option
+  // through, the same one Konva's own `evt` would carry (S1).
+  const dragged = (event: { clientX: number; clientY: number; shiftKey?: boolean }) => ({
     target: {
       x: () => event.clientX,
       y: () => event.clientY,
       position: (p: { x: number; y: number }) => konva.positions.push(p),
     },
+    evt: { shiftKey: event.shiftKey ?? false },
   });
 
   const draggable = (kind: string) =>
@@ -78,7 +84,9 @@ vi.mock('react-konva', async () => {
       // at the position the pointer had reached. That is the whole of the
       // Escape defect (r4d), so the stand-in has to do it too - held in a ref
       // and fired from the unmount cleanup, exactly where Konva fires it.
-      const live = React.useRef<{ clientX: number; clientY: number } | null>(null);
+      const live = React.useRef<{ clientX: number; clientY: number; shiftKey: boolean } | null>(
+        null,
+      );
       const latest = React.useRef(props);
       latest.current = props;
 
@@ -96,11 +104,13 @@ vi.mock('react-konva', async () => {
           data-x={props.x}
           data-y={props.y}
           onMouseDown={(e) => {
-            live.current = { clientX: e.clientX, clientY: e.clientY };
+            live.current = { clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey };
             props.onDragStart?.(dragged(e));
           }}
           onMouseMove={(e) => {
-            if (live.current) live.current = { clientX: e.clientX, clientY: e.clientY };
+            if (live.current) {
+              live.current = { clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey };
+            }
             props.onDragMove?.(dragged(e));
           }}
           onMouseUp={(e) => {
@@ -425,6 +435,71 @@ describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
       { x: 1, y: 1 },
       { x: 0, y: 1 },
     ]);
+  });
+
+  it('Shift snaps a corner drag to the dominant axis (S1, AC-S1-1)', () => {
+    const { container } = render(
+      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+    );
+    selectShape();
+
+    // Vertex 1 (top right) starts at (120, 0). dx=20, dy=3: the ratio is well
+    // under tan(22.5deg), so the corner is pinned to the dominant (x) axis -
+    // the raw y of 3 never reaches the shape.
+    const vertex = handle(container, 'polygon-vertex-1');
+    fireEvent.mouseDown(vertex);
+    fireEvent.mouseMove(vertex, { clientX: 140, clientY: 3, shiftKey: true });
+
+    expect(konva.positions.at(-1)).toEqual({ x: 140, y: 0 });
+  });
+
+  it('Shift snaps a corner drag to the diagonal when the deltas are close (S1, AC-S1-1)', () => {
+    const { container } = render(
+      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+    );
+    selectShape();
+
+    // dx=10, dy=12: close enough to 45 degrees that both land on the average
+    // magnitude, 11, rather than either raw value.
+    const vertex = handle(container, 'polygon-vertex-1');
+    fireEvent.mouseDown(vertex);
+    fireEvent.mouseMove(vertex, { clientX: 130, clientY: 12, shiftKey: true });
+
+    expect(konva.positions.at(-1)).toEqual({ x: 131, y: 11 });
+  });
+
+  it('frees the corner once Shift is released mid-drag (S1, AC-S1-2)', () => {
+    const { container } = render(
+      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+    );
+    selectShape();
+
+    const vertex = handle(container, 'polygon-vertex-1');
+    fireEvent.mouseDown(vertex);
+    fireEvent.mouseMove(vertex, { clientX: 140, clientY: 3, shiftKey: true });
+    expect(konva.positions.at(-1)).toEqual({ x: 140, y: 0 });
+    const pushedWhileLocked = konva.positions.length;
+
+    // Shift comes up: the handler no longer overrides the node's position,
+    // so nothing new is pushed and the corner follows the raw cursor.
+    fireEvent.mouseMove(vertex, { clientX: 150, clientY: 0 });
+    expect(konva.positions.length).toBe(pushedWhileLocked);
+    expect(pointsOf()[1]).toEqual({ x: 1.25, y: 0 });
+  });
+
+  it('Shift constrains an EDGE drag to its dominant axis too (S1, AC-S1-3)', () => {
+    const { container } = render(
+      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+    );
+    selectShape();
+
+    // Edge 0's midpoint starts at (60, 0), same dx/dy as the first corner
+    // case above.
+    const edge = handle(container, 'polygon-edge-0');
+    fireEvent.mouseDown(edge);
+    fireEvent.mouseMove(edge, { clientX: 80, clientY: 3, shiftKey: true });
+
+    expect(konva.positions.at(-1)).toEqual({ x: 80, y: 0 });
   });
 
   it('gives a boxed price badge the same handles (r4b, AC-S6-2)', () => {

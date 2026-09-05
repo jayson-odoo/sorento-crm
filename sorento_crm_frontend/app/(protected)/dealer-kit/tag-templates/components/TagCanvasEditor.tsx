@@ -63,6 +63,7 @@ import {
   polygonPoints,
   refitPolygon,
   scalePolygonPoints,
+  snapDelta,
 } from '@/lib/dealer-kit/polygon-path';
 import {
   actualSizeView,
@@ -1330,26 +1331,46 @@ export function TagCanvasEditor({
     setPolygonPreview(null);
   }, []);
 
+  /**
+   * The delta from the drag's own start, in the layer's local pixel space -
+   * the Group carrying these handles already has the layer's rotation, so a
+   * plain `node.x()/y()` minus `origin` is unrotated (r4b's own comment on
+   * `refitPolygon` says the same thing for mm space). Shift (S1, AC-S1-1/3)
+   * snaps that delta BEFORE it is normalized by width/height, because the
+   * snap is about the shape drawn in pixels, not the box's aspect ratio - a
+   * 45-degree pixel move on a non-square box is not a 45-degree normalized
+   * one. The node is repositioned to the snapped point so the handle stops
+   * exactly where the shape does, rather than trailing the raw cursor.
+   */
   const polygonPointsFromDrag = useCallback(
-    (node: Konva.Node) => {
+    (e: Konva.KonvaEventObject<DragEvent>) => {
       const drag = polygonDragRef.current;
       const layer = cornerHandleLayer;
       if (!drag || !layer) return null;
       const width = layer.width_mm * scale;
       const height = layer.height_mm * scale;
       if (width <= 0 || height <= 0) return null;
-      const dx = (node.x() - drag.origin.x) / width;
-      const dy = (node.y() - drag.origin.y) / height;
+      const node = e.target;
+      let dx = node.x() - drag.origin.x;
+      let dy = node.y() - drag.origin.y;
+      if (e.evt?.shiftKey) {
+        const snapped = snapDelta(dx, dy);
+        dx = snapped.dx;
+        dy = snapped.dy;
+        node.position({ x: drag.origin.x + dx, y: drag.origin.y + dy });
+      }
+      const normDx = dx / width;
+      const normDy = dy / height;
       return drag.kind === 'vertex'
-        ? movePoint(drag.base, drag.index, dx, dy)
-        : moveEdge(drag.base, drag.index, dx, dy);
+        ? movePoint(drag.base, drag.index, normDx, normDy)
+        : moveEdge(drag.base, drag.index, normDx, normDy);
     },
     [cornerHandleLayer, scale],
   );
 
   const handlePolygonDragMove = useCallback(
     (e: Konva.KonvaEventObject<DragEvent>) => {
-      const next = polygonPointsFromDrag(e.target);
+      const next = polygonPointsFromDrag(e);
       if (next) setPolygonPreview(next);
     },
     [polygonPointsFromDrag],
@@ -1371,7 +1392,7 @@ export function TagCanvasEditor({
   const handlePolygonDragEnd = useCallback(
     (e: Konva.KonvaEventObject<DragEvent>) => {
       const drag = polygonDragRef.current;
-      const next = polygonPointsFromDrag(e.target);
+      const next = polygonPointsFromDrag(e);
       const layer = cornerHandleLayer;
       polygonDragRef.current = null;
       setPolygonPreview(null);
