@@ -1,0 +1,176 @@
+{
+  "source": {
+    "hand_crafted": true,
+    "expected_from": "reasoned",
+    "rationale": "The modal did-you-mean turn. The customer types back a code that IS one of the offered candidates. tryDymPick finds it (bare-code match on the message), applyDymPick replaces the SOURCE token's entity in place (for_raw 'abc12' -> index 0) with the candidate's own entity_type (never the LLM's hint), stamps dym_slot from the offer id so a SECOND pick can still find it, carries the prior date window, and - because the whole message IS the code (_isBareCode) and the offer stored a domain - FORCES domain_hint back to the offer's 'incoming', overriding the LLM's master_products guess, and realigns intent_hint from prior state. scope_exclusive is forced false regardless of what the LLM said. The retained 'ACME' customer entity is then dropped by the incoming blocklist, and the carried date is stripped again by the date gate (incoming is not whitelisted) leaving date_filter_gated. dym_pick_applied is one of D11's resolved-pick signals, so _pending_pick is true.",
+    "amended": [
+      {
+        "at": "2026-08-26T13:01:30Z",
+        "to_version": "7671ebe7-d6db-4687-818f-c2e88df802a4",
+        "reason": "baseline catch-up re-pin to live 74ef5116 (other lanes; see commit body)",
+        "paths": [
+          "[0].json.output.dym_superseded_dropped"
+        ]
+      }
+    ]
+  },
+  "ctx": {
+    "When Executed by Another Workflow": [
+      {
+        "json": {
+          "latest_user_message": "ABC-123",
+          "contact_id": 900000003,
+          "previous_conversation_state": {
+            "domain_hint": "incoming",
+            "intent_hint": "check_incoming",
+            "date_filter_start": "2026-08-01",
+            "routing": {
+              "suggested_team": "purchasing",
+              "suggested_agent": "incoming_stock_enquiries"
+            },
+            "response": "No exact match. Did you mean ABC-123?",
+            "dym_offer": {
+              "id": "off-1",
+              "domain": "incoming",
+              "candidates": [
+                {
+                  "code": "ABC-123",
+                  "uuid": "u1",
+                  "entity_type": "product",
+                  "for_raw": "abc12",
+                  "for_hint": "product",
+                  "for_canonical": null
+                }
+              ]
+            },
+            "entities": [
+              {
+                "raw": "abc12",
+                "hint": "product",
+                "canonical_code": null,
+                "current_message": true
+              },
+              {
+                "raw": "ACME",
+                "hint": "customer",
+                "canonical_code": null,
+                "current_message": true
+              }
+            ]
+          },
+          "is_test": null,
+          "mock_reformulator_output": null
+        }
+      }
+    ]
+  },
+  "input": [
+    {
+      "json": {
+        "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_product\",\"domain_hint\":\"master_products\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"ABC-123\",\"access_levels\":[],\"date_mode\":null,\"date_filter_start\":null,\"date_filter_end\":null,\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[{\"raw\":\"ABC-123\",\"hint\":\"product\",\"canonical_code\":null,\"current_message\":true}],\"entity_op\":\"replace_combine\",\"scope_exclusive\":true,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+      }
+    }
+  ],
+  "runIndex": 0,
+  "expected": [
+    {
+      "json": {
+        "output": {
+          "message_type": "business_query",
+          "intent_hint": "check_incoming",
+          "domain_hint": "incoming",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "ABC-123",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "ABC-123",
+              "hint": "product",
+              "canonical_code": "ABC-123",
+              "uuid": "u1",
+              "current_message": true,
+              "dym_slot": "off-1"
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": false,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": "purchasing",
+            "suggested_agent": "incoming_stock_enquiries"
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          },
+          "dym_pick_applied": true,
+          "dym_offer_pick_code": "ABC-123",
+          "dym_pick_domain_forced": "incoming",
+          "domain_signal_source": "intent_explicit",
+          "scope_exclusive_applied": false,
+          "entity_op_applied": "replace_combine",
+          "query_brands": [],
+          "entities_filtered": true,
+          "entities_emptied_by_filter": false,
+          "broaden_dropped": [
+            "customer:ACME"
+          ],
+          "date_filter_gated": "incoming",
+          "_pending_pick": true,
+          "dym_superseded_dropped": 0
+        },
+        "_parser_raw": {
+          "message_type": "business_query",
+          "intent_hint": "check_product",
+          "domain_hint": "master_products",
+          "scope_intent": "specific",
+          "is_affirmative": null,
+          "user_goal": "ABC-123",
+          "access_levels": [],
+          "date_mode": null,
+          "date_filter_start": null,
+          "date_filter_end": null,
+          "match_mode": "and",
+          "demand_qty": null,
+          "entities": [
+            {
+              "raw": "ABC-123",
+              "hint": "product",
+              "canonical_code": null,
+              "current_message": true
+            }
+          ],
+          "entity_op": "replace_combine",
+          "scope_exclusive": true,
+          "requested_attributes": [],
+          "contains_flyer": false,
+          "reference_positions": [],
+          "reference_target": null,
+          "person_mention": null,
+          "is_active": null,
+          "order_status": null,
+          "correction": false,
+          "routing": {
+            "suggested_team": null,
+            "suggested_agent": null
+          },
+          "escalation": {
+            "is_escalation_confirmation": false
+          }
+        }
+      }
+    }
+  ]
+}

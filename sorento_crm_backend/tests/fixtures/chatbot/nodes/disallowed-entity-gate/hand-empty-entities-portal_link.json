@@ -1,0 +1,93 @@
+{
+ "source": {
+  "hand_crafted": true,
+  "expected_from": "reasoned",
+  "reasoned_from": "contract",
+  "rationale": "ALLOWS_EMPTY.portal_link is TRUE: with nothing resolved the gate PASSES as a broad query. The empty-entities arm is decided by that flag alone \u2014 the ALLOWED row is never consulted, which is why a domain with an EMPTY allowed row can still pass here."
+ },
+ "ctx": {
+  "Call 'sub-query-reformulator'": [
+   {
+    "json": {
+     "output": {
+      "domain_hint": "portal_link"
+     }
+    }
+   }
+  ],
+  "resolve-entity": [
+   {
+    "json": {
+     "tokens": [
+      "x"
+     ],
+     "resolutions": [],
+     "unresolved_tokens": [
+      "x"
+     ]
+    }
+   }
+  ],
+  "build-ctx": [
+   {
+    "json": {
+     "ctx": {
+      "parse": {
+       "output": {
+        "domain_hint": "portal_link"
+       }
+      }
+     }
+    }
+   }
+  ]
+ },
+ "input": [
+  {
+   "json": {
+    "tokens": [
+     "x"
+    ],
+    "resolutions": [],
+    "unresolved_tokens": [
+     "x"
+    ]
+   }
+  }
+ ],
+ "expected": [
+  {
+   "json": {
+    "tokens": [
+     "x"
+    ],
+    "resolutions": [],
+    "unresolved_tokens": [
+     "x"
+    ],
+    "access_denied_levels": [],
+    "access_notice": "",
+    "brand_gate_empty": false,
+    "brand_unheld": false,
+    "resolved_company": null,
+    "company_team": null,
+    "resolved_companies": [],
+    "routing_brand": null,
+    "routing_brand_source": null,
+    "routing_companies": [],
+    "routing_company": null,
+    "gate_passed": true,
+    "require_specific": false,
+    "gate_reason": "no entities; 'portal_link' permits broad query",
+    "gate_clarification": "",
+    "compatible_entities": [],
+    "gate_debug": {
+     "domain": "portal_link",
+     "allowed_lookup": [],
+     "entities_count": 0
+    }
+   }
+  }
+ ],
+ "runIndex": 0
+}

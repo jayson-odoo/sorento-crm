@@ -340,6 +340,7 @@ PERMISSION_REGISTRY.extend([
     # AutoCount ingest contract version (D8, PLAN-autocount-document-ingest-v2). Granted
     # to every role holding `scm.sales_orders.edit` by migration 472.
     {"slug": "integration.contract.read", "name": "Read ingest contract", "description": "Read the AutoCount ESB ingest contract version and supported entity list."},
+    {"slug": "integration.chat_turn.submit", "name": "Submit chatbot turns", "description": "Post one inbound WhatsApp turn to the chatbot engine and receive the reply and the actions to execute."},
 ])
 
 # System

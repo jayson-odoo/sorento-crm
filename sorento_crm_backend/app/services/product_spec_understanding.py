@@ -451,6 +451,7 @@ def derive_search_inputs(
     allow_model: bool = True,
     user_id: str | None = None,
     registry_rows=None,
+    log_usage: bool = True,
 ) -> tuple[list[dict], list[str], list[dict], Understanding | None]:
     """Read the sentence, then let the caller's own extraction win over it.
 
@@ -470,7 +471,12 @@ def derive_search_inputs(
         return merged_specs, merged_terms, [], None
 
     understanding = understand_phrase(
-        db, phrase, user_id=user_id, allow_model=allow_model, registry_rows=registry_rows
+        db,
+        phrase,
+        user_id=user_id,
+        allow_model=allow_model,
+        registry_rows=registry_rows,
+        log_usage=log_usage,
     )
     # A spec the caller pinned by hand always wins: they saw the whole sentence
     # (or the screen), this saw one phrase.
@@ -491,12 +497,20 @@ def understand_phrase(
     user_id: str | None = None,
     allow_model: bool = True,
     registry_rows=None,
+    log_usage: bool = True,
 ) -> Understanding:
     """Map a customer's sentence onto registry specs, semantically where possible.
 
     Always returns something usable. The deterministic resolver is both the fallback
     and the floor: whatever the model finds is merged ON TOP of it, so a literal
     synonym match can never be lost by asking a model.
+
+    `log_usage=False` skips the `ai_assistant_usage_logs` row and NOTHING else. It exists
+    for D14: a chatbot turn marked `is_test` / `test_run_id` must write ZERO rows outside
+    `chatbot.turns`, and this was the one write the business lane could still reach
+    through the resolve endpoint. The model is still CALLED and the reading is unchanged,
+    which is the point - a dry run has to answer the same as a live one or the shadow
+    comparison it exists for would be comparing two different behaviours.
     """
     phrase = (phrase or "").strip()
     if not phrase:
@@ -592,25 +606,31 @@ def understand_phrase(
     # replace.
     terms = [phrase] + [t for t in free_terms if t.lower() != phrase.lower()]
 
-    try:
-        db.add(
-            AIAssistantUsageLog(
-                user_id=user_id,
-                feature="spec_search",
-                provider=provider_name,
-                model=model_name,
-                prompt_tokens=int(result.prompt_tokens or 0),
-                completion_tokens=int(result.completion_tokens or 0),
-                total_tokens=int(result.total_tokens or 0),
-                tool_calls_count=0,
-                response_time_ms=elapsed_ms,
-                was_answered=bool(merged),
+    # D14: `log_usage=False` skips the bookkeeping row and nothing else. Guarded HERE, at
+    # the write, rather than at the caller, so the model is still asked and `merged` /
+    # `terms` / `notes` below are computed identically - a dry run has to READ the sentence
+    # the same way a live turn does, or the shadow comparison it exists for would be
+    # comparing two different behaviours.
+    if log_usage:
+        try:
+            db.add(
+                AIAssistantUsageLog(
+                    user_id=user_id,
+                    feature="spec_search",
+                    provider=provider_name,
+                    model=model_name,
+                    prompt_tokens=int(result.prompt_tokens or 0),
+                    completion_tokens=int(result.completion_tokens or 0),
+                    total_tokens=int(result.total_tokens or 0),
+                    tool_calls_count=0,
+                    response_time_ms=elapsed_ms,
+                    was_answered=bool(merged),
+                )
             )
-        )
-        db.commit()
-    except Exception as exc:  # noqa: BLE001 - never fail a search over bookkeeping
-        logger.warning("spec understanding: usage log failed: %s", exc)
-        db.rollback()
+            db.commit()
+        except Exception as exc:  # noqa: BLE001 - never fail a search over bookkeeping
+            logger.warning("spec understanding: usage log failed: %s", exc)
+            db.rollback()
 
     return Understanding(
         specs=merged,

@@ -301,7 +301,7 @@ cancelled SPO read-back, one plan-exception snapshot per batch, claims-writer de
 company filter in customer back-create, migration 473 test). Security reviewer: no blockers;
 opaque error bodies for non-domain exceptions, 50-char code caps + `DataError` handling,
 `lines` <= 2000 and `from_so_numbers` <= 50 caps, hook actor = the principal, conflict wording.
-All applied in the S6 fix round except BL-050 / BL-051 (backlog with triggers). Contract doc:
+All applied in the S6 fix round except BL-055 / BL-056 (backlog with triggers). Contract doc:
 `PLAN-autocount-cross-repo-contract.md` section 9.
 
 ## 8. Live-run fix round 2 (2026-09-05, ESB against :8042)

@@ -1,0 +1,140 @@
+{
+ "source": {
+  "hand_crafted": true,
+  "expected_from": "reasoned",
+  "rationale": "FINDING-1's belt-and-suspenders. A stray date-valued candidate is in the offer map and the customer replies with that exact date. _isDateLike must veto the match so tryDymPick falls through to ordinary date handling: dym_pick_applied absent, the LLM's own date window and entities survive, and the turn stays in the promotion domain (which IS date-whitelisted, so the window is not stripped)."
+ },
+ "ctx": {
+  "When Executed by Another Workflow": [
+   {
+    "json": {
+     "latest_user_message": "2026-08-01",
+     "contact_id": 900000003,
+     "previous_conversation_state": {
+      "domain_hint": "promotion",
+      "intent_hint": "check_promotion",
+      "routing": {
+       "suggested_team": "marketing_promotion",
+       "suggested_agent": "general_enquiries"
+      },
+      "response": "Did you mean one of these?",
+      "dym_offer": {
+       "id": "off-2",
+       "domain": "incoming",
+       "candidates": [
+        {
+         "code": "2026-08-01",
+         "uuid": "u2",
+         "entity_type": "product",
+         "for_raw": "abc12",
+         "for_hint": "product"
+        }
+       ]
+      },
+      "entities": [
+       {
+        "raw": "abc12",
+        "hint": "product",
+        "canonical_code": null,
+        "current_message": true
+       }
+      ]
+     },
+     "is_test": null,
+     "mock_reformulator_output": null
+    }
+   }
+  ]
+ },
+ "input": [
+  {
+   "json": {
+    "output": "{\"message_type\":\"business_query\",\"intent_hint\":\"check_promotion\",\"domain_hint\":\"promotion\",\"scope_intent\":\"specific\",\"is_affirmative\":null,\"user_goal\":\"promos on 2026-08-01\",\"access_levels\":[],\"date_mode\":\"exact\",\"date_filter_start\":\"2026-08-01\",\"date_filter_end\":\"2026-08-01\",\"match_mode\":\"and\",\"demand_qty\":null,\"entities\":[],\"entity_op\":\"replace_combine\",\"scope_exclusive\":false,\"requested_attributes\":[],\"contains_flyer\":false,\"reference_positions\":[],\"reference_target\":null,\"person_mention\":null,\"is_active\":null,\"order_status\":null,\"correction\":false,\"routing\":{\"suggested_team\":null,\"suggested_agent\":null},\"escalation\":{\"is_escalation_confirmation\":false}}"
+   }
+  }
+ ],
+ "runIndex": 0,
+ "expected": [
+  {
+   "json": {
+    "output": {
+     "message_type": "business_query",
+     "intent_hint": "check_promotion",
+     "domain_hint": "promotion",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "promos on 2026-08-01",
+     "access_levels": [],
+     "date_mode": "exact",
+     "date_filter_start": "2026-08-01",
+     "date_filter_end": "2026-08-01",
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [
+      {
+       "raw": "abc12",
+       "hint": "product",
+       "canonical_code": null,
+       "current_message": false
+      }
+     ],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": "marketing_promotion",
+      "suggested_agent": "general_enquiries"
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     },
+     "domain_signal_source": "intent_explicit",
+     "scope_exclusive_applied": false,
+     "entity_op_applied": "replace_combine",
+     "query_brands": [],
+     "entities_filtered": false,
+     "entities_emptied_by_filter": false
+    },
+    "_parser_raw": {
+     "message_type": "business_query",
+     "intent_hint": "check_promotion",
+     "domain_hint": "promotion",
+     "scope_intent": "specific",
+     "is_affirmative": null,
+     "user_goal": "promos on 2026-08-01",
+     "access_levels": [],
+     "date_mode": "exact",
+     "date_filter_start": "2026-08-01",
+     "date_filter_end": "2026-08-01",
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": null,
+      "suggested_agent": null
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     }
+    }
+   }
+  }
+ ]
+}

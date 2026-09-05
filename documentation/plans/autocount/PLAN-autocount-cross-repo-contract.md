@@ -374,10 +374,10 @@ payload still validates. Deviations from the v1 behaviour above, all deliberate:
     book of record. Shipping-order rows are the exception (always closed).
 13. **Permission consequence of back-create (recorded):** a document `.edit` slug can mint
     suppliers/customers/agents. Accepted for the single trusted ESB; gating on the master's own
-    `.edit` slug is backlog BL-051 with the trigger "a narrowly-scoped integration".
+    `.edit` slug is backlog BL-056 with the trigger "a narrowly-scoped integration".
 14. **`integration_references` is global** (no company column). Refs are minted
     `{DatabaseName}:{AutoKey}` on the ESB side, so two AutoCount books cannot collide; a second
-    book connecting is the trigger for BL-050.
+    book connecting is the trigger for BL-055.
 15. **Customers master: `credit_limit` and `payment_terms_days` are accepted and ignored.** No
     column exists on `customers` for either (found on the first live customers push, a v1 defect);
     they are dropped until Sorento carries AR terms. Every master-ingest error body is sanitized
