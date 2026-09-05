@@ -74,6 +74,9 @@ def read_font_bytes(asset_id: str, db: Session = Depends(get_db)) -> Response:
         media_type=attachment.mime_type or "application/octet-stream",
         headers={
             "Cache-Control": "public, max-age=86400",
+            # Bytes somebody uploaded, served unauthenticated under our own
+            # origin: the browser must take the declared type or nothing.
+            "X-Content-Type-Options": "nosniff",
             "Content-Disposition": content_disposition(filename, inline=True),
         },
     )

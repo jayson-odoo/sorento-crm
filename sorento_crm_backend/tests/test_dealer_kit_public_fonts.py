@@ -28,7 +28,7 @@ from tests._pg_fixture import pg_session, unique_code
 _SORENTO = "00000000-0000-0000-0000-000000000001"
 
 
-def _seed_asset(db, *, kind: str, filename: str, mime: str, content: bytes) -> str:
+def _seed_asset(db, *, kind: str, filename: str, mime: str, content: bytes) -> tuple[str, str]:
     """A dealer_kit.asset row plus its attachment, stored bytes in a fake backend."""
     from app.models.dealer_kit import Asset
     from app.models.resources import Attachment
@@ -95,6 +95,9 @@ def test_a_font_asset_returns_its_bytes_and_content_type(client_and_db):
     assert response.content == b"zzt ttf bytes"
     assert response.headers["content-type"].startswith("font/ttf")
     assert response.headers["cache-control"] == "public, max-age=86400"
+    # The route hands back bytes an anonymous caller uploaded and named. Without
+    # this, a browser is free to sniff a font file as something executable.
+    assert response.headers["x-content-type-options"] == "nosniff"
 
 
 def test_a_woff2_font_keeps_its_own_content_type(client_and_db):

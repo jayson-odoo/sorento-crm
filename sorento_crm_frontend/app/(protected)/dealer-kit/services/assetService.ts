@@ -91,13 +91,15 @@ export async function listFontAssets(): Promise<KitAsset[]> {
  * is unauthenticated and same-origin, so there is nothing to sign and nothing
  * for CORS to block.
  *
- * A bare relative path already resolves correctly with no explicit
- * `NEXT_PUBLIC_API_URL` (Next's rewrite proxies `/api/v1` to the backend, same
- * as production's nginx does) - the prefix only matters in local dev where
- * that env var points at a different host/port than the page itself.
+ * BARE, with no `NEXT_PUBLIC_API_URL` prefix. That value is inlined into the
+ * browser bundle at build time, so it names a host as the BROWSER's machine
+ * sees it, which is why `apiFetch` (`lib/api.ts`) strips it for every
+ * browser-side call. The page's own origin already proxies `/api/v1` to the
+ * backend - Next's rewrite in dev, nginx in production - so the relative path
+ * is both correct and the only one that cannot point at the wrong machine.
+ * The print page is the one caller that must prefix it, because the PDF
+ * worker drives that page directly rather than through the proxy.
  */
 export function fontAssetUrl(assetId: string): string {
-  const env = process.env.NEXT_PUBLIC_API_URL;
-  const base = env ? env.replace(/\/$/, '') : '';
-  return `${base}/api/v1/public/dealer-kit/fonts/${assetId}`;
+  return `/api/v1/public/dealer-kit/fonts/${assetId}`;
 }

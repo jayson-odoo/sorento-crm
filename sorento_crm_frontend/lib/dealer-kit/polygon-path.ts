@@ -15,13 +15,25 @@
 
 import type { PolygonPoint } from './tag-template-types';
 
-/** The box's own four corners: what a polygon looks like until one is moved. */
+/**
+ * The box's own four corners: what a polygon looks like until one is moved.
+ *
+ * Read-only by convention. Nothing here ever hands it OUT - `polygonPoints`
+ * and the movers copy it - because a caller that stored it straight into a
+ * layer's props would give every unedited polygon in the document the same
+ * four objects, and the first corner drag would move all of them at once.
+ */
 export const DEFAULT_POLYGON_POINTS: PolygonPoint[] = [
   { x: 0, y: 0 },
   { x: 1, y: 0 },
   { x: 1, y: 1 },
   { x: 0, y: 1 },
 ];
+
+/** A fresh copy of the box's four corners, safe to store in a document. */
+export function defaultPolygonPoints(): PolygonPoint[] {
+  return DEFAULT_POLYGON_POINTS.map((point) => ({ x: point.x, y: point.y }));
+}
 
 function clamp01(value: number) {
   return Math.min(1, Math.max(0, value));
@@ -35,13 +47,23 @@ function round(value: number) {
 /**
  * The points a polygon layer draws with.
  *
- * Anything that could not be drawn - absent, or fewer than three corners -
- * falls back to the box, rather than leaving the layer invisible.
+ * Anything that could not be drawn - absent, fewer than three corners, or a
+ * coordinate that is not a finite number - falls back to the box, rather than
+ * leaving the layer invisible or writing `NaN` into a path string. The refit
+ * divides by the box size, so a zero-width axis anywhere upstream is exactly
+ * how a `NaN` would get in.
+ *
+ * Always a fresh array of fresh points: the caller stores what it gets back
+ * into a layer's props, and handing out the shared default would alias every
+ * unedited polygon in the document onto the same four objects.
  */
 export function polygonPoints(props: { points?: PolygonPoint[] | null }): PolygonPoint[] {
   const points = props.points;
-  if (!Array.isArray(points) || points.length < 3) return DEFAULT_POLYGON_POINTS;
-  return points;
+  if (!Array.isArray(points) || points.length < 3) return defaultPolygonPoints();
+  if (!points.every((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y))) {
+    return defaultPolygonPoints();
+  }
+  return points.map((point) => ({ x: point.x, y: point.y }));
 }
 
 /** Normalized points onto a box of `width` x `height`, in that box's own units. */
@@ -124,9 +146,11 @@ export function movePoint(
   dx: number,
   dy: number,
 ): PolygonPoint[] {
-  if (index < 0 || index >= points.length) return points;
+  if (index < 0 || index >= points.length) return points.map((p) => ({ x: p.x, y: p.y }));
   return points.map((point, i) =>
-    i === index ? { x: clamp01(point.x + dx), y: clamp01(point.y + dy) } : point,
+    i === index
+      ? { x: clamp01(point.x + dx), y: clamp01(point.y + dy) }
+      : { x: point.x, y: point.y },
   );
 }
 
@@ -145,7 +169,7 @@ export function moveEdge(
   dx: number,
   dy: number,
 ): PolygonPoint[] {
-  if (index < 0 || index >= points.length) return points;
+  if (index < 0 || index >= points.length) return points.map((p) => ({ x: p.x, y: p.y }));
   const nextIndex = (index + 1) % points.length;
   const a = points[index];
   const b = points[nextIndex];
@@ -154,6 +178,6 @@ export function moveEdge(
   return points.map((point, i) =>
     i === index || i === nextIndex
       ? { x: clamp01(point.x + clampedX), y: clamp01(point.y + clampedY) }
-      : point,
+      : { x: point.x, y: point.y },
   );
 }

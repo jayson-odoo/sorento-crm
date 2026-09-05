@@ -195,6 +195,15 @@ function lineTagData(overrides: Partial<LineTagData> = {}): LineTagData {
 
 const LINE_BOUND_DATA: TagBindingData = { kind: 'line', line: lineTagData() };
 
+/** A slot-bound layer whose override holds a merge field (D57, AC-S3-5). */
+function boundTokenLayer(id: string, override: string): TagLayer {
+  return {
+    ...textLayer(id, 'placeholder'),
+    slot_binding: 'code',
+    text_override: override,
+  };
+}
+
 function docWithLayers(layers: TagLayer[]): TagTemplateDoc {
   return { width_mm: 60, height_mm: 40, layers };
 }
@@ -267,6 +276,36 @@ describe('TagCanvasEditor inline edit - sole-token layer opens resolved (S3)', (
 
     expect(editor.value).toBe('Plain words');
     expect(editor).not.toHaveAttribute('readonly');
+  });
+
+  it('opens a BOUND layer typed over with a token on the resolved code too (AC-S3-5)', async () => {
+    // The seeded product block's code layer: bound to the `code` slot AND
+    // holding `{{product.code}}` as its override (D57 - a bound layer typed
+    // over with a merge field keeps following the product). The first cut of
+    // S3 excluded every bound layer, so the one layer a user actually
+    // double-clicks to copy a code still opened on the braces.
+    const doc = docWithLayers([boundTokenLayer('code', '{{product.code}}')]);
+    render(<TagCanvasEditor doc={doc} onChange={vi.fn()} boundData={LINE_BOUND_DATA} />);
+
+    fireEvent.doubleClick(screen.getByTestId('layer-code'));
+    const editor = (await screen.findByTestId(
+      'inline-text-editor',
+    )) as HTMLTextAreaElement;
+
+    expect(editor.value).toBe('SRTWT8267-GM');
+    expect(editor).toHaveAttribute('readonly');
+  });
+
+  it('opens on the TRIMMED value when the token is padded with whitespace (AC-S3-5)', async () => {
+    const doc = docWithLayers([boundTokenLayer('code', ' {{product.code}} ')]);
+    render(<TagCanvasEditor doc={doc} onChange={vi.fn()} boundData={LINE_BOUND_DATA} />);
+
+    fireEvent.doubleClick(screen.getByTestId('layer-code'));
+    const editor = (await screen.findByTestId(
+      'inline-text-editor',
+    )) as HTMLTextAreaElement;
+
+    expect(editor.value).toBe('SRTWT8267-GM');
   });
 
   it('with no bound data (template editor, no preview), a sole-token layer opens raw (AC-S3-4)', async () => {

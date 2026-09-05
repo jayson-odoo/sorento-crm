@@ -2525,23 +2525,32 @@ export function TagCanvasEditor({
    * code}}` off the canvas and typing braces into a search box is the bug
    * this closes.
    *
-   * Three things all have to hold, or the raw content opens exactly as
-   * before:
-   *  - the layer is UNBOUND (`slot_binding` is null) - a bound layer edits
-   *    `text_override`, a different value with nothing to preview here;
-   *  - the whole (trimmed) content is exactly one token, never mixed text
-   *    ("Code {{product.code}}") - there is no single value to substitute;
+   * Two things have to hold, or the raw content opens exactly as before:
+   *  - the whole (trimmed) CONTENT is exactly one token, never mixed text
+   *    ("Code {{product.code}}") - there is no single value to substitute.
+   *    Content, not `props.text`: a bound layer's content is its
+   *    `text_override`, which is exactly where the seeded product block keeps
+   *    its `{{product.code}}` (D57), and the first cut of this excluded every
+   *    bound layer and so missed the one layer a user actually
+   *    double-clicks to copy a code (AC-S3-5);
    *  - something actually resolves it. With no bound data (the template
-   *    editor's own preview-less state, AC-S3-4) `renderMergeFields` hands
-   *    the token straight back, and that equality is the signal there was
-   *    nothing to resolve against.
+   *    editor's own preview-less state, AC-S3-4) there is nothing to
+   *    substitute and the raw token opens.
+   *
+   * Decided ONCE per edit session, keyed on the layer the editor opened on:
+   * the request designer re-resolves its line data on window focus, and an
+   * editor that was read-only when it opened must not turn editable (or
+   * change its value) underneath a user who is mid-copy.
    */
   const editingResolvedValue = useMemo(() => {
-    if (!editingLayer || editingLayer.slot_binding) return null;
-    if (!soleMergeField(editingContent)) return null;
-    const resolved = renderMergeFields(editingContent, dataOf(editingLayer), 'print');
-    return resolved && resolved !== editingContent ? resolved : null;
-  }, [editingLayer, editingContent, dataOf]);
+    if (!editingLayer) return null;
+    const content = contentFor(editingLayer);
+    if (!soleMergeField(content)) return null;
+    const resolved = renderMergeFields(content, dataOf(editingLayer), 'print');
+    return resolved && resolved !== content ? resolved.trim() : null;
+    // Deliberately keyed on the OPEN alone - see the freeze note above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingLayerId]);
 
   /** Mirrors the inline editor's live (uncommitted) text, for the effect below. */
   const editingTextRef = useRef('');

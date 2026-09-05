@@ -13,6 +13,8 @@ import { Suspense } from 'react';
 import { act, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { ensureFontsLoaded } from '@/lib/dealer-kit/fonts';
+
 import TagSheetPrintPage from './page';
 
 vi.mock('@/lib/dealer-kit/fonts', () => ({
@@ -43,7 +45,11 @@ class PendingImage {
   }
 }
 
-function payload(media: { assets?: Record<string, string>; images?: Record<string, string> }) {
+function payload(media: {
+  assets?: Record<string, string>;
+  images?: Record<string, string>;
+  fonts?: { name: string; family: string; url: string }[];
+}) {
   return {
     doc: {
       kind: 'tag_sheet',
@@ -59,13 +65,17 @@ function payload(media: { assets?: Record<string, string>; images?: Record<strin
     resolvedData: {},
     assets: media.assets ?? {},
     images: media.images ?? {},
-    fonts: [],
+    fonts: media.fonts ?? [],
     requestDocNumber: 'PT-202608-0001',
     version: 1,
   };
 }
 
-function stub(media: { assets?: Record<string, string>; images?: Record<string, string> }) {
+function stub(media: {
+  assets?: Record<string, string>;
+  images?: Record<string, string>;
+  fonts?: { name: string; family: string; url: string }[];
+}) {
   PendingImage.created = [];
   vi.stubGlobal('Image', PendingImage);
   vi.stubGlobal(
@@ -91,6 +101,7 @@ async function renderPage() {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe('the tag sheet print page reports ready', () => {
@@ -134,5 +145,29 @@ describe('the tag sheet print page reports ready', () => {
     await act(async () => PendingImage.created[0].fire('error'));
 
     expect(main.dataset.dkPrintReady).toBe('true');
+  });
+});
+
+describe('the brand fonts the print page loads', () => {
+  it('are fetched from the api base, since the payload carries a bare path', async () => {
+    // The worker drives this page in headless Chromium, which has no notion
+    // of "the frontend origin proxies /api/v1" unless the page is served
+    // through that proxy - so the page prefixes the path itself (S1).
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'http://backend.test:8000');
+    stub({
+      fonts: [
+        { name: 'Century Gothic', family: 'Century Gothic', url: '/api/v1/public/dealer-kit/fonts/f1' },
+      ],
+    });
+
+    await renderPage();
+
+    expect(ensureFontsLoaded).toHaveBeenCalledWith([
+      {
+        name: 'Century Gothic',
+        family: 'Century Gothic',
+        url: 'http://backend.test:8000/api/v1/public/dealer-kit/fonts/f1',
+      },
+    ]);
   });
 });

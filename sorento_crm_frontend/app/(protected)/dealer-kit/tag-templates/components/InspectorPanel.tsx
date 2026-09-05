@@ -38,7 +38,7 @@ import type {
   TagLayerProps,
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
-import { DEFAULT_POLYGON_POINTS } from '@/lib/dealer-kit/polygon-path';
+import { defaultPolygonPoints } from '@/lib/dealer-kit/polygon-path';
 import { isDynamic } from '@/lib/dealer-kit/product-block';
 import { tagColours } from '@/lib/dealer-kit/colour';
 import { ColorPicker } from './ColorPicker';
@@ -660,7 +660,7 @@ function withShape(
     // Explicitly undefined, not omitted: the caller MERGES this over the
     // layer's current props, so an omitted key would leave the old corners
     // in place.
-    points: shape === 'polygon' ? (props.points ?? DEFAULT_POLYGON_POINTS) : undefined,
+    points: shape === 'polygon' ? (props.points ?? defaultPolygonPoints()) : undefined,
   };
 }
 

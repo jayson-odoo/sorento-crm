@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pydantic
 import pytest
 
 from app.schemas.price_tag import TagTemplateDocModel
@@ -419,5 +420,5 @@ def test_a_polygon_saved_before_a_corner_moved_needs_no_points():
 
 
 def test_a_shape_that_is_not_one_of_the_five_is_still_rejected():
-    with pytest.raises(Exception):
+    with pytest.raises(pydantic.ValidationError):
         TagTemplateDocModel.model_validate(_polygon_doc(_shape_props(shape="hexagon")))

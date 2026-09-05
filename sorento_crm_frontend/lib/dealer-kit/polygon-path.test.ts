@@ -51,6 +51,51 @@ describe('polygonPoints (AC-S4-8)', () => {
       DEFAULT_POLYGON_POINTS,
     );
   });
+
+  it('falls back to the box when a coordinate is not a finite number', () => {
+    // A refit divides by the box size, so one zero-width axis anywhere
+    // upstream writes NaN into the document. Drawing the box beats drawing
+    // nothing at all, and beats a path string full of NaN.
+    expect(
+      polygonPoints({
+        points: [
+          { x: 0, y: 0 },
+          { x: Number.NaN, y: 0 },
+          { x: 1, y: 1 },
+          { x: 0, y: 1 },
+        ],
+      }),
+    ).toEqual(DEFAULT_POLYGON_POINTS);
+    expect(
+      polygonPoints({
+        points: [
+          { x: 0, y: 0 },
+          { x: Number.POSITIVE_INFINITY, y: 0 },
+          { x: 1, y: 1 },
+        ],
+      }),
+    ).toEqual(DEFAULT_POLYGON_POINTS);
+  });
+
+  it('never hands back the shared default itself, so a caller cannot mutate it', () => {
+    const first = polygonPoints({});
+    expect(first).not.toBe(DEFAULT_POLYGON_POINTS);
+    first[0].x = 0.5;
+    expect(DEFAULT_POLYGON_POINTS[0]).toEqual({ x: 0, y: 0 });
+    expect(polygonPoints({})[0]).toEqual({ x: 0, y: 0 });
+  });
+
+  it('copies the layer own points rather than aliasing them', () => {
+    const points = [
+      { x: 0.2, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+    ];
+    const out = polygonPoints({ points });
+    expect(out[0]).not.toBe(points[0]);
+    out[0].x = 0.9;
+    expect(points[0].x).toBe(0.2);
+  });
 });
 
 describe('scalePolygonPoints', () => {
@@ -110,6 +155,12 @@ describe('movePoint (AC-S4-2/3)', () => {
   it('leaves the points alone for an index that is not there', () => {
     expect(movePoint(DEFAULT_POLYGON_POINTS, 9, 0.1, 0.1)).toEqual(DEFAULT_POLYGON_POINTS);
   });
+
+  it('rebuilds every corner, so the result shares no object with its input', () => {
+    const next = movePoint(DEFAULT_POLYGON_POINTS, 1, 0.1, 0);
+    next.forEach((point, index) => expect(point).not.toBe(DEFAULT_POLYGON_POINTS[index]));
+    expect(DEFAULT_POLYGON_POINTS[0]).toEqual({ x: 0, y: 0 });
+  });
 });
 
 describe('moveEdge (AC-S4-2/3)', () => {
@@ -120,6 +171,11 @@ describe('moveEdge (AC-S4-2/3)', () => {
     // The other two corners stay where they were.
     expect(next[2]).toEqual({ x: 1, y: 1 });
     expect(next[3]).toEqual({ x: 0, y: 1 });
+  });
+
+  it('rebuilds every corner, so the result shares no object with its input', () => {
+    const next = moveEdge(DEFAULT_POLYGON_POINTS, 0, 0, 0.1);
+    next.forEach((point, index) => expect(point).not.toBe(DEFAULT_POLYGON_POINTS[index]));
   });
 
   it('wraps for the last edge, which closes the polygon', () => {
