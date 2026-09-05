@@ -54,6 +54,7 @@ from typing import Any, Callable, Optional
 
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.schemas.canonical_masters import (
@@ -87,6 +88,36 @@ logger = logging.getLogger(__name__)
 #: authored FOR the caller and keeps its own message - only the catch-all
 #: is sanitised.
 INTERNAL_ERROR_MESSAGE = "internal error; see server logs"
+
+
+def integrity_conflict_errors(exc: IntegrityError) -> dict[str, str]:
+    """A per-record verdict body for a unique-constraint violation (fix round 4,
+    BUG B), shared by all three ingest surfaces (masters/documents/shipping
+    orders) so a two-company push that races a code/number can name what
+    collided instead of falling through to `INTERNAL_ERROR_MESSAGE`.
+
+    Reads psycopg2's own diagnostics off ``exc.orig`` rather than ``str(exc)``,
+    which quotes the failed statement in full - `constraint_name` says WHICH
+    unique index collided (e.g. `uq_warehouses_company_warehouse_code`) and
+    `message_detail` is the bare DETAIL line ("Key (company_id,
+    warehouse_code)=(..., BRW) already exists."), never the SQL itself.
+
+    `errors["code"]` when the constraint parsed (the expected shape for a
+    natural-key collision on any of these surfaces - `code` is the wire field
+    every `CanonicalXxx.code` masters payload and the v2 ladder's code rungs
+    are spelled under); `errors["_"]` for the "unknown constraint" case where
+    the DBAPI driver exposed no diagnostics at all to name one by.
+    """
+    orig = getattr(exc, "orig", None)
+    diag = getattr(orig, "diag", None)
+    constraint = getattr(diag, "constraint_name", None) if diag else None
+    detail = getattr(diag, "message_detail", None) if diag else None
+    if constraint:
+        message = f"conflict: {constraint}"
+        if detail:
+            message = f"{message} ({detail})"
+        return {"code": message}
+    return {"_": "conflict: unique constraint"}
 
 
 class UnsupportedIngestEntity(ValueError):
@@ -505,6 +536,22 @@ class MasterIngestService:
                 source_ref=payload.source_ref,
                 outcome=IngestOutcome.FAILED,
                 errors={"source_ref": str(exc)},
+            )
+        except IntegrityError as exc:
+            # Fix round 4, BUG B: a unique-constraint race (two companies, or a
+            # concurrent push of the same code) - named by constraint, never by
+            # `str(exc)`'s full SQL statement.
+            savepoint.rollback()
+            logger.warning(
+                "ingest.integrity_conflict entity=%s source_ref=%s",
+                entity_type,
+                payload.source_ref,
+                exc_info=True,
+            )
+            return RecordResult(
+                source_ref=payload.source_ref,
+                outcome=IngestOutcome.FAILED,
+                errors=integrity_conflict_errors(exc),
             )
         except Exception:  # noqa: BLE001 - one record's failure, not the batch's
             savepoint.rollback()

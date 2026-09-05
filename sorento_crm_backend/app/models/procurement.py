@@ -41,7 +41,11 @@ class Supplier(Base, CompanyScopedMixin):
     __audit_track__ = True  # who changed what (Sub-plan D Tier-2)
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    supplier_code = Column(String(50), unique=True, nullable=False)
+    # Unique PER COMPANY, not globally (migration 305): composite unique index in
+    # __table_args__ below. A bare unique=True here would make create_all build
+    # the old global suppliers_supplier_code_key and reject the same code in a
+    # second company (fix round 4).
+    supplier_code = Column(String(50), nullable=False)
     supplier_name = Column(String(255), nullable=False)
     contact_name = Column(String(150), nullable=True)
     email = Column(String(150), nullable=True)
@@ -64,6 +68,11 @@ class Supplier(Base, CompanyScopedMixin):
     inbound_shipments = relationship("InboundShipment", back_populates="supplier")
     
     __table_args__ = (
+        Index(
+            "uq_suppliers_company_supplier_code",
+            "company_id", "supplier_code",
+            unique=True,
+        ),
         Index("ix_suppliers_is_active", "is_active"),
         Index("ix_suppliers_country", "country"),
         Index("ix_suppliers_city", "city"),
@@ -104,7 +113,12 @@ class InboundShipment(Base, CompanyScopedMixin):
     __tablename__ = "inbound_shipments"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    shipment_number = Column(String(50), unique=True, nullable=True)
+    # Unique PER COMPANY, not globally (migration 305): composite partial unique
+    # index in __table_args__ below (WHERE shipment_number IS NOT NULL, same
+    # multiple-NULL semantics 305 preserved). A bare unique=True here would make
+    # create_all build the old global inbound_shipments_shipment_number_key and
+    # reject the same number in a second company (fix round 4).
+    shipment_number = Column(String(50), nullable=True)
     supplier_id = Column(UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True)
     shipment_date = Column(Date, nullable=False)
     estimated_arrival_date = Column(Date, nullable=True)
@@ -229,6 +243,12 @@ class InboundShipment(Base, CompanyScopedMixin):
         return self.total_cartons
 
     __table_args__ = (
+        Index(
+            "uq_inbound_shipments_company_shipment_number",
+            "company_id", "shipment_number",
+            unique=True,
+            postgresql_where=text("shipment_number IS NOT NULL"),
+        ),
         Index("ix_inbound_shipments_supplier_id", "supplier_id"),
         Index("ix_inbound_shipments_shipment_number", "shipment_number"),
         Index("ix_inbound_shipments_shipment_status", "shipment_status"),
@@ -533,7 +553,11 @@ class PickingHeader(Base, CompanyScopedMixin):
     __tablename__ = "picking_headers"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    picking_number = Column(String(50), unique=True, nullable=False)
+    # Unique PER COMPANY, not globally (migration 305): composite unique index in
+    # __table_args__ below. A bare unique=True here would make create_all build
+    # the old global picking_headers_picking_number_key and reject the same
+    # number in a second company (fix round 4).
+    picking_number = Column(String(50), nullable=False)
     # DISPLAY-width, not match-width: a multi-SPO GRN stores every SPO it covers
     # ("SPO-A, SPO-B") so the list says so instead of showing a dash. Allocation
     # matching stays scalar (`_spo_match_key` / `_normalize_spo_number` compare ONE
@@ -577,6 +601,11 @@ class PickingHeader(Base, CompanyScopedMixin):
     picking_lines = relationship("PickingLine", back_populates="picking_header")
     
     __table_args__ = (
+        Index(
+            "uq_picking_headers_company_picking_number",
+            "company_id", "picking_number",
+            unique=True,
+        ),
         Index("ix_picking_headers_picking_type", "picking_type"),
         Index("ix_picking_headers_picking_number", "picking_number"),
         Index("ix_picking_headers_picking_status", "picking_status"),

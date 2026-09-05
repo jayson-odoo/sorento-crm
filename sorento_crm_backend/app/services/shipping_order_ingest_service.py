@@ -56,6 +56,7 @@ from typing import Any, Optional
 
 from pydantic import ValidationError
 from sqlalchemy import and_, func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
@@ -74,6 +75,7 @@ from app.services.master_ingest_service import (
     MissingReference,
     RecordResult,
     _field_errors,
+    integrity_conflict_errors,
 )
 from app.services.master_ref_resolver import MasterRefResolver, dedupe_warnings
 from app.services.scm import order_link_service
@@ -236,6 +238,22 @@ class ShippingOrderIngestService(MasterRefResolver):
                 source_ref=payload.source_ref,
                 outcome=IngestOutcome.FAILED,
                 errors={exc.field_name: str(exc)},
+            )
+        except IntegrityError as exc:
+            # Fix round 4, BUG B: a unique-constraint race (two companies, or a
+            # concurrent push of the same number) - named by constraint, never
+            # by `str(exc)`'s full SQL statement.
+            savepoint.rollback()
+            logger.warning(
+                "ingest.integrity_conflict entity=%s source_ref=%s",
+                SHIPPING_ORDERS_ENTITY,
+                payload.source_ref,
+                exc_info=True,
+            )
+            return RecordResult(
+                source_ref=payload.source_ref,
+                outcome=IngestOutcome.FAILED,
+                errors=integrity_conflict_errors(exc),
             )
         except Exception:  # noqa: BLE001 - one document's failure, not the file's
             savepoint.rollback()

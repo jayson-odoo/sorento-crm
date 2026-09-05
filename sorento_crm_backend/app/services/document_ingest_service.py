@@ -64,6 +64,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
@@ -94,6 +95,7 @@ from app.services.master_ingest_service import (
     UnsupportedIngestEntity,
     _field_errors,
     _value_changed,
+    integrity_conflict_errors,
 )
 from app.services.scm import order_link_service, plan_exception_service
 from app.services.scm.customer_label import normalize_debtor_code
@@ -455,6 +457,22 @@ class DocumentIngestService(MasterRefResolver):
                 source_ref=payload.source_ref,
                 outcome=IngestOutcome.FAILED,
                 errors={"status": str(exc)},
+            )
+        except IntegrityError as exc:
+            # Fix round 4, BUG B: a unique-constraint race (two companies, or a
+            # concurrent push of the same number/code) - named by constraint,
+            # never by `str(exc)`'s full SQL statement.
+            savepoint.rollback()
+            logger.warning(
+                "ingest.integrity_conflict entity=%s source_ref=%s",
+                spec.entity_type,
+                payload.source_ref,
+                exc_info=True,
+            )
+            return RecordResult(
+                source_ref=payload.source_ref,
+                outcome=IngestOutcome.FAILED,
+                errors=integrity_conflict_errors(exc),
             )
         except Exception:  # noqa: BLE001 - one document's failure, not the file's
             savepoint.rollback()

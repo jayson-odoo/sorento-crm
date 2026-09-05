@@ -230,11 +230,26 @@ class Transporter(Base, CompanyScopedMixin):
     __tablename__ = "transporters"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    code = Column(String(100), nullable=False, unique=True)
+    # Unique PER COMPANY, not globally (migration 305): composite unique indexes
+    # in __table_args__ below. A bare unique=True here would make create_all
+    # build the old global uq_transporters_code/uq_transporters_normalized_name
+    # and reject the same code/name in a second company (fix round 4).
+    code = Column(String(100), nullable=False)
     name = Column(String(255), nullable=False)
-    normalized_name = Column(String(255), nullable=False, unique=True)
+    normalized_name = Column(String(255), nullable=False)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), nullable=True)
+
+    __table_args__ = (
+        Index(
+            "uq_transporters_company_code", "company_id", "code", unique=True
+        ),
+        Index(
+            "uq_transporters_company_normalized_name",
+            "company_id", "normalized_name",
+            unique=True,
+        ),
+    )
 
 
 class Order(Base, CompanyScopedMixin):

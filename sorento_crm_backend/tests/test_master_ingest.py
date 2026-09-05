@@ -174,6 +174,53 @@ class TestCustomerColumnsFixRound2BugB:
         assert row == ("ZZT-CUST-01", "Test Sdn Bhd")
 
 
+class TestSEC3IntegrityConflictNamesTheConstraint:
+    """Fix round 4, BUG B. A unique-constraint race (two companies pushing the
+    same code, or a concurrent duplicate) must be a FAILED verdict naming the
+    constraint, never `INTERNAL_ERROR_MESSAGE` - and never `str(exc)`'s own
+    SQL statement either.
+
+    Forces the race the adoption check (`_lookup_id`) exists to prevent: with
+    `_lookup_id` patched to always answer "nothing exists yet", `_apply` takes
+    its CREATE path against a code that already has a row, and the real
+    composite unique index (fix round 4, BUG A) is what raises.
+    """
+
+    def test_a_forced_unique_violation_is_failed_and_names_the_constraint(
+        self, db, svc, monkeypatch
+    ):
+        import app.services.master_ingest_service as m
+
+        code = "ZZT-WH-DUP"
+        db.execute(
+            text(
+                "INSERT INTO warehouses (id, warehouse_code, warehouse_name, "
+                "company_id, is_active) VALUES (:i, :c, 'Existing', :cid, true)"
+            ),
+            {"i": str(uuid.uuid4()), "c": code, "cid": DEFAULT_COMPANY_ID},
+        )
+        db.commit()
+        monkeypatch.setattr(m, "_lookup_id", lambda *a, **kw: None)
+
+        result = svc.ingest("warehouses", [_wh(code=code, ref="DK-DUP")])
+
+        assert result.failed == 1
+        entry = result.records[0]
+        assert entry.outcome is IngestOutcome.FAILED
+        assert "uq_warehouses_company_warehouse_code" in entry.errors.get("code", "")
+        body_text = str(entry.errors)
+        assert "INSERT" not in body_text
+        assert "SQL" not in body_text
+        # Only one row for this code - the forced create never landed.
+        assert (
+            db.execute(
+                text("SELECT count(*) FROM warehouses WHERE warehouse_code = :c"),
+                {"c": code},
+            ).scalar()
+            == 1
+        )
+
+
 class TestQuarantineNotBlock:
     def test_valid_rows_persist_when_a_sibling_fails(self, db, svc):
         # AC-AC-15. 10,000 products with 12 bad ones must yield 9,988 imported.
