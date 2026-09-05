@@ -32,14 +32,19 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 # The engine's session seam. See the module docstring: module-level on purpose, and
 # the single point every test patches to keep the engine off the shared database.
 from app.database import SessionLocal, get_db
+from app.models.chatbot_turn import ChatbotTurn
 from app.dependencies import get_external_api_user
 from app.schemas.integration import IntegrationLogCreate
 from app.services.chatbot import complete_turn, run_turn
+# The head's OWN lookup for "which row is this message's turn" (D15), so the id-less
+# complete route and the duplicate-delivery check can never pick different rows.
+from app.services.chatbot.engine import find_turn_for_message
 from app.services.chatbot_reply_copy import CHATBOT_TURN_ERROR_REPLY
 from app.services.chatbot.contracts import (
     CompleteRequest,
@@ -47,10 +52,68 @@ from app.services.chatbot.contracts import (
     TurnRequest,
     TurnResponse,
 )
-from app.services.integration_service import IntegrationLogService
+from app.services.error_handler import AppException
+from app.services.integration_service import (
+    IntegrationLogService,
+    sanitize_request_headers,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# A real turn is a WhatsApp message plus a session blob: a few KB, and the largest capture
+# in the 1,535-fixture corpus is well under one hundred. 256 KB is therefore three orders
+# of magnitude of headroom AND a bound on what one caller can push into `chatbot.turns`,
+# which is written once per customer message and never pruned.
+#
+# Measured on the PARSED payload, not on `content-length`. Two reasons, and both were
+# defects in the first version:
+#
+# * a chunked request carries no `content-length` at all, so a header check is skippable
+#   by the caller - exactly the caller a size guard exists for;
+# * by the time this route function runs FastAPI has already read, parsed and validated
+#   the body into `TurnRequest` (that is what resolving the `payload` parameter does), so
+#   the guard cannot protect the parse however it is measured. What it CAN bound is the
+#   write: `chatbot.turns` keeps the envelope, is written once per customer message and is
+#   never pruned, and the integration log copies it. STORED is the honest claim.
+#
+# Bounding the socket read is a server-level concern (`client_max_body_size`), and saying
+# so is better than implying a protection this cannot give.
+MAX_TURN_BODY_BYTES = 256 * 1024
+
+# The integration log records the CALL. A payload that was rejected for its size must not
+# be copied into `integration_logs` in full - that would move the problem one table over.
+MAX_LOGGED_PAYLOAD_BYTES = 64 * 1024
+
+
+def _logged_payload(payload: BaseModel, *, reference: str = "") -> str:
+    """The request body for the integration log, bounded.
+
+    Takes ANY request model, because `/complete` needs the same bound and used to
+    have none: `CompleteRequest` carries `item`, an optional `ctx` override and
+    eleven producer fragments, one of which is a result set, and the engine's own
+    document cap is 512 KB - so these are expected to get large, and the refusal
+    path logs one too. Serialising it whole moved the problem `MAX_TURN_BODY_BYTES`
+    exists to prevent one table over: unbounded rows in `integration_logs`.
+
+    Over the cap the body is REPLACED by a note that names its size, the way
+    `trace.cap_document` does it, rather than truncated to invalid JSON. The
+    `reference` kept beside the note is whatever identifies the call - the contact
+    on `/turn`, the turn id on `/complete` - so an operator reading the row can
+    still find it.
+    """
+    body = payload.model_dump_json()
+    if len(body) <= MAX_LOGGED_PAYLOAD_BYTES:
+        return body
+    return json.dumps(
+        {
+            "note": (
+                f"payload omitted: {len(body)} bytes exceeds the "
+                f"{MAX_LOGGED_PAYLOAD_BYTES} byte log cap"
+            ),
+            "reference": reference,
+        }
+    )
 
 # What the customer reads when the tail could not finish. The SAME declaration the head's
 # parser reads, in a core module the package does not own, so the two can never drift
@@ -81,6 +144,18 @@ def chat_turn(
     to_reraise: HTTPException | None = None
 
     try:
+        # The serialised payload, so a chunked request with no `content-length` is bounded
+        # too. See MAX_TURN_BODY_BYTES: this is a bound on what gets STORED.
+        body_bytes = len(payload.model_dump_json().encode("utf-8"))
+        if body_bytes > MAX_TURN_BODY_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"The turn body is {body_bytes} bytes, over the "
+                    f"{MAX_TURN_BODY_BYTES} byte limit. A turn carries one message and the "
+                    "session state, not an attachment - send media by reference."
+                ),
+            )
         result = run_turn(payload.envelope, session_factory=SessionLocal)
         response_payload = TurnResponse(**result.as_dict())
         if result.status == "failed":
@@ -98,9 +173,7 @@ def chat_turn(
         to_reraise = HTTPException(status_code=response_status, detail=error_message)
 
     try:
-        request_headers = dict(request.headers)
-        if "x-api-key" in request_headers:
-            request_headers["x-api-key"] = "***"
+        request_headers = sanitize_request_headers(dict(request.headers))
         IntegrationLogService(db).create_integration_log(
             IntegrationLogCreate(
                 integration_channel="n8n",
@@ -111,7 +184,9 @@ def chat_turn(
                 endpoint=str(request.url.path),
                 http_method=request.method,
                 request_headers=json.dumps(request_headers),
-                request_payload=payload.model_dump_json(),
+                request_payload=_logged_payload(
+                    payload, reference=str(payload.envelope.contact.get("id") or "")
+                ),
                 status_code=response_status,
                 status="success" if response_status < 400 else "failed",
                 error_message=error_message,
@@ -127,6 +202,66 @@ def chat_turn(
 
     assert response_payload is not None
     return response_payload
+
+
+def _turn_row(db: Session, turn_id: str) -> ChatbotTurn | None:
+    """The turn row, read through the REQUEST session, for the two facts the route needs
+    that the engine's answer cannot carry: `is_test` on a tail that raised.
+
+    Kept to one query and one place. `turn_id` comes off the path (or the resolver) and a
+    malformed one is a miss, not a 500 - the caller already has its 404 for that.
+    """
+    try:
+        return db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+    except Exception:  # noqa: BLE001 - a bad id is a miss, and the answer is already decided
+        db.rollback()
+        return None
+
+
+def _log_complete_call(
+    db: Session,
+    *,
+    request: Request,
+    payload: CompleteRequest,
+    business_id: str,
+    external_reference: str,
+    status_code: int,
+    error_message: str | None,
+) -> None:
+    """The `integration_log` row every `/complete` call writes, answered or refused.
+
+    ONE writer for both complete routes and for both outcomes, because the module contract
+    is that no call to this endpoint is invisible - a 404 or a 409 on the id-less form is
+    exactly the call an operator reading an n8n run needs to find, and it used to be the
+    only one that left no trace.
+
+    Best-effort, like every other post-response side effect here: the answer has already
+    been decided and failing to describe it must not change it.
+    """
+    try:
+        request_headers = sanitize_request_headers(dict(request.headers))
+        IntegrationLogService(db).create_integration_log(
+            IntegrationLogCreate(
+                integration_channel="n8n",
+                business_table="chatbot.turns",
+                business_id=business_id,
+                external_reference=external_reference,
+                direction="inbound",
+                endpoint=str(request.url.path),
+                http_method=request.method,
+                request_headers=json.dumps(request_headers),
+                request_payload=_logged_payload(payload, reference=external_reference),
+                status_code=status_code,
+                status="success" if status_code < 400 else "failed",
+                error_message=error_message,
+            )
+        )
+    except Exception as log_error:  # noqa: BLE001
+        logger.warning(
+            "Failed to create integration log for chatbot turn completion: %s",
+            log_error,
+            exc_info=True,
+        )
 
 
 @router.post(
@@ -187,41 +322,158 @@ def chat_turn_complete(
         # is not lost, it is on `chatbot.turns` and in the integration log below.
         logger.exception("chatbot turn %s failed to complete: %s", turn_id, exc)
         error_message = f"{type(exc).__name__}: {exc}"
+        # The row's own `is_test`, read back rather than assumed: a clone turn's failure
+        # reply must carry `dry_run` too, or the one action this answer has is the one
+        # action a test envelope could actually send. A row that has gone (pruned mid
+        # turn) reads as a live turn, which is the safe direction for a `dry_run` FLAG and
+        # the wrong direction for nothing else here.
+        row = _turn_row(db, turn_id)
+        dry_run = bool(getattr(row, "is_test", False))
+        reply = {
+            "text": TAIL_ERROR_REPLY,
+            "quick_replies": None,
+            "result_set": None,
+            "attachments_src": None,
+        }
         response_payload = CompleteResponse(
             turn_id=turn_id,
-            reply={"text": TAIL_ERROR_REPLY, "quick_replies": None, "result_set": [], "attachments_src": None},
-            actions=[{"kind": "send_message", "text": TAIL_ERROR_REPLY, "quick_replies": None}],
+            reply=reply,
+            # NEVER a null reply and never an empty `actions`: the caller executes
+            # `actions` and nothing else (the executor ruling, 5 Sep), so an answer whose
+            # words are only on `reply.text` is a customer left in silence. Same four keys
+            # `_send_actions` emits, so the sender reads one shape on every turn.
+            actions=[
+                {
+                    "kind": "send_message",
+                    "text": TAIL_ERROR_REPLY,
+                    "quick_replies": None,
+                    "result_set": None,
+                    "dry_run": dry_run,
+                }
+            ],
+            is_test=dry_run,
         )
 
-    try:
-        request_headers = dict(request.headers)
-        if "x-api-key" in request_headers:
-            request_headers["x-api-key"] = "***"
-        IntegrationLogService(db).create_integration_log(
-            IntegrationLogCreate(
-                integration_channel="n8n",
-                business_table="chatbot.turns",
-                business_id=turn_id,
-                external_reference=turn_id,
-                direction="inbound",
-                endpoint=str(request.url.path),
-                http_method=request.method,
-                request_headers=json.dumps(request_headers),
-                request_payload=payload.model_dump_json(),
-                status_code=response_status,
-                status="success" if response_status < 400 else "failed",
-                error_message=error_message,
-            )
-        )
-    except Exception as log_error:  # noqa: BLE001
-        logger.warning(
-            "Failed to create integration log for chatbot turn completion: %s",
-            log_error,
-            exc_info=True,
-        )
+    _log_complete_call(
+        db,
+        request=request,
+        payload=payload,
+        business_id=turn_id,
+        external_reference=turn_id,
+        status_code=response_status,
+        error_message=error_message,
+    )
 
     if to_reraise is not None:
         raise to_reraise
 
     assert response_payload is not None
     return response_payload
+
+
+def _resolve_turn_for_complete(db: Session, payload: CompleteRequest) -> str:
+    """Find the turn a body describes, without an id in the path.
+
+    Agreed with the n8n side so their cut touches ONE workflow: `sub-output` has the `ctx`
+    but not the turn id (the id lives on the spine, two workflows up), and threading it
+    through would mean editing the spine, `sub-main-processing` and every
+    `Call 'sub-output'*` caller. The pair `(contact, respond message id)` already
+    identifies the turn - it is the same pair `chatbot.turns` is UNIQUE on (D15) - so the
+    body it already sends is enough.
+
+    **The HIGHEST attempt wins, and it is the SAME row the engine calls "this turn".**
+    `find_turn_for_message` is the head's own duplicate lookup (D15), reused here rather
+    than re-implemented: a retry from the trace screen (R4, S2b) inserts another row for
+    the same message, and completing the first one would fold the lane's result into the
+    attempt nobody is watching. Two readers of one pair that ordered their rows differently
+    would disagree about which row IS the turn the moment a second one existed, so there is
+    one helper and one answer.
+    """
+    ctx = payload.ctx or {}
+    contact_id = ((ctx.get("contact") or {}).get("id"))
+    # `ctx.text` IS `tf-message`'s own item, so the respond message id sits at
+    # `ctx.text.message.messageId` - one level up from the message BODY
+    # (`ctx.text.message.message.text`), which is the level that reads like the obvious
+    # one and is wrong.
+    message = (ctx.get("text") or {}).get("message") or {}
+    message_id = message.get("messageId")
+    if contact_id in (None, "") or message_id in (None, ""):
+        raise AppException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            message="This turn could not be identified.",
+            detail=(
+                "the body carries no `ctx.contact.id` / `ctx.text.message.messageId` pair, "
+                "which is what identifies a turn when the path has no id"
+            ),
+            code="CHATBOT_TURN_NOT_IDENTIFIED",
+        )
+
+    row = find_turn_for_message(
+        db, contact_respond_id=str(contact_id), message_id=str(message_id)
+    )
+    if row is None:
+        raise AppException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            message="This turn could not be found.",
+            detail=(
+                f"no chatbot turn for contact {contact_id} and message {message_id}: the "
+                "head either never ran for it or the row has been pruned"
+            ),
+            code="CHATBOT_TURN_NOT_FOUND",
+        )
+    # `done` WITH a stored response is not a refusal: it is the replay `complete_turn`
+    # already answers a duplicate delivery with (the tail ran, the caller has its answer
+    # and must not send it twice), and refusing it here would have made that branch
+    # unreachable from the route n8n actually calls. Everything else - `processing`,
+    # `failed`, or a `done` row with nothing stored - has no lane result to fold in and no
+    # answer to replay, so it is refused BEFORE the tail runs: completing it would compose
+    # an answer out of the caller's fragments and erase the failure record.
+    replayable = row.status == "done" and isinstance(row.response, dict)
+    if row.status != "delegated" and not replayable:
+        raise AppException(
+            status_code=409,
+            message="This turn cannot be completed.",
+            detail=(
+                f"chatbot turn {row.id} is {row.status!r} at stage {row.stage!r}: it is "
+                "neither 'delegated' (a lane result to fold in) nor a finished turn with a "
+                "stored answer to replay. A failed turn is retried from the trace screen, "
+                "never completed."
+            ),
+            code="CHATBOT_TURN_NOT_DELEGATED",
+        )
+    return str(row.id)
+
+
+@router.post("/turn/complete", response_model=CompleteResponse, status_code=status.HTTP_200_OK)
+def chat_turn_complete_by_body(
+    payload: CompleteRequest,
+    request: Request,
+    current_user: dict = Depends(get_external_api_user),
+    db: Session = Depends(get_db),
+):
+    """`/turn/{id}/complete` without the id: the body says which turn it is.
+
+    Same request body, same response, same engine call. The ONLY difference is how the
+    turn is found, and the reason is the n8n side's: `sub-output` holds the `ctx` and not
+    the id, so this keeps their cut inside one workflow.
+    """
+    try:
+        turn_id = _resolve_turn_for_complete(db, payload)
+    except AppException as refused:
+        # A refusal is a call too. Logged here because the answer is decided BEFORE
+        # `chat_turn_complete` runs, so its own log would never be reached, and a 404 /
+        # 409 that leaves no `integration_log` row is the one call an operator cannot
+        # find when n8n reports a turn that was never finished.
+        detail = refused.detail if isinstance(refused.detail, dict) else {}
+        ctx = payload.ctx or {}
+        _log_complete_call(
+            db,
+            request=request,
+            payload=payload,
+            business_id=str(uuid.uuid4()),
+            external_reference=str((ctx.get("contact") or {}).get("id") or ""),
+            status_code=refused.status_code,
+            error_message=str(detail.get("detail") or detail.get("message") or refused.detail),
+        )
+        raise
+    return chat_turn_complete(turn_id, payload, request, current_user, db)

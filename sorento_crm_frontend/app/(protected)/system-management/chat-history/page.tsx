@@ -29,6 +29,8 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { buildGroupHeader } from './groupHeader';
 import { getChatMessages } from './services/chatHistoryService';
 import { useExportChatHistory } from './hooks/useChatHistory';
+import { useFailedChatbotContacts } from './hooks/useChatbotTurns';
+import { stageLabel } from './turnPresentation';
 import { ChatThreadDrawer } from './components/ChatThreadDrawer';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import type {
@@ -72,6 +74,8 @@ export default function ChatHistoryPage() {
   const [dateTo, setDateTo] = useState(() => localInput(0));
   const [direction, setDirection] = useState('');
   const [breachedOnly, setBreachedOnly] = useState(false);
+  // AC-255. Narrows the LIST to contacts whose chatbot turns failed in this range.
+  const [failedTurnsOnly, setFailedTurnsOnly] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [groupBy, setGroupBy] = useState<ChatHistoryGroupBy>('none');
 
@@ -79,7 +83,7 @@ export default function ChatHistoryPage() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'sent_at', desc: true }]);
   const [selected, setSelected] = useState<ChatMessageRow | null>(null);
 
-  const filters: ChatHistoryFilters = useMemo(
+  const range: ChatHistoryFilters = useMemo(
     () => ({
       date_from: dateFrom ? new Date(dateFrom).toISOString() : undefined,
       date_to: dateTo ? new Date(dateTo).toISOString() : undefined,
@@ -88,6 +92,29 @@ export default function ChatHistoryPage() {
     }),
     [dateFrom, dateTo, direction, breachedOnly],
   );
+
+  // AC-255. Only fetched when the filter is on: an aggregate over the whole turn table
+  // behind a toggle most operators never touch would be a page-load cost for nothing.
+  const {
+    byContactId: failedByContact,
+    contactIds: failedContactIds,
+    isLoading: failedLoading,
+    isSuccess: failedLoaded,
+  } = useFailedChatbotContacts({ from: range.date_from, to: range.date_to }, failedTurnsOnly);
+
+  // AC-255. The turn aggregate names the contacts; the LIST is then narrowed on the
+  // SERVER by sending them back as repeated `contact_id`. Filtering the fetched page in
+  // the browser instead left the pager counting rows it had just hidden and the empty
+  // state claiming nothing failed when the failures were simply on page two.
+  const filters: ChatHistoryFilters = useMemo(
+    () => (failedTurnsOnly ? { ...range, contact_id: failedContactIds } : range),
+    [range, failedTurnsOnly, failedContactIds],
+  );
+
+  // With the filter on there is nothing to ask for until the aggregate has answered, and
+  // an empty answer means an empty list - NOT an unfiltered one, which is what sending no
+  // `contact_id` would mean to the endpoint.
+  const listEnabled = !failedTurnsOnly || (failedLoaded && failedContactIds.length > 0);
 
   const { data, isLoading, isPlaceholderData } = useQuery({
     ...LIST_QUERY_OPTIONS,
@@ -101,12 +128,15 @@ export default function ChatHistoryPage() {
         query: searchQuery || undefined,
         group_by: groupBy === 'none' ? undefined : groupBy,
       }),
+    enabled: listEnabled,
     staleTime: 15_000,
   });
 
   const exportMutation = useExportChatHistory();
 
   const resetPage = () => setPagination((p) => ({ ...p, pageIndex: 0 }));
+
+  const rows = useMemo(() => (listEnabled ? (data?.data ?? []) : []), [data, listEnabled]);
 
   const columns = useMemo<ColumnDef<ChatMessageRow>[]>(
     () => [
@@ -123,11 +153,24 @@ export default function ChatHistoryPage() {
         accessorKey: 'contact_display',
         id: 'contact_display',
         header: ({ column }) => <DataGridColumnHeader title="Contact" column={column} />,
-        cell: ({ row }) => (
-          <span className="truncate" title={row.original.contact_display}>
-            {row.original.contact_display}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const failed = failedByContact.get(row.original.contact_id);
+          return (
+            <div className="min-w-0">
+              <span className="truncate block" title={row.original.contact_display}>
+                {row.original.contact_display}
+              </span>
+              {failed && (
+                // AC-255: the row says what stopped last, so the list itself answers
+                // "which of these is worth opening" without opening any of them.
+                <Badge variant="destructive" appearance="light" size="sm" className="mt-0.5">
+                  failed at {stageLabel(failed.last_failed_stage ?? 'received').toLowerCase()}
+                  {failed.count > 1 ? ` (${failed.count})` : ''}
+                </Badge>
+              )}
+            </div>
+          );
+        },
         size: 210,
       },
       {
@@ -172,15 +215,18 @@ export default function ChatHistoryPage() {
         size: 110,
       },
     ],
-    [],
+    // `failedByContact` is read by the Contact cell (AC-255's last-failed-stage badge).
+    // Without it here the columns memo would keep the first, empty map and the badge
+    // would never appear - the filter would look like it silently did nothing.
+    [failedByContact],
   );
 
   const renderGroupHeader = useMemo(() => buildGroupHeader(groupBy), [groupBy]);
 
   const table = useReactTable({
     columns,
-    data: data?.data ?? [],
-    pageCount: Math.ceil((data?.pagination.total ?? 0) / pagination.pageSize),
+    data: rows,
+    pageCount: Math.ceil((listEnabled ? (data?.pagination.total ?? 0) : 0) / pagination.pageSize),
     getRowId: (row) => String(row.id),
     state: { pagination, sorting },
     columnResizeMode: 'onChange',
@@ -193,7 +239,7 @@ export default function ChatHistoryPage() {
     manualSorting: true,
   });
 
-  const filtersActive = (direction ? 1 : 0) + (breachedOnly ? 1 : 0);
+  const filtersActive = (direction ? 1 : 0) + (breachedOnly ? 1 : 0) + (failedTurnsOnly ? 1 : 0);
 
   const GridToolbar = () => {
     const [inputValue, setInputValue] = useState(searchQuery);
@@ -292,6 +338,20 @@ export default function ChatHistoryPage() {
                 </div>
                 <div>
                   <Button
+                    variant={failedTurnsOnly ? 'primary' : 'outline'}
+                    size="sm"
+                    className="w-full"
+                    onClick={() => {
+                      setFailedTurnsOnly((v) => !v);
+                      resetPage();
+                    }}
+                    aria-pressed={failedTurnsOnly}
+                  >
+                    {failedTurnsOnly ? 'Failed turns only: on' : 'Failed turns only: off'}
+                  </Button>
+                </div>
+                <div>
+                  <Button
                     variant={breachedOnly ? 'primary' : 'outline'}
                     size="sm"
                     className="w-full"
@@ -335,14 +395,20 @@ export default function ChatHistoryPage() {
       <Container>
         <DataGrid
           table={table}
-          recordCount={data?.pagination.total ?? 0}
-          isLoading={isLoading}
+          recordCount={listEnabled ? (data?.pagination.total ?? 0) : 0}
+          isLoading={isLoading || (failedTurnsOnly && failedLoading)}
           isPlaceholderData={isPlaceholderData}
           onRowClick={(row: ChatMessageRow) => setSelected(row)}
           standardToolbar={false}
           tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
           renderGroupHeader={renderGroupHeader}
-          emptyMessage="No messages in this range. Widen the date range or clear filters - chat history is written by the n8n WhatsApp flow."
+          emptyMessage={
+            failedTurnsOnly
+              ? (failedLoading
+                  ? 'Looking for failed turns…'
+                  : 'No chatbot turns failed in this range.')
+              : 'No messages in this range. Widen the date range or clear filters - chat history is written by the n8n WhatsApp flow.'
+          }
         >
           <Card>
             <GridToolbar />

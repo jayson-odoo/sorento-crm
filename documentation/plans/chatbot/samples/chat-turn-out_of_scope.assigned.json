@@ -1,0 +1,162 @@
+{
+  "turn_id": "8c18559f-7fcb-411c-a91b-6bb47c739a0d",
+  "is_test": false,
+  "ctx": {
+    "contact": {
+      "id": "437264483",
+      "firstName": "ZZT",
+      "custom_fields": []
+    },
+    "text": {
+      "event_type": "message.received",
+      "contact": {
+        "id": "437264483"
+      },
+      "message": {
+        "messageId": "chat-turn-out_of_scope-assigned",
+        "contactId": "437264483",
+        "channelId": "whatsapp",
+        "traffic": "incoming",
+        "message": {
+          "type": "text",
+          "text": "I need to speak to a human"
+        }
+      }
+    },
+    "session": {
+      "respond_io_id": "437264483",
+      "session_vars": {
+        "variables": {}
+      }
+    },
+    "parse": {
+      "output": {
+        "message_type": "request_for_help",
+        "intent_hint": null,
+        "domain_hint": null,
+        "scope_intent": null,
+        "is_affirmative": null,
+        "user_goal": "trying to reach a person",
+        "access_levels": [],
+        "broaden_axis": null,
+        "date_mode": null,
+        "date_filter_start": null,
+        "date_filter_end": null,
+        "match_mode": "and",
+        "demand_qty": null,
+        "entities": [],
+        "entity_op": "replace_combine",
+        "scope_exclusive": false,
+        "requested_attributes": [],
+        "contains_flyer": false,
+        "reference_positions": [],
+        "reference_target": null,
+        "person_mention": null,
+        "is_active": null,
+        "order_status": null,
+        "correction": false,
+        "routing": {
+          "suggested_team": "customer_service",
+          "suggested_agent": "general_enquiries"
+        },
+        "escalation": {
+          "is_escalation_confirmation": true
+        },
+        "domain_signal_source": "intent_none",
+        "scope_exclusive_applied": false,
+        "entity_op_applied": "replace_combine",
+        "query_brands": []
+      },
+      "_parser_raw": {
+        "message_type": "request_for_help",
+        "intent_hint": null,
+        "domain_hint": null,
+        "scope_intent": null,
+        "is_affirmative": null,
+        "user_goal": "trying to reach a person",
+        "access_levels": [],
+        "broaden_axis": null,
+        "date_mode": null,
+        "date_filter_start": null,
+        "date_filter_end": null,
+        "match_mode": "and",
+        "demand_qty": null,
+        "entities": [],
+        "entity_op": "replace_combine",
+        "scope_exclusive": false,
+        "requested_attributes": [],
+        "contains_flyer": false,
+        "reference_positions": [],
+        "reference_target": null,
+        "person_mention": null,
+        "is_active": null,
+        "order_status": null,
+        "correction": false,
+        "routing": {
+          "suggested_team": "customer_service",
+          "suggested_agent": "general_enquiries",
+          "team_source": null
+        },
+        "escalation": {
+          "is_escalation_confirmation": true
+        }
+      }
+    },
+    "access": {
+      "allowed": true,
+      "decision": "allow",
+      "agent_name": "General Enquiries",
+      "attributes": null,
+      "all_attributes_allowed": null
+    },
+    "media": null
+  },
+  "item": {
+    "allowed": true,
+    "decision": "allow",
+    "agent_name": "General Enquiries",
+    "attributes": null,
+    "all_attributes_allowed": null,
+    "branch_kind": "out_of_scope"
+  },
+  "branch_kind": "out_of_scope",
+  "delegate": null,
+  "reply": {
+    "text": null,
+    "quick_replies": null,
+    "result_set": [],
+    "attachments_src": null
+  },
+  "actions": [
+    {
+      "kind": "send_message",
+      "text": "Your request is out of the scope of my ability and require human assistance. We are directing your enquiry to the correct person. Please wait for a moment.",
+      "dry_run": false,
+      "result_set": [],
+      "quick_replies": null
+    },
+    {
+      "kind": "assign_conversation",
+      "dry_run": false,
+      "respond_user_id": "100000001"
+    },
+    {
+      "kind": "add_comment",
+      "text": "Team: customer_service\n\u23f0 SLA Alert: This contact is routed to you at 2026-09-05 12:00:00.\nYou have until 2026-09-05 16:00:00 to respond.\nYou have until 2026-09-06 12:00:00 to resolve.\nReference message: https://app.respond.io/space/364817/inbox/437264483#chat-turn-out_of_scope-assigned",
+      "dry_run": false,
+      "mention_user_ids": [
+        "100000001"
+      ]
+    },
+    {
+      "kind": "send_message",
+      "text": "This inquiry has been routed to the respective person-in-charge (PIC) from customer service team. We will get back to you soon. Thanks for your patience.",
+      "dry_run": false,
+      "result_set": [],
+      "quick_replies": null
+    }
+  ],
+  "session_patch": null,
+  "delegate_payload": null,
+  "duplicate": false
+}

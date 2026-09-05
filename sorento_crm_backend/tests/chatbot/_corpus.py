@@ -108,6 +108,16 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
     # graded (`runData`) mismatch is `sub-send-attachments-rs/rs51-02-withattach`, whose
     # `input` is `[{"json": {}}]` while its `expected` is a fully composed answer - the
     # signature of a node reading something other than its own input.
+    # S5 - the escalation lane. Four nodes, one slug: the LIVE `sub-escalation`
+    # (`fr2u3e6FKg52cPvK` @ `bac9613b`, the 10-node graph). The EXPORT of that workflow
+    # carries a `fresh-entity-gate` and a `clarify-team-*` pair that are NOT live (B-HB-1 /
+    # B-TEAM-1', unpromoted), which is why the port and these captures both come from the
+    # live body and not from it. `clarify-company-reply` has ZERO captures: the clarify arm
+    # did not fire once in the window, honestly reported rather than fabricated.
+    "escalation-input": ("sub-escalation-live",),
+    "escalation-context": ("sub-escalation-live",),
+    "clarify-company-reply": ("sub-escalation-live",),
+    "escalation-result": ("sub-escalation-live",),
     "central-exchange": (
         "live-spine-sorento-consume-main",
         "sub-answer-live",

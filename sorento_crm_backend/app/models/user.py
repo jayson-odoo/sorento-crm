@@ -526,6 +526,15 @@ class SystemSetting(Base):
     # have been dead by typo since they were written (0/150 live fixtures). Turning them
     # on is therefore a DATA change with a test, not a surprise on deploy. Default off.
     chatbot_stock_denial_enabled = Column(Boolean, nullable=False, server_default="false", default=False)
+    # AC-304 (D5): the ONE list the owner has actually changed, so it is a column and not
+    # a table. `not_supported` is decided against this instead of the two literals the JS
+    # carries, and the default IS those two literals.
+    chatbot_unsupported_domains = Column(
+        JSONB,
+        nullable=False,
+        server_default='["goods_receive", "spo_allocation"]',
+        default=lambda: ["goods_receive", "spo_allocation"],
+    )
     # Which lanes the CRM is allowed to FINISH, by `branch_kind`, one at a time.
     #
     # `contracts.CRM_COMPLETED_BRANCH_KINDS` says what the code CAN complete; this says

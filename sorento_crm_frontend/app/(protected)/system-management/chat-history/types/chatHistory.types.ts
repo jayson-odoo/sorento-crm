@@ -52,7 +52,12 @@ export interface ChatThreadResponse {
 export interface ChatHistoryFilters {
   date_from?: string;
   date_to?: string;
-  contact_id?: string;
+  /**
+   * One contact, or the several the list is narrowed to. "Failed turns only" sends the
+   * contacts whose chatbot turns failed, so the SERVER pages over exactly those rows and
+   * the pager counts them (AC-255).
+   */
+  contact_id?: string | string[];
   direction?: 'incoming' | 'outgoing';
   search?: string;
   breached_only?: boolean;

@@ -22,16 +22,21 @@ state; the tail (S2) is what fills it.
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, Mapping
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import jsc, trace as trace_mod
-from app.services.chatbot.contracts import TURN_FAILURE_STAGES, Envelope
+from app.services.chatbot.contracts import (
+    SELF_CLOSING_BRANCH_KINDS,
+    TURN_FAILURE_STAGES,
+    Envelope,
+)
 from app.services.chatbot.delegate import delegate_for, enabled_lanes_from
 from app.services.error_handler import AppException
 from app.services.chatbot.head import parser
@@ -43,12 +48,19 @@ from app.services.chatbot.head.output_exchange import (
     suggest_follow_up,
 )
 from app.services.chatbot.head.route import decide
-from app.services.chatbot.lanes import business, casual
+from app.services.chatbot.lanes import business, canned as canned_lanes, casual
+from app.services.chatbot.lanes.escalation import run as run_escalation_lane
 from app.services.chatbot.lanes.business import resolve_gate, services as business_services
+from app.services.chatbot.usage import record_parser_usage
 
 logger = logging.getLogger(__name__)
 
 SessionFactory = Callable[[], Session]
+
+# The branch kinds whose arm closes its OWN row, after its lane has produced an answer.
+# Everything else closes at `routed` in the block below. `contracts` owns the list because
+# `lanes/canned.py` subtracts the same one to know which kinds are ITS to compose.
+_CRM_FINISHED_HERE: frozenset[str] = SELF_CLOSING_BRANCH_KINDS
 
 # "the caller did not pass a row", which `None` cannot mean here: `None` is the real value
 # when the settings singleton does not exist yet.
@@ -68,6 +80,7 @@ class TurnResult:
 
     __slots__ = (
         "turn_id",
+        "is_test",
         "ctx",
         "item",
         "branch_kind",
@@ -93,6 +106,7 @@ class TurnResult:
     def as_dict(self) -> dict[str, Any]:
         return {
             "turn_id": self.turn_id,
+            "is_test": bool(self.is_test),
             "ctx": self.ctx,
             "item": self.item,
             "branch_kind": self.branch_kind,
@@ -297,7 +311,16 @@ def _select_turn(db: Session, *, contact_respond_id: str, message_id: str | None
     """The raw lookup. Kept separate from `_existing_turn` so the post-collision retry
     below can re-read WITHOUT going through whatever a test has wrapped around the public
     helper - the forced-TOCTOU test synchronises on `_existing_turn`, and a second trip
-    through that barrier would deadlock the very path being fixed."""
+    through that barrier would deadlock the very path being fixed.
+
+    The ORDER BY is the ONE place the "which row" question is answered, for the head and
+    for the id-less `/turn/complete` alike (`find_turn_for_message`). The HIGHEST attempt
+    wins, agreed with the n8n side: when S2b's retry puts a second row on a message, the
+    retry is the row being watched, and completing (or replaying) the older one would fold
+    a lane's result into a row nobody is looking at and leave the live one delegated
+    forever. `(contact_respond_id, message_id)` is UNIQUE today, so there is exactly one
+    row to order and this is the shape of the answer rather than a change to it;
+    `created_at` breaks a tie for a row written before `attempt` was populated."""
     if message_id is None:
         return None
     return (
@@ -306,9 +329,40 @@ def _select_turn(db: Session, *, contact_respond_id: str, message_id: str | None
             ChatbotTurn.contact_respond_id == contact_respond_id,
             ChatbotTurn.message_id == message_id,
         )
-        .order_by(ChatbotTurn.created_at.asc())
+        # NEWEST first: with a retry there can be several rows for one message, and the
+        # one that matters is the last one - the earlier attempts are settled history.
+        # `attempt` leads because it is the retry's own counter (S2b writes old + 1), so
+        # it answers the question directly; `created_at` only breaks a tie for a row
+        # written before `attempt` was populated.
+        .order_by(ChatbotTurn.attempt.desc(), ChatbotTurn.created_at.desc())
         .first()
     )
+
+
+def _awaiting_retry(row) -> bool:
+    """Is this row a FAILED turn an operator asked to re-run (S2b)?
+
+    D15 says a respond message already turned into a turn is a duplicate, and a retry
+    re-posts that same message - same `message_id` - so without this it would come back
+    as `duplicate: true` and Retry would be a no-op that reported success. The marker is
+    what tells the two apart: an operator asked for this one.
+    """
+    return row is not None and row.status == "failed" and row.retry_requested_at is not None
+
+
+def find_turn_for_message(db: Session, *, contact_respond_id: str, message_id: str | None):
+    """Which row is this message's turn? Asked by the ENDPOINT as well as by the head.
+
+    The id-less `/turn/complete` identifies a turn from `(contact, respond message id)`,
+    which is the same question `_existing_turn` asks on arrival, so it asks it through the
+    same lookup instead of writing a second `ORDER BY`: the HIGHEST attempt, once for both
+    readers. Two orderings over one pair would disagree about which row IS the turn the
+    moment a second row for a message existed (S2b's retry), and the disagreement would
+    surface as a lane result folded into a row nobody is watching. Public because
+    `app/api/v1/external/chat.py` is a doorway file; the package still EXPORTS only
+    `run_turn` / `complete_turn` (D3).
+    """
+    return _select_turn(db, contact_respond_id=contact_respond_id, message_id=message_id)
 
 
 def _existing_turn(db: Session, *, contact_respond_id: str, message_id: str | None):
@@ -322,21 +376,37 @@ def _existing_turn(db: Session, *, contact_respond_id: str, message_id: str | No
     return _select_turn(db, contact_respond_id=contact_respond_id, message_id=message_id)
 
 
-def _insert_turn(db: Session, *, envelope: Envelope, contact_respond_id: str) -> ChatbotTurn:
+def _insert_turn(
+    db: Session,
+    *,
+    envelope: Envelope,
+    contact_respond_id: str,
+    retrying: ChatbotTurn | None = None,
+) -> ChatbotTurn:
+    """The turn row. `retrying` is the failed row an operator asked to re-run (S2b).
+
+    A retry is a NEW turn, not an edit of the old one: same message, next attempt, ingress
+    `retry`. The old row keeps its trace and its failure - that is the record the operator
+    was reading - and only loses its retry marker, so a second failure can be retried too.
+    """
     row = ChatbotTurn(
         contact_respond_id=contact_respond_id,
         message_id=_message_id(envelope),
-        ingress=envelope.ingress,
-        envelope=envelope.model_dump(mode="json"),
+        ingress="retry" if retrying is not None else envelope.ingress,
+        envelope=trace_mod.cap_document(envelope.model_dump(mode="json")),
         is_test=envelope.dry_run,
         status="processing",
         stage="received",
-        attempt=1,
+        attempt=(retrying.attempt + 1) if retrying is not None else 1,
         trace=[],
         shadow_of=getattr(envelope, "shadow_of", None),
         started_at=_now(),
     )
     db.add(row)
+    if retrying is not None:
+        # Consumed. Leaving it set would make the NEXT delivery of this message look like
+        # another requested re-run rather than the duplicate it is.
+        retrying.retry_requested_at = None
     db.commit()
     db.refresh(row)
     return row
@@ -369,9 +439,35 @@ def _close_turn(
     # delivery replays this, and n8n's `build-ctx` / `route-turn` re-emitters would throw
     # on a null. It is also what S2b's Retry reads. Written HERE, at close, which is what
     # bounds the guarantee - see `_duplicate_result`.
-    row.response = response
+    row.response = trace_mod.cap_document(response)
     row.finished_at = _now()
     db.commit()
+
+
+def _record_parser_usage(
+    db: Session,
+    *,
+    usage: dict[str, Any],
+    started: float,
+    contact_respond_id: str,
+    dry_run: bool,
+    answered: bool,
+) -> None:
+    """One `ai_assistant_usage_logs` row for the turn's parser call.
+
+    LIVE turns only (D14: a test envelope writes nothing outside `chatbot.turns`), and
+    only when the provider reported something - a stubbed parse has no spend to record.
+    Written on the session that is open anyway, so it costs no extra connection.
+    """
+    if dry_run or not usage:
+        return
+    record_parser_usage(
+        db,
+        usage=usage,
+        response_time_ms=int((time.perf_counter() - started) * 1000),
+        contact_respond_id=contact_respond_id,
+        answered=answered,
+    )
 
 
 def _duplicate_result(row: ChatbotTurn) -> TurnResult:
@@ -401,6 +497,7 @@ def _duplicate_result(row: ChatbotTurn) -> TurnResult:
     response = row.response if isinstance(row.response, dict) else {}
     return TurnResult(
         turn_id=str(row.id),
+        is_test=bool(row.is_test),
         ctx=response.get("ctx"),
         item=response.get("item"),
         branch_kind=row.branch_kind,
@@ -446,13 +543,19 @@ def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResu
         existing = _existing_turn(
             db, contact_respond_id=contact_respond_id, message_id=message_id
         )
-        if existing is not None:
+        retrying = existing if _awaiting_retry(existing) else None
+        if existing is not None and retrying is None:
             # D15: the two injectors delivered the same respond message. No second turn
             # runs, no second LLM call, and the caller's Switch on `duplicate` sends
             # nothing.
             return _duplicate_result(existing)
         try:
-            row = _insert_turn(db, envelope=envelope, contact_respond_id=contact_respond_id)
+            row = _insert_turn(
+                db,
+                envelope=envelope,
+                contact_respond_id=contact_respond_id,
+                retrying=retrying,
+            )
         except IntegrityError:
             # The SELECT above is a TOCTOU window, not a lock: a webhook delivery racing a
             # poller re-delivery can both miss and both insert. The unique index is the
@@ -461,7 +564,10 @@ def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResu
             winner = _select_turn(
                 db, contact_respond_id=contact_respond_id, message_id=message_id
             )
-            if winner is None:  # pragma: no cover - some OTHER constraint failed
+            if winner is None or _awaiting_retry(winner):
+                # Either some OTHER constraint failed, or two retries of one message
+                # raced - neither is a duplicate, and guessing would answer the customer
+                # from a turn that never ran.
                 raise
             return _duplicate_result(winner)
         turn_id = str(row.id)
@@ -471,7 +577,7 @@ def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResu
     stage: list[str] = ["received"]
     actions: list[dict[str, Any]] = []
     try:
-        return _run_stages(
+        result = _run_stages(
             envelope,
             session_factory=session_factory,
             turn_trace=turn_trace,
@@ -481,6 +587,14 @@ def run_turn(envelope: Envelope, *, session_factory: SessionFactory) -> TurnResu
             actions=actions,
             stage=stage,
         )
+        # D14: `is_test` is decided on the ENVELOPE, so it belongs on every answer the
+        # head returns, whichever arm produced it. Stamped at this ONE exit rather than
+        # on each arm's own `TurnResult`, which is exactly how three arms - the canned
+        # block, `_run_casual_lane` and `_run_escalation_arm` - came to leave it false on
+        # a turn that wrote nothing. Every action already carried its own `dry_run`; this
+        # is the top-level field a caller switches the whole turn on.
+        result.is_test = dry_run
+        return result
     except Exception as exc:  # noqa: BLE001 - a failed turn is recorded, never dropped
         message = f"{type(exc).__name__}: {exc}"
         logger.exception("chatbot turn %s failed at stage %s", turn_id, stage[0])
@@ -613,11 +727,14 @@ def _run_stages(  # noqa: PLR0915
     # `ParserOutputError` from `post_process` and lands on the failed-`understood` arm
     # below, exactly as a malformed model answer does (R5 / H44).
     parser_bypassed = dry_run and "mock_reformulator_output" in harness_present
+    parse_started = time.perf_counter()
     try:
         if parser_bypassed:
             parser_raw = _harness_value(envelope, "mock_reformulator_output")
         else:
             parser_raw = parser.parse(parser_config, user_block)
+        # Empty on a bypassed parse: no call, no spend to record.
+        parser_usage = getattr(parser_raw, "usage", {}) or {}
         parse_block = post_process({"output": parser_raw}, {}, parent_input)
         parse_block = suggest_follow_up(parse_block, parent_input)
     except (parser.ParserError, ParserOutputError) as exc:
@@ -634,6 +751,16 @@ def _run_stages(  # noqa: PLR0915
             raw={"user_block": user_block},
         )
         with _session(session_factory) as db:
+            # The provider bills a truncated or non-JSON emission too, so a failed parse
+            # is a spend the usage table has to carry.
+            _record_parser_usage(
+                db,
+                usage=getattr(exc, "usage", {}) or {},
+                started=parse_started,
+                contact_respond_id=contact_respond_id,
+                dry_run=dry_run,
+                answered=False,
+            )
             _close_turn(
                 db,
                 turn_id,
@@ -665,6 +792,9 @@ def _run_stages(  # noqa: PLR0915
             "intent": qf.get("intent_hint"),
             "entities": len(qf.get("entities") or []),
             "prompt_version": parser_config.prompt_version,
+            # Always present, 0 when the parse was bypassed or the provider reported
+            # nothing: a missing row reads as "free", which no LLM call is.
+            "tokens": int(parser_usage.get("total_tokens") or 0),
             "parser_bypassed": parser_bypassed,
         },
         raw={"parser_raw": parse_block.get("_parser_raw"), "derived": qf},
@@ -673,6 +803,14 @@ def _run_stages(  # noqa: PLR0915
     # -- access + routed ---------------------------------------------------- #
     stage[0] = "access"
     with _session(session_factory) as db:
+        _record_parser_usage(
+            db,
+            usage=parser_usage,
+            started=parse_started,
+            contact_respond_id=contact_respond_id,
+            dry_run=dry_run,
+            answered=True,
+        )
         suggested_agent = jsc.get(qf.get("routing"), "suggested_agent")
         access = check_access(
             db,
@@ -711,7 +849,15 @@ def _run_stages(  # noqa: PLR0915
         settings_row = _settings_row(db)
         stock_denial_enabled = _stock_denial_enabled(db, settings_row)
         enabled_lanes = _enabled_lanes(db, settings_row)
-        branch_kind, tier_stamp = decide(ctx, stock_denial_enabled=stock_denial_enabled)
+        # AC-304: the configured unsupported-domain list, or None when the owner has set
+        # none. `route.decide` owns the fallback to the two literals the JS hard-codes, so
+        # None travels as an argument rather than as an absent one - one call shape, and
+        # the default lives in exactly one file.
+        branch_kind, tier_stamp = decide(
+            ctx,
+            stock_denial_enabled=stock_denial_enabled,
+            unsupported_domains=_unsupported_domains(settings_row),
+        )
         item = _stamp_item(access, branch_kind, tier_stamp)
 
         turn_trace.record(
@@ -903,12 +1049,62 @@ def _run_stages(  # noqa: PLR0915
         # `routed`, so `WHERE stage = 'looked_up' AND status IN ('delegated','done')` is
         # the operator's query, and `response.delegate_error` beside it carries the reason
         # (`ENTITY_PIN_MISMATCH` included, which arrives here as an AppException).
-        # The lane the CRM is finishing is the exception: its turn is not over yet, so
+        # -- the lanes the CRM finishes itself (S3, AC-301) ------------------ #
+        # Gated on `completes_here` exactly as the low_signal block above is: the code
+        # half is `contracts.CRM_COMPLETED_BRANCH_KINDS` and the data half is
+        # `chatbot_completed_lanes`, and `delegate_for` is the ONE place that reads both.
+        if branch_kind in canned_lanes.COMPLETED_BRANCH_KINDS and completes_here:
+            # `ideate` makes a TOOL call, so a failure there stops at `looked_up` the way
+            # every other lookup does; the canned kinds have nothing to look up and go
+            # straight to composing. The distinction is what the trace screen shows an
+            # operator when an MCP call is what broke.
+            stage[0] = "looked_up" if branch_kind == "ideate" else "replied"
+            reply, session_patch, extra_actions = _complete_canned_lane(
+                db,
+                branch_kind=branch_kind,
+                ctx=ctx,
+                item=item,
+                turn_id=turn_id,
+                dry_run=dry_run,
+                contact_respond_id=contact_respond_id,
+                turn_trace=turn_trace,
+            )
+            actions = [*actions, *extra_actions]
+            _close_turn(
+                db,
+                turn_id,
+                status="done",
+                stage="sent",
+                branch_kind=branch_kind,
+                error=None,
+                records=turn_trace.records,
+                response={"ctx": ctx, "item": item, "actions": actions, "reply": reply},
+            )
+            return TurnResult(
+                turn_id=turn_id,
+                ctx=ctx,
+                item=item,
+                branch_kind=branch_kind,
+                # D4: the CRM finished it, so there is no lane left for n8n to run. Its
+                # `head-arm` Switch reads exactly this and sends.
+                delegate=None,
+                actions=actions,
+                reply=reply,
+                # D14: the would-be patch on a dry run, so a console or clone turn can be
+                # inspected without anything having been written.
+                session_patch=session_patch if dry_run else None,
+                status="done",
+                stage="sent",
+            )
+
+        # A lane the CRM is FINISHING is the exception: its turn is not over yet, so
         # closing it here would record a `done` turn before the reply exists (and
-        # `_close_turn` is write-once). `_run_casual_lane` closes it after the clarifier
-        # answers. With the lane switched off there is nothing to wait for and this closes
-        # as `delegated`, exactly as it did before S4.
-        if not (branch_kind == "low_signal" and completes_here):
+        # `_close_turn` is write-once). Each such arm closes the row itself once its lane
+        # has answered - `_run_casual_lane` after the clarifier, `_run_escalation_arm`
+        # after the handover. With the lane switched off there is nothing to wait for and
+        # this closes as `delegated`, exactly as it did before S4. The S3 canned kinds are
+        # not in this set because their block above has already returned.
+        if not (branch_kind in _CRM_FINISHED_HERE and completes_here):
             _close_turn(
                 db,
                 turn_id,
@@ -930,6 +1126,18 @@ def _run_stages(  # noqa: PLR0915
                 },
             )
 
+    if branch_kind == "out_of_scope" and completes_here:
+        return _run_escalation_arm(
+            turn_id=turn_id,
+            ctx=ctx,
+            item=item,
+            actions=actions,
+            dry_run=dry_run,
+            session_factory=session_factory,
+            turn_trace=turn_trace,
+            stage=stage,
+        )
+
     if branch_kind == "low_signal" and completes_here:
         return _run_casual_lane(
             turn_id=turn_id,
@@ -947,6 +1155,7 @@ def _run_stages(  # noqa: PLR0915
 
     return TurnResult(
         turn_id=turn_id,
+        is_test=dry_run,
         ctx=ctx,
         item=item,
         branch_kind=branch_kind,
@@ -1024,7 +1233,9 @@ def _run_casual_lane(
 
     actions = [
         *actions,
-        {"kind": "send_message", "text": text, "quick_replies": [], "dry_run": dry_run},
+        # AC-507: `quick_replies` is n8n's comma-joined string or null, never a list -
+        # this lane offers none, so it is null, matching every other hand-built action.
+        {"kind": "send_message", "text": text, "quick_replies": None, "dry_run": dry_run},
     ]
 
     # The clarifier IS this lane's lookup: it is where the turn's answer comes from, the
@@ -1056,7 +1267,9 @@ def _run_casual_lane(
         # AC-403: a failed clarifier is a FAILED turn, and the tail does not run. No
         # session is written (the customer's memory must not record an answer that was
         # never composed), and `branch_kind` stays `low_signal` because routing succeeded.
-        reply = {"text": text, "quick_replies": []}
+        # AC-507: null, not `[]` - the same string-or-null contract every other reply
+        # carries (a failed clarifier never composed one).
+        reply = {"text": text, "quick_replies": None}
         with _session(session_factory) as db:
             _close_turn(
                 db,
@@ -1144,6 +1357,175 @@ def _run_casual_lane(
     )
 
 
+def _run_escalation_arm(
+    *,
+    turn_id: str,
+    ctx: dict[str, Any],
+    item: dict[str, Any],
+    actions: list[dict[str, Any]],
+    dry_run: bool,
+    session_factory: SessionFactory,
+    turn_trace: Any,
+    stage: list[str],
+) -> TurnResult:
+    """The `out_of_scope` lane, from the lane call to the closed turn (AC-501 to AC-505).
+
+    `run_escalation_lane` is a module-level name so a test can replace it; the real one is
+    `lanes.escalation.run`, whose `services` default builds the production bundle. The lane
+    owns its own unit of work: the round-robin cursor and the SLA row must not roll back
+    with the turn's routing transaction, because a person has already been told.
+
+    A lane failure is a FAILED turn at `looked_up` with today's generic reply and NO
+    partial assignment - the lane returns its whole action list or raises before returning
+    any of it, so "assigned but no SLA row" is not a state this can produce.
+    """
+    stage[0] = "looked_up"
+    try:
+        fragment = run_escalation_lane(ctx, item, dry_run=dry_run)
+    except Exception as exc:  # noqa: BLE001 - a failed lane is recorded, never dropped
+        message = f"{type(exc).__name__}: {exc}"
+        logger.exception("chatbot turn %s: escalation lane failed", turn_id)
+        turn_trace.record(
+            "looked_up",
+            status="failed",
+            summary="Could not hand the conversation to a person.",
+            why="The assignment the escalation lane depends on did not complete.",
+            facts={"lane": "out_of_scope", "dry_run": dry_run},
+            error=message,
+            raw=None,
+        )
+        with _session(session_factory) as db:
+            _close_turn(
+                db,
+                turn_id,
+                status="failed",
+                stage="looked_up",
+                branch_kind="out_of_scope",
+                error=message,
+                records=turn_trace.records,
+                response={"ctx": ctx, "item": item, "actions": actions},
+            )
+        return _failed_result(turn_id, "looked_up", message, actions, dry_run)
+
+    arm = fragment.get("arm")
+    clarify = fragment.get("clarify")
+    lane_actions = list(fragment.get("actions") or [])
+    pending = fragment.get("pending")
+
+    # Only `looked_up` is recorded here. `replied` and `remembered` are the TAIL's, and
+    # recording a `replied` of our own would put two of them on the trace.
+    turn_trace.record(
+        "looked_up",
+        summary=(
+            "Asked which company should take it."
+            if arm == "clarify"
+            else "Handed the conversation to a person."
+        ),
+        why=(
+            "More than one company was offered and nobody picked one, so assigning would "
+            "have round-robined a pool the customer never chose."
+            if arm == "clarify"
+            else "The turn asked for a human, so the lane assigns one and starts the SLA clock."
+        ),
+        facts={
+            "lane": "out_of_scope",
+            "arm": arm,
+            "actions": [a.get("kind") for a in lane_actions],
+            "dry_run": dry_run,
+        },
+        raw={"clarify": clarify, "pending": pending},
+    )
+
+    # -- the tail, the same one every completed lane runs -------------------- #
+    # n8n sends this arm through `tag-out-of-scope` -> `sub-output`, so the session IS
+    # written today: the routing axes, and `escalate-catalog`'s `includeResponse: false`
+    # state text ("Informed the user that request is out of scope..."). Skipping the tail
+    # would have quietly dropped both the moment the lane was switched on.
+    #
+    # The item handed over is `tag-out-of-scope`'s, `{branch_kind: "out_of_scope"}` and
+    # nothing else - NOT `route-turn`'s item. That is what makes `complete_turn`'s entry
+    # gate run `escalate-catalog` for this arm, which is where the acknowledgement text
+    # comes from. It stays a tail concern and is deliberately not one of the actions.
+    #
+    # The row is closed `delegated` at `routed` first: it is the state the turn is really
+    # in (a lane produced a result, the tail has not folded it in), it is what
+    # `complete_turn` refuses to run without, and it puts the actions on the row before the
+    # tail reads `prior_actions` off it, so a duplicate replays them too (D15).
+    all_actions = [*actions, *lane_actions]
+    with _session(session_factory) as db:
+        _close_turn(
+            db,
+            turn_id,
+            status="delegated",
+            stage="routed",
+            branch_kind="out_of_scope",
+            error=None,
+            records=turn_trace.records,
+            response={"ctx": ctx, "item": item, "actions": all_actions, "pending": pending},
+        )
+
+    completed = complete_turn(
+        turn_id,
+        {"item": {"branch_kind": "out_of_scope"}, "ctx": ctx, "clarify": clarify},
+        session_factory=session_factory,
+    )
+
+    # -- seal the send actions with what the tail composed -------------------- #
+    # `quick_replies` and `result_set` are the SEALED reply's, and they do not exist until
+    # the tail has run - the lane declares the keys empty and they are filled here, so the
+    # executor sees one `send_message` shape whoever built it. `attachments_src` is the
+    # same story one step further: when the tail produced one, the send_attachments action
+    # goes LAST, after both messages, which is the order `send-attachments` runs in today.
+    sealed = completed.reply or {}
+    final_actions = [_seal_send(a, sealed) for a in (completed.actions or [])]
+    if jsc.truthy(sealed.get("attachments_src")):
+        final_actions.append(
+            {
+                "kind": "send_attachments",
+                "attachments_src": sealed.get("attachments_src"),
+                "reply": sealed,
+                "dry_run": dry_run,
+            }
+        )
+    if final_actions != (completed.actions or []):
+        # The row has to carry what the caller was handed, or a duplicate delivery replays
+        # a different action list than the first turn produced (D15).
+        with _session(session_factory) as db:
+            row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+            if row is not None and isinstance(row.response, dict):
+                row.response = {**row.response, "actions": final_actions}
+                db.commit()
+
+    return TurnResult(
+        turn_id=turn_id,
+        ctx=ctx,
+        item=item,
+        branch_kind="out_of_scope",
+        delegate=None,
+        reply=completed.reply,
+        actions=final_actions,
+        # D14: on a dry run the tail wrote nothing and hands back what it WOULD have
+        # written; on a live turn it is already saved.
+        session_patch=completed.session_patch,
+        status=completed.status,
+        stage=completed.stage,
+    )
+
+
+def _seal_send(action: dict[str, Any], sealed: dict[str, Any]) -> dict[str, Any]:
+    """Fill a `send_message`'s sealed halves from the tail's reply. Others pass through."""
+    if action.get("kind") != "send_message":
+        return action
+    return {
+        **action,
+        # AC-507/D9: n8n's `quick_reply` is a comma-joined STRING or null, never a list -
+        # `or []` here would hand the sender a type its `quick_reply` input has never
+        # taken. Pass the sealed value through verbatim, empty or not.
+        "quick_replies": sealed.get("quick_replies"),
+        "result_set": sealed.get("result_set"),
+    }
+
+
 def _casual_failure_summary(failed: str, setup_error: str | None) -> str:
     """One sentence for the trace screen, in the operator's words not the provider's.
 
@@ -1162,31 +1544,46 @@ def _casual_failure_summary(failed: str, setup_error: str | None) -> str:
 
 
 def _stamp_item(access: dict, branch_kind: str, tier_stamp: dict) -> dict[str, Any]:
-    """`route-turn`'s output item, byte-equal to today (AC-101)."""
+    """`route-turn`'s output item, byte-equal to today (AC-101).
+
+    `stock_denied` also carries `not_allowed_check_stock: true` - n8n stamps it with a
+    one-field `Edit Fields2` Set between the route Switch and `tag-entry-resolve`, and
+    `sub-main-processing` reads it by that exact name. The CRM stamps it here rather than
+    keeping a node-shaped Set of its own, so the item `sub-main-processing` receives is
+    unchanged while that lane still delegates (S6 owns it).
+    """
     from app.services.chatbot.contracts import TAG_ONLY_BRANCH_KINDS
 
     if branch_kind in TAG_ONLY_BRANCH_KINDS:
         return {"branch_kind": branch_kind}
-    return {**access, "branch_kind": branch_kind, **tier_stamp}
+    item = {**access, "branch_kind": branch_kind, **tier_stamp}
+    if branch_kind == "stock_denied":
+        item["not_allowed_check_stock"] = True
+    return item
 
 
 def _failed_result(
     turn_id: str, stage: str, error: str, actions: list[dict[str, Any]], dry_run: bool
 ) -> TurnResult:
-    """A failed turn still hands the caller today's error reply to send (AC-105, AC-107)."""
+    """A failed turn still hands the caller today's error reply to send (AC-105, AC-107).
+
+    `quick_replies` is null, never `[]`: AC-507's contract is `quick_reply` is n8n's
+    comma-joined string or null, and a failed turn offered none.
+    """
     return TurnResult(
         turn_id=turn_id,
+        is_test=dry_run,
         ctx=None,
         item=None,
         branch_kind=None,
         delegate=None,
-        reply={"text": GENERIC_ERROR_REPLY, "quick_replies": []},
+        reply={"text": GENERIC_ERROR_REPLY, "quick_replies": None},
         actions=[
             *actions,
             {
                 "kind": "send_message",
                 "text": GENERIC_ERROR_REPLY,
-                "quick_replies": [],
+                "quick_replies": None,
                 "dry_run": dry_run,
             },
         ],
@@ -1235,6 +1632,17 @@ def _stock_denial_enabled(db: Session, row: Any = _UNSET) -> bool:
     if row is _UNSET:
         row = _settings_row(db)
     return bool(getattr(row, "chatbot_stock_denial_enabled", False)) if row is not None else False
+
+
+def _unsupported_domains(row: Any) -> tuple[str, ...] | None:
+    """`system_settings.chatbot_unsupported_domains` (AC-304), or None for the default.
+
+    None rather than the default list, so `route.decide` owns the fallback in ONE place -
+    returning the two literals here would put them in two files. Takes the row the turn
+    has already read rather than querying again.
+    """
+    configured = getattr(row, "chatbot_unsupported_domains", None) if row else None
+    return tuple(str(x) for x in configured) if isinstance(configured, list) else None
 
 
 def _enabled_lanes(db: Session, row: Any = _UNSET) -> frozenset[str]:
@@ -1298,13 +1706,23 @@ FRAGMENT_FIELDS: tuple[str, ...] = (
 class CompleteResult:
     """What the `/complete` endpoint serialises."""
 
-    __slots__ = ("turn_id", "reply", "actions", "session_patch", "status", "stage", "error")
+    __slots__ = (
+        "turn_id",
+        "reply",
+        "actions",
+        "session_patch",
+        "status",
+        "stage",
+        "error",
+        "is_test",
+    )
 
     def __init__(self, **kwargs: Any) -> None:
         for slot in self.__slots__:
             setattr(self, slot, kwargs.get(slot))
         if self.actions is None:
             self.actions = []
+        self.is_test = bool(self.is_test)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -1312,6 +1730,9 @@ class CompleteResult:
             "reply": self.reply,
             "actions": self.actions,
             "session_patch": self.session_patch,
+            # The ROW's `is_test`, so the caller's test-guard reads one field here instead
+            # of remembering what `/turn` said about this turn two calls ago.
+            "is_test": self.is_test,
         }
 
 
@@ -1328,6 +1749,301 @@ def _attachments_src(answer: Any) -> Any:
     """
     fragment = jsc.get(answer, "outcome_fragment")
     return jsc.get(fragment, "central-exchange") if isinstance(fragment, dict) else None
+
+
+def run_tail(
+    db: Session,
+    *,
+    turn_id: str,
+    ctx: Mapping[str, Any],
+    item: Mapping[str, Any],
+    values: Mapping[str, Any],
+    canned: Any,
+    branch_kind: str | None,
+    dry_run: bool,
+    contact_respond_id: str,
+    turn_trace: trace_mod.TurnTrace,
+    write_session: bool = True,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """outcome -> CS member offer -> compile-state -> compose -> validate -> persist.
+
+    ONE tail, TWO callers. `complete_turn` runs it for a lane that ran in n8n, and
+    `run_turn` runs it for a lane the CRM finished itself (S3) - and they must be the same
+    code, because the whole claim of the port is that a turn's memory does not depend on
+    which half of the migration answered it.
+
+    `write_session` is the ONE thing a caller may vary, and it is not a dry-run flag:
+    `access_denied` answers WITHOUT the tail's write on a live turn (n8n's `route[0]`
+    goes straight to the send node and never reaches `compile-current-state`), and a
+    contact refused the
+    agent must not have the turn written into their memory. `dry_run` suppresses the write
+    for a different reason (D14) and both suppress it independently.
+
+    Returns `(reply, session_patch)`. Raises before writing anything when the compiled
+    variables carry a key outside the allowlist (AC-203).
+    """
+    from app.services.chatbot.contracts import SessionVars
+    from app.services.chatbot.tail import compose as compose_mod
+    from app.services.chatbot.tail import member_offer as member_mod
+    from app.services.chatbot.tail import outcome as outcome_mod
+    from app.services.chatbot.tail.compile_state import compile_current_state
+
+    # -- what this branch built ---------------------------------------- #
+    producers: dict[str, Any] = {}
+    for name, field in outcome_mod.CARRIER_FIELDS.items():
+        if values.get(field) is not None:
+            producers[name] = values[field]
+
+    outcome_input: dict[str, Any] = dict(item)
+    # `entry-gate`: the escalate catalog runs only when the lane stamped a branch
+    # kind on the item. Everything else goes straight to the outcome hub.
+    if jsc.js_string(jsc.get(item, "branch_kind") or "") != "":
+        catalog = outcome_mod.escalate_catalog(
+            item,
+            ctx,
+            canned,
+            not_found=values["not_found"],
+            incoming_picker=values["incoming_picker"],
+            access_choice=values["access_choice"],
+            suggest_offer=values["suggest_offer"],
+            gate=values["gate"],
+            offer_hold=values["offer_hold"],
+        )
+        producers["escalate-catalog"] = catalog
+        outcome_input = catalog
+        if outcome_mod.cs_offer_gate(catalog, ctx, values["gate"]):
+            plan = member_mod.cs_roster_plan(values["gate"])
+            rosters = member_mod.fetch_rosters(db, plan, ctx)
+            offer = member_mod.build_cs_member_offer(catalog, plan, rosters)
+            producers["cs-roster-plan"] = plan
+            producers["build-cs-member-offer"] = offer
+            outcome_input = offer
+
+    outcome_items = outcome_mod.build_outcome([{"json": outcome_input}], producers)
+
+    # -- what to say, and what to remember ------------------------------ #
+    compiled = compile_current_state(
+        outcome_items[0]["json"],
+        ctx,
+        resolved=values["resolved"],
+        gate=values["gate"],
+        execution_id=turn_id,
+    )
+    composed = compose_mod.crossdomain_compose(
+        compiled.item,
+        result=values["result"],
+        answered=compiled.answered_domain is not None,
+    )
+    sealed = composed.get("reply") or {}
+    session_patch = sealed.get("session_patch") or {}
+    variables = session_patch.get("variables") or {}
+
+    turn_trace.record(
+        "replied",
+        summary=trace_mod.replied_summary(sealed, branch_kind),
+        why="The reply is composed from what the lane built, never from the customer's words.",
+        facts={
+            "lane": branch_kind,
+            "quick_replies": bool(sealed.get("quick_replies")),
+            "rows_offered": len(variables.get("last_result_set") or []),
+            "cross_domain_block": composed is not compiled.item,
+        },
+        raw={"reply": sealed},
+    )
+
+    # AC-203 / H15: the allowlist is checked BEFORE anything is written. A key the
+    # compiler should not be writing fails the turn here rather than landing in a
+    # real customer's session, where nothing would ever notice it.
+    SessionVars(**variables)
+
+    # `ctx.session` is `get-session-vars`'s own body, so the previous variables sit
+    # one level in. Same accessor the compiler uses, so "kept" on the trace screen and
+    # "carried" in the compiler can never disagree about what was there before.
+    remembered = trace_mod.memory_delta(
+        before=jsc.get(jsc.get(jsc.get(ctx, "session"), "session_vars"), "variables") or {},
+        after=variables,
+    )
+    if not dry_run and write_session:
+        from app.services.conversation_variables_service import overwrite_for_contact
+
+        overwrite_for_contact(db, respond_io_id=contact_respond_id, state=session_patch)
+        _log_session_write(db, turn_id=turn_id, contact_respond_id=contact_respond_id)
+    turn_trace.record(
+        "remembered",
+        summary=trace_mod.remembered_summary(remembered, dry_run=dry_run),
+        why=(
+            "Nothing was written: this is a test turn (D14)."
+            if dry_run
+            else "Nothing was written: a refused turn is not remembered."
+            if not write_session
+            else "The CRM is the only writer of the conversation state on the turn path (D2)."
+        ),
+        facts={
+            "kept": len(remembered["kept"]),
+            "new": len(remembered["new"]),
+            "cleared": len(remembered["cleared"]),
+            "dry_run": dry_run,
+            "written": (not dry_run) and write_session,
+        },
+        raw={"session_patch": session_patch},
+    )
+
+    reply = {
+        "text": sealed.get("text"),
+        "quick_replies": sealed.get("quick_replies"),
+        # What `sub-sendmsg` and `send-attachments` reach for by name today, handed
+        # back as fields so their expressions become one read each (AC-207).
+        "result_set": variables.get("last_result_set"),
+        "attachments_src": _attachments_src(values["answer"]),
+    }
+    return reply, session_patch
+
+
+def _send_actions(
+    reply: Mapping[str, Any], *, dry_run: bool, preview: bool = False
+) -> list[dict[str, Any]]:
+    """The actions the CALLER executes for a finished turn, in order (D9).
+
+    Shape agreed with the n8n executor, and it is the SEALED reply's own values verbatim,
+    not a normalised copy of them:
+
+    * `quick_replies` is `compile-current-state`'s `quick_reply` as it stands - n8n's
+      comma-joined string, or null when the turn offered none. Coercing it to a list
+      would hand `sub-sendmsg` a type its `quick_reply` input has never been given, and
+      the sender is the half of this that did NOT move into the CRM.
+    * `result_set` is `variables.last_result_set`, which is what the send node passes on
+      so a numbered reply's rows travel with the message that numbered them.
+    * `send_attachments` is a SECOND action and only when there is something to send.
+      It carries the whole `reply` because `sub-send-attachments` reads more than one
+      field off it, and it comes AFTER the message for the same reason n8n wires it that
+      way: the text explains the files.
+
+    `preview` adds AC-507's second flag, and only a lane that stood a seam value in sets
+    it: the key is ABSENT on a live action and on a dry run whose text is real, exactly as
+    the escalation lane emits it, so a reader never has to tell `preview: false` from
+    "this build does not report it".
+    """
+    send: dict[str, Any] = {
+        "kind": "send_message",
+        "text": reply.get("text"),
+        "quick_replies": reply.get("quick_replies"),
+        "result_set": reply.get("result_set"),
+        "dry_run": dry_run,
+    }
+    if preview:
+        send["preview"] = True
+    actions = [send]
+    attachments = reply.get("attachments_src")
+    if attachments is not None:
+        attach: dict[str, Any] = {
+            "kind": "send_attachments",
+            "attachments_src": attachments,
+            "reply": dict(reply),
+            "dry_run": dry_run,
+        }
+        if preview:
+            attach["preview"] = True
+        actions.append(attach)
+    return actions
+
+
+def _complete_canned_lane(
+    db: Session,
+    *,
+    branch_kind: str,
+    ctx: Mapping[str, Any],
+    item: Mapping[str, Any],
+    turn_id: str,
+    dry_run: bool,
+    contact_respond_id: str,
+    turn_trace: trace_mod.TurnTrace,
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+    """One of S3's eight lanes, answered inside the turn. `(reply, patch, actions)`.
+
+    Two shapes, and the split is n8n's own graph rather than a convenience:
+
+    * **`access_denied`** is answered by the SEND NODE's own expression - the `route`
+      Switch's `access_denied` output goes STRAIGHT to
+      `sorento-sub-respond-sendmsg-respond5` (there is no tag node on that arm) and never
+      reaches `compile-current-state`. So the CRM composes that one string and runs
+      no tail: a contact who is not allowed the agent must not have the turn written into
+      their memory, and running the tail would write it.
+    * **everything else** builds the `sub-output` fragments its lane would have handed the
+      tail, and the S2 tail runs UNCHANGED. `ideate` supplies its reply through
+      `item.outcome_fragment` - RS-6.1c's own mechanism and the exact key `build-outcome`
+      reads - so the tail needs no ideate arm.
+
+    The `sent` stage is recorded here and it is not a fiction: the CRM never sends (D9),
+    it hands the caller a `send_message` action, and the trace records that hand-off so
+    the operator screen shows where the turn ended.
+    """
+    from app.services.chatbot import copy as copy_mod
+    from app.services.chatbot.lanes import ideate as ideate_mod
+
+    canned = copy_mod.resolve(db)
+    reply_extras: dict[str, Any] = {}
+    # Only the `ideate` arm can set this: it is the one canned lane whose reply text comes
+    # from a seam, so it is the one whose `send_message` stands a value in (AC-507).
+    preview = False
+
+    if branch_kind in canned_lanes.NO_SESSION_WRITE_BRANCH_KINDS:
+        text = canned_lanes.access_denied_text(ctx, canned)
+        reply = {"text": text, "quick_replies": None, "result_set": [], "attachments_src": None}
+        session_patch: dict[str, Any] = {}
+        turn_trace.record(
+            "replied",
+            summary=f"Refused: {trace_mod.lane_words(branch_kind).lower()}.",
+            why="The contact is not granted the agent this turn would have used.",
+            facts={"lane": branch_kind},
+            raw={"reply": reply},
+        )
+        turn_trace.record(
+            "remembered",
+            summary="Nothing was remembered.",
+            why="A refused turn is not written into the contact's memory.",
+            facts={"lane": branch_kind, "written": False, "dry_run": dry_run},
+            raw=None,
+        )
+    else:
+        prev_variables = jsc.get(
+            jsc.get(jsc.get(ctx, "session"), "session_vars"), "variables"
+        ) or {}
+        if branch_kind == "ideate":
+            # D14 / H37: `dry_run` goes INTO the lane, not around it. The lane's seam is
+            # an MCP write tool that mints a real idea record and pulls the contact's
+            # media, so the guard has to sit before the call rather than after it.
+            lane = ideate_mod.run(ctx, item, dry_run=dry_run)
+            tail_item = lane["item"]
+            reply_extras = lane["reply_extras"]
+            preview = bool(lane.get("preview"))
+            fragments: dict[str, Any] = {"item": tail_item}
+        else:
+            fragments = canned_lanes.fragments_for(branch_kind, item, ctx, prev_variables, canned)
+            tail_item = fragments["item"]
+        values = {name: fragments.get(name) for name in FRAGMENT_FIELDS}
+        reply, session_patch = run_tail(
+            db,
+            turn_id=turn_id,
+            ctx=ctx,
+            item=tail_item,
+            values=values,
+            canned=canned,
+            branch_kind=branch_kind,
+            dry_run=dry_run,
+            contact_respond_id=contact_respond_id,
+            turn_trace=turn_trace,
+        )
+        reply = {**reply, **reply_extras}
+
+    actions = _send_actions(reply, dry_run=dry_run, preview=preview)
+    turn_trace.record(
+        "sent",
+        summary="Handed the reply to the caller to send.",
+        why="The CRM never sends on the turn path; n8n owns respond.io egress (D9).",
+        facts={"lane": branch_kind, "actions": len(actions), "dry_run": dry_run},
+        raw={"actions": actions},
+    )
+    return reply, session_patch, actions
 
 
 def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the contract
@@ -1353,11 +2069,6 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
     has to raise before `overwrite_for_contact`, not after.
     """
     from app.services.chatbot import copy as copy_mod
-    from app.services.chatbot.contracts import SessionVars
-    from app.services.chatbot.tail import compose as compose_mod
-    from app.services.chatbot.tail import member_offer as member_mod
-    from app.services.chatbot.tail import outcome as outcome_mod
-    from app.services.chatbot.tail.compile_state import compile_current_state
 
     item = fragments.get("item") or {}
     values = {name: fragments.get(name) for name in FRAGMENT_FIELDS}
@@ -1377,6 +2088,7 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
                 session_patch=None,
                 status=row.status,
                 stage=row.stage,
+                is_test=bool(row.is_test),
             )
         if row.status != "delegated":
             # ONLY a delegated turn has a tail to run, and the guard is not tidiness.
@@ -1413,111 +2125,18 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
         # `routed` - which reads on the trace screen as a turn still waiting for a lane
         # that finished minutes ago, and is the dropped turn H32 is about.
         try:
-            # -- what this branch built ---------------------------------------- #
-            producers: dict[str, Any] = {}
-            for name, field in outcome_mod.CARRIER_FIELDS.items():
-                if values.get(field) is not None:
-                    producers[name] = values[field]
-
-            outcome_input: dict[str, Any] = dict(item)
-            # `entry-gate`: the escalate catalog runs only when the lane stamped a branch
-            # kind on the item. Everything else goes straight to the outcome hub.
-            if jsc.js_string(jsc.get(item, "branch_kind") or "") != "":
-                catalog = outcome_mod.escalate_catalog(
-                    item,
-                    ctx,
-                    canned,
-                    not_found=values["not_found"],
-                    incoming_picker=values["incoming_picker"],
-                    access_choice=values["access_choice"],
-                    suggest_offer=values["suggest_offer"],
-                    gate=values["gate"],
-                    offer_hold=values["offer_hold"],
-                )
-                producers["escalate-catalog"] = catalog
-                outcome_input = catalog
-                if outcome_mod.cs_offer_gate(catalog, ctx, values["gate"]):
-                    plan = member_mod.cs_roster_plan(values["gate"])
-                    rosters = member_mod.fetch_rosters(db, plan, ctx)
-                    offer = member_mod.build_cs_member_offer(catalog, plan, rosters)
-                    producers["cs-roster-plan"] = plan
-                    producers["build-cs-member-offer"] = offer
-                    outcome_input = offer
-
-            outcome_items = outcome_mod.build_outcome([{"json": outcome_input}], producers)
-
-            # -- what to say, and what to remember ------------------------------ #
-            compiled = compile_current_state(
-                outcome_items[0]["json"],
-                ctx,
-                resolved=values["resolved"],
-                gate=values["gate"],
-                execution_id=turn_id,
+            reply, session_patch = run_tail(
+                db,
+                turn_id=turn_id,
+                ctx=ctx,
+                item=item,
+                values=values,
+                canned=canned,
+                branch_kind=branch_kind,
+                dry_run=dry_run,
+                contact_respond_id=contact_respond_id,
+                turn_trace=turn_trace,
             )
-            composed = compose_mod.crossdomain_compose(
-                compiled.item,
-                result=values["result"],
-                answered=compiled.answered_domain is not None,
-            )
-            sealed = composed.get("reply") or {}
-            session_patch = sealed.get("session_patch") or {}
-            variables = session_patch.get("variables") or {}
-
-            turn_trace.record(
-                "replied",
-                summary=trace_mod.replied_summary(sealed, branch_kind),
-                why="The reply is composed from what the lane built, never from the customer's words.",
-                facts={
-                    "lane": branch_kind,
-                    "quick_replies": bool(sealed.get("quick_replies")),
-                    "rows_offered": len(variables.get("last_result_set") or []),
-                    "cross_domain_block": composed is not compiled.item,
-                },
-                raw={"reply": sealed},
-            )
-
-            # AC-203 / H15: the allowlist is checked BEFORE anything is written. A key the
-            # compiler should not be writing fails the turn here rather than landing in a
-            # real customer's session, where nothing would ever notice it.
-            SessionVars(**variables)
-
-            # `ctx.session` is `get-session-vars`'s own body, so the previous variables sit
-            # one level in. Same accessor the compiler uses, so "kept" on the trace screen and
-            # "carried" in the compiler can never disagree about what was there before.
-            remembered = trace_mod.memory_delta(
-                before=jsc.get(jsc.get(jsc.get(ctx, "session"), "session_vars"), "variables") or {},
-                after=variables,
-            )
-            if not dry_run:
-                from app.services.conversation_variables_service import overwrite_for_contact
-
-                overwrite_for_contact(db, respond_io_id=contact_respond_id, state=session_patch)
-                _log_session_write(db, turn_id=turn_id, contact_respond_id=contact_respond_id)
-            turn_trace.record(
-                "remembered",
-                summary=trace_mod.remembered_summary(remembered, dry_run=dry_run),
-                why=(
-                    "Nothing was written: this is a test turn (D14)."
-                    if dry_run
-                    else "The CRM is the only writer of the conversation state on the turn path (D2)."
-                ),
-                facts={
-                    "kept": len(remembered["kept"]),
-                    "new": len(remembered["new"]),
-                    "cleared": len(remembered["cleared"]),
-                    "dry_run": dry_run,
-                },
-                raw={"session_patch": session_patch},
-            )
-
-            reply = {
-                "text": sealed.get("text"),
-                "quick_replies": sealed.get("quick_replies"),
-                # What `sub-sendmsg` and `send-attachments` reach for by name today, handed
-                # back as fields so their expressions become one read each (AC-207).
-                "result_set": variables.get("last_result_set"),
-                "attachments_src": _attachments_src(values["answer"]),
-            }
             _close_turn(
                 db,
                 turn_id,
@@ -1576,6 +2195,7 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
         session_patch=session_patch if dry_run else None,
         status="done",
         stage="remembered",
+        is_test=dry_run,
     )
 
 

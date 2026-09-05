@@ -19,6 +19,7 @@ from sorento_crm_mcp.escalation_hint import attach_suggested_escalation
 from sorento_crm_mcp.http_client import CRMClient
 from sorento_crm_mcp.module_loader import merged_catalog
 from sorento_crm_mcp.presenters import PRESENTER_TOOLS, present_response
+from sorento_crm_mcp.ideation import register_ideation_tools
 from sorento_crm_mcp.record_actions import register_record_action_tools
 from sorento_crm_mcp.settings import Settings
 from sorento_crm_mcp.user_guides import register_user_guide_tools
@@ -1769,5 +1770,8 @@ def create_mcp_app(settings: Settings) -> FastMCP:
 
     register_record_action_tools(mcp, settings)
     logger.debug("Registered record-action tools")
+
+    register_ideation_tools(mcp, settings)
+    logger.debug("Registered ideation tools")
 
     return mcp

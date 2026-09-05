@@ -912,7 +912,15 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     # escalate_offer and the member-offer arms, since the member offer SPREADS the
     # catalog - or when a miss arm appended the frozen phrase itself.
     offer_open = bool(jsc.get(cat, "is_escalate_offer") is True or turn_state["offer_open"])
-    variables["pending"] = pending_marker.derive(offer_open=offer_open, qf=qf, gate=gate)
+    variables["pending"] = pending_marker.derive(
+        offer_open=offer_open,
+        qf=qf,
+        gate=gate,
+        # Read off the FINAL value, not the ladder's: the miss-company block below can
+        # still set it, and the marker must describe what the customer was actually left
+        # looking at.
+        selection_context=variables.get("selection_context"),
+    )
 
     sanitize_em_dash(output)
     # The node's output IS a serialised n8n item, so `undefined` becomes an absent key

@@ -20,7 +20,10 @@ from app.dependencies import get_external_api_user
 from app.schemas.external.ideation import IdeationTurnRequest, IdeationTurnResponse
 from app.schemas.integration import IntegrationLogCreate
 from app.services.ideation_turn_service import handle_turn
-from app.services.integration_service import IntegrationLogService
+from app.services.integration_service import (
+    IntegrationLogService,
+    sanitize_request_headers,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -65,9 +68,7 @@ def ideation_turn(
         )
 
     try:
-        request_headers = dict(request.headers)
-        if "x-api-key" in request_headers:
-            request_headers["x-api-key"] = "***"
+        request_headers = sanitize_request_headers(dict(request.headers))
         IntegrationLogService(db).create_integration_log(
             IntegrationLogCreate(
                 integration_channel="n8n",

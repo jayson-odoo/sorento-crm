@@ -160,10 +160,12 @@ TRACE_STATUSES = ("ok", "failed", "skipped")
 TraceStatus = Literal[TRACE_STATUSES]  # type: ignore[valid-type]
 
 # `chatbot.turns.stage` records WHERE a turn stopped. It is a superset of TURN_STAGES:
-# three failure points sit outside the trace timeline - `intake` is before the first
-# trace record exists (H5, AC-107), `queued` is the S7 per-contact wait (AC-710) and
-# `casual_llm` is the S4 clarifier call (AC-403).
-TURN_FAILURE_STAGES = TURN_STAGES + ("intake", "queued", "casual_llm")
+# four failure points sit outside the trace timeline - `intake` is before the first
+# trace record exists (H5, AC-107), `queued` is the S7 per-contact wait (AC-710),
+# `casual_llm` is the S4 clarifier call (AC-403), and `delegated` is a turn an n8n lane
+# took over and never finished, failed by the sweep (AC-260,
+# `app/services/chatbot_turn_sweep.py`).
+TURN_FAILURE_STAGES = TURN_STAGES + ("intake", "queued", "casual_llm", "delegated")
 TurnFailureStage = Literal[TURN_FAILURE_STAGES]  # type: ignore[valid-type]
 # Enforced where the column is written (`engine._close_turn`), so a typo'd stage fails
 # loudly instead of landing in the row and reading as an unknown state on the trace
@@ -344,6 +346,10 @@ class SessionVars(BaseModel):
     pending: Pending | None = None
 
 
+# The widths the `chatbot.turns` columns actually have. Validated on the way IN so an
+# over-long identifier is a 422 naming the field, never a truncation error at insert.
+MAX_MESSAGE_ID_LENGTH = 128
+
 # --------------------------------------------------------------------------- #
 # Transport (the plan's "Transport contract with n8n")
 # --------------------------------------------------------------------------- #
@@ -367,6 +373,26 @@ class Envelope(BaseModel):
     mode: str | None = None
     scope: str | None = None
     ingress: IngressKind = "webhook"
+    # Gate 4 (shadow mode). Same reason as `messageId`: it lands in a VARCHAR(128).
+    shadow_of: str | None = Field(default=None, max_length=128)
+
+    @field_validator("message")
+    @classmethod
+    def _identifiers_must_fit_their_columns(cls, message: dict[str, Any]) -> dict[str, Any]:
+        """`messageId` is stored in a VARCHAR(128); an over-long one is the CALLER's bug.
+
+        Without this the insert raises a `StringDataRightTruncation` deep in the engine and
+        the caller sees a 500 - indistinguishable from the CRM being down, and n8n retries
+        it. 422 naming the field says which byte to fix.
+        """
+        inner = message.get("message")
+        message_id = inner.get("messageId") if isinstance(inner, dict) else None
+        if message_id is not None and len(str(message_id)) > MAX_MESSAGE_ID_LENGTH:
+            raise ValueError(
+                f"message.message.messageId is longer than {MAX_MESSAGE_ID_LENGTH} "
+                "characters, which is the width of the column it is stored in"
+            )
+        return message
 
     @field_validator("contact")
     @classmethod
@@ -424,6 +450,10 @@ class TurnResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     turn_id: str
+    # The ENGINE's dry-run verdict, not an echo of the request: `is_test`, `test_run_id`
+    # and a non-live `mode` all produce it (D14), and n8n gates its egress on this rather
+    # than on re-deriving the same rule from the envelope it sent.
+    is_test: bool = False
     ctx: dict[str, Any] | None = None
     item: dict[str, Any] | None = None
     branch_kind: BranchKind | None = None
@@ -492,13 +522,54 @@ class CompleteResponse(BaseModel):
     # D14: populated on a dry run only, so a console or clone turn can be inspected
     # without anything having been written.
     session_patch: dict[str, Any] | None = None
+    # The ROW's `is_test`, decided on the envelope at `/turn` and repeated here so n8n's
+    # `test-guard` can log what it recorded instead of sent without carrying the head's
+    # answer across two calls. Not a second switch: every action already carries the same
+    # value on `dry_run`.
+    is_test: bool = False
 
 
 # Which branch kinds still hand back to an n8n lane. After S1 that is all of them: the
 # head decides and n8n answers. Each later slice REMOVES entries here (S3 takes eight,
 # S4 one, S5 one, S6 three), and S7 empties it and deletes `delegate` entirely. Derived
 # from BRANCH_KINDS minus what the CRM already completes, so the two can never disagree.
-CRM_COMPLETED_BRANCH_KINDS: frozenset[str] = frozenset({"low_signal"})
+CRM_COMPLETED_BRANCH_KINDS: frozenset[str] = frozenset(
+    {
+        # S3 - the canned lanes, offer-hold and ideation. Each is answered from the
+        # prompt registry or (for `ideate`) from the `crm_ideation_turn` MCP tool, and
+        # every one of them ends the turn inside `run_turn`.
+        "access_denied",
+        "escalate_offer",
+        "escalation_declined",
+        "clarify_menu",
+        "not_supported",
+        "demand_qty",
+        "offer_hold",
+        "ideate",
+        # S4 - the small-talk clarifier.
+        "low_signal",
+        # S5 - the escalation lane, which hands the turn to a person.
+        "out_of_scope",
+    }
+)
+# The kinds that have a lane MODULE of their own and close their own turn row once that
+# lane has answered: `low_signal` is `lanes/casual.py` (S4) and `out_of_scope` is
+# `lanes/escalation.py` (S5). Every other kind the CRM completes is composed by
+# `lanes/canned.py`, which projects its own set off the two above rather than repeating
+# either, and closes in `_run_stages`' canned block. Declared HERE because the engine and
+# the canned module both need the answer, and two literals would drift the moment a slice
+# adds a lane - which is exactly what S5 landing on S3 would otherwise have done.
+SELF_CLOSING_BRANCH_KINDS: frozenset[str] = frozenset({"low_signal", "out_of_scope"})
+
+# What a dry run prints where a SEAM would have supplied a value (D14, AC-507). One
+# token, so a reader of a preview action can tell at a glance that nothing behind it
+# happened. Declared here rather than in a lane because two lanes now stand values in -
+# `out_of_scope` for the assignee and the SLA timestamps, `ideate` for the whole reply
+# the write tool would have composed - and an executor that had to match two spellings of
+# "nothing happened" would be matching a typo the day a third lane arrived.
+PREVIEW = "<preview>"
+
+
 # `DELEGATED_BRANCH_KINDS` used to be the complement of the set above and is GONE: with
 # `system_settings.chatbot_completed_lanes` in the decision, "delegated" is no longer a
 # property of the build at all - the same kind delegates or completes depending on data -

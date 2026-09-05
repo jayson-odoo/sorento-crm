@@ -30,7 +30,13 @@ from tests._pg_fixture import blank_session
 
 SETTINGS_ENDPOINT = "/api/v1/user-management/settings/"
 SETTINGS_GENERAL_ENDPOINT = "/api/v1/user-management/settings/general"
-_SETTINGS_PERMISSION = "user_management.settings.view"
+# Both halves of the blob: the GET is gated on `.view` and the POST on `.edit`
+# (tests/test_settings_app_config_gate.py owns that gate). This suite is about
+# the column reaching the API, so it holds both.
+_SETTINGS_PERMISSIONS = {
+    "user_management.settings.view",
+    "user_management.settings.edit",
+}
 
 MARKER = "ZZTUOM"
 
@@ -71,7 +77,7 @@ def settings_api(db, monkeypatch):
     monkeypatch.setattr(
         UserPermissionService,
         "check_user_has_permission",
-        lambda self, uid, slug: slug == _SETTINGS_PERMISSION,
+        lambda self, uid, slug: slug in _SETTINGS_PERMISSIONS,
     )
     client = TestClient(app)
     try:

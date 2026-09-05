@@ -29,7 +29,10 @@ from app.schemas.ticket_comment import (
 from app.models.access import RespondContact
 from app.services import conversation_event_bus
 from app.services.chat_message_resolver import respond_ts_from_message_id
-from app.services.integration_service import IntegrationLogService
+from app.services.integration_service import (
+    IntegrationLogService,
+    sanitize_request_headers,
+)
 from app.services.ticket_comment_service import TicketCommentService
 
 logger = logging.getLogger(__name__)
@@ -165,10 +168,8 @@ def ingest_chat_message(
         error_message = "Failed to ingest chat history message."
 
     try:
-        request_headers = dict(request.headers)
-        # Avoid persisting sensitive API key values in integration logs.
-        if "x-api-key" in request_headers:
-            request_headers["x-api-key"] = "***"
+        # Never persist a credential in an integration log: one helper, one denylist.
+        request_headers = sanitize_request_headers(dict(request.headers))
 
         IntegrationLogService(db).create_integration_log(
             IntegrationLogCreate(
@@ -395,9 +396,7 @@ def _log_comment_ingest(
     """One inbound row per comment ingest call. Best-effort, like its sibling:
     logging must never be the reason an ingest fails."""
     try:
-        request_headers = dict(request.headers)
-        if "x-api-key" in request_headers:
-            request_headers["x-api-key"] = "***"
+        request_headers = sanitize_request_headers(dict(request.headers))
 
         IntegrationLogService(db).create_integration_log(
             IntegrationLogCreate(

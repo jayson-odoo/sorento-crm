@@ -15,11 +15,13 @@ Two replacements, and they are deliberately different in kind:
   directly - so `CompiledState.answered_domain` carries it as a value and no session key
   is invented for a question that never crosses a turn boundary.
 
-**Only `escalation_offer` is written today, and that is on purpose.** `PendingKind`
-declares five, but the other four (`team_clarify`, `company_clarify`, `tier_ask`,
-`member_offer`) each already have a structured reader: `selection_context` plus
-`last_result_set`, which the parser post-processor reads without touching text. Writing a
-marker nobody reads would be machinery for a hypothetical. S5 writes them when its
+**Two kinds are written today.** `escalation_offer` is the one that replaces a TEXT read.
+`member_offer` joins it at S3 because the offer-hold lane RE-PERSISTS an open roster and
+the marker is what says the offer is still open after S8 deletes the regex - the roster
+itself is carried by `selection_context` + `last_result_set`, but neither of those says
+"an escalation is still on the table". The remaining three (`team_clarify`,
+`company_clarify`, `tier_ask`) have a structured reader already and no text read to
+replace, so writing them would be machinery for a hypothetical; S5 writes them when its
 escalation lane needs them.
 """
 from __future__ import annotations
@@ -47,6 +49,7 @@ def derive(
     offer_open: bool,
     qf: Mapping[str, Any],
     gate: Any = None,
+    selection_context: Any = None,
 ) -> dict[str, Any] | None:
     """`variables.pending`, or None when nothing is pending.
 
@@ -54,6 +57,15 @@ def derive(
     dym-offer lifecycle learned the hard way: a branch that relies on "the key just is not
     there" survives one refactor and then silently keeps a stale offer alive.
     """
+    if selection_context == "member_offer":
+        # A numbered roster is on the customer's screen. MORE SPECIFIC than
+        # `escalation_offer` and it outranks it: the next turn has to resolve a number
+        # against that roster, and "an offer is open" does not say which.
+        return {
+            "kind": "member_offer",
+            "team": escalation_team(qf, gate),
+            "domain": jsc.get(qf, "domain_hint"),
+        }
     if not offer_open:
         return None
     return {

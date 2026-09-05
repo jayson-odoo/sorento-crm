@@ -217,3 +217,65 @@ def test_app_config_returns_nulls_when_no_settings_row_exists(api, db):
 
     assert resp.status_code == 200
     assert resp.json() == {field: None for field in EXPECTED_FIELDS}
+
+
+# --------------------------------------------------------------------------- #
+# The WRITE half. Reading the blob required `user_management.settings.view`
+# while PUT/POST of the same blob required only authentication, so any
+# authenticated session - a sales rep, a warehouse clerk - could rewrite it.
+# The chatbot slice made that load-bearing: `chatbot_unsupported_domains`,
+# `chatbot_completed_lanes` and `chatbot_stock_denial_enabled` all live here and
+# all change what production turns do for real customers.
+# --------------------------------------------------------------------------- #
+
+GENERAL_ENDPOINT = "/api/v1/user-management/settings/general"
+EDIT_PERMISSION = "user_management.settings.edit"
+
+
+def test_general_put_denies_without_the_edit_slug(api, db):
+    client, allow = api
+    _seed_settings(db)
+    allow.add(PERMISSION)  # read is not enough
+
+    resp = client.put(GENERAL_ENDPOINT, json={"currency": "SGD"})
+
+    assert resp.status_code == 403
+    assert EDIT_PERMISSION in str(resp.json())
+
+
+def test_general_post_denies_without_the_edit_slug(api, db):
+    client, allow = api
+    _seed_settings(db)
+    allow.add(PERMISSION)
+
+    resp = client.post(GENERAL_ENDPOINT, json={"chatbot_unsupported_domains": []})
+
+    assert resp.status_code == 403
+
+
+def test_general_put_allows_with_the_edit_slug(api, db):
+    client, allow = api
+    _seed_settings(db)
+    allow.add(EDIT_PERMISSION)
+
+    resp = client.put(GENERAL_ENDPOINT, json={"currency": "SGD"})
+
+    assert resp.status_code == 200
+    from app.models.user import SystemSetting
+
+    db.expire_all()
+    assert db.query(SystemSetting).first().currency == "SGD"
+
+
+def test_general_post_allows_with_the_edit_slug(api, db):
+    client, allow = api
+    _seed_settings(db)
+    allow.add(EDIT_PERMISSION)
+
+    resp = client.post(GENERAL_ENDPOINT, json={"chatbot_unsupported_domains": ["forms"]})
+
+    assert resp.status_code == 200
+    from app.models.user import SystemSetting
+
+    db.expire_all()
+    assert db.query(SystemSetting).first().chatbot_unsupported_domains == ["forms"]

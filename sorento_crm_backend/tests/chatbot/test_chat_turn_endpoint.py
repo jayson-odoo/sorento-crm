@@ -38,6 +38,8 @@ from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.head import parser as parser_mod
 
+from app.api.v1.external.chat import MAX_LOGGED_PAYLOAD_BYTES
+
 SLUG = "integration.chat_turn.submit"
 _TURN_URL = "/api/v1/external/chat/turn"
 
@@ -86,6 +88,55 @@ def client(session_factory):
         yield TestClient(app, raise_server_exceptions=False)
     finally:
         app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.fixture()
+def seeded_contact(session_factory):
+    db = session_factory()
+    db.execute(
+        text(
+            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+            "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
+        ),
+        {"cid": CONTACT_ID, "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
+    )
+    db.commit()
+    return db
+
+@pytest.fixture()
+def stub_engine_seams(monkeypatch, session_factory):
+    """**Real-DB-write finding (tester):** `app/api/v1/external/chat.py` hardcodes
+    `SessionLocal` - the actual `DATABASE_URL` engine, not the request's `Depends(get_db)`
+    session - as the engine's own session factory (its own docstring: "which is why it
+    takes SessionLocal rather than this one"). `dry_run`/`is_test` only suppresses WRITES
+    inside the engine's business logic; it does not change which database the turn row
+    lands in. A first version of this test hit the real endpoint without patching this and
+    left a real, half-written `chatbot.turns` row (status `processing`, contact
+    `ZZT-contact-900000009`) in the shared dev database - found and deleted by hand. Any
+    FUTURE test that calls this endpoint through `TestClient` must patch
+    `app.api.v1.external.chat.SessionLocal` the same way, or it writes to the real DB too.
+    """
+    monkeypatch.setattr("app.api.v1.external.chat.SessionLocal", session_factory)
+
+    def fake_resolve_config(db, *, current_date):
+        return parser_mod.ParserConfig(
+            system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
+        )
+
+    monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve_config)
+    monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: _parser_output())
+    monkeypatch.setattr(
+        engine_mod,
+        "check_access",
+        lambda db, *, agent_code, contact_id, space_id: {
+            "allowed": True,
+            "decision": "allow",
+            "agent_name": "General Enquiries",
+            "attributes": None,
+            "all_attributes_allowed": None,
+        },
+    )
+    monkeypatch.setattr(engine_mod, "default_space_id", lambda db: "364817")
 
 
 class TestResponseModelSurvival:
@@ -163,54 +214,6 @@ class TestDryRunEndpointZeroWrites:
     """AC-702 measured through the whole request, not just `run_turn` (the endpoint's
     OWN write - the integration log - is the one exception D14 does not forbid: the
     docstring says every call logs, dry run or not)."""
-
-    @pytest.fixture()
-    def seeded_contact(self, session_factory):
-        db = session_factory()
-        db.execute(
-            text(
-                "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
-                "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
-            ),
-            {"cid": CONTACT_ID, "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
-        )
-        db.commit()
-        return db
-
-    @pytest.fixture()
-    def stub_engine_seams(self, monkeypatch, session_factory):
-        """**Real-DB-write finding (tester):** `app/api/v1/external/chat.py` hardcodes
-        `SessionLocal` - the actual `DATABASE_URL` engine, not the request's `Depends(get_db)`
-        session - as the engine's own session factory (its own docstring: "which is why it
-        takes SessionLocal rather than this one"). `dry_run`/`is_test` only suppresses WRITES
-        inside the engine's business logic; it does not change which database the turn row
-        lands in. A first version of this test hit the real endpoint without patching this and
-        left a real, half-written `chatbot.turns` row (status `processing`, contact
-        `ZZT-contact-900000009`) in the shared dev database - found and deleted by hand. Any
-        FUTURE test that calls this endpoint through `TestClient` must patch
-        `app.api.v1.external.chat.SessionLocal` the same way, or it writes to the real DB too.
-        """
-        monkeypatch.setattr("app.api.v1.external.chat.SessionLocal", session_factory)
-
-        def fake_resolve_config(db, *, current_date):
-            return parser_mod.ParserConfig(
-                system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
-            )
-
-        monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve_config)
-        monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: _parser_output())
-        monkeypatch.setattr(
-            engine_mod,
-            "check_access",
-            lambda db, *, agent_code, contact_id, space_id: {
-                "allowed": True,
-                "decision": "allow",
-                "agent_name": "General Enquiries",
-                "attributes": None,
-                "all_attributes_allowed": None,
-            },
-        )
-        monkeypatch.setattr(engine_mod, "default_space_id", lambda db: "364817")
 
     def _count(self, session_factory, table: str, *, where: str | None = None) -> int:
         """Unqualified table name only - resolved via the isolated schema's `search_path`
@@ -291,3 +294,79 @@ class TestDryRunEndpointZeroWrites:
             .first()
         )
         assert row.is_test is True
+
+
+class TestTheCallLogNeverStoresACredentialOrAnUnboundedBody:
+    """`integration_logs` is written once per customer message and never pruned, so
+    anything that lands in it lands there forever (security review S2/S3)."""
+
+    @staticmethod
+    def _latest_log(session_factory, endpoint_suffix: str):
+        row = (
+            session_factory()
+            .execute(
+                text(
+                    "SELECT request_headers, request_payload FROM integration_log "
+                    "WHERE endpoint LIKE :e ORDER BY created_at DESC LIMIT 1"
+                ),
+                {"e": f"%{endpoint_suffix}"},
+            )
+            .fetchone()
+        )
+        assert row is not None, f"no integration_log row for {endpoint_suffix}"
+        return row
+
+    def test_no_credential_header_reaches_the_log(
+        self, client, api_key, session_factory, seeded_contact, stub_engine_seams
+    ):
+        """`X-API-Key` was masked and nothing else was. Both it and `Authorization`
+        are accepted by `get_current_user_or_api_key`, so the caller's own choice of
+        header decided whether the secret was persisted."""
+        envelope = _envelope()
+        envelope.message["message"]["messageId"] = "ZZT-msg-header-mask"
+        payload = {"envelope": json.loads(envelope.model_dump_json())}
+
+        resp = client.post(
+            _TURN_URL,
+            json=payload,
+            headers={
+                "X-API-Key": api_key,
+                "Authorization": "Bearer ZZT-BEARER-SECRET",
+                "Cookie": "session=ZZT-COOKIE-SECRET",
+                "X-Chatbot-Retry-Key": "ZZT-RETRY-SECRET",
+            },
+        )
+        assert resp.status_code == 200, resp.text
+
+        headers = self._latest_log(session_factory, "/chat/turn").request_headers
+        for secret in (api_key, "ZZT-BEARER-SECRET", "ZZT-COOKIE-SECRET", "ZZT-RETRY-SECRET"):
+            assert secret not in headers, f"{secret!r} was persisted in an integration log"
+        assert headers.count("***") >= 4
+
+    def test_an_oversized_complete_body_is_logged_as_a_note_not_a_copy(
+        self, client, api_key, session_factory, seeded_contact
+    ):
+        """`/turn` bounds what a caller can push into the log; `/complete` did not, and
+        its REFUSAL path logs too - so an unknown turn with a huge body wrote an
+        unbounded row. Refusing is what makes this the cheapest place to measure it:
+        no turn row is needed and the log row is written before the tail could run."""
+        big = "z" * (MAX_LOGGED_PAYLOAD_BYTES + 1024)
+        body = {
+            "item": {"branch_kind": "business_query"},
+            "ctx": {
+                "contact": {"id": CONTACT_ID},
+                "text": {"message": {"messageId": "ZZT-msg-no-such-turn"}},
+            },
+            "result": {"rows": [big]},
+        }
+
+        resp = client.post(
+            "/api/v1/external/chat/turn/complete", json=body, headers={"X-API-Key": api_key}
+        )
+        assert resp.status_code == 404, resp.text
+
+        stored = self._latest_log(session_factory, "/chat/turn/complete").request_payload
+        assert len(stored) < MAX_LOGGED_PAYLOAD_BYTES
+        assert big not in stored
+        assert json.loads(stored)["note"].startswith("payload omitted")
+        assert json.loads(stored)["reference"] == CONTACT_ID

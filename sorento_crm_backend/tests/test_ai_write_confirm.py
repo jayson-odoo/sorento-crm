@@ -257,3 +257,81 @@ def test_confirm_reports_failure_without_crashing(svc, conv, monkeypatch):
     )
     assert msg.metadata_json["pending_confirmation"]["status"] == "failed"
     assert "didn't go through" in msg.content or "failed" in msg.content.lower()
+
+
+# --------------------------------------------------------------------------- #
+# crm_ideation_turn: a write tool whose NAME does not end in a write verb       #
+# (security review S2b-S5, finding B1b)                                         #
+# --------------------------------------------------------------------------- #
+def test_ideation_turn_is_a_write_tool_despite_its_name():
+    """`_is_write_tool` matched a verb SUFFIX, and this tool ends in `_turn`.
+
+    Both of the assistant's write controls read this one predicate - the
+    write-confirm gate in the agent loop and the prompt dry-run suppression - so
+    a False here is two silent bypasses, not one. The tool mints or mutates a
+    real ideation draft against a real respond.io contact, so it is a write by
+    what it does, not by what it is called.
+    """
+    from app.services.ai_assistant_service import _is_write_tool
+
+    assert _is_write_tool("crm_ideation_turn")
+    # The suffix rule is untouched, and it still must not gate a read.
+    assert not _is_write_tool("crm_ideation_board_list")
+
+
+def test_ideation_turn_carries_a_confirm_permission():
+    from app.services.ai_assistant_service import AIAssistantChatService
+
+    assert (
+        AIAssistantChatService._WRITE_TOOL_PERMISSIONS["crm_ideation_turn"]
+        == "ideation.board.view"
+    )
+
+
+def test_ideation_turn_confirm_denied_when_user_lacks_the_permission(svc, conv, monkeypatch):
+    import app.services.ai_assistant_service as m
+    import app.services.user_service as us
+
+    fake = _FakeMCP()
+    monkeypatch.setattr(m, "MCPRuntimeClient", lambda *a, **k: fake)
+    monkeypatch.setattr(
+        us.UserPermissionService, "check_user_has_permission", lambda self, uid, slug: False
+    )
+
+    pending = {
+        "tool_name": "crm_ideation_turn",
+        "args": {"respond_io_id": "437264483", "message_text": "an idea"},
+        "summary": "run ideation turn",
+    }
+    svc._serve_pending_confirmation(conv=conv, config=_CFG, pending=pending, request_started=0.0)
+    loaded = svc._load_pending_confirmation(conv.id)
+    _c, msg = svc._resolve_pending_confirmation(
+        conv=conv, user_id="95709c37-0fb4-5c00-8686-536c019e6fb7", config=_CFG,
+        pending=loaded, action="confirm", request_started=0.0,
+    )
+
+    assert fake.calls == []
+    assert msg.metadata_json["pending_confirmation"]["status"] == "denied"
+
+
+def test_ideation_turn_confirm_runs_when_the_user_has_the_permission(svc, conv, monkeypatch):
+    import app.services.ai_assistant_service as m
+    import app.services.user_service as us
+
+    fake = _FakeMCP()
+    monkeypatch.setattr(m, "MCPRuntimeClient", lambda *a, **k: fake)
+    monkeypatch.setattr(
+        us.UserPermissionService, "check_user_has_permission", lambda self, uid, slug: True
+    )
+
+    args = {"respond_io_id": "437264483", "message_text": "an idea"}
+    pending = {"tool_name": "crm_ideation_turn", "args": args, "summary": "run ideation turn"}
+    svc._serve_pending_confirmation(conv=conv, config=_CFG, pending=pending, request_started=0.0)
+    loaded = svc._load_pending_confirmation(conv.id)
+    _c, msg = svc._resolve_pending_confirmation(
+        conv=conv, user_id="95709c37-0fb4-5c00-8686-536c019e6fb7", config=_CFG,
+        pending=loaded, action="confirm", request_started=0.0,
+    )
+
+    assert fake.calls == [("crm_ideation_turn", args)]
+    assert msg.metadata_json["pending_confirmation"]["status"] == "confirmed"
