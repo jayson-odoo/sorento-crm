@@ -329,7 +329,10 @@ payload still validates. Deviations from the v1 behaviour above, all deliberate:
    `customer_code`. Caps: `customer_code`/`supplier_code` 50 chars.
 2. **Warnings.** A record verdict carries `warnings: [..]` when non-empty, fixed vocabulary:
    `customer_created`, `customer_unresolved`, `supplier_created`, `agent_created`,
-   `unclassified_demand`, `warehouse_unresolved`. A back-create is reported, never silent.
+   `unclassified_demand`, `warehouse_unresolved`, `ref_mismatch`. A back-create is reported, never
+   silent. `ref_mismatch` = the master resolved by code/name is already registered under a
+   DIFFERENT ref than the one sent; the original ref stays, the record lands (found on the first
+   live run: the ESB had minted master refs with the watermark in the key).
 3. **Unresolvable warehouse (D10).** A SENT `warehouse_ref`/`warehouse_code` that resolves to
    nothing lands the line with `warehouse_id = NULL` (SPO rows keep `location_code`) plus
    `warehouse_unresolved`, replacing the v1 `retryable`. Products stay `retryable`.
@@ -375,3 +378,7 @@ payload still validates. Deviations from the v1 behaviour above, all deliberate:
 14. **`integration_references` is global** (no company column). Refs are minted
     `{DatabaseName}:{AutoKey}` on the ESB side, so two AutoCount books cannot collide; a second
     book connecting is the trigger for BL-050.
+15. **Customers master: `credit_limit` and `payment_terms_days` are accepted and ignored.** No
+    column exists on `customers` for either (found on the first live customers push, a v1 defect);
+    they are dropped until Sorento carries AR terms. Every master-ingest error body is sanitized
+    like the documents' (`internal error; see server logs`).

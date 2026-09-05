@@ -92,7 +92,8 @@ The ESB gates every new key behind `sorento_contract_version = 2` on its consume
   `scm.sales_orders.edit` by the same sweep migration). Response
   `{"version": 2, "entities": sorted(SUPPORTED_ENTITIES)}`.
 - **D9. Warnings vocabulary.** Fixed strings: `customer_created`, `customer_unresolved`,
-  `supplier_created`, `agent_created`, `unclassified_demand`, `warehouse_unresolved` (D10).
+  `supplier_created`, `agent_created`, `unclassified_demand`, `warehouse_unresolved` (D10),
+  `ref_mismatch` (fix round 2, live run).
   Recommendation: module constants in `document_ingest_service`, listed in the cross-repo plan
   section 7.
 - **D10. Unresolvable warehouse on a line (asked by the ESB 2026-09-05).** Today a SENT
@@ -302,3 +303,16 @@ opaque error bodies for non-domain exceptions, 50-char code caps + `DataError` h
 `lines` <= 2000 and `from_so_numbers` <= 50 caps, hook actor = the principal, conflict wording.
 All applied in the S6 fix round except BL-050 / BL-051 (backlog with triggers). Contract doc:
 `PLAN-autocount-cross-repo-contract.md` section 9.
+
+## 8. Live-run fix round 2 (2026-09-05, ESB against :8042)
+
+Two defects surfaced only with real pushes: (A) a document line's `product_ref` missed (the ESB
+had minted master refs with a watermark in the key) and the code rung then tried to register the
+resolved product under the new ref, hitting `uq_integration_ref_entity`; now `link()` raises a
+`ReferenceConflict` instead of an `IntegrityError`, and the ladder skips the link with
+`ref_mismatch` when the row is already registered elsewhere. (B) the v1 customers master wrote
+`credit_limit`/`payment_terms_days`, columns that exist on no table; dropped from the column map,
+accepted on the wire, master-ingest errors sanitized. Commit 81ddbd576. Lane moved to a fresh
+database (`sorento_ingest_v3`) for the clean re-push; the xlsx twin runs in `sorento_ingest_xls`
+because a create_all scratch schema carries GLOBAL unique codes (production has per-company
+uniques from migration 305), so two companies cannot share product codes in one scratch DB.
