@@ -464,8 +464,8 @@ async def get_chatbot_lanes(
 
         settings = db.query(SystemSetting).first()
         return [
-            ChatbotLane(**option)
-            for option in lane_options(
+            ChatbotLane(kind=kind, built=built)
+            for kind, built in lane_options(
                 business_lane_enabled=bool(
                     getattr(settings, "chatbot_business_lane_enabled", False)
                 )

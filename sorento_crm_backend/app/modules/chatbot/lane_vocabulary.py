@@ -22,8 +22,8 @@ def completed_lane_kinds() -> frozenset[str]:
     return frozenset(contracts.CRM_COMPLETED_BRANCH_KINDS)
 
 
-def lane_options(*, business_lane_enabled: bool) -> list[dict[str, object]]:
-    """The vocabulary with the one flag the screen needs beside it.
+def lane_options(*, business_lane_enabled: bool) -> list[tuple[str, bool]]:
+    """`(kind, built)` for every lane, sorted, with the one flag the screen needs.
 
     `built` is False for the three business arms while `chatbot_business_lane_enabled` is
     off: the arm ships, but nothing runs it, so checking it would do nothing at all. Every
@@ -32,9 +32,6 @@ def lane_options(*, business_lane_enabled: bool) -> list[dict[str, object]]:
     from app.services.chatbot.contracts import BUSINESS_BRANCH_KINDS
 
     return [
-        {
-            "kind": kind,
-            "built": business_lane_enabled if kind in BUSINESS_BRANCH_KINDS else True,
-        }
+        (kind, business_lane_enabled if kind in BUSINESS_BRANCH_KINDS else True)
         for kind in sorted(completed_lane_kinds())
     ]
