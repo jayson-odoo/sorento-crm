@@ -153,8 +153,19 @@ def _fetch_semantic_input(
 
 
 def _error_fragment(reason: str, *, outcome: str | None = None) -> dict[str, Any]:
-    """`fetch-result`'s `error` arm, as the fragment the engine records a failure from."""
-    item = fetch_mod.fetch_result({"error": reason})
+    """`fetch-result`'s `error` arm, as the fragment the engine records a failure from.
+
+    `outcome` separates the two things this arm carries, and the separation is
+    load-bearing: `not_found` is a GENUINE ABSENCE (H11's zero-tool case - the question
+    was understood and nothing matches it), while an absent `outcome` is an
+    INFRASTRUCTURE failure (the MCP call raised, the tool returned an error envelope, the
+    tool search failed). Only the first may be told to the customer as "I could not find
+    anything". It rides on the ITEM as well as the fragment because `complete_answer`
+    receives the item, not the fragment.
+    """
+    item = fetch_mod.fetch_result(
+        {"error": reason, **({"outcome": outcome} if outcome is not None else {})}
+    )
     fragment: dict[str, Any] = {
         "kind": "error",
         "_fetch_arm": item["_fetch_arm"],
@@ -365,10 +376,20 @@ def complete_answer(
 
     **The ITEM handed to the tail is the LANE's own output, never `route-turn`'s** - the
     same rule S4 learned the hard way. `complete_turn`'s entry gate runs `escalate-catalog`
-    only when the item carries a `branch_kind`, and these lane outputs carry none, so the
-    catalog is skipped and the compile-state ladder falls through to the lane's own
-    response. Hand it the router's item instead and the catalog wins the ladder with an
-    empty `response`, and the reply comes out blank.
+    only when the item carries a `branch_kind`, and `route-turn`'s (`business_query`) is a
+    kind the catalog has no case for, so it would fall through to an EMPTY response and the
+    reply would come out blank.
+
+    **The three non-answer arms stamp the tail's own kind, because the spine does.** Live
+    puts a Set node on each of those edges - `build-suggest-offer -> tag-not-found`,
+    `access-level-choice-message -> tag-access-choice`, and the two gate pickers reach
+    `tag-not-found` through `build-suggest-offer` - and `escalate-catalog` is what turns
+    their `escalate_message` into the customer's `response`. Without the stamp the catalog
+    is skipped, the compile-state ladder finds no `response` on the item (the miss lane
+    writes `escalate_message`, not `response`) and the customer reads nothing: H11's empty
+    turn, arriving through the CRM instead of through n8n. The ANSWER half carries no kind
+    and must not: its live path (`central-exchange -> ... -> compile-current-state`) has no
+    tag node, so the catalog is correctly skipped there.
 
     **No database session is held across the probes.** Everything this function reads from
     the database was read before it was called; `services` is the injected seam pair, and
@@ -404,13 +425,39 @@ def complete_answer(
         # `access-level-choice-message` renders the ask, and S6b's per-tier probe is what
         # makes it honest ("Dealer - has promotion").
         tier_source = fetch if fetch_arm == "tier-ask" else payload
-        lane_item = answer_mod.access_level_choice_message(tier_source, parser=parser)
+        lane_item = {
+            **answer_mod.access_level_choice_message(tier_source, parser=parser),
+            # `tag-access-choice`
+            "branch_kind": "access_choice",
+        }
         fragments["access_choice"] = lane_item
 
     elif exit_kind == "offer":
         # The gate rendered its own picker (incoming / customer). It is already the answer.
-        lane_item = dict(payload)
+        # Live sends both pickers through `build-suggest-offer` into `tag-not-found`, so the
+        # kind is `not_found` here too and the catalog reads the picker's own
+        # `escalate_message` off the `incoming_picker` fragment below.
+        lane_item = {**dict(payload), "branch_kind": "not_found"}
         fragments["incoming_picker"] = lane_item
+
+    elif fetch_arm == "error" and fetch.get("outcome") != "not_found":
+        # An INFRASTRUCTURE failure, not an absence: the MCP call raised, the tool returned
+        # an error envelope, or the tool search failed. Rendering the miss lane here would
+        # tell the customer "I could not find anything" about a read that never ran - the
+        # same assertion `crossdomain-render`'s "positive facts only" rule refuses to make.
+        # Live agrees: `Call 'sub-get-results'` carries `onError: continueErrorOutput` and
+        # its ERROR output goes to `set-ran-query-formulator`, whose whole body is
+        # `output.response = 'There is some error encountered by the AI: ${...error}'`,
+        # sent straight out - it never reaches `not-found-error-message`.
+        #
+        # The engine decides this at `looked_up` and does not call this function for it, so
+        # reaching here means a caller went round that gate; raising puts the turn on the
+        # lane's own failure path (generic error reply, `failed`, R4 manual retry) instead
+        # of quietly answering with the wrong words.
+        raise RuntimeError(
+            "fetch failed before an answer existed: "
+            f"{jsc.nullish_str(fetch.get('error'), 'unknown fetch error')}"
+        )
 
     elif exit_kind == "not_found" or fetch_arm == "error":
         lane_item = _run_miss_half(
@@ -467,7 +514,12 @@ def complete_answer(
             tier_probe=fetch.get("tier_probe"),
             crossdomain_render=crossdomain.get("render"),
         )
-        fragments["result"] = result_item.get("result")
+        # `build-result`'s WHOLE item, not its inner `result` object: the tail reads the
+        # cross-domain block through `$('build-result').first().json.result.xd.block`, so
+        # the double `result` is the shape it expects (`tail/compose._cross_domain_block`,
+        # and `test_replay._run_crossdomain_compose` hands it the same thing). Passing the
+        # inner object made every answered turn fail in the tail.
+        fragments["result"] = result_item
         fragments["crossdomain_render"] = crossdomain.get("render")
 
         if answer_mod.dispatch(result_item.get("result")) == "sub_answer":
@@ -516,6 +568,10 @@ def complete_answer(
         turn_id,
         {**fragments, "item": lane_item},
         session_factory=session_factory,
+        # This lane is finishing the turn, so the caller needs the send to execute (D9).
+        # It cannot be built before the tail the way S4's clarifier builds its own: the
+        # words do not exist until the tail has composed them.
+        compose_send_action=True,
     )
     return {
         "reply": completed.reply,
@@ -618,7 +674,14 @@ def _run_miss_half(
     dry_run: bool,
     build_result: Any = None,
 ) -> dict[str, Any]:
-    """`not-found-error-message` -> `sub-miss-suggest` -> `build-suggest-offer`."""
+    """`not-found-error-message` -> `sub-miss-suggest` -> `build-suggest-offer` ->
+    `tag-not-found`.
+
+    The tag is the last node on this edge in the live spine and it is not decoration:
+    `escalate-catalog` only runs on an item that carries a `branch_kind`, and it is what
+    turns the offer's `escalate_message` into the customer's `response`. The FRAGMENT keeps
+    the composer's own output untagged, so what the tail grades is unchanged.
+    """
     not_found = answer_mod.not_found_error_message(
         payload, parser=parser, resolved=resolved, gate=gate
     )
@@ -637,4 +700,4 @@ def _run_miss_half(
         dry_run=dry_run,
     )
     fragments["suggest_offer"] = offer
-    return offer
+    return {**offer, "branch_kind": "not_found"}

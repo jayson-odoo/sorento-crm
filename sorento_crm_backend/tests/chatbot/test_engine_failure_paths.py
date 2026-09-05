@@ -340,3 +340,214 @@ class TestDuplicateWhileTheFirstTurnIsStillRunning:
             "a duplicate of a CLOSED turn must replay the stored answer; only the "
             "in-flight and failed cases legitimately hand back nulls"
         )
+
+
+class TestTheBusinessLaneWithTheSwitchOn:
+    """S6c round 2: what a turn does when the CRM owns the lane and something breaks.
+
+    Three cells, and they are not the same answer:
+
+    * the resolver RAISES - the lane is broken in a way it does not model, so the turn
+      goes to the n8n lane that can still answer it (its Switch output exists until
+      AC-610). Without the restored delegate the row closed `done` with no reply and no
+      delegate: a silent turn.
+    * the fetch found NO TOOL (`outcome == "not_found"`) - a genuine absence, and H11 /
+      AC-604 say the CRM answers it through the miss lane.
+    * the fetch FAILED (MCP raise, error envelope, tool search down) - the read never ran,
+      so the customer must not be told "I could not find anything". Recorded `failed` at
+      `looked_up` with the generic error reply, which is what R4's manual retry acts on.
+      Live agrees: `Call 'sub-get-results'` is `continueErrorOutput` into
+      `set-ran-query-formulator` ("There is some error encountered by the AI: ..."), never
+      into `not-found-error-message`.
+
+    Both switch positions are graded for every cell, because "the lane is off" is the
+    state every install starts in.
+    """
+
+    @staticmethod
+    def _enable(session_factory, row, lanes):
+        from app.models.user import SystemSetting
+
+        db = session_factory()
+        setting = db.query(SystemSetting).filter(SystemSetting.id == row.id).one()
+        setting.chatbot_completed_lanes = lanes
+        db.commit()
+
+    def _wire(self, monkeypatch, *, fetch=None, resolve_raises=False):
+        """Route the turn into the business lane and stub the two lane seams."""
+        from app.config import settings
+        from app.services.chatbot.lanes.business.services import ResolveGateServices
+
+        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", True)
+        monkeypatch.setattr(
+            engine_mod, "decide", lambda ctx, *, stock_denial_enabled: ("business_query", {})
+        )
+        monkeypatch.setattr(
+            engine_mod.business_services,
+            "production_services",
+            lambda db, *, space_id=None: ResolveGateServices(
+                access_types=lambda **_: [],
+                resolve_entity=lambda body: {
+                    "tokens": [],
+                    "resolutions": [],
+                    "unresolved_tokens": [],
+                },
+                probe=lambda **_: None,
+            ),
+        )
+        if resolve_raises:
+            monkeypatch.setattr(
+                engine_mod.business,
+                "run_until_exit",
+                lambda *a, **k: (_ for _ in ()).throw(RuntimeError("resolver unavailable")),
+            )
+            return []
+        monkeypatch.setattr(
+            engine_mod.business,
+            "run_until_exit",
+            lambda *a, **k: {
+                "delegate": "business_query",
+                "payload": {"_exit_kind": "continue", "resolved": {}, "gate": {}},
+            },
+        )
+        monkeypatch.setattr(engine_mod.business, "run_fetch", lambda *a, **k: fetch)
+        answered: list = []
+        monkeypatch.setattr(
+            engine_mod.business,
+            "complete_answer",
+            lambda payload, **kwargs: answered.append(payload)
+            or {"reply": {"text": "Couldn't find that.", "quick_replies": []}, "actions": []},
+            raising=False,
+        )
+        return answered
+
+    @staticmethod
+    def _error_fragment(reason, outcome=None):
+        from app.services.chatbot.lanes import business
+
+        return business._error_fragment(reason, outcome=outcome)
+
+    # -- the resolver raises ------------------------------------------------ #
+
+    def test_a_resolver_failure_on_an_enabled_lane_still_delegates(
+        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        self._enable(session_factory, system_settings_row, ["business_query"])
+        self._wire(monkeypatch, resolve_raises=True)
+        stub_parser()
+        stub_access()
+
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        assert result.delegate == "business_query", (
+            "the lane crashed, so the turn belongs to n8n while its Switch output exists - "
+            "a None delegate here is a turn nobody answers"
+        )
+        assert result.stage == "looked_up"
+        row = _only_row(session_factory)
+        assert row.status == "delegated"
+        assert row.stage == "looked_up"
+        assert not (row.status == "done" and result.reply is None), "a silent turn"
+
+    def test_a_resolver_failure_with_the_lane_off_is_unchanged(
+        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        assert (system_settings_row.chatbot_completed_lanes or []) == []
+        self._wire(monkeypatch, resolve_raises=True)
+        stub_parser()
+        stub_access()
+
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        assert result.delegate == "business_query"
+        assert result.stage == "looked_up"
+        assert _only_row(session_factory).status == "delegated"
+
+    # -- the fetch found no tool (a genuine absence) ------------------------- #
+
+    def test_no_tool_matched_on_an_enabled_lane_is_answered_by_the_crm(
+        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        self._enable(session_factory, system_settings_row, ["business_query"])
+        answered = self._wire(
+            monkeypatch,
+            fetch=self._error_fragment("no MCP tool matched this question", "not_found"),
+        )
+        stub_parser()
+        stub_access()
+
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        assert answered, "H11 / AC-604: a genuine absence is answered, not left silent"
+        assert answered[0]["fetch"]["outcome"] == "not_found", (
+            "the arm's own outcome is what tells the answer half it may say 'not found'"
+        )
+        assert result.delegate is None
+        assert result.status != "failed"
+
+    def test_no_tool_matched_with_the_lane_off_delegates(
+        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        answered = self._wire(
+            monkeypatch,
+            fetch=self._error_fragment("no MCP tool matched this question", "not_found"),
+        )
+        stub_parser()
+        stub_access()
+
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        assert not answered
+        assert result.delegate == "business_query"
+        assert result.stage == "looked_up"
+
+    # -- the fetch itself failed (infrastructure) --------------------------- #
+
+    def test_an_mcp_failure_on_an_enabled_lane_is_a_failed_turn_not_a_not_found(
+        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        self._enable(session_factory, system_settings_row, ["business_query"])
+        answered = self._wire(
+            monkeypatch,
+            fetch=self._error_fragment("MCP tool crm_master_products_list failed: timeout"),
+        )
+        stub_parser()
+        stub_access()
+
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        assert not answered, (
+            "an outage must not render the miss lane - that asserts an absence the read "
+            "never established"
+        )
+        assert result.status == "failed"
+        assert result.stage == "looked_up"
+        assert result.reply["text"] == engine_mod.GENERIC_ERROR_REPLY
+        assert result.actions[-1]["kind"] == "send_message"
+        assert result.branch_kind == "business_query", "the turn keeps where it got to"
+        row = _only_row(session_factory)
+        assert row.status == "failed"
+        assert row.stage == "looked_up"
+        assert "timeout" in (row.error or "")
+
+    def test_an_mcp_failure_with_the_lane_off_delegates_as_before(
+        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        answered = self._wire(
+            monkeypatch,
+            fetch=self._error_fragment("MCP tool crm_master_products_list failed: timeout"),
+        )
+        stub_parser()
+        stub_access()
+
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        assert not answered
+        assert result.delegate == "business_query"
+        assert result.status == "delegated"
+        assert result.stage == "looked_up"
+        row = _only_row(session_factory)
+        assert row.status == "delegated"
+        assert (row.response or {}).get("delegate_error"), (
+            "the operator's query needs the reason beside the delegated row"
+        )
