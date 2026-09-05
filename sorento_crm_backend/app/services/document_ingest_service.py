@@ -1112,18 +1112,28 @@ class DocumentIngestService(MasterRefResolver):
 
 
 def _line_status(header_status: str, qty_ordered: Any, qty_delivered: Any) -> str:
-    """`cancelled`, `fulfilled` or `open`, in that order of precedence.
+    """`cancelled`, `closed` or `open`, in that order of precedence.
 
     Cancellation wins over completeness: a cancelled order's fully delivered line
-    is still cancelled, and reading it as `fulfilled` would leave it counted as
+    is still cancelled, and reading it as settled would leave it counted as
     supply that arrived.
+
+    `closed`, not `fulfilled` (fix round 3, parity review): every OTHER writer
+    of `sales_order_lines`/`purchase_order_lines.line_status` already uses
+    `closed` for a settled line - `outstanding_import_service`'s own upload
+    (`_preload_closed_lines`/`_match_closed_line`), `project_so_ingest_service
+    .RETIRED_LINE_STATUS`, `project_so_reconciliation_service.CORE_LINE_CLOSED`
+    - and the shipping-order side of THIS SAME ingest surface
+    (`shipping_order_ingest_service.LINE_CLOSED`) already writes `closed` too.
+    A push settling a line was the one writer still spelling it `fulfilled`,
+    which is not a word any of those readers looked for.
     """
     if header_status == CANCELLED:
         return CANCELLED
     ordered = qty_ordered or 0
     delivered = qty_delivered or 0
     if ordered > 0 and delivered >= ordered:
-        return "fulfilled"
+        return "closed"
     return "open"
 
 

@@ -439,3 +439,33 @@ class TestN1PlanExceptionBatchRecordsTheCallingPrincipal:
         )
         assert batch is not None
         assert str(batch.created_by) == _USER_ID
+
+
+# ================================================================ fix round 3
+class TestSettledLinesWriteClosedNotFulfilled:
+    """Fix round 3 (captain decision, parity review): a settled document line
+    must write `closed`, not `fulfilled`, so every writer of
+    `sales_order_lines`/`purchase_order_lines.line_status` agrees -
+    `outstanding_import_service`, `project_so_ingest_service`,
+    `project_so_reconciliation_service` and the shipping-order side of this
+    SAME ingest surface all already use `closed` for a settled line."""
+
+    def test_a_fully_delivered_so_line_lands_line_status_closed(self, env):
+        line = _so_line(env, qty_ordered=6, qty_delivered=6)
+        record = _so_record(env, lines=[line])
+
+        res = env.post(INGEST_SO, [record])
+
+        assert res.json()["records"][0]["outcome"] == "created", res.text
+        header = env.header("sales_orders", record["source_ref"])
+        assert env.so_lines(header["id"])[0]["line_status"] == "closed"
+
+    def test_a_fully_received_po_line_lands_line_status_closed(self, env):
+        line = _po_line(env, qty_ordered=6, qty_received=6)
+        record = _po_record(env, lines=[line], supplier_ref=env.supplier_ref)
+
+        res = env.post(INGEST_PO, [record])
+
+        assert res.json()["records"][0]["outcome"] == "created", res.text
+        header = env.header("purchase_orders", record["source_ref"])
+        assert env.po_lines(header["id"])[0]["line_status"] == "closed"

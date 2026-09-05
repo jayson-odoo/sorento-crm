@@ -270,7 +270,7 @@ class TestGoldenV1Payloads:
         assert lines[0]["qty_ordered"] == 4
         assert lines[0]["qty_received"] == 4
         assert lines[0]["unit_cost"] == Decimal("9.99")
-        assert lines[0]["line_status"] == "fulfilled"
+        assert lines[0]["line_status"] == "closed"
 
         got = env.read(READ_PO, [record["source_ref"]]).json()["records"][0]
         assert got["po_number"] == record["po_number"]

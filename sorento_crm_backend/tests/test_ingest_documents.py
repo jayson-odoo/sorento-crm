@@ -481,7 +481,7 @@ class TestCreate:
         assert first["warehouse_id"] is not None
         assert first["line_status"] == "open"
         # Fully delivered, so this one is closed on arrival.
-        assert by_ref[line_b["source_ref"]]["line_status"] == "fulfilled"
+        assert by_ref[line_b["source_ref"]]["line_status"] == "closed"
 
     def test_the_projects_schema_table_of_the_same_name_is_untouched(self, env):
         """AC-A3-1. `projects.sales_orders` exists and is a DIFFERENT table.
@@ -1183,7 +1183,7 @@ class TestPurchaseOrders:
         assert lines[0]["qty_received"] == 4
         assert lines[0]["unit_cost"] == Decimal("9.99")
         # Received in full, so the line is closed.
-        assert lines[0]["line_status"] == "fulfilled"
+        assert lines[0]["line_status"] == "closed"
 
     def test_a_re_push_upserts_purchase_order_lines(self, env):
         keep = _po_line(env, qty_ordered=4)
