@@ -1,6 +1,6 @@
 # PLAN - Price Tag Designer Round 4 (fonts, stale data, inline copy, free-corner shape)
 
-Status: in progress, round 4b committed, browser verification pending; lane `fix/price-tag-r4` cut off `origin/main` dbba826bf on 5 Sep 2026
+Status: PR open 5 Sep 2026 (rounds 4, 4b, 4c, 4d; browser-verified on the lane stack)
 UAC: `documentation/plans/dealer-kit/price-tag-r4-acceptance-criteria.md`
 Predecessor: `documentation/plans/_archive/dealer-kit/PLAN-price-tag-ux-r3.md` (shipped #625)
 
