@@ -51,7 +51,7 @@ from app.services.chatbot.usage import record_parser_usage
 # Module level and by name, the same shape `app/api/v1/external/media.py` uses for its own
 # enqueue-and-wait: the offload is one flag away from being the normal path, and a lazy
 # import inside the branch would hide the dependency from anything reading this file.
-from app.services.queue_service import enqueue_job, get_job_status, redis_conn
+from app.services.queue_service import cancel_job, enqueue_job, get_job_status, redis_conn
 
 logger = logging.getLogger(__name__)
 
@@ -693,6 +693,17 @@ def _run_on_worker(envelope: Envelope, *, session_factory: SessionFactory) -> Tu
     Enqueue-and-wait is `app/api/v1/external/media.py`'s pattern, for its reason: a job
     row that outlives the request means a slow turn degrades into a recorded one rather
     than a hung socket.
+
+    **What this does NOT do is raise the concurrency ceiling, and the flag's trigger has
+    to be read that way.** `/external/media` waits on the event loop (`async def`,
+    `asyncio.to_thread`, `asyncio.sleep`); this endpoint is synchronous, so the wait
+    happens on the API's threadpool thread and that thread is occupied either way. What
+    moves is the LLM call's CPU and memory, off the API process and onto a worker that can
+    be scaled and restarted on its own. Making the wait free as well means making
+    `/chat/turn` async, which is a change to the endpoint and not to this function; it is
+    named in the plan's capacity section rather than done here, because the measured
+    trigger for the offload has not arrived either. The connection half of the same
+    problem IS fixed: the request no longer holds a database transaction while it waits.
     """
     # Imported HERE, not at module level: the task module imports this engine (it is the
     # thing it runs), so a top-level import is a cycle. `enqueue_job` and `get_job_status`
@@ -725,6 +736,14 @@ def _run_on_worker(envelope: Envelope, *, session_factory: SessionFactory) -> Tu
                 f"the offloaded turn {state}: {(snapshot.get('exc_info') or '')[:300]}",
             )
         if time.monotonic() >= deadline:
+            # STOP the job before answering. Left running, the worker finishes the turn
+            # minutes later and closes the row `done` or `delegated` - a row carrying an
+            # answer nobody will ever send, because the caller has already sent the
+            # apology, and (when it delegated) a ghost n8n will never complete.
+            # `cancel_job` sends the stop command to a started job and cancels a queued
+            # one; it swallows its own errors, including the race where the worker
+            # finished a millisecond ago.
+            cancel_job(job.id)
             return _worker_failed(
                 envelope,
                 session_factory,
@@ -742,6 +761,17 @@ def _worker_failed(
     The turn id is read back off the row the WORKER inserted, so the operator opening the
     trace screen lands on the turn that actually ran rather than on a job id that means
     nothing there. Empty only when the worker never got as far as inserting.
+
+    **The row is CLOSED here, not left open.** H32's invariant is that no turn sits at
+    `processing` with a null error: the caller has already been handed the apology, so a
+    row still claiming to be in flight is the dropped turn this whole inbox exists to
+    prevent. Closed `failed` at `queued`, the stage the turn genuinely reached from the
+    API's point of view.
+
+    Tolerant of the worker winning the race: a row that already has `finished_at` is left
+    exactly as the worker wrote it. Its answer is not sent (the caller has the apology),
+    but overwriting a finished trace with "the offload timed out" would erase what
+    actually happened.
     """
     turn_id = ""
     try:
@@ -753,8 +783,19 @@ def _worker_failed(
             )
             if row is not None:
                 turn_id = str(row.id)
+                if row.finished_at is None:
+                    _close_turn(
+                        db,
+                        turn_id,
+                        status="failed",
+                        stage="queued",
+                        branch_kind=None,
+                        error=message,
+                        records=trace_mod.TurnTrace.resume(row.trace).records,
+                        response=row.response if isinstance(row.response, dict) else None,
+                    )
     except Exception:  # noqa: BLE001 - the reply matters more than the id
-        logger.warning("chatbot offload: could not read back the turn row", exc_info=True)
+        logger.warning("chatbot offload: could not close the turn row", exc_info=True)
     logger.error("chatbot offload failed: %s", message)
     return _failed_result(turn_id, "queued", message, [], envelope.dry_run)
 
