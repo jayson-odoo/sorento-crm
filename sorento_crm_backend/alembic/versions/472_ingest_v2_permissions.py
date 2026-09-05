@@ -21,13 +21,13 @@ migration made (mirrored on the source slug), leaving the permission rows - a
 here and survives.
 
 Revision ID: 472_ingest_v2_permissions
-Revises: 477_chatbot_lanes
+Revises: 478_chatbot_s3_copy
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "472_ingest_v2_permissions"
-down_revision = "477_chatbot_lanes"
+down_revision = "478_chatbot_s3_copy"
 branch_labels = None
 depends_on = None
 
