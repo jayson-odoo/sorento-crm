@@ -172,6 +172,11 @@ describe('renderMergeFields - product paths', () => {
   it('tolerates whitespace inside the braces', () => {
     expect(renderMergeFields('{{ product.code }}', product(), 'print')).toBe('CBF3612');
   });
+
+  it('draws nothing for a name that only repeats the code (S2, AC-S2-2)', () => {
+    const data = product({ name: 'CBF3612' });
+    expect(renderMergeFields('[{{product.name}}]', data, 'print')).toBe('[]');
+  });
 });
 
 describe('renderMergeFields - spec paths', () => {

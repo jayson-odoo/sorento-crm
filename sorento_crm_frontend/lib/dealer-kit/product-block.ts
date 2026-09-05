@@ -51,6 +51,17 @@ export function formatSetMemberLine(member: ProductSetMemberTagData): string {
 }
 
 /**
+ * Sorento's product name IS its code (S2). A `name` that only repeats the
+ * `code` is redundant on the tag, so it draws nothing - the layer or merge
+ * token stays in the document, an empty string is just what it resolves to.
+ * Compared case- and space-insensitively: seeded data disagrees on casing far
+ * more often than it disagrees on the actual name.
+ */
+function nameOrBlankIfCode(name: string, code: string): string {
+  return name.trim().toLowerCase() === code.trim().toLowerCase() ? '' : name;
+}
+
+/**
  * The value a slot resolves to, or null when this layer is not bound to one or
  * the data behind it has not arrived.
  *
@@ -81,7 +92,7 @@ export function resolveSlotText(
       case 'code':
         return data.line.code;
       case 'name':
-        return data.line.name;
+        return nameOrBlankIfCode(data.line.name, data.line.code);
       case 'dimensions':
         return data.line.dimensions;
       case 'spec_lines':
@@ -102,7 +113,7 @@ export function resolveSlotText(
       case 'code':
         return data.set.set_code;
       case 'name':
-        return data.set.name;
+        return nameOrBlankIfCode(data.set.name, data.set.set_code);
       case 'set_members':
         return data.set.members.map(formatSetMemberLine).join('\n');
       // A set has no barcode of its own (S7) - falls through to null.
@@ -116,7 +127,7 @@ export function resolveSlotText(
     case 'code':
       return product.code;
     case 'name':
-      return product.name;
+      return nameOrBlankIfCode(product.name, product.code);
     case 'dimensions':
       return product.dimensions;
     case 'spec_lines':

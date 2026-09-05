@@ -251,6 +251,65 @@ describe('buildSetBlock', () => {
 });
 
 // ---------------------------------------------------------------------------
+// resolveSlotText - name equal to code is redundant (S2, AC-S2-2)
+// ---------------------------------------------------------------------------
+
+describe('resolveSlotText name slot (S2, AC-S2-2)', () => {
+  const nameLayer = { slot_binding: 'name' as const };
+
+  it('blanks the name for a product whose name is its code, case- and space-insensitive', () => {
+    expect(
+      resolveSlotText(nameLayer, { kind: 'product', product: product({ name: 'SK-1234' }) }),
+    ).toBe('');
+    expect(
+      resolveSlotText(nameLayer, {
+        kind: 'product',
+        product: product({ code: 'SK-1234', name: ' sk-1234 ' }),
+      }),
+    ).toBe('');
+  });
+
+  it('keeps the name for a product whose name differs from its code (AC-S2-3)', () => {
+    expect(
+      resolveSlotText(nameLayer, { kind: 'product', product: product({ name: 'Kitchen Sink' }) }),
+    ).toBe('Kitchen Sink');
+  });
+
+  it('blanks the name for a set whose name is its set code', () => {
+    const set = { ...productSet(), set_code: 'BF-SET-01', name: 'bf-set-01' };
+    expect(resolveSlotText(nameLayer, { kind: 'set', set })).toBe('');
+  });
+
+  it('keeps the name for a set whose name differs from its set code', () => {
+    const set = productSet();
+    expect(resolveSlotText(nameLayer, { kind: 'set', set })).toBe('Bathroom Furniture Set');
+  });
+
+  it('blanks the name for a line whose name is its code', () => {
+    const line = {
+      kind: 'line' as const,
+      line: {
+        line_id: 'l1',
+        code: 'SK-1234',
+        name: 'SK-1234',
+        dimensions: '800 x 500 x 220 mm',
+        spec_lines: '',
+        specs: [],
+        set_members: '',
+        images: [],
+        list_price: 1599,
+        sell_price: null,
+        show_promo_price: false,
+        included_accessories: '',
+        quantity: 1,
+        barcode: null,
+      },
+    };
+    expect(resolveSlotText(nameLayer, line)).toBe('');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Presets (AC-L.5)
 // ---------------------------------------------------------------------------
 
