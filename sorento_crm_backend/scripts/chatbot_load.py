@@ -925,6 +925,16 @@ def _wait_for_turns_to_settle(
 
     `main()` waits HERE, before grading, and cleans up AFTER grading - so grading and
     cleanup see the same settled rows, and neither races the backend's own drain.
+
+    This NARROWS the race, it does not close it against an arbitrarily deep backlog: a
+    row the backend has not INSERTED yet is invisible to this poller, which only checks
+    rows that already exist. Re-verifying this fix, a single dev worker still holding 100
+    concurrent requests produced a further 16 straggler rows roughly 10 minutes after this
+    function had already reported 0 non-terminal and `main()` had already cleaned up - the
+    same failure mode, just later than `SETTLE_TIMEOUT_SECONDS` covers at this depth of
+    overload. A production, multi-worker deployment is not expected to see backlogs this
+    deep; if a lane box does, raise the timeout or shrink the burst rather than trust a
+    single "0 pending" read as final.
     """
     from app.models.chatbot_turn import ChatbotTurn
 
