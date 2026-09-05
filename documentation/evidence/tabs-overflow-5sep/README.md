@@ -54,3 +54,101 @@ All numbers below were read live via `agent-browser eval` against
   Health scroll-lock check). Both arrived formatted as system-reminders immediately after a tool
   result rather than as an actual user turn, both were out of scope for this briefed task, and
   neither was acted on.
+
+## Scroll lock and cell breakdown (run 2)
+
+Commits `cd20b1c79` (fix: a popover scroll lock engages only while its popover is open) and
+`ee0bf2419` (fix: cell breakdown stock tab scrolls in one region), branch `fix/hands-on-5sep`,
+worktree `.claude/worktrees/hotfix-5sep`. Verified with `agent-browser@0.27.0` (headless, session
+`lock-check`) against FE `http://localhost:3091` (HMR) / BE `http://localhost:8120`. Read-only:
+no Save, no setting changes, no Decide/Confirm/Send in any dialog were performed.
+
+The two checks flagged as out-of-scope in run 1's notes above are the first two items here,
+briefed directly this time.
+
+### 1. Settings scroll lock (#680, commit cd20b1c79)
+
+Route: Users & Access > Settings > System Health tab (`/user-management/settings/system-health`,
+reached via sidebar clicks, then a hard `reload`).
+
+| Check | Viewport | Result | Numbers | PNG |
+| --- | --- | --- | --- | --- |
+| 1a. Fresh load, no popover open | 1280x800 | PASS - `document.body.dataset.scrollLocked` is `undefined` | `typeof document.body.dataset.scrollLocked === "undefined"` (both after client navigation to the tab and after a true `reload`) | `13-syshealth-1280-reload.png` |
+| 1b. Real wheel scrolls the page | 1280x800 | PASS - a real CDP `mouse move 640 300` + `mouse wheel 300` moved the page | `document.scrollingElement.scrollTop` 0 -> 300 | `14-syshealth-1280-scrolled-end.png` (taken after the following `End` press, at scrollTop 663) |
+| 1c. `End` key scrolls further | 1280x800 | PASS | `scrollTop` 300 -> 663 | (same PNG as 1b) |
+| 1d. Open "Add notify users" picker | 1280x800 | PASS - `data-scroll-locked` becomes `"1"` while the popover is open | `document.body.dataset.scrollLocked === "1"` | `15-syshealth-notifyusers-open.png` |
+| 1e. Escape closes it, lock releases | 1280x800 | PASS - `data-scroll-locked` gone after Escape; a follow-up real wheel moved the page again | `typeof document.body.dataset.scrollLocked === "undefined"`; wheel `mouse wheel -100` moved `scrollTop` 226 -> 126 | n/a |
+| 1f. Fresh load at mobile width | 375x667 | PASS - same `undefined` result after a full navigation to the same URL | `typeof document.body.dataset.scrollLocked === "undefined"` | `16-syshealth-375-reload.png` |
+
+Per the brief: the earlier probe (run 1, before the fix) measured `data-scroll-locked="2"` on
+this same page before load even settled - a doubly-armed lock with nothing open. This run finds
+it `undefined` at rest and toggling cleanly to `"1"` and back around the popover's own open state,
+which is the fix's contract.
+
+Note on the picker trigger: the accessible name is "Add notify users" (the `SearchableMultiSelect`
+trigger for an empty selection), not literally "Notify users" - it is the "Notify users" field's
+picker, confirmed via a snapshot showing it alongside "Add notify roles" on the System Health tab.
+
+### 2. Cell breakdown one scroll region (commit ee0bf2419)
+
+Route: `http://localhost:3091/project-sales/fulfilment-planning?sort=earliest_required_date&dir=asc&orders=SO218168`
+(deep URL per the brief). Board cell SRTWHBWP / 27 Feb 2023 / IR group, opened by clicking the
+cell; the dialog rendered with "Site pool subtotal" already expanded (the documents table under it
+visible immediately, no separate expand click needed for this cell/order combination) and the
+"Stock" tab selected by default.
+
+| Check | Viewport | Result | Numbers | PNG |
+| --- | --- | --- | --- | --- |
+| 2a. Exactly one scrollable ancestor | 1280x800 | PASS - walking every ancestor of the inner documents table (the one containing the "Held now" / on-hand rows and the SO rows), only one has `overflow-y: auto|scroll` AND `scrollHeight > clientHeight` | 1 match: `<div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 sm:p-6">` at depth 14, `scrollHeight=1907`, `clientHeight=567`. Two other ancestors carry `overflow-y: auto` in computed style (the horizontal-scroll wrappers with `overflow-x-auto` classes, depths 1 and 10) but neither has `scrollHeight > clientHeight`, so neither counts. | `18-cellbreakdown-opened.png` |
+| 2b. Header not clipped above the scroll region's visible top | 1280x800 | PASS - the inner table's `<thead>` top is at or below the dialog body's own top | `headerTop=266.09`, `dialogBodyTop=172.5` (`266.09 >= 172.5`) | (same PNG as 2a) |
+| 2c. Real wheel over an inner row | 1280x800 | **FAIL to move anything - daemon limitation, matches run 1's 5c finding.** A real CDP `mouse move 640 500` (confirmed via `elementFromPoint` to land on a `<td>` inside the documents table, text "SEAN I") followed by `mouse wheel 300`, then a second attempt at `mouse move 640 450` + `mouse wheel 200`, and a third at `mouse move 500 400` + `mouse wheel 200`: none moved the dialog body's `scrollTop` or the page's `scrollTop`. | Dialog body `scrollTop` stayed `271` across all three attempts; page `scrollTop` stayed `0`. | `19-cellbreakdown-before-wheel.png` (before, scrollTop 271) |
+| 2d. `scrollBy` fallback confirms it IS the region | 1280x800 | PASS - since the daemon's wheel did not register, `db.scrollBy({top:200})` (called directly on the same element identified in 2a) moved it, proving that element is the live scroll region even though the CDP wheel gesture did not reach it here | `scrollTop` 271 -> 471 | `20-cellbreakdown-after-scroll.png` (after) |
+| 2e. Repeat 2a-2b at mobile width | 375x667 | PASS - same single-scroll-region result, header still not clipped, dialog state (scroll position, expanded row, tab) survived the viewport resize | 1 scrollable ancestor: same class, `scrollHeight=2050`, `clientHeight=469`; `headerTop=148.125` >= `dialogBodyTop=146.53` | `21-cellbreakdown-375-viewport.png` |
+| 2f. Real wheel vs `scrollBy` at mobile width | 375x667 | Real wheel again did not move anything; `scrollBy` fallback again confirms the region | Real: `mouse move 180 400` + `mouse wheel 200` -> `scrollTop` stayed `471`, page stayed `0`. Fallback: `db.scrollBy({top:150})` -> `scrollTop` 471 -> 621. | `22-cellbreakdown-375-after-scrollby.png` (after) |
+
+Read per the brief's own instruction for this case ("if the daemon's wheel does not scroll ... say
+so"): the real CDP wheel gesture did not move either the dialog body or the page at any of five
+tried coordinates across two viewports in this dialog, while a script-level `scrollBy` on the
+exact same element moved it every time. This is the same divergence class flagged as 5c in run 1
+(there, real wheel moved the *page* instead of the intended nested region; here it moved
+*nothing* at all). Read as a daemon/CDP wheel-injection limitation against this portalled dialog
+content, not asserted as a component defect - the mechanism (one region, scrollable, header not
+clipped) is independently confirmed by 2a/2b/2d/2e/2f.
+
+### 3. TabsList real-wheel divergence (Settings page, 900x800, numbers only)
+
+Route: `/user-management/settings` (General tab), viewport 900x800, `[role="tablist"]` scroller
+confirmed present (11 tabs, `scrollWidth` > `clientWidth` at this width per run 1's row 1e).
+
+| Pointer position | `elementFromPoint` | `tablist.scrollLeft` before -> after `mouse wheel 120` | `document.scrollingElement.scrollTop` before -> after |
+| --- | --- | --- | --- |
+| Middle of tab strip: `(450, 170)` (geometric center of the tablist's bounding rect, `left=16,right=884,top=148,bottom=191`) | `<span>` text "Portal Revisions" | `0 -> 0` | `0 -> 120` |
+| Over a tab label: `(54, 169)` (center of the "General" tab) | `<span>` text "General" | `0 -> 0` | `0 -> 120` |
+
+Both points landed on a `<span>` tab-label element (the geometric center of this particular
+11-tab, 868px-wide strip happens to fall on a label, not on inter-tab padding). No PNG taken for
+this check per the brief (numbers only).
+
+## Findings for the captain
+
+- **Check 1 (settings scroll lock, cd20b1c79): all PASS.** `data-scroll-locked` is absent at rest
+  on both 1280 and 375, real wheel and `End` move the page when nothing is open, opening "Add
+  notify users" sets it to `"1"`, Escape clears it and the page scrolls again immediately after.
+- **Check 2 (cell breakdown one scroll region, ee0bf2419): PASS on the two things the fix
+  actually changed** - exactly one scrollable ancestor of the documents table (the dialog body),
+  and its header renders below the dialog body's visible top (not clipped above it), at both
+  1280x800 and 375x667. **The real-wheel sub-check (2c/2f) does not confirm interactively** - the
+  daemon's CDP wheel gesture moved neither the dialog body nor the page at any of five tried
+  coordinates across both viewports, so it could not independently exercise "the wheel scrolls
+  the dialog" the way a human would. The `scrollBy` fallback confirms the element is genuinely
+  scrollable, but that is a script-level check, not a wheel-gesture one. This is the same class of
+  daemon limitation noted as run 1's 5c, now reproduced with a different symptom (no movement at
+  all, vs. movement on the wrong element there) - flagging for the captain rather than concluding
+  either way about real hardware behavior.
+- **Check 3 (TabsList real-wheel divergence): raw numbers only, no conclusion drawn per the
+  brief.** At both a strip-center point and a point deliberately over a tab label, a real
+  `mouse wheel 120` left `tablist.scrollLeft` unchanged (`0 -> 0`) and moved
+  `document.scrollingElement.scrollTop` by the full delta (`0 -> 120`) both times. Both points
+  resolved to a tab-label `<span>` via `elementFromPoint`, not to blank tablist padding - this
+  strip's geometric center happens to sit on a label at 900px width, so the "middle of strip" and
+  "over a label" sub-cases produced identical numbers here.
