@@ -151,3 +151,69 @@ describe('TagCanvasEditor keyboard shortcuts - scoped to the inline editor (N2)'
     expect(savedA?.props.kind === 'text' ? savedA.props.fontWeight : null).toBe(700);
   });
 });
+
+describe('Ctrl+A / Delete are guarded by document.activeElement, not just e.target (r4c)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  /**
+   * The listener is on `window`, so a keydown that bubbles up carries
+   * whatever DOM node it was dispatched on as `e.target` - which is not
+   * necessarily the element that actually has focus. Dispatching straight on
+   * `window` (rather than on the focused input, the way a real keypress
+   * would target it) is what used to slip past the old guard: `e.target`
+   * was neither an input nor a textarea, so `isInput` read false even while
+   * an unrelated form control had focus.
+   */
+  it('Ctrl+A while an input has focus does not select every layer', () => {
+    const onChange = vi.fn();
+    render(
+      <div>
+        <input data-testid="unrelated-input" />
+        <TagCanvasEditor doc={twoLooseTextLayersDoc()} onChange={onChange} />
+      </div>,
+    );
+
+    const input = screen.getByTestId('unrelated-input');
+    input.focus();
+    expect(document.activeElement).toBe(input);
+
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+
+    fireEvent.keyDown(window, { key: 'a', ctrlKey: true, bubbles: true });
+
+    // Nothing got selected: the Delete toolbar action is still disabled.
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+  });
+
+  it('Ctrl+A still selects every layer when nothing else has focus', () => {
+    const onChange = vi.fn();
+    render(<TagCanvasEditor doc={twoLooseTextLayersDoc()} onChange={onChange} />);
+
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+
+    fireEvent.keyDown(window, { key: 'a', ctrlKey: true, bubbles: true });
+
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+  });
+
+  it('Delete while an input has focus does not delete the selected layer', () => {
+    const onChange = vi.fn();
+    render(
+      <div>
+        <input data-testid="unrelated-input" />
+        <TagCanvasEditor doc={twoLooseTextLayersDoc()} onChange={onChange} />
+      </div>,
+    );
+
+    fireEvent.click(screen.getByTestId('layer-a'));
+    screen.getByTestId('unrelated-input').focus();
+
+    fireEvent.keyDown(window, { key: 'Delete', bubbles: true });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    const saved = onChange.mock.calls.at(-1)?.[0] as TagTemplateDoc;
+    expect(saved.layers.map((l) => l.id)).toEqual(['a', 'b']);
+  });
+});

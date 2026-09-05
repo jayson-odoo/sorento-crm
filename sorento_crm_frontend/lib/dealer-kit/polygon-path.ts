@@ -140,9 +140,10 @@ export function roundedPolygonPath(points: PolygonPoint[], radiusPx: number): st
  *
  * A polygon whose corners all line up has a zero-width bounding box, and a
  * zero-width box is a division by zero one line later - and a layer nobody can
- * grab again.
+ * grab again. Matches the Transformer's own 2mm floor (`TagCanvasEditor.tsx`)
+ * so a refit never produces a box the Transformer would immediately reject.
  */
-export const MIN_POLYGON_BOX_MM = 1;
+export const MIN_POLYGON_BOX_MM = 2;
 
 export interface PolygonBox {
   /** The layer's own position and size, in millimetres. */

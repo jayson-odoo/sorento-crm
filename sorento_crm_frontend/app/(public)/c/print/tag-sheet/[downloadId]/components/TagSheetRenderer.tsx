@@ -144,6 +144,7 @@ function renderTextLayer(layer: TagLayer, resolved: ResolvedLineData | null) {
         width: `${layer.width_mm}mm`,
         height: `${layer.height_mm}mm`,
         transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
+        transformOrigin: layer.rotation_deg ? '0 0' : undefined,
         fontFamily: props.fontFamily || 'DM Sans, sans-serif',
         fontSize: `${props.fontSize}pt`,
         fontWeight: props.fontWeight,
@@ -191,6 +192,7 @@ function renderShapeLayer(layer: TagLayer) {
           left: `${layer.x_mm}mm`,
           top: `${layer.y_mm}mm`,
           transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
+          transformOrigin: layer.rotation_deg ? '0 0' : undefined,
           overflow: 'visible',
         }}
       >
@@ -216,6 +218,7 @@ function renderShapeLayer(layer: TagLayer) {
         width: `${layer.width_mm}mm`,
         height: isLine ? '0' : `${layer.height_mm}mm`,
         transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
+        transformOrigin: layer.rotation_deg ? '0 0' : undefined,
         backgroundColor: isLine ? 'transparent' : props.fill,
         border: isLine
           ? 'none'
@@ -277,6 +280,7 @@ function renderImageLayer(
         width: `${layer.width_mm}mm`,
         height: `${layer.height_mm}mm`,
         transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
+        transformOrigin: layer.rotation_deg ? '0 0' : undefined,
         overflow: 'hidden',
         borderRadius: circle ? '50%' : undefined,
         display: 'flex',
@@ -325,6 +329,7 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
     width: `${layer.width_mm}mm`,
     height: `${layer.height_mm}mm`,
     transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
+    transformOrigin: layer.rotation_deg ? '0 0' : undefined,
     fontFamily: typo.fontFamily || 'DM Sans, sans-serif',
     display: 'flex',
     flexDirection: 'column',
@@ -520,6 +525,7 @@ function renderProductSlotLayer(
         width: `${layer.width_mm}mm`,
         height: `${layer.height_mm}mm`,
         transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
+        transformOrigin: layer.rotation_deg ? '0 0' : undefined,
         fontFamily: 'DM Sans, sans-serif',
         fontSize: '10pt',
         color: '#000000',
@@ -548,6 +554,7 @@ function renderBadgeLayer(layer: TagLayer, media: TagSheetMedia) {
         width: `${layer.width_mm}mm`,
         height: `${layer.height_mm}mm`,
         transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
+        transformOrigin: layer.rotation_deg ? '0 0' : undefined,
         overflow: 'hidden',
       }}
     >
@@ -640,6 +647,7 @@ function BarcodeLayer({
         width: `${w}mm`,
         height: `${h}mm`,
         transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
+        transformOrigin: layer.rotation_deg ? '0 0' : undefined,
         backgroundColor: '#ffffff',
         borderRadius: `${geo.cornerRadius_mm}mm`,
         overflow: 'hidden',

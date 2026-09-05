@@ -99,7 +99,7 @@ function ToolbarButton({
         <Button
           variant="ghost"
           size="sm"
-          className={cn('h-8 w-8 p-0', active && 'bg-accent text-accent-foreground')}
+          className={cn('h-8 w-8 shrink-0 p-0', active && 'bg-accent text-accent-foreground')}
           onClick={onClick}
           disabled={disabled}
           aria-pressed={active}
@@ -148,7 +148,7 @@ export function CanvasToolbar({
   selectionIsGroup,
 }: CanvasToolbarProps) {
   return (
-    <div className="flex h-10 shrink-0 items-center gap-1 border-b bg-background px-2">
+    <div className="flex h-10 min-w-0 shrink-0 flex-nowrap items-center gap-1 overflow-x-auto border-b bg-background px-2">
       {/* Tools */}
       <ToolbarButton
         icon={MousePointer2}
@@ -165,7 +165,7 @@ export function CanvasToolbar({
         shortcut="H"
       />
 
-      <Separator orientation="vertical" className="mx-1 h-5" />
+      <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
 
       {/* Add layer buttons */}
       <ToolbarButton icon={Type} label="Add Text" onClick={onAddText} />
@@ -184,7 +184,7 @@ export function CanvasToolbar({
       <ToolbarButton icon={Tag} label="Add Badge" onClick={onAddBadge} />
       <ToolbarButton icon={Barcode} label="Add Barcode" onClick={onAddBarcode} />
 
-      <Separator orientation="vertical" className="mx-1 h-5" />
+      <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
 
       {/* Product-bound blocks and presets */}
       <ToolbarButton icon={Package} label="Add Product" onClick={onAddProduct} />
@@ -200,7 +200,7 @@ export function CanvasToolbar({
         onClick={onAddAccessoriesStrip}
       />
 
-      <Separator orientation="vertical" className="mx-1 h-5" />
+      <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
 
       {/* Undo / Redo */}
       <ToolbarButton
@@ -218,13 +218,13 @@ export function CanvasToolbar({
         shortcut="Ctrl+Shift+Z"
       />
 
-      <Separator orientation="vertical" className="mx-1 h-5" />
+      <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
 
       {/* Zoom controls */}
       <ToolbarButton icon={Minus} label="Zoom Out" onClick={onZoomOut} />
       <button
         type="button"
-        className="min-w-[48px] rounded px-1 text-center text-xs tabular-nums text-muted-foreground hover:bg-accent"
+        className="min-w-[48px] shrink-0 rounded px-1 text-center text-xs tabular-nums text-muted-foreground hover:bg-accent"
         onClick={onZoomReset}
         title="Zoom to 100% (Ctrl+1)"
       >
@@ -233,7 +233,7 @@ export function CanvasToolbar({
       <ToolbarButton icon={Plus} label="Zoom In" onClick={onZoomIn} />
       <ToolbarButton icon={Expand} label="Fit to View" onClick={onFit} shortcut="Ctrl+0" />
 
-      <Separator orientation="vertical" className="mx-1 h-5" />
+      <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
 
       {/* Selection actions */}
       <ToolbarButton

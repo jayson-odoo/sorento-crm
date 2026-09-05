@@ -448,6 +448,8 @@ export function TagCanvasEditor({
   const [panelGroupSize, setPanelGroupSize] = useState({ width: 0, height: 0 });
   const leftPanelRef = useRef<ImperativePanelHandle>(null);
   const rightPanelRef = useRef<ImperativePanelHandle>(null);
+  /** The TAG SIZE / LAYERS divider inside the left rail (S7, GitHub #676). */
+  const railPanelRef = useRef<ImperativePanelHandle>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
   const dragRef = useRef<DragSession | null>(null);
@@ -1405,6 +1407,21 @@ export function TagCanvasEditor({
     [polygonPreview, cornerHandleLayer],
   );
 
+  /**
+   * A corner drag that is interrupted by the handles disappearing (Escape
+   * deselects, the layer is deleted or locked mid-drag) never reaches
+   * `handlePolygonDragEnd` - Konva's dragend fires on a node that has
+   * already unmounted, so React never hears it. Once `cornerHandleLayer`
+   * goes null there is nothing left to preview against, so drop the stale
+   * preview and the drag ref here instead (AC-S4-7).
+   */
+  useEffect(() => {
+    if (!cornerHandleLayer) {
+      setPolygonPreview(null);
+      polygonDragRef.current = null;
+    }
+  }, [cornerHandleLayer]);
+
   /** Escape climbs one level, and deselects at the top. */
   const selectParentGroup = useCallback(() => {
     const first = Array.from(selectedIds)[0];
@@ -1962,6 +1979,26 @@ export function TagCanvasEditor({
   const railMinPercent = (RAIL_MIN_PX / groupHeight) * 100;
   const railMaxPercent = 100 - railMinPercent;
 
+  /**
+   * `react-resizable-panels` reads a Panel's `defaultSize` ONCE, at mount -
+   * before hydration has replaced `panelLayout.railSplit` with the stored
+   * value and before `panelGroupSize.height` is known, so the FIRST
+   * `railPercent` is computed against the 600px fallback with the default
+   * split. Nothing tells the panel to move once the real values arrive a
+   * render later, so the stored split round-trips through localStorage and
+   * is never applied (S7, GitHub #676). Fix: once hydration has run AND the
+   * group has a REAL measured height, push the panel there imperatively,
+   * exactly once - `hasAppliedRailRef` is what keeps a later ResizeObserver
+   * tick from fighting a drag the user is mid-way through.
+   */
+  const hasAppliedRailRef = useRef(false);
+  useEffect(() => {
+    if (hasAppliedRailRef.current) return;
+    if (!hasHydratedRef.current || panelGroupSize.height <= 0) return;
+    hasAppliedRailRef.current = true;
+    railPanelRef.current?.resize(railPercent);
+  }, [panelGroupSize.height, railPercent]);
+
   const handleLeftResize = useCallback(
     (size: number) => {
       if (!draggingHandleRef.current) return;
@@ -2254,11 +2291,23 @@ export function TagCanvasEditor({
   // -- Keyboard shortcuts ----------------------------------------------------
 
   useEffect(() => {
+    const isFormControl = (node: EventTarget | null): boolean =>
+      node instanceof HTMLInputElement ||
+      node instanceof HTMLTextAreaElement ||
+      node instanceof HTMLSelectElement ||
+      (node instanceof HTMLElement && node.isContentEditable);
+
     const handler = (e: KeyboardEvent) => {
-      const isInput =
-        e.target instanceof HTMLInputElement ||
-        e.target instanceof HTMLTextAreaElement ||
-        e.target instanceof HTMLSelectElement;
+      // The listener is on `window`, so `e.target` is only ever right when
+      // the control that has focus is also what dispatched the event. A
+      // synthetic or re-targeted keydown (Radix, a portal, a test harness)
+      // can hand this handler an `e.target` that is the canvas while the
+      // REAL focus - and where Ctrl+A/Delete would actually act - sits on a
+      // form control elsewhere in the DOM (an Inspector field, a dialog
+      // input). Checking `document.activeElement` too is what keeps that
+      // case from having Ctrl+A select every layer, or Delete delete the
+      // selection, out from under whatever the user is actually typing in.
+      const isInput = isFormControl(e.target) || isFormControl(document.activeElement);
       const modifier = e.ctrlKey || e.metaKey;
 
       // B/I/U/Shift+X format the selected text layer(s) whether the inline
@@ -2692,7 +2741,7 @@ export function TagCanvasEditor({
   const canSelectParent = insideGroupId !== null;
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full flex-col overflow-x-hidden">
       {/* Toolbar */}
       <CanvasToolbar
         tool={tool}
@@ -2781,6 +2830,7 @@ export function TagCanvasEditor({
             {leftRail ? (
               <ResizablePanelGroup direction="vertical" className="h-full">
                 <ResizablePanel
+                  ref={railPanelRef}
                   id="canvas-left-rail"
                   order={1}
                   minSize={railMinPercent}

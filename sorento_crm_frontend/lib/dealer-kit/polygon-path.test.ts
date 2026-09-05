@@ -281,7 +281,7 @@ describe('refitPolygon (r4b, AC-S4-11)', () => {
     expect(refit.points).toEqual(DEFAULT_POLYGON_POINTS);
   });
 
-  it('holds an axis at 1mm rather than letting the box collapse', () => {
+  it('holds an axis at 2mm rather than letting the box collapse', () => {
     const refit = refitPolygon({
       ...BOX,
       points: [
@@ -292,14 +292,15 @@ describe('refitPolygon (r4b, AC-S4-11)', () => {
       ],
     });
 
-    // 0.01 of 40mm is 0.4mm: below the floor, so the box keeps 1mm and the
-    // shape sits inside it rather than being stretched back out to fill it.
-    expect(refit.width).toBe(1);
+    // 0.01 of 40mm is 0.4mm: below the floor, so the box keeps 2mm (matching
+    // the Transformer's own floor) and the shape sits inside it rather than
+    // being stretched back out to fill it.
+    expect(refit.width).toBe(2);
     expect(refit.height).toBe(20);
     expect(refit.points).toEqual([
       { x: 0, y: 0 },
-      { x: 0.4, y: 0 },
-      { x: 0.4, y: 1 },
+      { x: 0.2, y: 0 },
+      { x: 0.2, y: 1 },
       { x: 0, y: 1 },
     ]);
   });

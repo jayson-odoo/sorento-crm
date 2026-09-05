@@ -197,6 +197,36 @@ describe('KonvaTagLayer price badge typography (AC-S6-4/5)', () => {
     expect(node.getAttribute('data-align')).toBe('center');
   });
 
+  it('keeps the pre-r4b promo sizes when the layer names no typography (r4c, AC-S6-5)', () => {
+    const { container } = render(
+      <KonvaTagLayer
+        layer={badgeLayer({ variant: 'promo' })}
+        scale={3}
+        display={{ price: PRICE }}
+      />,
+    );
+
+    // 40mm x 20mm at scale 3: h = 60px. strikeH = h*0.3 = 18, boxH = 42.
+    // bigFont = max(6, boxH*0.5) = 21 - the SAME number the pre-typography
+    // formula produced, so a badge saved before these fields prints
+    // identically (AC-S6-5).
+    const amount = nodes(container, 'text').find(
+      (n) => n.getAttribute('data-text') === 'RM 599',
+    );
+    expect(amount?.getAttribute('data-font-size')).toBe('21');
+
+    const nett = nodes(container, 'text').find((n) => n.getAttribute('data-text') === 'NETT');
+    expect(nett?.getAttribute('data-font-size')).toBe(String(Math.max(4, 21 * 0.56)));
+
+    const sp = nodes(container, 'text').find((n) => n.getAttribute('data-text') === 'SP');
+    expect(sp?.getAttribute('data-font-size')).toBe(String(Math.max(4, 21 * 0.56)));
+
+    const struck = nodes(container, 'text').find(
+      (n) => n.getAttribute('data-text') === 'LP: RM 1,599',
+    );
+    expect(struck?.getAttribute('data-font-size')).toBe(String(Math.max(4, 21 * 0.6)));
+  });
+
   it('scales the promotional block SP and NETT with the figure', () => {
     const { container } = render(
       <KonvaTagLayer

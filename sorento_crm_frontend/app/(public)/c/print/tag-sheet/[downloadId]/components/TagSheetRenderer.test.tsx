@@ -113,6 +113,25 @@ describe('price_badge on the print page', () => {
     expect(screen.getByText('NETT')).toBeInTheDocument();
   });
 
+  it('keeps the pre-r4b promo sizes when the layer names no typography (r4c, AC-S6-5)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({ type: 'price_badge', props: defaultPriceBadgeProps('promo') }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    // figureSize falls back to 16pt when the layer names no fontSize; the
+    // struck list price and the SP/NETT labels keep their proportion to it
+    // (0.5625 and 0.5), unchanged since before typography existed.
+    expect(screen.getByText('RM 599')).toHaveStyle({ fontSize: '16pt' });
+    expect(screen.getByText('LP: RM 1,599')).toHaveStyle({ fontSize: '9pt' });
+    expect(screen.getByText('SP')).toHaveStyle({ fontSize: '8pt' });
+    expect(screen.getByText('NETT')).toHaveStyle({ fontSize: '8pt' });
+  });
+
   it('falls back to the list price when the line turns the promo price off', () => {
     render(
       <TagSheetRenderer
@@ -405,6 +424,66 @@ describe('bound text and pictures on the print page', () => {
     const el = screen.getByText('Plain');
     expect(el).toHaveStyle({ fontStyle: 'normal' });
     expect(el).toHaveStyle({ textDecoration: 'none' });
+  });
+
+  it('rotates a layer about its own top-left corner, not the CSS box centre (r4c)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'text-rotated',
+            type: 'text',
+            rotation_deg: 30,
+            props: {
+              kind: 'text',
+              text: 'Rotated',
+              fontFamily: 'DM Sans',
+              fontSize: 10,
+              fontWeight: 400,
+              color: '#000',
+              align: 'left',
+              lineHeight: 1.2,
+              letterSpacing: 0,
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    const el = screen.getByText('Rotated');
+    expect(el).toHaveStyle({ transform: 'rotate(30deg)' });
+    expect(el.style.transformOrigin).toBe('0 0');
+  });
+
+  it('leaves an unrotated layer with no transform-origin', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'text-flat',
+            type: 'text',
+            rotation_deg: 0,
+            props: {
+              kind: 'text',
+              text: 'Flat',
+              fontFamily: 'DM Sans',
+              fontSize: 10,
+              fontWeight: 400,
+              color: '#000',
+              align: 'left',
+              lineHeight: 1.2,
+              letterSpacing: 0,
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    const el = screen.getByText('Flat');
+    expect(el.style.transform).toBe('');
+    expect(el.style.transformOrigin).toBe('');
   });
 
   it('draws an asset image from the payload map', () => {

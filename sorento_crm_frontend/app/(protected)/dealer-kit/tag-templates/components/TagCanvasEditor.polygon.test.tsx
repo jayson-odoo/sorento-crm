@@ -480,6 +480,31 @@ describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
     expect(container.querySelector('[data-name="polygon-vertex-0"]')).toBeNull();
   });
 
+  it('never strands a drag preview when the handles disappear mid-drag (r4c)', () => {
+    const { container } = render(
+      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+    );
+    selectShape();
+
+    const vertex = handle(container, 'polygon-vertex-1');
+    fireEvent.mouseDown(vertex);
+    fireEvent.mouseMove(vertex, { clientX: W_PX / 4, clientY: 0 });
+    // Sanity check: the preview IS showing the dragged point before Escape.
+    expect(pointsOf()[1]).toEqual({ x: 0.25, y: 0 });
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(container.querySelector('[data-name="polygon-vertex-0"]')).toBeNull();
+
+    selectShape();
+
+    expect(pointsOf()).toEqual([
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 },
+    ]);
+  });
+
   it('one drag is one undo (AC-S4-7)', () => {
     const { container } = render(
       <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
