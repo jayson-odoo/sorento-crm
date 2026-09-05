@@ -522,13 +522,34 @@ class CompleteResponse(BaseModel):
     # D14: populated on a dry run only, so a console or clone turn can be inspected
     # without anything having been written.
     session_patch: dict[str, Any] | None = None
+    # The ROW's `is_test`, decided on the envelope at `/turn` and repeated here so n8n's
+    # `test-guard` can log what it recorded instead of sent without carrying the head's
+    # answer across two calls. Not a second switch: every action already carries the same
+    # value on `dry_run`.
+    is_test: bool = False
 
 
 # Which branch kinds still hand back to an n8n lane. After S1 that is all of them: the
 # head decides and n8n answers. Each later slice REMOVES entries here (S3 takes eight,
 # S4 one, S5 one, S6 three), and S7 empties it and deletes `delegate` entirely. Derived
 # from BRANCH_KINDS minus what the CRM already completes, so the two can never disagree.
-CRM_COMPLETED_BRANCH_KINDS: frozenset[str] = frozenset({"low_signal"})
+CRM_COMPLETED_BRANCH_KINDS: frozenset[str] = frozenset(
+    {
+        # S3 - the canned lanes, offer-hold and ideation. Each is answered from the
+        # prompt registry or (for `ideate`) from the `crm_ideation_turn` MCP tool, and
+        # every one of them ends the turn inside `run_turn`.
+        "access_denied",
+        "escalate_offer",
+        "escalation_declined",
+        "clarify_menu",
+        "not_supported",
+        "demand_qty",
+        "offer_hold",
+        "ideate",
+        # S4 - the small-talk clarifier.
+        "low_signal",
+    }
+)
 # `DELEGATED_BRANCH_KINDS` used to be the complement of the set above and is GONE: with
 # `system_settings.chatbot_completed_lanes` in the decision, "delegated" is no longer a
 # property of the build at all - the same kind delegates or completes depending on data -

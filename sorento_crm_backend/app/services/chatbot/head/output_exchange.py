@@ -562,7 +562,10 @@ def _offer_is_open(state: Any) -> bool:
     carries only the string and a session written by the CRM carries the marker, so the
     reader accepts either and neither deployment order strands a customer mid-offer.
     """
-    if jsc.get(jsc.get(state, "pending"), "kind") == "escalation_offer":
+    # BOTH offer kinds. A `member_offer` is an escalation offer with a roster attached -
+    # its reply carries the same frozen phrase - so a reader that only knew the general
+    # kind would go blind on every member-offer turn the day S8 deletes the regex below.
+    if jsc.get(jsc.get(state, "pending"), "kind") in ("escalation_offer", "member_offer"):
         return True
     response = jsc.get(state, "response")
     return bool(

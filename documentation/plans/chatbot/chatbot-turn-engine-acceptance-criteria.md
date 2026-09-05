@@ -413,6 +413,36 @@ Runs after S1 parity is green and before S1 promotes, in the same lane.
   members in-process), compile-current-state and crossdomain-compose, writes session vars
   in-process, marks the turn `done`, and responds `{ reply: {text, quick_replies, result_set,
   attachments_src}, actions: [] }`. (A2, A3)
+
+  **A second route, same everything else** (5 Sep 2026, agreed with the n8n side):
+  `POST /api/v1/external/chat/turn/complete` takes the SAME body and returns the SAME
+  response, and identifies the turn from `(ctx.contact.id, ctx.text.message.messageId)` -
+  the pair `chatbot.turns` is already UNIQUE on (D15) - taking the HIGHEST attempt. It
+  requires `delegated`: 404 with a sentence when no row matches, 409
+  `CHATBOT_TURN_NOT_DELEGATED` otherwise, both BEFORE the tail runs, and both writing an
+  `integration_log` like every other call to this endpoint.
+
+  **Three amendments, all agreed with the n8n side (5 Sep 2026):**
+
+  - **`done` WITH a stored response is not refused**; it falls through to
+    `complete_turn`'s replay branch and returns the answer already composed (D15's
+    duplicate-delivery shape). 409 is for a turn with neither a lane result to fold in nor
+    an answer to replay - `processing`, `failed`, or `done` with nothing stored.
+  - **Both routes answer with `is_test`** (the ROW's, decided on the envelope at `/turn`),
+    so the caller's test-guard logs what it recorded instead of sent without carrying the
+    head's answer across two calls.
+  - **A tail that RAISES is still a 200 answer**: `reply = {text: <today's error reply>,
+    quick_replies: null, result_set: null, attachments_src: null}` AND
+    `actions = [{kind: send_message, text: <the same>, quick_replies: null,
+    result_set: null, dry_run: <the row's is_test>}]`, never a null reply or an empty
+    action list - the executor executes `actions` and nothing else. The row is still
+    `failed` at `remembered` with the reason on it.
+
+  The reason is the n8n side's, and it keeps their cut inside one workflow: `sub-output`
+  holds the `ctx` but not the turn id (the id lives on the spine, two workflows up), so
+  the id-in-the-path form would have meant editing the spine, `sub-main-processing` and
+  every `Call 'sub-output'*` caller to thread it down. `/turn/{turn_id}/complete` is
+  UNCHANGED and still the form a retry from the trace screen uses, where the id is known.
 - AC-202 `[T]` Given every `compile-current-state`, `crossdomain-compose`, `build-outcome`,
   `escalate-catalog`, `cs-roster-plan`, `build-cs-member-offer` fixture, when replayed, then
   `reply.text`, `reply.quick_replies` and `session_patch.variables` equal `expected`, the only
@@ -561,6 +591,15 @@ endpoint over `chatbot.turns.trace`. Lands after S2 so the head and tail both wr
     copy. Only `{{team}}` and `{{user_goal}}` are declared.
   - Migration `476_chatbot_reply_copy` seeds them; the engine falls back to the same
     strings when a row is missing or the DB is unreachable, so the bot answers either way.
+  - **The last two land at S3 with their lanes** (5 Sep 2026), as this note said they
+    would: `chatbot_reply_access_denied` (the send node's own expression, `{{team}}` being
+    the parser's `suggested_agent` with em-dashes folded to hyphens) and
+    `chatbot_reply_offer_hold` (+ `_no_companies`, because a pool with no names gets a
+    DIFFERENT clause rather than an empty parenthetical). Seeded by migration
+    `478_chatbot_s3_copy` (S4's `477_chatbot_lanes` seeds no copy; it adds the
+    `chatbot_completed_lanes` switch, and 478 chains onto it). Eleven keys now, and
+    `{{companies}}` is finally used - by the offer-hold clause, which is the only canned
+    string that names a pool.
 - AC-303 `[BE][T]` Given `domain_hint == 'ideate'`, when the head runs, then the engine calls
   MCP tool `crm_ideation_turn` (via `MCPRuntimeClient`) with the same arguments
   `ideate-turn-http` sends today (including `media_selection` derivation from
@@ -575,6 +614,14 @@ endpoint over `chatbot.turns.trace`. Lands after S2 so the head and tail both wr
   `system_settings.chatbot_unsupported_domains` (JSON array, default
   `["goods_receive", "spo_allocation"]`), exposed in BOTH settings GET dict builders and the
   `SystemSettingUpdate` schema. (B2)
+
+  **Landed with a sibling** (5 Sep 2026): `system_settings.chatbot_completed_lanes`, a JSON
+  list shipped EMPTY, which decides which branch kinds the CRM finishes rather than
+  delegating. A lane completes only when it is in BOTH that list and the code's own
+  `lanes.canned.COMPLETED_BRANCH_KINDS`, so the S3 cutover is a data change with an edit-
+  the-list rollback rather than a deploy. Both columns are in the settings GET dict and the
+  `SystemSettingUpdate` schema, typed `List[str]` so a bare string cannot be saved and then
+  iterated one character at a time by the membership test.
 - AC-306 `[BE][T]` Given `system_settings.chatbot_stock_denial_enabled` (boolean, default
   false, both dict builders), when false, then `isStockCheckDenied` is never evaluated and no
   turn routes to `stock_denied` / `demand_qty`; when true, then a contact without
@@ -583,6 +630,19 @@ endpoint over `chatbot.turns.trace`. Lands after S2 so the head and tail both wr
   eight branch kinds above are removed and a single `if delegate == null` node after the head
   call goes straight to `sub-sendmsg`; the `ideate-turn-http`, `build-ideate-reply`,
   `offer-hold-reply`, `tag-*` and `Edit Fields2` nodes are deleted. (A2)
+
+  **Amended 5 Sep 2026, two corrections from the implementation:**
+
+  - There is an ORDER, and it is written at node level in `n8n-changes.md` S3: CRM deploy
+    (inert, `chatbot_completed_lanes = []`) -> shadow -> the owner adds the kind(s) to the
+    list -> only THEN the Switch outputs and nodes go. Deleting before the data flip turns
+    a reversible change into an outage; rollback before that point is editing the list.
+  - `Edit Fields2` STAYS. It stamps `not_allowed_check_stock` onto the `stock_denied`
+    item and that lane still delegates until S6. The CRM stamps the same field itself now
+    (`engine._stamp_item`), so the node is a no-op - but a no-op that is deleted while its
+    lane still runs is a lane that stops carrying the field.
+  - The `if delegate == null` node already exists: it is S1's `head-arm` Switch `finished`
+    route, so S3 adds no node to the spine at all.
 
 ### S4 - low_signal lane (journey A2)
 

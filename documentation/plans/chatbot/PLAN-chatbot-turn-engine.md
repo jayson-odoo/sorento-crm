@@ -62,7 +62,7 @@ PII-scrubbed; 11 full-execution `worlds`; 5 `regression-guards`; 5 named canarie
 | the pattern | `app/services/ideation_turn_service.handle_turn` + `app/api/v1/external/ideation.py`: fail-closed config, LLM in a never-raising extractor, integration_log on every call |
 | LLM | `llm_provider.get_provider(...).chat(messages, json_schema=...)`, OpenAI / Anthropic / Gemini |
 | prompts | `ai_prompt_registry` (17 keys, versioned, 60 s cache, DB-down fallback, admin UI) |
-| MCP | `sorento_crm_mcp/catalog.py` (40 tools; ideation NOT yet a tool, added in S3 per D6) + `ai_assistant_service.MCPRuntimeClient` (in-process JSON-RPC client) |
+| MCP | `sorento_crm_mcp/catalog.py` (40 tools; ideation NOT yet a tool, added in S3 per D6) + `ai_assistant_service.MCPRuntimeClient` (HTTP JSON-RPC client for the streamable-HTTP MCP endpoint) |
 | tool search | `EmbeddingReadService` behind `POST /external/rag/tool-search` |
 | resolver | service behind `POST /system/references/resolve` (`app/api/v1/system/references.py:2133`), `entity_pins` supported |
 | access / teams / assignee / SLA | `mcp_access_service.evaluate_agent`, `ContactAccessTypeService`, `company_routing_service` (team members), next-assignee service (`next_assignee.py`, commits a round-robin cursor), `ConversationSLATrackingService` |
@@ -132,7 +132,9 @@ POST /api/v1/external/chat/turn            body { envelope: A }
            reply?: {text, quick_replies, result_set, attachments_src},
            actions?: [...], session_patch?: {...} }      # session_patch only on dry run
 POST /api/v1/external/chat/turn/{id}/complete   body = sub-output input contract (S2 to S6)
-  -> 200 { reply, actions, session_patch? }
+POST /api/v1/external/chat/turn/complete        same body; the turn is identified from
+                                                (ctx.contact.id, ctx.text.message.messageId)
+  -> 200 { turn_id, reply, actions, is_test, session_patch? }
 ```
 
 `delegate` names the n8n lane that must still run during migration (`business_query`,
@@ -146,6 +148,47 @@ result_set}`, `send_attachments {attachments_src, reply}`, `assign_conversation
 {respond_user_id}`, `add_comment {text, mention_user_ids}`, `update_contact_fields {fields}`.
 Every action carries `dry_run` (true on test envelopes, D14) so the clone's `test-guard`
 records instead of sends, exactly as today.
+
+**Implemented verbatim at S3** (5 Sep 2026, field shapes agreed with the n8n executor), so
+this line needs no amendment - but two properties of it are worth stating because an
+implementation could satisfy the field NAMES and still break the sender:
+
+- `quick_replies` is the SEALED `compile-current-state` value, unchanged: n8n's own
+  comma-joined string, or null when the turn offered none. `sub-sendmsg`'s `quick_reply`
+  input has never been given a list, and the sender is the half that did NOT move into the
+  CRM, so an action that normalised the type would break it. `result_set` is likewise
+  `variables.last_result_set` as sealed.
+- `send_attachments` is emitted ONLY when `reply.attachments_src` is non-null, and it comes
+  AFTER `send_message` for the reason n8n wires it that way: the text explains the files.
+  It carries the whole `reply` object because `sub-send-attachments` reads more than one
+  field off it.
+
+**The executor executes `actions[]` and NOTHING else (ruling, 5 Sep 2026, help-crm).**
+n8n never sends `reply.text`. `reply` is the record of what was composed (and what the
+trace screen and the duplicate-delivery replay read); `actions` is the instruction list,
+so a lane whose words are only on `reply.text` is a customer left in silence. Every lane
+that finishes in the CRM therefore puts its customer copy in an action:
+
+- the eight S3 kinds and `low_signal` all end at `_send_actions`, or (for `low_signal`)
+  at the one `send_message` the casual lane stamps before its tail runs;
+- a failed HEAD returns the parser's error reply as a `send_message` (AC-105);
+- a failed TAIL returns the same error reply as a `send_message` with the row's `dry_run`,
+  rather than a null `reply` and an empty list (5 Sep);
+- `/complete` also carries `is_test` (the row's), so the caller's test-guard reads one
+  field instead of remembering what `/turn` said two calls ago.
+
+One measured shape difference, recorded rather than smoothed over: `low_signal`'s action
+is stamped BEFORE the tail (it has to be on the row before the tail reads `prior_actions`,
+so a duplicate delivery replays the action as well as the reply, D15). It therefore carries
+the clarifier's text with `quick_replies: []` and no `result_set` key, where `_send_actions`
+would have carried the sealed `quick_reply` and `last_result_set`. Identical text; the
+executor reads a missing `result_set` the same way it reads a null.
+
+Measured while implementing: no canned lane can produce quick replies today.
+`compile-current-state` sets `quickReply` from `access-level-choice-message` or
+`build-suggest-offer` only, and no canned lane supplies either fragment, so every one of
+the eight seals a null. That is why the pass-through is what S3's own test asserts on a
+lane and the populated shape is asserted as a unit.
 
 **D14's input half (O2, AC-112).** A dry-run envelope may also carry three optional harness
 keys, and the engine honours them ONLY on a dry run: `mock_reformulator_output` replaces the
