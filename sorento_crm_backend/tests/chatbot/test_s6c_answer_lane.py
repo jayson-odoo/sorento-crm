@@ -351,12 +351,33 @@ def _run_access_level_choice_message(fixture: _corpus.Fixture) -> Any:
     )
 
 
+def _get_results(fixture: _corpus.Fixture) -> list | None:
+    """`$('Call \\'sub-get-results\\'').all(0, ri)` for `ri` in `0..24` (D2's alternatives
+    scan): a list of RUNS, each run itself a list of that run's own `.json` bodies. The
+    harness only ever captures run 0 (the comment on the node itself: "get-results runs
+    EXACTLY ONCE per turn"), so this wraps that one run rather than inventing the others -
+    `None` when the node never ran at all, matching the node's own `isExecuted` guard."""
+    items = fixture.upstream("Call 'sub-get-results'")
+    if not items:
+        return None
+    return [[i.get("json") for i in items]]
+
+
+def _execution_id(fixture: _corpus.Fixture) -> Any:
+    """`$execution.id`, off the fixture's own capture metadata (same read as
+    `test_replay.py::_execution_id`, informal here since no fixture lacks it)."""
+    return (fixture.data.get("execution") or {}).get("id") or (
+        fixture.data.get("source") or {}
+    ).get("execution_id")
+
+
 def _run_build_suggest_offer(fixture: _corpus.Fixture) -> Any:
     from app.services.chatbot.lanes.business.answer import build_suggest_offer
 
     dym_annotate = _named(fixture, "dym-annotate")
     sibling_probe = _named(fixture, "sibling-probe")
     sibling_transform = _named(fixture, "sibling-transform")
+    get_results = _get_results(fixture)
     return _wrap(
         build_suggest_offer(
             _rt(_input_json(fixture)),
@@ -366,6 +387,8 @@ def _run_build_suggest_offer(fixture: _corpus.Fixture) -> Any:
             dym_annotate=_rt(dym_annotate) if dym_annotate is not None else None,
             sibling_probe=_rt(sibling_probe) if sibling_probe is not None else None,
             sibling_transform=_rt(sibling_transform) if sibling_transform is not None else None,
+            get_results=_rt(get_results) if get_results is not None else None,
+            execution_id=_execution_id(fixture),
         )
     )
 
@@ -400,14 +423,24 @@ def _run_miss_roster_check(fixture: _corpus.Fixture) -> Any:
 
 
 def _run_miss_roster_plan(fixture: _corpus.Fixture) -> Any:
+    """`build_result.tool.name` is `build-result`'s own shape when that consolidated node
+    ran (the `sub-main-processing`/clone-sub-main-processing slugs). The LIVE SPINE has no
+    such node - its own `miss-roster-plan.js` reads `$('tool-filter').first().json` for
+    the tool DIRECTLY - so the fallback rebuilds the same `{tool: ...}` shape from
+    `tool-filter`'s own output when `build-result` never ran."""
     from app.services.chatbot.lanes.business.sub_answer import miss_roster_plan
 
-    build_result_out = _named(fixture, "build-result") or {}
+    build_result_out = _named(fixture, "build-result")
+    if build_result_out is not None:
+        build_result = build_result_out.get("result") or {}
+    else:
+        tool = _named(fixture, "tool-filter")
+        build_result = {"tool": tool} if tool is not None else {}
     central_exchange = _named(fixture, "central-exchange")
     return _wrap(
         miss_roster_plan(
             _rt(_input_json(fixture)),
-            build_result=_rt(build_result_out.get("result") or {}),
+            build_result=_rt(build_result),
             parser=_rt(_parser_output(fixture)),
             gate=_rt(_gate(fixture)),
             central_exchange=_rt(central_exchange) if central_exchange is not None else None,
@@ -443,9 +476,22 @@ def _run_dym_transform_partial(fixture: _corpus.Fixture) -> Any:
 
 
 def _run_dym_annotate_partial(fixture: _corpus.Fixture) -> Any:
+    """`dym-annotate-partial.js`'s own by-name reads: `_PAYLOAD_SRC = 'central-exchange'`
+    (the payload the downstream renderer expects back), `_XF_SRC = 'dym-transform-partial'`
+    (this lane's planner). Neither is optional on this deployment - both are direct
+    upstreams of every capture - so absence still threads through as `None` rather than
+    being silently skipped."""
     from app.services.chatbot.lanes.business.sub_answer import dym_annotate_partial
 
-    return _wrap(dym_annotate_partial(_rt(_input_json(fixture))))
+    payload = _named(fixture, "central-exchange")
+    transform = _named(fixture, "dym-transform-partial")
+    return _wrap(
+        dym_annotate_partial(
+            _rt(_input_json(fixture)),
+            payload=_rt(payload) if payload is not None else None,
+            transform=_rt(transform) if transform is not None else None,
+        )
+    )
 
 
 def _run_answer_result(fixture: _corpus.Fixture) -> Any:
@@ -482,6 +528,12 @@ def _run_dym_transform(fixture: _corpus.Fixture) -> Any:
             _rt(_input_json(fixture)),
             parser=_rt(_parser_output(fixture)),
             resolved=_rt(_resolved(fixture)),
+            # `gate` is the UPSTREAM IF that decides whether the require-specific PICKER
+            # lane fires (`_dym_plan.picker_cands()` reads `gate.require_specific` /
+            # `gate.gate_clarification` / `gate.compatible_entities`) rather than the D1
+            # lane - omitting it silently drops every capture into "d1", which is the
+            # WRONG lane whenever the gate asked a numbered picker question.
+            gate=_rt(_gate(fixture)),
             central_exchange=_rt(central_exchange) if central_exchange is not None else None,
         )
     )
@@ -500,7 +552,21 @@ def _run_dym_annotate(fixture: _corpus.Fixture) -> Any:
         return _wrap(None)
     from app.services.chatbot.lanes.business.miss_suggest import dym_annotate
 
-    return _wrap(dym_annotate(_rt(_input_json(fixture))))
+    # `dym-annotate.js`'s own by-name reads: `_PAYLOAD_SRC = 'not-found-error-message'`
+    # (the payload the downstream renderer expects back), `_XF_SRC = 'dym-transform'` (this
+    # lane's planner). `probe_items = $input.all()` - the FULL input list to this node's own
+    # execution, only D18's per-candidate promotion lane reads it.
+    payload = _named(fixture, "not-found-error-message")
+    transform = _named(fixture, "dym-transform")
+    probe_items = [item.get("json") for item in fixture.input]
+    return _wrap(
+        dym_annotate(
+            _rt(_input_json(fixture)),
+            payload=_rt(payload) if payload is not None else None,
+            transform=_rt(transform) if transform is not None else None,
+            probe_items=_rt(probe_items),
+        )
+    )
 
 
 def _run_miss_suggest_result(fixture: _corpus.Fixture) -> Any:
@@ -553,9 +619,23 @@ PORTED_NODES = sorted(RUNNERS)
 
 
 def _replay(fixture: _corpus.Fixture) -> None:
+    """Same shape as `test_replay.py::_replay` (AC-005): a registered divergence with
+    `strip_paths` is FIELD-scoped - those paths come off both sides and the remainder must
+    still be byte-equal - while a blanket entry (no `strip_paths`) excuses the whole
+    fixture. Applying `strip_paths` here (rather than only checking `registered is not
+    None`) is what keeps the dym-transform/dym-annotate stale-spine entries a real,
+    field-scoped gate instead of a rubber stamp on any mismatch."""
     actual = _rt(RUNNERS[fixture.node](fixture))
     expected = _rt(fixture.expected)
     registered = divergences.find(fixture.node, fixture.name.split("/")[-1])
+    if registered is not None and registered.strip_paths:
+        stripped_actual = divergences.strip(actual, registered.strip_paths)
+        stripped_expected = divergences.strip(expected, registered.strip_paths)
+        assert stripped_actual == stripped_expected, (
+            f"{fixture.node}/{fixture.name} diverges outside the registered "
+            f"{registered.hazard} fields\nfixture: {fixture.path}"
+        )
+        return
     if actual == expected:
         if registered is not None:
             pytest.fail(
@@ -921,13 +1001,21 @@ class TestCrossdomainProbe:
 
 class TestMissLaneProbesAndFamilyFetch:
     def test_not_found_path_probes_and_fetches_the_family_before_offering(self) -> None:
+        """`_sibling_gate` (`sibling-gate`'s own four AND conditions, verbatim) is the ONE
+        branch where `family_fetch` AND `mcp_probe` both fire on the same turn - `run_miss_lane`
+        docstring's graph: `sibling-gate TRUE -> family-fetch -> sibling-transform ->
+        sibling-probe`. It requires an `incoming`-domain gate with a non-uuid product code in
+        `compatible_entities`, `require_specific` not True, and a `build_result` whose own
+        `has_result` is False - the `dym-transform` branch below it (FALSE) never calls
+        `family_fetch` at all, so a gate that fails these four conditions grades the wrong
+        branch."""
         from app.services.chatbot.lanes.business.miss_suggest import run_miss_lane
         from app.services.chatbot.lanes.business.services import AnswerServices
 
         parser = {
             "message_type": "business_query",
             "intent_hint": "check_stock",
-            "domain_hint": "inventory",
+            "domain_hint": "incoming",
             "entities": [{"hint": "product", "raw": "SRTWC286"}],
             "access_levels": [],
         }
@@ -941,14 +1029,22 @@ class TestMissLaneProbesAndFamilyFetch:
                         {
                             "entity_type": "product",
                             "canonical_code": "SRTWC286-SH",
-                            "uuid": "prod-uuid-1",
+                            "uuid": "11111111-1111-1111-1111-111111111111",
                             "match_tier": "prefix",
                         }
                     ],
                 }
             ],
         }
-        gate = {"gate_passed": False, "gate_reason": "no exact match"}
+        gate = {
+            "gate_passed": False,
+            "gate_reason": "no exact match",
+            "gate_debug": {"domain": "incoming"},
+            "require_specific": False,
+            "compatible_entities": [
+                {"entity_type": "product", "code": "SRTWC286", "uuid": None},
+            ],
+        }
         not_found_item = {
             "escalate_message": "Could not find product SRTWC286.",
             "is_clarification": False,
@@ -968,7 +1064,13 @@ class TestMissLaneProbesAndFamilyFetch:
         services = AnswerServices(mcp_probe=mcp_probe, family_fetch=family_fetch)
 
         out = run_miss_lane(
-            not_found_item, parser=parser, resolved=resolved, gate=gate, services=services
+            not_found_item,
+            parser=parser,
+            resolved=resolved,
+            gate=gate,
+            services=services,
+            # `_sibling_gate`'s fourth condition: the fetch genuinely came back empty.
+            build_result={"has_result": False},
         )
 
         assert probe_calls, (
