@@ -1757,8 +1757,12 @@ class TestH16ByEntityTypeIterationIsEntityKeysOnly:
 # --------------------------------------------------------------------------- #
 # H22 / H23: a did-you-mean offer's carried PICKS only ride into a cross-domain read
 # when the offer's own domain agrees with the turn's current domain. A promotion-thread
-# offer must not pollute an inventory-domain crossdomain probe. (`crossdomain-zeroset`'s
-# own `_offerDomainOk` guard, "DOMAIN GUARD 2026-09-01".)
+# offer must not pollute an inventory-domain crossdomain probe.
+#
+# The guard is `sub-main-processing-live`'s `_offerDomainOk` ("DOMAIN GUARD 2026-09-01"),
+# and the ACTIVE spine's copy of the node does NOT carry it, so this is a registered CRM
+# divergence (`divergences.CROSSDOMAIN_DYM_OFFER_DOMAIN_GUARD`, with both shas) and these
+# are the tests it is registered against. No capture grades it: all five predate it.
 # --------------------------------------------------------------------------- #
 
 

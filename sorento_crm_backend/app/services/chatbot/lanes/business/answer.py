@@ -9,14 +9,16 @@ this file dispatches into.
 **Source of truth is the LIVE SPINE's copy of each body**, not the clone's and not
 `sub-main-processing`'s: every capture the corpus grades these against came from
 `live-spine-sorento-consume-main`, and the three copies genuinely differ (measured:
-`build-suggest-offer` is 710 / 729 / 944 lines across them). `build-result` is the one
-exception - it lives only in `sub-main-processing-live` and `sub-answer`, and the tester's
-runner passes the sub's five producers, so the 88-line version is the one ported.
+`build-suggest-offer` is 710 / 729 / 944 lines across them). There are TWO named
+exceptions: `build-result` lives only in `sub-main-processing-live` and `sub-answer`, and
+the tester's runner passes the sub's five producers, so the 88-line version is the one
+ported; and `crossdomain-zeroset`'s domain guard is taken from the same sub's 151-line
+body, which makes it a divergence from the shipping spine rather than parity - the shas
+are cited at the block and the entry is `divergences.CROSSDOMAIN_DYM_OFFER_DOMAIN_GUARD`.
 
-**Nothing here holds a database session.** The two seams that do I/O
-(`AnswerServices.mcp_probe`, `.family_fetch`) are injected, and the only function that
-reads the database at all is `completed_lanes`, which is a turn-time flag read the engine
-makes before this lane runs.
+**Nothing here holds a database session.** Every function here is pure over plain dicts,
+and the two seams that do I/O (`AnswerServices.mcp_probe`, `.family_fetch`) are injected
+by the caller.
 
 **D11.** Everything after the parser works on structured state. Where a ported body
 sniffs raw text - and a few do - the line carries `# D11-reproduced` naming the n8n site,
@@ -498,14 +500,22 @@ def crossdomain_zeroset(
         variables = jsc.get(session_block, "variables")
     dym_offer = jsc.get(variables, "dym_offer") if jsc.truthy(variables) else None
     dym_offer = dym_offer if isinstance(dym_offer, dict) else None
-    # DOMAIN GUARD (H22 / H23, the shipping body's own "DOMAIN GUARD 2026-09-01"). The offer
-    # records WHOSE picks these are, and a pick made under an ORDER or PROMOTION offer is not
-    # a requested PRODUCT: carrying it printed "No stock records found for: CG-202608-051."
-    # on an inventory turn (exec 14769923). Picks carry only when the offer's OWN domain is in
-    # this feature's stock / incoming family; an offer with no `domain` field - a
-    # pre-lifecycle session - keeps today's behaviour. THIS turn's own pick needs no guard: a
-    # pick forces the turn into the offer's domain, and the domain gate at the top of this
-    # node has already restricted us to inventory / incoming.
+    # DOMAIN GUARD (H22 / H23). The offer records WHOSE picks these are, and a pick made
+    # under an ORDER or PROMOTION offer is not a requested PRODUCT: carrying it printed
+    # "No stock records found for: CG-202608-051." on an inventory turn (exec 14769923).
+    # Picks carry only when the offer's OWN domain is in this feature's stock / incoming
+    # family; an offer with no `domain` field - a pre-lifecycle session - keeps today's
+    # behaviour. THIS turn's own pick needs no guard: a pick forces the turn into the
+    # offer's domain, and the domain gate at the top of this node has already restricted
+    # us to inventory / incoming.
+    #
+    # PROVENANCE, because the two live copies of this node disagree: the guard is in
+    # `sub-main-processing-live`'s 151-line body (sha256 fb9d41cf64ea320b, workflow
+    # version 53ca1c6b-a6b3-48ed-b094-2cddafb3185c) and NOT in the ACTIVE spine's
+    # 143-line one (sha256 a880d01e3629538b, version c9fe3e68-b732-460d-b968-c1b4a5e5f038),
+    # which is the body answering turns today. So against the shipping path this is a CRM
+    # divergence, registered as `divergences.CROSSDOMAIN_DYM_OFFER_DOMAIN_GUARD` and
+    # tested by `TestH22H23DymOfferDomainCleared`, not silent parity.
     offer_domain = jsc.get(dym_offer, "domain") if dym_offer is not None else None
     offer_domain_ok = (
         dym_offer is None

@@ -194,6 +194,43 @@ CASUAL_SETUP_FAILURE_HAS_A_REPLY = Divergence(
 )
 
 
+# S6c. `crossdomain-zeroset`'s DOMAIN GUARD, and WHICH body it came from.
+#
+# Two live workflows ship a node called `crossdomain-zeroset` and they differ:
+#
+#   * `sub-main-processing-live` (id 53RxDSON8P3QSN22, version
+#     53ca1c6b-a6b3-48ed-b094-2cddafb3185c) ships 151 lines, sha256
+#     fb9d41cf64ea320bd016ef516fb4b0edd903cc1da9996fd01eabb4a00fc1c06d, and CARRIES the
+#     guard ("DOMAIN GUARD (2026-09-01, exec 14769923)"). This is the body the plan's
+#     S6c line count (151) names and the one the port was made from.
+#   * `live-spine-sorento-consume-main` (id 9qVyfUxmRQqrpGRMDLRuz, version
+#     c9fe3e68-b732-460d-b968-c1b4a5e5f038) ships 143 lines, sha256
+#     a880d01e3629538bdde874f60875b481af7415acb6c7f12d4795171074518f92, and does NOT.
+#     The spine is `active: true` and has no `Call 'sub-main-processing'` node, so IT is
+#     the body answering turns today.
+#
+# So relative to the shipping path the guard is a CRM behaviour change, not parity, and
+# it is registered as one rather than left to a comment. It only ever REMOVES codes from
+# `_xd.requested` (a pick made under an order or promotion offer stops naming a product
+# on an inventory turn, which printed "No stock records found for: CG-202608-051."), so
+# the direction is fail-quiet, and the pick made THIS turn is unaffected.
+#
+# Not fixture-visible: all five graded `crossdomain-zeroset` captures predate the guard
+# (22 Aug 2026) and none carries a foreign-domain `dym_offer`, so no replay changes.
+# Pinned by tests/chatbot/test_s6c_answer_lane.py::TestH22H23DymOfferDomainCleared.
+CROSSDOMAIN_DYM_OFFER_DOMAIN_GUARD = Divergence(
+    node="crossdomain-zeroset",
+    fixture=None,
+    hazard="H22 / H23",
+    reason=(
+        "carried did-you-mean picks ride into the cross-domain read only when the offer's "
+        "own domain is inventory / incoming. Present in sub-main-processing-live's 151-line "
+        "body (sha fb9d41cf64ea320b), absent from the ACTIVE spine's 143-line one "
+        "(sha a880d01e3629538b). Not fixture-visible: the five captures predate it."
+    ),
+)
+
+
 def find(node: str, fixture: str) -> Divergence | None:
     """The registered divergence covering this replay, or None."""
     for d in DIVERGENCES:
