@@ -871,6 +871,13 @@ contact inside the synchronous request. Different contacts run in parallel.
   AC was always meant to surface, previously hidden by the wrong-path measurement above;
   see the plan's capacity section for the pool clause's open question and the trigger for
   a multi-worker re-run.
+  **Re-verified 6 Sep 2026** after the settle-wait and STRICT-gate fix, `--timeout 240`
+  (load averages 4.16 5.16 6.27 before): `wall 240.2s p50 240.00s p95 240.07s`,
+  `errors 100`, `branch_kind: {'business_query': 25}`, `75 turn row(s) missing`. Every one
+  of the 25 landed rows is `business_query / remembered / done` - zero of the earlier
+  run's 21-straggler shape, confirming the settle-wait fix. Still RED on timing (single
+  dev worker, unchanged finding); `db connections: baseline 19 peak 40` rules out Postgres
+  as the ceiling here.
 - AC-707 `[E2E]` Given live traffic for one pilot contact routed through S7, when they send
   three messages quickly, then the three replies arrive in order and `chatbot.turns` shows
   three `done` rows with `finished_at` ascending. (A5)

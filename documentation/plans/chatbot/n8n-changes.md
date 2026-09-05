@@ -1210,6 +1210,27 @@ made a same-session repeat unsafe to compare against and was not attempted. A re
 number needs either a multi-worker lane box, a smaller burst, or the prod-host run above;
 that work is tracked in the plan's capacity section, not this one.
 
+**Re-verified 6 Sep 2026, after the `_wait_for_turns_to_settle` and STRICT-gate fix, same
+lane backend and settings, `--timeout 240`** (`uptime` before: load averages 4.16 5.16
+6.27). Raw numbers:
+
+```
+wall 240.2s  turns 100  p50 240.00s  p95 240.07s
+errors 100  out-of-order contacts 0
+branch_kind: {'business_query': 25}
+75 turn row(s) missing - the burst did not all reach chatbot.turns
+RED - p95 240.07s is over the 12.0s target
+```
+
+Confirms the settle-wait fix directly: every one of the 25 landed rows is
+`business_query / stage=remembered / status=done` - zero of the 21-straggler shape the
+earlier run produced, because grading and cleanup now wait for the backend to finish
+first. The single dev worker is still the ceiling (25 of 100 landed even at a 240s client
+timeout; `db connections: baseline 19 peak 40`, so Postgres was not it), which is the
+same capacity finding as the first re-measurement, on a fully-drained sample this time.
+Settings were flipped for this run and restored immediately after (before: `false` /
+`[]`; during: `true` / `["business_query"]`; after: `false` / `[]`, verified by re-read).
+
 ### Step 5 - the switchover proof (AC-714), on the clone
 
 Not a load test, a correctness one, and it is the reason both injectors flip together:

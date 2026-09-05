@@ -404,6 +404,12 @@ suite on the shared DB.
   pool/thread numbers below are therefore this section's own open question, not yet
   re-answered on the corrected path; a multi-worker re-run (or the prod-host run
   `n8n-changes.md` names) is the next step, not this fix's job.
+  **Re-verified 6 Sep 2026** after the settle-wait and STRICT-gate fix, `--timeout 240`
+  (load averages 4.16 5.16 6.27 before): `errors 100`,
+  `branch_kind: {'business_query': 25}`, `75 turn row(s) missing`, every landed row
+  `business_query / remembered / done` - zero stragglers this time, confirming the fix.
+  `db connections: baseline 19 peak 40` rules out Postgres; the single dev worker is
+  still the ceiling.
 - **The seeded contact carries no `contact_access_types` row.** A real dealer holds at
   least one; an entitlement-filtered fetch against an untyped contact is therefore lighter
   than what a real dealer's turn does, so the numbers above are a floor, not a ceiling, on
