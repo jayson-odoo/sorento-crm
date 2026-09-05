@@ -32,6 +32,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 # The engine's session seam. See the module docstring: module-level on purpose, and
@@ -52,7 +53,10 @@ from app.services.chatbot.contracts import (
     TurnResponse,
 )
 from app.services.error_handler import AppException
-from app.services.integration_service import IntegrationLogService
+from app.services.integration_service import (
+    IntegrationLogService,
+    sanitize_request_headers,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -82,8 +86,22 @@ MAX_TURN_BODY_BYTES = 256 * 1024
 MAX_LOGGED_PAYLOAD_BYTES = 64 * 1024
 
 
-def _logged_payload(payload: TurnRequest) -> str:
-    """The request body for the integration log, bounded."""
+def _logged_payload(payload: BaseModel, *, reference: str = "") -> str:
+    """The request body for the integration log, bounded.
+
+    Takes ANY request model, because `/complete` needs the same bound and used to
+    have none: `CompleteRequest` carries `item`, an optional `ctx` override and
+    eleven producer fragments, one of which is a result set, and the engine's own
+    document cap is 512 KB - so these are expected to get large, and the refusal
+    path logs one too. Serialising it whole moved the problem `MAX_TURN_BODY_BYTES`
+    exists to prevent one table over: unbounded rows in `integration_logs`.
+
+    Over the cap the body is REPLACED by a note that names its size, the way
+    `trace.cap_document` does it, rather than truncated to invalid JSON. The
+    `reference` kept beside the note is whatever identifies the call - the contact
+    on `/turn`, the turn id on `/complete` - so an operator reading the row can
+    still find it.
+    """
     body = payload.model_dump_json()
     if len(body) <= MAX_LOGGED_PAYLOAD_BYTES:
         return body
@@ -93,7 +111,7 @@ def _logged_payload(payload: TurnRequest) -> str:
                 f"payload omitted: {len(body)} bytes exceeds the "
                 f"{MAX_LOGGED_PAYLOAD_BYTES} byte log cap"
             ),
-            "contact_id": str(payload.envelope.contact.get("id") or ""),
+            "reference": reference,
         }
     )
 
@@ -155,9 +173,7 @@ def chat_turn(
         to_reraise = HTTPException(status_code=response_status, detail=error_message)
 
     try:
-        request_headers = dict(request.headers)
-        if "x-api-key" in request_headers:
-            request_headers["x-api-key"] = "***"
+        request_headers = sanitize_request_headers(dict(request.headers))
         IntegrationLogService(db).create_integration_log(
             IntegrationLogCreate(
                 integration_channel="n8n",
@@ -168,7 +184,9 @@ def chat_turn(
                 endpoint=str(request.url.path),
                 http_method=request.method,
                 request_headers=json.dumps(request_headers),
-                request_payload=_logged_payload(payload),
+                request_payload=_logged_payload(
+                    payload, reference=str(payload.envelope.contact.get("id") or "")
+                ),
                 status_code=response_status,
                 status="success" if response_status < 400 else "failed",
                 error_message=error_message,
@@ -221,9 +239,7 @@ def _log_complete_call(
     been decided and failing to describe it must not change it.
     """
     try:
-        request_headers = dict(request.headers)
-        if "x-api-key" in request_headers:
-            request_headers["x-api-key"] = "***"
+        request_headers = sanitize_request_headers(dict(request.headers))
         IntegrationLogService(db).create_integration_log(
             IntegrationLogCreate(
                 integration_channel="n8n",
@@ -234,7 +250,7 @@ def _log_complete_call(
                 endpoint=str(request.url.path),
                 http_method=request.method,
                 request_headers=json.dumps(request_headers),
-                request_payload=payload.model_dump_json(),
+                request_payload=_logged_payload(payload, reference=external_reference),
                 status_code=status_code,
                 status="success" if status_code < 400 else "failed",
                 error_message=error_message,
