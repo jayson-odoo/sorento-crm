@@ -45,3 +45,5 @@ Plan: `PLAN-price-tag-r4.md`
 - AC-S6-1 Price badge, variant "List price only": a "Box" checkbox appears; ticking it draws the box in Box Fill with Corner Radius, text in Text Colour; untick draws no box. Saved documents without the flag print as before (no box).
 - AC-S6-2 A boxed badge shows the same corner and edge handles as a polygon when selected; dragging makes the box a slanted callout on canvas and in the PDF; the price text stays centred.
 - AC-S6-3 Promo variant is unchanged (always boxed).
+- AC-S6-4 Price badge inspector shows the same typography controls as a text layer; changing font family, size, bold/italic/underline/strike, weight, align, line height and letter spacing changes the figure on canvas and in the PDF identically.
+- AC-S6-5 A saved badge without these fields renders exactly as before.

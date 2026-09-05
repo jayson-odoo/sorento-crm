@@ -163,3 +163,12 @@ Findings, all on the same lane:
   centred in the layer box.
 - Review should-fix 1 and 2 (relative font path in the browser; freeze the read-only decision
   per edit session) and nits 4-9 land in the same pass.
+- **S6b price badge typography.** The badge's figure has no text controls; a text layer has
+  Font Family (+ Upload font), Font Size, B/I/U/S, Font Weight, Colour, Align, Line Height,
+  Letter Spacing. `PriceBadgeLayerProps` gains the same optional typography fields as
+  `TextLayerProps` (`fontFamily, fontSize, fontWeight, italic, underline, strikethrough,
+  align, lineHeight, letterSpacing`); absent = today's look, so saved badges print unchanged.
+  The Inspector's typography block is extracted from the text section into one shared
+  component used by both the text and the price badge sections. Both renderers apply the
+  fields to the badge's figure; the struck LP line, SP and NETT parts keep their proportion to
+  the figure exactly as they scale today. Text Colour stays the badge's colour field.
