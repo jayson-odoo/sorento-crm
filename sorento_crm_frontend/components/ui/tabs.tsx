@@ -4,17 +4,25 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { Tabs as TabsPrimitive } from 'radix-ui';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useHorizontalOverflow } from '@/hooks/use-horizontal-overflow';
 import { PRESSED_CLASS } from '@/components/ui/primitive-classes';
+import { Button } from '@/components/ui/button';
+import { useReducedMotion } from '@/lib/motion';
 
 // Variants for TabsList
 const tabsListVariants = cva(
   // The list owns its scroller. Without one, Settings hid 7 of its 10 tabs at
   // 375 and the Product create strip overlapped five pills; with `max-w-full` +
   // `min-w-0` the strip scrolls instead of widening the page. The scrollbar is
-  // hidden because it would sit on top of the tab labels, so the right-edge mask
-  // (driven by `data-fade`) is what says there is more to the right.
-  'flex items-center shrink-0 min-w-0 max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden data-[fade=true]:[mask-image:linear-gradient(to_right,black_calc(100%-24px),transparent)]',
+  // hidden because it would sit on top of the tab labels, so a mask on
+  // whichever edge(s) still have more to show (`data-fade-start` /
+  // `data-fade-end`, from `useHorizontalOverflow`) is what says so instead -
+  // one mask, one, two or the two combined stops depending on which edges fade.
+  'flex items-center shrink-0 min-w-0 max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ' +
+    'data-[fade-start=true]:data-[fade-end=false]:[mask-image:linear-gradient(to_right,transparent,black_24px)] ' +
+    'data-[fade-end=true]:data-[fade-start=false]:[mask-image:linear-gradient(to_right,black_calc(100%-24px),transparent)] ' +
+    'data-[fade-start=true]:data-[fade-end=true]:[mask-image:linear-gradient(to_right,transparent,black_24px,black_calc(100%-24px),transparent)]',
   {
   variants: {
     variant: {
@@ -168,7 +176,8 @@ function TabsList({
   ref: callerRef,
   ...props
 }: React.ComponentProps<typeof TabsPrimitive.List> & VariantProps<typeof tabsListVariants>) {
-  const { ref: scrollerRef, isFading } = useHorizontalOverflow<HTMLDivElement>();
+  const { ref: scrollerRef, isFadingStart, isFadingEnd } = useHorizontalOverflow<HTMLDivElement>();
+  const prefersReducedMotion = useReducedMotion();
 
   // The list needs its own ref to measure the overflow, but it is not entitled to
   // the caller's: placing ours after {...props} silently dropped one.
@@ -181,26 +190,108 @@ function TabsList({
     [scrollerRef, callerRef],
   );
 
+  // A trackpad and shift+wheel already move an overflowing strip sideways -
+  // the browser reads those as a horizontal delta on its own. A plain
+  // vertical wheel (any ordinary mouse) does not, and left the strip exactly
+  // where it last scrolled with no way for that user to move it (prod
+  // defect, 5 Sep). `{ passive: false }` is required for `preventDefault` to
+  // take effect, and React's own `onWheel` cannot be marked passive, hence a
+  // manual listener. Anything already read as horizontal, or a list that
+  // fits, is left alone so the page keeps scrolling normally.
+  React.useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const onWheel = (event: WheelEvent) => {
+      if (el.scrollWidth - el.clientWidth <= 1) return;
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      el.scrollLeft += event.deltaY;
+      event.preventDefault();
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [scrollerRef]);
+
+  // Keeping the active/focused tab in view: Radix computes `data-state` on
+  // `TabsPrimitive.Trigger` itself from its own (unexported) context, and a
+  // context change re-renders that trigger directly rather than this
+  // wrapper - a plain effect here would never re-fire on a later value
+  // change. A `MutationObserver` on the list is the one place that reliably
+  // sees every `data-state` flip, mount included, without TabsList having to
+  // duplicate Radix's own active-value tracking.
+  React.useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const revealActiveTab = () => {
+      const active = el.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
+      active?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    };
+    revealActiveTab();
+    const observer = new MutationObserver(revealActiveTab);
+    observer.observe(el, { attributes: true, attributeFilter: ['data-state'], subtree: true });
+    return () => observer.disconnect();
+  }, [scrollerRef]);
+
+  const scrollByChevron = (direction: 1 | -1) => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    el.scrollBy({ left: direction * el.clientWidth * 0.8, behavior: prefersReducedMotion ? 'auto' : 'smooth' });
+  };
+
   return (
     <TabsContext.Provider value={{ variant: variant || 'line', size: size || 'md' }}>
-      <TabsPrimitive.List
-        data-slot="tabs-list"
-        data-fade={isFading}
-        className={cn(tabsListVariants({ variant, shape, size }), className)}
-        {...props}
-        ref={mergedRef}
-      />
+      <div className="relative">
+        {isFadingStart && (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            aria-label="Scroll tabs left"
+            onClick={() => scrollByChevron(-1)}
+            className="absolute left-0.5 top-1/2 z-10 size-7 -translate-y-1/2 rounded-full"
+          >
+            <ChevronLeft />
+          </Button>
+        )}
+        <TabsPrimitive.List
+          data-slot="tabs-list"
+          data-fade-start={isFadingStart}
+          data-fade-end={isFadingEnd}
+          className={cn(tabsListVariants({ variant, shape, size }), className)}
+          {...props}
+          ref={mergedRef}
+        />
+        {isFadingEnd && (
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            aria-label="Scroll tabs right"
+            onClick={() => scrollByChevron(1)}
+            className="absolute right-0.5 top-1/2 z-10 size-7 -translate-y-1/2 rounded-full"
+          >
+            <ChevronRight />
+          </Button>
+        )}
+      </div>
     </TabsContext.Provider>
   );
 }
 
-function TabsTrigger({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
+function TabsTrigger({ className, onFocus, ...props }: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
   const { variant, size } = React.useContext(TabsContext);
 
   return (
     <TabsPrimitive.Trigger
       data-slot="tabs-trigger"
       className={cn(tabsTriggerVariants({ variant, size }), className)}
+      // Keyboard/roving-focus navigation can move the focused tab off-screen
+      // on a long strip; this keeps it visible the moment focus lands,
+      // independent of the list's own MutationObserver (which only fires on
+      // a `data-state` change, i.e. once the tab is also selected).
+      onFocus={(event) => {
+        onFocus?.(event);
+        event.currentTarget.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+      }}
       {...props}
     />
   );
