@@ -1158,6 +1158,71 @@ class TestMissLaneProbesAndFamilyFetch:
         assert out["dym_offer"].get("ttl") == 3
         assert out["dym_offer"].get("picked") == []
 
+    def test_a_failed_dym_probe_still_offers_the_did_you_mean(self) -> None:
+        """`dym-probe` is the ONE node in `sub-miss-suggest-live/workflow.json` (and the
+        same node on the live spine) that carries an `onError`, and it is
+        `continueRegularOutput`: the probe fails, an item is still emitted,
+        `dym-annotate` runs on it and the customer gets the BARE offer. Unwrapped, an
+        MCP timeout here propagates out of `complete_answer` and the turn answers with
+        `GENERIC_ERROR_REPLY` instead."""
+        from app.services.chatbot.lanes.business.miss_suggest import run_miss_lane
+        from app.services.chatbot.lanes.business.services import AnswerServices
+
+        parser = {
+            "message_type": "business_query",
+            "intent_hint": "check_stock",
+            "domain_hint": "inventory",
+            "user_goal": "stock for SRTWC286",
+            "entities": [{"hint": "product", "raw": "SRTWC286"}],
+            "access_levels": [],
+        }
+        resolved = {
+            "by_entity_type": {},
+            "unresolved_tokens": ["SRTWC286"],
+            "resolutions": [
+                {
+                    "token": "SRTWC286",
+                    "matches": [
+                        {
+                            "entity_type": "product",
+                            "canonical_code": "SRTWC286-SH",
+                            "uuid": "11111111-1111-1111-1111-111111111111",
+                            "match_tier": "prefix",
+                        }
+                    ],
+                }
+            ],
+        }
+        # `gate_debug.domain` is inventory, so `sibling-gate` is FALSE and the turn takes
+        # the `dym-transform -> dym-probe` leg rather than the family one.
+        gate = {
+            "gate_passed": False,
+            "gate_reason": "no exact match",
+            "gate_debug": {"domain": "inventory"},
+            "require_specific": False,
+            "compatible_entities": [],
+        }
+        probes: list[str] = []
+
+        def mcp_probe(name: str, args: dict) -> dict:
+            probes.append(name)
+            raise RuntimeError("MCP read timed out")
+
+        out = run_miss_lane(
+            {"escalate_message": "Could not find product SRTWC286.", "is_clarification": False},
+            parser=parser,
+            resolved=resolved,
+            gate=gate,
+            services=AnswerServices(mcp_probe=mcp_probe, family_fetch=lambda q: {"data": []}),
+            build_result={"has_result": False},
+        )
+
+        assert probes, "the did-you-mean probe never ran - this test grades the wrong branch"
+        offer = out.get("dym_offer") or {}
+        assert [c["code"] for c in offer.get("candidates") or []] == ["SRTWC286-SH"], (
+            "a failed dym-probe must still reach the offer (onError: continueRegularOutput)"
+        )
+
     def test_family_fetch_takes_a_query_string_never_a_raw_url(self) -> None:
         """D10/H52 (family-fetch's own httpRequest node hits `https://72.62.195.20/...`
         directly today - the plan's H52 disposition is `fix S6b (config URL)`, and

@@ -1238,15 +1238,24 @@ def run_miss_lane(
         )
         return _compose(miss_suggest_result(plan, dym_annotate=annotated))
 
-    probe = services.mcp_probe(
-        plan.get("probe_tool"),
-        _probe_args(
-            plan.get("dym_probe_entities") or [],
-            parser=parser,
-            contact_id=contact_id,
-            space_id=space_id,
-        ),
-    )
+    try:
+        probe = services.mcp_probe(
+            plan.get("probe_tool"),
+            _probe_args(
+                plan.get("dym_probe_entities") or [],
+                parser=parser,
+                contact_id=contact_id,
+                space_id=space_id,
+            ),
+        )
+    except Exception:  # noqa: BLE001 - `dym-probe` carries onError: continueRegularOutput
+        # The ONLY node in `sub-miss-suggest-live` (and the same node on the spine) with an
+        # `onError`, and it is `continueRegularOutput`: a failed probe still emits an item,
+        # `dym-annotate` runs on it, and the customer gets the BARE did-you-mean offer.
+        # `sibling-probe`, `promo-dym-probe` and `family-fetch` carry no `onError`, which is
+        # why their calls above are deliberately unwrapped.
+        logger.warning("chatbot: did-you-mean probe did not run", exc_info=True)
+        probe = {"error": "probe failed"}
     annotated = dym_annotate(probe, payload=payload, transform=plan)
     return _compose(miss_suggest_result(plan, dym_annotate=annotated))
 
