@@ -594,6 +594,7 @@ def render(data: dict) -> str:
     lines.append("| node | branch | real captures | other | gate 0 |")
     lines.append("| --- | --- | ---: | ---: | --- |")
     blocking: list[str] = []
+    blocking_nodes: set[str] = set()
     exhausted: list[str] = []
     for node in sorted(data["rows"]):
         for branch in sorted(data["rows"][node]):
@@ -603,6 +604,7 @@ def render(data: dict) -> str:
             state, blocks = _cell_state(node, branch, real)
             if blocks:
                 blocking.append(f"{node}/{branch} ({real} of {CAPTURES_PER_BRANCH})")
+                blocking_nodes.add(node)
             elif state.startswith("exhausted"):
                 exhausted.append(f"{node}/{branch} ({real})")
             lines.append(f"| `{node}` | `{branch}` | {real} | {other} | {state} |")
@@ -615,6 +617,15 @@ def render(data: dict) -> str:
             f"**BLOCKED: {len(blocking)} cell(s) short in a pool that was not fully scanned.** "
             "Capture more turns for: " + ", ".join(blocking) + "."
         )
+        unpooled = sorted(node for node in blocking_nodes if _pool_for(node) is None)
+        if unpooled:
+            lines.append("")
+            lines.append(
+                "Owed by the n8n side, and the bar does not move to meet it: a capture run "
+                "that produces the missing turns, or a scan report recording the pool as "
+                "exhausted (a `CAPTURE_REPORT` entry, the way every other slug carries "
+                "one). No pool is on record at all for: " + ", ".join(unpooled) + "."
+            )
     else:
         lines.append(
             "**Not blocked.** Every cell is either met, exhausted in a fully-scanned pool, "
