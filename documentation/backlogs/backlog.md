@@ -165,3 +165,8 @@ removed copy, for whoever restores a UI for them:
   an ingested sales order changed the plan and there is no change batch to show. Fix: synthesise a
   `Diff` from the before/after line sets in `DocumentIngestService._sync_lines` and call
   `build_batch` from the route hook. | same plan | Low | Open |
+- **BL-058** (2026-09-05, real-company load via the ESB): `sales_agents` rows created by the
+  masters ingest (A2 `EntitySpec`) carry `source = 'manual'` (the column default) instead of a
+  value naming the ESB; the xlsx path stamps `'import'`. Cosmetic today, misleading on the agent
+  master screen. Fix: the sales_agents EntitySpec sets `source = 'autocount'` on create, never on
+  update. | `plans/autocount/PLAN-autocount-document-ingest-v2.md` | Low | Open |
