@@ -32,6 +32,7 @@ from functools import cmp_to_key
 from typing import Any, Literal
 
 from app.services.chatbot import jsc
+from app.services.chatbot.lanes.business.fetch import space_id_or_default
 
 # The did-you-mean helpers the JS carries in BOTH bodies with a "keep in lockstep" note.
 # `miss_suggest` owns them because that is where their node lives; this file imports them
@@ -600,12 +601,16 @@ def crossdomain_probe_args(
     parser: dict[str, Any] | None,
     entities_names: Any,
     contact_id: Any,
-    space_id: Any = "364817",
+    space_id: Any = None,
 ) -> dict[str, Any]:
     """`crossdomain-probe`'s `sub-get-results` inputs, key for key.
 
     `access_levels` is the SORTED entitlement intersected with what the parser stated, and
     only when the entitlement read ran at all - otherwise the parser's own list, unchanged.
+
+    `space_id` goes through the SAME fallback the fetch and the did-you-mean probes use
+    (`fetch.space_id_or_default`), so an install with no default respond workspace row
+    cannot have this probe send `null` while the other three send n8n's literal.
     """
     xd = zeroset if isinstance(zeroset, dict) else {}
     qf = parser if isinstance(parser, dict) else {}
@@ -627,7 +632,7 @@ def crossdomain_probe_args(
             "user_goal": qf.get("user_goal") if qf.get("user_goal") is not None else None,
             "access_levels": access_levels,
             "contact_id": jsc.js_string(contact_id) if contact_id is not None else None,
-            "space_id": space_id,
+            "space_id": space_id_or_default(space_id),
             "is_active": qf.get("is_active") if qf.get("is_active") is not None else None,
         },
         "user_prompt": (
@@ -815,7 +820,7 @@ def run_crossdomain(
     entities_names: Any,
     services: Any,
     contact_id: Any,
-    space_id: Any = "364817",
+    space_id: Any = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """`crossdomain-zeroset -> crossdomain-gate -> crossdomain-probe -> crossdomain-render`.
