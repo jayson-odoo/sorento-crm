@@ -13,7 +13,7 @@ and the RQ task the offload runs on). It is a thin adapter: validate, call `run_
 serialise, log. Every call writes an `integration_log` on success AND failure, the same as
 the ideation turn and the conversation-variables endpoint.
 
-**In S7 mode (`CHATBOT_ORDERING_ENABLED`) `/turn` is the only trigger**: it runs the whole
+**In S7 mode (`system_settings.chatbot_ordering_enabled`) `/turn` is the only trigger**: it runs the whole
 turn, orders it per contact, and returns the finished reply and actions, so `/complete`
 answers 410 Gone. The route is still declared because n8n keeps calling it until the S7
 promote lands on the n8n side; it is deleted at S8 (H6, AC-701).
@@ -43,9 +43,9 @@ from sqlalchemy.orm import Session
 
 # The engine's session seam. See the module docstring: module-level on purpose, and
 # the single point every test patches to keep the engine off the shared database.
-from app.config import settings
 from app.database import SessionLocal, get_db
 from app.models.chatbot_turn import ChatbotTurn
+from app.models.user import SystemSetting
 from app.dependencies import get_external_api_user
 from app.schemas.chatbot_turn import ChatbotTurnResponse
 from app.schemas.integration import IntegrationLogCreate
@@ -147,15 +147,21 @@ S7_TAIL_GONE_MESSAGE = (
 )
 
 
-def _s7_mode() -> bool:
-    """`CHATBOT_ORDERING_ENABLED` - the one flag that says the CRM owns the whole turn.
+def _s7_mode(db: Session) -> bool:
+    """`system_settings.chatbot_ordering_enabled` - the CRM owns the whole turn.
 
-    It is the same flag that turns per-contact ordering on because they are the same
+    It is the same switch that turns per-contact ordering on because they are the same
     promote: the thin spine posts every message to `/turn`, the CRM orders them per
-    contact and answers each one itself. Two flags for one cutover would only let an
+    contact and answers each one itself. Two switches for one cutover would only let an
     operator half-arrive.
+
+    A settings COLUMN since AC-810, read on the REQUEST session both callers already hold
+    (no extra session, one query on the way to the 410) rather than from the environment,
+    so the owner can turn it off from Settings > Chatbot and have the next call answer 200
+    without a deploy - which is the whole point of the rollback path.
     """
-    return bool(getattr(settings, "chatbot_ordering_enabled", False))
+    row = db.query(SystemSetting).first()
+    return bool(getattr(row, "chatbot_ordering_enabled", False)) if row is not None else False
 
 
 @router.post("/turn", response_model=TurnResponse, status_code=status.HTTP_200_OK)
@@ -445,7 +451,7 @@ def chat_turn_complete(
     to_reraise: HTTPException | None = None
 
     try:
-        if _s7_mode():
+        if _s7_mode(db):
             raise AppException(
                 status_code=status.HTTP_410_GONE,
                 message="This turn engine completes its own turns.",
@@ -625,7 +631,7 @@ def chat_turn_complete_by_body(
     two queries the lookup costs on every stale call.
     """
     try:
-        if _s7_mode():
+        if _s7_mode(db):
             raise AppException(
                 status_code=status.HTTP_410_GONE,
                 message="This turn engine completes its own turns.",

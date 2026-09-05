@@ -97,28 +97,12 @@ class Settings(BaseSettings):
     # forever - a ghost in the trace list that Retry (failed turns only, R4) cannot touch.
     chatbot_delegated_ttl_minutes: int = 10  # CHATBOT_DELEGATED_TTL_MINUTES
 
-    # S7 MODE (AC-701, AC-709, AC-710). OFF until the owner promotes S7, because until
-    # then n8n's own dispatcher is still serialising per contact and doing it twice would
-    # only add the CRM's wait to n8n's.
+    # S7 MODE and the business lane's own switch are NOT here (AC-810). Both are columns
+    # on the `system_settings` row now, toggled on System > Settings > Chatbot and read
+    # per turn, because the owner turns them on and off while watching live turns and an
+    # environment variable makes each flip a deploy. The two settings below stay here:
+    # they are deployment properties of THIS box, not owner decisions.
     #
-    # It switches on TWO halves of one promote, and they are one flag because they are one
-    # cutover - the thin spine posts every message to `/turn` and the CRM answers it:
-    #
-    #   * per-contact ordering: a turn takes a redis ticket for its contact and waits for
-    #     the ticket before it; different contacts never wait on each other;
-    #   * the CRM owns the tail: `POST /chat/turn` returns the finished reply, and
-    #     `/turn/{id}/complete` answers 410 Gone (H6, one trigger).
-    #
-    # **Precondition for turning it on: the CRM must complete every lane** - S6c landed
-    # and every branch kind listed in `system_settings.chatbot_completed_lanes`. Flip it
-    # while a lane still delegates and that lane's turns have nobody to finish them, so the
-    # engine refuses them rather than leaving ghosts: `failed` at the stage they reached,
-    # naming the lane and this setting, with today's error reply and Retry available
-    # (AC-715, LIVE turns only - a dry run delegates as before and records the finding on
-    # its trace, so the harness that exists to catch this can still run). The symptom is
-    # immediate and the fix is this flag back off.
-    # CHATBOT_ORDERING_ENABLED.
-    chatbot_ordering_enabled: bool = False
     # The longest a turn waits for its contact's earlier turns. Past it the turn is failed
     # at stage `queued` with today's error reply rather than holding the request open: n8n's
     # HTTP node waits 60 s, so a wait that outlives that would turn one stuck turn into a
@@ -132,14 +116,6 @@ class Settings(BaseSettings):
     # How long the request waits for the offloaded turn before giving up on it.
     # CHATBOT_TURN_WAIT_SECONDS.
     chatbot_turn_wait_seconds: int = 60
-    # Chatbot turn engine: run the ported business lane (resolve + gate, S6a) in process.
-    # OFF by default, and that default is the strangler's whole point (D7). Until the n8n
-    # edits in documentation/plans/chatbot/n8n-changes.md section S6a are made, n8n STILL
-    # calls `sub-resolve-and-gate` itself, so turning this on runs the resolver twice per
-    # business turn - including the spec-search model call. Enable it in one environment to
-    # gather shadow evidence, confirm `delegate_payload` matches what n8n produced, then
-    # make the n8n edit and leave it on. CHATBOT_BUSINESS_LANE_ENABLED.
-    chatbot_business_lane_enabled: bool = False
     # Per-MCP-call bound for the chatbot's fetch step. The plan's capacity section says 10
     # seconds; the AI assistant's own 20 is a different budget for a different surface (a
     # user watching a screen, not a customer waiting inside a whole WhatsApp turn's latency
