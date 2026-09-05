@@ -81,47 +81,16 @@ def aggregate_response_intro(result: dict[str, Any] | None) -> list[Any]:
 
 # --------------------------------------------------------------------------- #
 # H45 - a row already in the answer is never offered again.
+#
+# There is no code-keyed "already shown" predicate here, and that is deliberate. The
+# live exclusion is `build-suggest-offer.js:288-323`'s answered-token OUTCOME rule: a
+# candidate whose UUID is in `gate.compatible_entities` WAS QUERIED this turn, so the
+# answer already covers it and offering it back is a dead end. It is ported verbatim in
+# `build_suggest_offer` below (the `queried` block), keyed by uuid over the same
+# `_QUERIED_TYPES` list the transformer maps to CRM params, and it is what AC-609 /
+# H45 are graded on. A second, code-keyed predicate beside it would be an improvement
+# with no counterpart in any shipping body, which D8 puts after parity, not before it.
 # --------------------------------------------------------------------------- #
-
-
-def _code_key(value: Any) -> str:
-    """The one code comparison this lane uses: trimmed, upper, nothing else.
-
-    Every code compare in the ported bodies is `String(x).trim().toUpperCase()`, so the
-    predicate is written ONCE here rather than re-derived per call site - which is what
-    let a did-you-mean re-offer a row the answer had already shown (H45).
-    """
-    return jsc.nullish_str(value).strip().upper()
-
-
-def exclude_already_shown(candidates: Any, *, shown_codes: Any) -> list[Any]:
-    """H45: drop every candidate whose code is already in the answer.
-
-    ONE outcome-level predicate, applied where the offer is built, rather than a guard
-    repeated in each renderer - the hazard was that the renderers disagreed about what
-    "already shown" meant.
-    """
-    # Any iterable: the callers hand this a set, a list or a generator depending on where
-    # the "already shown" codes were collected, and the predicate is about the CODES, not
-    # about which container they arrived in.
-    raw_shown: Any = [] if shown_codes is None else shown_codes
-    if isinstance(raw_shown, (str, bytes)):
-        raw_shown = [raw_shown]
-    shown = {_code_key(c) for c in raw_shown if _code_key(c)}
-    candidate_list = list(candidates) if isinstance(candidates, (list, tuple, set)) else jsc.array(candidates)
-    if not shown:
-        return list(candidate_list)
-    kept: list[Any] = []
-    for candidate in candidate_list:
-        code = candidate if isinstance(candidate, str) else (
-            jsc.get(candidate, "code")
-            or jsc.get(candidate, "canonical_code")
-            or jsc.get(candidate, "label")
-        )
-        if _code_key(code) in shown:
-            continue
-        kept.append(candidate)
-    return kept
 
 
 # --------------------------------------------------------------------------- #

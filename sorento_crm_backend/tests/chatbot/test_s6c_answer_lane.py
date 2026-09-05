@@ -28,7 +28,6 @@ n8n node whose by-name reads it reproduces)**:
                         sibling_probe=None, sibling_transform=None) -> dict
     dispatch(result) -> Literal["sub_answer", "miss_suggest"]           # If6
     aggregate_response_intro(result) -> list[str]                       # Aggregate1
-    exclude_already_shown(candidates, *, shown_codes) -> list           # H45
     completed_lanes(db) -> list[str]              # system_settings.chatbot_completed_lanes, default []
     lane_disposition(branch_kind, *, completed_lanes) -> Literal["complete", "delegate"]
 
@@ -1241,34 +1240,111 @@ class TestMissLaneProbesAndFamilyFetch:
 
 
 # --------------------------------------------------------------------------- #
-# AC-609 / H45: did-you-mean never re-offers a row the answer already showed. ONE
-# outcome-level predicate (not scattered per-mechanism across dym-transform,
-# dym-annotate and build-suggest-offer separately).
+# AC-609 / H45: did-you-mean never re-offers a row the answer already showed.
+#
+# ONE outcome-level predicate, and it is the LIVE one: `build-suggest-offer.js:288-323`'s
+# answered-token rule. "Already shown" means "queried this turn", read off
+# `gate.compatible_entities` by UUID - outside REQUIRE_SPECIFIC domains the gate lifts
+# every compatible match of an ambiguous token into that list and the fetch queries them
+# all, so the miss that reaches the offer is the CRM's ANSWER over those candidates.
+# Applied per CANDIDATE, not per token: a candidate the gate never lifted is still a real
+# suggestion, and a token left with none is named in `dym_answered_tokens` rather than
+# silently dropped. Graded through `run_miss_lane`, the lane's own entry point, so the
+# rule is proven where the offer is actually built.
 # --------------------------------------------------------------------------- #
 
 
 class TestH45NoReofferOfAnsweredRows:
-    def test_candidate_already_in_the_answer_is_dropped(self) -> None:
-        from app.services.chatbot.lanes.business.answer import exclude_already_shown
+    _UF = "11111111-1111-1111-1111-111111111111"
+    _200 = "22222222-2222-2222-2222-222222222222"
+    _PARSER = {
+        "message_type": "business_query",
+        "intent_hint": "check_stock",
+        "domain_hint": "inventory",
+        "user_goal": "stock for SRTWC8517",
+        "entities": [{"hint": "product", "raw": "SRTWC8517"}],
+        "access_levels": [],
+    }
 
-        candidates = [{"code": "SRTWC286-SH"}, {"code": "SRTWC8517"}]
-        result = exclude_already_shown(candidates, shown_codes={"SRTWC286-SH"})
-        assert [c["code"] for c in result] == ["SRTWC8517"]
+    @property
+    def _resolved(self) -> dict:
+        return {
+            "by_entity_type": {},
+            "unresolved_tokens": ["SRTWC8517"],
+            "resolutions": [
+                {
+                    "token": "SRTWC8517",
+                    "matches": [
+                        {
+                            "entity_type": "product",
+                            "canonical_code": "SRTWC8517-SH-UF",
+                            "uuid": self._UF,
+                            "match_tier": "prefix",
+                        },
+                        {
+                            "entity_type": "product",
+                            "canonical_code": "SRTWC8517-SH-200",
+                            "uuid": self._200,
+                            "match_tier": "prefix",
+                        },
+                    ],
+                }
+            ],
+        }
 
-    def test_nothing_shown_keeps_every_candidate(self) -> None:
-        from app.services.chatbot.lanes.business.answer import exclude_already_shown
+    def _offer(self, compatible_entities: list[dict]) -> dict:
+        from app.services.chatbot.lanes.business.miss_suggest import run_miss_lane
+        from app.services.chatbot.lanes.business.services import AnswerServices
 
-        candidates = [{"code": "A"}, {"code": "B"}]
-        assert exclude_already_shown(candidates, shown_codes=set()) == candidates
+        return run_miss_lane(
+            {"escalate_message": "Could not find product SRTWC8517.", "is_clarification": False},
+            parser=self._PARSER,
+            resolved=self._resolved,
+            gate={
+                "gate_passed": False,
+                "gate_reason": "no exact match",
+                "gate_debug": {"domain": "inventory"},
+                "require_specific": False,
+                "compatible_entities": compatible_entities,
+            },
+            services=AnswerServices(
+                mcp_probe=lambda name, args: {"answers": [], "has_result": False},
+                family_fetch=lambda query: {"data": []},
+            ),
+            build_result={"has_result": False},
+        )
 
-    def test_predicate_is_case_and_shape_insensitive_like_every_other_code_compare(
-        self,
-    ) -> None:
-        from app.services.chatbot.lanes.business.answer import exclude_already_shown
+    @staticmethod
+    def _entity(uuid: str, code: str) -> dict:
+        return {"entity_type": "product", "uuid": uuid, "code": code}
 
-        candidates = [{"code": "srtwc286-sh"}]
-        result = exclude_already_shown(candidates, shown_codes={"SRTWC286-SH"})
-        assert result == []
+    def test_a_candidate_the_answer_already_queried_is_not_offered_again(self) -> None:
+        out = self._offer([self._entity(self._UF, "SRTWC8517-SH-UF")])
+        codes = [c["code"] for c in (out.get("dym_offer") or {}).get("candidates") or []]
+        assert codes == ["SRTWC8517-SH-200"], (
+            "SRTWC8517-SH-UF was queried this turn (its uuid is in compatible_entities), "
+            f"so the offer must not hand it back: {codes}"
+        )
+
+    def test_a_token_whose_candidates_were_all_queried_leaves_the_offer_named(self) -> None:
+        out = self._offer(
+            [
+                self._entity(self._UF, "SRTWC8517-SH-UF"),
+                self._entity(self._200, "SRTWC8517-SH-200"),
+            ]
+        )
+        assert out.get("dym_offer") is None, "the whole token was answered - there is nothing to offer"
+        assert out.get("dym_answered_tokens") == ["SRTWC8517"], (
+            "a token that loses every candidate is NAMED, never a silent drop"
+        )
+
+    def test_an_empty_compatible_entities_excludes_nothing(self) -> None:
+        """UAC SR-U5: a genuine miss is never silenced. Nothing was queried, so both
+        candidates are still real suggestions."""
+        out = self._offer([])
+        codes = [c["code"] for c in (out.get("dym_offer") or {}).get("candidates") or []]
+        assert codes == ["SRTWC8517-SH-UF", "SRTWC8517-SH-200"]
+        assert out.get("dym_answered_tokens") is None
 
 
 # --------------------------------------------------------------------------- #
