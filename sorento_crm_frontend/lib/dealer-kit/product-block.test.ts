@@ -362,16 +362,29 @@ describe('buildAlternativesRow', () => {
     expect(layers.some((layer) => layer.props.kind === 'group')).toBe(false);
   });
 
-  it('slots each block own code and name, so the resolver rule can apply to them (r5 review)', () => {
+  it('blanks a duplicate name at build time instead of slot-binding it to the tag (r5 fix)', () => {
     const layers = buildAlternativesRow(
-      [product({ id: 'a', code: 'TAP-1' }), product({ id: 'b', code: 'TAP-2' })],
+      [
+        product({ id: 'a', code: 'TAP-1', name: 'Tap One' }),
+        product({ id: 'b', code: 'TAP-2', name: 'tap-2' }),
+      ],
       OPTS,
     );
 
-    const codeLayers = layers.filter((layer) => layer.slot_binding === 'code');
-    const nameLayers = layers.filter((layer) => layer.slot_binding === 'name');
-    expect(codeLayers).toHaveLength(2);
-    expect(nameLayers).toHaveLength(2);
+    const textValues = layers
+      .filter((layer) => layer.props.kind === 'text')
+      .map((layer) => (layer.props as { text: string }).text);
+
+    expect(textValues).toContain('TAP-1');
+    expect(textValues).toContain('Tap One');
+    expect(textValues).toContain('TAP-2');
+    // name === code (case-insensitive) blanks to '' rather than repeating the code
+    expect(textValues.filter((text) => text === '')).toHaveLength(1);
+
+    // neither layer is bound to a slot - an ungrouped slot resolves against the
+    // WHOLE tag's binding, so a slot here would make every alternative print
+    // the tag's own product instead of its own (D28/r5 review)
+    expect(layers.every((layer) => layer.slot_binding === null)).toBe(true);
   });
 });
 

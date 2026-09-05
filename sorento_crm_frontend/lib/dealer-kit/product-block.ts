@@ -665,7 +665,6 @@ export function buildAlternativesRow(
           y: 21,
           w: ALTERNATIVE_WIDTH_MM,
           h: 5,
-          slot: 'code',
           props: text(product.code, { fontSize: 8, fontWeight: 700, align: 'center' }),
         },
         {
@@ -674,8 +673,7 @@ export function buildAlternativesRow(
           y: 26,
           w: ALTERNATIVE_WIDTH_MM,
           h: 5,
-          slot: 'name',
-          props: text(product.name, { fontSize: 7, align: 'center' }),
+          props: text(nameOrBlankIfCode(product.name, product.code), { fontSize: 7, align: 'center' }),
         },
         {
           type: 'price_badge',
