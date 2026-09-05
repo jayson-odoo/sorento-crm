@@ -526,69 +526,83 @@ def run_turn(
     message_id = _message_id(envelope)
     dry_run = envelope.dry_run
 
-    with _session(session_factory) as db:
-        existing = _existing_turn(
-            db, contact_respond_id=contact_respond_id, message_id=message_id
-        )
-        retrying = existing if _awaiting_retry(existing) else None
-        if existing is not None and retrying is None:
-            # D15: the two injectors delivered the same respond message. No second turn
-            # runs, no second LLM call, and the caller's Switch on `duplicate` sends
-            # nothing.
-            return _duplicate_result(existing)
-        try:
-            row = _insert_turn(
-                db,
-                envelope=envelope,
-                contact_respond_id=contact_respond_id,
-                retrying=retrying,
-            )
-        except IntegrityError:
-            # The SELECT above is a TOCTOU window, not a lock: a webhook delivery racing a
-            # poller re-delivery can both miss and both insert. The unique index is the
-            # real guarantee, so the loser reads the winner's row rather than 500ing.
-            db.rollback()
-            winner = _select_turn(
-                db, contact_respond_id=contact_respond_id, message_id=message_id
-            )
-            if winner is None or _awaiting_retry(winner):
-                # Either some OTHER constraint failed, or two retries of one message
-                # raced - neither is a duplicate, and guessing would answer the customer
-                # from a turn that never ran.
-                raise
-            return _duplicate_result(winner)
-        turn_id = str(row.id)
-
-    # The stage the turn is currently in, for the catch-all below. A plain list because
-    # the inner stages update it and the handler reads it.
-    stage: list[str] = ["received"]
-    actions: list[dict[str, Any]] = []
     ordered = bool(getattr(settings, "chatbot_ordering_enabled", False))
     ticket: int | None = None
     redis = None
     try:
-        if ordered:
-            # AC-709. The ticket is taken HERE: after the row exists (so a queue timeout is
-            # a recorded turn, not a vanished one) and before any stage runs. `stage[0]`
-            # carries `queued` through the wait, so the handler below files a `QueueWait`
-            # under the stage it actually happened in without a special case (AC-710).
-            stage[0] = "queued"
-            redis = _ordering_redis()
+        with _session(session_factory) as db:
+            existing = _existing_turn(
+                db, contact_respond_id=contact_respond_id, message_id=message_id
+            )
+            retrying = existing if _awaiting_retry(existing) else None
+            if existing is not None and retrying is None:
+                # D15: the two injectors delivered the same respond message. No second turn
+                # runs, no second LLM call, and the caller's Switch on `duplicate` sends
+                # nothing. NO TICKET has been taken at this point, on purpose: a duplicate
+                # that took one and released it immediately would advance the counter past
+                # a turn that is still running and let its successor start beside it.
+                return _duplicate_result(existing)
+
+            if ordered:
+                # AC-709. The ticket is taken HERE - after the dedup read, before the row
+                # INSERT - and the position is the guarantee. `chatbot.turns.created_at`
+                # is this session's transaction start, i.e. the moment the request reached
+                # the engine; taking the ticket after the insert instead left the whole
+                # write between the two, and under a burst that window is tens of
+                # milliseconds of connection setup and commit. Two messages 50 ms apart
+                # then took their tickets in the WRONG order and the CRM answered them
+                # backwards - measured, 2 inversions in 6 turns, by
+                # `tests/chatbot/test_s7_poller_batch_order.py` before this moved.
+                redis = _ordering_redis()
+                try:
+                    ticket = dispatch.contact_ticket(redis, contact_respond_id)
+                except dispatch.ORDERING_ERRORS:
+                    # Redis is not answering. Run the turn UNORDERED rather than failing
+                    # it: out-of-order replies are a degradation, a chatbot that answers
+                    # nothing is an outage, and until this flag existed a redis blip cost
+                    # this path nothing at all.
+                    logger.warning(
+                        "chatbot ordering: redis is unavailable, running this turn for %s "
+                        "unordered",
+                        contact_respond_id,
+                        exc_info=True,
+                    )
+                    ticket = None
+
             try:
-                ticket = dispatch.contact_ticket(redis, contact_respond_id)
-            except dispatch.ORDERING_ERRORS:
-                # Redis is not answering. Run the turn UNORDERED rather than failing it:
-                # out-of-order replies are a degradation, a chatbot that answers nothing
-                # is an outage, and until this flag existed a redis blip cost this path
-                # nothing at all.
-                logger.warning(
-                    "chatbot ordering: redis is unavailable, running turn %s unordered",
-                    turn_id,
-                    exc_info=True,
+                row = _insert_turn(
+                    db,
+                    envelope=envelope,
+                    contact_respond_id=contact_respond_id,
+                    retrying=retrying,
                 )
-                ordered = False
-                ticket = None
-                stage[0] = "received"
+            except IntegrityError:
+                # The SELECT above is a TOCTOU window, not a lock: a webhook delivery
+                # racing a poller re-delivery can both miss and both insert. The unique
+                # index is the real guarantee, so the loser reads the winner's row rather
+                # than 500ing. The ticket it took is released by the `finally` below.
+                db.rollback()
+                winner = _select_turn(
+                    db, contact_respond_id=contact_respond_id, message_id=message_id
+                )
+                if winner is None or _awaiting_retry(winner):
+                    # Either some OTHER constraint failed, or two retries of one message
+                    # raced - neither is a duplicate, and guessing would answer the
+                    # customer from a turn that never ran.
+                    raise
+                return _duplicate_result(winner)
+            turn_id = str(row.id)
+
+        # The stage the turn is currently in, for the catch-all below. A plain list because
+        # the inner stages update it and the handler reads it.
+        stage: list[str] = ["received"]
+        actions: list[dict[str, Any]] = []
+        if ticket is not None:
+            # `stage[0]` carries `queued` through the wait, so the handler below files a
+            # `QueueWait` under the stage it actually happened in without a special case
+            # (AC-710). The wait itself happens after the row exists, so a queue timeout is
+            # a recorded turn and not a vanished one.
+            stage[0] = "queued"
         try:
             if ticket is not None:
                 try:
@@ -623,53 +637,52 @@ def run_turn(
                 actions=actions,
                 stage=stage,
             )
-        finally:
-            # AC-704. In a `finally`, and one that covers the WAIT as well as the stages,
-            # because the ONE thing worse than a failed turn is a failed turn that never
-            # releases its ticket: every later message from that contact would then wait
-            # out the whole queue window and fail as well, and the customer would watch one
-            # broken turn break the conversation. The turn most in need of releasing is the
-            # one that gave up waiting (AC-710) - it is the one whose predecessor may be
-            # dead - and a `finally` on the stages alone would be the only one to skip it.
-            #
-            # `mark_done` is monotone, so releasing out of order can never rewind the
-            # counter.
-            if ticket is not None:
-                try:
-                    dispatch.mark_done(redis, contact_respond_id, ticket)
-                except dispatch.ORDERING_ERRORS:
-                    # Best effort, same reasoning as the take above: if redis is down the
-                    # next turn for this contact cannot read the counter either, so it
-                    # runs unordered rather than waiting on a release that never lands.
-                    logger.warning(
-                        "chatbot ordering: could not release ticket %s for %s",
-                        ticket,
-                        contact_respond_id,
-                        exc_info=True,
-                    )
-    except Exception as exc:  # noqa: BLE001 - a failed turn is recorded, never dropped
-        message = f"{type(exc).__name__}: {exc}"
-        logger.exception("chatbot turn %s failed at stage %s", turn_id, stage[0])
-        turn_trace.record(
-            stage[0],  # type: ignore[arg-type]
-            status="failed",
-            summary="The turn stopped before it could be answered.",
-            why="Something the turn depends on did not respond as expected.",
-            facts={"stage": stage[0]},
-            error=message,
-            raw=None,
-        )
-        with _session(session_factory) as db:
-            _close_turn(
-                db,
-                turn_id,
+        except Exception as exc:  # noqa: BLE001 - a failed turn is recorded, never dropped
+            message = f"{type(exc).__name__}: {exc}"
+            logger.exception("chatbot turn %s failed at stage %s", turn_id, stage[0])
+            turn_trace.record(
+                stage[0],  # type: ignore[arg-type]
                 status="failed",
-                stage=stage[0],
-                branch_kind=None,
+                summary="The turn stopped before it could be answered.",
+                why="Something the turn depends on did not respond as expected.",
+                facts={"stage": stage[0]},
                 error=message,
-                records=turn_trace.records,
+                raw=None,
             )
-        return _failed_result(turn_id, stage[0], message, actions, dry_run)
+            with _session(session_factory) as db:
+                _close_turn(
+                    db,
+                    turn_id,
+                    status="failed",
+                    stage=stage[0],
+                    branch_kind=None,
+                    error=message,
+                    records=turn_trace.records,
+                )
+            return _failed_result(turn_id, stage[0], message, actions, dry_run)
+    finally:
+        # AC-704. In a `finally`, and one that covers the ROW INSERT and the WAIT as well
+        # as the stages, because the ONE thing worse than a failed turn is a failed turn
+        # that never releases its ticket: every later message from that contact would then
+        # wait out the whole queue window and fail as well, and the customer would watch
+        # one broken turn break the conversation. The turn most in need of releasing is
+        # the one that gave up waiting (AC-710) - it is the one whose predecessor may be
+        # dead - and a `finally` on the stages alone would be the only one to skip it.
+        #
+        # `mark_done` is monotone, so releasing out of order can never rewind the counter.
+        if ticket is not None:
+            try:
+                dispatch.mark_done(redis, contact_respond_id, ticket)
+            except dispatch.ORDERING_ERRORS:
+                # Best effort, same reasoning as the take above: if redis is down the next
+                # turn for this contact cannot read the counter either, so it runs
+                # unordered rather than waiting on a release that never lands.
+                logger.warning(
+                    "chatbot ordering: could not release ticket %s for %s",
+                    ticket,
+                    contact_respond_id,
+                    exc_info=True,
+                )
 
 
 def _ordering_redis() -> Any:
