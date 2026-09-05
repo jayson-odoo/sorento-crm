@@ -32,6 +32,15 @@ from functools import cmp_to_key
 from typing import Any, Literal
 
 from app.services.chatbot import jsc
+
+# The did-you-mean helpers the JS carries in BOTH bodies with a "keep in lockstep" note.
+# `miss_suggest` owns them because that is where their node lives; this file imports them
+# rather than re-deriving them, which is the drift those JS notes are warning about. The
+# leading underscores are the JS's own names, kept so a reader can grep one identifier
+# across the port and the body; the `_ms_` prefixes only disambiguate from this module's
+# same-named locals. The dependency runs ONE way at import time (answer -> miss_suggest);
+# the composer `build_suggest_offer` goes back the other way, which is why THAT import is
+# deferred to call time and documented at its site.
 from app.services.chatbot.lanes.business.miss_suggest import (
     _PRODUCT_CODE_RE as _PRODUCT_CODE_LABEL_RE,
     _cap3,
@@ -2556,6 +2565,16 @@ def build_suggest_offer(
                 # ALWAYS a numbered picker whenever at least one sibling exists, regardless of
                 # has-incoming (the owner reversed the earlier split). Has-incoming first, then
                 # code order, NO cap.
+                # `(Number(b.has) - Number(a.has)) || String(a.code).localeCompare(...)`.
+                # The tiebreak is CODE-POINT order here and ICU collation there, and the
+                # two disagree on punctuation and case: node orders `SRT_100, SRT-100,
+                # SRT1, srt100, SRT100, SRTA` where Python orders `SRT-100, SRT1, SRT100,
+                # SRTA, SRT_100, srt100`. Reproducing ICU needs PyICU, which is a new
+                # dependency for a tiebreak between two codes of the SAME product family;
+                # no captured turn disagrees (every graded `build-suggest-offer` replay is
+                # byte-equal). Registered as `divergences.SIBLING_TIEBREAK_IS_CODE_POINT`;
+                # the trigger for paying for ICU is a real family whose codes differ only
+                # in punctuation or case.
                 sibs.sort(key=lambda s: ((0 if s["has"] else 1), jsc.js_string(s["code"])))
                 exact_list = ", ".join(c.upper() for c in exact_codes)
                 numbered = "\n".join(

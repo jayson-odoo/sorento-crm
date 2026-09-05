@@ -231,6 +231,27 @@ CROSSDOMAIN_DYM_OFFER_DOMAIN_GUARD = Divergence(
 )
 
 
+# S6c. `build-suggest-offer`'s sibling picker breaks a has-incoming tie with
+# `String(a.code).localeCompare(String(b.code))`; the port uses Python's code-point
+# order. ICU treats punctuation and case differently: node sorts
+# `SRT_100, SRT-100, SRT1, srt100, SRT100, SRTA`, Python sorts
+# `SRT-100, SRT1, SRT100, SRTA, SRT_100, srt100`. Only reachable when one product family
+# holds two codes differing solely in punctuation or case, which no captured turn does -
+# every graded `build-suggest-offer` replay is byte-equal. Recorded rather than fixed
+# because the fix is a new dependency (PyICU) for a tiebreak inside one family; the
+# trigger to pay for it is a real family of that shape.
+SIBLING_TIEBREAK_IS_CODE_POINT = Divergence(
+    node="build-suggest-offer",
+    fixture=None,
+    hazard="platform (localeCompare vs code-point order)",
+    reason=(
+        "the sibling picker's tiebreak is ICU collation in n8n and code-point order in "
+        "Python. Not fixture-visible: no captured family holds two codes differing only "
+        "in punctuation or case."
+    ),
+)
+
+
 def find(node: str, fixture: str) -> Divergence | None:
     """The registered divergence covering this replay, or None."""
     for d in DIVERGENCES:
