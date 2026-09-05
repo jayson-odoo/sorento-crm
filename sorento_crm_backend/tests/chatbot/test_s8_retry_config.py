@@ -260,6 +260,27 @@ class TestUrlValidationOnSave:
             ("https://10.0.0.1/webhook/x", ("private",)),
             ("https://169.254.169.254/webhook/x", ("link-local", "metadata", "private")),
             ("https://[::1]/webhook/x", ("loopback",)),
+            # S8a review B1: an IPv6 literal that CARRIES an IPv4 address. The mapped
+            # form (`::ffff:a.b.c.d`) used to skip the private-range test entirely - an
+            # IPv6Address is never `in` an IPv4Network, so membership answered False on
+            # a version mismatch - and `https://[::ffff:10.0.0.1]/` was accepted while
+            # `https://10.0.0.1/` was refused. Loopback and link-local happened to be
+            # caught anyway (CPython delegates those two properties to the mapped v4),
+            # which is why only the range cases leaked; all four are pinned so the
+            # normalisation cannot regress for one family and not the other.
+            ("https://[::ffff:10.0.0.1]/hook", ("private",)),
+            ("https://[::ffff:127.0.0.1]/hook", ("loopback",)),
+            ("https://[::ffff:169.254.169.254]/hook", ("link-local", "metadata")),
+            ("https://[::ffff:100.64.0.1]/hook", ("private",)),
+            # 6to4 and Teredo TUNNEL to the v4 address they encode, so a public-looking
+            # v6 literal reaches 127.0.0.1 / 10.0.0.1 anyway.
+            ("https://[2002:7f00:1::]/hook", ("loopback",)),
+            ("https://[2001:0:c000:0201:0:0:f5ff:fffe]/hook", ("private",)),
+            # S8a review N4: userinfo would be stored in clear on the workspace row.
+            (
+                "https://admin:hunter2@automate-sorento.foundryx.my/webhook/x",
+                ("username", "password"),
+            ),
         ],
     )
     def test_rejected_urls_422_name_the_rule(

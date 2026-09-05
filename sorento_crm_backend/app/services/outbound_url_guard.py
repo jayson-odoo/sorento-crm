@@ -30,6 +30,14 @@ Four rules, each named in the refusal so the message says what to change:
 public address and one private one is the standard way past a check that looks at
 `getaddrinfo(...)[0]`.
 
+**Every address is NORMALISED first, by one function both branches call.** An IPv6
+address can carry an IPv4 address inside it, and the range checks below are about the
+address it carries. `_addresses_to_check` is the only place that unwrapping happens, so a
+literal typed into the field and a name resolved through `getaddrinfo` cannot disagree -
+they did once, and `https://[::ffff:10.0.0.1]/` was accepted while `https://10.0.0.1/` was
+refused (an `IPv6Address` is never `in` an `IPv4Network`, so the membership test answered
+False on a version mismatch rather than on the address).
+
 **What this does NOT do, said out loud.** It cannot close the DNS-rebinding gap: the name
 is resolved here and again by the HTTP client, and an attacker who controls the
 authoritative server can answer differently the second time. Closing that means resolving
@@ -37,7 +45,17 @@ once and connecting to the pinned address with the Host header preserved, which 
 custom transport. The trigger for building it is named rather than guessed: an
 untrusted-tenant install, or a second admin-editable outbound URL - today there is one
 field, edited by an operator who already has Settings access, and the caller follows no
-redirects, so the residual is one DNS round trip wide.
+redirects, so the residual is one DNS round trip wide. The refusal deliberately names the
+RULE and not the address it resolved to, so the save path is not also a working internal
+DNS resolver for whoever can reach it.
+
+Two more residuals of the same class, named for the same reason. **A proxy**: httpx reads
+`HTTP_PROXY` / `HTTPS_PROXY` from the environment, and with one configured the proxy does
+the resolving, so the addresses checked here are not the ones the socket goes to. No
+deploy sets those today. **A port**: `https://public-host:9200/` is accepted. It was
+considered and left, because the host checks are what decide whether the request can reach
+anything internal, and a port allow-list on a webhook URL is a rule an operator would hit
+long before an attacker did.
 
 **Documentation ranges (TEST-NET, 192.0.2/24, 198.51.100/24, 203.0.113/24) are allowed.**
 `ipaddress.is_private` returns True for them, which is correct about their reservation and
@@ -66,6 +84,14 @@ _PRIVATE_NETWORKS = tuple(
         # IPv6 unique-local, the fc00::/7 equivalent of RFC 1918.
         "fc00::/7",
         "::/128",
+        # Deprecated IPv6 site-local. Still routed by some stacks, and it means the same
+        # thing fc00::/7 does now.
+        "fec0::/10",
+        # NAT64. The last 32 bits are an IPv4 address the translator dials, so this
+        # prefix reaches whatever the internal translator can reach. Refused whole rather
+        # than unwrapped: nobody types a NAT64 literal into a webhook field, so the
+        # simpler rule costs nothing real.
+        "64:ff9b::/96",
     )
 )
 
@@ -85,12 +111,47 @@ class OutboundUrlRejected(ValueError):
         self.message = message
 
 
-def _resolved_addresses(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+_Address = ipaddress.IPv4Address | ipaddress.IPv6Address
+
+
+def _addresses_to_check(address: _Address) -> list[_Address]:
+    """`address` plus any IPv4 address hidden inside it.
+
+    ONE normalisation, called by both branches of `_resolved_addresses`, because the two
+    disagreeing is exactly the bypass this closes.
+
+    Three IPv6 shapes carry an IPv4 address, and they are not the same case:
+
+    * **IPv4-mapped** (`::ffff:10.0.0.1`) IS that IPv4 address wearing a hat, so it
+      REPLACES the v6 form and every rule reads the v4. Without this the private-range
+      membership test answers False on a version mismatch rather than on the address.
+    * **6to4** (`2002::/16`) and **Teredo** (`2001::/32`) TUNNEL to the address they
+      encode, so the outer address is checked as well as the one it carries. `2002:7f00:1::`
+      is a public-looking v6 address that means 127.0.0.1.
+    """
+    if not isinstance(address, ipaddress.IPv6Address):
+        return [address]
+    mapped = address.ipv4_mapped
+    if mapped is not None:
+        return [mapped]
+    out: list[_Address] = [address]
+    sixtofour = address.sixtofour
+    if sixtofour is not None:
+        out.append(sixtofour)
+    teredo = address.teredo
+    if teredo is not None:
+        out.extend(teredo)
+    return out
+
+
+def _resolved_addresses(host: str) -> list[_Address]:
     """Every address `host` answers with, or the literal when it already is one."""
     try:
-        return [ipaddress.ip_address(host.strip("[]"))]
+        literal = ipaddress.ip_address(host.strip("[]"))
     except ValueError:
         pass
+    else:
+        return _addresses_to_check(literal)
     try:
         infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
     except socket.gaierror as exc:
@@ -99,7 +160,7 @@ def _resolved_addresses(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv
             f"The host {host!r} does not resolve, so the CRM cannot check where a "
             "request to it would go.",
         ) from exc
-    out: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+    out: list[_Address] = []
     for info in infos:
         sockaddr = info[4]
         if not sockaddr:
@@ -108,11 +169,7 @@ def _resolved_addresses(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv
             address = ipaddress.ip_address(str(sockaddr[0]).split("%", 1)[0])
         except ValueError:
             continue
-        # An IPv4-mapped IPv6 answer (`::ffff:127.0.0.1`) is an IPv4 address wearing a
-        # hat, and every range check below is about the address it carries.
-        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
-            address = address.ipv4_mapped
-        out.append(address)
+        out.extend(_addresses_to_check(address))
     if not out:
         raise OutboundUrlRejected(
             "unresolvable",
@@ -163,6 +220,13 @@ def assert_safe_outbound_url(url: str, *, label: str = "This URL") -> str:
     host = (parts.hostname or "").strip().rstrip(".")
     if not host:
         raise OutboundUrlRejected("host", f"{label} has no host.")
+    if parts.username or parts.password:
+        raise OutboundUrlRejected(
+            "userinfo",
+            f"{label} must not carry a username or password in the URL. Those would be "
+            "stored in clear on the workspace row; the retry key header is where a "
+            "credential belongs.",
+        )
 
     lowered = host.lower()
     if lowered in _own_hostnames():
@@ -172,23 +236,27 @@ def assert_safe_outbound_url(url: str, *, label: str = "This URL") -> str:
             "somewhere else, or the CRM would be asking itself to do the work.",
         )
 
+    # The refusals below name the RULE and never the resolved address. Echoing it would
+    # make this field a working internal DNS resolver for anyone who can reach the save
+    # path, which is the thing the rule is refusing to be. The address is in the server
+    # log for whoever is debugging the webhook.
     for address in _resolved_addresses(host):
         if address.is_loopback:
             raise OutboundUrlRejected(
                 "loopback",
-                f"{label} resolves to a loopback address ({address}). That is this "
-                "machine, and a webhook must point somewhere else.",
+                f"{label} resolves to a loopback address. That is this machine, and a "
+                "webhook must point somewhere else.",
             )
         if address.is_link_local:
             raise OutboundUrlRejected(
                 "link-local",
-                f"{label} resolves to a link-local address ({address}). That range "
-                "carries the cloud metadata endpoint, so the CRM will not call it.",
+                f"{label} resolves to a link-local address. That range carries the cloud "
+                "metadata endpoint, so the CRM will not call it.",
             )
         if any(address in network for network in _PRIVATE_NETWORKS):
             raise OutboundUrlRejected(
                 "private",
-                f"{label} resolves to a private address ({address}). A webhook must be "
-                "reachable as a public host, not an address on the internal network.",
+                f"{label} resolves to a private address. A webhook must be reachable as "
+                "a public host, not an address on the internal network.",
             )
     return candidate
