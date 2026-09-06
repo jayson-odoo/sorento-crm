@@ -33,6 +33,7 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
+from app.services import translation_service
 from app.services.error_handler import AppException
 from app.services.import_alias_service import AliasResolver
 from app.services.scm import packing_list_service, proforma_invoice_service
@@ -86,37 +87,135 @@ def classify(data: bytes) -> Optional[str]:
     return None
 
 
-def _pi_blocks(parsed: ProformaReadResult) -> list[dict[str, Any]]:
-    return [
-        {
-            "container_no": d.container_no,
-            "seal_no": d.seal_no,
-            "cartons": (sum(ln.cartons for ln in d.lines if ln.cartons is not None) or None),
-            "cbm_total": (
-                round(sum(ln.cbm_total for ln in d.lines if ln.cbm_total is not None), 4)
-                or None
-            ),
-            "amount": d.line_total or None,
-            "line_count": len(d.lines),
-            "note_count": 0,
-        }
-        for d in parsed.documents
-    ]
+def _text_item(text: Optional[str], translations: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """One translatable phrase in the preview shape (R16): the Chinese, the English the
+    memory or the AI fill has for it (`None` when nobody has translated it yet), and who
+    said so. `None` when there is no text at all - a line with nothing to translate
+    carries no entry rather than an all-null one."""
+    if not text:
+        return None
+    hit = translations.get(text)
+    return {
+        "text": text,
+        "text_en": hit.text if hit else None,
+        "text_en_source": hit.source if hit else None,
+    }
 
 
-def _pl_blocks(parsed: PackingReadResult) -> list[dict[str, Any]]:
-    return [
-        {
-            "container_no": b.container_no,
-            "seal_no": b.seal_no,
-            "cartons": b.total_cartons,
-            "cbm_total": b.total_cbm,
-            "amount": b.total_amount,
-            "line_count": len(b.lines),
-            "note_count": len(b.notes),
-        }
-        for b in parsed.blocks
-    ]
+def _pi_blocks(
+    parsed: ProformaReadResult, known: dict[str, Any], translations: dict[str, Any]
+) -> list[dict[str, Any]]:
+    out = []
+    for d in parsed.documents:
+        lines = []
+        for ln in d.lines:
+            matched = ln.item_code.upper() in known
+            # Ruling 5 (3 Sep batch): a MATCHED line shows the product master name
+            # elsewhere in the UI, so only an unmatched line's own 品名 needs
+            # translating here - it is the only description this preview ever shows.
+            description = None if matched else ln.description
+            item = _text_item(description, translations)
+            if item is None:
+                continue
+            lines.append({"item_code": ln.item_code, "matched": matched, **item})
+        out.append(
+            {
+                "container_no": d.container_no,
+                "seal_no": d.seal_no,
+                "cartons": (sum(ln.cartons for ln in d.lines if ln.cartons is not None) or None),
+                "cbm_total": (
+                    round(sum(ln.cbm_total for ln in d.lines if ln.cbm_total is not None), 4)
+                    or None
+                ),
+                "amount": d.line_total or None,
+                "line_count": len(d.lines),
+                "note_count": 0,
+                "lines": lines,
+                "notes": [],
+            }
+        )
+    return out
+
+
+def _pl_blocks(
+    parsed: PackingReadResult, known: dict[str, Any], translations: dict[str, Any]
+) -> list[dict[str, Any]]:
+    out = []
+    for b in parsed.blocks:
+        lines = []
+        for ln in b.lines:
+            matched = ln.item_code.upper() in known
+            description = None if matched else ln.product_name
+            # A remark only round-trips onto a shipment line for a MATCHED line - an
+            # unmatched one is skipped entirely at apply time, so its remark is never
+            # stored and translating it here would show a promise this screen cannot
+            # keep.
+            remark = ln.remark if matched else None
+            desc_item = _text_item(description, translations)
+            remark_item = _text_item(remark, translations)
+            if desc_item is None and remark_item is None:
+                continue
+            lines.append(
+                {
+                    "item_code": ln.item_code,
+                    "matched": matched,
+                    "description": desc_item["text"] if desc_item else None,
+                    "description_en": desc_item["text_en"] if desc_item else None,
+                    "description_en_source": desc_item["text_en_source"] if desc_item else None,
+                    "remark": remark_item["text"] if remark_item else None,
+                    "remark_en": remark_item["text_en"] if remark_item else None,
+                    "remark_en_source": remark_item["text_en_source"] if remark_item else None,
+                }
+            )
+        notes = [
+            item for note in (b.notes or []) if (item := _text_item(note, translations))
+        ]
+        out.append(
+            {
+                "container_no": b.container_no,
+                "seal_no": b.seal_no,
+                "cartons": b.total_cartons,
+                "cbm_total": b.total_cbm,
+                "amount": b.total_amount,
+                "line_count": len(b.lines),
+                "note_count": len(b.notes),
+                "lines": lines,
+                "notes": notes,
+            }
+        )
+    return out
+
+
+def _translate_preview_texts(
+    db: Session,
+    pi_result: Optional[ProformaReadResult],
+    pl_result: Optional[PackingReadResult],
+    known_pi: dict[str, Any],
+    known_pl: dict[str, Any],
+) -> dict[str, Any]:
+    """Every Chinese phrase THIS file's preview is about to show - unmatched
+    descriptions, matched-line remarks, block notes, the footer - translated in one
+    batched call (R16)."""
+    texts: list[str] = []
+    if pi_result and pi_result.ok:
+        for d in pi_result.documents:
+            for ln in d.lines:
+                if ln.description and ln.item_code.upper() not in known_pi:
+                    texts.append(ln.description)
+    if pl_result and pl_result.ok:
+        for b in pl_result.blocks:
+            for ln in b.lines:
+                matched = ln.item_code.upper() in known_pl
+                if not matched and ln.product_name:
+                    texts.append(ln.product_name)
+                if matched and ln.remark:
+                    texts.append(ln.remark)
+            texts.extend(b.notes or [])
+        if pl_result.footer_notes:
+            texts.append(pl_result.footer_notes)
+    if not texts:
+        return {}
+    return translation_service.translate(db, texts)
 
 
 def _header_of(
@@ -150,12 +249,15 @@ def _file_preview(db: Session, name: str, data: bytes) -> dict[str, Any]:
             "header": _header_of(None, None),
             "unmatched": [],
             "errors": ["Could not tell whether this is a proforma invoice or a packing list."],
+            "footer_note": None,
         }
 
     pi_result: Optional[ProformaReadResult] = None
     pl_result: Optional[PackingReadResult] = None
     errors: list[str] = []
     unmatched: list[str] = []
+    known_pi: dict[str, Any] = {}
+    known_pl: dict[str, Any] = {}
 
     if kind in ("proforma_invoice", "combined"):
         pi_resolver = AliasResolver.for_doc_type(db, PI_DOC_TYPE)
@@ -169,7 +271,7 @@ def _file_preview(db: Session, name: str, data: bytes) -> dict[str, Any]:
                 else "No proforma invoice was found in this file."
             )
         else:
-            known = proforma_invoice_service._products_by_code(
+            known_pi = proforma_invoice_service._products_by_code(
                 db, {ln.item_code for d in pi_result.documents for ln in d.lines}
             )
             unmatched += sorted(
@@ -177,7 +279,7 @@ def _file_preview(db: Session, name: str, data: bytes) -> dict[str, Any]:
                     ln.item_code
                     for d in pi_result.documents
                     for ln in d.lines
-                    if ln.item_code.upper() not in known
+                    if ln.item_code.upper() not in known_pi
                 }
             )
 
@@ -193,7 +295,7 @@ def _file_preview(db: Session, name: str, data: bytes) -> dict[str, Any]:
                 else "No container block was found in this file."
             )
         else:
-            known = packing_list_service._products_by_code(
+            known_pl = packing_list_service._products_by_code(
                 db, {ln.item_code for b in pl_result.blocks for ln in b.lines}
             )
             unmatched += sorted(
@@ -201,12 +303,25 @@ def _file_preview(db: Session, name: str, data: bytes) -> dict[str, Any]:
                     ln.item_code
                     for b in pl_result.blocks
                     for ln in b.lines
-                    if ln.item_code.upper() not in known
+                    if ln.item_code.upper() not in known_pl
                 }
             )
 
-    blocks = (_pi_blocks(pi_result) if pi_result and pi_result.ok else []) + (
-        _pl_blocks(pl_result) if pl_result and pl_result.ok else []
+    translations = _translate_preview_texts(db, pi_result, pl_result, known_pi, known_pl)
+
+    blocks = (
+        _pi_blocks(pi_result, known_pi, translations) if pi_result and pi_result.ok else []
+    ) + (
+        _pl_blocks(pl_result, known_pl, translations) if pl_result and pl_result.ok else []
+    )
+
+    # The `备注：` footer (R13) applies to the whole file, not one block - shown once
+    # here rather than repeated inside every block's own notes, even though every
+    # shipment this file creates stores it (`packing_list_service._block_notes`).
+    footer_note = (
+        _text_item(pl_result.footer_notes, translations)
+        if pl_result and pl_result.ok
+        else None
     )
 
     return {
@@ -216,6 +331,7 @@ def _file_preview(db: Session, name: str, data: bytes) -> dict[str, Any]:
         "header": _header_of(pi_result, pl_result),
         "unmatched": sorted(set(unmatched))[:200],
         "errors": errors,
+        "footer_note": footer_note,
     }
 
 
@@ -355,14 +471,22 @@ def apply(
     currency: Optional[str] = None,
     actor_id: Optional[str] = None,
     actor_name: Optional[str] = None,
+    translations: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Proforma invoices first, then packing lists, then price links (R12).
 
     `files` is `[(filename, data, content_type)]`. Refuses the WHOLE upload when any file is
     unclassifiable, named, rather than silently applying the others and leaving the operator
     to notice one file never showed up.
+
+    `translations` (R16) is `[{source_text, target_text}]` off the preview's edited
+    cells - written as MANUAL rows FIRST, before `packing_list_service.apply` runs its
+    own translate-and-compose pass, so an edit made in the preview is what a remark or
+    a note is stored with, never the AI's unedited guess.
     """
     assert_supplier(db, supplier_id)
+    if translations:
+        translation_service.remember(db, translations, user_id=actor_id)
 
     kinds = [(name, data, ctype, classify(data)) for name, data, ctype in files]
     unreadable = [name for name, _d, _c, kind in kinds if kind is None]

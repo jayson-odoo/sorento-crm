@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from app.config import settings
 from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.services.error_handler import AppException
@@ -28,6 +29,16 @@ from tests._pg_fixture import blank_session
 MARKER = "ZZSD"
 _VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"
+
+
+@pytest.fixture(autouse=True)
+def _no_ai_translation(monkeypatch):
+    """None of THIS file's tests are about the translation AI fill (that is
+    `test_translation_service.py`'s job) - forcing no key here keeps every Chinese
+    note/remark in the Jiexia fixtures untranslated (R16's own fallback: the source
+    text alone) and, more importantly, keeps this suite off the network even though
+    `.env` carries a real `OPENAI_API_KEY` for the app itself."""
+    monkeypatch.setattr(settings, "openai_api_key", None, raising=False)
 
 
 def _load(name: str):

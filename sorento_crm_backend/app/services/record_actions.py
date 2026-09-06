@@ -901,6 +901,24 @@ register(
 )
 
 
+def _delete_translation(db: Session, payload: dict):
+    from app.services import translation_service
+
+    return translation_service.delete_memory(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="translation_memory.delete",
+        entity_types=("translation_memory",),
+        execute=_delete_translation,
+        window=WINDOW_DESTRUCTIVE,
+        permission="system.translations.edit",
+        label="Delete translation",
+    )
+)
+
+
 # ----- Dealer kit -----------------------------------------------------------------------
 #
 # One slug for all five, `dealer_kit.page.edit`, because that is the single grant every

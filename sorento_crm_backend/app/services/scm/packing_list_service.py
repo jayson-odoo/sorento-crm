@@ -34,6 +34,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.schemas.procurement import InboundShipmentCreate, InboundShipmentLineCreate
+from app.services import translation_service
 from app.services.error_handler import AppException
 from app.services.scm.currency_resolution import resolve_currency
 from app.services.scm.packing_list_reader import (
@@ -181,14 +182,45 @@ def _parse(db: Session, data: bytes) -> PackingReadResult:
     return read_workbook(data, db=db)
 
 
-def _block_notes(block: PackingBlock, parsed: PackingReadResult) -> Optional[str]:
+def _block_notes(
+    block: PackingBlock,
+    parsed: PackingReadResult,
+    translations: dict[str, "translation_service.TranslationHit"],
+) -> Optional[str]:
     """The shipment's `notes` field (R13/R14): the block's own accessory-line notes
     (`840 水箱空瓷：1个`), the file's `备注：` footer, or both - `None` when the file states
-    neither, never an empty string sitting where "nothing was said" belongs."""
+    neither, never an empty string sitting where "nothing was said" belongs.
+
+    Each part carries its English beside the Chinese when the translation memory has
+    one (R16/AC-G3): `English (中文)` when they differ, the Chinese alone otherwise.
+    """
     parts = list(getattr(block, "notes", None) or [])
     if parsed.footer_notes:
         parts.append(parsed.footer_notes)
-    return "\n".join(parts) if parts else None
+    bilingual = [
+        translation_service.compose_bilingual(translations.get(p), p) or p for p in parts
+    ]
+    return "\n".join(bilingual) if bilingual else None
+
+
+def _translate_for_apply(
+    db: Session, parsed: PackingReadResult
+) -> dict[str, "translation_service.TranslationHit"]:
+    """Every Chinese text this apply is about to store - line remarks and block/footer
+    notes - translated in ONE batched call (R16). Called unconditionally: `apply` may
+    run with no preceding preview (Confirm without ever pressing Test), so this is the
+    only place these texts are guaranteed to reach the memory."""
+    texts: list[str] = []
+    for block in parsed.blocks:
+        texts.extend(getattr(block, "notes", None) or [])
+        for ln in block.lines:
+            if ln.remark:
+                texts.append(ln.remark)
+    if parsed.footer_notes:
+        texts.append(parsed.footer_notes)
+    if not texts:
+        return {}
+    return translation_service.translate(db, texts)
 
 
 def _check_supplier(db: Session, supplier_id: Optional[str]) -> None:
@@ -411,6 +443,9 @@ def apply(
     known = _products_by_code(
         db, {ln.item_code for b in parsed.blocks for ln in b.lines}
     )
+    # R16/AC-G3: every remark and note this apply is about to store, translated once
+    # up front (memory-first, AI-fill on a miss) rather than per line.
+    translations = _translate_for_apply(db, parsed)
 
     from app.services.procurement_service import InboundShipmentService
 
@@ -452,7 +487,11 @@ def apply(
                     # per-unit figure times the quantity; never zero for an unmeasured
                     # item, because zero reads as "takes no space".
                     cbm=_line_cbm(ln),
-                    remarks=ln.remark,
+                    remarks=translation_service.compose_bilingual(
+                        translations.get(ln.remark), ln.remark
+                    )
+                    if ln.remark
+                    else None,
                 )
             )
 
@@ -484,7 +523,7 @@ def apply(
             seal_number=getattr(block, "seal_no", None),
             consignee=getattr(block, "consignee", None),
             shipper=parsed.shipper,
-            notes=_block_notes(block, parsed),
+            notes=_block_notes(block, parsed, translations),
             # A caller-supplied `attachment_id` still binds every block to it, same as
             # before; the `file_in_drive` filing (below) only fills in for shipments
             # that come out of this loop still unbound.

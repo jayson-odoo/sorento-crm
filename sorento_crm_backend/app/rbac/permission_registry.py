@@ -494,6 +494,23 @@ PERMISSION_REGISTRY.extend([
     },
 ])
 
+# Translation memory (R15/R16, purchasing consolidation batch, lane C) - view/edit
+# only, same shape as the status engine above: rows are written by the upload preview
+# and the AI fill, never created by hand here, so this admin page only ever reads,
+# corrects or removes one.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "system.translations.view",
+        "name": "View Translations",
+        "description": "View the Chinese-English translation memory.",
+    },
+    {
+        "slug": "system.translations.edit",
+        "name": "Edit Translations",
+        "description": "Correct a translation or remove one from the memory.",
+    },
+])
+
 # Project Sales (UAC Group J). Every salesperson sees every project read-only, by
 # design: the module exists to stop two people unknowingly working one tender, and
 # hiding other people's projects would recreate exactly that blindness. Editing is

@@ -10,6 +10,7 @@ this system.
 """
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import date
 from typing import Optional
@@ -898,12 +899,27 @@ async def apply_supplier_documents(
     currency: Optional[str] = Form(
         None, description="Only needed when neither the file nor the price list says"
     ),
+    translations: Optional[str] = Form(
+        None,
+        description=(
+            "JSON array of {source_text, target_text} - the preview's edited "
+            "translation cells (R16)"
+        ),
+    ),
     current_user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
     """Proforma invoices first, then packing lists, then price links (R12-R14). Each file
     is filed in Drive under its own type (Proforma Invoice / Packing List)."""
     read = [(f.filename, await read_upload(f), f.content_type) for f in files]
+    parsed_translations = None
+    if translations:
+        try:
+            parsed_translations = json.loads(translations)
+        except (TypeError, ValueError) as exc:
+            raise AppException(422, "translations must be a JSON array", detail="translations") from exc
+        if not isinstance(parsed_translations, list):
+            raise AppException(422, "translations must be a JSON array", detail="translations")
     out = await run_in_threadpool(
         supplier_document_service.apply,
         db,
@@ -912,6 +928,7 @@ async def apply_supplier_documents(
         currency=currency,
         actor_id=current_user.get("id"),
         actor_name=_actor(current_user),
+        translations=parsed_translations,
     )
     db.commit()
     return out
