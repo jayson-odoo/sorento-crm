@@ -175,6 +175,18 @@ describe('tickCheckbox', () => {
     expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
   });
 
+  it('survives a replacement that lands inside its own wait', async () => {
+    render(<ReplacedOnLoad />);
+
+    // Deliberately NOT settled first: the swap lands while `tickCheckbox` is
+    // awaiting, which is the ordering CI hits. A version that held the handle
+    // its own `findByLabelText` returned clicks the discarded node here and
+    // times out waiting for a tick that never happens.
+    await tickCheckbox('Select all rows on this page');
+
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+  });
+
   it('reports a click that did not tick the box', async () => {
     const { asyncUtilTimeout } = getConfig();
     configure({ asyncUtilTimeout: 150 });

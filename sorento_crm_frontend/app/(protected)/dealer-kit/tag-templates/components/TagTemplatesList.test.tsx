@@ -112,18 +112,6 @@ function serverTime(offsetMs: number): string {
   return new Date(Date.now() + offsetMs).toISOString().replace(/\.\d+Z$/, '');
 }
 
-/**
- * Every test below ticks a checkbox on a freshly-mounted grid and then reads
- * the bulk strip, which exists only if the tick actually selected something.
- *
- * That wait used to carry `{ timeout: 8000 }`, on the reading that a CI
- * failure at 5362ms was the grid being slow. It was not: the same wait failed
- * again at 8298ms and CI dumped a toolbar with no selection in it at all, so
- * the button was never coming. `tickCheckbox` waits on the tick itself, which
- * is where the silence was, and the wait for Delete goes back to the suite's
- * 5s budget.
- */
-
 async function renderList() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const utils = render(
