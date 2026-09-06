@@ -41,7 +41,9 @@ class CanonicalProductCategory(_Canonical):
     code: str = Field(..., min_length=1, max_length=100)
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
-    is_active: bool = True
+    # Absent vs null (D14): omitted leaves the stored value untouched (or, on
+    # create, the model's own True default); an explicit null clears it.
+    is_active: Optional[bool] = None
 
 
 class CanonicalUnitOfMeasure(_Canonical):
@@ -49,18 +51,19 @@ class CanonicalUnitOfMeasure(_Canonical):
 
     code: str = Field(..., min_length=1, max_length=100)
     name: str = Field(..., min_length=1, max_length=255)
-    # Canonical divisibility, 0..4 (front-planning plan 6.4). Absent means 0: an
-    # upstream master that has never expressed precision counts in whole units.
-    decimal_places: int = Field(0, ge=0, le=4)
+    # Canonical divisibility, 0..4 (front-planning plan 6.4). Absent (D14) means
+    # untouched on update / the model's own 0 default on create - never a value
+    # this schema invents.
+    decimal_places: Optional[int] = Field(None, ge=0, le=4)
     description: Optional[str] = None
-    is_active: bool = True
+    is_active: Optional[bool] = None
 
 
 class CanonicalWarehouse(_Canonical):
     code: str = Field(..., min_length=1, max_length=100)
     name: str = Field(..., min_length=1, max_length=255)
     location: Optional[str] = Field(None, max_length=255)
-    is_active: bool = True
+    is_active: Optional[bool] = None
 
 
 class CanonicalSupplier(_Canonical):
@@ -76,10 +79,11 @@ class CanonicalSupplier(_Canonical):
     postal_code: Optional[str] = Field(None, max_length=40)
     country: Optional[str] = Field(None, max_length=100)
     payment_terms_days: Optional[int] = Field(None, ge=0, le=3650)
-    # Resolved against the payment-terms master once it exists (Phase D). Until
-    # then an unresolvable code is reported retryable, never persisted.
+    # Deprecated (D15, kept through S0-S3): still accepted so an old payload
+    # validates, but ignored - not written to any column - and flagged with the
+    # `deprecated_field` warning. Removed only at S4's contract 2.1 cutover.
     payment_terms_code: Optional[str] = Field(None, max_length=100)
-    is_active: bool = True
+    is_active: Optional[bool] = None
 
 
 class CanonicalCustomer(_Canonical):
@@ -89,11 +93,13 @@ class CanonicalCustomer(_Canonical):
     phone_number: Optional[str] = Field(None, max_length=100)
     registration_number: Optional[str] = Field(None, max_length=100)
     tax_id: Optional[str] = Field(None, max_length=100)
+    # Deprecated (D15, kept through S0-S3): accepted-and-ignored, warned
+    # `deprecated_field`. `customers` has no matching columns.
     credit_limit: Optional[Decimal] = Field(None, ge=0)
     payment_terms_days: Optional[int] = Field(None, ge=0, le=3650)
     payment_terms_code: Optional[str] = Field(None, max_length=100)
     country: Optional[str] = Field(None, max_length=100)
-    is_active: bool = True
+    is_active: Optional[bool] = None
 
 
 class CanonicalSalesAgent(_Canonical):
@@ -117,7 +123,7 @@ class CanonicalSalesAgent(_Canonical):
 
     code: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=255)
-    is_active: bool = True
+    is_active: Optional[bool] = None
     person_label: Optional[str] = Field(None, max_length=100)
 
 
@@ -137,4 +143,4 @@ class CanonicalProduct(_Canonical):
     bar_code: Optional[str] = Field(None, max_length=100)
     list_price: Optional[Decimal] = Field(None, ge=0)
     cost_price: Optional[Decimal] = Field(None, ge=0)
-    is_active: bool = True
+    is_active: Optional[bool] = None

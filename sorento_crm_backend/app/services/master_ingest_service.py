@@ -49,6 +49,7 @@ import enum
 import logging
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Optional
 
@@ -57,6 +58,12 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.models.base import company_scope
+from app.models.inventory import Warehouse
+from app.models.order import Customer
+from app.models.procurement import Supplier
+from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.sales_agent import SalesAgent
 from app.schemas.canonical_masters import (
     CanonicalCustomer,
     CanonicalProductCategory,
@@ -70,6 +77,7 @@ from app.services.integration_reference_service import (
     IntegrationReferenceService,
     ReferenceConflict,
 )
+from app.services.rules.customer_rules import customer_identity
 # The agent code's one normalisation, imported rather than restated: the master
 # screen, the outstanding-SO import and this ingest all have to agree on what
 # `sean i` is, or the captain's demand class lands on one of three rows.
@@ -221,12 +229,20 @@ class EntitySpec:
     table: str
     schema: type[BaseModel]
     code_column: str
-    # canonical payload -> column values. May raise MissingReference.
+    # canonical payload -> column values (present fields only, D14). May raise
+    # MissingReference.
     to_columns: Callable[[BaseModel, Session, str], dict[str, Any]]
+    # The ORM model class the D18 writer upserts through, so audit, embedding
+    # and CompanyScopedMixin listeners fire on flush.
+    model: type
     # Whether adoption matches ``upper(btrim())`` on BOTH sides instead of the
     # stored string. True only where the column has one canonical spelling that
     # the rows do not all carry yet -- see ``_lookup_id``.
     normalized_code: bool = False
+    # Overrides the default code-only adoption match. None means the default
+    # (``_lookup_id`` on ``code_column`` alone). Customers are the only user so
+    # far (D13): the (code, name) pair, not the code alone.
+    adopt_lookup: Optional[Callable[[Session, Any, str], Optional[str]]] = None
 
 
 # Tables where a row serves every company (``company_id`` NULL). Listed rather
@@ -240,71 +256,98 @@ def _is_company_scoped(table: str) -> bool:
     return table not in SHARED_TABLES
 
 
+#: D15: fields that stay on the canonical schemas so an old payload still
+#: validates, but are never written to any column - flagged with the
+#: `deprecated_field` warning instead. Removed at S4's contract 2.1 cutover.
+_DEPRECATED_FIELDS: dict[str, set[str]] = {
+    "customers": {"credit_limit", "payment_terms_days", "payment_terms_code"},
+    "suppliers": {"payment_terms_code"},
+}
+
+
+def _deprecated_warnings(entity_type: str, payload: Any) -> list[str]:
+    deprecated = _DEPRECATED_FIELDS.get(entity_type)
+    if deprecated and deprecated & payload.model_fields_set:
+        return ["deprecated_field"]
+    return []
+
+
+
+
+def _present(payload: Any, columns: dict[str, Any], *names: str) -> None:
+    """D14: absent vs null. Copies ``payload.<name>`` into ``columns`` only for
+    fields the caller actually SET - an omitted field must never overwrite a
+    stored value, only an explicit ``null`` may."""
+    for name in names:
+        if name in payload.model_fields_set:
+            columns[name] = getattr(payload, name)
+
+
 def _category_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
-    return {
-        "category_code": payload.code,
-        "category_name": payload.name,
-        "description": payload.description,
-        "is_active": payload.is_active,
-    }
+    columns: dict[str, Any] = {"category_code": payload.code, "category_name": payload.name}
+    _present(payload, columns, "description", "is_active")
+    return columns
 
 
 def _uom_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
-    return {
-        "uom_code": payload.code,
-        "uom_name": payload.name,
-        # Canonical divisibility (plan 6.4). A source that does not state it lands on
-        # 0, the same rollout fallback the backfill gives an unknown unit name.
-        "decimal_places": payload.decimal_places,
-        "description": payload.description,
-        "is_active": payload.is_active,
-    }
+    columns: dict[str, Any] = {"uom_code": payload.code, "uom_name": payload.name}
+    # Canonical divisibility (plan 6.4). Absent (D14) leaves the row untouched on
+    # update, or the model's own 0 default on create - never a value this
+    # module invents.
+    _present(payload, columns, "decimal_places", "description", "is_active")
+    return columns
 
 
 def _warehouse_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
-    return {
-        "warehouse_code": payload.code,
-        "warehouse_name": payload.name,
-        "location": payload.location,
-        "is_active": payload.is_active,
-    }
+    columns: dict[str, Any] = {"warehouse_code": payload.code, "warehouse_name": payload.name}
+    _present(payload, columns, "location", "is_active")
+    return columns
 
 
 def _supplier_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
-    terms = payload.payment_terms_days
-    if payload.payment_terms_code:
-        # The payment-terms master does not exist until Phase D. Rather than
-        # silently dropping the code -- which would persist a supplier with the
-        # wrong terms and no signal -- report it retryable so the ESB re-drains
-        # once that master lands.
-        raise MissingReference("payment_terms_code", payload.payment_terms_code)
-    return {
-        "supplier_code": payload.code,
-        "supplier_name": payload.name,
-        "email": payload.email,
-        "phone_number": payload.phone_number,
-        "payment_terms_days": terms,
-        "is_active": payload.is_active,
-    }
+    columns: dict[str, Any] = {"supplier_code": payload.code, "supplier_name": payload.name}
+    # D15: the contact/address block AutoCount carries and this module used to
+    # drop on the floor. D14: absent vs null on every one of them, plus
+    # `payment_terms_days` (model default 30 fills an absent value on create -
+    # see `_insert`). `payment_terms_code` is deprecated (see
+    # `_DEPRECATED_FIELDS`): accepted, warned, never written and never a
+    # MissingReference - the payment-terms master this used to wait for still
+    # does not exist, but a supplier no longer has to stay unsynced for it.
+    _present(
+        payload,
+        columns,
+        "contact_name",
+        "email",
+        "phone_number",
+        "address_line1",
+        "address_line2",
+        "city",
+        "state",
+        "postal_code",
+        "country",
+        "payment_terms_days",
+        "is_active",
+    )
+    return columns
 
 
 def _customer_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
-    if payload.payment_terms_code:
-        raise MissingReference("payment_terms_code", payload.payment_terms_code)
-    return {
-        "customer_code": payload.code,
-        "customer_name": payload.name,
-        "email": payload.email,
-        "phone_number": payload.phone_number,
-        "registration_number": payload.registration_number,
-        "tax_id": payload.tax_id,
-        # `credit_limit` / `payment_terms_days` (fix-round-2 BUG B): no column
-        # on `customers` yet - accepted on `CanonicalCustomer` so a v1 payload
-        # still validates, but not written; every customers push was failing
-        # with the raw psycopg2 UndefinedColumn message before this.
-        "country": payload.country,
-        "is_active": payload.is_active,
-    }
+    # `credit_limit` / `payment_terms_days` / `payment_terms_code` are
+    # deprecated (D15, see `_DEPRECATED_FIELDS`): `customers` has no matching
+    # column, so they are accepted-and-warned, never written - same as before
+    # fix-round-2 BUG B, now with a warning instead of silence.
+    columns: dict[str, Any] = {"customer_code": payload.code, "customer_name": payload.name}
+    _present(
+        payload,
+        columns,
+        "email",
+        "phone_number",
+        "registration_number",
+        "tax_id",
+        "country",
+        "is_active",
+    )
+    return columns
 
 
 def _lookup_id(
@@ -348,37 +391,41 @@ def _lookup_id(
 
 
 def _product_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
+    columns: dict[str, Any] = {"product_code": payload.code, "product_name": payload.name}
+    _present(payload, columns, "description", "is_active")
+
     # products.category_id and base_uom_id are NOT NULL, so an unresolved code
-    # makes the row uncreatable. That is a sequencing problem, not bad data.
-    if not payload.category_code:
-        raise MissingReference("category_code", "")
-    category_id = _lookup_id(
-        db, "product_categories", "category_code", payload.category_code, company_id
-    )
-    if category_id is None:
-        raise MissingReference("category_code", payload.category_code)
+    # makes the row uncreatable - a sequencing problem, not bad data. D14: only
+    # resolved (and only required) when the payload actually sends the field;
+    # an update that omits it leaves the existing link untouched.
+    if "category_code" in payload.model_fields_set:
+        if not payload.category_code:
+            raise MissingReference("category_code", "")
+        category_id = _lookup_id(
+            db, "product_categories", "category_code", payload.category_code, company_id
+        )
+        if category_id is None:
+            raise MissingReference("category_code", payload.category_code)
+        columns["category_id"] = category_id
 
-    if not payload.uom_code:
-        raise MissingReference("uom_code", "")
-    uom_id = _lookup_id(db, "units_of_measure", "uom_code", payload.uom_code, company_id)
-    if uom_id is None:
-        raise MissingReference("uom_code", payload.uom_code)
+    if "uom_code" in payload.model_fields_set:
+        if not payload.uom_code:
+            raise MissingReference("uom_code", "")
+        uom_id = _lookup_id(db, "units_of_measure", "uom_code", payload.uom_code, company_id)
+        if uom_id is None:
+            raise MissingReference("uom_code", payload.uom_code)
+        columns["base_uom_id"] = uom_id
 
-    columns: dict[str, Any] = {
-        "product_code": payload.code,
-        "product_name": payload.name,
-        "description": payload.description,
-        "category_id": category_id,
-        "base_uom_id": uom_id,
-        "list_price": payload.list_price if payload.list_price is not None else 0,
-        "cost_price": payload.cost_price,
-        "is_active": payload.is_active,
-    }
+    if "list_price" in payload.model_fields_set:
+        columns["list_price"] = payload.list_price
+    if "cost_price" in payload.model_fields_set:
+        columns["cost_price"] = payload.cost_price
+
     # D14: `barcode` is CRM-owned. Only written when the incoming value is
-    # non-empty - the key is left OUT of the dict otherwise, so `_update`'s
-    # blind `SET col = :col` never touches it and a manually entered barcode
-    # (or one from an earlier sync) survives a push that carries none. On
-    # CREATE the same omission leaves the column at its NULL default.
+    # non-empty - the key is left OUT of the dict otherwise, so an update never
+    # touches it and a manually entered barcode (or one from an earlier sync)
+    # survives a push that carries none. On CREATE the same omission leaves the
+    # column at its own NULL default.
     if payload.bar_code:
         columns["barcode"] = payload.bar_code
     return columns
@@ -399,12 +446,25 @@ def _sales_agent_columns(payload: Any, db: Session, company_id: str) -> dict[str
     a row got here, and an agent an outstanding-SO upload created is still
     `import` even after AutoCount confirms it exists.
     """
-    return {
-        "sales_agent": _normalize_agent_code(payload.code),
-        "description": payload.description,
-        "is_active": payload.is_active,
-        "person_label": payload.person_label,
-    }
+    columns: dict[str, Any] = {"sales_agent": _normalize_agent_code(payload.code)}
+    _present(payload, columns, "description", "is_active", "person_label")
+    return columns
+
+
+def _adopt_customer(db: Session, payload: Any, company_id: str) -> Optional[str]:
+    """D13: adoption match for a customer is the (code, name) pair, never the
+    code alone - the same key as `uq_customers_company_code_name_lower` and
+    `order_service.CustomerService.create_customer`, via the shared
+    `customer_identity` rule."""
+    code_norm, name_norm = customer_identity(payload.code, payload.name)
+    row = db.execute(
+        text(
+            "SELECT id FROM customers WHERE lower(btrim(customer_code)) = :code "
+            "AND lower(btrim(customer_name)) = :name AND company_id = :cid LIMIT 1"
+        ),
+        {"code": code_norm, "name": name_norm, "cid": company_id},
+    ).first()
+    return str(row[0]) if row else None
 
 
 ENTITY_SPECS: dict[str, EntitySpec] = {
@@ -412,15 +472,23 @@ ENTITY_SPECS: dict[str, EntitySpec] = {
     # NOT NULL, so a product whose category has not synced yet is retryable
     # and stays that way until these land.
     "product_categories": EntitySpec(
-        "product_categories", CanonicalProductCategory, "category_code", _category_columns
+        "product_categories", CanonicalProductCategory, "category_code", _category_columns,
+        ProductCategory,
     ),
     "units_of_measure": EntitySpec(
-        "units_of_measure", CanonicalUnitOfMeasure, "uom_code", _uom_columns
+        "units_of_measure", CanonicalUnitOfMeasure, "uom_code", _uom_columns, UnitOfMeasure
     ),
-    "warehouses": EntitySpec("warehouses", CanonicalWarehouse, "warehouse_code", _warehouse_columns),
-    "suppliers": EntitySpec("suppliers", CanonicalSupplier, "supplier_code", _supplier_columns),
-    "customers": EntitySpec("customers", CanonicalCustomer, "customer_code", _customer_columns),
-    "products": EntitySpec("products", CanonicalProduct, "product_code", _product_columns),
+    "warehouses": EntitySpec(
+        "warehouses", CanonicalWarehouse, "warehouse_code", _warehouse_columns, Warehouse
+    ),
+    "suppliers": EntitySpec(
+        "suppliers", CanonicalSupplier, "supplier_code", _supplier_columns, Supplier
+    ),
+    "customers": EntitySpec(
+        "customers", CanonicalCustomer, "customer_code", _customer_columns, Customer,
+        adopt_lookup=_adopt_customer,
+    ),
+    "products": EntitySpec("products", CanonicalProduct, "product_code", _product_columns, Product),
     # The only shared master here: the row carries no company (see SHARED_TABLES)
     # and its code is matched normalised, because the rows already in the table
     # carry AutoCount's spelling rather than ours.
@@ -429,6 +497,7 @@ ENTITY_SPECS: dict[str, EntitySpec] = {
         CanonicalSalesAgent,
         "sales_agent",
         _sales_agent_columns,
+        SalesAgent,
         normalized_code=True,
     ),
 }
@@ -515,13 +584,14 @@ class MasterIngestService:
         # fails too -- turning "12 bad rows" into "nothing imported".
         savepoint = self.db.begin_nested()
         try:
-            outcome, entity_id, diff = self._apply(entity_type, spec, payload)
+            outcome, entity_id, diff, warnings = self._apply(entity_type, spec, payload)
             savepoint.commit()
             return RecordResult(
                 source_ref=payload.source_ref,
                 outcome=outcome,
                 entity_id=entity_id,
                 diff=diff,
+                warnings=warnings,
             )
         except MissingReference as exc:
             savepoint.rollback()
@@ -572,7 +642,8 @@ class MasterIngestService:
 
     def _apply(
         self, entity_type: str, spec: EntitySpec, payload: Any
-    ) -> tuple[IngestOutcome, str, Optional[dict[str, dict[str, Any]]]]:
+    ) -> tuple[IngestOutcome, str, Optional[dict[str, dict[str, Any]]], list[str]]:
+        warnings = _deprecated_warnings(entity_type, payload)
         columns = spec.to_columns(payload, self.db, self.company_id)
 
         existing_id = self.refs.resolve(entity_type=entity_type, source_ref=payload.source_ref)
@@ -581,18 +652,23 @@ class MasterIngestService:
             diff = self._diff(spec, existing_id, columns)
             self._update(spec, existing_id, columns)
             self._link(entity_type, existing_id, payload)
-            return IngestOutcome.UPDATED, existing_id, diff
+            return IngestOutcome.UPDATED, existing_id, diff, warnings
 
-        # First sync: adopt a local record with the same business code rather
-        # than creating a duplicate under a new id.
-        adopted = _lookup_id(
-            self.db,
-            spec.table,
-            spec.code_column,
-            payload.code,
-            self.company_id,
-            normalized=spec.normalized_code,
-        )
+        # First sync: adopt a local record with the same business identity
+        # rather than creating a duplicate under a new id. Customers override
+        # this with the (code, name) pair (D13); everything else matches on
+        # the bare business code.
+        if spec.adopt_lookup is not None:
+            adopted = spec.adopt_lookup(self.db, payload, self.company_id)
+        else:
+            adopted = _lookup_id(
+                self.db,
+                spec.table,
+                spec.code_column,
+                payload.code,
+                self.company_id,
+                normalized=spec.normalized_code,
+            )
         if adopted is not None:
             if self.refs.origin_of(entity_type=entity_type, entity_id=adopted) is not None:
                 # Already claimed by a different source document -- surfacing
@@ -606,27 +682,52 @@ class MasterIngestService:
             diff = self._diff(spec, adopted, columns)
             self._update(spec, adopted, columns)
             self._link(entity_type, adopted, payload)
-            return IngestOutcome.UPDATED, adopted, diff
+            return IngestOutcome.UPDATED, adopted, diff, warnings
 
-        new_id = str(uuid.uuid4())
-        # Raw SQL bypasses the ORM auto-stamp, so the anchor is written by hand.
-        # Without it the row lands with a NULL company -- rejected outright on the
-        # live schema (NOT NULL, migration 305) and, where the column is still
-        # nullable, invisible to every scoped read afterwards. A shared table is
-        # left alone: NULL there means "serves both companies".
-        insert_columns = dict(columns)
-        if _is_company_scoped(spec.table):
-            insert_columns["company_id"] = self.company_id
-        cols = ", ".join(["id", *insert_columns])
-        binds = ", ".join([":id", *(f":{c}" for c in insert_columns)])
-        self.db.execute(
-            text(f"INSERT INTO {spec.table} ({cols}) VALUES ({binds})"),
-            {"id": new_id, **insert_columns},
-        )
+        new_id = self._insert(entity_type, spec, columns)
         self._link(entity_type, new_id, payload)
         # Nothing existed to overwrite, so there is no diff to report. Distinct
         # from {} -- see RecordResult.diff.
-        return IngestOutcome.CREATED, new_id, None
+        return IngestOutcome.CREATED, new_id, None, warnings
+
+    def _insert(self, entity_type: str, spec: EntitySpec, columns: dict[str, Any]) -> str:
+        """D18: the ORM insert, so `before_insert` company-stamping, the audit
+        `before_flush` listener and the embedding `after_insert` listener all
+        fire - none of which a raw ``INSERT`` statement ever reached.
+
+        ``company_scope`` is pinned to the anchor for the duration, not read
+        off the ambient session scope: a caller (this parity test fixture,
+        certainly a batch ingest) can run two companies through the same
+        session without resetting global state between them, and an insert or
+        the row lookup in ``_update`` must never drift onto whichever company
+        happened to be ambient last.
+        """
+        insert_columns = dict(columns)
+        # `products.list_price` is NOT NULL with no column-level default (unlike
+        # `is_active`/UOM `decimal_places`/supplier `payment_terms_days`, which
+        # the model's own Python default fills on flush when left unset) - so
+        # D14's create-only default has to be filled here instead.
+        if entity_type == "products":
+            insert_columns.setdefault("list_price", Decimal("0"))
+        # The audit `before_flush` listener reads a pending object's PK straight
+        # off the instance attribute - a PK still waiting on its column default
+        # reads as None there and the create goes unrecorded (same gap
+        # `Customer`'s own `"init"` event exists to close, order.py:174). Every
+        # entity here gets the same fix at the one call site that creates all
+        # of them, rather than one `"init"` listener per model.
+        insert_columns.setdefault("id", str(uuid.uuid4()))
+
+        with company_scope(self.db, frozenset({self.company_id})):
+            row = spec.model(**insert_columns)
+            if _is_company_scoped(spec.table):
+                row.company_id = self.company_id
+            if entity_type == "sales_agents":
+                # D18: only on create - an existing agent's provenance (manual,
+                # import) is never overwritten by a later AutoCount confirmation.
+                row.source = "autocount"
+            self.db.add(row)
+            self.db.flush()
+            return str(row.id)
 
     def _require_same_company(self, spec: EntitySpec, entity_id: str, source_ref: str) -> None:
         """Refuse a reference that resolves into another company.
@@ -683,11 +784,24 @@ class MasterIngestService:
         }
 
     def _update(self, spec: EntitySpec, entity_id: str, columns: dict[str, Any]) -> None:
-        assignments = ", ".join(f"{c} = :{c}" for c in columns)
-        self.db.execute(
-            text(f"UPDATE {spec.table} SET {assignments} WHERE id = :id"),
-            {"id": entity_id, **columns},
-        )
+        """D18: setattr on the ORM row, not a blind ``UPDATE`` - so the audit
+        `before_flush` listener and the embedding `after_update` listener both
+        fire, and only the columns this record actually sent are touched (D14).
+
+        `updated_at` is stamped explicitly rather than left to `onupdate` -
+        several of these tables (``customers`` among them) declare the column
+        plain-nullable with no `onupdate=func.now()`, the same gap their own
+        manual-service `update_*` methods paper over ad hoc (see
+        `product_service.update_product`, `inventory_service.update_warehouse`)."""
+        with company_scope(self.db, frozenset({self.company_id})):
+            row = self.db.query(spec.model).filter(spec.model.id == entity_id).first()
+            if row is None:
+                return
+            for column, value in columns.items():
+                setattr(row, column, value)
+            if hasattr(row, "updated_at"):
+                row.updated_at = datetime.utcnow()
+            self.db.flush()
 
     def _link(self, entity_type: str, entity_id: str, payload: Any) -> None:
         self.refs.link(
