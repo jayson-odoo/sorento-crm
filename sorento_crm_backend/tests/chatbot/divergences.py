@@ -485,6 +485,28 @@ DIVERGENCES: list[Divergence] = [
             "rs8a-t2-picker-T1",
         )
     ),
+    # OWNER RULING D1 (console pass 3) as struck by the review of #706, blocker B2: the
+    # model's own `escalation.is_escalation_confirmation` is the ONE accept signal over an
+    # open offer, and on this capture the model got it wrong - "YES ESCALTE" (a typo of
+    # ESCALATE) came back `request_for_help`, null routing, `is_escalation_confirmation:
+    # false`. Live confirmed it through `is_affirmative` alone, which is the same test
+    # that confirmed "can someone else help me" (turn 9a40182a). The first cut rescued this
+    # capture with an accept-word list over the raw message; that is a D11 hard-fail and it
+    # re-opened D1 ("ok, can someone else help me" confirmed the stale offer). Ruling:
+    # register, do not sniff. The port asks which team here; the parser prompt is where a
+    # typo'd acceptance gets read as one. Field-scoped to `escalation`; the entities, the
+    # routing and everything else on the capture still grade.
+    Divergence(
+        node="output_exchange",
+        fixture="parser-15074293",
+        hazard="owner ruling D1 (console pass 3) / review of #706 B2",
+        reason=(
+            "a request_for_help with a null routing over an open offer asks which team "
+            "unless the model's own is_escalation_confirmation says it accepted; on this "
+            "capture the model says false for 'YES ESCALTE'. Field-scoped to `escalation`."
+        ),
+        strip_paths=(("output", "escalation"),),
+    ),
     # The three keys rules 2, 3 and 4 ADD to `output_exchange`'s emission. No
     # capture can contain a key the node did not emit when it was taken, so this
     # is the same class as the `pending` marker above and is handled the same

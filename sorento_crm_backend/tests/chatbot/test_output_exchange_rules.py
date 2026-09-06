@@ -778,3 +778,29 @@ class TestOwnerRulingD1PendingOfferTeamMismatch:
         assert out["escalation"].get("is_escalation_confirmation") is True, (
             f"a bare affirmative over a pending offer must still confirm it: {out['escalation']!r}"
         )
+
+    def test_an_accept_word_in_front_of_a_fresh_ask_does_not_confirm_the_stale_offer(
+        self,
+    ) -> None:
+        """(d) Review of #706, blocker B2. The first cut of rule (b) kept an accept-word
+        list over the raw message behind the model's own flag, to rescue one capture where
+        the flag is wrong ("YES ESCALTE", parser-15074293). Unanchored token membership
+        re-opened the defect the rule exists for: "ok, can someone else help me" over a
+        pending warehouse offer read "ok" as an acceptance and confirmed the stale offer -
+        turn 9a40182a's shape with one word in front. The list is gone; the model's
+        `escalation.is_escalation_confirmation` is the one accept signal, and the capture
+        it gets wrong is a registered divergence, not a reason to sniff text (D11)."""
+        out = run(
+            parser_output(
+                message_type="request_for_help",
+                is_affirmative=True,
+                routing={"suggested_team": None, "suggested_agent": None},
+                escalation={"is_escalation_confirmation": False},
+            ),
+            message="ok, can someone else help me",
+            state=_pending_warehouse_state(),
+        )
+        assert out["escalation"].get("is_escalation_confirmation") is False, (
+            f"'ok' in front of a fresh ask is not an acceptance: {out['escalation']!r}"
+        )
+        assert out["escalation"].get("team_unresolved") is True, out["escalation"]

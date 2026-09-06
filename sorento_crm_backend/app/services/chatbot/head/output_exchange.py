@@ -30,7 +30,7 @@ import re
 from typing import Any
 
 from app.services.chatbot import jsc, topic
-from app.services.chatbot.contracts import ENTITY_HINTS, INTENT_HINTS
+from app.services.chatbot.contracts import DEFAULT_SUGGESTED_TEAM, ENTITY_HINTS, INTENT_HINTS
 
 
 class ParserOutputError(ValueError):
@@ -541,37 +541,6 @@ DATE_FILTER_DOMAINS = frozenset({"promotion", "order"})
 _REPLY_TO_SPLIT = re.compile(r"\s*reply to:", re.IGNORECASE)
 _OFFERED_ESCALATION_RE = re.compile(r"would you like me to escalate", re.IGNORECASE)
 
-# Words that ACCEPT an open escalation offer, for the one question `message_type` cannot
-# answer: "ESCALATE", "YES ESCALTE" and "can someone else help me" are all emitted
-# `request_for_help` with `is_affirmative: true` and a null routing, and the first two are
-# acceptances while the third is a fresh ask. Measured against every capture in the replay
-# corpus that reaches this arm (output_exchange/exec-13484619, parser-15074683,
-# parser-15074293), which is also why the list is short: it holds only what an acceptance
-# has actually been said with, and it is a fallback behind the model's own
-# `escalation.is_escalation_confirmation`, never the primary reading. Inventoried with the
-# module's other deterministic text tiers (`_ALL_RE`, `CO_FILLERS`) in the plan's
-# text-sniffing table.
-ESCALATION_ACCEPT_WORDS = frozenset(
-    {
-        "yes",
-        "ya",
-        "yah",
-        "yeah",
-        "yep",
-        "yup",
-        "ok",
-        "ok",
-        "okay",
-        "okey",
-        "sure",
-        "escalate",
-        "proceed",
-        "ahead",
-        "confirm",
-        "setuju",
-        "boleh",
-    }
-)
 _ALL_RE = re.compile(
     r"^(all|all of them|all of it|everything|every one|semua|semuanya|semua sekali|both|kedua|kedua-duanya)[.!\s]*$",
     re.IGNORECASE,
@@ -2019,18 +1988,21 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     parser_said_confirm = (
         jsc.get(jsc.get(parser_raw_snapshot, "escalation"), "is_escalation_confirmation") is True
     )
-    # ... and behind that, an accept WORD, because the model gets its own flag wrong: on
-    # capture parser-15074293 ("YES ESCALTE", a typo of ESCALATE) it emitted
-    # `is_escalation_confirmation: false` and the deterministic `is_affirmative` + open
-    # offer is the only thing that carried the acceptance through.
-    accept_msg = _split_reply_to(parent_input.get("latest_user_message")).lower()
-    said_accept = any(t in ESCALATION_ACCEPT_WORDS for t in _TOKEN_RE.findall(accept_msg))
+    # And NOTHING behind that. The model's flag is wrong on one capture in the corpus
+    # (parser-15074293, "YES ESCALTE" - a typo of ESCALATE - came back
+    # `is_escalation_confirmation: false`), and the first cut of this rule put an
+    # accept-word list over the raw message to catch it. Review of #706 struck it: a word
+    # list over `ctx.text` is the D11 hard-fail the plan names as a merge blocker, and an
+    # unanchored one re-opened the very defect - "ok, can someone else help me" over a
+    # pending warehouse offer read "ok" as an acceptance and confirmed the stale offer,
+    # turn 9a40182a's shape with one word in front. So that capture is a REGISTERED
+    # divergence with its reason (`divergences.py`), and the parser prompt is where a
+    # typo'd acceptance gets fixed, not here.
     team_unresolved = (
         offered_escalation
         and req_help
         and llm_team_n is None
         and not parser_said_confirm
-        and not said_accept
     )
 
     if names_other_team or team_unresolved:
@@ -2038,7 +2010,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         if team_unresolved:
             o["escalation"]["team_unresolved"] = True
         else:
-            o["escalation"]["retargeted_team"] = llm_team_n
+            o["escalation"]["retargeted_team"] = llm_team_n  # diagnostic: no reader
     elif offered_escalation and is_affirmative:
         o["escalation"] = {"is_escalation_confirmation": True}
     elif offered_escalation and is_decline and not is_position_pick and not req_help:
@@ -2149,7 +2121,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         llm_team_n if req_help else None,
         norm(derived.get("suggested_team")),
         norm(jsc.get(prior_routing, "suggested_team")),
-        "customer_service",
+        DEFAULT_SUGGESTED_TEAM,
     )
     suggested_agent = _nullish(
         llm_agent_n if req_help else None,

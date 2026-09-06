@@ -73,6 +73,14 @@ SUGGESTED_TEAMS = (
     "marketing_promotion",
     "it_admin",
 )
+
+# The team `output_exchange`'s routing chain falls to when this turn named none, its domain
+# derives none and no previous turn carried one - the HARD default at the end of the
+# nullish chain, so this body never emits a null team. Named here because TWO readers need
+# the same word: the chain that writes it, and the escalation lane's inheritance guard
+# (AC-815 / review of #706 B1), which must not mistake a carried default for a previous
+# turn's real routing.
+DEFAULT_SUGGESTED_TEAM = "customer_service"
 SuggestedTeam = Literal[SUGGESTED_TEAMS]  # type: ignore[valid-type]
 
 SUGGESTED_AGENTS = (
