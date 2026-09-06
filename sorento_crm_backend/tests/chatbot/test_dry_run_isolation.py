@@ -263,15 +263,36 @@ class TestOrderingKeysSkipDryRunTurns:
         stub_parser()
         stub_access()
 
+        # A contact id of this run's own, NOT the shared `CONTACT_ID`. Redis is the one
+        # substrate in this suite that is not rolled back per test and not per worktree:
+        # `settings.redis_url` is the same instance every lane on this machine uses, and
+        # the `delete` below is a real delete. Keyed on CONTACT_ID it would wipe another
+        # lane's in-flight ordering keys (and be wiped by them), which is a flake in both
+        # directions. The database rows this turn writes are still scratch-schema.
+        contact_id = f"ZZT-ordering-{uuid.uuid4().hex[:8]}"
+        db_session = session_factory()
+        db_session.execute(
+            text(
+                "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+                "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
+            ),
+            {"cid": contact_id, "phone": "+60000000008", "sv": json.dumps({"variables": {}})},
+        )
+        db_session.commit()
+
         redis_client = _redis_client()
         keys = (
-            dispatch.seq_key(CONTACT_ID),
-            dispatch.done_key(CONTACT_ID),
-            dispatch.running_key(CONTACT_ID),
+            dispatch.seq_key(contact_id),
+            dispatch.done_key(contact_id),
+            dispatch.running_key(contact_id),
         )
         redis_client.delete(*keys)
         try:
             envelope = _envelope(test_run_id="ZZT-run-ordering-dry")
+            envelope.contact = {**envelope.contact, "id": contact_id}
+            envelope.message["contact"]["id"] = contact_id
+            envelope.message["message"]["contactId"] = contact_id
+            envelope.message["message"]["messageId"] = f"ZZT-msg-{contact_id}"
             assert envelope.dry_run is True
 
             result = engine_mod.run_turn(envelope, session_factory=session_factory)

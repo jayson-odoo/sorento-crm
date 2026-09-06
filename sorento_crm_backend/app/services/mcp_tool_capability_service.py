@@ -11,13 +11,15 @@ For every MCP tool we emit:
 Both the body and the question bank are chunked and embedded, so the tool's real
 purpose - not just hand-picked phrases - drives retrieval.
 
-**The pool is READ-ONLY (H58).** Only catalogue tools that READ are embedded - method
-GET, or `read_only=True` declared on the spec for a POST whose body is transport rather
-than a side effect. Retrieval is by cosine similarity and the chatbot calls the single top
-hit, so a write tool in the pool is a write a customer's phrasing can trigger.
-`read_only_tool_names()` below derives that set from the catalogue and is the one source of
-truth for it; the chatbot refuses at the call site as well, because an already-seeded pool
-is data that a code change does not retract.
+**The pool holds EVERY tool, write tools included, and that is deliberate (H58).** The
+in-app AI assistant retrieves from this same pool and its four record actions
+(`crm_complaint_close`, `crm_order_cancel`, the two purchase-request approvals) are put in
+it ON PURPOSE by `record_action_bootstrap` so its Tool-RAG can find them; it gates them
+with an explicit user confirmation and a permission check instead. The READ-ONLY rule
+belongs to the CHATBOT, which has no user to confirm with, and is applied on the chatbot's
+own retrieval and call seams (`app/services/chatbot/lanes/business/fetch.py`
+::`CHATBOT_READ_ONLY_TOOLS`). Filtering here would have taken the assistant's write tools
+away from it.
 """
 from __future__ import annotations
 
@@ -1963,49 +1965,6 @@ def _load_catalog_specs():
         return getattr(module, "CATALOG")
 
 
-def read_only_tool_names() -> frozenset[str]:
-    """Every catalogue tool that only READS: method GET, or `read_only=True`.
-
-    H58, and the ONE source of truth for "may an automated caller pick this tool?". It is
-    derived from the catalogue rather than from a hand-kept list, because a hand-kept list
-    is a second place to forget: the day a new writing tool is added to
-    `sorento_crm_mcp/catalog.py` it is excluded here by construction, with nothing to
-    remember.
-
-    **`method` alone is the wrong test, because method is TRANSPORT and not semantics.**
-    Three catalogue tools are POST purely because their input does not fit in a query
-    string and they still write nothing: `crm_lookup_resolve` (keyword to canonical
-    dropdown value), `crm_portal_link_get` (mints a scoped, expiring link for the contact
-    already in the conversation) and `user_guides_read` (Outline search body). Excluding
-    them would have taken three genuinely useful reads out of the AI assistant's tool
-    search, which shares this pool. So the catalogue DECLARES the semantics: `read_only` is
-    an explicit opt-in on the ToolSpec, defaulting to False, and the default is what keeps
-    a real write tool out by construction.
-
-    `getattr` rather than `spec.read_only`: a deployment can pin an older `sorento_crm_mcp`
-    whose `ToolSpec` has no such field, and the missing-field answer must be "not read
-    only" (one tool drops out of the pool) rather than an AttributeError that takes the
-    whole pool build down - and never the other direction.
-
-    Two consumers, deliberately, because the two failure modes are different:
-
-    * `build_capability_documents` below, which never EMBEDS a non-GET tool - so a write
-      tool cannot be a similarity candidate in the first place. That half is DATA, and it
-      only takes effect for a pool that has been re-seeded;
-    * `app/services/chatbot/lanes/business/fetch.py::call_tool`, which refuses one at the
-      egress - so a row already embedded on a live install (the state prod is in until the
-      re-seed runs) still cannot be called.
-
-    Not cached: the catalogue module is imported once and `_load_catalog_specs` returns the
-    same tuple after that, so this is a 40-element walk of an in-memory tuple.
-    """
-    return frozenset(
-        spec.name
-        for spec in _load_catalog_specs()
-        if str(spec.method).upper() == "GET" or bool(getattr(spec, "read_only", False))
-    )
-
-
 def _intent_for(tool_name: str) -> ToolIntent | None:
     return TOOL_INTENTS.get(tool_name)
 
@@ -2201,20 +2160,8 @@ def build_capability_documents(include_planned: bool = True, definitions_file: s
             )
         return docs
 
-    read_only = read_only_tool_names()
     for spec in _load_catalog_specs():
         if spec.name in _EMBEDDING_SKIP_TOOLS:
-            continue
-        if spec.name not in read_only:
-            # H58: a tool that can WRITE is never embedded. The Tool-RAG pool is what an
-            # automated caller picks from by cosine similarity alone - the chatbot's
-            # `tool_filter` takes the single top hit with no further check - so anything in
-            # the pool is something a customer's phrasing can cause to be CALLED.
-            # `crm_order_cancel`, `crm_complaint_close` and the two purchase-request
-            # approvals were all in it. The tools stay in the MCP catalogue and remain
-            # callable by a deliberate n8n or external caller; they are simply not
-            # retrievable by similarity. A POST that only reads stays in the pool by
-            # declaring `read_only=True` on its spec - see `read_only_tool_names`.
             continue
         required_params = [*spec.path_params]
         optional_params = [*spec.query_params]

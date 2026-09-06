@@ -1057,34 +1057,44 @@ contact inside the synchronous request. Different contacts run in parallel.
   Writes` / `test_s8a_hardening.py::TestATestEnvelopeIsNeverADuplicateOfALiveTurn`, both
   amended in the same change because they asserted the behaviour this AC replaces. (H57, D14, D15)
 
-- AC-813 `[BE][T]` **The chatbot's MCP tool pool is read-only, and a write tool is refused at
-  the call site as well.** The business lane picks ONE tool per turn as the argmax of
-  cosine similarity over the embedded catalogue and calls it with no allow-list check, and
-  the pool contained `crm_it_support_ticket_create`, `crm_complaint_close`,
-  `crm_order_cancel`, `crm_purchase_request_approve` and `crm_purchase_request_reject`.
-  Given the real MCP catalogue, when the Tool-RAG capability documents are built, then every
-  emitted tool is one the catalogue declares a READ - method GET, or an explicit
-  `read_only=True` on the spec - and everything else is excluded from the pool, so it is
-  never a candidate. The flag is there because METHOD IS TRANSPORT, NOT SEMANTICS:
-  `crm_lookup_resolve`, `crm_portal_link_get` and `user_guides_read` are POST only because
-  their input does not fit in a query string, they write nothing, and excluding them would
-  have taken three useful reads out of the AI assistant's tool search, which shares this
-  pool. The default is False, so a genuinely writing tool is out by construction, and a
-  future edit that flagged one is caught by name.
-  Given a candidate list whose top hit is a writing tool (the state a live
-  install is in until the pool is re-seeded), when the fetch lane runs, then the MCP client
-  is NOT called, the fetch fragment is an `error` naming the refused tool with outcome
-  `tool_not_allowed`, and the turn is recorded failed at `looked_up` with the generic error
-  reply rather than told to the customer as "I could not find anything" (a refusal is not an
-  absence). The allowed set is DERIVED from `sorento_crm_mcp/catalog.py`'s own declaration
-  in one place (`mcp_tool_capability_service.read_only_tool_names`), not hand-kept, so a new
-  writing tool is excluded by construction. Both layers are required and neither is redundant:
-  the pool is data already written on a live install and only shrinks when
-  `app/scripts/seed_mcp_tool_capabilities.py --rebuild` is re-run, while the refusal is code
-  that ships with the deploy. The tools stay in the MCP catalogue and remain callable by a
-  deliberate n8n or external caller; they are only unreachable by similarity.
-  Evidence: `tests/chatbot/test_tool_pool_is_read_only.py` (13 tests, walking the real
-  catalogue: the five write tools excluded by name and asserted NOT flagged, the three
-  read-only POST tools included by name, the derivation itself, and the field surviving the
-  import path the backend actually resolves) and
-  `test_dry_run_isolation.py::TestMcpToolPickRefusesWriteTools`. (H58, D10)
+- AC-813 `[BE][T]` **The chatbot may call READ tools only, and a write tool is refused
+  before it is picked and again before it is called.** The business lane picks ONE tool per
+  turn as the argmax of cosine similarity over the shared `mcp_tool` embedding pool and
+  calls it with no allow-list check, and six write tools live in that pool:
+  `crm_it_support_ticket_create`, `crm_complaint_close`, `crm_order_cancel`,
+  `crm_purchase_request_approve`, `crm_purchase_request_reject` and `crm_ideation_turn`.
+  **The pool keeps them.** It is shared with the in-app AI assistant, whose Tool-RAG only
+  ever sees what is embedded (`ai_assistant_service._rag_select_tools`) and whose four
+  record actions are put there deliberately by `record_action_bootstrap`; the assistant
+  gates each behind an explicit user confirmation and a permission check. Filtering the
+  pool would take the assistant's write tools away and would need a production re-seed to
+  take effect at all. The rule belongs to the CHATBOT, which has no user to confirm with.
+  Given a business question whose nearest tools include a write tool, when the chatbot
+  searches, then that tool is not among the candidates at all
+  (`lanes/business/services.py::_tool_search` filters after the collapse, so it is not even
+  listed under `_tool_pick.rejected`; the filter is NOT in `tool_filter`, which is graded
+  byte-for-byte against 38 captures). Given a write tool named by any other route (a payload,
+  a probe, the tier probe), when the lane tries to call it, then `fetch.ensure_read_only`
+  raises `ToolNotAllowed` at both call seams - `fetch.call_tool` and
+  `services._mcp_call`, the one choke point every `mcp_probe` caller passes through - the
+  MCP client is never invoked, the fetch fragment is an `error` naming the refused tool with
+  outcome `tool_not_allowed`, and the turn is recorded failed at `looked_up` with the
+  generic error reply rather than told to the customer as "I could not find anything" (a
+  refusal is not an absence). The allow-list is a FROZEN SET in the backend
+  (`fetch.CHATBOT_READ_ONLY_TOOLS`), never a catalogue walk on the turn path: the deployed
+  backend image contains no copy of `sorento_crm_mcp` (compose builds the backend with
+  `context: ./sorento_crm_backend`, `mcp` is absent from `requirements.txt`, no volume
+  mounts it), so a catalogue read there would raise in every container and `run_fetch`'s
+  broad `except` would turn EVERY live business turn into "MCP tool X failed". The catalogue
+  remains the source of truth for WHICH names belong in the set - method GET, or an explicit
+  `read_only=True` for a POST whose body is transport rather than a side effect
+  (`crm_lookup_resolve`, `crm_portal_link_get`, `user_guides_read`) - and CI asserts the set
+  and the catalogue are EQUAL in both directions, where the catalogue is readable: a name
+  missing from the set is a read the chatbot silently lost, a name in the set that is no
+  longer a read is a write it would still call. A tool not in the set is refused, so a new
+  write tool is out by default. No migration, no re-seed, no deploy step.
+  Evidence: `tests/chatbot/test_tool_pool_is_read_only.py` (18 tests: the set-equals-catalogue
+  guardrail, the six write tools refused BY NAME and asserted not flagged `read_only`, the same
+  six asserted STILL IN the pool so a well-meaning re-filter fails here, the three read-only
+  POSTs allowed by name, and a source scan proving no turn-path file imports
+  `sorento_crm_mcp`) and `test_dry_run_isolation.py::TestMcpToolPickRefusesWriteTools`. (H58, D10)

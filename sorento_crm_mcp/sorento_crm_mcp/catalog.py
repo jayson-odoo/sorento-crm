@@ -19,15 +19,19 @@ class ToolSpec:
     path_params: tuple[str, ...] = ()
     query_params: tuple[str, ...] = ()
     method: str = "GET"
-    read_only: bool = False  # Declares "this call has no side effects" for a tool whose
-    # method is not GET. METHOD IS TRANSPORT, NOT SEMANTICS: a lookup that takes a JSON
-    # body is a POST because the body will not fit in a query string, and it still only
-    # reads. Every GET tool is read-only by definition and does NOT set this; the flag
-    # exists for the handful of POST tools that are reads, and its default (False) is what
-    # keeps a genuinely writing tool out of automated selection by construction. Read by
-    # `mcp_tool_capability_service.read_only_tool_names()`, which is the ONE source of
-    # truth for "may the chatbot pick this tool" - the Tool-RAG embedding pool and the
-    # chatbot's call seam both derive from it.
+    read_only: bool = False  # Declares "safe for an automated caller to invoke with no
+    # customer-visible side effect" for a tool whose method is not GET. METHOD IS
+    # TRANSPORT, NOT SEMANTICS: a lookup that takes a JSON body is a POST because the body
+    # will not fit in a query string, and it still only reads. Every GET tool is read-only
+    # by definition and does NOT set this; the flag exists for the handful of POST tools
+    # that are reads, and its default (False) is what keeps a genuinely writing tool out of
+    # automated selection by construction. This is the SOURCE OF TRUTH for the chatbot's
+    # allow-list: the deployed backend image has no copy of this package, so the chatbot
+    # carries the names as a frozen set
+    # (`app/services/chatbot/lanes/business/fetch.py::CHATBOT_READ_ONLY_TOOLS`) and CI
+    # asserts the two agree. The Tool-RAG embedding pool is NOT filtered by this - the
+    # in-app AI assistant retrieves write tools from it on purpose and confirms with a
+    # human.
     body_params: tuple[str, ...] = ()
     module: str = ""  # Module key (e.g. "order"); empty for legacy unbound tools
     external: bool = False  # When true, the tool is registered by a custom handler
@@ -745,8 +749,11 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (),
         method="POST",
-        # POST is for the BODY. It mints a scoped, expiring link for the contact who is
-        # already in the conversation; nothing in the CRM's business state changes.
+        # POST is for the BODY, and there is no customer-visible side effect: it mints an
+        # IDEMPOTENT portal token for the contact already in the conversation (the route
+        # reuses a live one via `get_or_mint_token`), so calling it twice hands back the
+        # same link. It does persist that token row - "read_only" here means "safe for an
+        # automated caller to invoke", not "writes nothing at all".
         read_only=True,
         body_params=("contact_id", "space_id", "submission_type", "base_url"),
     ),

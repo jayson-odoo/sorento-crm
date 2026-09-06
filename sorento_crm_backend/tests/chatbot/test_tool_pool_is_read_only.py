@@ -1,49 +1,56 @@
-"""H58 / AC-813: the Tool-RAG pool holds READ tools only, walked against the real catalogue.
+"""H58 / AC-813: the chatbot's tool allow-list, pinned to the real MCP catalogue.
 
-The chatbot picks one tool per turn by cosine similarity and calls the single top hit
-(`lanes/business/fetch.py::tool_filter`), so every tool in the embedding pool is a tool a
-customer's phrasing can cause to be CALLED. Five write tools were in it -
-`crm_it_support_ticket_create`, `crm_complaint_close`, `crm_order_cancel`,
-`crm_purchase_request_approve`, `crm_purchase_request_reject` - with nothing between them
-and a live conversation but the fact that no phrasing had scored them first.
+The chatbot picks one tool per turn by cosine similarity over the shared `mcp_tool`
+embedding pool and calls the single top hit (`lanes/business/fetch.py::tool_filter`), so
+any tool it can retrieve is a tool a customer's phrasing can cause to be CALLED. Six write
+tools live in that pool: `crm_complaint_close`, `crm_order_cancel`,
+`crm_purchase_request_approve`, `crm_purchase_request_reject`,
+`crm_it_support_ticket_create` and `crm_ideation_turn`.
 
-**The test is "does the catalogue declare it a read", not "is it a GET".** Method is
-TRANSPORT: three catalogue tools are POST purely because their input does not fit in a
-query string (`crm_lookup_resolve`, `crm_portal_link_get`, `user_guides_read`) and they
-write nothing, so the ToolSpec carries an explicit `read_only=True` for them. The flag
-defaults to False, which is what keeps a genuinely writing tool out by construction.
+**They stay in the pool.** The in-app AI assistant retrieves from the same pool and
+`record_action_bootstrap` puts the four record actions there deliberately so its Tool-RAG
+can find them; it gates each behind a user confirmation (`_is_write_tool`) and a permission
+check. Filtering the pool would have taken the assistant's write tools away from it. The
+read-only rule belongs to the CHATBOT, which has no user to confirm with, and it is applied
+on the chatbot's own retrieval and call seams.
 
-Everything here walks the REAL catalogue (`sorento_crm_mcp/catalog.py`, via
-`_load_catalog_specs`) rather than a fixture: a fixture would go stale on the day the next
-writing tool is added, which is exactly the day this file exists for.
+**The allow-list is a frozen set in the backend, not a walk of the catalogue.** The
+deployed backend image has no copy of `sorento_crm_mcp` (compose builds it with
+`context: ./sorento_crm_backend`, `mcp` is not in `requirements.txt`, no volume mounts it),
+so a catalogue read on the turn path would raise in every container and `run_fetch`'s broad
+`except` would turn every live business turn into "MCP tool X failed".
+
+This file is where the frozen set and the catalogue are held together. It imports the
+catalogue, which IS available in CI and in a checkout, and asserts the set equals the
+catalogue's own answer, so drift in either direction fails here rather than in production.
 """
 from __future__ import annotations
 
-import dataclasses
 from typing import Any
 
 import pytest
 
+from app.services.chatbot.lanes.business.fetch import CHATBOT_READ_ONLY_TOOLS
 from app.services.mcp_tool_capability_service import (
     _load_catalog_specs,
     build_capability_documents,
-    read_only_tool_names,
 )
 
-# The five the audit found. Named, so a regression says WHICH one came back rather than
-# just that the count moved, and so flipping one to `read_only=True` in the catalogue
-# cannot pass review by accident.
+# The six the audit found. Named, so a regression says WHICH one came back rather than just
+# that a count moved, and so flipping one to `read_only=True` in the catalogue cannot pass
+# review by accident.
 WRITE_TOOLS = (
     "crm_it_support_ticket_create",
     "crm_complaint_close",
     "crm_order_cancel",
     "crm_purchase_request_approve",
     "crm_purchase_request_reject",
+    "crm_ideation_turn",
 )
 
 # The POST tools that only READ. Each carries `read_only=True` in the catalogue with a
-# comment saying why; they are in the pool on purpose and the AI assistant's tool search
-# shares that pool.
+# comment saying why. They are in the chatbot's allow-list on purpose: method is transport,
+# and their bodies exist because the input does not fit in a query string.
 READ_ONLY_POST_TOOLS = (
     "crm_lookup_resolve",
     "crm_portal_link_get",
@@ -56,16 +63,42 @@ def _catalog_by_name() -> dict[str, Any]:
 
 
 def _reads(spec: Any) -> bool:
+    """The catalogue's own answer: a GET, or a POST the spec declares `read_only`."""
     return str(getattr(spec, "method", "GET")).upper() == "GET" or bool(
         getattr(spec, "read_only", False)
     )
 
 
+def test_the_allow_list_equals_the_catalogues_own_answer() -> None:
+    """THE guardrail. The frozen set exists because the container has no catalogue; this is
+    what keeps it honest, and it fails in CI where the catalogue is readable.
+
+    Both directions are checked and both matter: a name in the catalogue but missing from
+    the set is a read tool the chatbot silently stopped being able to use, and a name in the
+    set but no longer a read in the catalogue is a WRITE the chatbot would still call.
+    """
+    catalog_reads = {s.name for s in _load_catalog_specs() if _reads(s)}
+
+    missing = sorted(catalog_reads - CHATBOT_READ_ONLY_TOOLS)
+    extra = sorted(CHATBOT_READ_ONLY_TOOLS - catalog_reads)
+
+    assert not missing, (
+        "the MCP catalogue declares these tools READ but "
+        "fetch.CHATBOT_READ_ONLY_TOOLS does not list them, so the chatbot can no longer "
+        f"use them: {', '.join(missing)}"
+    )
+    assert not extra, (
+        "fetch.CHATBOT_READ_ONLY_TOOLS lists these, but the MCP catalogue no longer "
+        "declares them reads - the chatbot would call a tool that can WRITE: "
+        f"{', '.join(extra)}"
+    )
+
+
 def test_the_catalogue_still_carries_writing_tools() -> None:
-    """The guard's own precondition: if nothing in the catalogue could write, this file
-    would pass for the wrong reason. Asserted rather than assumed, so a catalogue change
-    that removed the write tools announces itself instead of quietly turning the exclusion
-    tests below into tautologies."""
+    """The guard's own precondition: if nothing in the catalogue could write, every
+    exclusion test below would pass for the wrong reason. Asserted rather than assumed, so
+    a catalogue change that removed the write tools announces itself instead of quietly
+    turning them into tautologies."""
     writers = [s.name for s in _load_catalog_specs() if not _reads(s)]
 
     assert writers, (
@@ -74,32 +107,13 @@ def test_the_catalogue_still_carries_writing_tools() -> None:
     )
 
 
-def test_every_embedded_tool_is_declared_read_only() -> None:
-    """AC-813: nothing that can write is retrievable by similarity."""
-    catalog = _catalog_by_name()
-
-    offenders = []
-    for doc in build_capability_documents(include_planned=False):
-        spec = catalog.get(doc.source_key)
-        if spec is None:
-            # A tool-definitions FILE entry, not a catalogue entry: it has no method and
-            # no path, so it is not an HTTP tool this rule can speak about.
-            continue
-        if not _reads(spec):
-            offenders.append(f"{doc.source_key} ({spec.method})")
-
-    assert not offenders, (
-        "these WRITING tools are in the Tool-RAG embedding pool, so a business question "
-        "can select one and the chatbot will call it: " + ", ".join(sorted(offenders))
-    )
-
-
 @pytest.mark.parametrize("tool_name", WRITE_TOOLS)
-def test_the_five_write_tools_are_named_and_excluded(tool_name: str) -> None:
-    """By name, both from the allowed set and from the pool.
+def test_the_six_write_tools_are_named_and_refused(tool_name: str) -> None:
+    """By name, and asserted NOT flagged read-only in the catalogue either.
 
-    A future edit that added `read_only=True` to one of these in the catalogue would be
-    declaring that cancelling an order is a read, and this is where that gets caught.
+    A future edit that added `read_only=True` to one of these would be declaring that
+    cancelling an order is a read, and the equality test above would then happily follow it
+    into the allow-list. This is the case that says no.
     """
     catalog = _catalog_by_name()
     spec = catalog.get(tool_name)
@@ -109,18 +123,35 @@ def test_the_five_write_tools_are_named_and_excluded(tool_name: str) -> None:
         "the flag is for a POST whose body is transport, never for a side effect."
     )
 
-    assert tool_name not in read_only_tool_names()
+    assert tool_name not in CHATBOT_READ_ONLY_TOOLS
+
+
+@pytest.mark.parametrize("tool_name", WRITE_TOOLS)
+def test_the_write_tools_stay_in_the_embedding_pool(tool_name: str) -> None:
+    """The other half of the ruling, and the one a well-meaning fix breaks.
+
+    The pool is SHARED with the in-app AI assistant, whose Tool-RAG only ever sees what is
+    embedded (`ai_assistant_service._rag_select_tools`), and `record_action_bootstrap`
+    exists solely to make these retrievable for it. Filtering the pool would take the
+    assistant's write tools away while doing nothing the chatbot-side allow-list does not
+    already do.
+    """
     embedded = {doc.source_key for doc in build_capability_documents(include_planned=False)}
-    assert tool_name not in embedded
+
+    assert tool_name in embedded, (
+        f"{tool_name} is no longer embedded, so the in-app AI assistant can never retrieve "
+        "it. The read-only rule is the CHATBOT's and belongs on its retrieval seam "
+        "(lanes/business/services.py::_tool_search), not on the shared pool."
+    )
 
 
 @pytest.mark.parametrize("tool_name", READ_ONLY_POST_TOOLS)
-def test_a_post_tool_that_declares_read_only_stays_in_the_pool(tool_name: str) -> None:
-    """The other half of the rule, and the reason it is not "method == GET".
+def test_a_post_tool_that_declares_read_only_is_allowed(tool_name: str) -> None:
+    """The reason the rule is not "method == GET".
 
     These three take a POST body because their input does not fit in a query string. They
-    read; excluding them would have taken three useful tools out of the assistant's search
-    for a transport detail.
+    have no customer-visible side effect, and excluding them would cost the chatbot three
+    useful reads for a transport detail.
     """
     catalog = _catalog_by_name()
     spec = catalog.get(tool_name)
@@ -131,55 +162,42 @@ def test_a_post_tool_that_declares_read_only_stays_in_the_pool(tool_name: str) -
     )
     assert spec.read_only is True
 
-    assert tool_name in read_only_tool_names()
-    embedded = {doc.source_key for doc in build_capability_documents(include_planned=False)}
-    assert tool_name in embedded
+    assert tool_name in CHATBOT_READ_ONLY_TOOLS
 
 
-def test_the_flag_and_not_the_method_is_what_admits_a_post_tool() -> None:
-    """The rule stated directly on a pair of synthetic specs: same method, one flag apart.
+def test_the_turn_path_never_reads_the_catalogue() -> None:
+    """B2, as a source scan: `sorento_crm_mcp` is not in the deployed backend image, so an
+    import of it from the chatbot package or the external API would raise in every
+    container and take every live business turn down through `run_fetch`'s broad `except`.
 
-    The two cases above prove it on the real catalogue, which is what matters; this proves
-    the DERIVATION rather than today's data, so the day the catalogue happens to hold no
-    read-only POST the rule is still pinned.
+    A source scan rather than a mock, for `test_import_boundary.py`'s reason: an importer
+    that no test happens to execute is still an importer. It matches IMPORTS, not the word:
+    naming the package in a comment (this rule's own explanation lives in one) is fine, and
+    the four ways in are the same four that file enumerates.
     """
-    template = next(s for s in _load_catalog_specs() if str(s.method).upper() != "GET")
-    writes = dataclasses.replace(template, name="zzt_post_writes", read_only=False)
-    reads = dataclasses.replace(template, name="zzt_post_reads", read_only=True)
+    import re
+    from pathlib import Path
 
-    assert not _reads(writes)
-    assert _reads(reads)
-
-
-def test_read_only_names_are_derived_from_the_catalogue_not_a_list() -> None:
-    """One source of truth: the set IS the catalogue's own declaration, no more and no less.
-
-    A hand-kept allow-list would pass every test above on the day it was written and fail
-    silently on the day the next tool landed, so the derivation itself is the thing worth
-    pinning.
-    """
-    expected = {s.name for s in _load_catalog_specs() if _reads(s)}
-
-    assert read_only_tool_names() == expected
-
-
-def test_the_field_survives_the_import_path_the_backend_actually_uses() -> None:
-    """`_load_catalog_specs` prefers an IMPORTED `sorento_crm_mcp.catalog` and falls back to
-    loading the file by path, so the field has to exist on whichever object comes back.
-
-    Worth its own case because the failure is silent in the safe-looking direction: a stale
-    package without the field makes `getattr(spec, "read_only", False)` answer False for
-    everything, and the three read-only POST tools would drop out of the pool with no error
-    anywhere. This is where that gets noticed.
-    """
-    specs = list(_load_catalog_specs())
-
-    assert specs, "the catalogue loaded empty"
-    assert all(hasattr(s, "read_only") for s in specs), (
-        "the ToolSpec reaching the CRM has no `read_only` field - the resolved "
-        "sorento_crm_mcp package is older than this backend"
+    import_re = re.compile(
+        r"^\s*(?:from\s+sorento_crm_mcp\b|import\s+sorento_crm_mcp\b)"
+        r"|import_module\(\s*[\'\"]sorento_crm_mcp"
+        r"|__import__\(\s*[\'\"]sorento_crm_mcp",
+        re.MULTILINE,
     )
-    assert any(s.read_only for s in specs), (
-        "no spec on the resolved catalogue declares read_only=True, so the three POST "
-        "reads are silently out of the Tool-RAG pool"
+    backend_root = Path(__file__).resolve().parents[2]
+    roots = [
+        backend_root / "app" / "services" / "chatbot",
+        backend_root / "app" / "api" / "v1" / "external",
+    ]
+    offenders = [
+        str(path.relative_to(backend_root))
+        for root in roots
+        for path in root.rglob("*.py")
+        if import_re.search(path.read_text(encoding="utf-8"))
+    ]
+
+    assert not offenders, (
+        "these turn-path files IMPORT sorento_crm_mcp, which does not exist in the "
+        "deployed backend image (compose builds it with context: ./sorento_crm_backend), "
+        "so every live business turn would fail: " + ", ".join(sorted(offenders))
     )

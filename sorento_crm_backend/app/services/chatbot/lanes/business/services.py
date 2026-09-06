@@ -238,15 +238,37 @@ def _tool_search(db: Session) -> ToolSearchFn:
         why `tool-filter` cannot simply take the first row. The fold itself is
         `fetch.collapse_tool_rows` (a ported node with its own 38 captures); this seam is
         the half that must not leave the service layer - the query.
+
+        **H58: the READ-ONLY filter is here, on the CHATBOT's own retrieval.** The
+        `mcp_tool` pool is shared with the in-app AI assistant, which retrieves its four
+        record actions from it ON PURPOSE (`record_action_bootstrap`) and gates them behind
+        a user confirmation and a permission check - so the pool must keep them and the
+        chatbot must not see them. This seam rather than `fetch.tool_filter` for two
+        reasons: `tool_filter` is a ported node graded byte-for-byte against 38 captures
+        (D8) and this rule is not part of what that node does, and filtering BEFORE the
+        pick means a write tool is not even listed among `_tool_pick.rejected`, so nothing
+        downstream can reach for one.
+
+        The filter runs AFTER the SQL `limit`, so a query whose neighbours are write tools
+        yields fewer than five candidates and can end at `not_found` - which is an
+        answerable outcome (H11), and the right one: the chatbot has nothing to say about a
+        question whose only matches were actions it may not take.
         """
         from app.services.embedding_service import EmbeddingReadService
 
-        from app.services.chatbot.lanes.business.fetch import collapse_tool_rows
+        from app.services.chatbot.lanes.business.fetch import (
+            CHATBOT_READ_ONLY_TOOLS,
+            collapse_tool_rows,
+        )
 
         rows = EmbeddingReadService(db).search_tool_chunks(
             embedding, source_type="mcp_tool", limit=5, domain=domain
         )
-        return collapse_tool_rows(rows)
+        return [
+            tool
+            for tool in collapse_tool_rows(rows)
+            if tool.get("name") in CHATBOT_READ_ONLY_TOOLS
+        ]
 
     return call
 
@@ -258,9 +280,18 @@ def _mcp_call(db: Session | None = None) -> McpCallFn:
         n8n bakes `http://<raw ip>:8765/mcp` into two nodes. This reads
         `settings.ai_assistant_mcp_url`, the same setting the AI assistant already uses, so
         an environment moves the endpoint without a deploy of anything but config.
+
+        H58: the read-only check is on THIS seam, not only on `fetch.call_tool`, because
+        the probes reach for the bundle directly (`answer.mcp_probe`, `miss_suggest`'s
+        three, the did-you-mean probe) and go nowhere near the ported call node. This is
+        the single choke point where a tool name becomes an MCP request, so it is where the
+        rule has to hold. The probes name read tools and are unaffected.
         """
         from app.config import settings
         from app.services.ai_assistant_service import MCPRuntimeClient
+        from app.services.chatbot.lanes.business.fetch import ensure_read_only
+
+        ensure_read_only(name)
 
         # The plan's capacity section bounds each MCP call at 10 s, and the AI assistant's
         # own 20 is a different budget for a different surface (a user watching a screen,
