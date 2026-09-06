@@ -34,23 +34,30 @@ vi.mock('next/navigation', () => ({
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+/** The dropdown-menu stub renders children and, for an item, wires the click - that is
+ *  the whole surface this list touches, so it is typed rather than left as `any`. */
+type MenuSlotProps = { children?: React.ReactNode };
+type MenuItemProps = MenuSlotProps & { onClick?: () => void; disabled?: boolean };
+
 vi.mock('@/components/ui/dropdown-menu', () => ({
-  DropdownMenu: ({ children }: any) => <div>{children}</div>,
-  DropdownMenuTrigger: ({ children }: any) => <>{children}</>,
-  DropdownMenuContent: ({ children }: any) => <div data-testid="menu-content">{children}</div>,
-  DropdownMenuItem: ({ children, onClick, disabled }: any) => (
+  DropdownMenu: ({ children }: MenuSlotProps) => <div>{children}</div>,
+  DropdownMenuTrigger: ({ children }: MenuSlotProps) => <>{children}</>,
+  DropdownMenuContent: ({ children }: MenuSlotProps) => (
+    <div data-testid="menu-content">{children}</div>
+  ),
+  DropdownMenuItem: ({ children, onClick, disabled }: MenuItemProps) => (
     <button type="button" onClick={onClick} disabled={disabled}>
       {children}
     </button>
   ),
-  DropdownMenuCheckboxItem: ({ children }: any) => <div>{children}</div>,
-  DropdownMenuLabel: ({ children }: any) => <div>{children}</div>,
+  DropdownMenuCheckboxItem: ({ children }: MenuSlotProps) => <div>{children}</div>,
+  DropdownMenuLabel: ({ children }: MenuSlotProps) => <div>{children}</div>,
   DropdownMenuSeparator: () => <hr />,
-  DropdownMenuGroup: ({ children }: any) => <div>{children}</div>,
-  DropdownMenuPortal: ({ children }: any) => <>{children}</>,
-  DropdownMenuSub: ({ children }: any) => <div>{children}</div>,
-  DropdownMenuSubContent: ({ children }: any) => <div>{children}</div>,
-  DropdownMenuSubTrigger: ({ children }: any) => <div>{children}</div>,
+  DropdownMenuGroup: ({ children }: MenuSlotProps) => <div>{children}</div>,
+  DropdownMenuPortal: ({ children }: MenuSlotProps) => <>{children}</>,
+  DropdownMenuSub: ({ children }: MenuSlotProps) => <div>{children}</div>,
+  DropdownMenuSubContent: ({ children }: MenuSlotProps) => <div>{children}</div>,
+  DropdownMenuSubTrigger: ({ children }: MenuSlotProps) => <div>{children}</div>,
 }));
 
 vi.mock('@/components/upload-activity', () => ({
