@@ -14,7 +14,7 @@ them, exactly as `DocumentIngestService` already did before this extraction.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -29,8 +29,8 @@ from app.services.integration_reference_service import (
     ReferenceConflict,
 )
 from app.services.master_ingest_service import MissingReference, _is_company_scoped
+from app.services.rules import master_rules
 from app.services.scm import customer_back_create, sales_agent_service
-from app.services.scm.outstanding_import_service import _clean_supplier_name
 from app.services.scm.supplier_back_create import back_create_supplier, supplier_slug
 
 # Fixed verdict-warning vocabulary (D9). Module constants rather than literals
@@ -50,16 +50,11 @@ WARN_REF_MISMATCH = "ref_mismatch"
 #: specific) alongside its siblings, even though only `DocumentIngestService`
 #: emits it today.
 WARN_UNCLASSIFIED_DEMAND = "unclassified_demand"
-
-# The exact-match code column per master the ref/code ladder resolves through.
-# `sales_agents` is absent on purpose: it is shared (no company scope) and
-# matched through `sales_agent_service`, which owns its own normalisation.
-_CODE_COLUMNS: dict[type, Any] = {
-    Customer: Customer.customer_code,
-    Supplier: Supplier.supplier_code,
-    Product: Product.product_code,
-    Warehouse: Warehouse.warehouse_code,
-}
+#: S3 repoint (D2): a cleaned supplier name matches more than one existing
+#: row (the same company held twice, once per currency account) - refused
+#: rather than back-created or guessed, the document lands with `supplier_id`
+#: NULL. Distinct from a plain "not found" name, which still back-creates.
+WARN_SUPPLIER_AMBIGUOUS = "supplier_ambiguous"
 
 
 def dedupe_warnings(warnings: list[str]) -> list[str]:
@@ -296,10 +291,25 @@ class MasterRefResolver:
 
         if model is Supplier:
             entity_id = self._resolve_by_code(model, code) if code else None
+            ambiguous = False
             if entity_id is None and name:
                 entity_id = self._resolve_supplier_by_name(name)
+                # S3 repoint (D2): `_resolve_supplier_by_name` collapses "no
+                # match" and "more than one match" to the same `None` - a
+                # separate count tells them apart, since only the second one
+                # refuses to back-create.
+                if entity_id is None and (
+                    master_rules.count_supplier_name_matches(
+                        self.db, name, self.company_id
+                    )
+                    > 1
+                ):
+                    ambiguous = True
             if entity_id is not None:
                 return entity_id
+            if ambiguous:
+                warnings.append(WARN_SUPPLIER_AMBIGUOUS)
+                return None
             if code or name:
                 supplier = back_create_supplier(
                     self.db,
@@ -344,11 +354,13 @@ class MasterRefResolver:
     def _resolve_by_code(self, model: type, code: str) -> Optional[str]:
         """Exact match on the model's code column, case/whitespace-insensitive.
 
-        `order_by(id.desc())` rather than an unqualified `.scalar()`: a code is
-        unique per company for every model here EXCEPT `customers` (D2 - one
-        debtor code routinely carries more than one legal name), and a query
-        that raises on more than one row would turn that into a 500 instead of
-        a deterministic pick.
+        `Customer` stays its own query (S3 repoint): `master_rules
+        .resolve_master_by_code` deliberately has no `customers` entry -
+        identity there is the (code, name) pair, not the code alone (D13) -
+        but this ladder's Customer rung has always matched on a bare code
+        too (the `WARN_CUSTOMER_UNRESOLVED` path). Every other model
+        delegates to the shared function (D17), the same one the manual
+        create services and the ESB masters push already go through.
 
         Memoised (perf round 5): a positive hit is cached for every model - a
         code that resolved once resolves the same way for the rest of this
@@ -361,36 +373,37 @@ class MasterRefResolver:
         memo_key = (model.__tablename__, "code", normalized)
         if memo_key in self._memo:
             return self._memo[memo_key]
-        column = _CODE_COLUMNS[model]
-        query = (
-            self.db.query(model.id)
-            .filter(func.upper(func.btrim(column)) == normalized)
-            .order_by(model.id.desc())
-        )
-        if _is_company_scoped(model.__tablename__):
-            query = query.filter(model.company_id == self.company_id)
-        row = query.first()
-        entity_id = str(row[0]) if row else None
+        if model is Customer:
+            row = (
+                self.db.query(model.id)
+                .filter(func.upper(func.btrim(Customer.customer_code)) == normalized)
+                .order_by(model.id.desc())
+                .filter(model.company_id == self.company_id)
+                .first()
+            )
+            entity_id = str(row[0]) if row else None
+        else:
+            company_id = (
+                self.company_id if _is_company_scoped(model.__tablename__) else None
+            )
+            entity_id = master_rules.resolve_master_by_code(
+                self.db, model, code, company_id
+            )
         if entity_id is not None or model in (Product, Warehouse):
             self._memo[memo_key] = entity_id
         return entity_id
 
     def _resolve_supplier_by_name(self, name: str) -> Optional[str]:
-        """The upload's own name-fallback rule: cleaned name, order by id desc.
-
-        `supplier_name` carries no uniqueness constraint, so more than one row
-        can share one - ordered so the pick is deterministic rather than
-        whatever order Postgres happens to return (`outstanding_import_service
-        ._resolve_parties_by_name`, which this mirrors).
+        """Delegates to `master_rules.resolve_supplier_by_name` (D2, S3
+        repoint): a cleaned name matching more than one supplier now REFUSES
+        (returns `None`) rather than picking the most recent row, matching
+        `po_history_service`'s own ambiguity rule. The caller
+        (`_resolve_by_fallback`) separately checks `master_rules
+        .count_supplier_name_matches` to tell that refusal apart from a
+        genuine "not found" and warn `supplier_ambiguous` only for the
+        former - this function itself does not distinguish the two, exactly
+        as `resolve_supplier_by_name`'s own existing contract does not
+        (`tests/test_ingest_parity_s1_products.py
+        ::test_resolve_supplier_by_name_refuses_an_ambiguous_cleaned_name`).
         """
-        cleaned = _clean_supplier_name(name)
-        if not cleaned:
-            return None
-        row = (
-            self.db.query(Supplier.id)
-            .filter(func.upper(Supplier.supplier_name) == cleaned.upper())
-            .filter(Supplier.company_id == self.company_id)
-            .order_by(Supplier.id.desc())
-            .first()
-        )
-        return str(row[0]) if row else None
+        return master_rules.resolve_supplier_by_name(self.db, name, self.company_id)

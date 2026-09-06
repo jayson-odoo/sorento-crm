@@ -134,6 +134,22 @@ def resolve_supplier_by_name(db: Session, name: str, company_id: str) -> Optiona
     return str(matches[0].id)
 
 
+def count_supplier_name_matches(db: Session, name: str, company_id: str) -> int:
+    """How many suppliers share `name`'s cleaned form, within the company.
+
+    `resolve_supplier_by_name` collapses "no match" and "more than one
+    match" to the same `None` - correct for a caller that only wants an id,
+    wrong for one that has to warn `supplier_ambiguous` on the second case
+    and stay silent on the first (`MasterRefResolver._resolve_by_fallback`,
+    S3 repoint).
+    """
+    cleaned = clean_supplier_name(name).upper()
+    if not cleaned:
+        return 0
+    suppliers = db.query(Supplier).filter(Supplier.company_id == company_id).all()
+    return sum(1 for s in suppliers if clean_supplier_name(s.supplier_name).upper() == cleaned)
+
+
 def code_name_columns(model: type) -> tuple[str, str]:
     """The (code_column, name_column) pair for a model `ensure_reference`
     auto-creates. Raises `KeyError` for a model that has no name column here -

@@ -207,9 +207,11 @@ def _run_document_hooks(
     reaction, the same attribution an interactive user's action gets.
 
     Only `sales_orders` and `purchase_orders` react here - a shipping order's
-    lines are closed-by-absence WITHIN the pushed document only (D7); the
-    book-wide reconciliation the upload does is the ESB's own deletion call,
-    not a hook on this route.
+    forward-match hook (D7, S3) runs INSIDE `ShippingOrderIngestService
+    .ingest()` itself instead (batch end, non-dry only), not through this
+    route hook: the RED test drives that service directly, bypassing this
+    route entirely, and firing it from both places would double the call a
+    real ESB push makes.
     """
     if entity == "sales_orders":
         _run_plan_exception_hook(db, service, actor=actor)
@@ -417,7 +419,9 @@ async def ingest_masters(
         db.commit()
         # D7/S5: post-write hooks, non-dry only (AC-V5-4) - `MasterIngestService`
         # and `ShippingOrderIngestService` carry none of the attributes these
-        # read, so only a `DocumentIngestService` batch reaches this.
+        # read (the latter's own forward-match hook runs inside its `ingest()`
+        # instead - see `_run_document_hooks`'s docstring), so only a
+        # `DocumentIngestService` batch reaches this.
         if isinstance(service, DocumentIngestService):
             _run_document_hooks(
                 db, entity, service, actor=current_user.get("id")

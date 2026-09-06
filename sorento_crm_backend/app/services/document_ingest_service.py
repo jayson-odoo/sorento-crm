@@ -434,11 +434,18 @@ class DocumentIngestService(MasterRefResolver):
                 errors={"_": INTERNAL_ERROR_MESSAGE},
             )
 
-        # D5: an `SPO-` numbered document pushed as a purchase order is refused
-        # outright, before any savepoint work - it is a shipping order wearing
-        # the wrong entity name, and adopting it here would create a phantom
-        # purchase order `spo_allocations` can never link back to.
-        if spec.entity_type == "purchase_orders" and doc_family(payload.po_number) == FAMILY_SPO:
+        # D5/D6 (S3, AC-P3-7): an `SPO-` numbered document, OR one the payload
+        # itself flags `is_shipping_order` (AutoCount's `UDF_ShipOrder`),
+        # pushed as a purchase order is refused outright, before any
+        # savepoint work - it is a shipping order wearing the wrong entity
+        # name, and adopting it here would create a phantom purchase order
+        # `spo_allocations` can never link back to. The flag exists because
+        # the prefix alone misses a differently-numbered SPO AutoCount still
+        # marks as one.
+        if spec.entity_type == "purchase_orders" and (
+            doc_family(payload.po_number) == FAMILY_SPO
+            or getattr(payload, "is_shipping_order", False)
+        ):
             return RecordResult(
                 source_ref=payload.source_ref,
                 outcome=IngestOutcome.FAILED,

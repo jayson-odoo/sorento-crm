@@ -27,6 +27,7 @@ from app.services.procurement_service import (
     PickingHeaderService,
     AllocationReceivedGuardError,
 )
+from app.services.rules import shipping_order_rules
 from app.services.grn_spo_matching import (
     build_allocation_pool,
     draw_fifo,
@@ -1133,16 +1134,16 @@ def _spo_import_find_column(row_data: dict, *candidates: str) -> Any:
 
 
 def _spo_import_extract_container(loading_date_value: Any) -> Optional[str]:
-    """Extract shipping container number: text after first space in Loading Date cell."""
+    """Extract the shipping container number from the Loading Date cell.
+
+    Delegates to the shared `shipping_order_rules.extract_container_number`
+    (D6, S3), which both writers of `spo_allocations` use now - kept as its
+    own function only because callers here pass whatever raw cell value the
+    reader returned (not necessarily a string yet).
+    """
     if loading_date_value is None:
         return None
-    s = str(loading_date_value).strip()
-    if not s:
-        return None
-    parts = s.split(None, 1)  # max 2 parts
-    if len(parts) < 2:
-        return None
-    return parts[1].strip() or None
+    return shipping_order_rules.extract_container_number(str(loading_date_value))
 
 
 def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id: str):
@@ -1366,12 +1367,18 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
         for (product_id, warehouse_id), (total_qty, shipment_id) in groups.items():
             processed += 1
             try:
+                # D6 (S3): the group's own container, already cleaned
+                # (`_spo_import_extract_container`) when the row was read.
+                container_number = (
+                    spo_row_identity.get((product_id, warehouse_id), {}).get("container")
+                )
                 allocation_data = SPOAllocationCreate(
                     spo_number=spo_number,
                     inbound_shipment_id=shipment_id,
                     warehouse_id=warehouse_id,
                     product_id=product_id,
                     allocated_quantity=total_qty,
+                    container_number=container_number,
                     receipt_status="pending",
                     quantity_received=0,
                     quantity_rejected=0,

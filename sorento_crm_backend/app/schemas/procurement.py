@@ -447,6 +447,14 @@ class SPOAllocationBase(BaseModel):
     quantity_rejected: int = 0
     allocation_notes: Optional[str] = None
     product_id: str
+    # D6 (S3): AutoCount's `PO.Ref` / the SPO xlsx Loading Date cell, already
+    # cleaned (`shipping_order_rules.extract_container_number`) by the caller.
+    container_number: Optional[str] = None
+    # Section 7 currency gap (S3): absent on every SPO xlsx row today, unlike
+    # the PO side which has carried it since the outstanding upload's own
+    # `DEFAULT_PO_CURRENCY` fill - added so the two writers' parity test can
+    # stop excluding this column.
+    currency: Optional[str] = None
 
 
 class SPOAllocationCreate(SPOAllocationBase):

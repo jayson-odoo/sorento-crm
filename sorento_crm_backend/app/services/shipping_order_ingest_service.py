@@ -78,6 +78,8 @@ from app.services.master_ingest_service import (
     integrity_conflict_errors,
 )
 from app.services.master_ref_resolver import MasterRefResolver, dedupe_warnings
+from app.services.rules import shipping_order_rules
+from app.services.rules.document_rules import derive_document_status
 from app.services.scm import order_link_service
 from app.services.scm.outstanding_import_service import DEFAULT_PO_CURRENCY
 
@@ -100,6 +102,11 @@ RECEIPT_FULLY_RECEIVED = "fully_received"
 # four are accepted and otherwise inert - a line's own `line_status` always
 # comes from its quantities, never from this word.
 STATUS_WORDS = frozenset({"open", "partial", "fulfilled", "closed", "cancelled"})
+
+# D6/D7 (S3) verdict warnings - same fixed vocabulary convention as
+# `master_ref_resolver`'s `WARN_*` constants.
+WARN_CONTAINER_UNRESOLVED = "container_unresolved"
+WARN_RECEIVED_LOCKED = "received_locked"
 
 
 def _round_qty(value: Optional[Decimal]) -> int:
@@ -152,10 +159,16 @@ class ShippingOrderIngestService(MasterRefResolver):
     """Same constructor and ``ingest()``/``RecordResult`` contract as its siblings.
 
     Subclasses `MasterRefResolver` for the ref/code/name/back-create ladder,
-    shared with `DocumentIngestService` rather than duplicated. No `__init__`
-    of its own (review nit) - `MasterRefResolver.__init__` already has the
-    exact signature this class needs.
+    shared with `DocumentIngestService` rather than duplicated.
     """
+
+    def __init__(self, db: Session, integration_id: Optional[str], *, company_id: str):
+        super().__init__(db, integration_id, company_id=company_id)
+        # D7 (S3): SPO numbers this batch touched, read by the route's
+        # post-write forward-match hook (`app.api.v1.external.ingest
+        # ._run_document_hooks`) after commit - same role
+        # `DocumentIngestService.so_numbers` plays for its own hook.
+        self.spo_numbers_touched: set[str] = set()
 
     # --------------------------------------------------------------- the batch
     def ingest(
@@ -170,7 +183,33 @@ class ShippingOrderIngestService(MasterRefResolver):
                 # In a finally, so an error mid-batch cannot leave a partially
                 # applied preview in the session for whatever commits next.
                 self.db.rollback()
+        if not dry_run and self.spo_numbers_touched:
+            self._run_forward_match()
         return result
+
+    def _run_forward_match(self) -> None:
+        """D7 (S3): `forward_match_grn_lines_for_spo_best_effort` once per SPO
+        number this batch touched, end of batch - correct already on the
+        xlsx path (`import_tasks.process_spo_import`, which fires it once per
+        file for the same reason: a waiting GRN line must be placed against
+        the allocation that actually covers its warehouse, not whichever one
+        this batch happened to write first). Runs HERE, inside `ingest()`,
+        rather than as a route-level post-commit hook like the SO/PO ones:
+        this service's own `ingest()` is the batch boundary a caller (this
+        module's own tests included) can drive directly, with no route in
+        between. `forward_match_grn_lines_for_spo_best_effort` is itself
+        already the best-effort wrapper (catches, rolls back, warns), so
+        nothing here needs its own try/except.
+
+        Called through the MODULE attribute so a caller monkeypatching
+        `grn_spo_matching` sees this call.
+        """
+        import app.services.grn_spo_matching as grn_spo_matching
+
+        for spo_number in sorted(self.spo_numbers_touched):
+            grn_spo_matching.forward_match_grn_lines_for_spo_best_effort(
+                self.db, spo_number, company_id=self.company_id
+            )
 
     def _ingest_one(self, raw: dict) -> RecordResult:
         source_ref = raw.get("source_ref") if isinstance(raw, dict) else None
@@ -196,18 +235,30 @@ class ShippingOrderIngestService(MasterRefResolver):
                 errors={"_": INTERNAL_ERROR_MESSAGE},
             )
 
-        status_word = (payload.status or "").strip().lower()
-        if status_word not in STATUS_WORDS:
-            return RecordResult(
-                source_ref=payload.source_ref,
-                outcome=IngestOutcome.FAILED,
-                errors={
-                    "status": (
-                        f"unknown status {payload.status!r}; expected one of: "
-                        f"{', '.join(sorted(STATUS_WORDS))}"
-                    )
-                },
-            )
+        if payload.status is None:
+            # D20 (S3, AC-P3-6): absent derives via the same shared function
+            # the SO/PO side uses - all allocations received = closed, else
+            # open. There is no header row to read an EXISTING status off
+            # (D3), so `existing` is always `None` here; `cancelled` is
+            # therefore never derived, only ever explicitly sent.
+            line_dicts = [
+                {"qty_ordered": line.qty_ordered, "qty_received": line.qty_received}
+                for line in payload.lines
+            ]
+            status_word = derive_document_status(line_dicts, None)
+        else:
+            status_word = (payload.status or "").strip().lower()
+            if status_word not in STATUS_WORDS:
+                return RecordResult(
+                    source_ref=payload.source_ref,
+                    outcome=IngestOutcome.FAILED,
+                    errors={
+                        "status": (
+                            f"unknown status {payload.status!r}; expected one of: "
+                            f"{', '.join(sorted(STATUS_WORDS))}"
+                        )
+                    },
+                )
         force_closed = status_word == "cancelled"
 
         # One document per savepoint. Without it a failed flush poisons the
@@ -292,6 +343,13 @@ class ShippingOrderIngestService(MasterRefResolver):
             warnings=warnings,
         )
         currency = payload.currency or DEFAULT_PO_CURRENCY
+        # D6 (S3): cleaned ONCE per document - every line of it stores the
+        # same container, so there is no reason to re-clean per line.
+        container_number = (
+            shipping_order_rules.extract_container_number(payload.container_number)
+            if payload.container_number
+            else None
+        )
 
         line_values = [
             self._line_values(payload, line, index, supplier_id, currency, warnings)
@@ -308,13 +366,28 @@ class ShippingOrderIngestService(MasterRefResolver):
         for values in line_values:
             row = by_ref.pop(values["source_ref"], None)
             if row is not None:
-                self._write_row(row, values, force_closed)
+                # D7 (S3): a received quantity is a fact of what physically
+                # arrived, and an ESB push cannot pull it out from under a
+                # GRN that already drew against it - the line is left
+                # exactly as it was, and the record still lands (rest of the
+                # document unaffected).
+                guard = shipping_order_rules.received_guard(row, values["allocated_quantity"])
+                if guard == shipping_order_rules.GUARD_RECEIVED_LOCKED:
+                    warnings.append(WARN_RECEIVED_LOCKED)
+                    continue
+                self._write_row(
+                    row, values, force_closed,
+                    container_number=container_number, warnings=warnings,
+                )
                 counts["updated"] += 1
             else:
                 unmatched.append(values)
 
         if unmatched and pool:
-            self._adopt_lines(unmatched, pool, counts, force_closed)
+            self._adopt_lines(
+                unmatched, pool, counts, force_closed,
+                container_number=container_number, warnings=warnings,
+            )
 
         # S1 review fix: the NEXT number is the highest across every row this
         # `spo_number` has EVER carried, not just the rows THIS DocKey's own
@@ -332,7 +405,10 @@ class ShippingOrderIngestService(MasterRefResolver):
                 spo_line_number=next_number,
             )
             self.db.add(row)
-            self._write_row(row, values, force_closed)
+            self._write_row(
+                row, values, force_closed,
+                container_number=container_number, warnings=warnings,
+            )
             counts["created"] += 1
 
         # A leftover row - the payload no longer names it - is ALWAYS closed,
@@ -349,6 +425,7 @@ class ShippingOrderIngestService(MasterRefResolver):
             counts["cancelled"] += 1
         self.db.flush()
         self._write_order_link_claims(payload)
+        self.spo_numbers_touched.add(payload.spo_number)
         return _Verdict(outcome=outcome, warnings=dedupe_warnings(warnings), line_counts=counts)
 
     def _write_order_link_claims(self, payload: CanonicalShippingOrder) -> None:
@@ -558,7 +635,13 @@ class ShippingOrderIngestService(MasterRefResolver):
         )
 
     def _write_row(
-        self, row: SPOAllocation, values: dict[str, Any], force_closed: bool
+        self,
+        row: SPOAllocation,
+        values: dict[str, Any],
+        force_closed: bool,
+        *,
+        container_number: Optional[str] = None,
+        warnings: Optional[list[str]] = None,
     ) -> None:
         values = dict(values)
         values.pop("line_number", None)
@@ -569,6 +652,16 @@ class ShippingOrderIngestService(MasterRefResolver):
             # still outstanding - a cancelled shipment covers no demand
             # however much of it had already arrived.
             row.line_status = LINE_CLOSED
+        # D6 (S3): every allocation of the pushed document stores the cleaned
+        # container - `None` when the payload named none, so an absent
+        # header field never clears one a previous push (or the xlsx import)
+        # already set here.
+        if container_number:
+            linked = shipping_order_rules.link_allocation_to_shipment(
+                self.db, row, container_number
+            )
+            if not linked and warnings is not None:
+                warnings.append(WARN_CONTAINER_UNRESOLVED)
 
     def _adopt_lines(
         self,
@@ -576,6 +669,9 @@ class ShippingOrderIngestService(MasterRefResolver):
         pool: list[SPOAllocation],
         counts: dict[str, int],
         force_closed: bool,
+        *,
+        container_number: Optional[str] = None,
+        warnings: Optional[list[str]] = None,
     ) -> None:
         """D11: claim ref-less POOL rows for ref-less UNMATCHED incoming lines.
 
@@ -642,7 +738,10 @@ class ShippingOrderIngestService(MasterRefResolver):
         claimed_rows: set[int] = set()
 
         def _claim(idx: int, values: dict[str, Any], row: SPOAllocation) -> None:
-            self._write_row(row, values, force_closed)
+            self._write_row(
+                row, values, force_closed,
+                container_number=container_number, warnings=warnings,
+            )
             counts["adopted"] += 1
             claimed_lines.add(idx)
             claimed_rows.add(id(row))

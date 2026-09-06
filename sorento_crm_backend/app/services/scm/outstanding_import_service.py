@@ -1571,13 +1571,21 @@ def _spo_lines_to_close(db: Session, stated_keys: set[tuple[str, int]]) -> list:
 
     One reader for the preview and the write, so the number the operator confirms and the
     rows the commit settles cannot differ.
+
+    D11 (S3): also considers rows `ShippingOrderIngestService` wrote
+    (`source_system == "autocount"`) - one shipping-order writer identity
+    across the outstanding book and the ESB, so a document the file no
+    longer states closes regardless of which channel last touched it.
+    `scm_spo_history`/`scm_po_history` (closed history, a different feed
+    entirely) are still excluded - neither is this channel's to settle.
     """
     from app.models.procurement import SPOAllocation
+    from app.services.document_ingest_service import SOURCE_SYSTEM as ESB_SOURCE_SYSTEM
 
     return [
         row
         for row in db.query(SPOAllocation).filter(
-            SPOAllocation.source_system == SPO_UPLOAD_SOURCE,
+            SPOAllocation.source_system.in_([SPO_UPLOAD_SOURCE, ESB_SOURCE_SYSTEM]),
             SPOAllocation.line_status == "open",
         )
         if (row.spo_number, row.spo_line_number) not in stated_keys

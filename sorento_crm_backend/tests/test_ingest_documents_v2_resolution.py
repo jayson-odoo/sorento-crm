@@ -264,6 +264,31 @@ class TestSupplierLadder:
         resolved = env.refs.resolve(entity_type="suppliers", source_ref=new_ref)
         assert str(resolved) == str(header["supplier_id"])
 
+    def test_ambiguous_cleaned_supplier_name_refuses_and_does_not_back_create(self, env):
+        """D2/S1 repoint (ingest-parity-standardisation S3): the ladder's
+        `_resolve_supplier_by_name` now delegates to `master_rules
+        .resolve_supplier_by_name`, which refuses (rather than picking the
+        most recent row) when a cleaned name matches more than one supplier
+        - the same company held twice, once per currency account. The
+        record still lands (a supplier is optional on a PO the way a
+        warehouse is), `supplier_id` is NULL, and the warning names WHY
+        rather than the document silently linking to whichever row happened
+        to sort last.
+        """
+        cleaned = f"{MARKER} Ambiguous Creditor Co"
+        _plain_supplier(env, env.company_a, code=unique_code(MARKER), name=f"{cleaned} (RMB)")
+        _plain_supplier(env, env.company_a, code=unique_code(MARKER), name=f"{cleaned} (USD)")
+        record = _po_record(env, supplier_name=f"{cleaned} (SGD)")
+
+        res = env.post(INGEST_PO, [record])
+
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", res.text
+        assert "supplier_ambiguous" in entry.get("warnings", []), entry
+        assert "supplier_created" not in entry.get("warnings", []), entry
+        header = env.header("purchase_orders", record["source_ref"])
+        assert header["supplier_id"] is None
+
     def test_back_create_slugs_the_name_when_only_a_name_is_sent(self, env):
         name = f"{MARKER} Nameless Supplier Co"
         record = _po_record(env, supplier_name=name)
