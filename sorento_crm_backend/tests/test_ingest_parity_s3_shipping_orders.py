@@ -92,10 +92,6 @@ _GENERIC_EXCLUDE = {
     # them, the xlsx writer never does) - same reasoning as excluding `source`
     # itself in the S0/S1/S2 files.
     "source_system", "source_ref", "source_doc_ref",
-    # `currency`: SPOAllocationCreate does not expose this column at all (a
-    # real gap, but not one any S3 AC names) - excluded so the parity signal
-    # here stays on what THIS phase claims.
-    "currency",
 }
 
 
@@ -471,19 +467,21 @@ class TestAcP37DocFamilyAcceptsFlagOrPrefix:
 
 class TestAcP38XlsxVsEsbParity:
     """A scaled-down stand-in for the UAC's 6-line SPO fixture (three
-    representative lines, distinct products, each with its own container/
-    shipment): through the xlsx import's own write function
-    (`SPOAllocationService.upsert_allocation`) into company A, and through
-    the ESB into company B. `inbound_shipment_id` is compared as
+    representative lines, distinct products, sharing ONE container/shipment
+    for the whole document - `CanonicalShippingOrder.container_number` is
+    header-level (D6, one container per document, applied to every line by
+    `ShippingOrderIngestService._apply`), so the ESB half names it once on
+    the payload rather than per line): through the xlsx import's own write
+    function (`SPOAllocationService.upsert_allocation`) into company A, and
+    through the ESB into company B. `inbound_shipment_id` is compared as
     presence-of-link (a boolean), not the raw id - the id itself is a
     company-scoped row and legitimately differs, same reasoning as every
-    other `*_id` column excluded generically; `container_number` is included
-    in the generic column list (harmless no-op today since the column does
-    not exist - AC-P3-1)."""
+    other `*_id` column excluded generically."""
 
     def test_three_line_spo_xlsx_vs_esb_parity(self, db):
         from app.models.company import Company
         from app.models.procurement import SPOAllocation
+        from app.services.rules import shipping_order_rules
 
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         other = Company(id=str(uuid.uuid4()), name=f"{MARKER} B", code=unique_code(MARKER)[:10])
@@ -492,6 +490,19 @@ class TestAcP38XlsxVsEsbParity:
         company_b = str(other.id)
 
         spo_number = _code("SPOPAR")
+        shared_container = _code("CONT")
+        # `process_spo_import` (the real xlsx importer) reads the container
+        # already cleaned by `_spo_import_extract_container`, i.e. the same
+        # `extract_container_number` the ESB side runs - so the fixture's
+        # xlsx half must state the cleaned form too, not the raw one.
+        cleaned_container = shipping_order_rules.extract_container_number(shared_container)
+        shipment_a = InboundShipment(
+            shipment_number=_code("SHA"), shipping_container_number=shared_container,
+            shipment_date=date(2026, 1, 1), shipment_status="pending",
+        )
+        db.add(shipment_a)
+        db.flush()
+
         lines = []
         for i in range(3):
             category = ProductCategory(category_code=_code(f"CAT{i}"), category_name="Cat")
@@ -507,26 +518,22 @@ class TestAcP38XlsxVsEsbParity:
             warehouse_a = Warehouse(warehouse_code=_code(f"WHA{i}"), warehouse_name="Main")
             db.add(warehouse_a)
             db.flush()
-            shipment_a = InboundShipment(
-                shipment_number=_code(f"SHA{i}"), shipping_container_number=_code(f"CONTA{i}"),
-                shipment_date=date(2026, 1, 1), shipment_status="pending",
-            )
-            db.add(shipment_a)
-            db.flush()
             lines.append(
-                {
-                    "product_a": product_a, "warehouse_a": warehouse_a, "shipment_a": shipment_a,
-                    "qty": 10 + i,
-                }
+                {"product_a": product_a, "warehouse_a": warehouse_a, "qty": 10 + i}
             )
 
-        # Upload half, into company A.
+        # Upload half, into company A - all three lines share the one shipment.
         proc = SPOAllocationService(db)
         for line in lines:
             proc.upsert_allocation(
                 SPOAllocationCreate(
                     spo_number=spo_number,
-                    inbound_shipment_id=line["shipment_a"].id,
+                    inbound_shipment_id=shipment_a.id,
+                    # `process_spo_import` (the real xlsx importer) always
+                    # resolves and states the container explicitly alongside
+                    # the shipment id it resolved from it - see
+                    # app/tasks/import_tasks.py.
+                    container_number=cleaned_container,
                     warehouse_id=line["warehouse_a"].id,
                     location_code=line["warehouse_a"].warehouse_code,
                     product_id=line["product_a"].id,
@@ -536,12 +543,19 @@ class TestAcP38XlsxVsEsbParity:
                 forward_match=False,
             )
 
-        # ESB half, into company B - its own products/warehouses/shipments,
-        # same codes so the fixture reads as "the same document".
+        # ESB half, into company B - its own products/warehouses/shipment,
+        # same codes/container so the fixture reads as "the same document".
         set_company_scope(db, frozenset({company_b}))
         from app.services.integration_reference_service import IntegrationReferenceService
 
         refs = IntegrationReferenceService(db)
+        shipment_b = InboundShipment(
+            shipment_number=_code("SHB"), shipping_container_number=shared_container,
+            shipment_date=date(2026, 1, 1), shipment_status="pending",
+        )
+        db.add(shipment_b)
+        db.flush()
+
         esb_lines = []
         for i, line in enumerate(lines):
             product_b = Product(
@@ -565,13 +579,6 @@ class TestAcP38XlsxVsEsbParity:
             )
             db.add(warehouse_b)
             db.flush()
-            shipment_b = InboundShipment(
-                shipment_number=_code(f"SHB{i}"),
-                shipping_container_number=line["shipment_a"].shipping_container_number,
-                shipment_date=date(2026, 1, 1), shipment_status="pending",
-            )
-            db.add(shipment_b)
-            db.flush()
             esb_lines.append(
                 {
                     "source_ref": f"DK-{spo_number}-L{i}",
@@ -589,6 +596,7 @@ class TestAcP38XlsxVsEsbParity:
                     "source_ref": f"DK-{spo_number}",
                     "spo_number": spo_number,
                     "status": "open",
+                    "container_number": shared_container,
                     "lines": esb_lines,
                 }
             ],
