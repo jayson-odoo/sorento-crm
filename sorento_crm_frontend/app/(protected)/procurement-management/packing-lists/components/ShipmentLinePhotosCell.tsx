@@ -1,7 +1,6 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
 import { Plus, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -17,13 +16,13 @@ import AttachmentPreviewModal, {
 } from '@/components/common/AttachmentPreviewModal';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
 import { toast } from '@/lib/toast';
-import {
-  uploadShipmentLinePhotos,
-  type ShipmentLinePhoto,
-} from '../../../scm/services/fulfilmentService';
+import { useUploadShipmentLinePhotos } from '@/app/(protected)/scm/hooks/useFulfilment';
+import { type ShipmentLinePhoto } from '@/app/(protected)/scm/services/fulfilmentService';
 
 /** Only images - the shared dropzone enforces this client-side, the backend's own
- *  attachment-type extensions (Phase 2) enforce it again server-side. */
+ *  image-extension guard (independent of the attachment type row, review round 1
+ *  item 2) enforces it again server-side regardless of what an admin later widens
+ *  the type's own `allowed_extensions` to. */
 const IMAGE_ACCEPT = '.jpg,.jpeg,.png,.webp,.gif';
 
 /** Thumbnails shown before the strip collapses into "+n" (R25). No cap on how many a
@@ -31,8 +30,8 @@ const IMAGE_ACCEPT = '.jpg,.jpeg,.png,.webp,.gif';
 const VISIBLE_COUNT = 4;
 
 /** Query key `useShipmentLinePhotos` (`useFulfilment.ts`) reads/invalidates - kept here
- *  too so the upload success path and the deferred-delete's `invalidateKeys` agree with
- *  the read without importing the hooks file (this is a leaf cell, not a page). */
+ *  too so the deferred-delete's `invalidateKeys` agrees with the read without importing
+ *  the hooks file just for the key (this is a leaf cell, not a page). */
 export function shipmentLinePhotosQueryKey(shipmentId: string | null) {
   return ['scm', 'fulfilment', 'line-photos', shipmentId] as const;
 }
@@ -54,12 +53,14 @@ export function ShipmentLinePhotosCell({
   productLabel,
   photos,
 }: ShipmentLinePhotosCellProps) {
-  const queryClient = useQueryClient();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  const [uploading, setUploading] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
+
+  // Upload goes through the hook layer (review round 1 item 7) - the toast and the
+  // list invalidation both live in `useUploadShipmentLinePhotos` now, not here.
+  const upload = useUploadShipmentLinePhotos(shipmentId);
 
   // Hard delete, no confirmation dialog (D7): the "x" parks the delete on the server
   // for the grace window and a toast carries the countdown - matches the convention
@@ -73,6 +74,16 @@ export function ShipmentLinePhotosCell({
     successMessage: 'Photo deleted',
     invalidateKeys: [shipmentLinePhotosQueryKey(shipmentId)],
   });
+
+  // `shipment_id`/`line_id` scope the deferred delete server-side (review round 1
+  // item 1) - `EntityAttachmentLink` carries no company scope of its own, so the
+  // handler asserts the photo actually belongs to THIS line before deleting it.
+  const runDelete = (target: { id: string; filename: string | null }) =>
+    removal.run({
+      id: target.id,
+      subject: target.filename ?? 'this photo',
+      payload: { shipment_id: shipmentId, line_id: lineId },
+    });
 
   const previewItems = useMemo<AttachmentPreviewItem[]>(
     () =>
@@ -97,16 +108,12 @@ export function ShipmentLinePhotosCell({
 
   const handleUpload = async () => {
     if (!lineId || pendingFiles.length === 0) return;
-    setUploading(true);
     try {
-      await uploadShipmentLinePhotos(shipmentId, lineId, pendingFiles);
-      await queryClient.invalidateQueries({ queryKey: shipmentLinePhotosQueryKey(shipmentId) });
-      toast.success(pendingFiles.length === 1 ? 'Photo added' : `${pendingFiles.length} photos added`);
+      await upload.mutateAsync({ lineId, files: pendingFiles });
       closeUploadDialog(false);
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to upload photos');
-    } finally {
-      setUploading(false);
+    } catch {
+      // The hook's own onError already toasted (review round 1 item 7) - the dialog
+      // stays open so the picked files are not lost on a failed attempt.
     }
   };
 
@@ -142,9 +149,7 @@ export function ShipmentLinePhotosCell({
               <button
                 type="button"
                 className="absolute -right-1 -top-1 hidden size-4 items-center justify-center rounded-full bg-destructive text-destructive-foreground group-hover:flex disabled:opacity-50"
-                onClick={() =>
-                  removal.run({ id: photo.id, subject: photo.filename ?? 'this photo' })
-                }
+                onClick={() => runDelete({ id: photo.id, filename: photo.filename })}
                 disabled={removal.targetId === photo.id && removal.isPending}
                 aria-label={`Delete ${photo.filename ?? 'photo'} for ${productLabel}`}
               >
@@ -153,7 +158,17 @@ export function ShipmentLinePhotosCell({
             </div>
           ))}
           {overflow > 0 ? (
-            <span className="shrink-0 text-xs text-muted-foreground">+{overflow}</span>
+            <button
+              type="button"
+              className="shrink-0 rounded-full border bg-muted px-1.5 py-0.5 text-2xs font-medium text-muted-foreground hover:bg-muted/70"
+              onClick={() => {
+                setPreviewIndex(VISIBLE_COUNT);
+                setPreviewOpen(true);
+              }}
+              aria-label={`View ${overflow} more photo(s) for ${productLabel}`}
+            >
+              +{overflow}
+            </button>
           ) : null}
         </div>
         <Button
@@ -192,21 +207,26 @@ export function ShipmentLinePhotosCell({
             aria-label={`Photos to add for ${productLabel}`}
           />
           <DialogFooter>
-            <Button variant="outline" onClick={() => closeUploadDialog(false)} disabled={uploading}>
+            <Button variant="outline" onClick={() => closeUploadDialog(false)} disabled={upload.isPending}>
               Cancel
             </Button>
-            <Button onClick={handleUpload} disabled={uploading || pendingFiles.length === 0}>
-              {uploading ? 'Uploading...' : 'Upload'}
+            <Button onClick={handleUpload} disabled={upload.isPending || pendingFiles.length === 0}>
+              {upload.isPending ? 'Uploading...' : 'Upload'}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
+      {/* Every photo is deletable from here (review round 1 item 8), including the
+          overflow ones the "+n" badge does not render its own thumbnail for - the
+          carousel already carries all of them (`previewItems` is the full list). */}
       <AttachmentPreviewModal
         open={previewOpen}
         onOpenChange={setPreviewOpen}
         items={previewItems}
         startIndex={previewIndex}
+        onDelete={(item) => runDelete({ id: item.id, filename: item.name })}
+        deletingItemId={removal.targetId}
       />
     </>
   );

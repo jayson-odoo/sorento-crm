@@ -1,7 +1,9 @@
 /**
  * ShipmentLinePhotosCell - thumbnail strip, the add-photos dialog, preview, and the
  * deferred (D7) per-thumbnail delete (R25, purchasing consolidation batch, lane C,
- * slice C3). Phase 1: `uploadShipmentLinePhotos` is mocked - no backend route yet.
+ * slice C3, review round 1). The upload goes through `useUploadShipmentLinePhotos`
+ * (`useFulfilment.ts`), which calls `uploadShipmentLinePhotos` - mocked at the
+ * service layer below so the hook's own dispatch is exercised for real.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';

@@ -5,7 +5,7 @@ R11 clarified. UAC:
 `scm-purchasing-consolidation-6sep-acceptance-criteria.md`. Lavish page:
 `mockups/purchasing-consolidation-6sep-plan.html`. **Lane A (section 13: 1, 2 (R3 only), 3, 8,
 10 (R22)) built, browser-verified, review round 1 applied.** **Lane C built (C1-C3), review
-round 1 applied, awaiting C3 review + browser test** - sections 6, 7, 12 (supplier documents,
+rounds applied, awaiting browser test** - sections 6, 7, 12 (supplier documents,
 translation memory, shipment line photos). B/D awaiting GO.
 
 Feedback given 6 Sep on production (`fe-sorento.foundryx.my`). Twelve asks, four lanes, four
@@ -627,3 +627,58 @@ No open questions remain. Waiting for GO.
   deviation: `_MULTI_SEP` now needs whitespace on both sides of an ASCII slash and only
   splits when what follows carries a label of its own; the note branch inside
   `_apply_pending` no longer drains `pending` while `pending_is_new_block` is set.
+
+### C3 review round 1 (7 Sep 2026) - the fixes and why one is kept as designed
+
+- **`shipment_line_photos.delete_photo` keeps its own inline, synchronous object
+  delete** (`delete_object_best_effort` called once for `file_path`, once for
+  `thumbnail_path`) **rather than switching to `AttachmentService.delete_attachment`.**
+  That method only enqueues the FILE key onto the `imports` queue's
+  `delete_storage_files` job - it never touches `thumbnail_path` at all, so a photo
+  deleted through it would leave its thumbnail orphaned in storage forever. Calling it
+  here would also mean a photo delete waits on a worker being up to actually free the
+  bytes, for a delete this endpoint can already do inline in the same request. Kept as
+  built; not a regression the review found, a deliberate difference restated once this
+  round asked the question directly.
+- **The delete is now scoped to `shipment_id`/`line_id`, not `photo_id` alone**
+  (blocker item 1): `delete_photo(db, shipment_id, line_id, photo_id)` 404s a
+  shipment/line mismatch before the link is even looked up, and asserts the link's own
+  `entity_id` against the resolved line. The deferred action
+  (`shipment_line_photo.delete`, `record_actions.py`) and the FE's `removal.run` both
+  now carry `shipment_id`/`line_id` in the action's `payload`.
+- **The image guard is now independent of the attachment type row** (`_IMAGE_EXTS`/
+  `_content_type_for`, checked before any storage PUT) - the type's own
+  `allowed_extensions` still gates quota, but this guard holds regardless of what an
+  admin later widens that row to.
+- **The Shipment Line Photo attachment type IS seeded** (migration
+  `485_shipment_line_photo_type`, idempotent update-or-insert by code, mirroring
+  `021_add_attachment_type_code_and_complaint_document.py`) - a captain's ruling this
+  round reverses the slice's original "admin-set, never auto-created" stance for THIS
+  type specifically: unlike `packing_list_service`'s best-effort filing, this endpoint
+  has no fallback, so a fresh deploy needed the row to exist on day one. Applied by
+  hand to the shared dev DB via a guarded `upgrade()` call bound to a live connection
+  (never `alembic upgrade`), same as 483/484.
+- **A multi-file upload batch now purges its own failed file's object (and thumbnail)
+  and reports which files landed** before re-raising, rather than leaving a
+  half-written batch silent about what actually happened.
+- **`EntityAttachmentService.link_existing_attachment`'s `sort_order` is now
+  `MAX(existing) + 1`, not `count()`** - fixed in the shared method (every
+  linked-attachment feature uses it), since `count()` repeats an existing value once a
+  middle link has been deleted and two links end up sharing a position.
+- **The packing-list export's 3cm photo row height is now per-row**
+  (`line.get("photos")`), not sheet-wide (`_max_photo_columns(payload)`) - a line with
+  no photos of its own no longer grows just because some other line on the same
+  container has one.
+- **`GET .../packing-list`'s own JSON now redacts each photo ref to `attachment_id`**
+  (`consolidated_packing_list.redact_photo_refs`) before it reaches the frontend; the
+  export route still calls `build()` fresh for its own copy, which `to_xlsx` reads
+  `file_path`/`storage_provider` from unchanged.
+- **Upload and delete moved into the hook layer** (`useUploadShipmentLinePhotos`,
+  `useFulfilment.ts`) - the cell no longer holds its own upload state, toast or
+  invalidation; `useDeferredRowAction`'s existing plumbing already did the same for
+  delete.
+- **`AttachmentPreviewModal` gained an optional `onDelete`/`deletingItemId` pair** -
+  additive only (every existing caller omits both, unchanged), added so an overflow
+  photo (beyond the visible four-thumbnail strip) is reachable for delete through the
+  same carousel the "+n" badge already opens, rather than a second, duplicate
+  overflow-thumbnail popover.

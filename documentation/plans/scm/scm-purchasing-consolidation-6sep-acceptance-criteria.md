@@ -3,7 +3,7 @@
 Plan: `PLAN-scm-purchasing-consolidation-6sep.md`. Status: markup round 1 applied 6 Sep 2026
 (Q1-Q5 ruled, AC-A1 / AC-D3 / AC-D4 / AC-E4 / AC-F4 revised). **Lane A (groups A, B, C, H,
 AC-J1) built, browser-verified, review round 1 applied.** **Lane C built (C1-C3), review
-round 1 applied, awaiting C3 review + browser test** - groups tied to sections 6/7/12
+rounds applied, awaiting browser test** - groups tied to sections 6/7/12
 (supplier documents, translation memory, group L: shipment line photos). Groups D-G, I, the
 rest of J, K (lanes B/D) awaiting GO.
 
@@ -193,7 +193,10 @@ AC-L2's table is `entity_attachment_links` (existing linkage mechanism, reused),
 `inbound_shipment_line_photos`; AC-L1's "delete with confirmation" is the deferred-action
 countdown (D7, `useDeferredRowAction`), not `ConfirmDeleteDialog` (retired codebase-wide);
 AC-L3's photo columns sit after column V (`TOTAL AMOUNT`), not between REMARKS and RMB, so
-RMB/TOTAL RM's own formulas keep their existing column letters.
+RMB/TOTAL RM's own formulas keep their existing column letters. Review round 1 (7 Sep):
+the Shipment Line Photo attachment type IS seeded by migration
+`485_shipment_line_photo_type`, not admin-created on first use - see the plan's C3
+review round 1 notes.
 
 - AC-L1. Lines tab has a `Photos` cell: thumbnails, `+` opens the shared dropzone
   (multi-file, image types), delete with confirmation.

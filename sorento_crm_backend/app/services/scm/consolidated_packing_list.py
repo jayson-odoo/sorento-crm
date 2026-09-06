@@ -18,7 +18,10 @@ that never went into the container is read as goods that shipped.
 Reads only: `build` never writes, and `to_xlsx` is a pure function of what `build`
 returned - PLUS a storage read per photo (R26, section 12): `build` carries each line's
 photos as attachment refs only (`file_path`/`storage_provider`, never bytes), and
-`to_xlsx` fetches and embeds them at export time through `storage_router`.
+`to_xlsx` fetches and embeds them at export time through `storage_router`. The LISTING
+route strips those refs down to `attachment_id` before the JSON reaches the frontend
+(`redact_photo_refs`) - the export route calls `build` again for its own, unredacted
+copy.
 """
 from __future__ import annotations
 
@@ -267,6 +270,26 @@ def build(db: Session, shipment_id: str) -> dict:
     }
 
 
+def redact_photo_refs(payload: dict) -> None:
+    """Strip each line's photo refs down to `attachment_id` (review round 1 nit).
+
+    `build()`'s own return value is what the LISTING route
+    (`GET .../packing-list`) sends straight to the frontend as JSON - a raw
+    storage `file_path`/`storage_provider` has no legitimate reader there (the
+    Lines tab's own photo strip already gets a signed URL, from
+    `shipment_line_photos.list_for_shipment`). The EXPORT route calls `build()`
+    again itself and hands that fresh, unredacted payload to `to_xlsx` - so this
+    never touches the one `to_xlsx` actually reads bytes through. In place, not a
+    copy: the payload is built fresh per request either way.
+    """
+    for factory in payload.get("factories") or []:
+        for line in factory.get("lines") or []:
+            line["photos"] = [
+                {"attachment_id": photo.get("attachment_id")}
+                for photo in line.get("photos") or []
+            ]
+
+
 # --------------------------------------------------------------------------- #
 # the workbook
 # --------------------------------------------------------------------------- #
@@ -375,7 +398,7 @@ _SUBTOTAL_FORMATS = {
 #: lookup rather than two spellings that drift.
 _LETTERS = [spec[0] for spec in _COLUMNS_SPEC]
 
-#: R26 (section 12): `PHOTO 1 .. PHOTO n` go AFTER W, not between REMARKS and RMB -
+#: R26 (section 12): `PHOTO 1 .. PHOTO n` start AT W, after V, not between REMARKS and RMB -
 #: the reference's own RMB/TOTAL RM formulas hardcode column letters (`T{row}*F{row}`,
 #: `U{row}`), and inserting a variable-width block ahead of them (no cap per line, Q5)
 #: would mean re-deriving every one of those letters for every export. Appending after
@@ -635,9 +658,12 @@ def to_xlsx(payload: dict) -> bytes:
 
             style_row(row, formats=_LINE_FORMATS)
             # 3cm cap (R26): a photo needs more headroom than the reference's own line
-            # height, but only once the container actually carries one - a photo-less
-            # export must not grow every row for a column nobody filled.
-            ws.row_dimensions[row].height = _PHOTO_ROW_HEIGHT if photo_columns else _LINE_HEIGHT
+            # height, but only on a row that ACTUALLY carries one (review round 1, item
+            # 5) - a line with none of its own must not grow just because some other
+            # line on the same container has photos.
+            ws.row_dimensions[row].height = (
+                _PHOTO_ROW_HEIGHT if line.get("photos") else _LINE_HEIGHT
+            )
 
             ws.cell(row=row, column=1, value=block["name"])
             ws.cell(row=row, column=2, value=number)

@@ -12,16 +12,19 @@ asked for. See ``## Deviations (lane C)`` in the plan.
 
 No cap per line (Q5, ruled 6 Sep 2026): a line can hold as many photos as it is given.
 
-The attachment type (``Shipment Line Photo``) is admin data, never auto-created - same
-convention ``packing_list_service._PACKING_LIST_TYPE_CODE`` reads by: the captain sets
-the code (or just the name) after deploy, and a missing type is a 400 that says so
-rather than a silent skip, because filing the photo IS the point of this endpoint (a
-missing "Packing List" type there is a best-effort aside on an apply that succeeds
-either way; there is no such fallback here).
+The attachment type (``Shipment Line Photo``) IS seeded by migration
+``485_shipment_line_photo_type`` (review round 1, item 3): unlike
+``packing_list_service``'s own best-effort "Packing List" type, this endpoint has no
+fallback - filing the photo IS the point of it - so a fresh deploy with nobody having
+created the row yet would otherwise 400 on the very first upload. The lookup still
+tolerates an admin later renaming or re-coding the row (the ``code = ... OR
+lower(type_name) = ...`` match below), it just no longer depends on someone doing that
+FIRST.
 """
 from __future__ import annotations
 
 import logging
+import mimetypes
 import uuid as uuid_module
 from typing import Optional
 
@@ -52,6 +55,19 @@ logger = logging.getLogger(__name__)
 ENTITY_TYPE = "inbound_shipment_line"
 TYPE_CODE = "shipment_line_photo"
 TYPE_NAME = "Shipment Line Photo"
+
+#: What this endpoint ever accepts, independent of the attachment type row's own
+#: ``allowed_extensions`` (review round 1, item 2): the type is admin-editable, and
+#: an admin widening it later (e.g. to file a PDF spec sheet under the same type)
+#: must not turn a "photo" upload into an arbitrary-file one.
+_IMAGE_EXTS = {"jpg", "jpeg", "png", "webp", "gif"}
+_IMAGE_MIME_BY_EXT = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+    "gif": "image/gif",
+}
 
 
 def _line_or_404(db: Session, shipment_id: str, line_id: str) -> InboundShipmentLine:
@@ -90,6 +106,30 @@ def _photo_type(db: Session) -> AttachmentType:
     return row
 
 
+def _validated_image_ext(filename: str) -> str:
+    """The extension, only when it is one of the images this endpoint ever accepts
+    (review round 1, item 2). A 400 named after the actual file, not a generic
+    "unsupported type" - this is the one gate that must hold regardless of what the
+    attachment type row's own ``allowed_extensions`` happens to say."""
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in _IMAGE_EXTS:
+        raise AppException(
+            400, f"{filename} is not an image (jpg, jpeg, png, webp or gif)."
+        )
+    return ext
+
+
+def _content_type_for(filename: str, ext: str, content_type: Optional[str]) -> str:
+    """The browser's own ``content_type``, else derived from the extension (review
+    round 1, item 2) - a bare multipart part with no ``Content-Type`` header must
+    still store and thumbnail as the image it is, not as
+    ``application/octet-stream``."""
+    if content_type:
+        return content_type
+    guessed, _ = mimetypes.guess_type(filename)
+    return guessed or _IMAGE_MIME_BY_EXT.get(ext, "application/octet-stream")
+
+
 def _serialize(link: EntityAttachmentLink) -> dict:
     att = link.attachment
     provider = normalize_provider(getattr(att, "storage_provider", None))
@@ -125,6 +165,17 @@ def list_for_shipment(db: Session, shipment_id: str) -> dict[str, list[dict]]:
     return {line_id: [_serialize(link) for link in links] for line_id, links in by_line.items()}
 
 
+def _line_photos(db: Session, line_id: str) -> list[dict]:
+    by_line = EntityAttachmentService(db).list_links_for_entities(ENTITY_TYPE, [line_id])
+    return [_serialize(link) for link in by_line.get(line_id, [])]
+
+
+def _err_message(exc: Exception) -> str:
+    if isinstance(exc, AppException) and isinstance(exc.detail, dict):
+        return exc.detail.get("message") or str(exc)
+    return str(exc)
+
+
 async def upload_photos(
     db: Session,
     *,
@@ -135,10 +186,17 @@ async def upload_photos(
 ) -> list[dict]:
     """Store each file as a Shipment Line Photo attachment and link it to the line, in
     upload order (``sort_order`` appends, via ``link_existing_attachment`` - R25).
+    Returns the line's FULL photo list afterwards (review round 1, item 10) - not just
+    the files this call added - so the caller never has to merge two lists itself.
 
     Never calls the n8n intake webhook: a line photo is not a document a downstream
     integration needs notified about, same convention
     ``packing_list_service.file_supplier_document`` follows for its own filed copy.
+
+    Each file is stored and linked inside its own try/except (review round 1, item 4):
+    a failure partway through a multi-file batch purges whatever THAT file already put
+    in storage (object + thumbnail, both best-effort) and re-raises naming which files
+    landed before it - the ones before it stay linked, exactly as committed.
     """
     line = _line_or_404(db, shipment_id, line_id)
     attachment_type = _photo_type(db)
@@ -147,59 +205,95 @@ async def upload_photos(
     provider = default_provider()
     backend = get_backend(provider)
 
-    created: list[dict] = []
+    landed: list[str] = []
     for upload in files:
         content = await upload.read()
         original_filename = sanitize_storage_filename(upload.filename or "photo.jpg")
-        ext = original_filename.rsplit(".", 1)[-1].lower() if "." in original_filename else ""
-        entity_svc.check_quota(attachment_type, ENTITY_TYPE, str(line.id), len(content), ext)
+        ext = _validated_image_ext(original_filename)
+        content_type = _content_type_for(original_filename, ext, upload.content_type)
 
-        object_key = f"{TYPE_CODE}/{line.id}/{uuid_module.uuid4()}-{original_filename}"
-        # Real network PUT via sync boto3 - must not run on the event loop directly, or
-        # one slow upload freezes every other request this worker is holding (same
-        # concern `resources/attachments.py`'s own upload route guards against).
-        s3_key, _ = await run_in_threadpool(
-            backend.upload_file,
-            file_content=content,
-            file_path=object_key,
-            content_type=upload.content_type,
-        )
-        thumbnail_path = await run_in_threadpool(
-            store_thumbnail, backend, provider, s3_key, content, upload.content_type
-        )
+        s3_key: Optional[str] = None
+        thumbnail_path: Optional[str] = None
+        try:
+            entity_svc.check_quota(attachment_type, ENTITY_TYPE, str(line.id), len(content), ext)
 
-        from app.schemas.resources import AttachmentCreate
-        from app.services.resources_service import AttachmentService
+            object_key = f"{TYPE_CODE}/{line.id}/{uuid_module.uuid4()}-{original_filename}"
+            # Real network PUT via sync boto3 - must not run on the event loop directly,
+            # or one slow upload freezes every other request this worker is holding
+            # (same concern `resources/attachments.py`'s own upload route guards
+            # against).
+            s3_key, _ = await run_in_threadpool(
+                backend.upload_file,
+                file_content=content,
+                file_path=object_key,
+                content_type=content_type,
+            )
+            thumbnail_path = await run_in_threadpool(
+                store_thumbnail, backend, provider, s3_key, content, content_type
+            )
 
-        attachment_data = AttachmentCreate(
-            attachment_type_id=str(attachment_type.id),
-            original_filename=original_filename,
-            stored_filename=original_filename,
-            file_path=cdn_base_url(provider, s3_key),
-            file_size_bytes=len(content),
-            mime_type=upload.content_type,
-            storage_provider=provider,
-            thumbnail_path=thumbnail_path,
-        )
-        # Commits internally (`AttachmentService.create_attachment`) and stamps
-        # `company_id` off the active company scope - the same call every other upload
-        # path in this codebase makes, so a photo is scoped exactly like any other file.
-        attachment = AttachmentService(db).create_attachment(attachment_data, actor_id)
-        link = entity_svc.link_existing_attachment(
-            entity_type=ENTITY_TYPE,
-            entity_id=str(line.id),
-            attachment_id=str(attachment.id),
-            created_by=actor_id,
-        )
-        db.commit()
-        db.refresh(link)
-        created.append(_serialize(link))
+            from app.schemas.resources import AttachmentCreate
+            from app.services.resources_service import AttachmentService
 
-    return created
+            attachment_data = AttachmentCreate(
+                attachment_type_id=str(attachment_type.id),
+                original_filename=original_filename,
+                stored_filename=original_filename,
+                file_path=cdn_base_url(provider, s3_key),
+                file_size_bytes=len(content),
+                mime_type=content_type,
+                storage_provider=provider,
+                thumbnail_path=thumbnail_path,
+                # The type's own default folder (review round 1, item 6) - same
+                # convention `packing_list_service._file_the_upload` reads
+                # `default_directory_id` by; NULL files nowhere in particular, same
+                # as today.
+                directory_id=attachment_type.default_directory_id,
+            )
+            # Commits internally (`AttachmentService.create_attachment`) and stamps
+            # `company_id` off the active company scope - the same call every other
+            # upload path in this codebase makes, so a photo is scoped exactly like
+            # any other file.
+            attachment = AttachmentService(db).create_attachment(attachment_data, actor_id)
+            entity_svc.link_existing_attachment(
+                entity_type=ENTITY_TYPE,
+                entity_id=str(line.id),
+                attachment_id=str(attachment.id),
+                created_by=actor_id,
+            )
+            db.commit()
+        except Exception as exc:
+            db.rollback()
+            # The object (and its thumbnail) may already be sitting in storage before
+            # whatever failed - an object outliving its row is an orphan nothing on
+            # screen ever points at, so it is purged here rather than left billing
+            # forever.
+            if s3_key:
+                delete_object_best_effort(provider, s3_key)
+            if thumbnail_path:
+                thumb_key = extract_key(thumbnail_path)
+                if thumb_key:
+                    delete_object_best_effort(provider, thumb_key)
+            message = _err_message(exc)
+            if landed:
+                message = f"Uploaded {', '.join(landed)}. {original_filename} failed: {message}"
+            status_code = exc.status_code if isinstance(exc, AppException) else 400
+            raise AppException(status_code, message) from exc
+
+        landed.append(original_filename)
+
+    return _line_photos(db, str(line.id))
 
 
-def delete_photo(db: Session, photo_id: str) -> None:
+def delete_photo(db: Session, shipment_id: str, line_id: str, photo_id: str) -> None:
     """Removes the link row AND the attachment row AND the stored bytes.
+
+    Scoped to ``shipment_id``/``line_id`` (review round 1, item 1):
+    ``EntityAttachmentLink`` carries no company scope of its own, so matching on
+    ``photo_id`` alone would let a caller who merely GUESSES another shipment's photo
+    id delete it. ``_line_or_404`` 404s a shipment/line mismatch before the link is
+    even looked up, and the link's own ``entity_id`` is asserted against THIS line -
+    a link somehow pointing elsewhere 404s the same way rather than being trusted.
 
     DB rows commit first, the object purges after (same ordering
     ``dealer_kit.asset_service``'s own delete uses): an object outliving its row is an
@@ -208,6 +302,8 @@ def delete_photo(db: Session, photo_id: str) -> None:
     (``entity_attachment_links.attachment_id`` is ``ON DELETE CASCADE``), so only one
     delete is needed.
     """
+    line = _line_or_404(db, shipment_id, line_id)
+
     link = (
         db.query(EntityAttachmentLink)
         .filter(
@@ -216,7 +312,7 @@ def delete_photo(db: Session, photo_id: str) -> None:
         )
         .first()
     )
-    if link is None:
+    if link is None or link.entity_id != str(line.id):
         raise handle_not_found("Photo", photo_id)
 
     attachment = db.query(Attachment).filter(Attachment.id == link.attachment_id).first()

@@ -26,7 +26,7 @@ from app.models.base import set_company_scope
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
-from app.models.resources import Attachment, AttachmentType
+from app.models.resources import Attachment, AttachmentDirectory, AttachmentType
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.entity_attachment_service import EntityAttachmentService
 from app.services.error_handler import AppException
@@ -116,13 +116,17 @@ def _line(db, shipment_id, product_id, supplier_id, *, qty: int = 10) -> Inbound
     return line
 
 
-def _photo_type(db, *, code: str = "shipment_line_photo") -> AttachmentType:
+def _photo_type(
+    db, *, code: str = "shipment_line_photo", allowed_extensions: str = "jpg,jpeg,png,webp,gif",
+    default_directory_id: str | None = None,
+) -> AttachmentType:
     t = AttachmentType(
         id=str(uuid.uuid4()),
         type_name="Shipment Line Photo",
         code=code,
-        allowed_extensions="jpg,jpeg,png,webp,gif",
+        allowed_extensions=allowed_extensions,
         max_file_size_mb=10,
+        default_directory_id=default_directory_id,
     )
     db.add(t)
     db.flush()
@@ -263,6 +267,146 @@ def test_upload_rejects_a_non_image_extension(db, monkeypatch):
     assert excinfo.value.status_code == 400
 
 
+def test_upload_rejects_a_non_image_extension_even_when_the_type_row_allows_it(db, monkeypatch):
+    """Review round 1, item 2: the image guard is independent of the attachment
+    type's own `allowed_extensions` - an admin later widening that row (e.g. to file
+    a spec sheet under the same type) must not turn this into an arbitrary-file
+    upload."""
+    _stub_backend(monkeypatch)
+    _photo_type(db, allowed_extensions="*")
+    shipment, line = _seed_line(db)
+    db.commit()
+
+    with pytest.raises(AppException) as excinfo:
+        asyncio.run(
+            shipment_line_photos.upload_photos(
+                db,
+                shipment_id=str(shipment.id),
+                line_id=str(line.id),
+                files=[_upload("not-a-photo.pdf", content_type="application/pdf")],
+                actor_id=None,
+            )
+        )
+    assert excinfo.value.status_code == 400
+
+
+def test_upload_derives_content_type_from_the_extension_when_none_is_sent(db, monkeypatch):
+    """Review round 1, item 2: a bare multipart part with no `Content-Type` header
+    must still store and thumbnail as the image it is."""
+    _stub_backend(monkeypatch)
+    _photo_type(db)
+    shipment, line = _seed_line(db)
+    db.commit()
+
+    out = asyncio.run(
+        shipment_line_photos.upload_photos(
+            db,
+            shipment_id=str(shipment.id),
+            line_id=str(line.id),
+            files=[_upload("a.png", content_type="")],
+            actor_id=None,
+        )
+    )
+
+    assert out[0]["thumbnail_url"], "no content-type must still thumbnail like an image"
+
+
+def test_upload_files_into_the_type_own_default_directory(db, monkeypatch):
+    """Review round 1, item 6: `directory_id` follows the attachment type's own
+    `default_directory_id`, same convention `packing_list_service` reads it by."""
+    _stub_backend(monkeypatch)
+    directory_id = str(uuid.uuid4())
+    db.add(AttachmentDirectory(id=directory_id, name=f"{MARKER} folder"))
+    db.flush()
+    _photo_type(db, default_directory_id=directory_id)
+    shipment, line = _seed_line(db)
+    db.commit()
+
+    out = asyncio.run(
+        shipment_line_photos.upload_photos(
+            db,
+            shipment_id=str(shipment.id),
+            line_id=str(line.id),
+            files=[_upload("a.png")],
+            actor_id=None,
+        )
+    )
+
+    attachment = db.query(Attachment).filter(Attachment.id == out[0]["attachment_id"]).first()
+    assert str(attachment.directory_id) == directory_id
+
+
+def test_upload_returns_the_lines_full_photo_list_not_just_this_batch(db, monkeypatch):
+    """Review round 1, item 10: a second upload call returns EVERY photo on the line,
+    the first batch included, not only what this call just added."""
+    _stub_backend(monkeypatch)
+    _photo_type(db)
+    shipment, line = _seed_line(db)
+    db.commit()
+
+    asyncio.run(
+        shipment_line_photos.upload_photos(
+            db, shipment_id=str(shipment.id), line_id=str(line.id),
+            files=[_upload("a.png")], actor_id=None,
+        )
+    )
+    out = asyncio.run(
+        shipment_line_photos.upload_photos(
+            db, shipment_id=str(shipment.id), line_id=str(line.id),
+            files=[_upload("b.png")], actor_id=None,
+        )
+    )
+
+    assert [p["filename"] for p in out] == ["a.png", "b.png"]
+
+
+def test_a_failure_after_the_put_leaves_no_orphan_object_and_keeps_earlier_files(db, monkeypatch):
+    """Review round 1, item 4: the second file's own object (and thumbnail) purge on
+    a forced `create_attachment` failure; the first file, already committed, stays."""
+    _stub_backend(monkeypatch)
+    _photo_type(db)
+    shipment, line = _seed_line(db)
+    db.commit()
+
+    deleted: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        "app.services.scm.shipment_line_photos.delete_object_best_effort",
+        lambda provider, key: deleted.append((provider, key)),
+    )
+
+    calls = {"n": 0}
+    from app.services.resources_service import AttachmentService
+
+    real_create = AttachmentService.create_attachment
+
+    def _flaky_create(self, data, actor_id=None):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("boom")
+        return real_create(self, data, actor_id)
+
+    monkeypatch.setattr(AttachmentService, "create_attachment", _flaky_create)
+
+    with pytest.raises(AppException) as excinfo:
+        asyncio.run(
+            shipment_line_photos.upload_photos(
+                db,
+                shipment_id=str(shipment.id),
+                line_id=str(line.id),
+                files=[_upload("a.png"), _upload("b.png")],
+                actor_id=None,
+            )
+        )
+
+    assert excinfo.value.status_code == 400
+    assert "a.png" in excinfo.value.detail["message"]
+    assert "b.png" in excinfo.value.detail["message"]
+    assert deleted, "the second file's own object was never purged"
+
+    by_line = shipment_line_photos.list_for_shipment(db, str(shipment.id))
+    assert [p["filename"] for p in by_line[str(line.id)]] == ["a.png"]
+
+
 def test_delete_removes_the_link_and_the_attachment_row(db, monkeypatch):
     """AC-L2: the row (here, `EntityAttachmentLink` - the reused linkage mechanism)
     and the attachment it points at are both gone, via the FK's own CASCADE."""
@@ -282,7 +426,7 @@ def test_delete_removes_the_link_and_the_attachment_row(db, monkeypatch):
     )
     photo_id, attachment_id = out[0]["id"], out[0]["attachment_id"]
 
-    shipment_line_photos.delete_photo(db, photo_id)
+    shipment_line_photos.delete_photo(db, str(shipment.id), str(line.id), photo_id)
 
     assert db.query(EntityAttachmentLink).filter(EntityAttachmentLink.id == photo_id).first() is None
     assert db.query(Attachment).filter(Attachment.id == attachment_id).first() is None
@@ -290,9 +434,43 @@ def test_delete_removes_the_link_and_the_attachment_row(db, monkeypatch):
 
 def test_delete_an_unknown_photo_404s(db, monkeypatch):
     _stub_backend(monkeypatch)
+    shipment, line = _seed_line(db)
+    db.commit()
+
     with pytest.raises(AppException) as excinfo:
-        shipment_line_photos.delete_photo(db, str(uuid.uuid4()))
+        shipment_line_photos.delete_photo(db, str(shipment.id), str(line.id), str(uuid.uuid4()))
     assert excinfo.value.status_code == 404
+
+
+def test_delete_a_photo_under_another_shipment_404s_and_deletes_nothing(db, monkeypatch):
+    """Review round 1, item 1: `EntityAttachmentLink` carries no company scope of its
+    own, so matching on `photo_id` alone would let a caller who merely knows another
+    shipment's photo id delete it - the delete has to be scoped to shipment_id/line_id
+    too."""
+    _stub_backend(monkeypatch)
+    _photo_type(db)
+    shipment, line = _seed_line(db)
+    other_shipment, other_line = _seed_line(db, code="OTHER")
+    db.commit()
+
+    out = asyncio.run(
+        shipment_line_photos.upload_photos(
+            db,
+            shipment_id=str(shipment.id),
+            line_id=str(line.id),
+            files=[_upload("a.png")],
+            actor_id=None,
+        )
+    )
+    photo_id, attachment_id = out[0]["id"], out[0]["attachment_id"]
+
+    with pytest.raises(AppException) as excinfo:
+        shipment_line_photos.delete_photo(
+            db, str(other_shipment.id), str(other_line.id), photo_id
+        )
+    assert excinfo.value.status_code == 404
+    assert db.query(EntityAttachmentLink).filter(EntityAttachmentLink.id == photo_id).first() is not None
+    assert db.query(Attachment).filter(Attachment.id == attachment_id).first() is not None
 
 
 # --------------------------------------------------------------------------- #
@@ -378,3 +556,165 @@ def test_export_prints_photo_1_through_n_after_the_busiest_line_and_anchors_each
     # `_FIRST_LINE_ROW` is 18 (0-based 17): product_a's row, 3 images across columns
     # W/X/Y (0-based 22/23/24); product_b's row is the next one, one image at W.
     assert placements == [(17, 22), (17, 23), (17, 24), (18, 22)]
+
+
+# --------------------------------------------------------------------------- #
+# Routes - GET / POST / DELETE over the wire (review round 1, item 9)
+# --------------------------------------------------------------------------- #
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app.dependencies import get_current_user, get_current_user_or_api_key, get_db  # noqa: E402
+from app.main import app  # noqa: E402
+from app.services.company_scope_resolver import apply_company_scope  # noqa: E402
+from app.services.user_service import UserPermissionService  # noqa: E402
+
+#: The incumbent company every row this suite seeds is auto-stamped with, same
+#: constant `test_consolidated_packing_list.py` reads by (`tests/conftest.py`).
+_ROUTE_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
+
+
+def _route_caller(db, monkeypatch, *, permitted_slugs: set[str]) -> TestClient:
+    """A TestClient reading the session the test seeded, holding exactly the given
+    permission slugs - same shape `test_consolidated_packing_list.py`'s own
+    `_caller` uses, generalised to more than one slug (GET needs
+    `scm.dashboard.view`, POST/DELETE need `scm.reorder.run`)."""
+    principal = {"id": str(uuid.uuid4()), "email": "zzt-slp@example.com"}
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: principal
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: principal
+    monkeypatch.setattr(
+        UserPermissionService,
+        "check_user_has_permission",
+        lambda self, uid, slug: slug in permitted_slugs,
+    )
+
+    scope = frozenset({_ROUTE_COMPANY_ID})
+    set_company_scope(db, scope)
+
+    async def _scope():
+        set_company_scope(db, scope)
+        return scope
+
+    app.dependency_overrides[apply_company_scope] = _scope
+    return TestClient(app)
+
+
+@pytest.fixture
+def route_client(db, monkeypatch):
+    """Holds both the read and the write permission this router's routes use."""
+    try:
+        yield _route_caller(
+            db, monkeypatch, permitted_slugs={"scm.dashboard.view", "scm.reorder.run"}
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def reader_only_client(db, monkeypatch):
+    """Holds only the read permission - every write route must refuse it."""
+    try:
+        yield _route_caller(db, monkeypatch, permitted_slugs={"scm.dashboard.view"})
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_get_route_lists_photos_keyed_by_line_id(route_client, db, monkeypatch):
+    _stub_backend(monkeypatch)
+    shipment, line = _seed_line(db)
+    _link_photo(db, line_id=line.id, filename="via-route.png")
+    db.commit()
+
+    r = route_client.get(f"/api/v1/scm/inbound-shipments/{shipment.id}/line-photos")
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert [p["filename"] for p in body[str(line.id)]] == ["via-route.png"]
+    assert {"id", "attachment_id", "sort_order", "thumbnail_url", "url", "filename"} <= set(
+        body[str(line.id)][0]
+    )
+
+
+def test_get_route_requires_the_read_permission(db, monkeypatch):
+    _stub_backend(monkeypatch)
+    shipment, _line = _seed_line(db)
+    db.commit()
+    client = _route_caller(db, monkeypatch, permitted_slugs=set())
+    try:
+        r = client.get(f"/api/v1/scm/inbound-shipments/{shipment.id}/line-photos")
+        assert r.status_code == 403, r.text
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_post_route_uploads_a_photo_and_returns_the_lines_full_list(route_client, db, monkeypatch):
+    _stub_backend(monkeypatch)
+    _photo_type(db)
+    shipment, line = _seed_line(db)
+    db.commit()
+
+    r = route_client.post(
+        f"/api/v1/scm/inbound-shipments/{shipment.id}/lines/{line.id}/photos",
+        files={"files": ("a.png", _TINY_PNG, "image/png")},
+    )
+
+    assert r.status_code == 200, r.text
+    assert [p["filename"] for p in r.json()] == ["a.png"]
+
+
+def test_post_route_requires_the_write_permission(reader_only_client, db, monkeypatch):
+    _stub_backend(monkeypatch)
+    _photo_type(db)
+    shipment, line = _seed_line(db)
+    db.commit()
+
+    r = reader_only_client.post(
+        f"/api/v1/scm/inbound-shipments/{shipment.id}/lines/{line.id}/photos",
+        files={"files": ("a.png", _TINY_PNG, "image/png")},
+    )
+
+    assert r.status_code == 403, r.text
+
+
+def test_delete_route_removes_the_photo(route_client, db, monkeypatch):
+    _stub_backend(monkeypatch)
+    _photo_type(db)
+    shipment, line = _seed_line(db)
+    db.commit()
+
+    upload = route_client.post(
+        f"/api/v1/scm/inbound-shipments/{shipment.id}/lines/{line.id}/photos",
+        files={"files": ("a.png", _TINY_PNG, "image/png")},
+    )
+    photo_id = upload.json()[0]["id"]
+
+    r = route_client.delete(
+        f"/api/v1/scm/inbound-shipments/{shipment.id}/lines/{line.id}/photos/{photo_id}"
+    )
+
+    assert r.status_code == 200, r.text
+    assert db.query(EntityAttachmentLink).filter(EntityAttachmentLink.id == photo_id).first() is None
+
+
+def test_delete_route_404s_for_a_photo_under_another_shipment(route_client, db, monkeypatch):
+    """Review round 1, item 1, proved over the wire: the cross-shipment guess 404s
+    and deletes nothing."""
+    _stub_backend(monkeypatch)
+    _photo_type(db)
+    shipment, line = _seed_line(db)
+    other_shipment, other_line = _seed_line(db, code="OTHER")
+    db.commit()
+
+    upload = route_client.post(
+        f"/api/v1/scm/inbound-shipments/{shipment.id}/lines/{line.id}/photos",
+        files={"files": ("a.png", _TINY_PNG, "image/png")},
+    )
+    photo_id = upload.json()[0]["id"]
+
+    r = route_client.delete(
+        f"/api/v1/scm/inbound-shipments/{other_shipment.id}/lines/{other_line.id}/photos/{photo_id}"
+    )
+
+    assert r.status_code == 404, r.text
+    assert db.query(EntityAttachmentLink).filter(EntityAttachmentLink.id == photo_id).first() is not None

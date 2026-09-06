@@ -1331,7 +1331,15 @@ register(
 def _delete_shipment_line_photo(db: Session, payload: dict):
     from app.services.scm import shipment_line_photos
 
-    return shipment_line_photos.delete_photo(db, _entity_id(payload))
+    # `shipment_id`/`line_id` scope the delete (review round 1, item 1) - the route
+    # puts both there, same as `entity_id`; without them a photo id under another
+    # shipment would be reachable off a guess.
+    return shipment_line_photos.delete_photo(
+        db,
+        str(payload.get("shipment_id") or ""),
+        str(payload.get("line_id") or ""),
+        _entity_id(payload),
+    )
 
 
 register(

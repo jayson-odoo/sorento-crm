@@ -1072,7 +1072,9 @@ def consolidated_packing_list_for_shipment(
     db: Session = Depends(get_db),
 ):
     """The Sorento packing list: every factory on this container, subtotalled and split."""
-    return consolidated_packing_list.build(db, shipment_id)
+    payload = consolidated_packing_list.build(db, shipment_id)
+    consolidated_packing_list.redact_photo_refs(payload)
+    return payload
 
 
 @router.get("/inbound-shipments/{shipment_id}/packing-list/export")
@@ -1131,8 +1133,10 @@ def delete_shipment_line_photo(
     """Immediate delete - same `shipment_line_photos.delete_photo` the deferred
     `shipment_line_photo.delete` record action calls (`record_actions.py`); the FE's own
     "x" on a thumbnail goes through that deferred path (D7), never this route directly.
+    Scoped to shipment_id/line_id (review round 1, item 1): a photo id under another
+    shipment 404s rather than deleting.
     """
-    shipment_line_photos.delete_photo(db, photo_id)
+    shipment_line_photos.delete_photo(db, shipment_id, line_id, photo_id)
     return {"message": "Photo deleted"}
 
 
