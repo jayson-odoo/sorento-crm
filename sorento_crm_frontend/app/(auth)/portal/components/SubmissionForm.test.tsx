@@ -136,7 +136,14 @@ beforeEach(() => {
 });
 
 async function waitForLoaded() {
-  await waitFor(() => expect(screen.queryByText(/^loading/i)).toBeNull());
+  // The loading state renders `SectionSkeleton` (role="status", name "Loading"),
+  // not the old "Loading..." text - wait for the skeleton itself to unmount so
+  // callers doing a synchronous `getByText` right after this resolve never race
+  // the fetch's state update (PR #669, design-system M5 loading shells).
+  await waitFor(() => {
+    expect(screen.queryByText(/^loading/i)).toBeNull();
+    expect(screen.queryByRole('status', { name: 'Loading' })).toBeNull();
+  });
 }
 
 describe('SubmissionForm - staff attachment banner', () => {
