@@ -635,6 +635,76 @@ class TestAPendingOrderRosterDoesNotSwallowABareProductCode:
             f"{head3.branch_kind!r}"
         )
 
+    def test_a_container_hinted_product_code_answers_stock_not_incoming(
+        self, seeded, session_factory, monkeypatch
+    ):
+        """Owner console pass 4, item F (live turn ace4cec6).
+
+        With a stock question already in play the customer typed a bare "srtwc287"; the
+        parser hinted the token `inbound_shipment` and invented `check_incoming` /
+        `incoming`, which made `domain_signal_source` `intent_explicit` and so bypassed
+        AC-816 rule 4's bare-entity inheritance - and the reply led with "No incoming stock
+        (ETA) found for SRTWC287" while the resolver's own answer for that token was
+        products. Graded on the REAL resolver against real seeded rows, because the whole
+        rule is "what did the resolver come back with".
+        """
+        company_id = self._seed_master(session_factory)
+        from app.models.base import set_company_scope
+        from app.models.product import Product
+
+        db = session_factory()
+        # `_seed_master` created a FRESH company; the suite's session default is Sorento's,
+        # so the seeded rows are invisible to an ordinary query on this session.
+        set_company_scope(db, frozenset({company_id}))
+        sibling = db.query(Product).filter(Product.product_code == "SRTWC286").one()
+        db.add(
+            Product(
+                product_code="SRTWC287",
+                product_name="ZZT SRTWC287",
+                category_id=sibling.category_id,
+                base_uom_id=sibling.base_uom_id,
+                list_price=10,
+                is_active=True,
+                company_id=sibling.company_id,
+            )
+        )
+        db.commit()
+        self._seed_offer(session_factory)
+        self._wire(session_factory, monkeypatch, company_id)
+
+        head = self._run(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="business_query",
+                intent_hint="check_incoming",
+                domain_hint="incoming",
+                entities=[
+                    {
+                        "raw": "srtwc287",
+                        "hint": "inbound_shipment",
+                        "canonical_code": None,
+                        "current_message": True,
+                        "confident": True,
+                    }
+                ],
+            ),
+            text_body="srtwc287",
+            msg_id="ZZT-item-f-t1",
+        )
+
+        qf = head.ctx["parse"]["output"]
+        assert qf["entities"][0]["hint"] == "product", (
+            f"the resolver answered PRODUCTS and no shipment: {qf['entities']!r}"
+        )
+        assert qf.get("shipment_hint_retyped") == ["srtwc287"], qf
+        assert qf["domain_hint"] == "order", (
+            "the invented incoming domain had no support but that one mis-hinted entity "
+            f"and no incoming word in the message, so the carried domain applies: "
+            f"{qf['domain_hint']!r}"
+        )
+        assert head.branch_kind == "business_query", head.branch_kind
+
 
 class TestAnOutOfRangePickKeepsTheProductInScope:
     """"promotion 7445" -> a three-tier picker -> "9" -> "all" (prod execs 15445325 /

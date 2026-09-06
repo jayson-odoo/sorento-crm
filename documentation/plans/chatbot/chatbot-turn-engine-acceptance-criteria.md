@@ -1420,3 +1420,46 @@ contact inside the synchronous request. Different contacts run in parallel.
   `tests/chatbot/test_r3_pending_end_to_end.py::TestAPendingOrderRosterDoesNotSwallowABareProductCode::test_both_narrowed_turns_are_ANSWERED_and_the_roster_stays_pending`
   (the real three-turn chain: the branch and the persisted `ttl`, on both filter turns).
   Console case: "a filter reply under an open roster is answered, not re-asked". (H70)
+
+- AC-819 `[BE][T]` **A container-hinted token the resolver answers with products only is a
+  product.** Live turn ace4cec6. With a stock question already in play (previous domain
+  `inventory`, a warehouse escalation offer pending) the customer typed a bare "srtwc287";
+  the parser hinted the token `inbound_shipment` and emitted `check_incoming` / `incoming`,
+  so `domain_signal_source` was `intent_explicit`, AC-816 rule 4's bare-entity inheritance
+  was bypassed by a domain the model had invented from a mis-shaped token, and the reply led
+  with "No incoming stock (ETA) found for SRTWC287" - while the resolver's own answer for
+  that token was two products (SRTWC287, SRTWC287-LID) and no shipment at all.
+
+  Given a `inbound_shipment`-hinted entity, when the resolver returns ZERO shipment matches
+  and at least one product match for that token, then the entity is retyped `product`
+  (`shipment_hint_retyped` records it). Both halves are required: a real container keeps its
+  type even when a product shares the token, and a token that resolved to nothing stays a
+  miss rather than being answered as the wrong thing. Given ALSO exactly one entity in
+  scope, `domain_signal_source == "intent_explicit"`, and NO incoming word in the customer's
+  own message, then the invented `incoming` domain is dropped for the carried business
+  domain (which is what rule 4 would have done); with nothing carried, the domain stands
+  rather than being replaced by a second guess.
+
+  **The message condition is not belt-and-braces, it is the whole discriminator.**
+  `domain_signal_source` is stamped for ANY decisive intent plus a domain, said aloud or
+  invented, so "M90ss any eta" (capture `sub-resolve-and-gate-rs/rg-15123789`) is IDENTICAL
+  to the owner's turn in structured state. A product legitimately HAS incoming stock - the
+  incoming picker lists product codes - so the entity retype is right in both cases and only
+  the domain drop needs the customer's own word, read through
+  `output_exchange.DOMAIN_SWITCH_WORDS`, the vocabulary that already decides a this-turn
+  domain switch (imported, not copied).
+
+  The seam is `resolve_gate.run`, between `services.resolve_entity` and `run_gate` - the
+  first point in the turn where this evidence exists. NOT `output_exchange`: the
+  post-processor is the parser's own step and runs before anything is resolved. Five graded
+  `resolve-exit-offer` captures carry the retype and NOTHING else in the sub's output moves
+  on any of them (measured, one at a time), registered field-scoped to the entity hint and
+  its diagnostic. Evidence:
+  `tests/chatbot/test_resolve_gate_unit.py::TestAShipmentHintedTokenThatIsOnlyAProductIsRetyped`
+  (nine cases, five of them guards including the "any eta" counter-example) and
+  `tests/chatbot/test_r3_pending_end_to_end.py::...::test_a_container_hinted_product_code_answers_stock_not_incoming`
+  (the real resolver on seeded rows). Console cases: "a bare product code under a stock
+  thread answers stock, not incoming" and its "still answers incoming" counter-example.
+  **Outside this lane:** the parser prompt should state the container shape (4 letters + 7
+  digits) and that product-family prefixes are products - a D2-style prompt change, noted in
+  the PR body, not made here. (H71)

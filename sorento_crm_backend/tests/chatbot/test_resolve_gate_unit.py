@@ -470,3 +470,205 @@ class TestBareEntityInheritanceIsBlockedAtResolveTime:
         out = run_gate(dict(resolver), parser=self.INVENTORY_PARSER, resolver=resolver)
         assert out["gate_passed"] is True
         assert out["gate_reason"] == "ok"
+
+
+# --------------------------------------------------------------------------- #
+# Owner console pass 4, item F (live turn ace4cec6). The customer typed "srtwc287" with a
+# stock question already in play (previous domain `inventory`, a warehouse escalation
+# offer pending) and the reply led with "No incoming stock (ETA) found for SRTWC287" -
+# while the resolver's own answer for that token was two PRODUCTS, SRTWC287 and
+# SRTWC287-LID, and no shipment at all.
+#
+# The parser hinted the token `inbound_shipment` and emitted `intent_hint: check_incoming`
+# / `domain_hint: incoming`, so `domain_signal_source` was `intent_explicit` and AC-816
+# rule 4's bare-entity inheritance was bypassed by a domain the model had invented from a
+# mis-shaped token. Nothing at parse time can tell a container number from a product code
+# (that is a PROMPT question, noted in the PR body), but the RESOLVER can and already did:
+# zero shipments, two products.
+#
+# So the correction is deterministic and post-resolve, off resolver output only (D11).
+# It belongs in `resolve_gate.run`, between `services.resolve_entity` and `run_gate`, and
+# NOT in `output_exchange`: the post-processor is the parser's own step and runs before
+# anything has been resolved, so the evidence this rule needs does not exist there yet.
+# --------------------------------------------------------------------------- #
+
+
+class TestAShipmentHintedTokenThatIsOnlyAProductIsRetyped:
+    CARRIED_DOMAIN = "inventory"
+
+    def _parser(self, **overrides) -> dict[str, Any]:
+        parser = {
+            "message_type": "business_query",
+            "intent_hint": "check_incoming",
+            "domain_hint": "incoming",
+            "domain_signal_source": "intent_explicit",
+            "entities": [
+                {
+                    "raw": "srtwc287",
+                    "hint": "inbound_shipment",
+                    "canonical_code": None,
+                    "current_message": True,
+                }
+            ],
+        }
+        parser.update(overrides)
+        return parser
+
+    def _resolver(self, *entity_types: str) -> dict[str, Any]:
+        return {
+            "tokens": ["srtwc287"],
+            "resolutions": [
+                {
+                    "token": "srtwc287",
+                    "resolved": len(entity_types) == 1,
+                    "ambiguous": len(entity_types) > 1,
+                    "matches": [
+                        {
+                            "uuid": f"u-{i}",
+                            "entity_type": t,
+                            "canonical_code": "SRTWC287" if i == 0 else "SRTWC287-LID",
+                            "match_tier": "exact",
+                        }
+                        for i, t in enumerate(entity_types)
+                    ],
+                }
+            ],
+            "unresolved_tokens": [],
+        }
+
+    def test_zero_shipments_and_some_products_retypes_the_entity_and_drops_the_domain(
+        self,
+    ) -> None:
+        parser = self._parser()
+        out = resolve_gate.retype_shipment_miss(
+            parser,
+            self._resolver("product", "product"),
+            carried_domain=self.CARRIED_DOMAIN,
+            message="srtwc287",
+        )
+        assert out is True, "the correction did not fire on its own evidence"
+        assert parser["entities"][0]["hint"] == "product", parser["entities"]
+        assert parser["domain_hint"] == "inventory", (
+            "the invented `incoming` domain had no support but that one entity, so the "
+            f"carried business domain applies: {parser['domain_hint']!r}"
+        )
+        assert parser["intent_hint"] != "check_incoming", parser["intent_hint"]
+        assert parser["shipment_hint_retyped"] == ["srtwc287"], parser
+
+    def test_the_retyped_token_then_passes_the_inventory_gate(self) -> None:
+        """End of the same move: the corrected parser is what `run_gate` sees, and the
+        token that would have been refused as an incompatible type now answers stock."""
+        parser = self._parser()
+        resolver = self._resolver("product")
+        resolve_gate.retype_shipment_miss(
+            parser, resolver, carried_domain=self.CARRIED_DOMAIN, message="srtwc287"
+        )
+        out = run_gate(dict(resolver), parser=parser, resolver=resolver)
+        assert out["gate_passed"] is True, out.get("gate_reason")
+
+    def test_a_real_shipment_hit_is_left_alone(self) -> None:
+        """Guard: a container number that IS a shipment keeps its type and its domain,
+        even when a product happens to match the same token too."""
+        parser = self._parser()
+        out = resolve_gate.retype_shipment_miss(
+            parser,
+            self._resolver("inbound_shipment", "product"),
+            carried_domain=self.CARRIED_DOMAIN,
+            message="srtwc287",
+        )
+        assert out is False
+        assert parser["entities"][0]["hint"] == "inbound_shipment"
+        assert parser["domain_hint"] == "incoming"
+
+    def test_a_token_that_resolved_to_nothing_is_left_alone(self) -> None:
+        """Guard: a genuine miss is a miss. Retyping on no evidence would answer the
+        wrong question instead of saying the code was not found."""
+        parser = self._parser()
+        out = resolve_gate.retype_shipment_miss(
+            parser, self._resolver(), carried_domain=self.CARRIED_DOMAIN, message="srtwc287"
+        )
+        assert out is False
+        assert parser["domain_hint"] == "incoming"
+
+    def test_a_second_entity_keeps_the_incoming_domain(self) -> None:
+        """Guard: the domain is only dropped when its ONLY support was the mis-hinted
+        entity. "eta for srtwc287 and container TEMU6355180" still means incoming."""
+        parser = self._parser(
+            entities=[
+                {"raw": "srtwc287", "hint": "inbound_shipment", "current_message": True},
+                {"raw": "TEMU6355180", "hint": "inbound_shipment", "current_message": True},
+            ]
+        )
+        out = resolve_gate.retype_shipment_miss(
+            parser,
+            self._resolver("product"),
+            carried_domain=self.CARRIED_DOMAIN,
+            message="srtwc287 and container TEMU6355180",
+        )
+        assert out is True, "the ENTITY is still retyped on its own evidence"
+        assert parser["entities"][0]["hint"] == "product"
+        assert parser["domain_hint"] == "incoming", (
+            "a second entity is separate support for the domain the customer asked in: "
+            f"{parser['domain_hint']!r}"
+        )
+
+    def test_a_customer_named_incoming_domain_is_kept(self) -> None:
+        """Guard: `domain_signal_source` is what says whose domain it is. Anything but
+        `intent_explicit` means the domain did not come from this turn's own intent, so
+        there is nothing here to correct."""
+        parser = self._parser(domain_signal_source="intent_none")
+        out = resolve_gate.retype_shipment_miss(
+            parser, self._resolver("product"), carried_domain=self.CARRIED_DOMAIN, message="srtwc287"
+        )
+        assert out is True
+        assert parser["entities"][0]["hint"] == "product"
+        assert parser["domain_hint"] == "incoming"
+
+    def test_with_no_carried_domain_the_entity_is_retyped_and_the_domain_stands(self) -> None:
+        """Guard: a cold turn has nothing to fall back to, and inventing one would be a
+        guess. The type correction still lands - it rests on resolver evidence alone."""
+        parser = self._parser()
+        out = resolve_gate.retype_shipment_miss(
+            parser, self._resolver("product"), carried_domain=None, message="srtwc287"
+        )
+        assert out is True
+        assert parser["entities"][0]["hint"] == "product"
+        assert parser["domain_hint"] == "incoming"
+
+    def test_a_customer_who_asked_about_eta_keeps_the_incoming_domain(self) -> None:
+        """The capture that proves `domain_signal_source` cannot carry this on its own
+        (`sub-resolve-and-gate-rs/rg-15123789`, "M90ss any eta"): the parser stamps
+        `intent_explicit` for ANY decisive intent plus a domain, said aloud or invented, so
+        four of the five graded incoming captures look identical to the owner's turn in
+        structured state and differ only in that the customer typed the word. A product
+        HAS incoming stock - `crm_incoming_stock_list` is keyed by product code and the
+        incoming picker lists product codes - so retyping the entity is right in both, and
+        only the DOMAIN drop needs the customer's own word. The vocabulary is
+        `output_exchange.DOMAIN_SWITCH_WORDS`, already inventoried and already the table
+        that decides a this-turn domain switch; no second list."""
+        parser = self._parser()
+        out = resolve_gate.retype_shipment_miss(
+            parser,
+            self._resolver("product", "product"),
+            carried_domain="order",
+            message="M90ss any eta",
+        )
+        assert out is True, "the entity is a product either way"
+        assert parser["entities"][0]["hint"] == "product"
+        assert parser["domain_hint"] == "incoming", (
+            "the customer said ETA, so the incoming domain is theirs and not the model's "
+            f"guess: {parser['domain_hint']!r}"
+        )
+
+    def test_the_owners_bare_token_turn_drops_it(self) -> None:
+        """The turn the rule exists for (ace4cec6), stated beside its own counter-example:
+        the same structured state, no incoming word anywhere in the message."""
+        parser = self._parser()
+        out = resolve_gate.retype_shipment_miss(
+            parser,
+            self._resolver("product", "product"),
+            carried_domain="inventory",
+            message="srtwc287",
+        )
+        assert out is True
+        assert parser["domain_hint"] == "inventory", parser["domain_hint"]

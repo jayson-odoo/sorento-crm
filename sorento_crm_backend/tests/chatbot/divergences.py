@@ -413,6 +413,41 @@ DIVERGENCES: list[Divergence] = [
         )
         for name in ("rg-15114061", "rg-15125764")
     ),
+    # OWNER CONSOLE PASS 4, item F (6 Sep 2026): a container-hinted token that the
+    # resolver answers with PRODUCTS and no shipment is retyped `product` before the
+    # gate runs. Five graded `resolve-exit-offer` captures carry that shape, and on
+    # every one of them the retype changes NOTHING else - measured, one at a time: the
+    # exit kind, the gate, the picker text, `specific_options` and the roster are all
+    # byte-equal, because the incoming lane is keyed by product code anyway. So the
+    # divergence is the entity's own `hint` and the diagnostic that says why it moved,
+    # and the rest of each capture still grades. Four of the five say "eta" or
+    # "incoming" in the message, which is exactly why the DOMAIN half of the rule needs
+    # the customer's own word and cannot run off `domain_signal_source`. Pinned by
+    # test_resolve_gate_unit.py::TestAShipmentHintedTokenThatIsOnlyAProductIsRetyped.
+    *(
+        Divergence(
+            node="sub-resolve-and-gate",
+            fixture=name,
+            hazard="owner console pass 4, item F (6 Sep 2026)",
+            reason=(
+                "a shipment-hinted token the resolver answers with products only is "
+                "retyped `product` before the gate. Field-scoped to the entity hint and "
+                "its diagnostic; every other byte of the sub's output is unchanged."
+            ),
+            strip_paths=(
+                ("ctx_resolved", "ctx", "parse", "output", "entities"),
+                ("ctx_resolved", "ctx", "parse", "output", "shipment_hint_retyped"),
+                ("ctx_resolved", "ctx", "parse", "output", "domain_dropped_with_shipment_hint"),
+            ),
+        )
+        for name in (
+            "rg-15123789",
+            "rg-15128371",
+            "rg-15192977",
+            "rs8-t2-picker",
+            "rs8a-t2-picker-T1",
+        )
+    ),
     # The three keys rules 2, 3 and 4 ADD to `output_exchange`'s emission. No
     # capture can contain a key the node did not emit when it was taken, so this
     # is the same class as the `pending` marker above and is handled the same

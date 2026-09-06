@@ -226,3 +226,31 @@ cases:
           branch_kind: business_query
           reply_not_contains: ["share the date range", "not one of the options"]
           no_uuid: true
+
+  # Owner console pass 4, item F (prod turn ace4cec6). A bare product code with a stock
+  # question already in play was answered "No incoming stock (ETA) found for SRTWC287",
+  # because the parser hinted the token as a container and invented an incoming intent for
+  # it. The resolver's own answer was two PRODUCTS and no shipment.
+  - name: a bare product code under a stock thread answers stock, not incoming
+    cold: true
+    turns:
+      - text: "check stock srtwc286"
+        expect:
+          branch_kind: business_query
+          no_uuid: true
+      - text: "srtwc287"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["SRTWC287"]
+          reply_not_contains: ["No incoming stock (ETA) found for SRTWC287"]
+          no_uuid: true
+
+  # ... and its counter-example, which must NOT move: the customer who says the word gets
+  # the incoming answer they asked for (capture sub-resolve-and-gate-rs/rg-15123789).
+  - name: an eta question about a product code still answers incoming
+    text: "srtwc287 any eta"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["SRTWC287"]
+      no_uuid: true
