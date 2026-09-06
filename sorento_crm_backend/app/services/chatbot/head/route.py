@@ -117,7 +117,17 @@ def decide(
             if prev.get("selection_context") != "member_offer":
                 return False
             plan = jsc.array(prev.get("routing_roster_plan"))
-            return len(plan) > 1
+            if len(plan) > 1:
+                return True
+            # OWNER RULING K, rule 3 (2026-09-06), and a DIVERGENCE from n8n: live tests
+            # only `_plan.length > 1`, so an out-of-range pick against an ordinary
+            # SINGLE-company roster ("9" on a six-name list) fell past this arm, and
+            # `is_low_signal` then read the bare digit as a content-free casual message
+            # and answered with a clarifier. The roster is on the customer's screen
+            # either way, so the reprompt is owed either way; a multi-company plan is one
+            # reason the offer is live, not the only one.
+            roster = jsc.array(prev.get("last_result_set"))
+            return len(roster) > 0
         except Exception:
             return False
 
