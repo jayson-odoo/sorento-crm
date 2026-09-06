@@ -720,7 +720,7 @@ def _person_routing(
     #   `output_exchange` hard-defaults `routing.suggested_team` to `customer_service` and
     #   `compile_state` persists it every turn, so the previous routing is ALWAYS truthy
     #   and gating on it made the arm fire on every turn with no named team. The ruling is
-    #   about a stale OFFER being consumed; `_offer_is_open` is what says one is open,
+    #   about a stale OFFER being consumed; `offer_is_open` is what says one is open,
     #   read through the same function the post-processor uses so the two ends of the
     #   turn cannot disagree about it (an expired member offer is not open, AC-816).
     #
@@ -740,7 +740,7 @@ def _person_routing(
         return None
     if jsc.truthy(_parser_team(ctx, team)):
         return None
-    from app.services.chatbot.head.output_exchange import _offer_is_open, derive_routing
+    from app.services.chatbot.head.output_exchange import offer_is_open, derive_routing
 
     prev = _prev_variables(ctx)
     clarify = {
@@ -748,7 +748,7 @@ def _person_routing(
         "text": _team_clarify_text(None, []),
         "options": _team_clarify_options([]),
     }
-    if _offer_is_open(prev):
+    if offer_is_open(prev):
         return clarify
     derived_team = (
         jsc.get(derive_routing(output), "suggested_team")

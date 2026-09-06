@@ -1962,7 +1962,7 @@ class TestAnAcceptanceIsNeverAskedWhichTeam:
 
     def test_an_expired_offer_is_not_an_open_one(self) -> None:
         """A pending marker whose clock ran out (AC-816 rule 1's ttl) is not an open
-        offer: the same premise `output_exchange._offer_is_open` applies, read here
+        offer: the same premise `output_exchange.offer_is_open` applies, read here
         through the same function so the two ends of the turn cannot disagree. The
         previous routing is the carried DEFAULT, so H64's premise is absent too, and the
         turn assigns."""
@@ -1981,6 +1981,24 @@ class TestAnAcceptanceIsNeverAskedWhichTeam:
         item = _item(brand_code=None, company_id=None, company_name=None, routing_source="none")
         result = run(ctx, item, services=_services())
         assert result["arm"] == "human-intervention", result["arm"]
+
+    def test_an_open_offer_for_the_default_team_still_asks(self) -> None:
+        """Re-review of #706: the ONE shape only the open-offer premise catches. The
+        offer is for `customer_service` and the previous routing is `customer_service`,
+        so H64's inheritance premise is absent (that is the carried default); the offer
+        being OPEN is the whole reason to ask. Red with `if offer_is_open(prev)` removed,
+        confirmed on the way in."""
+        result, services = self._run(
+            text="can someone help me",
+            offered="customer_service",
+            confirmed=False,
+            prev_team="customer_service",
+        )
+        assert result["arm"] == "clarify", (
+            f"an open offer is a premise on its own, whatever team it is for: {result['arm']!r}"
+        )
+        assert result["pending"] == {"kind": "team_clarify"}, result["pending"]
+        services.next_assignee.assert_not_called()
 
     def test_an_inherited_specialised_team_with_no_offer_still_asks(self) -> None:
         """H64 / AC-815 kept beside D1: the owner's "escalate to marketing" turn had NO

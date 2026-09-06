@@ -1,6 +1,6 @@
 """R3, end to end: the tail WRITES `pending`, a later turn's head READS it (AC-201, D2).
 
-`test_r3_dual_read.py` proves the head's reader (`output_exchange._offer_is_open`)
+`test_r3_dual_read.py` proves the head's reader (`output_exchange.offer_is_open`)
 accepts the marker shape in isolation - a hand-built `previous_conversation_state` dict,
 never anything the CRM itself persisted. `test_tail_units.py::TestPendingMarker` proves
 the tail WRITES that shape - a hand-built `ctx`, never a real session round trip. Neither
@@ -203,7 +203,7 @@ class TestAnAbandonedMemberOfferStopsConfirming:
 
     A member offer went out, the customer ignored it and asked three stock questions
     instead, and then typed "yes" - about the stock, not the offer. Before the TTL the
-    tail re-armed `selection_context` on every one of those turns, so `_offer_is_open` was
+    tail re-armed `selection_context` on every one of those turns, so `offer_is_open` was
     still true four turns later and the head read that "yes" as an escalation
     confirmation: a human was assigned to a conversation nobody had asked to escalate.
 

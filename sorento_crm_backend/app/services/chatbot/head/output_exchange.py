@@ -634,7 +634,7 @@ def _ce_keys_of(e: Any) -> list[str]:
     return out or [_ce_key(e)]
 
 
-def _offer_is_open(state: Any) -> bool:
+def offer_is_open(state: Any) -> bool:
     """R3 / AC-106: is an escalation offer open? BOTH forms, during the migration window.
 
     The JS decided this by matching the frozen phrase "would you like me to escalate"
@@ -1682,7 +1682,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         if (
             _bf_ents
             and jsc.get(_bf_prev, "selection_context") == "member_offer"
-            and _offer_is_open(_bf_prev)
+            and offer_is_open(_bf_prev)
             and o.get("is_affirmative") is None
             and not jsc.array(o.get("reference_positions"))
             and not jsc.js_number(o.get("positions_resolved")) > 0
@@ -1941,7 +1941,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
 
     # escalation confirmation = the previous response OFFERED escalation (fixed wording)
     # AND the current message is affirmative.
-    offered_escalation = _offer_is_open(parent_input.get("previous_conversation_state"))
+    offered_escalation = offer_is_open(parent_input.get("previous_conversation_state"))
     is_affirmative = o.get("is_affirmative") is True
     is_decline = o.get("is_affirmative") is False
 
@@ -2535,7 +2535,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # forward across same-team turns and would re-open a closed offer.
     if sel_ctx != "member_offer" and o.get("dym_pick_applied") is not True:
         st_o = parent_input.get("previous_conversation_state") or {}
-        open_o = _offer_is_open(st_o)
+        open_o = offer_is_open(st_o)
         if open_o and not jsc.truthy(o.get("domain_hint")):
             co_o = co_company_pick(o)
             retarget_o = (

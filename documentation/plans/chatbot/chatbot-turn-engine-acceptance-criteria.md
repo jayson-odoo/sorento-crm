@@ -1201,7 +1201,7 @@ contact inside the synchronous request. Different contacts run in parallel.
      turn and gets an answer, then the offer is gone: `selection_context`,
      `last_result_set` and the `pending` marker are all cleared, and a later affirmative
      is not an escalation confirmation and assigns nobody
-     (`output_exchange._offer_is_open` reads the marker's liveness, not only its kind). An
+     (`output_exchange.offer_is_open` reads the marker's liveness, not only its kind). An
      accepted assignment or a decline still ends it on the turn it happens, unchanged. A
      filter modification under the offer (rule 3) does NOT clear it - the roster is still
      on screen - but it SPENDS one turn against the clock, or the narrow arm becomes the
@@ -1223,7 +1223,7 @@ contact inside the synchronous request. Different contacts run in parallel.
      comparison, so `ttl` is invisible to the corpus and the 3600-test chatbot suite is
      green with no new entry.
      Evidence: `tests/chatbot/test_tail_units.py::TestTheMemberOfferHasTheSameTtlAsTheDymOffer`
-     (the clock, the answered arm, the filter arm and the `_offer_is_open` seam) and
+     (the clock, the answered arm, the filter arm and the `offer_is_open` seam) and
      `tests/chatbot/test_r3_pending_end_to_end.py::TestAnAbandonedMemberOfferStopsConfirming`
      (the owner's own sequence, through the real head/tail round trip on the database).
 
@@ -1395,9 +1395,10 @@ contact inside the synchronous request. Different contacts run in parallel.
      `compile_state._partial_dym_block` (which writes `dym_last_result_set`) returns on its
      own clarification guard; the partial roster is therefore seeded in the block's own row
      shape before the pick. Also measured, reported, not fixed: a numbered pick over that
-     `suggest_offer` roster WITHOUT the parser's `reference_target: "dym"` tag takes the
-     stock positional arm, which comes back `replace_combine` with only the pick in scope and
-     the resolved code dropped.
+     `suggest_offer` roster without a `dym_last_result_set` roster in state takes the stock
+     positional arm whatever the parser's `reference_target` says (None, "result" and "dym"
+     all measured alike), and comes back `replace_combine` with only the pick in scope and
+     the resolved code dropped. `apply_dym_pick` keys on the roster's presence.
 
   3. **A pending escalation offer never consumes a request for a DIFFERENT team.** Evidence
      turns 9a40182a and 8b3a3b80: a pending `{kind: escalation_offer, team: warehouse}` offer
@@ -1406,7 +1407,7 @@ contact inside the synchronous request. Different contacts run in parallel.
      pre-derivation snapshot, never the derived value that has already inherited the offer's
      team) names a different team, then the turn is not a confirmation and routes to the named
      team. When the parser names NO team on a `request_for_help` and neither its own
-     `escalation.is_escalation_confirmation` nor an accept word says the customer accepted,
+     `escalation.is_escalation_confirmation` says the customer accepted,
      then `escalation.team_unresolved` is set, the turn is not a confirmation, and the lane
      asks which team with quick replies. A bare "yes" still confirms. "Accepted" is the
      model's own `escalation.is_escalation_confirmation` and NOTHING else (review of #706,
@@ -1422,7 +1423,7 @@ contact inside the synchronous request. Different contacts run in parallel.
      post-processor. The clarify then needs one of two premises, because the previous
      routing is NEVER absent (the chain's hard default is persisted every turn, so "a
      previous turn had a routing" was true on every turn from the second): D1's - an
-     escalation offer is OPEN, read through `output_exchange._offer_is_open`; or H64's -
+     escalation offer is OPEN, read through `output_exchange.offer_is_open`; or H64's -
      the team this turn would assign to is INHERITED, meaning the parser named none, the
      domain derives none (`derive_routing`, the chain's own function) and the previous
      routing is not the carried `DEFAULT_SUGGESTED_TEAM` (`contracts.py`, the one place the

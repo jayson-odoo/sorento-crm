@@ -311,7 +311,7 @@ sessions (H15). `is_active` stays a phantom read (the parser port reads it as nu
 `PendingKind` declares five, but the other four (`team_clarify`, `company_clarify`,
 `tier_ask`, `member_offer`) already have a structured reader today - `selection_context`
 plus `last_result_set`, which the parser post-processor reads without touching text. Only
-`escalation_offer` replaces a TEXT read (`output_exchange._offer_is_open`), so only it is
+`escalation_offer` replaces a TEXT read (`output_exchange.offer_is_open`), so only it is
 written; writing a marker nobody reads would be machinery for a hypothetical. S5 writes
 the clarify kinds when its escalation lane needs them.
 Top-level siblings `user_response` and `quick_reply` persist as today. The ideation service
