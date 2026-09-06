@@ -104,6 +104,12 @@ class TeamMembersFn(Protocol):
     def __call__(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]: ...
 
 
+class StaffLookupFn(Protocol):
+    """`(first_name) -> [{team_code, team_name, user_id, user_name, respond_user_id}]`."""
+
+    def __call__(self, name: str) -> list[dict[str, Any]]: ...
+
+
 # --------------------------------------------------------------------------- #
 # escalation-input.js
 # --------------------------------------------------------------------------- #
@@ -489,8 +495,7 @@ def run(
         return {**result, "actions": actions, "pending": None}
 
     if services is not None:
-        actions = _assign(ctx, context_item, team, services)
-        return {**result, "actions": actions, "pending": None}
+        return _human_intervention(ctx, context_item, team, services, result)
 
     # No injected seam, so this is production: the session is opened HERE, off the TURN's
     # own factory (so it carries the contact's company scope, H56), and closed on the way
@@ -498,8 +503,132 @@ def run(
     from app.services.chatbot.lanes import escalation_services
 
     with escalation_services.production_session(session_factory) as db:
-        actions = _assign(ctx, context_item, team, production_services(db))
+        return _human_intervention(
+            ctx, context_item, team, production_services(db), result
+        )
+
+
+def _human_intervention(
+    ctx: dict[str, Any],
+    context_item: dict[str, Any],
+    team: Any,
+    services: Any,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    """Assign the conversation, or ask which team - one place, both seam sources.
+
+    The person / team decision needs a seam, so it happens HERE rather than in `run()`,
+    where the production bundle does not exist yet.
+    """
+    routed = _person_routing(ctx, context_item, team, services)
+    if routed is not None and routed["kind"] == "clarify":
+        # The tail keys on `clarify_text` (`compile_state`'s clarify arm), the same field
+        # `clarify-company-reply` writes; the item carries the context so the trace shows
+        # what was asked and why.
+        clarify = {**context_item, "clarify_team": True, "clarify_text": routed["text"]}
+        return {
+            **escalation_result(clarify_team=clarify),
+            "actions": [],
+            "pending": {"kind": "team_clarify"},
+        }
+    if routed is not None and routed["kind"] == "assign":
+        actions = _assign(
+            ctx,
+            context_item,
+            routed["team"],
+            services,
+            assignee=routed["assignee"],
+        )
+        return {**result, "actions": actions, "pending": None}
+    actions = _assign(ctx, context_item, team, services)
     return {**result, "actions": actions, "pending": None}
+
+
+def _person_routing(
+    ctx: dict[str, Any], context_item: dict[str, Any], team: Any, services: Any
+) -> dict[str, Any] | None:
+    """"escalate to Nurain" / "escalate to marketing": route by WHO, or ask which team.
+
+    Owner ruling, 6 Sep 2026, from two console turns that both arrived with
+    `routing = {suggested_team: null, suggested_agent: null}` and were assigned to whatever
+    team the PREVIOUS turn happened to be routed to - the comment named marketing_product
+    for a customer-service person and purchasing for a marketing ask.
+
+    Two arms, both deterministic and both off structured state (D11 - the name is the
+    parser's own `person_mention`, never a regex over the customer's words):
+
+    * A named person is resolved against the staff roster. Exactly one match routes to
+      THEIR team with them as the assignee - a person the customer named is a direct pick,
+      not a round-robin draw. No match, or more than one, ASKS.
+    * No person, no team, and a previous turn that HAD one: ask. That is the inheritance
+      the owner rejected, and refusing it here is the whole fix. With no previous routing
+      to inherit there is nothing to be wrong about, so the lane carries on exactly as it
+      does today (`test_no_team_clarify_on_live_team_flows_through_unguarded`).
+
+    Returns `None` for "nothing to do here", which is every turn that names nobody and
+    arrives with a team.
+    """
+    output = jsc.get(jsc.get(ctx, "parse"), "output") or {}
+    person = jsc.nullish_str(jsc.get(output, "person_mention")).strip()
+
+    if person:
+        lookup = getattr(services, "staff_lookup", None) if services is not None else None
+        if lookup is None:
+            return None  # a bundle without the seam behaves exactly as it did before
+        try:
+            hits = [h for h in jsc.array(lookup(person)) if jsc.truthy(h)]
+        except Exception:  # noqa: BLE001 - a failed lookup asks, it never guesses
+            logger.warning("chatbot: staff lookup did not run", exc_info=True)
+            hits = []
+        if len(hits) == 1:
+            hit = hits[0]
+            return {
+                "kind": "assign",
+                "team": jsc.get(hit, "team_code"),
+                "assignee": {
+                    "assignee_id": jsc.get(hit, "user_id"),
+                    "assignee_name": jsc.get(hit, "user_name"),
+                    "assignee_respond_user_id": jsc.get(hit, "respond_user_id"),
+                    "team_set_code": jsc.get(hit, "team_code"),
+                    "is_already_assigned": False,
+                },
+            }
+        return {"kind": "clarify", "text": _team_clarify_text(person, hits)}
+
+    prev_team = jsc.get(jsc.get(_prev_variables(ctx), "routing"), "suggested_team")
+    if not jsc.truthy(team) and jsc.truthy(prev_team):
+        return {"kind": "clarify", "text": _team_clarify_text(None, [])}
+    return None
+
+
+def _team_clarify_text(person: Any, hits: list) -> str:
+    """The ask. Names the teams the customer can choose between, and nothing else.
+
+    With hits it is the teams THOSE people are on (that is the whole ambiguity); without,
+    it is the routing vocabulary, which is the exact set the router can act on - inventing
+    a shorter list would invite a reply nothing could resolve.
+    """
+    from app.services.chatbot.contracts import SUGGESTED_TEAMS
+
+    names: list[str] = []
+    for hit in hits:
+        name = jsc.get(hit, "team_name") or _pretty_team(jsc.get(hit, "team_code"))
+        if jsc.truthy(name) and name not in names:
+            names.append(name)
+    if not names:
+        names = [_pretty_team(t) for t in SUGGESTED_TEAMS]
+    listed = f"{', '.join(names[:-1])} or {names[-1]}" if len(names) > 1 else names[0]
+    if person and hits:
+        return (
+            f"More than one person here goes by {jsc.js_string(person)}. "
+            f"Which team do you mean - {listed}?"
+        )
+    if person:
+        return (
+            f"I could not find anyone called {jsc.js_string(person)}. "
+            f"Which team should I pass this to - {listed}?"
+        )
+    return f"Which team should I pass this to - {listed}?"
 
 
 def _preview_assignee(
@@ -531,15 +660,25 @@ def _preview_assignee(
 
 
 def _assign(
-    ctx: dict[str, Any], context_item: dict[str, Any], team: Any, services: Any
+    ctx: dict[str, Any],
+    context_item: dict[str, Any],
+    team: Any,
+    services: Any,
+    *,
+    assignee: Any = None,
 ) -> list[dict[str, Any]]:
     """Draw an assignee, start the SLA clock, and build the four actions in live's order.
 
     Both seams run before a single action is built, which is what makes the failure shape
     in `engine.py` true: the lane returns its whole list or raises before returning any of
     it, so "assigned but no SLA row" is not a state a caller can observe.
+
+    `assignee` is passed in ONLY when the customer named the person (the staff-lookup arm):
+    a direct pick is not a rotation, so the round robin is not drawn from at all. The SLA
+    clock still starts, because the escalation is just as real.
     """
-    assignee = services.next_assignee(_next_assignee_body(ctx, context_item))
+    if assignee is None:
+        assignee = services.next_assignee(_next_assignee_body(ctx, context_item))
     sla = services.sla_create(_sla_body(ctx, context_item, assignee))
     return _assignment_actions(
         ctx,

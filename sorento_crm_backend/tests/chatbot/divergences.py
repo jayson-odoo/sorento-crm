@@ -359,6 +359,38 @@ STATUS_MISS_MESSAGE_STATES_THE_ETA = Divergence(
 )
 
 
+# Owner console pass, 6 Sep 2026. Two console turns - "escalate to Nurain" (a customer
+# service person) and "escalate to marketing" - both arrived with
+# `routing = {suggested_team: null, suggested_agent: null}`, and the turn was assigned to
+# whatever team the PREVIOUS turn had been routed to: the comment named marketing_product
+# for the person and purchasing for the marketing ask. Live has no gate for either case (the
+# `clarify-team-gate` in the export belongs to the unpromoted B-TEAM-1' build), so the lane
+# assigns whatever team reaches it.
+#
+# The port adds a two-armed gate ahead of the assignment: a `person_mention` is resolved
+# against the staff roster (exactly one match routes to THEIR team as a direct pick, no
+# match or more than one ASKS), and a turn with no person, no team and a PREVIOUS routing to
+# inherit asks rather than inheriting. With no previous routing there is nothing to inherit
+# and the lane carries on unchanged, which is what keeps
+# `test_no_team_clarify_on_live_team_flows_through_unguarded` (live's own behaviour) green
+# and `test_no_hard_default_team` (B-TEAM-1') still xfailing.
+#
+# Not fixture-visible: the four graded escalation nodes are `escalation-input`,
+# `escalation-context`, `clarify-company-reply` and `escalation-result`, none of which this
+# touches - the gate lives in `run()`, which has no capture. Pinned by
+# tests/chatbot/test_s5_escalation_lane.py::TestPersonMentionEscalationRoutesByStaffLookup.
+ESCALATION_ROUTES_BY_STAFF_LOOKUP = Divergence(
+    node="sub-escalation",
+    fixture=None,
+    hazard="H64 (owner console pass, 6 Sep 2026)",
+    reason=(
+        "a named person routes to their own team by staff lookup, and a null-team ask with "
+        "a previous routing asks instead of inheriting it. Live has neither gate. Not "
+        "fixture-visible: the gate is in `run()`, and the four graded nodes are unchanged."
+    ),
+)
+
+
 def find(node: str, fixture: str) -> Divergence | None:
     """The registered divergence covering this replay, or None."""
     for d in DIVERGENCES:
