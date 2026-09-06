@@ -26,6 +26,14 @@ carries `variables`, and the next turn sends it as `previous_conversation_state`
 harness key the engine honours on a dry run (`engine.HARNESS_KEYS`). That is what makes a
 picker sequence ("check stock for X" then "1") checkable without writing session state.
 
+**The runner owns the lane switches.** `chatbot_business_lane_enabled` and
+`chatbot_completed_lanes` decide whether the CRM ANSWERS a turn or delegates it to n8n, and
+a delegated turn comes back with an empty reply - which would grade the handoff, not the
+answer. So the script reads them, prints them, turns every lane on for the run and restores
+the exact values in a `finally`. On a PRODUCTION checkout it refuses to write them at all
+(the Settings > Chatbot screen is the only sanctioned way there) and runs against whatever
+is already set, after `--production` acknowledges where it is pointed.
+
 Reads `EXTERNAL_API_KEY` from the environment (or `--api-key`).
 """
 from __future__ import annotations
@@ -37,6 +45,7 @@ import re
 import sys
 import time
 import uuid
+from contextlib import contextmanager
 from typing import Any
 from urllib.parse import urlparse
 
@@ -159,13 +168,124 @@ def _pending_kind(turn_id: str | None) -> str | None:
     return str(kind) if kind else None
 
 
+# Every branch the router can decide. The CRM only ANSWERS a turn whose branch is in
+# `chatbot_completed_lanes` with `chatbot_business_lane_enabled` on (AC-809/AC-810); off
+# either one the head DELEGATES to n8n and every reply comes back empty, so the check would
+# grade the handoff instead of the answer.
+ALL_LANES = (
+    "access_denied",
+    "escalate_offer",
+    "out_of_scope",
+    "ideate",
+    "offer_hold",
+    "escalation_declined",
+    "check_promotion",
+    "low_signal",
+    "clarify_menu",
+    "not_supported",
+    "stock_denied",
+    "demand_qty",
+    "business_query",
+)
+
+
+def _read_switches() -> tuple[bool, Any]:
+    from sqlalchemy import text
+
+    db = _script_session()
+    try:
+        row = db.execute(
+            text(
+                "SELECT chatbot_business_lane_enabled, chatbot_completed_lanes "
+                "FROM system_settings LIMIT 1"
+            )
+        ).fetchone()
+    finally:
+        db.close()
+    return (bool(row[0]), row[1]) if row is not None else (False, [])
+
+
+def _write_switches(enabled: bool, lanes: Any) -> None:
+    from sqlalchemy import text
+
+    db = _script_session()
+    try:
+        db.execute(
+            text(
+                "UPDATE system_settings SET chatbot_business_lane_enabled = :e, "
+                "chatbot_completed_lanes = CAST(:l AS jsonb)"
+            ),
+            {"e": enabled, "l": json.dumps(list(lanes))},
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+@contextmanager
+def _lanes_on(production: bool) -> Any:
+    """Business lane on and every branch answered FOR THE RUN, restored in a `finally`.
+
+    The restore is the whole point: this is shared dev state, and a check that left the
+    switches flipped would change how the next person's turns behave without saying so. The
+    `finally` runs on a failed case, a raised exception and a Ctrl-C alike.
+
+    Refused on a PRODUCTION checkout, the same rule `chatbot_load.py` states: the Settings >
+    Chatbot screen is the only sanctioned way to flip a live tenant's lanes, and a script
+    that writes `system_settings` there is one typo from answering real customers with a
+    half-promoted engine. On production the switches must already be right; the check reads
+    them, says so, and runs against them unchanged.
+    """
+    before_enabled, before_lanes = _read_switches()
+    print(f"lane switches before: enabled={before_enabled} lanes={before_lanes!r}")
+    if production:
+        if not before_enabled or not set(ALL_LANES) & set(before_lanes or []):
+            raise SystemExit(
+                "this checkout is production and the chatbot lanes are not on. Flip them "
+                "on the Settings > Chatbot screen and re-run; this script never writes "
+                "system_settings on a production database."
+            )
+        yield
+        return
+    _write_switches(True, ALL_LANES)
+    print(f"lane switches for the run: enabled=True lanes={len(ALL_LANES)}")
+    try:
+        yield
+    finally:
+        _write_switches(before_enabled, before_lanes or [])
+        after = _read_switches()
+        print(f"lane switches restored: enabled={after[0]} lanes={after[1]!r}")
+
+
+def _customer_words(body: dict[str, Any]) -> str:
+    """Everything this turn would actually say to the customer, in one string.
+
+    NOT just `reply.text`. The escalation lane's assignment arm composes no reply at all -
+    `escalate-catalog` carries `includeResponse: false` for `out_of_scope` - and sends its
+    two sentences as `send_message` ACTIONS instead, so grading `reply.text` alone would
+    call a turn silent that says two things, and would let a genuinely silent turn pass on a
+    negative expectation.
+    """
+    parts = [((body.get("reply") or {}).get("text")) or ""]
+    for action in body.get("actions") or []:
+        if isinstance(action, dict) and isinstance(action.get("text"), str):
+            parts.append(action["text"])
+    return "\n".join(p for p in parts if p)
+
+
 def _grade(expect: dict[str, Any], body: dict[str, Any], pending: str | None) -> list[str]:
     """Every expectation that did NOT hold, as sentences. Empty list is a pass."""
     failures: list[str] = []
     if "_http_error" in body:
         return [body["_http_error"]]
-    reply = ((body.get("reply") or {}).get("text")) or ""
+    reply = _customer_words(body)
     branch = body.get("branch_kind")
+
+    # SILENCE IS A FAILURE, always and without being asked for. A turn that says nothing
+    # satisfies every negative expectation on the case vacuously, so a check that passes it
+    # is worse than no check.
+    if not reply.strip():
+        failures.append("the turn would say nothing to the customer")
 
     wanted_branch = expect.get("branch_kind")
     if wanted_branch and branch != wanted_branch:
@@ -220,6 +340,11 @@ def main(argv: list[str] | None = None) -> int:
         help="use each case's own `parser:` block instead of calling the model",
     )
     parser.add_argument(
+        "--production",
+        action="store_true",
+        help="acknowledge a production checkout: the lane switches are read, never written",
+    )
+    parser.add_argument(
         "--i-know",
         action="store_true",
         help="allow a non-local --base-url (the database read is this checkout's own)",
@@ -247,12 +372,32 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{args.cases} has no cases", file=sys.stderr)
         return 2
 
+    from app.config import settings as app_settings
+
+    is_production = app_settings.environment == "production"
+    if is_production and not args.production:
+        print(
+            "this checkout's ENVIRONMENT is production - pass --production to run against "
+            "it (the lane switches are then read, never written).",
+            file=sys.stderr,
+        )
+        return 2
+
     run_id = f"console-check-{int(time.time())}"
     url = args.base_url.rstrip("/") + TURN_PATH
     session = requests.Session()
     session.trust_env = False
 
     print(f"{run_id}  {len(cases)} cases against {args.base_url}")
+    with _lanes_on(is_production):
+        failed = _run_cases(cases, session, url, args, default_contact, run_id)
+
+    print(f"\n{len(cases) - failed} passed, {failed} failed  ({run_id})")
+    return 1 if failed else 0
+
+
+def _run_cases(cases, session, url, args, default_contact, run_id) -> int:
+    """Every case, in file order. Returns how many failed."""
     failed = 0
     for case in cases:
         name = str(case.get("name") or case.get("text") or "case")
@@ -277,7 +422,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             body = _post(session, url, args.api_key, envelope, args.timeout)
             pending = _pending_kind(body.get("turn_id"))
-            reply = ((body.get("reply") or {}).get("text")) or ""
+            reply = _customer_words(body)
             last_branch = body.get("branch_kind")
             last_line = reply.replace("\n", " ")[:120]
             prefix = f"turn {index + 1}: " if len(_turns_of(case)) > 1 else ""
@@ -288,9 +433,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"{verdict}  {name:<44} branch={last_branch}  {last_line!r}")
         for failure in case_failures:
             print(f"      - {failure}")
-
-    print(f"\n{len(cases) - failed} passed, {failed} failed  ({run_id})")
-    return 1 if failed else 0
+    return failed
 
 
 if __name__ == "__main__":

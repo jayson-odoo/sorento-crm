@@ -181,3 +181,12 @@ removed copy, for whoever restores a UI for them:
   value naming the ESB; the xlsx path stamps `'import'`. Cosmetic today, misleading on the agent
   master screen. Fix: the sales_agents EntitySpec sets `source = 'autocount'` on create, never on
   update. | `plans/autocount/PLAN-autocount-document-ingest-v2.md` | Low | Open |
+- **BL-060** (2026-09-06, review of #700): `fetch._axis_labelled_subject` picks the LONGEST code
+  per uuid to decide which of a customer's two rows is the name and which is its internal account
+  code. It is deterministic and it matches every shape measured (a debtor code is shorter than the
+  name it points at), but it is a heuristic where an exact test exists: the resolver already knows,
+  and records it as `match_field` (`customer_code` vs `debtor_name`), which `gate.run_gate` drops
+  when it flattens matches into `compatible_entities` (uuid, entity_type, code only). **Trigger:**
+  a customer whose account code is longer than their name, or any second reader that needs the
+  match field. Fix: carry `match_field` through the gate and test on it, deleting the length
+  tie-break. | `plans/chatbot/PLAN-chatbot-turn-engine.md` | Low | Open |

@@ -18,8 +18,17 @@ and no WhatsApp message can leave. The envelope is borrowed from that contact's 
 `chatbot.turns` row, which is why the script refuses a non-local `--base-url` without `--i-know`:
 it reads THIS checkout's database and posts to whatever backend you name, and nothing can check
 the two agree. The lane switches (`system_settings.chatbot_business_lane_enabled`,
-`chatbot_completed_lanes`) have to be on for the run and restored afterwards - the runner does
-that around the run, in a `finally`.
+`chatbot_completed_lanes`) decide whether the CRM answers a turn or delegates it to n8n, and a
+delegated turn comes back silent - so the script reads them, prints them, turns every lane on for
+the run and restores the exact values in a `finally`. On a production checkout it refuses to
+write them at all (Settings > Chatbot is the only sanctioned way there) and runs against whatever
+is already set, once `--production` acknowledges where it is pointed.
+
+**What is graded is what the customer would be TOLD** - the reply text plus every `send_message`
+action, because the escalation lane's assignment arm composes no reply and sends its sentences as
+actions. Silence fails on its own without being asked for, and every case carries a positive
+`reply_contains`: a case built from `branch_kind` plus negatives passes on the generic error
+reply, which is exactly how four cases read green while their turns had failed.
 
 **The case file grows from the n8n side.** Cases come from what the owner actually sent and what
 came back: the report from the n8n run is the source, one case per defect, with the expectation

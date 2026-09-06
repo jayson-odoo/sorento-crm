@@ -5,6 +5,13 @@
 # `scripts/chatbot_console_check.py` against a lane backend before the PR and once against
 # production after the deploy.
 #
+# EVERY CASE CARRIES A POSITIVE `reply_contains`. A case built only from `branch_kind` plus
+# negatives passes on the generic error reply, which is how four of these read green on the
+# first run while their turns had actually failed (review of #700). Silence fails on its own,
+# without being asked for, and what is graded is everything the turn would SAY - the reply
+# text plus every `send_message` action, because the escalation lane's assignment arm sends
+# its sentences as actions and composes no reply at all.
+#
 # LANE 2 ADDS THE PICKER SEQUENCES. The multi-turn form is here (a `turns:` list feeds each
 # reply's session variables into the next as `previous_conversation_state`), and the picker
 # and did-you-mean sequences from the same console run belong in it once lane 2 lands.
@@ -23,18 +30,21 @@ cases:
   - name: a container number is named, never its uuid
     text: "where is container TGHU6295708"
     expect:
+      reply_contains: ["TGHU6295708"]
       no_uuid: true
 
   - name: eta for a partly typed variant code offers the family
     text: "check eta SRTWB1542-MG"
     expect:
       branch_kind: business_query
+      reply_contains: ["SRTWB1542"]
       no_uuid: true
 
   - name: an idea reaches the ideate lane
     text: "I have an idea for you - please add a dark mode to the dealer portal"
     expect:
       branch_kind: ideate
+      reply_contains: ["idea"]
 
   - name: a cold "all of them" is a clarification, not small talk
     text: "all of them"
@@ -44,11 +54,13 @@ cases:
     previous_conversation_state: {}
     expect:
       branch_kind: clarify_menu
+      reply_contains: ["Are you asking about"]
       reply_not_contains: ["Hi!"]
 
   - name: a document ask with nothing to narrow by is refused, not listed
     text: "send me the packing list"
     expect:
+      reply_contains: ["escalate"]
       reply_not_contains: ["1. *Filename:*"]
       no_uuid: true
 
@@ -56,6 +68,7 @@ cases:
     text: "any orders for HANLIM TRADING SDN BHD with RPACC"
     expect:
       branch_kind: business_query
+      reply_contains: ["HANLIM"]
       reply_not_contains: ["300-H070", "[A/C I]"]
       no_uuid: true
 
@@ -63,16 +76,23 @@ cases:
     text: "has DO12345 been delivered"
     expect:
       branch_kind: business_query
+      reply_contains: ["DO12345"]
       no_uuid: true
 
   - name: escalate to a named person routes by staff lookup
     text: "escalate to Nurain"
     expect:
       branch_kind: out_of_scope
+      # Either arm is correct and both are proven by the unit tests: on a database where
+      # Nurain exists the turn routes to HER team and says so, and on one where she does
+      # not it asks which team. What must never happen is the inherited team going by
+      # unmentioned, so the positive expectation is the word every arm uses.
+      reply_contains: ["team"]
       no_uuid: true
 
   - name: escalate to a team word never inherits the previous team
     text: "escalate to marketing"
     expect:
       branch_kind: out_of_scope
+      reply_contains: ["human assistance"]
       no_uuid: true
