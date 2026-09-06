@@ -1,0 +1,78 @@
+# Console cases from the owner's run of 6 Sep 2026 - lane 1.
+#
+# One case per defect the lane fixed, with the expectation taken from that defect's own red
+# test, so the file and the suite say the same thing about the same turn. Run it with
+# `scripts/chatbot_console_check.py` against a lane backend before the PR and once against
+# production after the deploy.
+#
+# LANE 2 ADDS THE PICKER SEQUENCES. The multi-turn form is here (a `turns:` list feeds each
+# reply's session variables into the next as `previous_conversation_state`), and the picker
+# and did-you-mean sequences from the same console run belong in it once lane 2 lands.
+#
+# The contact is the one whose stored envelope the script borrows; override with --contact.
+contact: "437264483"
+
+cases:
+  - name: three codes, the third has neither stock nor incoming
+    text: "do you have SRTWC8517, SRTWB7096 and MSK11A-QT in stock"
+    expect:
+      branch_kind: business_query
+      reply_contains: ["MSK11A-QT"]
+      no_uuid: true
+
+  - name: a container number is named, never its uuid
+    text: "where is container TGHU6295708"
+    expect:
+      no_uuid: true
+
+  - name: eta for a partly typed variant code offers the family
+    text: "check eta SRTWB1542-MG"
+    expect:
+      branch_kind: business_query
+      no_uuid: true
+
+  - name: an idea reaches the ideate lane
+    text: "I have an idea for you - please add a dark mode to the dealer portal"
+    expect:
+      branch_kind: ideate
+
+  - name: a cold "all of them" is a clarification, not small talk
+    text: "all of them"
+    # COLD, and that is the whole case: with the contact's stored state the parser
+    # correctly reads a continuation and answers it. `{}` is the harness saying "this
+    # contact remembers nothing", which is the shape the owner's turn arrived in.
+    previous_conversation_state: {}
+    expect:
+      branch_kind: clarify_menu
+      reply_not_contains: ["Hi!"]
+
+  - name: a document ask with nothing to narrow by is refused, not listed
+    text: "send me the packing list"
+    expect:
+      reply_not_contains: ["1. *Filename:*"]
+      no_uuid: true
+
+  - name: the not-found line labels its axes and hides the debtor code
+    text: "any orders for HANLIM TRADING SDN BHD with RPACC"
+    expect:
+      branch_kind: business_query
+      reply_not_contains: ["300-H070", "[A/C I]"]
+      no_uuid: true
+
+  - name: a delivered-status miss names the status and the eta date
+    text: "has DO12345 been delivered"
+    expect:
+      branch_kind: business_query
+      no_uuid: true
+
+  - name: escalate to a named person routes by staff lookup
+    text: "escalate to Nurain"
+    expect:
+      branch_kind: out_of_scope
+      no_uuid: true
+
+  - name: escalate to a team word never inherits the previous team
+    text: "escalate to marketing"
+    expect:
+      branch_kind: out_of_scope
+      no_uuid: true
