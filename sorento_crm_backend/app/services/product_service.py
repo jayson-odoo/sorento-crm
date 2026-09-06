@@ -1205,8 +1205,8 @@ class ProductService:
     # longer source value is a row error rather than a silent truncation that
     # would collide with a different value later.
     REF_CODE_MAX_LEN = 50
-    DEFAULT_UOM_CODE = "EA"
-    DEFAULT_UOM_NAME = "Each"
+    DEFAULT_UOM_CODE = product_rules.DEFAULT_UOM_CODE
+    DEFAULT_UOM_NAME = product_rules.DEFAULT_UOM_NAME
     AUTO_CREATED_NOTE = "Auto-created by product import"
 
     @staticmethod

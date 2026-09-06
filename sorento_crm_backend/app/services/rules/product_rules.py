@@ -25,6 +25,9 @@ from app.services.rules.master_rules import (
 
 #: The rollout fallback unit code (moved from `product_service.DEFAULT_UOM_CODE`).
 DEFAULT_UOM_CODE = "EA"
+#: Its human name (moved from `product_service.DEFAULT_UOM_NAME`): the one
+#: auto-created reference whose name is KNOWN rather than "code = name".
+DEFAULT_UOM_NAME = "Each"
 
 #: Description prefix that marks a product discontinued when nothing states
 #: the flag explicitly (moved from `product_service.is_discontinued_from_description`).
@@ -146,7 +149,12 @@ class ReferenceTooLong(ValueError):
 
 
 def ensure_reference(
-    db: Session, model: type, code: Optional[str], company_id: Optional[str]
+    db: Session,
+    model: type,
+    code: Optional[str],
+    company_id: Optional[str],
+    *,
+    name: Optional[str] = None,
 ) -> tuple[str, bool]:
     """Resolve a master-data value, creating the row when it is unknown (D3).
 
@@ -158,7 +166,9 @@ def ensure_reference(
     drifting from this one's code-only match. `code = name = raw value` on
     CREATE, the same convention the closure already used. Returns
     `(id, created)` so a caller can attach a `<kind>_created` warning only
-    when it actually made the row.
+    when it actually made the row. `name` overrides the `code = name`
+    convention on CREATE for the one reference whose human name is known
+    (the bootstrapped `EA` / `Each` unit); matching is still by code then name.
     """
     value = (code or "").strip()
     if not value:
@@ -178,7 +188,7 @@ def ensure_reference(
     kwargs: dict[str, Any] = {
         "id": new_id,
         code_column: value,
-        name_column: value,
+        name_column: name or value,
         "description": AUTO_CREATED_NOTE,
     }
     if hasattr(model, "company_id"):
@@ -225,7 +235,9 @@ def resolve_default_uom(db: Session, company_id: Optional[str], settings: Any = 
             )
         if query.first():
             return configured
-    uom_id, _created = ensure_reference(db, UnitOfMeasure, DEFAULT_UOM_CODE, company_id)
+    uom_id, _created = ensure_reference(
+        db, UnitOfMeasure, DEFAULT_UOM_CODE, company_id, name=DEFAULT_UOM_NAME
+    )
     return uom_id
 
 
