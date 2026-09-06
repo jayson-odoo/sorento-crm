@@ -65,6 +65,7 @@ import {
   reviseSubmission,
 } from '../lib/portal-client';
 import { SubmissionForm } from './SubmissionForm';
+import { waitForSectionLoaded } from '@/test-utils';
 
 const CONTACT: PortalContact = {
   contact_id: 'contact-1',
@@ -145,14 +146,10 @@ beforeEach(() => {
   window.history.replaceState({}, '', '/portal/stock_inquiry/si-1');
 });
 
-async function waitForLoaded() {
-  await waitFor(() => expect(screen.queryByText(/^loading/i)).toBeNull());
-}
-
 async function renderRevisable(over: Partial<PortalSubmissionDetail> = {}) {
   (fetchSubmission as ReturnType<typeof vi.fn>).mockResolvedValue(detail(over));
   render(<SubmissionForm kind="stock_inquiry" submissionId="si-1" />);
-  await waitForLoaded();
+  await waitForSectionLoaded();
   // The form reloads once more when /me resolves (contact-derived defaults).
   // Settle it before touching fields, or that reload lands mid-test and looks
   // like the edit was thrown away.
@@ -161,7 +158,6 @@ async function renderRevisable(over: Partial<PortalSubmissionDetail> = {}) {
       (fetchSubmission as ReturnType<typeof vi.fn>).mock.calls.length,
     ).toBeGreaterThanOrEqual(2),
   );
-  await waitFor(() => expect(screen.queryByText(/^loading/i)).toBeNull());
 }
 
 /**
