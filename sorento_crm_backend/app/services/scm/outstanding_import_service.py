@@ -11,7 +11,6 @@ would otherwise silently become a SKU that gets planned and purchased.
 from __future__ import annotations
 
 import logging
-import re
 import uuid
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
@@ -82,25 +81,12 @@ logger = logging.getLogger(__name__)
 # the diff uses, for the same reason.
 _QTY_EPSILON = 0.0005
 
-# A trailing "(RMB)" / "（RMB)" style currency note AutoCount appends to a creditor NAME,
-# never part of the legal name. Anchored to the END of the string so a genuine parenthesised
-# token earlier in the name ("XYZ TRADING (M) SDN BHD") is never touched, and written to
-# accept EITHER paren style on EITHER side ("（RMB)" - the captain's real file mismatches
-# them) because NFKC header folding does not touch cell VALUES, only header text.
-_CURRENCY_SUFFIX_RE = re.compile(r"[\(（]\s*[A-Za-z]{2,4}\s*[\)）]\s*$")
-
-
-def _clean_supplier_name(raw: Optional[str]) -> str:
-    """The legal supplier name, with AutoCount's trailing currency note stripped.
-
-    The supplier master holds `XIAMEN TAIYANG TECHNOLOGY CO.,LTD`, never `... (RMB)` - the
-    suffix is the export's own currency notation, not part of the name - so matching or
-    back-creating on the raw cell would either miss an existing supplier or create a
-    duplicate per currency the client happens to buy that item in.
-    """
-    if not raw:
-        return ""
-    return _CURRENCY_SUFFIX_RE.sub("", str(raw).strip()).strip()
+# S1 (ingest-parity-standardisation): the body MOVED to
+# app.services.rules.master_rules.clean_supplier_name (D2), shared with the
+# manual supplier create and the ESB masters push - this import keeps the
+# name every call site in this module already uses.
+from app.services.rules.master_rules import clean_supplier_name as _clean_supplier_name
+from app.services.rules import customer_rules
 
 
 @dataclass(frozen=True)
@@ -151,13 +137,16 @@ class _Binding:
     # is a resolution issue the operator has to see.
     party_code_header_col: Optional[str] = None
     # Whether an unresolved counterparty code gets a MINIMAL master row created for it
-    # rather than only reported. Purchase-order creditor codes only (AC below): 2,177 of
-    # 5,243 PO-book documents in the captain's own file carried a creditor code the
-    # supplier master had never seen, so every one of them landed with no supplier at
-    # all. The sales side keeps the code on the header instead (`party_code_header_col`)
-    # and stays exactly as it was - a debtor code with no customer row still names a
-    # market segment fallback there, which a back-created customer with no segment
-    # would only make WORSE.
+    # rather than only reported. Purchase-order creditor codes only, originally (AC
+    # below): 2,177 of 5,243 PO-book documents in the captain's own file carried a
+    # creditor code the supplier master had never seen, so every one of them landed
+    # with no supplier at all.
+    #
+    # AC-P2-1/D8 (S2) turns this on for the sales side too, matching the ESB's own
+    # `MasterRefResolver` (which has back-created a customer on a debtor code+name
+    # pair since D2) - a debtor code the file ALSO names a customer for is worth
+    # creating, and `party_code_header_col` still keeps the raw code on the header
+    # even when a name is not sent, so a code-only row is exactly as it was.
     party_back_create: bool = False
     # The counterparty model's own "name" column, read only when `party_back_create` is
     # set - the file's label column (`SUPPLIER` on the PO export) becomes this row's
@@ -191,6 +180,11 @@ _BINDINGS: dict[str, _Binding] = {
         # ... and the code itself is kept on the header whether or not it resolves, so an
         # order this feed cannot link is still attributable and still fixable later.
         party_code_header_col="debtor_code",
+        # AC-P2-1/D8 (S2): back-created via `customer_rules.back_create_customer`
+        # when the file names BOTH a debtor code and a name - `outstanding_reader`
+        # already reads the export's `PROJECT/CUSTOMER` column into `Line.label`
+        # for every SO row, so no new reading code is needed, only the write.
+        party_back_create=True, party_name_col="customer_name",
         # `scm.committed_v` counts exactly one sales-order status, so writing and reading are
         # the same value here.
         write_status="open", live_statuses=("open",),
@@ -307,10 +301,18 @@ class PreviewResult:
     missing_columns: list[str]
     row_problems: list[RowProblem] = field(default_factory=list)
     resolution_issues: list[ResolutionIssue] = field(default_factory=list)
-    # Documents whose demand class this file cannot decide (QP1). Non-empty means the
-    # upload is REFUSED - `ok` is False and `apply` writes nothing - so the confirm screen
-    # states the same verdict the commit would.
+    # Documents whose demand class this file cannot decide. Reported, never refused
+    # (D23, captain 2026-09-06, AC-P2-8 - reverses QP1/26 Aug 2026): the document still
+    # lands with `demand_class` NULL, on both this channel and the ESB, which has never
+    # refused on this (`WARN_UNCLASSIFIED_DEMAND`). Named so a re-upload once the customer's
+    # market segment or the agent's class is fixed can tell which orders still need it.
     unclassified_documents: list[str] = field(default_factory=list)
+    # AC-P2-1 (guide-writer check, 2026-09-06): the codes `apply`'s back-create block
+    # WOULD create - reported (never created) on preview, same shape as `apply`'s own
+    # `suppliers_created_codes`/`customers_created_codes`. Whichever party this
+    # doc_type does not bind stays empty (an SO upload never back-creates a supplier).
+    suppliers_created: list[str] = field(default_factory=list)
+    customers_created: list[str] = field(default_factory=list)
     samples: dict = field(default_factory=dict)
     # Documents this upload would lift to the live status. Same key as `apply`'s response, so
     # the confirm screen shows the side effect BEFORE it happens and the commit reports the
@@ -349,7 +351,10 @@ class PreviewResult:
 
     @property
     def ok(self) -> bool:
-        return not self.missing_columns and not self.unclassified_documents
+        # D23 (AC-P2-8): an unclassifiable document no longer refuses the file - it is
+        # reported (`unclassified_documents`) and lands with `demand_class` NULL, same
+        # end state the ESB has always reached via `WARN_UNCLASSIFIED_DEMAND`.
+        return not self.missing_columns
 
     def to_dict(self) -> dict:
         return {
@@ -362,7 +367,17 @@ class PreviewResult:
             "missing_columns": self.missing_columns,
             "row_problems": [asdict(p) for p in self.row_problems],
             "resolution_issues": [asdict(i) for i in self.resolution_issues],
-            "unclassified_documents": list(self.unclassified_documents),
+            # S1 (review re-check, 2026-09-06): count + capped numbers, same
+            # shape `apply`'s response uses - a preview that returned the
+            # full list while apply returned an int was a silent contract
+            # mismatch the FE had to paper over.
+            "unclassified_documents": len(self.unclassified_documents),
+            "unclassified_documents_numbers": list(self.unclassified_documents)[:CREATED_SUPPLIERS_LISTED],
+            # AC-P2-1: same shape as `apply`'s response - count + capped codes.
+            "suppliers_created": len(self.suppliers_created),
+            "suppliers_created_codes": self.suppliers_created[:CREATED_SUPPLIERS_LISTED],
+            "customers_created": len(self.customers_created),
+            "customers_created_codes": self.customers_created[:CREATED_SUPPLIERS_LISTED],
             "samples": self.samples,
             "activated_documents": list(self.activated_documents),
             "unmapped_agents": [asdict(a) for a in self.unmapped_agents],
@@ -550,9 +565,14 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
                                           "no product with this code"))
             continue
         if l.location and _norm(l.location) not in warehouses:
+            # AC-P2-3/D9 (S2): KEPT, not skipped, matching the ESB's own
+            # warehouse-unresolved=NULL+warning rule - an unresolvable
+            # LOCATION does not invalidate the demand a line represents the
+            # way an unresolvable ITEM does. The write path below already
+            # leaves `warehouse_id` NULL for it (`resolved.warehouse_by_code
+            # .get(...)` on a location this dict has no entry for).
             issues.append(ResolutionIssue(row, "stock_location", l.location,
                                           "no warehouse with this code"))
-            continue
         kept.append(l)
 
         # Who sold it. Read only where the document type HAS an agent, so the purchase book
@@ -586,13 +606,14 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
                 if slot.get(key) is None and extra.get(key) is not None:
                     slot[key] = extra.get(key)
 
-        # The counterparty is resolved but NEVER gates the line, unlike the item and the
-        # location. A quantity with no product cannot be planned, and a quantity in the wrong
-        # warehouse makes every coverage figure for that location wrong - so those rows are
-        # dropped. An unknown creditor leaves the quantity and the arrival date perfectly
-        # true, and dropping the line would make on-order UNDERSTATE supply, which is what
-        # causes a second, unnecessary purchase. So it is reported and the header is left
-        # unlinked.
+        # The counterparty is resolved but NEVER gates the line, and (AC-P2-3/D9, S2)
+        # neither does the location any more - only the ITEM does. A quantity with no
+        # product cannot be planned, so that row is dropped; a quantity at an unknown
+        # location is still real demand/supply, just unlocated, so it is KEPT with
+        # `warehouse_id` NULL (see the location check above). An unknown creditor leaves
+        # the quantity and the arrival date perfectly true, and dropping the line would
+        # make on-order UNDERSTATE supply, which is what causes a second, unnecessary
+        # purchase. So it is reported and the header is left unlinked.
         code = _norm(extra.get("party_code"))
         if bind.party is None:
             # Nothing is LINKED on this path, but the code is not discarded either: the
@@ -626,11 +647,9 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
                         pid_by_name = names_by_key.get(name_key)
                         if pid_by_name is not None:
                             party_by_doc.setdefault(l.doc_number, pid_by_name)
-                        else:
-                            issues.append(ResolutionIssue(
-                                row, "party_name", cleaned,
-                                f"no {bind.party.__name__.lower()} named {cleaned!r}; a new "
-                                f"{bind.party.__name__.lower()} is being created for it"))
+                        # Else: back-created on apply, and reported by the preview
+                        # under `suppliers_created_codes` (see the code branch below
+                        # for why it is no longer a resolution issue).
             continue
         pid_party = parties.get(code)
         if pid_party is None:
@@ -638,22 +657,30 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
             # sales book keeps it on the header, so the order stays attributable and there
             # is nothing for the operator to fix in this file - reporting 2,546 of them
             # would bury the rows that really did fail.
-            if bind.party_back_create:
+            #
+            # AC-P2-1/D8 (S2): a Customer additionally needs a NAME to back-create (the
+            # unique index is on the pair) - a code-only debtor row falls through to the
+            # `party_code_header_col` branch below exactly as it did before this bind
+            # turned `party_back_create` on, kept and unreported.
+            can_back_create = bind.party_back_create and (
+                bind.party is not Customer or l.label
+            )
+            if can_back_create:
                 # The purchase book has nowhere to put an unlinked code, and 2,177 of
                 # 5,243 documents in the captain's own file arrived exactly this way -
                 # not a typo, a supplier AutoCount already deals with that the master
-                # simply hasn't caught up on. `apply()` creates a minimal supplier row
-                # for it (mirrors `order_service`'s customer back-create) and links the
-                # document; still reported here, so it is visible rather than a surprise
-                # after the fact.
+                # simply hasn't caught up on. `apply()` creates a minimal party row
+                # for it and links the document. NOT a resolution issue any more
+                # (AC-P2-1, CI catch 2026-09-06): the row LANDS, and a resolution
+                # issue is what the FE counts as a skipped row - with D8 back-creating
+                # customers on the sales book too, an SO book full of debtors the master
+                # has not caught up on read as "N rows skipped" for N rows that import.
+                # The preview reports them under `suppliers_created_codes` /
+                # `customers_created_codes` instead (`_would_create_parties`).
                 party_code_by_doc.setdefault(l.doc_number, code)
                 party_raw_code_by_code.setdefault(code, extra.get("party_code") or code)
                 if code not in party_label_by_code and l.label:
                     party_label_by_code[code] = l.label
-                issues.append(ResolutionIssue(
-                    row, bind.party_code, code,
-                    f"no {bind.party.__name__.lower()} with this code; a new "
-                    f"{bind.party.__name__.lower()} is being created for it"))
             elif bind.party_code_header_col:
                 party_code_by_doc.setdefault(l.doc_number, code)
             else:
@@ -1563,13 +1590,21 @@ def _spo_lines_to_close(db: Session, stated_keys: set[tuple[str, int]]) -> list:
 
     One reader for the preview and the write, so the number the operator confirms and the
     rows the commit settles cannot differ.
+
+    D11 (S3): also considers rows `ShippingOrderIngestService` wrote
+    (`source_system == "autocount"`) - one shipping-order writer identity
+    across the outstanding book and the ESB, so a document the file no
+    longer states closes regardless of which channel last touched it.
+    `scm_spo_history`/`scm_po_history` (closed history, a different feed
+    entirely) are still excluded - neither is this channel's to settle.
     """
     from app.models.procurement import SPOAllocation
+    from app.services.document_ingest_service import SOURCE_SYSTEM as ESB_SOURCE_SYSTEM
 
     return [
         row
         for row in db.query(SPOAllocation).filter(
-            SPOAllocation.source_system == SPO_UPLOAD_SOURCE,
+            SPOAllocation.source_system.in_([SPO_UPLOAD_SOURCE, ESB_SOURCE_SYSTEM]),
             SPOAllocation.line_status == "open",
         )
         if (row.spo_number, row.spo_line_number) not in stated_keys
@@ -1590,6 +1625,49 @@ def _spo_preview(db: Session, read: ReadResult) -> _SpoWrite:
     return out
 
 
+def _would_create_parties(db: Session, resolved: _Resolved, bind: _Binding) -> tuple[list[str], list[str]]:
+    """AC-P2-1 (guide-writer check, 2026-09-06): which supplier/customer codes
+    `apply`'s back-create block (below) WOULD create, without creating any of
+    them - the same existence checks that block runs (code match, then the
+    PO-book cleaned-name fallback), read-only. Returns
+    `(supplier_would_create_codes, customer_would_create_codes)`; whichever
+    one `bind.party` is not stays empty (an SO upload's party is `Customer`,
+    a PO/GRN upload's is `Supplier` - never both in the same call).
+    """
+    supplier_codes: list[str] = []
+    customer_codes: list[str] = []
+    if not bind.party_back_create:
+        return supplier_codes, customer_codes
+    target = customer_codes if bind.party is Customer else supplier_codes
+    if resolved.party_raw_code_by_code:
+        code_col = getattr(bind.party, bind.party_code_col)
+        for code in sorted(resolved.party_raw_code_by_code):
+            existing = db.query(bind.party).filter(func.upper(code_col) == code).one_or_none()
+            if existing is not None:
+                continue
+            raw_code = resolved.party_raw_code_by_code.get(code, code)
+            if bind.party is Customer and not resolved.party_label_by_code.get(code):
+                # D8: a customer needs code AND name - a code with no name is
+                # left unresolved, never created, on this path either.
+                continue
+            target.append(raw_code)
+    # PO-book NAME fallback: supplier only (D8 requires code AND name for a
+    # customer, so there is no name-alone creation path to preview for one).
+    if bind.party is not Customer and resolved.party_cleaned_name_by_key:
+        name_col = getattr(bind.party, bind.party_name_col)
+        for name_key in sorted(resolved.party_cleaned_name_by_key):
+            existing = (
+                db.query(bind.party)
+                .filter(func.upper(name_col) == name_key)
+                .order_by(bind.party.id)
+                .first()
+            )
+            if existing is not None:
+                continue
+            target.append(resolved.party_cleaned_name_by_key[name_key])
+    return supplier_codes, customer_codes
+
+
 def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
     """What this upload would change. Writes nothing."""
     plan = _build(db, file_data, doc_type)
@@ -1603,6 +1681,10 @@ def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
         )
     row_problems = read.problems + plan.problems
     spo = _spo_preview(db, read) if doc_type == PO else _SpoWrite()
+    bind = _binding(doc_type)
+    supplier_would_create, customer_would_create = (
+        _would_create_parties(db, plan.resolved, bind) if plan.resolved is not None else ([], [])
+    )
     return PreviewResult(
         doc_type=doc_type,
         scope_documents=diff.scope_documents,
@@ -1616,6 +1698,8 @@ def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
         samples=_samples(diff),
         activated_documents=plan.activate,
         unmapped_agents=plan.agent_notices,
+        suppliers_created=supplier_would_create,
+        customers_created=customer_would_create,
         warnings=_unreadable_date_warning(row_problems)
         + _shipping_order_warning(read, spo),
         shipping_order_rows=len(read.shipping_order_row_numbers),
@@ -2488,19 +2572,14 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
     if diff is None or resolved is None:
         return {"ok": False, "missing_columns": read.missing_columns, "counts": {}}
 
-    # QP1: an order nothing can classify refuses the FILE, before any write and before any
-    # outcome is recorded. Half a book is worse than none - the un-imported half is
-    # invisible while the imported half looks complete - and a defaulted class is worse
-    # still, because it is stable and no later upload surfaces it. The row problems name
-    # every offending order and its debtor; fixing the customer's market segment (or the
-    # order type, or the agent's class) and re-uploading is the whole remedy.
-    if plan.unclassified:
-        return {
-            "ok": False,
-            "unclassified_documents": list(plan.unclassified),
-            "row_problems": [asdict(p) for p in read.problems + plan.problems],
-            "counts": {},
-        }
+    # D23 (captain 2026-09-06, AC-P2-8, reverses QP1): an order nothing can classify no
+    # longer refuses the file - it lands with `demand_class` NULL (`_write_headers`'s own
+    # `cls = plan.demand.get(number)` already leaves the column untouched when nothing
+    # classified it) and is reported below, `unclassified_documents`/
+    # `unclassified_documents_numbers`, the same shape `suppliers_created`/
+    # `suppliers_created_codes` already use. Fixing the customer's market segment (or the
+    # order type, or the agent's class) and re-uploading is still the whole remedy - it is
+    # simply no longer the ONLY way the file is accepted at all.
 
     _record_rows_never_written(read, resolved, outcome)
 
@@ -2573,6 +2652,10 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
     # migrated one), must not poison the whole transaction - the code is left exactly as
     # unresolved as it always was rather than crashing the upload.
     created_supplier_codes: list[str] = []
+    # AC-P2-1/D8 (S2): the customer mirror of `created_supplier_codes` - reported
+    # under its own `customers_created`/`customers_created_codes` keys, the same
+    # shape the supplier side already reports under.
+    created_customer_codes: list[str] = []
     if bind.party_back_create and resolved.party_raw_code_by_code:
         party_ids_by_code: dict[str, str] = {}
         code_col = getattr(bind.party, bind.party_code_col)
@@ -2585,9 +2668,22 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
                 party_ids_by_code[code] = str(existing.id)
                 continue
             raw_code = resolved.party_raw_code_by_code.get(code, code)
-            name = resolved.party_label_by_code.get(code) or raw_code
+            name = resolved.party_label_by_code.get(code)
+            if bind.party is Customer:
+                # AC-P2-1/D8: a customer needs BOTH code and name (the unique
+                # index is on the pair) - unlike the supplier side, a code
+                # with no name is left exactly as unresolved as it always
+                # was, still attributable via `party_code_header_col`.
+                if not name:
+                    continue
+                created = customer_rules.back_create_customer(db, code=raw_code, name=name)
+                if created is None:
+                    continue
+                party_ids_by_code[code] = str(created.id)
+                created_customer_codes.append(raw_code)
+                continue
             created = back_create_supplier(
-                db, code=raw_code, name=name, party=bind.party,
+                db, code=raw_code, name=name or raw_code, party=bind.party,
                 code_col=bind.party_code_col, name_col=bind.party_name_col)
             if created is None:
                 continue
@@ -2606,7 +2702,10 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
     # above. Re-queried by name rather than trusting `_resolve`'s snapshot, for the same
     # reason the code loop re-queries by code: a name this run's own code-based creation
     # (or an earlier name in THIS loop) just created must be found, not re-created.
-    if bind.party_back_create and resolved.party_cleaned_name_by_key:
+    # Supplier only: no S2 scenario needs a customer back-created off a NAME
+    # alone (D8 requires code AND name), and `_clean_supplier_name`'s cleaning
+    # rule (trailing currency notes, etc.) is a supplier-specific concern.
+    if bind.party_back_create and bind.party is not Customer and resolved.party_cleaned_name_by_key:
         party_ids_by_name_key: dict[str, str] = {}
         name_col = getattr(bind.party, bind.party_name_col)
         for name_key in sorted(resolved.party_cleaned_name_by_key):
@@ -3017,4 +3116,13 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         # a person can read either.
         "suppliers_created": len(created_supplier_codes),
         "suppliers_created_codes": created_supplier_codes[:CREATED_SUPPLIERS_LISTED],
+        # AC-P2-1/D8 (S2): same shape, the customer side of the same fact.
+        "customers_created": len(created_customer_codes),
+        "customers_created_codes": created_customer_codes[:CREATED_SUPPLIERS_LISTED],
+        # D23/AC-P2-8: same shape again - the count is the whole truth, the list is
+        # capped so a book with hundreds of unclassifiable orders does not print all of
+        # them; `plan.unclassified` is document NUMBERS, not codes, hence `_numbers`
+        # rather than `_codes` to name what the values actually are.
+        "unclassified_documents": len(plan.unclassified),
+        "unclassified_documents_numbers": list(plan.unclassified)[:CREATED_SUPPLIERS_LISTED],
     }

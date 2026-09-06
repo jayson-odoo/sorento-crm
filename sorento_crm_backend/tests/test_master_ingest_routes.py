@@ -327,23 +327,25 @@ class TestSEC3GenericMasterExceptionsAreSanitized:
     def test_a_forced_insert_failure_never_leaks_sql_or_uuids_into_the_verdict(
         self, client, db, company_code, monkeypatch
     ):
-        # `_apply`'s CREATE path is a raw `db.execute(INSERT ...)`, not a
-        # `db.flush()` - the surgical target here is `execute`, scoped to the
-        # one call `_apply` itself makes so the route's own reads/writes
-        # elsewhere in the request are unaffected.
+        # D18 (ingest-parity-standardisation UAC AC-P0-6) moved the CREATE
+        # path from a raw `db.execute(INSERT ...)` to an ORM
+        # `db.add(row); db.flush()` (`_insert`), so the company-stamp, audit
+        # and embedding listeners fire. The surgical target follows: `flush`,
+        # scoped to the one call `_insert` itself makes so the route's own
+        # reads/writes elsewhere in the request are unaffected.
         leaking = (
             "INSERT INTO customers (id, customer_code) VALUES ('x') duplicate "
             "key value violates unique constraint; Key "
             "(id)=(5b8b9c10-3333-4222-8333-4444555566d1) already exists."
         )
-        real_execute = db.execute
+        real_flush = db.flush
 
         def _boom(*args, **kwargs):
-            if _called_from("_apply", "master_ingest_service.py"):
+            if _called_from("_insert", "master_ingest_service.py"):
                 raise RuntimeError(leaking)
-            return real_execute(*args, **kwargs)
+            return real_flush(*args, **kwargs)
 
-        monkeypatch.setattr(db, "execute", _boom)
+        monkeypatch.setattr(db, "flush", _boom)
 
         res = client.post(
             "/ingest/customers",
@@ -481,16 +483,25 @@ class TestDryRun:
     def test_dry_run_reports_retryable_exactly_as_a_real_ingest_would(self, client, company_code):
         # The verdict vocabulary must be identical, or a preview cannot be used
         # to predict the sync it is previewing.
+        #
+        # A supplier's `payment_terms_code` no longer causes this (ingest-parity-
+        # standardisation UAC AC-P0-4/D15: accepted-and-warned, never retryable
+        # - see tests/test_master_ingest.py::TestRetryableVsFatal). A sales
+        # order naming a `customer_ref` that does not resolve stays retryable
+        # on both dry-run and real ingest (`MasterRefResolver._resolve_ref` /
+        # `_resolve_master`) and is untouched by S1's product/master rules, so
+        # it is the stable choice here.
         res = client.post(
-            "/ingest/suppliers?dry_run=true",
+            "/ingest/sales_orders?dry_run=true",
             json={
                 "companyCode": company_code,
                 "records": [
                     {
-                        "source_ref": "ZZT-DK-S1",
-                        "code": unique_code("SUP"),
-                        "name": "Acme",
-                        "payment_terms_code": "NET-999-MISSING",
+                        "source_ref": "ZZT-DK-SO1",
+                        "so_number": unique_code("SO"),
+                        "status": "open",
+                        "customer_ref": "ZZT-DK-NOSUCHCUSTOMER",
+                        "lines": [],
                     }
                 ]
             },

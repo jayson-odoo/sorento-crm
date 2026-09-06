@@ -14,7 +14,7 @@ from app.models.certificate import Certificate
 from app.models.embeddings import EmbeddingQueue
 from app.models.marketing import Promotion, PromotionProduct, PromotionAttachment
 from app.models.procurement import InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine
-from app.models.product import ProductAttachment
+from app.models.product import Product, ProductAttachment
 from app.models.order import Order, OrderStatus, OrderLine
 
 
@@ -195,6 +195,7 @@ def register_embedding_change_listeners() -> None:
     _attach_listeners(PickingHeader, "picking_header")
     _attach_listeners(PickingLine, "picking_line")
     _attach_listeners(ProductAttachment, "product_attachment")
+    _attach_listeners(Product, "product")
     _attach_listeners(PromotionAttachment, "promotion_attachment")
     _attach_listeners(Certificate, "certificate")
     _attach_listeners(Order, "order")

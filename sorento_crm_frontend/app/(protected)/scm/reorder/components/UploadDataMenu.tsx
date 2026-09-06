@@ -3,27 +3,28 @@
 import { useMemo, useState } from 'react';
 import { Upload } from 'lucide-react';
 import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
-import { HistoryUploadDialog } from './HistoryUploadDialog';
+import { OrderInquiryUploadDialog } from './OrderInquiryUploadDialog';
 import { OutstandingUploadDialog } from './OutstandingUploadDialog';
 import { ReorderLevelUploadDialog } from './ReorderLevelUploadDialog';
 import type { OutstandingImportKind } from '../services/outstandingImportService';
-import type { HistoryImportKind } from '../services/purchaseHistoryService';
 
 /**
  * SCM - every file the plan is fed from, as entries on the plans list's Actions menu.
  *
- * Six channels, and the split between them is the point rather than a category: the order
- * book is what the plan is COMPUTED from and changes tomorrow's numbers; history and linkage
- * is what the order book does not carry - what was bought historically, where stock lands,
- * and which purchase order a sales order is waiting on; the reorder-level feed is neither,
- * it decides WHEN a product appears in the plan at all.
+ * Four channels, and the split between them is the point rather than a category: the order
+ * book is what the plan is COMPUTED from and changes tomorrow's numbers; the Order Inquiry
+ * sheet is what the order book does not carry - where stock lands and which purchase order a
+ * sales order is waiting on; the reorder-level feed is neither, it decides WHEN a product
+ * appears in the plan at all. The purchase-history and sales-history curation feeds that used
+ * to sit alongside Order Inquiry here were retired at ingest-parity-standardisation S4
+ * (AC-P4-1): closed history now arrives through the ESB's own document ingest.
  *
  * They live on the LIST rather than on a plan (plan 4.1): a file feeds the next run, not the
  * run already on screen, so a button for it beside a finished plan's own numbers promised
  * something it could not do.
  */
 
-type Channel = OutstandingImportKind | HistoryImportKind | 'reorder-levels';
+type Channel = OutstandingImportKind | 'order-inquiry' | 'reorder-levels';
 
 // Neither entry says "outstanding" any more, on either book. Each file carries the WHOLE
 // book - orders still owed and orders already completed alike - so naming the action after
@@ -36,9 +37,7 @@ const OUTSTANDING: ReadonlyArray<readonly [OutstandingImportKind, string]> = [
   ['purchase-orders', 'Upload purchase orders'],
 ] as const;
 
-const CURATION: ReadonlyArray<readonly [HistoryImportKind, string]> = [
-  ['purchase-history', 'Upload purchase history'],
-  ['sales-history', 'Upload sales history'],
+const CURATION: ReadonlyArray<readonly ['order-inquiry', string]> = [
   ['order-inquiry', 'Upload order inquiry sheet'],
 ] as const;
 
@@ -46,14 +45,6 @@ const CURATION: ReadonlyArray<readonly [HistoryImportKind, string]> = [
 const CONFIGURATION: ReadonlyArray<readonly ['reorder-levels', string]> = [
   ['reorder-levels', 'Upload reorder levels'],
 ] as const;
-
-function isHistoryChannel(channel: Channel): channel is HistoryImportKind {
-  return (
-    channel === 'purchase-history'
-    || channel === 'order-inquiry'
-    || channel === 'sales-history'
-  );
-}
 
 export interface UploadDataActions {
   /** Ready to hand to `DataGridListToolbar`'s `secondaryActions`. */
@@ -96,7 +87,7 @@ export function useUploadDataActions(onQueued?: () => void): UploadDataActions {
         <ReorderLevelUploadDialog open onOpenChange={(next) => !next && setChannel(null)} />
       ) : null}
 
-      {channel && channel !== 'reorder-levels' && !isHistoryChannel(channel) ? (
+      {channel && channel !== 'reorder-levels' && channel !== 'order-inquiry' ? (
         <OutstandingUploadDialog
           open
           onOpenChange={(next) => !next && setChannel(null)}
@@ -105,11 +96,10 @@ export function useUploadDataActions(onQueued?: () => void): UploadDataActions {
         />
       ) : null}
 
-      {channel && channel !== 'reorder-levels' && isHistoryChannel(channel) ? (
-        <HistoryUploadDialog
+      {channel === 'order-inquiry' ? (
+        <OrderInquiryUploadDialog
           open
           onOpenChange={(next) => !next && setChannel(null)}
-          kind={channel}
           onQueued={onQueued}
         />
       ) : null}

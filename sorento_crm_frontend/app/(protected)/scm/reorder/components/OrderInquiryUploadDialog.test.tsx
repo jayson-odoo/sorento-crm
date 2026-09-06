@@ -1,16 +1,17 @@
 /**
- * The curation feeds' dialog: test, confirm, and what each state says.
+ * The Order Inquiry upload dialog: test, confirm, and what each state says.
  *
- * What is asserted here is what the SCREEN promises, not what the parser does. Four claims
- * carry most of the weight:
+ * Renamed from `HistoryUploadDialog.test.tsx` (ingest-parity-standardisation S4, AC-P4-1): the
+ * purchase-history and sales-history describe blocks this file used to also carry were
+ * deleted along with the retired channels. What is asserted here is what the SCREEN promises,
+ * not what the parser does. Four claims carry most of the weight:
  *
- * 1. Choosing a file runs NOTHING. Test reads it; Confirm queues the write. The old dialog
- *    previewed on drop, which is the behaviour the captain asked us to remove.
+ * 1. Choosing a file runs NOTHING. Test reads it; Confirm queues the write.
  * 2. Confirm QUEUES: `notifyImportQueued()` so the upload drawer follows the job, the dialog
  *    closes, and no counts are claimed - the write happens on the worker.
  * 3. A file that could not be read says WHY, and does not offer to be queued.
- * 4. The problems are NAMED, not only counted - the unmatched item codes and the sales
- *    orders we have not received yet are the lists somebody acts on.
+ * 4. The problems are NAMED, not only counted - the sales orders we have not received yet are
+ *    the list somebody acts on.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -39,18 +40,12 @@ vi.mock('@/components/upload-activity/useImportJobDrawer', () => ({
   useImportJobDrawer: () => ({ notifyImportQueued }),
 }));
 
-const previewPurchaseHistory = vi.fn();
-const applyPurchaseHistory = vi.fn();
 const previewOrderInquiry = vi.fn();
 const applyOrderInquiry = vi.fn();
-const testPurchaseHistory = vi.fn();
 const testOrderInquiry = vi.fn();
-vi.mock('../services/purchaseHistoryService', () => ({
-  previewPurchaseHistory: (...a: unknown[]) => previewPurchaseHistory(...a),
-  applyPurchaseHistory: (...a: unknown[]) => applyPurchaseHistory(...a),
+vi.mock('../services/orderInquiryService', () => ({
   previewOrderInquiry: (...a: unknown[]) => previewOrderInquiry(...a),
   applyOrderInquiry: (...a: unknown[]) => applyOrderInquiry(...a),
-  testPurchaseHistory: (...a: unknown[]) => testPurchaseHistory(...a),
   testOrderInquiry: (...a: unknown[]) => testOrderInquiry(...a),
 }));
 
@@ -63,41 +58,19 @@ vi.mock('../services/outstandingImportService', () => ({
   getOutstandingUploadConfig: (...a: unknown[]) => getOutstandingUploadConfig(...a),
 }));
 
-import { HistoryUploadDialog } from './HistoryUploadDialog';
+import { OrderInquiryUploadDialog } from './OrderInquiryUploadDialog';
 import type { UploadTestResult } from './UploadTestVerdict';
-import type {
-  OrderInquiryPreview,
-  PurchaseHistoryPreview,
-} from '../services/purchaseHistoryService';
+import type { OrderInquiryPreview } from '../services/orderInquiryService';
 import type { ImportQueuedResult } from '@/components/upload-activity/importQueue';
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 // Distinct numbers throughout, so a `getByText` on one figure can never match another.
 
 const QUEUED: ImportQueuedResult = {
-  message: 'Purchase history upload queued.',
-  job_id: 'job-hist-1',
+  message: 'Order inquiry upload queued.',
+  job_id: 'job-inq-1',
   id: 'row-1',
 };
-
-function historyPreview(over: Partial<PurchaseHistoryPreview> = {}): PurchaseHistoryPreview {
-  return {
-    ok: true,
-    problems: [],
-    orders: 1586,
-    orders_new: 1500,
-    orders_existing: 86,
-    lines: 13458,
-    charge_lines: 534,
-    unmatched_items: 2,
-    unmatched_item_codes: ['GHOSTCODE1', 'GHOSTCODE2'],
-    so_claims: 43,
-    date_from: '2020-01-02',
-    date_to: '2020-12-30',
-    ...over,
-  };
-}
-
 
 function inquiryPreview(over: Partial<OrderInquiryPreview> = {}): OrderInquiryPreview {
   return {
@@ -119,10 +92,9 @@ function inquiryPreview(over: Partial<OrderInquiryPreview> = {}): OrderInquiryPr
   };
 }
 
-
 const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
-function file(name = 'book.xls'): File {
+function file(name = 'inquiry.xlsx'): File {
   return new File(['x'], name, { type: XLSX });
 }
 
@@ -131,13 +103,13 @@ function dropzone(): HTMLInputElement {
 }
 
 /** Pick a file. Runs nothing - that is the point of the change. */
-async function pick(name = 'book.xls') {
+async function pick(name = 'inquiry.xlsx') {
   fireEvent.change(dropzone(), { target: { files: [file(name)] } });
   await waitFor(() => expect(testButton()).toBeEnabled());
 }
 
 /** Pick a file AND press Test, which is what every assertion about the summary needs. */
-async function choose(name = 'book.xls') {
+async function choose(name = 'inquiry.xlsx') {
   await pick(name);
   fireEvent.click(testButton());
   await waitFor(() => expect(testButton()).toBeEnabled());
@@ -158,7 +130,7 @@ function verdict(over: Partial<UploadTestResult> = {}): UploadTestResult {
     valid: true,
     errors: [],
     warnings: [],
-    summary: { total_rows: 13458, would_create: 1586, would_update: 0, error_count: 0 },
+    summary: { total_rows: 105, would_create: 71, would_update: 0, error_count: 0 },
     ...over,
   };
 }
@@ -167,20 +139,14 @@ function testButton(): HTMLButtonElement {
   return screen.getByRole('button', { name: /^Test$/i }) as HTMLButtonElement;
 }
 
-function renderDialog(
-  kind: 'purchase-history' | 'order-inquiry',
-  onQueued = vi.fn(),
-  onOpenChange = vi.fn(),
-) {
+function renderDialog(onQueued = vi.fn(), onOpenChange = vi.fn()) {
   render(
-    <HistoryUploadDialog open kind={kind} onOpenChange={onOpenChange} onQueued={onQueued} />,
+    <OrderInquiryUploadDialog open onOpenChange={onOpenChange} onQueued={onQueued} />,
   );
   return { onQueued, onOpenChange };
 }
 
 beforeEach(() => {
-  previewPurchaseHistory.mockReset().mockResolvedValue(historyPreview());
-  applyPurchaseHistory.mockReset().mockResolvedValue(QUEUED);
   previewOrderInquiry.mockReset().mockResolvedValue(inquiryPreview());
   applyOrderInquiry.mockReset().mockResolvedValue(QUEUED);
   notifyImportQueued.mockReset();
@@ -188,42 +154,41 @@ beforeEach(() => {
   getOutstandingUploadConfig
     .mockReset()
     .mockResolvedValue({ allowed_extensions: ['.xlsx', '.xlsm', '.xls'] });
-  testPurchaseHistory.mockReset().mockResolvedValue(verdict());
   testOrderInquiry.mockReset().mockResolvedValue(verdict());
 });
 
 // ── 5. the Test function, which every other importer in this system has ─────
 
-describe('HistoryUploadDialog - Test', () => {
+describe('OrderInquiryUploadDialog - Test', () => {
   it('is offered once a file is chosen, and writes nothing', async () => {
-    renderDialog('purchase-history');
+    renderDialog();
     expect(testButton()).toBeDisabled();
 
     await pick();
     fireEvent.click(testButton());
 
-    await waitFor(() => expect(testPurchaseHistory).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(testOrderInquiry).toHaveBeenCalledTimes(1));
     // Both reads on one press: the rich preview AND the standard verdict.
-    expect(previewPurchaseHistory).toHaveBeenCalledTimes(1);
-    expect(applyPurchaseHistory).not.toHaveBeenCalled();
+    expect(previewOrderInquiry).toHaveBeenCalledTimes(1);
+    expect(applyOrderInquiry).not.toHaveBeenCalled();
   });
 
   it('shows the green verdict when there is nothing to fix', async () => {
-    renderDialog('purchase-history');
+    renderDialog();
     await choose();
 
     expect(await screen.findByText('No errors')).toBeInTheDocument();
   });
 
   it('shows errors and warnings separately, because only one of them blocks', async () => {
-    testPurchaseHistory.mockResolvedValue(
+    testOrderInquiry.mockResolvedValue(
       verdict({
         valid: false,
-        errors: ['No order block found in this file.'],
-        warnings: ['2 item codes we do not hold, so those lines are skipped: A, B'],
+        errors: ['No inquiry rows found in this file.'],
+        warnings: ['2 locations we do not recognise'],
       }),
     );
-    renderDialog('purchase-history');
+    renderDialog();
     await choose();
 
     expect(await screen.findByText('Errors (1)')).toBeInTheDocument();
@@ -233,10 +198,10 @@ describe('HistoryUploadDialog - Test', () => {
 
   it('warns on a file that is still perfectly loadable', async () => {
     // The distinction the button exists for: a warning is information, not a refusal.
-    testPurchaseHistory.mockResolvedValue(
-      verdict({ warnings: ['534 charge lines carry cost but no product'] }),
+    testOrderInquiry.mockResolvedValue(
+      verdict({ warnings: ['19 rows carry no order yet'] }),
     );
-    renderDialog('purchase-history');
+    renderDialog();
     await choose();
 
     expect(await screen.findByText('No errors')).toBeInTheDocument();
@@ -246,22 +211,22 @@ describe('HistoryUploadDialog - Test', () => {
 
   it('does not force a Test before Confirm', async () => {
     // Testing is a tool, not ceremony - the same rule as the GRN and customer importers.
-    renderDialog('purchase-history');
+    renderDialog();
     await pick();
 
     expect(confirmButton()).toBeEnabled();
-    expect(testPurchaseHistory).not.toHaveBeenCalled();
-    expect(previewPurchaseHistory).not.toHaveBeenCalled();
+    expect(testOrderInquiry).not.toHaveBeenCalled();
+    expect(previewOrderInquiry).not.toHaveBeenCalled();
   });
 
   it('drops the verdict when a different file is chosen', async () => {
     // A green tick for the previous file, still on screen above a new one, is how somebody
     // uploads a bad file believing it was tested.
-    renderDialog('purchase-history');
-    await choose('first.xls');
+    renderDialog();
+    await choose('first.xlsx');
     expect(await screen.findByText('No errors')).toBeInTheDocument();
 
-    await pick('second.xls');
+    await pick('second.xlsx');
     await waitFor(() => expect(screen.queryByText('No errors')).toBeNull());
   });
 });
@@ -269,9 +234,9 @@ describe('HistoryUploadDialog - Test', () => {
 // ── 6. the reading row holds its place ──────────────────────────────────────
 
 /**
- * Pressing Test on the captain's 27,192-row book made the popup shake for as long as
- * `Reading the file...` was on screen. Two causes, both measured in a browser rather than
- * guessed at, and both are properties of this row:
+ * Pressing Test on a large book made the popup shake for as long as `Reading the file...` was
+ * on screen. Two causes, both measured in a browser rather than guessed at, and both are
+ * properties of this row:
  *
  * 1. mounting the row on press grew the dialog by 36px, and `DialogContent` is centred with
  *    `translate-y-[-50%]`, so the whole popup jumped when the read started and again when it
@@ -287,7 +252,7 @@ describe('HistoryUploadDialog - Test', () => {
  * it is hidden with `invisible` rather than unmounted, and the spinner sits in a clipped box
  * and only spins while reading.
  */
-describe('HistoryUploadDialog - the reading row', () => {
+describe('OrderInquiryUploadDialog - the reading row', () => {
   function readingRow(): HTMLElement {
     const node = document.querySelector('[data-slot="upload-reading-indicator"]');
     if (!node) throw new Error('the reading row is not in the DOM');
@@ -295,13 +260,13 @@ describe('HistoryUploadDialog - the reading row', () => {
   }
 
   it('keeps its row before, during and after the read, so the popup never moves', async () => {
-    let release!: (p: PurchaseHistoryPreview) => void;
-    previewPurchaseHistory.mockReturnValue(
-      new Promise<PurchaseHistoryPreview>((resolve) => {
+    let release!: (p: OrderInquiryPreview) => void;
+    previewOrderInquiry.mockReturnValue(
+      new Promise<OrderInquiryPreview>((resolve) => {
         release = resolve;
       }),
     );
-    renderDialog('purchase-history');
+    renderDialog();
 
     // Before: present, holding its space, and hidden rather than absent.
     expect(readingRow()).toHaveClass('invisible');
@@ -314,7 +279,7 @@ describe('HistoryUploadDialog - the reading row', () => {
     await waitFor(() => expect(readingRow()).not.toHaveClass('invisible'));
     expect(readingRow().querySelector('.animate-spin')).not.toBeNull();
 
-    release(historyPreview());
+    release(inquiryPreview());
 
     // After: back to hidden, never unmounted.
     await waitFor(() => expect(readingRow()).toHaveClass('invisible'));
@@ -322,13 +287,13 @@ describe('HistoryUploadDialog - the reading row', () => {
   });
 
   it('clips the spinner to its own box, so its rotation cannot overflow the scrolling body', async () => {
-    let release!: (p: PurchaseHistoryPreview) => void;
-    previewPurchaseHistory.mockReturnValue(
-      new Promise<PurchaseHistoryPreview>((resolve) => {
+    let release!: (p: OrderInquiryPreview) => void;
+    previewOrderInquiry.mockReturnValue(
+      new Promise<OrderInquiryPreview>((resolve) => {
         release = resolve;
       }),
     );
-    renderDialog('purchase-history');
+    renderDialog();
     await pick();
     fireEvent.click(testButton());
 
@@ -341,56 +306,56 @@ describe('HistoryUploadDialog - the reading row', () => {
     expect(clip).toHaveClass('overflow-hidden');
     expect(clip).toHaveClass('size-4');
 
-    release(historyPreview());
+    release(inquiryPreview());
     await waitFor(() => expect(readingRow()).toHaveClass('invisible'));
   });
 
   it('runs one read per press, so the row cannot flicker on a double toggle', async () => {
-    renderDialog('purchase-history');
+    renderDialog();
     await choose();
 
-    expect(previewPurchaseHistory).toHaveBeenCalledTimes(1);
-    expect(testPurchaseHistory).toHaveBeenCalledTimes(1);
+    expect(previewOrderInquiry).toHaveBeenCalledTimes(1);
+    expect(testOrderInquiry).toHaveBeenCalledTimes(1);
   });
 });
 
 // ── 1. nothing is written from a single click ───────────────────────────────
 
-describe('HistoryUploadDialog - test, then upload', () => {
+describe('OrderInquiryUploadDialog - test, then upload', () => {
   it('opens with nothing chosen and Confirm disabled', () => {
-    renderDialog('purchase-history');
+    renderDialog();
 
     expect(confirmButton()).toBeDisabled();
-    expect(previewPurchaseHistory).not.toHaveBeenCalled();
-    expect(applyPurchaseHistory).not.toHaveBeenCalled();
+    expect(previewOrderInquiry).not.toHaveBeenCalled();
+    expect(applyOrderInquiry).not.toHaveBeenCalled();
   });
 
   it('reads NOTHING when a file is chosen', async () => {
-    renderDialog('purchase-history');
+    renderDialog();
     await pick();
 
     await Promise.resolve();
-    expect(previewPurchaseHistory).not.toHaveBeenCalled();
-    expect(testPurchaseHistory).not.toHaveBeenCalled();
-    expect(applyPurchaseHistory).not.toHaveBeenCalled();
+    expect(previewOrderInquiry).not.toHaveBeenCalled();
+    expect(testOrderInquiry).not.toHaveBeenCalled();
+    expect(applyOrderInquiry).not.toHaveBeenCalled();
   });
 
   it('reads the file on Test, and Test writes nothing', async () => {
-    renderDialog('purchase-history');
+    renderDialog();
     await choose();
 
-    await waitFor(() => expect(previewPurchaseHistory).toHaveBeenCalledTimes(1));
-    expect(applyPurchaseHistory).not.toHaveBeenCalled();
+    await waitFor(() => expect(previewOrderInquiry).toHaveBeenCalledTimes(1));
+    expect(applyOrderInquiry).not.toHaveBeenCalled();
     expect(confirmButton()).toBeEnabled();
   });
 
   it('queues on Confirm: drawer, close, and no counts it cannot have', async () => {
-    const { onQueued, onOpenChange } = renderDialog('purchase-history');
+    const { onQueued, onOpenChange } = renderDialog();
     await choose();
 
     fireEvent.click(confirmButton());
 
-    await waitFor(() => expect(applyPurchaseHistory).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(applyOrderInquiry).toHaveBeenCalledTimes(1));
     // The drawer is what follows the job; without it the operator is told "queued" and has
     // nowhere to watch it.
     expect(notifyImportQueued).toHaveBeenCalledTimes(1);
@@ -400,10 +365,10 @@ describe('HistoryUploadDialog - test, then upload', () => {
   });
 
   it('surfaces the extracted backend message when queueing is refused', async () => {
-    applyPurchaseHistory.mockRejectedValue(
+    applyOrderInquiry.mockRejectedValue(
       new Error('Select a single company before uploading this file.'),
     );
-    const { onQueued } = renderDialog('purchase-history');
+    const { onQueued } = renderDialog();
     await choose();
 
     fireEvent.click(confirmButton());
@@ -418,16 +383,16 @@ describe('HistoryUploadDialog - test, then upload', () => {
 
 // ── 2. a file we could not read ─────────────────────────────────────────────
 
-describe('HistoryUploadDialog - an unreadable file', () => {
+describe('OrderInquiryUploadDialog - an unreadable file', () => {
   it('says why, and does not offer to apply it', async () => {
-    previewPurchaseHistory.mockResolvedValue(
-      historyPreview({ ok: false, problems: ['No order block found in this file.'] }),
+    previewOrderInquiry.mockResolvedValue(
+      inquiryPreview({ ok: false, problems: ['No inquiry rows found in this file.'] }),
     );
-    renderDialog('purchase-history');
+    renderDialog();
     await choose();
 
     expect(
-      await screen.findByText('No order block found in this file.'),
+      await screen.findByText('No inquiry rows found in this file.'),
     ).toBeInTheDocument();
     await waitFor(() => expect(confirmButton()).toBeDisabled());
   });
@@ -438,76 +403,20 @@ describe('HistoryUploadDialog - an unreadable file', () => {
      * Test could not reach the server may still be queued - and the job then reports what
      * the worker made of it. What must not happen is silence.
      */
-    previewPurchaseHistory.mockRejectedValue(new Error('Backend is down'));
-    renderDialog('purchase-history');
+    previewOrderInquiry.mockRejectedValue(new Error('Backend is down'));
+    renderDialog();
     await choose();
 
     expect(await screen.findByText('Backend is down')).toBeInTheDocument();
-    expect(applyPurchaseHistory).not.toHaveBeenCalled();
-  });
-});
-
-// ── 3. purchase history reads as history ────────────────────────────────────
-
-describe('HistoryUploadDialog - purchase history', () => {
-  it('says what this feed does to the plan, purchase orders and shipping orders apart', () => {
-    // The single most expensive misreading available on this screen: a year of closed 2020
-    // orders taken for supply would inflate every position in the system. So the purchase
-    // orders say they are already received. What the copy must NOT do is claim the whole
-    // file is invisible to supply - the `SPO-` documents in it become `spo_allocations`,
-    // which `scm.on_order_v` reads, and that is the captain's own PO & SPO book.
-    renderDialog('purchase-history');
-
-    expect(screen.getByText(/already received/i)).toBeInTheDocument();
-    expect(screen.getByText(/Shipping orders in the same file become incoming stock/i))
-      .toBeInTheDocument();
-  });
-
-  it('shows the book it read, and the period it covers', async () => {
-    renderDialog('purchase-history');
-    await choose();
-
-    await screen.findByText('Orders');
-    expect(within(tile('Orders')).getByText('1,586')).toBeInTheDocument();
-    expect(within(tile('Charge lines')).getByText('534')).toBeInTheDocument();
-    // Charge lines are real money with no product behind them, so they are counted
-    // separately rather than folded into the line total or reported as a problem.
-    expect(screen.getByText(/43 orders name a sales order/i)).toBeInTheDocument();
-  });
-
-  it('names the item codes it could not match rather than only counting them', async () => {
-    renderDialog('purchase-history');
-    await choose();
-
-    expect(await screen.findByText('GHOSTCODE1')).toBeInTheDocument();
-    expect(screen.getByText('GHOSTCODE2')).toBeInTheDocument();
-    expect(
-      screen.getByText(/Nothing is created in the product catalogue from an upload/i),
-    ).toBeInTheDocument();
-  });
-
-  it('never claims what the upload DID - that lands on the job', async () => {
-    /**
-     * The tiles used to switch from "would" to "did" on the response. The write is on the
-     * worker now, so those numbers do not exist when this dialog closes: claiming them would
-     * be inventing them. The job page reports them, and the drawer is already pointed at it.
-     */
-    renderDialog('purchase-history');
-    await choose();
-    await waitFor(() => expect(confirmButton()).toBeEnabled());
-    fireEvent.click(confirmButton());
-
-    await waitFor(() => expect(notifyImportQueued).toHaveBeenCalled());
-    expect(screen.queryByText('Orders written')).toBeNull();
-    expect(screen.queryByText('Lines written')).toBeNull();
+    expect(applyOrderInquiry).not.toHaveBeenCalled();
   });
 });
 
 // ── 4. the order inquiry sheet ──────────────────────────────────────────────
 
-describe('HistoryUploadDialog - order inquiry', () => {
+describe('OrderInquiryUploadDialog - order inquiry', () => {
   it('shows the rows, the locations and the purchase-order links', async () => {
-    renderDialog('order-inquiry');
+    renderDialog();
     await choose('inquiry.xlsx');
 
     expect(await screen.findByText('Rows')).toBeInTheDocument();
@@ -522,7 +431,7 @@ describe('HistoryUploadDialog - order inquiry', () => {
     // A location can only be written onto a line that exists. That limit is real, so the
     // orders are NAMED - re-uploading after the SO book lands applies them, and somebody
     // has to be able to see which.
-    renderDialog('order-inquiry');
+    renderDialog();
     await choose('inquiry.xlsx');
 
     expect(await screen.findByText('SO414033')).toBeInTheDocument();
@@ -541,7 +450,7 @@ describe('HistoryUploadDialog - order inquiry', () => {
         sales_orders_not_found: Array.from({ length: 200 }, (_, i) => `SO90${i}`),
       }),
     );
-    renderDialog('order-inquiry');
+    renderDialog();
     await choose('book.xlsx');
 
     expect(
@@ -551,7 +460,7 @@ describe('HistoryUploadDialog - order inquiry', () => {
   });
 
   it('names a location code it does not recognise', async () => {
-    renderDialog('order-inquiry');
+    renderDialog();
     await choose('inquiry.xlsx');
 
     expect(await screen.findByText('BRW-ZZ')).toBeInTheDocument();
@@ -563,7 +472,7 @@ describe('HistoryUploadDialog - order inquiry', () => {
      * upload completed is reported on the job's result rather than here - the half nothing
      * else would say is still said, just not by a dialog that has already closed.
      */
-    renderDialog('order-inquiry');
+    renderDialog();
     await choose('inquiry.xlsx');
     await waitFor(() => expect(confirmButton()).toBeEnabled());
     fireEvent.click(confirmButton());
@@ -573,12 +482,12 @@ describe('HistoryUploadDialog - order inquiry', () => {
   });
 });
 
-describe('HistoryUploadDialog - one delivery, stated on many sheets', () => {
+describe('OrderInquiryUploadDialog - one delivery, stated on many sheets', () => {
   it('shows the row count AND the number of scheduled deliveries', async () => {
     // The customer's book carries a month tab, a roll-up tab covering that month and dated
     // working snapshots, so 15,797 rows describe 8,272 deliveries. Showing only the smaller
     // figure reads as rows lost; showing only the larger one is the bug we just fixed.
-    renderDialog('order-inquiry');
+    renderDialog();
     await choose('inquiry.xlsx');
 
     const rows = (await screen.findByText('Rows')).closest(
@@ -592,7 +501,7 @@ describe('HistoryUploadDialog - one delivery, stated on many sheets', () => {
   });
 
   it('says how many rows restated a delivery another sheet already lists', async () => {
-    renderDialog('order-inquiry');
+    renderDialog();
     await choose('inquiry.xlsx');
 
     expect(
@@ -607,7 +516,7 @@ describe('HistoryUploadDialog - one delivery, stated on many sheets', () => {
      * (`line_withdrawn`) on the job. What changed is where it is read, because the deletion
      * happens on the worker.
      */
-    renderDialog('order-inquiry');
+    renderDialog();
     await choose('inquiry.xlsx');
     await waitFor(() => expect(confirmButton()).toBeEnabled());
     fireEvent.click(confirmButton());

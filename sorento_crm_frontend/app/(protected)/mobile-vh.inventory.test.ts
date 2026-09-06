@@ -126,7 +126,7 @@ const FRACTIONAL_VH_FILES = [
   'app/(protected)/scm/loading-plan/components/PlanContainerDialog.tsx',
   'app/(protected)/scm/loading-plan/components/SendRequestDialog.tsx',
   'app/(protected)/scm/proforma-invoices/components/ProformaUploadDialog.tsx',
-  'app/(protected)/scm/reorder/components/HistoryUploadDialog.tsx',
+  'app/(protected)/scm/reorder/components/OrderInquiryUploadDialog.tsx',
   'app/(protected)/scm/reorder/components/OutstandingUploadDialog.tsx',
   'app/(protected)/scm/reorder/components/PlanOrderQtyLedger.tsx',
   'app/(protected)/scm/reorder/components/PlanRowDialogs.tsx',

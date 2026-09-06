@@ -24,6 +24,10 @@ The form fields:
 
 There is a UoM **detail** page (`/master-data-management/units-of-measure/{id}`), and **new**/**edit** pages.
 
+A **UOM Code** that differs from one you already hold only by case or spacing is refused with
+*"UOM code already exists."* rather than silently creating a near-duplicate - the same check
+applies to warehouses, suppliers and product categories.
+
 ## Delete a unit of measure
 
 Use the per-row **Delete** action → confirmation dialog. **Hard delete, cannot be undone.** A UoM still set as the base unit of a product cannot be removed while products reference it.

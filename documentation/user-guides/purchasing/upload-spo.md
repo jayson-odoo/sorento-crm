@@ -28,6 +28,14 @@ Rows are grouped by `(SPO number, product, warehouse)` - duplicate rows for the 
 
 Importing also links any previously uploaded GRN lines that stated this SPO number but had no allocation to match at the time - GRN and SPO files can arrive in either order.
 
+The **container number** read from the Loading Date cell is also matched against inbound
+shipments: when a shipment already carries that container number, every allocation on the
+document links to it straight away; when no shipment exists yet, the allocation still carries
+the container number and links up automatically once a shipment with that number is created. The
+AutoCount integration writes the same container number and gets the same linking - an allocation
+created by this upload is adopted rather than duplicated if the integration later restates the
+same SPO number, product and warehouse, and the reverse holds too.
+
 ## How you'll see progress
 
 Once a job is queued, the **SPO Allocations** page shows a **Latest SPO import** panel above the table. It updates with the job status (queued, running, completed, failed) and row counts in real time. Refresh the page if you don't see it.

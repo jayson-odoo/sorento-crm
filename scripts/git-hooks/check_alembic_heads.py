@@ -21,6 +21,13 @@ import sys
 
 VERSIONS_REL = "sorento_crm_backend/alembic/versions"
 
+# alembic provisions `alembic_version.version_num` as VARCHAR(32) on a fresh
+# database; a longer id stamps fine on the widened long-lived databases and
+# then fails CI's `tests/test_alembic_revision_ids.py` (and a fresh deploy).
+# Checked here for NEW files only (not on origin/main), so the sixty-odd
+# grandfathered long ids stay untouched. Bit ingest-parity PR #699.
+ALEMBIC_VERSION_NUM_WIDTH = 32
+
 
 def _repo_root() -> pathlib.Path:
     out = subprocess.run(
@@ -68,6 +75,7 @@ def main() -> int:
 
     revs: set[str] = set()
     downs: set[str] = set()
+    too_long: dict[str, int] = {}
     for path in all_paths:
         text = _read_working(repo_root, path) if path in wt_paths else _read_origin(repo_root, path)
         tree = ast.parse(text)
@@ -85,8 +93,18 @@ def main() -> int:
             val = ast.literal_eval(value)
             if name == "revision":
                 revs.add(val)
+                if path not in origin_paths and len(val) > ALEMBIC_VERSION_NUM_WIDTH:
+                    too_long[val] = len(val)
             elif val is not None:
                 downs.update([val] if isinstance(val, str) else val)
+
+    if too_long:
+        print(
+            f"new revision id(s) longer than alembic's varchar({ALEMBIC_VERSION_NUM_WIDTH}) "
+            f"(a fresh database cannot stamp them): {too_long}",
+            file=sys.stderr,
+        )
+        return 1
 
     heads = sorted(revs - downs)
     print(f"{len(revs)} revisions, {len(heads)} head(s): {heads}")

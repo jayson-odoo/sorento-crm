@@ -35,6 +35,13 @@ from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
 from app.services.scm.container_capacity import container_sizes as _container_sizes
 from app.services.scm.container_capacity import fit as _fit_capacity
 from app.services.scm.container_capacity import line_cbm as _line_cbm
+from app.services.rules.master_rules import clean_supplier_name, resolve_master_by_code
+from app.services.rules import shipping_order_rules
+from app.services.document_ingest_service import SOURCE_SYSTEM as ESB_SOURCE_SYSTEM
+from app.services.scm.outstanding_import_service import (
+    DEFAULT_PO_CURRENCY,
+    SPO_UPLOAD_SOURCE,
+)
 from app.schemas.procurement import (
     SupplierCreate, SupplierUpdate, ProductSupplierCreate, ProductSupplierUpdate,
     InboundShipmentCreate, InboundShipmentUpdate,
@@ -684,13 +691,16 @@ class SupplierService:
     
     def create_supplier(self, supplier_data: SupplierCreate):
         """Create a new supplier."""
-        existing = self.db.query(Supplier).filter(
-            Supplier.supplier_code == supplier_data.supplier_code
-        ).first()
-        if existing:
+        # D17: case/whitespace-insensitive, same as every other channel.
+        if resolve_master_by_code(self.db, Supplier, supplier_data.supplier_code):
             raise handle_conflict("Supplier code already exists.")
-        
-        supplier = Supplier(**supplier_data.model_dump())
+
+        data = supplier_data.model_dump()
+        # D2: AutoCount's trailing currency note (`"ACME (RMB)"`) is not part
+        # of the legal name - see `master_rules.clean_supplier_name`. A name
+        # with no such suffix passes through unchanged.
+        data["supplier_name"] = clean_supplier_name(data.get("supplier_name"))
+        supplier = Supplier(**data)
         self.db.add(supplier)
         self.db.commit()
         self.db.refresh(supplier)
@@ -699,8 +709,14 @@ class SupplierService:
     def update_supplier(self, supplier_id: str, supplier_data: SupplierUpdate):
         """Update a supplier."""
         supplier = self.get_supplier(supplier_id)
-        
+
         update_data = supplier_data.model_dump(exclude_unset=True)
+        # D2 (review nit): the trailing currency note (`"ACME (RMB)"`) is not
+        # part of the legal name on create - `update_supplier` used to write
+        # it through unstripped, so an edit could quietly restore the note
+        # `create_supplier`/the ESB push/the outstanding upload all clean.
+        if "supplier_name" in update_data:
+            update_data["supplier_name"] = clean_supplier_name(update_data["supplier_name"])
         for key, value in update_data.items():
             setattr(supplier, key, value)
         
@@ -1369,6 +1385,10 @@ class InboundShipmentService:
             self.db.commit()
             self.db.refresh(existing)
             self.refresh_shipment_line_statuses(existing.id)
+            # D6 (S3): a container this shipment now names may already sit on
+            # `spo_allocations` rows written before the shipment existed
+            # (or before its container was corrected on this same update).
+            self._relink_allocations_for_shipment(existing)
             setattr(existing, "_already_existed", True)
             return self._attach_capacity(existing)
 
@@ -1410,7 +1430,33 @@ class InboundShipmentService:
         self.db.commit()
         self.db.refresh(shipment)
         self.refresh_shipment_line_statuses(shipment.id)
+        # D6 (S3): same reason as the update-in-place path above - a brand
+        # new shipment can still be the one an already-written allocation
+        # was waiting on.
+        self._relink_allocations_for_shipment(shipment)
         return self._attach_capacity(shipment)
+
+    def _relink_allocations_for_shipment(self, shipment: "InboundShipment") -> None:
+        """D6 (S3): best-effort, post-commit - a failure here must not turn a
+        successful shipment write into a 500."""
+        container = shipping_order_rules.extract_container_number(
+            shipment.shipping_container_number
+        )
+        if not container:
+            return
+        try:
+            relinked = shipping_order_rules.relink_allocations_for_container(
+                self.db, container, company_id=shipment.company_id
+            )
+            if relinked:
+                self.db.commit()
+        except Exception:  # noqa: BLE001 - best-effort, the shipment already succeeded
+            self.db.rollback()
+            logger.warning(
+                "shipment.relink_allocations_for_container_failed container=%s",
+                container,
+                exc_info=True,
+            )
 
     def update_shipment(self, shipment_id: str, shipment_data: InboundShipmentUpdate, updated_by: str):
         """Update an inbound shipment. If shipment_lines provided, replace existing lines."""
@@ -1453,6 +1499,14 @@ class InboundShipmentService:
         self.db.commit()
         self.db.refresh(shipment)
         self.refresh_shipment_line_statuses(shipment_id)
+        if "shipping_container_number" in update_data:
+            # D6/S3 (review B6): `create_shipment` already relinks a
+            # leftover allocation waiting on this container - `update_shipment`
+            # never did, so SETTING a container on an existing container-less
+            # shipment (the operator filling it in after the fact) left any
+            # allocation already naming it stranded forever with
+            # `inbound_shipment_id` still NULL.
+            self._relink_allocations_for_shipment(shipment)
         return self._attach_capacity(shipment)
 
     def delete_shipment(self, shipment_id: str) -> None:
@@ -2457,6 +2511,11 @@ class SPOAllocationService:
             allocation_dict.get("receipt_status")
         )
         allocation_dict["created_by"] = created_by
+        # Section 7 currency gap (S3): absent on every SPO xlsx row today -
+        # filled the same way the PO side already is, so parity has one less
+        # excluded column.
+        if not allocation_dict.get("currency"):
+            allocation_dict["currency"] = DEFAULT_PO_CURRENCY
         # The LINE is the identity of a row in this table since migration 420
         # (`uk_spo_allocations_company_spo_line`), so a caller that does not state a line
         # number gets the next one on that document. The old guard checked
@@ -2476,6 +2535,16 @@ class SPOAllocationService:
                 raise handle_conflict("This SPO already carries that line number.")
 
         allocation = SPOAllocation(**allocation_dict)
+        # D6 (S3): a container given with no shipment already named (the
+        # xlsx import always resolves and states one explicitly - see
+        # `import_tasks.process_spo_import` - so this only fires for a
+        # caller that knows the container but not the shipment id) is
+        # auto-linked; no match is left unresolved rather than failing the
+        # create, matching the ESB push's own leniency.
+        if allocation.container_number and not allocation.inbound_shipment_id:
+            shipping_order_rules.link_allocation_to_shipment(
+                self.db, allocation, allocation.container_number
+            )
         self.db.add(allocation)
         self.db.commit()
         self.db.refresh(allocation)
@@ -2620,12 +2689,17 @@ class SPOAllocationService:
                 SPOAllocation.spo_number == allocation_data.spo_number,
                 SPOAllocation.product_id == allocation_data.product_id,
                 SPOAllocation.warehouse_id == allocation_data.warehouse_id,
-                # Rows this writer could own, which is the ones nobody stamped. Since
-                # migration 420 the same table holds the IMPORTED documents too, and the
-                # triple is not unique across them - two containers of one product on one
-                # SPO is ordinary data - so without this the allocation sheet would rewrite
-                # a 2023 history quantity, and `.first()` would pick which one at random.
-                SPOAllocation.source_system.is_(None),
+                # D11 (S3): one shipping-order writer identity. NULL is this
+                # service's own unstamped rows; `SPO_UPLOAD_SOURCE` is the
+                # outstanding book's own SPO write path; `ESB_SOURCE_SYSTEM`
+                # ("autocount") is `ShippingOrderIngestService`'s. All three
+                # are xlsx/ESB-era rows this upload may legitimately correct
+                # a quantity on - only `scm_po_history`/`scm_spo_history`
+                # (closed history, a different feed entirely) stay excluded.
+                or_(
+                    SPOAllocation.source_system.is_(None),
+                    SPOAllocation.source_system.in_([SPO_UPLOAD_SOURCE, ESB_SOURCE_SYSTEM]),
+                ),
             ).order_by(SPOAllocation.spo_line_number).first()
 
         if existing is None:
@@ -2638,14 +2712,21 @@ class SPOAllocationService:
         if new_qty == existing.allocated_quantity:
             return ("unchanged", existing)
 
-        received = existing.quantity_received or 0
-        if new_qty < received:
+        if shipping_order_rules.received_guard(existing, new_qty) == (
+            shipping_order_rules.GUARD_RECEIVED_LOCKED
+        ):
+            received = existing.quantity_received or 0
             raise AllocationReceivedGuardError(
                 f"Allocation {existing.spo_number} / product {existing.product_id} / "
                 f"warehouse {existing.warehouse_id}: new qty {new_qty} < already received "
                 f"{received}, skipped"
             )
 
+        # D11 (S3): "last writer wins" - adopting an ESB-written (or
+        # unstamped) row through THIS channel makes it this channel's row
+        # again, the same way `ShippingOrderIngestService._write_row`'s own
+        # blind setattr already re-stamps an xlsx-era row it adopts.
+        existing.source_system = None
         existing.allocated_quantity = new_qty
         existing.updated_at = datetime.utcnow()
         self.db.commit()

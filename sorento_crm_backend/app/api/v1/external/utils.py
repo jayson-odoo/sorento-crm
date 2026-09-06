@@ -129,9 +129,18 @@ def get_warehouses_by_code_or_name(db: Session, values: Iterable[str]) -> Dict[s
 
 
 def get_inbound_shipment_by_container_number(
-    db: Session, shipping_container_number: str
+    db: Session, shipping_container_number: str, *, company_id: Optional[str] = None
 ) -> Optional[InboundShipment]:
-    """Find inbound shipment by shipping_container_number (case-insensitive)."""
+    """Find inbound shipment by shipping_container_number (case-insensitive).
+
+    `company_id` (security review, ingest-parity-standardisation, should-fix
+    3): optional so callers that already run under a pinned company scope
+    (the scope listener filters for them) are unaffected, but a caller
+    running under the `None`/all-companies scope - the ESB's SPO push, the
+    external packing-list route on an unbound attachment - must pass its own
+    anchor explicitly or this can hand back a DIFFERENT company's shipment
+    that happens to share the same non-unique container number.
+    """
     if not (shipping_container_number or "").strip():
         return None
     key = normalize_code(shipping_container_number)
@@ -140,10 +149,10 @@ def get_inbound_shipment_by_container_number(
     # container comes back on later voyages. Unordered, "the" shipment was whatever
     # the seq scan happened to hand back, and could change under the caller between
     # two identical requests. Oldest first, so a re-post binds where the first did.
-    shipment = (
-        db.query(InboundShipment)
-        .filter(func.lower(InboundShipment.shipping_container_number) == key)
-        .order_by(InboundShipment.created_at, InboundShipment.id)
-        .first()
+    query = db.query(InboundShipment).filter(
+        func.lower(InboundShipment.shipping_container_number) == key
     )
+    if company_id:
+        query = query.filter(InboundShipment.company_id == company_id)
+    shipment = query.order_by(InboundShipment.created_at, InboundShipment.id).first()
     return shipment

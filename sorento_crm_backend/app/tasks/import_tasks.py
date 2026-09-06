@@ -27,6 +27,7 @@ from app.services.procurement_service import (
     PickingHeaderService,
     AllocationReceivedGuardError,
 )
+from app.services.rules import shipping_order_rules
 from app.services.grn_spo_matching import (
     build_allocation_pool,
     draw_fifo,
@@ -1133,16 +1134,16 @@ def _spo_import_find_column(row_data: dict, *candidates: str) -> Any:
 
 
 def _spo_import_extract_container(loading_date_value: Any) -> Optional[str]:
-    """Extract shipping container number: text after first space in Loading Date cell."""
+    """Extract the shipping container number from the Loading Date cell.
+
+    Delegates to the shared `shipping_order_rules.extract_container_number`
+    (D6, S3), which both writers of `spo_allocations` use now - kept as its
+    own function only because callers here pass whatever raw cell value the
+    reader returned (not necessarily a string yet).
+    """
     if loading_date_value is None:
         return None
-    s = str(loading_date_value).strip()
-    if not s:
-        return None
-    parts = s.split(None, 1)  # max 2 parts
-    if len(parts) < 2:
-        return None
-    return parts[1].strip() or None
+    return shipping_order_rules.extract_container_number(str(loading_date_value))
 
 
 def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id: str):
@@ -1366,12 +1367,18 @@ def process_spo_import(db_job_id: str, file_data: bytes, filename: str, user_id:
         for (product_id, warehouse_id), (total_qty, shipment_id) in groups.items():
             processed += 1
             try:
+                # D6 (S3): the group's own container, already cleaned
+                # (`_spo_import_extract_container`) when the row was read.
+                container_number = (
+                    spo_row_identity.get((product_id, warehouse_id), {}).get("container")
+                )
                 allocation_data = SPOAllocationCreate(
                     spo_number=spo_number,
                     inbound_shipment_id=shipment_id,
                     warehouse_id=warehouse_id,
                     product_id=product_id,
                     allocated_quantity=total_qty,
+                    container_number=container_number,
                     receipt_status="pending",
                     quantity_received=0,
                     quantity_rejected=0,
@@ -3643,30 +3650,20 @@ def _run_scm_upload_job(
         db.close()
 
 
-#: How many refused orders a failure message names before it stops listing them. Enough to
-#: recognise the pattern, short enough to read in a toast.
-_REFUSED_DOCUMENTS_LISTED = 10
-
-
 def _missing_columns_message(result: dict) -> Optional[str]:
-    """The outstanding books' way of saying "this is not the file you think it is"."""
+    """The outstanding books' way of saying "this is not the file you think it is".
+
+    D23 (captain 2026-09-06, AC-P2-8, reverses QP1): an order nothing can classify no
+    longer refuses the whole file - it lands with `demand_class` NULL and is reported on
+    the success response (`unclassified_documents`/`unclassified_documents_numbers`), so
+    `apply()` never returns `ok: False` for that reason any more and this function has
+    nothing to raise about it.
+    """
     if result.get("ok"):
         return None
     missing = ", ".join(c.replace("_", " ") for c in result.get("missing_columns") or [])
     if missing:
         return f"The file is missing required columns: {missing}."
-    # QP1: an order nothing can classify refuses the whole file, and the operator needs the
-    # order NUMBERS to go and fix the customer's market segment - "could not be read" would
-    # send them looking at the spreadsheet instead of at the master data.
-    unclassified = [str(d) for d in (result.get("unclassified_documents") or [])]
-    if unclassified:
-        shown = ", ".join(unclassified[:_REFUSED_DOCUMENTS_LISTED])
-        more = len(unclassified) - _REFUSED_DOCUMENTS_LISTED
-        tail = f" and {more} more" if more > 0 else ""
-        order = "order" if len(unclassified) == 1 else "orders"
-        return (f"Nothing was imported: {len(unclassified)} {order} carry no demand class "
-                f"({shown}{tail}). Give each customer a market segment, or state an order "
-                "type, then upload again.")
     return "The file could not be read."
 
 
@@ -3706,65 +3703,6 @@ def process_outstanding_import(db_job_id: str, file_data: bytes, filename: str,
         # The file's rows PLUS the lines it closed by absence: a closure carries an outcome
         # and no source row, and the file's own count alone would put processed past the
         # total. `file_rows` is still on the result as the operator's own number.
-        total_rows_of=lambda r: r.get("total_rows", 0),
-    )
-
-
-def process_po_history_import(db_job_id: str, file_data: bytes, filename: str, user_id: str):
-    """Import a purchase book as HISTORY, then resolve the SO<->PO claims.
-
-    Either export shape (the banded listing, or the flat PO + SPO extract) and both document
-    families; the service decides from the file itself. History is written closed and fully
-    received, so it can never read as incoming supply, whichever family it belongs to.
-
-    The link resolve runs inside the job because these files name sales orders - per document
-    in the banded report, per LINE in the structured one - so an upload can complete a pairing
-    the other side claimed months ago.
-    """
-    from app.services.scm import order_link_service, po_history_service
-
-    def _apply(db, outcome, on_total):
-        result = po_history_service.apply(db, file_data, actor=user_id, outcome=outcome,
-                                          on_total_rows=on_total)
-        if result.get("ok"):
-            result["links"] = order_link_service.resolve(db)
-        return result
-
-    _run_scm_upload_job(
-        db_job_id, filename, user_id,
-        job_label="Purchase history import",
-        entity_type="purchase_order",
-        apply_fn=_apply,
-        unreadable_message=_problems_message,
-        written_rows=lambda r: int(r.get("lines_created", 0)),
-        # The rows of the file, not its purchase lines: this is a banded report and most of
-        # it - headers, SO notes, spacers - was never a line. Each of those carries its own
-        # `not_a_line` outcome, so the total is the source rows and processed reaches it.
-        total_rows_of=lambda r: r.get("total_rows", 0),
-    )
-
-
-def process_sales_history_import(db_job_id: str, file_data: bytes, filename: str,
-                                 user_id: str):
-    """Absorb the sales-order listing as HISTORY for the job's company.
-
-    The channel that timed out: 11,275 documents and 81,361 lines in the client's own export.
-    Every line lands closed and fully delivered, so absorbed history contributes nothing to
-    committed demand.
-    """
-    from app.services.scm import so_history_service
-
-    _run_scm_upload_job(
-        db_job_id, filename, user_id,
-        job_label="Sales history import",
-        entity_type="sales_order",
-        apply_fn=lambda db, outcome, on_total: so_history_service.apply(
-            db, file_data, actor=user_id, outcome=outcome, on_total_rows=on_total,
-        ),
-        unreadable_message=_problems_message,
-        written_rows=lambda r: int(r.get("lines_created", 0)) + int(r.get("lines_updated", 0)),
-        # Every non-blank row, the 9,144 package captions included: each carries its own
-        # `not_a_line` outcome, so a total that counts them is still reachable.
         total_rows_of=lambda r: r.get("total_rows", 0),
     )
 

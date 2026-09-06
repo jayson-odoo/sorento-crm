@@ -155,6 +155,38 @@ The **system-wide integration audit trail**: every inbound/outbound call to an e
 
 ---
 
+## AutoCount integration (ESB) - contract version 2.1
+
+The AutoCount integration (the ESB) pushes masters and documents straight into Sorento on its
+own schedule, without a file ever being uploaded by hand. It has no settings screen of its own -
+this section is a reference for what it sends and how that interacts with data entered any other
+way. Every inbound call from it is logged the same as any other integration, on
+**[Integration Logs](/integration-management/integration-logs)** (`integration_channel` for the
+AutoCount pushes).
+
+**What version 2.1 sends that earlier versions did not:**
+
+* On a product: the **Discontinued** flag, a **remark** (kept separate from the description, not
+  merged into it), and a **brand**.
+* On a customer: its **market segment** and **region**.
+* On a shipping order (SPO): the **container number**.
+
+**Absent vs. null, on every field the integration can send:** a field the push simply does not
+mention leaves that column exactly as it was; a field sent as an explicit empty value (null, or a
+blank string) clears it, the same thing a blank cell means on the matching upload.
+A push never guesses at a value it was not given.
+
+**Removed in 2.1:** a supplier or customer's payment-terms fields sent by the integration are no
+longer accepted at all (they were accepted-and-ignored in the versions leading up to 2.1, with a
+warning) - payment terms are managed in Sorento, not pushed in from AutoCount.
+
+See also the rules stated once, for every channel, on [Upload the product master](../purchasing/upload-product-master.md)
+(discontinued, dimensions, default supplier) and [Upload SPO allocations](../purchasing/upload-spo.md)
+(container number, inbound-shipment linking) - the AutoCount integration follows the same rules
+as the matching upload and as a manual create/edit, not a separate set of its own.
+
+---
+
 ## Scheduled Tasks - `scheduled_tasks` (+ `scheduled_task_runs`)
 
 Configurable background jobs driven by the in-process scheduler (e.g. the **email outbox drainer**, Respond contacts sync, integration-log retry, SLA ticks). Each task has a config row plus a history of run rows.
@@ -514,3 +546,6 @@ thread, the drawer has its own **Failed turns only** toggle scoped to that one c
 
 * [Troubleshoot a failed notification (email or WhatsApp)](troubleshoot-failed-notifications.md)
 * [Read a chatbot turn trace, and retry a failed one](troubleshoot-chatbot-turn-failures.md)
+* [Supply Chain - Upload the data a reorder plan is built from](../supply-chain/upload-plan-data.md)
+* [Upload the product master](../purchasing/upload-product-master.md)
+* [Upload SPO allocations](../purchasing/upload-spo.md)

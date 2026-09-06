@@ -276,15 +276,20 @@ def test_the_agents_class_is_the_last_word_not_the_first(db, seeded):
     assert _row(db, seeded.dealer_so).demand_class == DEFAULT_DEMAND_CLASS
 
 
-def test_an_agent_with_no_class_refuses_the_file_and_names_the_document(db, seeded):
-    """AC-3.2, as QP1 leaves it. All 38 codes ship with `demand_class` NULL, so this is the
-    state on day one.
+def test_an_agent_with_no_class_lands_unclassified_and_names_the_document(db, seeded):
+    """AC-3.2. All 38 codes ship with `demand_class` NULL, so this is the state on day one.
 
     An agent nobody has classified contributes nothing, and with the header, the file and
-    the debtor silent too there is no answer left - so the upload is REFUSED and nothing is
-    written. Defaulting it to retail would under-prioritise a project order invisibly, and
-    the wrong answer would be stable, so no later upload would surface it either; importing
-    it unclassified put a quantity on the plan in a column the captain has struck out.
+    the debtor silent too there is no answer left. Defaulting it to retail would
+    under-prioritise a project order invisibly, and the wrong answer would be stable, so no
+    later upload would surface it either - the document lands with `demand_class` NULL
+    instead.
+
+    Superseded 2026-09-06 (D23, captain ruling, AC-P2-8): QP1 made this REFUSE the whole
+    file; D23 reverses that - the document lands (this test's original docstring called that
+    outcome "a column the captain has struck out", which the captain's own 2026-09-06 ruling
+    un-strikes) and is reported by name so "give this customer a market segment, or give the
+    agent a class" is still the fix, just no longer a precondition for the rest of the book.
     """
     code = _agent_code("UNCLASSIFIED")
     agents.resolve_or_create(db, code, source=agents.MANUAL_SOURCE)
@@ -293,15 +298,23 @@ def test_an_agent_with_no_class_refuses_the_file_and_names_the_document(db, seed
                           SO).to_dict()
     applied = svc.apply(db, _upload(seeded, seeded.project_so, _unknown_debtor(), code), SO)
 
-    assert not preview["ok"], "the confirm screen must say the file cannot go in"
-    assert preview["unclassified_documents"] == [seeded.project_so]
-    assert not applied["ok"] and applied["unclassified_documents"] == [seeded.project_so]
-    assert _row(db, seeded.project_so) is None, "a refused file wrote an order anyway"
+    assert preview["ok"], "an unclassifiable document must not block the confirm screen"
+    # S1 (review re-check, 2026-09-06): preview now reports the same shape apply
+    # does (count + capped numbers), not the raw list - was a silent preview vs
+    # apply contract mismatch the FE had to special-case.
+    assert preview["unclassified_documents"] == 1, preview
+    assert preview["unclassified_documents_numbers"] == [seeded.project_so], preview
+    assert applied["ok"], applied
+    assert applied["unclassified_documents"] == 1, applied
+    assert applied["unclassified_documents_numbers"] == [seeded.project_so], applied
+    row = _row(db, seeded.project_so)
+    assert row is not None, "D23: the order must land, not be refused"
+    assert row.demand_class is None, "nothing must guess a class for it"
     # BOTH sources named, because either one is a fix the operator can make: give the
     # customer a market segment, or give the agent a class. A message naming only one
     # sends them to whichever desk happens to be mentioned.
     assert any(code in line and _last_debtor[0] in line for line in _reported(applied)), (
-        f"the refusal named neither the debtor nor the agent: {_reported(applied)}")
+        f"the report named neither the debtor nor the agent: {_reported(applied)}")
     assert any(seeded.project_so in line for line in _reported(preview)), (
         f"the preview showed nothing about an order it cannot classify: {_reported(preview)}")
     assert any(code in line for line in _reported(applied)), (
@@ -502,9 +515,16 @@ def test_a_customer_with_no_segment_is_carried_by_a_classified_agent(db, seeded)
     assert _row(db, seeded.project_so).demand_class == DEFAULT_DEMAND_CLASS
 
 
-def test_a_customer_with_no_segment_and_a_blank_agent_refuses_and_names_both(db, seeded):
-    """Refused only when BOTH are blank, and the message has to name both - this is
-    JACKSON I on the live book, and neither half is guessable."""
+def test_a_customer_with_no_segment_and_a_blank_agent_lands_unclassified_and_names_both(
+    db, seeded
+):
+    """Unclassified only when BOTH are blank, and the report has to name both - this is
+    JACKSON I on the live book, and neither half is guessable.
+
+    Superseded 2026-09-06 (D23, captain ruling, AC-P2-8): QP1 made this REFUSE the whole
+    file; D23 reverses that - the document lands with `demand_class` NULL and is named on
+    the success response instead.
+    """
     debtor = f"{MARKER}-BLANKSEG-{uuid.uuid4().hex[:8]}".upper()
     db.add(Customer(id=_u(), customer_code=debtor, customer_name=debtor, is_active=True))
     db.flush()
@@ -513,8 +533,12 @@ def test_a_customer_with_no_segment_and_a_blank_agent_refuses_and_names_both(db,
 
     out = svc.apply(db, _upload(seeded, seeded.project_so, debtor, code), SO)
 
-    assert not out["ok"]
-    assert out["unclassified_documents"] == [seeded.project_so]
+    assert out["ok"], out
+    assert out["unclassified_documents"] == 1, out
+    assert out["unclassified_documents_numbers"] == [seeded.project_so], out
+    row = _row(db, seeded.project_so)
+    assert row is not None, "D23: the order must land, not be refused"
+    assert row.demand_class is None
     reported = " ".join(str(v) for p in out["row_problems"] for v in p.values())
-    assert debtor in reported, "the refusal never named the customer"
-    assert code in reported, "the refusal never named the agent"
+    assert debtor in reported, "the report never named the customer"
+    assert code in reported, "the report never named the agent"

@@ -16,6 +16,7 @@ from app.api.v1.scm import (
     explainer,
     fulfilment,
     market,
+    order_inquiry_conflicts,
     order_summary,
     plan_exceptions,
     outstanding_import,
@@ -45,6 +46,7 @@ router.include_router(market.router)
 router.include_router(coverage.router)
 router.include_router(order_summary.router)
 router.include_router(plan_exceptions.router)
+router.include_router(order_inquiry_conflicts.router)
 router.include_router(purchase_history.router)
 router.include_router(fulfilment.router)
 router.include_router(container_requests.router)

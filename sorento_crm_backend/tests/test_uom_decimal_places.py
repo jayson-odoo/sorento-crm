@@ -420,7 +420,12 @@ def test_backfill_does_not_rewrite_any_quantity_row():
 # =========================================================================== #
 
 
-def test_canonical_uom_accepts_decimal_places_and_defaults_to_zero():
+def test_canonical_uom_accepts_decimal_places_and_reports_none_when_omitted():
+    """D14 (absent vs null): the schema itself no longer invents a default - an
+    omitted `decimal_places` reports `None` at the schema level, so the writer
+    (`_uom_columns` / `_present`) can tell "not sent" apart from "sent as 0"
+    and leave a stored value untouched on update. The 0 end-state lives in the
+    ORM column default / DB, not here - see the two tests below."""
     from app.schemas.canonical_masters import CanonicalUnitOfMeasure
 
     with_value = CanonicalUnitOfMeasure(
@@ -431,7 +436,66 @@ def test_canonical_uom_accepts_decimal_places_and_defaults_to_zero():
     without_value = CanonicalUnitOfMeasure(
         source_ref=_code("R2"), code=_code("EAC"), name="Each",
     )
-    assert without_value.decimal_places == 0
+    assert without_value.decimal_places is None
+
+
+def test_ingest_created_uom_omitting_decimal_places_ends_up_zero_on_the_row(ingest_db):
+    """The create half of D14: omitted at the schema means absent from
+    `_uom_columns`' `columns` dict, so the INSERT never names the field and the
+    model/DB column default (0) applies - not a value this module invents."""
+    from sqlalchemy import text
+
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from app.services.master_ingest_service import MasterIngestService
+
+    svc = MasterIngestService(
+        ingest_db, integration_id=None, company_id=DEFAULT_COMPANY_ID
+    )
+    code = f"ZZTU{uuid.uuid4().hex[:12]}"
+    result = svc.ingest(
+        "units_of_measure",
+        [{"source_ref": _code("DK"), "code": code, "name": "Each"}],
+    )
+    assert result.created == 1, getattr(result, "records", result)
+    assert (
+        ingest_db.execute(
+            text("SELECT decimal_places FROM units_of_measure WHERE uom_code = :c"), {"c": code}
+        ).scalar()
+        == 0
+    )
+
+
+def test_ingest_update_omitting_decimal_places_leaves_a_stored_value_untouched(ingest_db):
+    """The update half of D14: a row already carrying 3 must survive a second
+    ingest call that never mentions `decimal_places` at all - absent must not
+    be read as "set back to 0"."""
+    from sqlalchemy import text
+
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from app.services.master_ingest_service import MasterIngestService
+
+    svc = MasterIngestService(
+        ingest_db, integration_id=None, company_id=DEFAULT_COMPANY_ID
+    )
+    code = f"ZZTU{uuid.uuid4().hex[:12]}"
+    source_ref = _code("DK")
+    result = svc.ingest(
+        "units_of_measure",
+        [{"source_ref": source_ref, "code": code, "name": "Kilogram", "decimal_places": 3}],
+    )
+    assert result.created == 1, getattr(result, "records", result)
+
+    result = svc.ingest(
+        "units_of_measure",
+        [{"source_ref": source_ref, "code": code, "name": "Kilogram renamed"}],
+    )
+    assert result.updated == 1, getattr(result, "records", result)
+    assert (
+        ingest_db.execute(
+            text("SELECT decimal_places FROM units_of_measure WHERE uom_code = :c"), {"c": code}
+        ).scalar()
+        == 3
+    )
 
 
 @pytest.fixture()

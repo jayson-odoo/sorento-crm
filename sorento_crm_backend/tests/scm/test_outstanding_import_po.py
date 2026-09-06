@@ -269,8 +269,10 @@ def test_an_unknown_creditor_code_is_reported_and_back_created_as_a_minimal_supp
     """A creditor code AutoCount has not reconciled against the supplier master yet is not a
     typo - 2,177 of 5,243 PO-book documents in the captain's own file arrived exactly this
     way. `apply()` creates a minimal supplier for it (code + name, `is_active=True`) and
-    links the document, but the code is still reported so the operator sees which ones this
-    run invented rather than discovering it later.
+    links the document, and the preview reports the code under `suppliers_created` so the
+    operator sees which ones this run invented rather than discovering it later. Not a
+    resolution issue (AC-P2-1): the row lands, and a resolution issue is what the FE
+    counts as a skipped row.
 
     Contrast `test_outstanding_import.py`'s item-code rule, which this file does NOT change:
     an unknown item code is still never invented, because a typo there becomes a SKU that
@@ -289,9 +291,8 @@ def test_an_unknown_creditor_code_is_reported_and_back_created_as_a_minimal_supp
 
     res = svc.preview(db, file, PO)
 
-    assert [(i.row_number, i.field, i.value) for i in res.resolution_issues] == [
-        (3, "creditor_code", unknown)
-    ]
+    assert res.resolution_issues == []
+    assert res.suppliers_created == [unknown]
     assert db.execute(text("SELECT count(*) FROM suppliers WHERE supplier_code = :c"),
                       {"c": unknown}).scalar() == 0, "preview must not write"
 

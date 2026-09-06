@@ -357,7 +357,7 @@ class TestSEC3NonDomainExceptionsAreSanitized:
         real_flush = env.db.flush
 
         def _boom(*args, **kwargs):
-            if _called_from("_apply", "shipping_order_ingest_service.py"):
+            if _called_from("_apply_scoped", "shipping_order_ingest_service.py"):
                 raise RuntimeError(leaking)
             return real_flush(*args, **kwargs)
 

@@ -181,7 +181,12 @@ removed copy, for whoever restores a UI for them:
   value naming the ESB; the xlsx path stamps `'import'`. Cosmetic today, misleading on the agent
   master screen. Fix: the sales_agents EntitySpec sets `source = 'autocount'` on create, never on
   update. | `plans/autocount/PLAN-autocount-document-ingest-v2.md` | Low | Open |
-- **BL-060** (2026-09-06, review of #700): `fetch._axis_labelled_subject` picks the LONGEST code
+- **BL-060** (2026-09-06, ingest parity D22): `order_inquiry_conflicts` rows are written when an
+  ESB sales-order push overrides a warehouse the Order Inquiry sheet had set, and a read route
+  exists, but the Order Inquiry worklist has no surface for them. **Trigger:** the planner asks
+  why an inquiry location changed. Fix: a Conflicts tab on the order-inquiry worklist listing
+  (so_number, line, previous, new, when). | `plans/autocount/PLAN-ingest-parity-standardisation.md` | Low | Open |
+- **BL-061** (2026-09-06, review of #700): `fetch._axis_labelled_subject` picks the LONGEST code
   per uuid to decide which of a customer's two rows is the name and which is its internal account
   code. It is deterministic and it matches every shape measured (a debtor code is shorter than the
   name it points at), but it is a heuristic where an exact test exists: the resolver already knows,

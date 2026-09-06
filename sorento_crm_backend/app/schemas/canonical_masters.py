@@ -19,12 +19,32 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class _Canonical(BaseModel):
     # extra="forbid" is the point of this layer, not a default worth relaxing.
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _blank_optional_string_is_null(cls, data):
+        """D14's third state (ingest parity, 2026-09-06): a blank string on an
+        OPTIONAL field is an explicit clear, exactly what a blank cell means to
+        the xlsx import. The ESB sends `""` for a mapped AutoCount field that
+        is empty (it omits None and never sends null), and storing that `""`
+        verbatim would be the one column shape the upload can never produce.
+        Required identity fields (`code`, `name`, `source_ref`) are left alone:
+        `""` there still fails `min_length=1` - blank is not a way to omit them.
+        Runs before `str_strip_whitespace`, so whitespace-only counts as blank.
+        """
+        if not isinstance(data, dict):
+            return data
+        for name, field in cls.model_fields.items():
+            value = data.get(name)
+            if isinstance(value, str) and not value.strip() and not field.is_required():
+                data[name] = None
+        return data
 
     # AutoCount's stable DocKey. The idempotency key: without it a re-push
     # cannot be told from a new record and every sync duplicates.
@@ -41,7 +61,9 @@ class CanonicalProductCategory(_Canonical):
     code: str = Field(..., min_length=1, max_length=100)
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
-    is_active: bool = True
+    # Absent vs null (D14): omitted leaves the stored value untouched (or, on
+    # create, the model's own True default); an explicit null clears it.
+    is_active: Optional[bool] = None
 
 
 class CanonicalUnitOfMeasure(_Canonical):
@@ -49,18 +71,19 @@ class CanonicalUnitOfMeasure(_Canonical):
 
     code: str = Field(..., min_length=1, max_length=100)
     name: str = Field(..., min_length=1, max_length=255)
-    # Canonical divisibility, 0..4 (front-planning plan 6.4). Absent means 0: an
-    # upstream master that has never expressed precision counts in whole units.
-    decimal_places: int = Field(0, ge=0, le=4)
+    # Canonical divisibility, 0..4 (front-planning plan 6.4). Absent (D14) means
+    # untouched on update / the model's own 0 default on create - never a value
+    # this schema invents.
+    decimal_places: Optional[int] = Field(None, ge=0, le=4)
     description: Optional[str] = None
-    is_active: bool = True
+    is_active: Optional[bool] = None
 
 
 class CanonicalWarehouse(_Canonical):
     code: str = Field(..., min_length=1, max_length=100)
     name: str = Field(..., min_length=1, max_length=255)
     location: Optional[str] = Field(None, max_length=255)
-    is_active: bool = True
+    is_active: Optional[bool] = None
 
 
 class CanonicalSupplier(_Canonical):
@@ -76,10 +99,12 @@ class CanonicalSupplier(_Canonical):
     postal_code: Optional[str] = Field(None, max_length=40)
     country: Optional[str] = Field(None, max_length=100)
     payment_terms_days: Optional[int] = Field(None, ge=0, le=3650)
-    # Resolved against the payment-terms master once it exists (Phase D). Until
-    # then an unresolvable code is reported retryable, never persisted.
-    payment_terms_code: Optional[str] = Field(None, max_length=100)
-    is_active: bool = True
+    # `payment_terms_code` REMOVED (D15 end state, S4's contract 2.1 cutover):
+    # accepted-and-warned `deprecated_field` through S0-S3, now rejected by
+    # `extra="forbid"` with a field-named validation error like any other
+    # unknown key - see `documentation/plans/autocount/PLAN
+    # -autocount-cross-repo-contract.md` section 10.
+    is_active: Optional[bool] = None
 
 
 class CanonicalCustomer(_Canonical):
@@ -89,11 +114,19 @@ class CanonicalCustomer(_Canonical):
     phone_number: Optional[str] = Field(None, max_length=100)
     registration_number: Optional[str] = Field(None, max_length=100)
     tax_id: Optional[str] = Field(None, max_length=100)
-    credit_limit: Optional[Decimal] = Field(None, ge=0)
-    payment_terms_days: Optional[int] = Field(None, ge=0, le=3650)
-    payment_terms_code: Optional[str] = Field(None, max_length=100)
+    # `credit_limit` / `payment_terms_days` / `payment_terms_code` REMOVED
+    # (D15 end state, S4's contract 2.1 cutover) - see the note on
+    # `CanonicalSupplier.payment_terms_days` above; `customers` never had
+    # matching columns for any of the three.
     country: Optional[str] = Field(None, max_length=100)
-    is_active: bool = True
+    is_active: Optional[bool] = None
+    # D16 (S2): AutoCount `Debtor.DebtorType` / `Debtor.AreaCode`. `market_segment_code`
+    # folds through `customer_rules.fold_market_segment` - an unknown spelling drops
+    # with warning `segment_unknown` rather than failing the record, fill-only (a
+    # hand-set segment is never overwritten). `region` is free text, written whenever
+    # sent (no reference table - AutoCount states none for it).
+    market_segment_code: Optional[str] = Field(None, max_length=50)
+    region: Optional[str] = Field(None, max_length=80)
 
 
 class CanonicalSalesAgent(_Canonical):
@@ -117,7 +150,7 @@ class CanonicalSalesAgent(_Canonical):
 
     code: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = Field(None, max_length=255)
-    is_active: bool = True
+    is_active: Optional[bool] = None
     person_label: Optional[str] = Field(None, max_length=100)
 
 
@@ -137,4 +170,10 @@ class CanonicalProduct(_Canonical):
     bar_code: Optional[str] = Field(None, max_length=100)
     list_price: Optional[Decimal] = Field(None, ge=0)
     cost_price: Optional[Decimal] = Field(None, ge=0)
-    is_active: bool = True
+    is_active: Optional[bool] = None
+    # D2 (S1): explicit flag wins over the description-derived **** convention.
+    is_discontinued: Optional[bool] = None
+    # D4 (S1): AutoCount `Item.Desc2`, stored on its own column - never
+    # concatenated into `description` the way the xlsx import's Desc 2
+    # handling does. See migration 475_products_remark.
+    remark: Optional[str] = Field(None, max_length=500)

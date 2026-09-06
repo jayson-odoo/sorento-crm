@@ -15,6 +15,7 @@ from app.services.error_handler import handle_not_found, handle_conflict, handle
 from app.services.company_scope import get_company_scope, stamp_lookup_companies
 from app.services.import_log_service import ImportLogService
 from app.services.identifier_resolver import resolve_identifier
+from app.services.rules.master_rules import resolve_master_by_code
 
 
 def _resolve_stock_product_id(db: Session, product_id: Optional[str]) -> Optional[str]:
@@ -169,13 +170,23 @@ class WarehouseService:
         return warehouse
     
     def create_warehouse(self, warehouse_data: WarehouseCreate):
-        """Create a new warehouse."""
-        existing = self.db.query(Warehouse).filter(
-            Warehouse.warehouse_code == warehouse_data.warehouse_code
-        ).first()
-        if existing:
+        """Create a new warehouse.
+
+        Security review (should-fix 4): a case/whitespace variant used to be
+        SILENTLY ADOPTED here - every `WarehouseBase` default on the request
+        (`is_active`, `counts_as_available`, `pool_warehouse_id`, `segment`,
+        `fulfilment_planning`, `manager_id`, ...) overwrote the existing row's
+        own values, and the call still returned 201 as if a new warehouse had
+        been created. D17's case/whitespace-insensitive match stays the rule
+        for the xlsx import and the ESB push (both correct a book that spells
+        a code two ways), but a human's manual Create click is a mistake to
+        surface, not silently rewrite - the same conflict standard S1 already
+        applies to `create_supplier`/`create_category`/`create_uom`.
+        """
+        existing_id = resolve_master_by_code(self.db, Warehouse, warehouse_data.warehouse_code)
+        if existing_id:
             raise handle_conflict("Warehouse code already exists.")
-        
+
         warehouse = Warehouse(**warehouse_data.model_dump())
         self.db.add(warehouse)
         self.db.commit()
@@ -193,15 +204,13 @@ class WarehouseService:
             if not new_code:
                 raise handle_validation_error("Warehouse code cannot be empty.")
             if new_code != (warehouse.warehouse_code or "").strip():
-                taken = (
-                    self.db.query(Warehouse)
-                    .filter(
-                        Warehouse.warehouse_code == new_code,
-                        Warehouse.id != warehouse_id,
-                    )
-                    .first()
-                )
-                if taken:
+                # S3 (review re-check, 2026-09-06): case/whitespace-insensitive
+                # (D17), same as `create_warehouse` - an EXACT-match query let a
+                # rename to a case variant of another warehouse's code through
+                # unrefused, the same conflict-vs-adopt gap security should-fix
+                # 4 closed on create.
+                conflict_id = resolve_master_by_code(self.db, Warehouse, new_code)
+                if conflict_id and conflict_id != warehouse_id:
                     raise handle_conflict("Warehouse code already exists.")
             update_data["warehouse_code"] = new_code
 

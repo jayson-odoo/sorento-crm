@@ -151,27 +151,31 @@ def _customer(code="ZZT-CUST-01", name="Test Sdn Bhd", ref=None, **extra):
 class TestCustomerColumnsFixRound2BugB:
     """Fix round 2, BUG B: `_customer_columns` wrote `credit_limit` and
     `payment_terms_days`, neither of which is a column on `customers` - every
-    customers push failed with the raw psycopg2 message. This is the one
-    place in this file that inserts a customer through the real column map
-    on Postgres; every other coverage of `CanonicalCustomer` was schema-only.
+    customers push failed with the raw psycopg2 message. Accepted-and-dropped
+    (never written) was the fix through S0-S3; superseded 2026-09-06 by S4's
+    contract 2.1 end state (AC-P0-4/D15), which REMOVES both fields from
+    `CanonicalCustomer` entirely - the raw-SQL bug this class guards against
+    is now structurally impossible, since `extra="forbid"` rejects the
+    payload before any column-building code runs at all.
     """
 
-    def test_credit_limit_and_payment_terms_days_are_accepted_but_not_written(
-        self, db, svc
-    ):
+    def test_credit_limit_and_payment_terms_days_fail_validation(self, db, svc):
         result = svc.ingest(
             "customers",
             [_customer(credit_limit="15000.50", payment_terms_days=30)],
         )
 
-        assert result.created == 1, result.records[0].errors
+        record = result.records[0]
+        assert record.outcome is IngestOutcome.FAILED, record.errors
+        assert "credit_limit" in record.errors
+        assert "payment_terms_days" in record.errors
         row = db.execute(
             text(
                 "SELECT customer_code, customer_name FROM customers "
                 "WHERE customer_code = 'ZZT-CUST-01'"
             )
         ).first()
-        assert row == ("ZZT-CUST-01", "Test Sdn Bhd")
+        assert row is None, "a failed record must write nothing"
 
 
 class TestSEC3IntegrityConflictNamesTheConstraint:
@@ -200,7 +204,12 @@ class TestSEC3IntegrityConflictNamesTheConstraint:
             {"i": str(uuid.uuid4()), "c": code, "cid": DEFAULT_COMPANY_ID},
         )
         db.commit()
-        monkeypatch.setattr(m, "_lookup_id", lambda *a, **kw: None)
+        # S1 (ingest-parity-standardisation): the adopt lookup for a
+        # non-agent master moved from `_lookup_id` to
+        # `master_rules.resolve_master_by_code` (D17, case/whitespace-
+        # insensitive matching) - forcing the same "not found" race now goes
+        # through that function instead.
+        monkeypatch.setattr(m, "resolve_master_by_code", lambda *a, **kw: None)
 
         result = svc.ingest("warehouses", [_wh(code=code, ref="DK-DUP")])
 
@@ -283,9 +292,14 @@ class TestQuarantineNotBlock:
 
 
 class TestRetryableVsFatal:
-    def test_missing_referenced_master_is_retryable_not_failed(self, db, svc):
-        # AC-AC-16. A supplier arriving before its payment terms exist is a
-        # sequencing artefact, not bad data -- the ESB drains these on retry.
+    def test_payment_terms_code_fails_validation_not_retryable(self, db, svc):
+        # Superseded 2026-09-06 (ingest-parity-standardisation S4, AC-P0-4/D15
+        # end state): `payment_terms_code` was accepted-and-warned
+        # `deprecated_field` through S0-S3 (the docstring this test used to
+        # carry said so explicitly); S4's contract 2.1 cutover REMOVES the
+        # field from `CanonicalSupplier` entirely, so `extra="forbid"` now
+        # rejects it with a field-named error - `FAILED`, never retryable,
+        # never a silent accept.
         result = svc.ingest(
             "suppliers",
             [
@@ -297,12 +311,20 @@ class TestRetryableVsFatal:
                 }
             ],
         )
-        assert result.retryable == 1
-        assert result.failed == 0
-        assert result.records[0].outcome is IngestOutcome.RETRYABLE
+        assert result.retryable == 0
+        record = result.records[0]
+        assert record.outcome is IngestOutcome.FAILED, record.errors
+        assert "payment_terms_code" in record.errors
 
-    def test_a_retryable_record_is_not_persisted(self, db, svc):
+    def test_payment_terms_code_fails_validation_on_an_update_too(self, db, svc):
+        # Superseded 2026-09-06, same reason as the test above - an update
+        # payload naming the removed field is rejected exactly like a create
+        # one, and the already-existing row is left untouched.
         svc.ingest(
+            "suppliers",
+            [{"source_ref": "DK-S1", "code": "ZZT-SUP-1", "name": "Acme"}],
+        )
+        result = svc.ingest(
             "suppliers",
             [
                 {
@@ -313,9 +335,12 @@ class TestRetryableVsFatal:
                 }
             ],
         )
-        assert db.execute(text("SELECT count(*) FROM suppliers WHERE supplier_code LIKE 'ZZT-%'")).scalar() == 0
-        # ...and no reference is written, or the retry would resolve to nothing.
-        assert db.query(IntegrationReference).filter(IntegrationReference.source_ref.like('DK-%')).count() == 0
+        record = result.records[0]
+        assert record.outcome is IngestOutcome.FAILED, record.errors
+        assert "payment_terms_code" in record.errors
+        assert db.execute(
+            text("SELECT count(*) FROM suppliers WHERE supplier_code LIKE 'ZZT-%'")
+        ).scalar() == 1
 
     def test_retry_succeeds_once_the_reference_exists(self, db, svc):
         payload = {
@@ -406,9 +431,13 @@ class TestCategoriesAndUnitsOfMeasure:
             == 1
         )
 
-    def test_a_product_is_retryable_until_its_category_exists(self, db, svc):
-        # AC-AC-16, and the reason these two entities were added: the ESB
-        # re-drains rather than reporting bad data.
+    def test_an_unknown_category_is_created_not_retryable(self, db, svc):
+        # Superseded by ingest-parity-standardisation S1 (D3, AC-P1-4): an
+        # unknown category/uom/brand is CREATED (code = name = the raw value),
+        # never retryable any more - `product_rules.ensure_reference`. This
+        # test used to assert the retired AC-AC-16 behaviour (retryable until
+        # the parent exists); see tests/test_ingest_parity_s1_products.py
+        # ::TestAcP14UnknownReferencesCreatedWithWarnings for the full contract.
         svc.ingest("units_of_measure", [{"source_ref": "DK-U1", "code": "ZZT-UOM-1", "name": "Each"}])
         result = svc.ingest(
             "products",
@@ -422,10 +451,14 @@ class TestCategoriesAndUnitsOfMeasure:
                 }
             ],
         )
-        assert result.retryable == 1
+        assert result.created == 1
+        assert result.retryable == 0
         assert result.failed == 0
+        assert "category_created" in result.records[0].warnings
 
-    def test_a_product_is_retryable_until_its_uom_exists(self, db, svc):
+    def test_an_unknown_uom_is_created_not_retryable(self, db, svc):
+        # Superseded by ingest-parity-standardisation S1 (D3, AC-P1-4) - see
+        # the sibling test above.
         svc.ingest(
             "product_categories",
             [{"source_ref": "DK-C1", "code": "ZZT-CAT-1", "name": "Fasteners"}],
@@ -442,8 +475,10 @@ class TestCategoriesAndUnitsOfMeasure:
                 }
             ],
         )
-        assert result.retryable == 1
+        assert result.created == 1
+        assert result.retryable == 0
         assert result.failed == 0
+        assert "uom_created" in result.records[0].warnings
 
     def test_the_product_lands_once_both_parents_have_synced(self, db, svc):
         # The sequencing end to end: category, then UoM, then the product that
@@ -470,7 +505,7 @@ class TestCategoriesAndUnitsOfMeasure:
         assert result.created == 1
         row = db.execute(
             text(
-                "SELECT p.product_name, c.category_code, u.uom_code "
+                "SELECT p.product_name, p.description, c.category_code, u.uom_code "
                 "FROM products p "
                 "JOIN product_categories c ON c.id = p.category_id "
                 "JOIN units_of_measure u ON u.id = p.base_uom_id "
@@ -478,8 +513,9 @@ class TestCategoriesAndUnitsOfMeasure:
             )
         ).first()
         # Resolved to the ids of the records just synced, not to some other
-        # category that happened to share a name.
-        assert row == ("Bolt", "ZZT-CAT-1", "ZZT-UOM-1")
+        # category that happened to share a name. D24: `product_name` is the
+        # item code, the payload's `name` text lands in `description`.
+        assert row == ("ZZT-PRD-1", "Bolt", "ZZT-CAT-1", "ZZT-UOM-1")
 
     def test_the_category_is_matched_by_code_not_by_name(self, db, svc):
         # The bug this pins: the lookup keyed on category_name, so a payload

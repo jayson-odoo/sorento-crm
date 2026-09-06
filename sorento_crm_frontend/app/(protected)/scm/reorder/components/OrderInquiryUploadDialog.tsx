@@ -18,87 +18,44 @@ import { FileDropzone } from '@/components/common/FileDropzone';
 import { ImportFeedbackSections } from '@/components/common/ImportFeedbackSections';
 import { useImportJobDrawer } from '@/components/upload-activity/useImportJobDrawer';
 import type { ImportQueuedResult } from '@/components/upload-activity/importQueue';
-import { formatDateInMalaysia } from '@/lib/helpers';
 import { MAX_SIZE_MB, useTwoStepUpload } from '../hooks/useTwoStepUpload';
 import {
   applyOrderInquiry,
-  applyPurchaseHistory,
   previewOrderInquiry,
-  previewPurchaseHistory,
   testOrderInquiry,
-  testPurchaseHistory,
-  type HistoryImportKind,
   type OrderInquiryPreview,
-  type PurchaseHistoryPreview,
-  type SalesHistoryPreview,
-  previewSalesHistory,
-  applySalesHistory,
-} from '../services/purchaseHistoryService';
+} from '../services/orderInquiryService';
 import { CountTile } from './UploadCountTile';
 import { UploadReadingIndicator } from './UploadReadingIndicator';
 import { UploadTestVerdict } from './UploadTestVerdict';
 import { fmtInt } from '../../lib/format';
 
 /**
- * SCM - the three curation feeds: purchase history, sales history, and the Order Inquiry
- * sheet.
+ * SCM - the Order Inquiry sheet upload.
  *
- * Separate from `OutstandingUploadDialog` because the files MEAN different things, not
- * because they look different. The outstanding extract is the open order book and drives
- * supply; this dialog's files carry what that extract does not hold - what was bought and
- * sold historically, where stock is meant to land, and which purchase order a sales order is
- * waiting on.
+ * Renamed from `HistoryUploadDialog` (ingest-parity-standardisation S4, AC-P4-1): this dialog
+ * used to also carry the purchase-history and sales-history curation feeds, which were
+ * retired - closed history now arrives through the ESB's own document ingest. What remains is
+ * the Order Inquiry sheet, which carries what neither the order book nor a history extract
+ * holds - where stock is meant to land, and which purchase order a sales order is waiting on.
  *
- * Test, then upload, with nothing at all running on file select. Confirm queues an import
- * job and the upload drawer follows it: the sales book is 81,361 lines in the client's own
- * export and writing it inside the request is what timed the gateway out. So what the upload
- * DID is reported on the job page, not here.
+ * Test, then upload, with nothing at all running on file select. Confirm queues an import job
+ * and the upload drawer follows it, because the resolve happens on the worker. So what the
+ * upload DID is reported on the job page, not here.
  *
  * The flow itself is shared (`useTwoStepUpload`), so the sequence guard and the server-owned
  * accept list cannot drift between the dialogs.
  */
 
-const COPY: Record<
-  HistoryImportKind,
-  { title: string; description: string; dropzoneLabel: string }
-> = {
-  'purchase-history': {
-    title: 'Upload purchase history',
-    // What it does to the plan, in one line. Not a description of the file format, and not
-    // lead time: that is measured to the goods receipt and this file carries none.
-    //
-    // It no longer claims that nothing here becomes incoming stock, because an `SPO-`
-    // document in this same book is filed into `spo_allocations` (`po_history_service`),
-    // which `scm.on_order_v` reads - so the sentence was untrue of half the file the
-    // captain actually uploads. What IS true of every purchase order in it: they are
-    // written closed and received, so no PO here reads as still owed.
-    description:
-      'Past purchase orders, for last cost and slow movers - written as already received. Shipping orders in the same file become incoming stock.',
-    dropzoneLabel: 'Purchase Order Listing file',
-  },
-  'sales-history': {
-    title: 'Upload sales history',
-    // What it does to the plan, in one line. The second sentence is the whole point of the
-    // channel: the same file through the outstanding upload would be demand.
-    description: 'Past sales orders, for the demand record. Never counted as demand.',
-    dropzoneLabel: 'Sales Order Listing file',
-  },
-  'order-inquiry': {
-    title: 'Upload order inquiry sheet',
-    description: 'Stock locations, and which purchase order each sales order is waiting on.',
-    dropzoneLabel: 'Order Inquiry file',
-  },
-};
+const TITLE = 'Upload order inquiry sheet';
+const DESCRIPTION = 'Stock locations, and which purchase order each sales order is waiting on.';
+const DROPZONE_LABEL = 'Order Inquiry file';
 
 /** How many codes or numbers to name before collapsing the rest into a tail count. */
 const CHIP_LIMIT = 12;
 
 function plural(n: number, one: string, many: string): string {
   return n === 1 ? one : many;
-}
-
-function dateText(value: string | null): string {
-  return value ? formatDateInMalaysia(value) : '-';
 }
 
 // ── pieces ──────────────────────────────────────────────────────────────────
@@ -153,84 +110,6 @@ function Problems({ problems }: { problems: string[] }) {
   return <ImportFeedbackSections errors={problems} />;
 }
 
-function HistorySummary({ data }: { data: PurchaseHistoryPreview }) {
-  return (
-    <div className="space-y-4">
-      <div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-          <CountTile label="Orders" value={data.orders} />
-          <CountTile label="New" value={data.orders_new} />
-          <CountTile label="Already held" value={data.orders_existing} />
-          <CountTile label="Lines" value={data.lines} />
-          <CountTile label="Charge lines" value={data.charge_lines} />
-        </div>
-        <p className="mt-1.5 text-2xs text-muted-foreground">
-          {dateText(data.date_from)} to {dateText(data.date_to)}.{' '}
-          {fmtInt(data.so_claims)}{' '}
-          {plural(data.so_claims, 'order names', 'orders name')} a sales order.
-        </p>
-      </div>
-
-      <ChipList
-        title="Items we do not hold"
-        items={data.unmatched_item_codes}
-        total={data.unmatched_items}
-        hint="These lines are skipped. Nothing is created in the product catalogue from an upload."
-      />
-    </div>
-  );
-}
-
-/**
- * The sales book, and the one figure it carries that no other channel does.
- *
- * `Still owed` above zero means the file is not purely history: those lines carry real
- * outstanding quantity, they will be absorbed as finished business anyway, and the
- * outstanding channel is where they belong. It is shown even at zero, because a figure that
- * appears only when it is bad teaches nobody where to look.
- *
- * What the upload then DID - created, updated, unchanged, and the documents it settled that
- * still owed something - is reported on the job, because it happens on the worker.
- */
-function SalesHistorySummary({ data }: { data: SalesHistoryPreview }) {
-  return (
-    <div className="space-y-4">
-      <div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-          <CountTile label="Orders" value={data.orders} />
-          <CountTile label="Lines" value={data.lines} />
-          <CountTile label="Charge lines" value={data.non_stock_lines} />
-          <CountTile label="Still owed" value={data.outstanding_lines} />
-        </div>
-        <p className="mt-1.5 text-2xs text-muted-foreground">
-          {dateText(data.date_from)} to {dateText(data.date_to)}.{' '}
-          {fmtInt(data.layout_rows)}{' '}
-          {plural(data.layout_rows, 'row is', 'rows are')} a package caption or spacer.
-        </p>
-      </div>
-
-      <ChipList
-        title="Items we do not hold"
-        items={data.unknown_items}
-        total={data.unknown_item_count}
-        hint="These lines are skipped. Nothing is created in the product catalogue from an upload."
-      />
-      <ChipList
-        title="Customers we do not hold"
-        items={data.unknown_debtors}
-        total={data.unknown_debtor_count}
-        hint="The orders are still absorbed, with the debtor code and printed name kept on them so the link can be made later."
-      />
-      <ChipList
-        title="Locations we do not hold"
-        items={data.unknown_locations}
-        total={data.unknown_locations.length}
-        hint="Those lines are absorbed without a location rather than guessing one."
-      />
-    </div>
-  );
-}
-
 function InquirySummary({ data }: { data: OrderInquiryPreview }) {
   return (
     <div className="space-y-4">
@@ -280,49 +159,26 @@ function InquirySummary({ data }: { data: OrderInquiryPreview }) {
 
 // ── dialog ──────────────────────────────────────────────────────────────────
 
-export interface HistoryUploadDialogProps {
+export interface OrderInquiryUploadDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  kind: HistoryImportKind;
   /** Fired once the job is queued, so a page can react to the upload having started. */
   onQueued?: (queued: ImportQueuedResult) => void;
 }
 
-export function HistoryUploadDialog({
+export function OrderInquiryUploadDialog({
   open,
   onOpenChange,
-  kind,
   onQueued,
-}: HistoryUploadDialogProps) {
-  const isHistory = kind === 'purchase-history';
-  const isSales = kind === 'sales-history';
-  const copy = COPY[kind];
+}: OrderInquiryUploadDialogProps) {
   const router = useRouter();
   const { notifyImportQueued } = useImportJobDrawer();
 
-  const upload = useTwoStepUpload<
-    PurchaseHistoryPreview | OrderInquiryPreview | SalesHistoryPreview,
-    ImportQueuedResult
-  >({
+  const upload = useTwoStepUpload<OrderInquiryPreview, ImportQueuedResult>({
     open,
-    preview: (file) =>
-      isSales
-        ? previewSalesHistory(file)
-        : isHistory
-          ? previewPurchaseHistory(file)
-          : previewOrderInquiry(file),
-    apply: (file) =>
-      isSales
-        ? applySalesHistory(file)
-        : isHistory
-          ? applyPurchaseHistory(file)
-          : applyOrderInquiry(file),
-    // The sales book has no `validate_only` route: its apply is already a reconcile
-    // (same -> skip) rather than an append, so the preview IS its dry run. The other two have
-    // one, and Test runs it alongside the preview - one press, one answer.
-    test: isSales
-      ? undefined
-      : (file) => (isHistory ? testPurchaseHistory(file) : testOrderInquiry(file)),
+    preview: (file) => previewOrderInquiry(file),
+    apply: (file) => applyOrderInquiry(file),
+    test: (file) => testOrderInquiry(file),
     onApplied: (queued) => {
       // The work is not tied to this tab: open the drawer, close the dialog, and let the job
       // be followed there.
@@ -345,10 +201,10 @@ export function HistoryUploadDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl">
         <DialogHeader>
-          <DialogTitle>{copy.title}</DialogTitle>
+          <DialogTitle>{TITLE}</DialogTitle>
           {/* Also the dialog's accessible description - without one Radix warns that the
               content has no `aria-describedby`. */}
-          <DialogDescription>{copy.description}</DialogDescription>
+          <DialogDescription>{DESCRIPTION}</DialogDescription>
         </DialogHeader>
 
         <DialogBody className="max-h-[65vh] space-y-4 overflow-y-auto">
@@ -365,7 +221,7 @@ export function HistoryUploadDialog({
             accept={upload.accept}
             maxSizeMb={MAX_SIZE_MB}
             disabled={previewing || applying}
-            aria-label={copy.dropzoneLabel}
+            aria-label={DROPZONE_LABEL}
           />
 
           <UploadReadingIndicator reading={previewing} />
@@ -374,15 +230,7 @@ export function HistoryUploadDialog({
 
           {shown && !shown.ok ? <Problems problems={shown.problems} /> : null}
 
-          {shown && shown.ok ? (
-            isSales ? (
-              <SalesHistorySummary data={shown as SalesHistoryPreview} />
-            ) : isHistory ? (
-              <HistorySummary data={shown as PurchaseHistoryPreview} />
-            ) : (
-              <InquirySummary data={shown as OrderInquiryPreview} />
-            )
-          ) : null}
+          {shown && shown.ok ? <InquirySummary data={shown} /> : null}
         </DialogBody>
 
         <DialogFooter>
@@ -412,4 +260,4 @@ export function HistoryUploadDialog({
   );
 }
 
-export default HistoryUploadDialog;
+export default OrderInquiryUploadDialog;

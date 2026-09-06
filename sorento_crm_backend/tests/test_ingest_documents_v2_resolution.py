@@ -264,6 +264,31 @@ class TestSupplierLadder:
         resolved = env.refs.resolve(entity_type="suppliers", source_ref=new_ref)
         assert str(resolved) == str(header["supplier_id"])
 
+    def test_ambiguous_cleaned_supplier_name_refuses_and_does_not_back_create(self, env):
+        """D2/S1 repoint (ingest-parity-standardisation S3): the ladder's
+        `_resolve_supplier_by_name` now delegates to `master_rules
+        .resolve_supplier_by_name`, which refuses (rather than picking the
+        most recent row) when a cleaned name matches more than one supplier
+        - the same company held twice, once per currency account. The
+        record still lands (a supplier is optional on a PO the way a
+        warehouse is), `supplier_id` is NULL, and the warning names WHY
+        rather than the document silently linking to whichever row happened
+        to sort last.
+        """
+        cleaned = f"{MARKER} Ambiguous Creditor Co"
+        _plain_supplier(env, env.company_a, code=unique_code(MARKER), name=f"{cleaned} (RMB)")
+        _plain_supplier(env, env.company_a, code=unique_code(MARKER), name=f"{cleaned} (USD)")
+        record = _po_record(env, supplier_name=f"{cleaned} (SGD)")
+
+        res = env.post(INGEST_PO, [record])
+
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", res.text
+        assert "supplier_ambiguous" in entry.get("warnings", []), entry
+        assert "supplier_created" not in entry.get("warnings", []), entry
+        header = env.header("purchase_orders", record["source_ref"])
+        assert header["supplier_id"] is None
+
     def test_back_create_slugs_the_name_when_only_a_name_is_sent(self, env):
         name = f"{MARKER} Nameless Supplier Co"
         record = _po_record(env, supplier_name=name)
@@ -357,8 +382,13 @@ class TestLineProductCodeLadder:
         lines = env.so_lines(header["id"])
         assert str(lines[0]["product_id"]) == str(product.id)
 
-    def test_a_miss_on_a_sent_product_code_is_retryable_and_writes_nothing(self, env):
-        before = env.counts()
+    def test_a_miss_on_a_sent_product_code_drops_the_line_not_the_record(self, env):
+        """Superseded 2026-09-06 (ingest-parity-standardisation D9, AC-P2-3):
+        an unresolved product code no longer fails the whole record - the
+        line is dropped and the (now line-less) header still lands, matching
+        `tests/test_ingest_documents.TestUnresolvedReferences` and
+        `tests/test_ingest_parity_s2_documents.py
+        ::TestAcP23UnknownProductDroppedUnknownLocationKept`."""
         line = {
             "source_ref": _ref("SOL"),
             "product_code": f"{MARKER}-NOT-SYNCED-YET",
@@ -369,10 +399,11 @@ class TestLineProductCodeLadder:
         res = env.post(INGEST_SO, [record])
 
         entry = res.json()["records"][0]
-        assert entry["outcome"] == "retryable", res.text
-        assert "not found" in entry["errors"].get("lines.0.product_code", ""), entry
-        assert env.header("sales_orders", record["source_ref"]) is None
-        assert env.counts() == before
+        assert entry["outcome"] == "created", res.text
+        assert entry.get("lines", {}).get("dropped") == 1, entry
+        header = env.header("sales_orders", record["source_ref"])
+        assert header is not None
+        assert env.so_lines(header["id"]) == []
 
 
 # ================================================================= AC-V1-7b

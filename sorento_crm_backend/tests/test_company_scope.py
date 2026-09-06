@@ -494,7 +494,15 @@ def test_every_company_id_table_is_registered():
     # catalogue shortcut, offered under the designer's Tag Size dropdown and editable at
     # `/dealer-kit/tag-sizes`, with a `(company_id, name)` unique constraint so a name is
     # only unique within that company's own set of saved sizes.
-    expected_owned = 128
+    #
+    # PLAN-ingest-parity-standardisation.md S2 (D22) adds 1: `order_inquiry_conflicts` is
+    # a record of ONE company's ESB push overriding the warehouse its own Order Inquiry
+    # sheet had set on its own sales order line. It is read standalone by
+    # `GET /scm/order-inquiry/conflicts` (paged list, not reached through the parent
+    # sales order), so it is owned outright rather than inheriting the partition through
+    # `sales_orders` - a standalone read of a child-only row would otherwise be the one
+    # place the parent's filter does not apply.
+    expected_owned = 129
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

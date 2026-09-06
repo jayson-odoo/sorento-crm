@@ -125,9 +125,11 @@ export interface OutstandingPlanningChangeBatch {
 export interface OutstandingPreview {
   doc_type: string;
   /**
-   * false = nothing can be applied. Two reasons: the header is missing required columns,
-   * or the file names an order whose demand class cannot be decided
-   * (`unclassified_documents`).
+   * false = nothing can be applied. One reason only, since D23 (captain 2026-09-06,
+   * AC-P2-8): the header is missing required columns. An order whose demand class
+   * cannot be decided no longer makes this false - it lands with no demand class and
+   * is reported under `unclassified_documents`/`unclassified_documents_numbers`
+   * instead, same as the ESB channel has always done.
    */
   ok: boolean;
   scope_documents: string[];
@@ -170,12 +172,27 @@ export interface OutstandingPreview {
   spo_closed?: number;
   spo_unknown_locations?: number;
   /**
-   * Sales orders in this file that no order type, customer market segment or agent class
-   * can classify (QP1). Non-empty REFUSES the whole file: a half-imported book disagrees
-   * with AutoCount, and a defaulted class is worse still because it is stable and no later
-   * upload surfaces it. The per-row list says which row and which debtor to fix.
+   * How many sales orders in this file no order type, customer market segment or agent
+   * class can classify. Since D23 (captain 2026-09-06, AC-P2-8, supersedes the earlier
+   * QP1 refusal) these land anyway, with `demand_class` NULL - reported so "give this
+   * customer a market segment, or give the agent a class" is still visible, just no
+   * longer a precondition for the rest of the book. A COUNT, same shape `apply`'s
+   * response uses, not the raw list - see `unclassified_documents_numbers` for that.
    */
-  unclassified_documents?: string[];
+  unclassified_documents?: number;
+  /** Up to 10 of the order numbers behind `unclassified_documents`, capped the same way
+   * `suppliers_created_codes`/`customers_created_codes` are. */
+  unclassified_documents_numbers?: string[];
+  /**
+   * A supplier/customer code this file names that no master row matched WOULD be
+   * back-created on Confirm (D3/D8) - reported here so the operator sees the side
+   * effect BEFORE it happens, not only after, on the job page. A COUNT; the capped
+   * codes are under the `_codes` key.
+   */
+  suppliers_created?: number;
+  suppliers_created_codes?: string[];
+  customers_created?: number;
+  customers_created_codes?: string[];
   /** Absent (not just `null`) on every Phase 1 response - Phase 2 wires the real preview. */
   planning_change_batch?: OutstandingPlanningChangeBatch | null;
 }

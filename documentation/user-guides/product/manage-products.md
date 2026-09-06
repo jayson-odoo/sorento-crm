@@ -75,7 +75,14 @@ Use the **Delete** row icon (single) or select rows and use the **Delete** bulk 
 ## Active vs. discontinued
 
 * **Active Status** (`is_active`) is the toggle you control on the form. Inactive products are hidden from pickers and most pages.
-* **Discontinued** (`is_discontinued`) is a separate flag shown on the detail page's **Tracking Flags**. It is **not** editable on the product form - it is set by the product master import / discontinued-batch process, which can fire a "products discontinued" notification that deep-links back into this list. Treat discontinued as a data-driven state, not a manual switch.
+* **Discontinued** (`is_discontinued`) is a separate flag shown on the detail page's **Tracking Flags**. It is **not** editable on the product form - a description starting with `****` marks the product discontinued automatically, whether the product is created here, edited here, uploaded via the product master, or arrives through the AutoCount integration; a discontinued batch process can also fire a "products discontinued" notification that deep-links back into this list. Treat discontinued as a data-driven state, not a manual switch.
+* **Length / Width / Height** left blank are filled in automatically from text like
+  `880x450x220MM` in the description, on create and on any edit that changes the name or
+  description - the same rule the [product master upload](../purchasing/upload-product-master.md)
+  and the AutoCount integration follow. A value you type yourself is never overwritten.
+* A brand-new product is linked to the tenant's default supplier (see **Default supplier (new
+  products)** under **[User Management → Settings](/user-management/settings)**) - the same link
+  the product master upload creates.
 
 ## Bulk import
 

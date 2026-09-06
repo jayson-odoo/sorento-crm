@@ -131,11 +131,19 @@ class TestContractEndpoint:
         return IntegrationKeyService(db).issue_key(integration)
 
     def test_a_valid_principal_gets_version_2_and_every_entity(self, env):
+        """Superseded 2026-09-06 (ingest-parity-standardisation S4,
+        D-final): the contract version is now the STRING "2.1", not the int
+        `2` this test originally pinned - `tests/test_ingest_parity_s4_contract
+        .py::TestAcP43ContractV21` is the new contract test for the full
+        v2.1 shape (`fields_added`/`fields_removed`/`status_optional`
+        /`absent_vs_null`/`warnings`); this test still proves the entity
+        list and the 200/401/403 gating this file's own name is about.
+        """
         res = env.client.get(CONTRACT_URL)
 
         assert res.status_code == 200, res.text
         body = res.json()
-        assert body["version"] == 2
+        assert body["version"] == "2.1"
         entities = set(body["entities"])
         for expected in (
             "sales_orders",

@@ -162,6 +162,10 @@ class ProductBase(BaseModel):
     # Whether the chatbot may answer with this product. Independent of is_active:
     # an order placeholder stays active and is still not a chat answer (#300).
     is_searchable: bool = True
+    # D2 (ingest-parity-standardisation): an explicit flag wins over the
+    # description-derived **** convention every channel otherwise falls back
+    # to - None means "not sent", not "false". See product_rules.is_discontinued.
+    is_discontinued: Optional[bool] = None
 
     @field_validator("currency", mode="before")
     @classmethod
@@ -210,6 +214,9 @@ class ProductUpdate(BaseModel):
     reorder_quantity: Optional[int] = None
     is_active: Optional[bool] = None
     is_searchable: Optional[bool] = None
+    # D2: explicit flag wins over the description-derived value (only recomputed
+    # when this is absent AND description is being changed - see update_product).
+    is_discontinued: Optional[bool] = None
 
     @field_validator("currency", mode="before")
     @classmethod

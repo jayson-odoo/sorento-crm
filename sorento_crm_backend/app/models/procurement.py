@@ -512,6 +512,12 @@ class SPOAllocation(Base, CompanyScopedMixin):
     #: (D3). A push finds its rows by this column, falling back to `spo_number` alone
     #: for a document's first sync.
     source_doc_ref = Column(String(255), nullable=True)
+    #: AutoCount's `PO.Ref` / the SPO xlsx Loading Date cell, cleaned through
+    #: `shipping_order_rules.extract_container_number` (D6, migration 477).
+    #: Stored on EVERY allocation of a document, whether or not it resolves
+    #: to a held `InboundShipment` - `inbound_shipment_id` is the resolved
+    #: link, this is the raw fact so a later shipment can still be relinked.
+    container_number = Column(String(100), nullable=True)
 
     inbound_shipment = relationship("InboundShipment", back_populates="spo_allocations")
     supplier = relationship("Supplier", foreign_keys=[supplier_id])
@@ -538,6 +544,9 @@ class SPOAllocation(Base, CompanyScopedMixin):
         Index("ix_spo_allocations_spo_product_warehouse", "spo_number", "product_id", "warehouse_id"),
         # AutoCount ingest v2 (S3): a push finds its document's rows by DocKey.
         Index("ix_spo_allocations_company_source_doc_ref", "company_id", "source_doc_ref"),
+        # D6 (migration 477): the relink sweep's own lookup, and a container is
+        # unique per company only (the same code legitimately arrives twice).
+        Index("ix_spo_allocations_company_container", "company_id", "container_number"),
         # One DtlKey can adopt at most one line, company-wide - partial so the
         # countless ref-less xlsx-era rows never collide with each other or with it.
         Index(

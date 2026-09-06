@@ -495,19 +495,21 @@ def _resolve_market_segments(
     if not supplied:
         return {}
 
-    from app.models.access import MarketSegment
+    # S2: the fold itself moved to `customer_rules.fold_market_segment`, shared
+    # with the ESB customers push - memoised per distinct spelling here so a
+    # 4,000-row file still costs one query per DISTINCT value, not one per row.
+    from app.services.rules import customer_rules
 
-    known = {
-        _key(code): code
-        for (code,) in db.query(MarketSegment.code).all()
-        if code
-    }
+    memo: dict[str, Optional[str]] = {}
     dropped: dict[int, str] = {}
     for row in rows:
         value = row.values.get("market_segment_code")
         if value is None:
             continue
-        canonical = known.get(_key(value))
+        key = _key(value)
+        if key not in memo:
+            memo[key] = customer_rules.fold_market_segment(db, value)
+        canonical = memo[key]
         if canonical is None:
             dropped[row.row_number] = value
             row.values.pop("market_segment_code")

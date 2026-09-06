@@ -150,6 +150,11 @@ class CanonicalSalesOrder(_CanonicalDocument):
     FIRST sync can adopt an existing row by.
     """
 
+    # D20 (S2): optional here - absent, `document_ingest_service` derives it
+    # via `document_rules.derive_document_status`. `CanonicalShippingOrder`
+    # gets the same override for the same reason (D20 for SPO, S3) - see its
+    # own comment below.
+    status: Optional[str] = Field(None, min_length=1, max_length=50)
     so_number: str = Field(..., min_length=1, max_length=100)
     customer_ref: Optional[str] = Field(None, max_length=255)
     # v2 code/name fallback (D1/D2). `customer_code` is written to
@@ -160,6 +165,11 @@ class CanonicalSalesOrder(_CanonicalDocument):
     # `String(50)` column - a longer value can only ever fail at INSERT.
     customer_code: Optional[str] = Field(None, max_length=50)
     customer_name: Optional[str] = Field(None, max_length=255)
+    # D16/D8 (S2): used ONLY when back-creating a customer off (customer_code,
+    # customer_name) - never applied to an existing row (that is what the
+    # customers master push's own market_segment_code/region are for).
+    customer_segment: Optional[str] = Field(None, max_length=50)
+    customer_region: Optional[str] = Field(None, max_length=80)
     sales_agent_ref: Optional[str] = Field(None, max_length=255)
     agent_code: Optional[str] = Field(None, max_length=100)
     # v2 demand classification (D4). FILL-only: written to `sales_orders.order_type`
@@ -175,6 +185,8 @@ class CanonicalSalesOrder(_CanonicalDocument):
 
 
 class CanonicalPurchaseOrder(_CanonicalDocument):
+    # D20 (S2): same override as CanonicalSalesOrder.status - see its comment.
+    status: Optional[str] = Field(None, min_length=1, max_length=50)
     po_number: str = Field(..., min_length=1, max_length=100)
     supplier_ref: Optional[str] = Field(None, max_length=255)
     # v2 code/name fallback (D1). `agent_code` is accepted for symmetry with
@@ -188,6 +200,12 @@ class CanonicalPurchaseOrder(_CanonicalDocument):
     issue_date: Optional[date] = None
     expected_date: Optional[date] = None
     currency: Optional[str] = Field(None, max_length=3)
+    # D6 (S3, AC-P3-7): AutoCount's `UDF_ShipOrder`. A purchase order the
+    # payload flags this way is refused the same as an `SPO-` numbered one
+    # (`document_ingest_service`'s D5 refusal) - a document number alone
+    # misses a differently-numbered shipping order AutoCount still marks as
+    # one.
+    is_shipping_order: Optional[bool] = None
     lines: list[CanonicalPurchaseOrderLine] = Field(default_factory=list, max_length=2000)
 
 
@@ -218,6 +236,13 @@ class CanonicalShippingOrder(_CanonicalDocument):
     purchase-order line's - see `CanonicalShippingOrderLine`.
     """
 
+    # D20 (S3): optional, same override and same reason as
+    # `CanonicalSalesOrder.status` - absent, `ShippingOrderIngestService`
+    # derives it via `document_rules.derive_document_status` over the
+    # pushed lines' own ordered/received quantities (all received = closed,
+    # else open) - there is no header row to read an EXISTING status off,
+    # unlike the SO/PO case, so derivation never sees anything but `None`.
+    status: Optional[str] = Field(None, min_length=1, max_length=50)
     # `max_length=50` (review nit): matches `spo_allocations.spo_number`'s own
     # `String(50)` column - `sales_orders.so_number`/`purchase_orders.po_number`
     # are `String(100)`, which is why only THIS number is narrower.
@@ -232,5 +257,9 @@ class CanonicalShippingOrder(_CanonicalDocument):
     agent_code: Optional[str] = Field(None, max_length=100)
     issue_date: Optional[date] = None
     expected_date: Optional[date] = None
+    # D6 (S3): AutoCount's `PO.Ref` - cleaned through the shared
+    # `shipping_order_rules.extract_container_number` before it lands on
+    # every allocation of this document.
+    container_number: Optional[str] = Field(None, max_length=100)
     currency: Optional[str] = Field(None, max_length=3)
     lines: list[CanonicalShippingOrderLine] = Field(default_factory=list, max_length=2000)

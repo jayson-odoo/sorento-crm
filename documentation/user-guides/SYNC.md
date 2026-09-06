@@ -48,6 +48,7 @@ documentation/user-guides/
   project-sales-admin/*.md         -> parent "Project Sales Admin" / *
   project-sales-manager/*.md       -> parent "Project Sales Manager" / *
   project-sales-rep/*.md           -> parent "Project Sales Rep" / *
+  supply-chain/*.md                -> parent "Supply Chain" / *
 ```
 
 Each markdown file's first H1 (`# Title`) becomes the Outline doc title. The leading H1 is stripped from the body Outline stores (Outline keeps title separately).

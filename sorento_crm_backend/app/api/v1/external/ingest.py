@@ -55,8 +55,10 @@ from app.services.master_ingest_service import (
     UnsupportedIngestEntity,
 )
 from app.services.master_read_service import MasterReadService
+from app.services import planning_change_service
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 from app.services.scm import plan_exception_service, reorder_run_service
+from app.services.scm.outstanding_diff import diff_lines
 from app.services.scm.outstanding_import_service import supersede_crm_raised_pos
 from app.services.shipping_order_ingest_service import (
     SHIPPING_ORDER_ENTITIES,
@@ -182,8 +184,10 @@ SUPPORTED_ENTITIES = set(ENTITY_SPECS) | set(DOCUMENT_ENTITIES) | set(SHIPPING_O
 # Bumped whenever the wire shape of an entity changes in a way the ESB must gate
 # on (a new required field, a changed enum). Read by `GET /external/contract`
 # (D8) so the ESB can check compatibility without trial-and-error against this
-# router.
-CONTRACT_VERSION = 2
+# router. A STRING (S4, ingest-parity-standardisation D-final): "2.1" is a
+# point release of the same major contract, and a bare int can never express
+# that - the ESB's own gate compares it as an opaque value, never arithmetic.
+CONTRACT_VERSION = "2.1"
 
 
 def _run_document_hooks(
@@ -204,15 +208,21 @@ def _run_document_hooks(
     - threaded through to whichever hook records who/what caused the
     reaction, the same attribution an interactive user's action gets.
 
-    Only `sales_orders` and `purchase_orders` react here - a shipping order's
-    lines are closed-by-absence WITHIN the pushed document only (D7); the
-    book-wide reconciliation the upload does is the ESB's own deletion call,
-    not a hook on this route.
+    `shipping_orders` reacts here too (security review, blocker 2): the
+    forward-match sweep used to run INSIDE `ShippingOrderIngestService
+    .ingest()` itself, before this route's own `db.commit()` -
+    `forward_match_grn_lines_for_spo` commits on success and rolls back on
+    failure, so one exception mid-batch discarded every not-yet-committed
+    record of the batch while the route still answered 200. Moved here so it
+    runs against a batch that has already landed, same as every other hook.
     """
     if entity == "sales_orders":
         _run_plan_exception_hook(db, service, actor=actor)
+        _run_planning_change_hook(db, service, actor=actor)
     elif entity == "purchase_orders":
         _run_supersede_and_relink_hooks(db, service, actor=actor)
+    elif entity == "shipping_orders":
+        _run_shipping_order_forward_match_hook(db, service, actor=actor)
 
 
 def _run_plan_exception_hook(db: Session, service, *, actor: Optional[str]) -> None:
@@ -255,6 +265,43 @@ def _run_plan_exception_hook(db: Session, service, *, actor: Optional[str]) -> N
         logger.warning("ingest.plan_exception_hook_failed", exc_info=True)
 
 
+def _run_planning_change_hook(db: Session, service, *, actor: Optional[str]) -> None:
+    """D10 (S2, BL-058): the ESB's own `planning_change_batches` row, built
+    from the SAME before/after line picture `outstanding_import_service
+    .apply()` diffs after its own upload - `service.so_diff_before`/
+    `so_diff_after`, gathered per record in `DocumentIngestService._apply`
+    (`Diff` docstring: "the documents named in the extract ARE the scope",
+    which is exactly the batch this push named). Called through the MODULE
+    attribute (`planning_change_service.build_batch`), same reason as
+    `plan_exception_service.generate_batch` above - a caller monkeypatching
+    the module sees this call.
+    """
+    if not service.so_diff_before and not service.so_diff_after:
+        return
+    try:
+        diff = diff_lines(service.so_diff_before, service.so_diff_after)
+        applied_line_ids: dict[int, str] = {}
+        for change in diff.changes:
+            line_id = (change.after.row_ref if change.after else None) or (
+                change.before.row_ref if change.before else None
+            )
+            if line_id:
+                applied_line_ids[id(change)] = line_id
+        planning_change_service.build_batch(
+            db,
+            diff,
+            applied_line_ids=applied_line_ids,
+            order_ids=dict(service.so_header_id_by_number),
+            actor=actor,
+            import_job_id=None,
+            file_name=None,
+        )
+        db.commit()
+    except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
+        db.rollback()
+        logger.warning("ingest.planning_change_hook_failed", exc_info=True)
+
+
 def _run_supersede_and_relink_hooks(db: Session, service, *, actor: Optional[str]) -> None:
     """AC-V5-2: retire CRM-raised POs this push confirms, then relink placements.
 
@@ -282,6 +329,36 @@ def _run_supersede_and_relink_hooks(db: Session, service, *, actor: Optional[str
         except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
             db.rollback()
             logger.warning("ingest.relink_to_matching_lines_failed", exc_info=True)
+
+
+def _run_shipping_order_forward_match_hook(
+    db: Session, service, *, actor: Optional[str]
+) -> None:
+    """D7 (S3), moved here by the security review (blocker 2): GRN
+    forward-match, once per SPO number this batch touched, AFTER the batch's
+    own commit rather than inside `ShippingOrderIngestService.ingest()`.
+
+    `forward_match_grn_lines_for_spo_best_effort` is itself already a
+    best-effort wrapper (catches, rolls back its OWN transaction, warns), so
+    the outer try/except here is defensive symmetry with the SO/PO hooks
+    above rather than a defect it is patching over - it should never actually
+    fire. Called through the MODULE attribute so a caller monkeypatching
+    `grn_spo_matching` sees this call, same reason the SO/PO hooks call
+    `plan_exception_service`/`planning_change_service` that way.
+    """
+    if not service.spo_numbers_touched:
+        return
+    import app.services.grn_spo_matching as grn_spo_matching
+
+    try:
+        for spo_number in sorted(service.spo_numbers_touched):
+            grn_spo_matching.forward_match_grn_lines_for_spo_best_effort(
+                db, spo_number, company_id=service.company_id
+            )
+        db.commit()
+    except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
+        db.rollback()
+        logger.warning("ingest.shipping_order_forward_match_hook_failed", exc_info=True)
 
 
 def _entity(entity: str) -> str:
@@ -375,10 +452,11 @@ async def ingest_masters(
         # Committed once for the batch. Each record already succeeded or rolled
         # back inside its own savepoint, so this persists exactly the good ones.
         db.commit()
-        # D7/S5: post-write hooks, non-dry only (AC-V5-4) - `MasterIngestService`
-        # and `ShippingOrderIngestService` carry none of the attributes these
-        # read, so only a `DocumentIngestService` batch reaches this.
-        if isinstance(service, DocumentIngestService):
+        # D7/S5: post-write hooks, non-dry only (AC-V5-4). `MasterIngestService`
+        # carries none of the attributes these read, so only a
+        # `DocumentIngestService` or `ShippingOrderIngestService` batch
+        # reaches this.
+        if isinstance(service, (DocumentIngestService, ShippingOrderIngestService)):
             _run_document_hooks(
                 db, entity, service, actor=current_user.get("id")
             )
