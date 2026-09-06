@@ -858,6 +858,8 @@ async def apply_packing_list(
         shipment_date=parsed_date,
         currency=currency,
         source_ref=file.filename,
+        content_type=file.content_type,
+        file_in_drive=True,
         actor_id=current_user.get("id"),
     )
     db.commit()

@@ -452,3 +452,27 @@ No open questions remain. Waiting for GO.
   fix; no page file needed touching. Verified: `PageHeader.inventory.test.ts` and
   `PageHeader.test.tsx` both green after the menu move, and `grep -rn "crumbs="` across the six
   route trees returns nothing.
+- **`PackingListUploadDialog` gained a self-serve supplier picker.** R3 moves the dialog to the
+  Packing Lists page, which (unlike `/scm/incoming`) carries no persistent supplier filter to
+  source `supplierId` from. Rather than build a second, page-level picker, the dialog itself now
+  manages an internal `internalSupplierId` when its `supplierId` prop is left `undefined`; every
+  other caller (`IncomingContainersView.tsx`) still passes an explicit `supplierId`/`supplierName`
+  and is unchanged. Documented in the dialog's own JSDoc.
+- **Step 10's "packing_list_service.apply() ... and the route" needed a THIRD change the brief
+  didn't ask for: an opt-in `file_in_drive` flag, default `False`.** Filing unconditionally broke
+  every OTHER `pg_session`-based test of `apply()` (`tests/scm/test_packing_list_import.py`, three
+  tests) - the shared dev DB already carries a real "Packing List" attachment type (admin data),
+  so an unconditional file-and-bind step made those tests perform a LIVE upload against the
+  configured staging storage bucket the moment they called `apply()`, which is not something any
+  test should ever do silently. Only `POST /packing-lists/apply` passes `file_in_drive=True`;
+  every other existing caller (all of them tests) is unaffected. See the docstring on
+  `test_packing_list_apply_files_attachment.py` for the full story.
+- **Attachment-type lookup for step 10:** `code = 'packing_list' OR lower(type_name) = 'packing
+  list'`, mirroring `container_status_document.py`'s existing `code = :code OR type_name = :name`
+  convention (case-insensitive added because R4 doesn't guarantee the admin sets a code at all).
+  Unlike that module, this lookup never auto-creates the type - a missing one is a named gap in
+  the response, never a reason to fail an otherwise-successful apply (R4 is admin-set, not
+  guaranteed to exist).
+- **`consolidated_packing_list.build()` keeps emitting `costs` in its JSON payload.** The plan
+  offered either choice ("may keep emitting costs ... or drop it; pick the smaller diff"); keeping
+  it is the smaller diff and harmless - only `to_xlsx()` (the export) stops reading it.

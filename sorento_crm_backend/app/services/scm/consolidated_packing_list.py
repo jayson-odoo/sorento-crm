@@ -466,7 +466,8 @@ def to_xlsx(payload: dict) -> bytes:
             style(row, index, bold=bold, red=red, fmt=(formats or {}).get(letter))
 
     header = payload.get("header") or {}
-    costs = payload.get("costs") or {}
+    # `payload["costs"]` (from `build()`) is deliberately not read here any more (R17,
+    # AC-H2): the export no longer apportions clearance / insurance / China freight.
 
     # ---- the header block ------------------------------------------------- #
     for row, label, key in _HEADER_BLOCK:
@@ -601,13 +602,11 @@ def to_xlsx(payload: dict) -> bytes:
         cell.value = f"=SUM({refs})" if refs else 0
     row += 2
 
-    # ---- the split, and what each company owes on it ----------------------- #
-    # Clearance and China freight follow the VOLUME, insurance follows the AMOUNT: that is
-    # how the forwarder bills them and how the source file apportions them.
-    clearance = _f_or_none(costs.get("clearance_cost"))
-    freight = _f_or_none(costs.get("china_freight_cost"))
-    insurance_rate = _f_or_none(costs.get("insurance_rate"))
-
+    # ---- the split: what each company's share of the container is ---------- #
+    # No CLEARANCE / INSURANCE / CHINA FREIGHT here any more (R17, purchasing
+    # consolidation batch 6 Sep 2026, AC-H2): the costs section is not needed on screen
+    # or in the export. CBM and TOTAL AMOUNT stay - they are operational totals, not
+    # costs, and the export still says how much of the container is whose.
     company_rows: dict[str, int] = {}
     for company in COMPANIES:
         rows_for = [r for c, r in subtotal_rows if c == company]
@@ -618,18 +617,6 @@ def to_xlsx(payload: dict) -> bytes:
         style(row, 13, bold=True, fmt=_FMT_MONEY_RED).value = (
             f"=SUM({cbm_ref})" if cbm_ref else 0
         )
-        if clearance is not None:
-            style(row, 14, bold=True, fmt=_FMT_MONEY_RED).value = (
-                f"=M{row}/M{total_row}*{clearance}"
-            )
-        if insurance_rate is not None:
-            style(row, 15, bold=True, fmt=_FMT_MONEY_RED).value = (
-                f"=U{row}/U{total_row}*{insurance_rate}"
-            )
-        if freight is not None:
-            style(row, 16, bold=True, fmt=_FMT_MONEY_RED).value = (
-                f"=M{row}/M{total_row}*{freight}"
-            )
         style(row, 20).value = company
         style(row, 21, bold=True, fmt=_FMT_MONEY_RED).value = (
             f"=SUM({amount_ref})" if amount_ref else 0
@@ -638,18 +625,8 @@ def to_xlsx(payload: dict) -> bytes:
         row += 1
 
     split_rows = [company_rows[c] for c in COMPANIES]
-    # The volume and the amount always total; a cost only totals when it was typed. Summing
-    # two blank cells prints 0, and a zero under CLEARANCE reads as a container that cost
-    # nothing to clear rather than as one nobody has priced yet.
-    totalled = ["M", "U"]
-    if clearance is not None:
-        totalled.append("N")
-    if insurance_rate is not None:
-        totalled.append("O")
-    if freight is not None:
-        totalled.append("P")
     style_row(row)
-    for column in totalled:
+    for column in ("M", "U"):
         cell = style(row, _LETTERS.index(column) + 1, bold=True, fmt=_FMT_MONEY_RED)
         cell.value = "=" + "+".join(f"{column}{r}" for r in split_rows)
     row += 1
@@ -657,9 +634,6 @@ def to_xlsx(payload: dict) -> bytes:
     style_row(row, bold=True)
     for column, label in (
         (13, "CBM"),
-        (14, "CLEARANCE"),
-        (15, "INSURANCE"),
-        (16, "CHINA FREIGHT"),
         (21, "TOTAL AMOUNT"),
     ):
         ws.cell(row=row, column=column, value=label)
