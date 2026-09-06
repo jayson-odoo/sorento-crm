@@ -67,6 +67,24 @@ DIVERGENCES: list[Divergence] = [
     # S6c.
     # ------------------------------------------------------------------ #
     Divergence(
+        node="output-structurer",
+        fixture="gr-15145805",
+        hazard="H63 (owner console pass, 6 Sep 2026)",
+        reason=(
+            "the multi-company 'which company came back empty' line is axis-labelled now "
+            "('no incoming stock records found for product A, B and C') instead of a bare "
+            "comma list of raw entity codes, because the un-labelled form printed an "
+            "internal debtor code and one alias row per customer alongside the products, "
+            "as four separate things that had been searched. Owner ruling: label it. This "
+            "is the ONE graded output-structurer capture that reaches the block (four "
+            "products, one silent company); field-scoped to `response`, so every other key "
+            "of the envelope is still compared byte for byte. Pinned by "
+            "tests/chatbot/test_s6b_fetch_lane.py::"
+            "TestLabelledNotFoundLineNeverLeaksInternalDebtorCode."
+        ),
+        strip_paths=(("response",),),
+    ),
+    Divergence(
         node="crossdomain-render",
         fixture="exec-14131197",
         hazard="H62 (owner console pass, 6 Sep 2026)",
