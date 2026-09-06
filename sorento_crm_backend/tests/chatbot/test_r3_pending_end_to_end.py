@@ -305,3 +305,230 @@ class TestAnAbandonedMemberOfferStopsConfirming:
         )
         actions = [a for a in (head.actions or []) if a.get("kind") == "assign_conversation"]
         assert not actions, f"the turn assigned a human off an abandoned offer: {actions!r}"
+
+
+class TestAPendingOrderRosterDoesNotSwallowABareProductCode:
+    """AC-816 rule 3 on the ORDER domain with a member roster (prod exec 15443838).
+
+    The owner's chain, cold: "delivery to hanlim, product srtwc286" (no orders, escalation
+    offer plus a six-name roster, `pending.kind = member_offer`, domain `order`), then
+    "last month" - which PASSES, because a date window is a filter in any domain - then
+    "rpacc", which came back `offer_hold` with ZERO entities and re-showed the same roster.
+
+    The cause is upstream of rule 3 and is why the inventory version of this turn passes:
+    a bare token with no verb is emitted `casual`, the casual arm wipes `entities` and the
+    domain-continuity block skips casual outright, so by the time the member ladder asks
+    "is this a filter?" there is nothing left to be one. Rule 3's own premise says what a
+    bare entity under an open offer IS - a narrowing of the question the offer was made
+    about - so the label is decided by STATE (an offer is open, an entity was named), not
+    by whether the model heard a verb (D11).
+
+    Turn 1 is SEEDED as the persisted offer, for the same reason as the TTL sequence above:
+    composing a real six-name roster needs the CS gate and real team rows, and none of
+    that is what this chain is about. Turns 2 and 3 are real `run_turn` calls against the
+    REAL resolver on real seeded rows - which is the half that matters, because the whole
+    question is what the resolver is asked and what it comes back with.
+    """
+
+    ROSTER = [{"idx": i, "label": f"Member {i}", "uuid": f"u{i}"} for i in range(1, 7)]
+
+    def _seed_master(self, session_factory) -> str:
+        from app.models.company import Company
+        from app.models.order import Customer
+        from app.models.product import Product, ProductCategory, UnitOfMeasure
+        from tests._pg_fixture import unique_code
+
+        db = session_factory()
+        company = Company(name=unique_code("HAN"), code=unique_code("HAN")[:50])
+        db.add(company)
+        db.flush()
+        db.add(
+            Customer(
+                customer_code="300-H030",
+                customer_name="HANLIM TRADING SDN BHD",
+                is_active=True,
+                company_id=company.id,
+            )
+        )
+        category = ProductCategory(
+            category_code=unique_code("CAT")[:50],
+            category_name="ZZT rule 3 category",
+            company_id=company.id,
+        )
+        uom = UnitOfMeasure(uom_code=unique_code("UOM")[:20], uom_name="Each", company_id=company.id)
+        db.add_all([category, uom])
+        db.flush()
+        for code in ("SRTWC286", "RPACC"):
+            db.add(
+                Product(
+                    product_code=code,
+                    product_name=f"ZZT {code}",
+                    category_id=category.id,
+                    base_uom_id=uom.id,
+                    list_price=10,
+                    is_active=True,
+                    company_id=company.id,
+                )
+            )
+        db.commit()
+        return str(company.id)
+
+    def _seed_offer(self, session_factory) -> None:
+        db = session_factory()
+        db.execute(
+            text(
+                "UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) "
+                "WHERE respond_io_id = :cid"
+            ),
+            {
+                "cid": CONTACT_ID,
+                "sv": json.dumps(
+                    {
+                        "variables": {
+                            "message_type": "business_query",
+                            "domain_hint": "order",
+                            "intent_hint": "check_order",
+                            "selection_context": "member_offer",
+                            "last_result_set": self.ROSTER,
+                            "entities": [
+                                {
+                                    "raw": "hanlim",
+                                    "hint": "customer",
+                                    "canonical_code": "300-H030",
+                                    "current_message": False,
+                                    "confident": True,
+                                }
+                            ],
+                            "response": (
+                                "Would you like me to escalate to customer service team?"
+                            ),
+                            "pending": {
+                                "kind": "member_offer",
+                                "team": "customer_service",
+                                "domain": "order",
+                                "ttl": 3,
+                            },
+                        }
+                    }
+                ),
+            },
+        )
+        db.commit()
+
+    def _wire(self, session_factory, monkeypatch, company_id: str) -> None:
+        """The REAL resolver seam, scoped to the seeded company the way the engine scopes
+        every session it opens (`engine._scoped_factory`, H56).
+
+        The business lane is switched ON so the turn reaches `resolve-entity` at all - off
+        it, the head delegates at `routed` and nothing resolves. The FETCH is stubbed to a
+        canned success (the same stand-in `test_engine_company_scope` uses): what this
+        chain grades is what the resolver was asked and what came back, not the RAG tool
+        pick, which needs an embedding provider.
+        """
+        from tests.chatbot.conftest import set_chatbot_switches
+        from tests.chatbot.test_engine_company_scope import (
+            _wire_answer_services,
+            _wire_answered_fetch,
+            _wire_real_resolve_entity,
+        )
+
+        set_chatbot_switches(session_factory, business_lane=True)
+        db = session_factory()
+        db.execute(text("UPDATE system_settings SET chatbot_completed_lanes = CAST(:l AS jsonb)"), {"l": '["business_query"]'})
+        db.commit()
+        _wire_real_resolve_entity(monkeypatch)
+        _wire_answer_services(monkeypatch)
+        _wire_answered_fetch(monkeypatch)
+        monkeypatch.setattr(
+            engine_mod, "_contact_company_scope", lambda factory, cid: frozenset({company_id})
+        )
+
+    def _run(self, session_factory, monkeypatch, *, qf, text_body, msg_id):
+        _stub_parser(monkeypatch, qf)
+        envelope = _envelope(is_test=False)
+        envelope.message["message"]["messageId"] = msg_id
+        envelope.message["message"]["message"]["text"] = text_body
+        return engine_mod.run_turn(envelope, session_factory=session_factory)
+
+    def test_a_bare_product_code_narrows_the_order_query_instead_of_reprompting(
+        self, seeded, session_factory, monkeypatch
+    ):
+        company_id = self._seed_master(session_factory)
+        self._seed_offer(session_factory)
+        self._wire(session_factory, monkeypatch, company_id)
+
+        # -- turn 2: "last month". A date window is a filter in ANY domain, and this half
+        #    already worked - it is here so turn 3 arrives in the state it really does.
+        self._run(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="business_query",
+                intent_hint=None,
+                domain_hint=None,
+                entities=[],
+                date_mode="range",
+                date_filter_start="2026-08-01",
+                date_filter_end="2026-08-31",
+            ),
+            text_body="last month",
+            msg_id="ZZT-rule3-order-t2",
+        )
+
+        # -- turn 3: "rpacc". A bare token with no verb: the model calls it casual and
+        #    names one entity, and the shape guess for a code under an order thread is
+        #    the model's, not the state's.
+        head = self._run(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual",
+                intent_hint=None,
+                domain_hint=None,
+                entities=[
+                    {
+                        "raw": "rpacc",
+                        "hint": "product",
+                        "canonical_code": None,
+                        "current_message": True,
+                        "confident": True,
+                    }
+                ],
+            ),
+            text_body="rpacc",
+            msg_id="ZZT-rule3-order-t3",
+        )
+
+        qf3 = head.ctx["parse"]["output"]
+        assert qf3["message_type"] == "business_query", (
+            f"a bare code under an open roster is a narrowing, not small talk: {qf3!r}"
+        )
+        assert qf3["domain_hint"] == "order", (
+            f"the carried domain must survive the turn: {qf3.get('domain_hint')!r}"
+        )
+        raws = {str(e.get("raw")).lower() for e in (qf3.get("entities") or [])}
+        assert {"rpacc", "hanlim"} <= raws, (
+            f"the new filter and the carried customer must both be in scope: {raws!r}"
+        )
+        assert (qf3.get("escalation") or {}).get("member_reprompt") is None, (
+            f"the roster must not be re-offered as if the code were a bad pick: {qf3!r}"
+        )
+        assert qf3.get("correction") is not True
+        assert qf3.get("member_offer_filter_modification") is True, (
+            "rule 3's filter arm is what keeps the offer pending while the question "
+            f"narrows: {qf3!r}"
+        )
+
+        from tests.chatbot.test_engine_company_scope import _looked_up_resolved, _turn_row
+
+        resolved = _looked_up_resolved(_turn_row(session_factory, head.turn_id))
+        product_codes = {
+            m.get("canonical_code")
+            for res in (resolved.get("resolutions") or [])
+            for m in (res.get("matches") or [])
+            if m.get("entity_type") == "product"
+        }
+        assert "RPACC" in product_codes, (
+            "the resolver must still reach the product through `fallback_to_all_types`, "
+            f"whatever type rule 4 stamped on the bare token: {resolved!r}"
+        )

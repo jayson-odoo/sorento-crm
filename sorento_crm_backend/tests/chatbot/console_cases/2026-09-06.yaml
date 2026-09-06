@@ -115,6 +115,28 @@ cases:
           reply_contains: ["Customer: ", "Dates: "]
           no_uuid: true
 
+  # Prod exec 15443838. Turn 3 came back `offer_hold` with zero entities and re-showed the
+  # same six-name roster: a bare token with no verb is emitted `casual`, and the casual arm
+  # wiped the entity before rule 3's filter arm could read it. Turn 2 already passed (a
+  # date window is a filter in any domain) and is here so turn 3 arrives in the real state.
+  - name: a pending order roster does not swallow a bare product code
+    cold: true
+    turns:
+      - text: "delivery to hanlim, product srtwc286"
+        expect:
+          branch_kind: business_query
+          no_uuid: true
+      - text: "last month"
+        expect:
+          branch_kind: business_query
+          no_uuid: true
+      - text: "rpacc"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["RPACC"]
+          reply_not_contains: ["not one of the options"]
+          no_uuid: true
+
   - name: a delivered-status miss names the status and the eta date
     text: "has DO12345 been delivered"
     expect:

@@ -1254,6 +1254,25 @@ contact inside the synchronous request. Different contacts run in parallel.
      and the product-code case, the latter asserted on the SEAM - the filter arm ran, the
      entity survived, the domain is kept - rather than on the absence of a reprompt, which
      passed for the wrong reason) and `test_route_unit.py`.
+
+     **And a bare entity under an open roster is never small talk.** Given a pending
+     member offer and a reply that is nothing but a token, when the model emits it
+     `casual` (which it does for anything with no verb), then the turn is still read as a
+     reply to the question the offer was made about: the label is decided by STATE - an
+     offer is open and an entity was named - not by whether a verb was heard (D11). Prod
+     exec 15443838 is the measured case: "rpacc" under a six-name roster on `order` came
+     back `offer_hold` with ZERO entities and the roster re-shown, because the casual arm
+     wipes `entities` and the domain-continuity block skips casual outright, so by the
+     time the ladder asked "is this a filter?" there was nothing left that could be one.
+     The same turn under an inventory thread with no roster answered, which is why rule 3
+     read as working. WHICH kind of reply it is - a narrowing, a new query, or junk -
+     stays the ladder's decision and is deliberately not taken here; a turn that engages
+     the offer with a pick signal (a yes / no, a number, a position) keeps every arm it
+     has today. The resolver then still reaches the product through
+     `fallback_to_all_types`, whatever type rule 4's retype stamped on the bare token.
+     Evidence:
+     `tests/chatbot/test_r3_pending_end_to_end.py::TestAPendingOrderRosterDoesNotSwallowABareProductCode`
+     (the owner's three-turn chain, real resolver, real seeded rows).
   4. **A bare entity inherits the carried business domain.** Given a carried business
      domain and a turn that is nothing but ONE entity - no `ordinal` on it, because a
      positional pick names a ROW and is never bare - with the model naming neither a
