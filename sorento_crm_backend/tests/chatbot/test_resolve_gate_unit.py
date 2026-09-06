@@ -672,3 +672,47 @@ class TestAShipmentHintedTokenThatIsOnlyAProductIsRetyped:
         )
         assert out is True
         assert parser["domain_hint"] == "inventory", parser["domain_hint"]
+
+
+RETYPED_SUB_FIXTURES = (
+    "rg-15123789",
+    "rg-15128371",
+    "rg-15192977",
+    "rs8-t2-picker",
+    "rs8a-t2-picker-T1",
+)
+
+
+class TestTheRetypedEntityArrayDiffersOnlyInTheHint:
+    """Review of #706, S3. The item F divergence strips `ctx_resolved.ctx.parse.output.
+    entities` whole on five captures, because `divergences.strip` addresses a path, not one
+    field of one array element. This is what makes that strip honest: on each capture the
+    array is compared element by element and the ONLY difference is the retyped hint."""
+
+    @pytest.mark.parametrize("stem", RETYPED_SUB_FIXTURES, ids=lambda v: v)
+    def test_only_the_hint_moved(self, stem: str) -> None:
+        from tests.chatbot import _corpus
+        from tests.chatbot.test_replay import _compare
+
+        fixtures = [
+            f for f in _corpus.sub_run_fixtures(vendored_only=False) if f.name.endswith(stem)
+        ]
+        if not fixtures:
+            pytest.skip(_corpus.corpus_skip_reason())
+        actual, expected = _compare(fixtures[0])
+
+        def entities_of(items: Any) -> list:
+            ctx = ((items[0].get("json") or {}).get("ctx_resolved") or {}).get("ctx") or {}
+            return ((ctx.get("parse") or {}).get("output") or {}).get("entities") or []
+
+        got, want = entities_of(actual), entities_of(expected)
+        assert len(got) == len(want) and got, (got, want)
+        moved = 0
+        for g, w in zip(got, want):
+            for key in sorted(set(g) | set(w)):
+                if key == "hint" and g.get(key) != w.get(key):
+                    assert (w.get("hint"), g.get("hint")) == ("inbound_shipment", "product"), (g, w)
+                    moved += 1
+                    continue
+                assert g.get(key) == w.get(key), f"{key!r} differs on {stem}: {g!r} vs {w!r}"
+        assert moved == 1, f"exactly one hint moves on {stem}, got {moved}"

@@ -162,6 +162,10 @@ def _incoming_named_in_message(message: Any) -> bool:
     """
     from app.services.chatbot.head.output_exchange import DOMAIN_SWITCH_WORDS
 
+    # ANY token, where `output_exchange`'s switch reader (its ~line 1125) demands EVERY
+    # remaining content token name the same domain. Different questions: the switch asks
+    # "is this message nothing but a domain word", this asks "did the customer say incoming
+    # at all", and one incoming word anywhere is enough to keep the domain theirs.
     text = jsc.nullish_str(message).lower()
     return any(DOMAIN_SWITCH_WORDS.get(tok) == "incoming" for tok in _WORD_RE.findall(text))
 

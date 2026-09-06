@@ -1336,18 +1336,30 @@ contact inside the synchronous request. Different contacts run in parallel.
 
   1. **The ambiguous-customer picker line reads `N. <name> (<company code>) - has DO` /
      `- no DO`.** Evidence turns 5ea477a6 (#15) and 934d4c18 (#16). Two defects, both fixed:
-     (a) the line rendered the account name alone, and the same name exists once per company
-     ledger ("A CRAFT IDEA SDN BHD" under SRT and again under MOCHA) while `_repLabel`
-     deletes exactly the marker that told them apart, so two lines of the picker read
-     identically; (b) the `- has delivery` stamp was built from EVERY order row the probe
-     returned, so a customer whose orders had not shipped read as having a delivery. Given an
-     ambiguous customer token, when the picker renders, then each line names the owning
-     company's `companies.code` (the resolver stamps `company_code` beside `company_name` in
-     `_attach_company_info`, and a match with none prints as it does today), and the suffix
-     counts ONLY order rows carrying an `Actual Delivery Date`. The roster's `title` carries
-     the same label as the printed line, so a reply by name resolves to the row that was
-     read. Which window was measured stays on `customer_probe_window_days`; the per-line
-     suffix is not hedged with it.
+     (a) the line rendered the account name alone, which does not say which ledger a pick
+     reaches - `_rep_label` folds a family to its bare name, so a line stood for accounts the
+     customer could not tell apart; (b) the `- has delivery` stamp was built from EVERY order
+     row the probe returned, so a customer whose orders had not shipped read as having a
+     delivery. Given an ambiguous customer token, when the picker renders, then each line
+     names EVERY company ledger its family spans, first-seen order ("(SRT, MOCHA)"; the
+     resolver stamps `company_code` beside `company_name` in `_attach_company_info`, a row
+     with none contributes nothing), and the suffix counts ONLY order rows carrying an
+     `Actual Delivery Date`. The roster's `title` carries the same label as the printed line,
+     so a reply by name resolves to the row that was read. Which window was measured stays
+     on `customer_probe_window_days`; the per-line suffix is not hedged with it.
+
+     **Withdrawn (review of #706, S2):** this AC first said the two ledgers' copies of one
+     name rendered as "two identical lines". They do not: `_cust_base` groups a family by
+     normalised name, so one name in two ledgers is ONE family and the gate passes silently
+     with both ledgers' rows, and the picker only appears when two DIFFERENT names match.
+     The owner's own turns are not in the local prod copy, so the exact shape they saw
+     cannot be re-read here. Kept as live has it, on measured evidence: the two production
+     captures of the shape (rg-15114061, JYL JUBIN under Mocha and Sorento; rg-15125764, YI
+     HONG TILING under both) render one line whose pick carries both ledgers, the order
+     answer downstream is already labelled per company (`routing_companies`), and a
+     per-ledger split - tried, measured - moved eight captures and printed two identical
+     lines wherever a payload lacks `company_code`. Stated as a test:
+     `tests/chatbot/test_s6a_gate_dry_run_and_seams.py::TestAPickerLineNamesEveryLedgerItsFamilySpans`.
 
      **And the probe seam is wired.** `ResolveGateServices.probe`'s production binding raised
      `NotImplementedError`, so `resolve_gate._run_probe` caught it on every live turn and the
@@ -1373,7 +1385,19 @@ contact inside the synchronous request. Different contacts run in parallel.
      (the post-processor, both arms) and
      `tests/chatbot/test_r3_pending_end_to_end.py::TestAllOfThemOverADidYouMeanOfferAnswersEveryOfferedCode`
      (the real two-turn chain: a missing code, three REAL siblings found by the trigram tier
-     on seeded Postgres rows, and the answer naming all three).
+     on seeded Postgres rows, and the answer naming all three) and
+     `::TestAPartialDidYouMeanPickReplacesOnlyTheMissingToken` (review of #706, S4: the
+     `replace` arm through the engine - one code resolves, one misses, a numbered pick
+     against the partial roster scopes the turn to the resolved code plus the pick and never
+     the missing token). Measured while writing it: on this lane a partial product miss is
+     claimed by the answer half's `dym-annotate-partial` -> `build-suggest-offer` before the
+     tail runs, so turn 1 persists `selection_context: suggest_offer`, and
+     `compile_state._partial_dym_block` (which writes `dym_last_result_set`) returns on its
+     own clarification guard; the partial roster is therefore seeded in the block's own row
+     shape before the pick. Also measured, reported, not fixed: a numbered pick over that
+     `suggest_offer` roster WITHOUT the parser's `reference_target: "dym"` tag takes the
+     stock positional arm, which comes back `replace_combine` with only the pick in scope and
+     the resolved code dropped.
 
   3. **A pending escalation offer never consumes a request for a DIFFERENT team.** Evidence
      turns 9a40182a and 8b3a3b80: a pending `{kind: escalation_offer, team: warehouse}` offer
@@ -1384,21 +1408,41 @@ contact inside the synchronous request. Different contacts run in parallel.
      team. When the parser names NO team on a `request_for_help` and neither its own
      `escalation.is_escalation_confirmation` nor an accept word says the customer accepted,
      then `escalation.team_unresolved` is set, the turn is not a confirmation, and the lane
-     asks which team with quick replies. A bare "yes" still confirms. At the lane's own
-     boundary, `_person_routing`'s "no team, no person, a previous turn had one" clarify reads
-     `_parser_team(ctx, team)` rather than the already-inherited `team`, which is what made it
-     inert on exactly the turns it exists for. Evidence:
+     asks which team with quick replies. A bare "yes" still confirms. "Accepted" is the
+     model's own `escalation.is_escalation_confirmation` and NOTHING else (review of #706,
+     B2): the first cut kept an accept-word list over the raw message to rescue the one
+     capture where the model's flag is wrong ("YES ESCALTE", parser-15074293), which is the
+     D11 hard-fail the plan names as a merge blocker and which re-opened D1 ("ok, can someone
+     else help me" read "ok" as an acceptance). That capture is a registered divergence; the
+     parser prompt is where a typo'd acceptance gets read as one.
+
+     At the lane's own boundary (review of #706, B1): an acceptance is never asked which
+     team - `is_escalation_confirmation` skips the clarify first, so a bare "yes" that the
+     post-processor confirmed is assigned to the offered team end to end, not only at the
+     post-processor. The clarify then needs one of two premises, because the previous
+     routing is NEVER absent (the chain's hard default is persisted every turn, so "a
+     previous turn had a routing" was true on every turn from the second): D1's - an
+     escalation offer is OPEN, read through `output_exchange._offer_is_open`; or H64's -
+     the team this turn would assign to is INHERITED, meaning the parser named none, the
+     domain derives none (`derive_routing`, the chain's own function) and the previous
+     routing is not the carried `DEFAULT_SUGGESTED_TEAM` (`contracts.py`, the one place the
+     default is named). Scoping to the open offer alone would have assigned the owner's
+     "escalate to marketing" turn to `purchasing` again. Evidence:
      `tests/chatbot/test_output_exchange_rules.py::TestOwnerRulingD1PendingOfferTeamMismatch`
-     (three cases including the bare-"yes" guard) and
-     `tests/chatbot/test_s5_escalation_lane.py::TestOwnerRulingD1LaneTeamMismatch`.
+     (four cases including the bare-"yes" and the "ok, ..." guards),
+     `tests/chatbot/test_s5_escalation_lane.py::TestOwnerRulingD1LaneTeamMismatch` and
+     `::TestAnAcceptanceIsNeverAskedWhichTeam` (seven cases through the lane's `run()`: the
+     three the review measured, the kept 9a40182a case, an expired offer, the H64 case and a
+     domain-routed guard).
 
   Registered divergences (`tests/chatbot/divergences.py`), all field-scoped so the rest of
   every capture still grades byte for byte: 4 `output_exchange` on `entity_op` /
-  `entity_op_applied` (measured - the entity list is byte-equal on all four), 4
-  `annotate-customer-picker` and 2 `sub-resolve-and-gate` exit arms on `escalate_message`.
+  `entity_op_applied` (measured - the entity list is byte-equal on all four), 1
+  `output_exchange` on `escalation` (parser-15074293, above), 4 `annotate-customer-picker`
+  and 2 `sub-resolve-and-gate` exit arms on `escalate_message`.
   None of the three rules can be fixture-visible: n8n's own bodies say "delivery", stamp
-  `replace_combine` and read `is_affirmative` alone. Full chatbot suite green: 3628 passed,
-  129 skipped, 5 xfailed. (H67, H68, H69)
+  `replace_combine` and read `is_affirmative` alone. Full chatbot suite green on the PR's
+  final head (count in the PR body). (H67, H68, H69)
 
 - AC-818 `[BE][T]` **A filter reply under an open roster is ANSWERED, not re-asked.** Live
   turn 0d1fc129 (exec 15456707), case 69 turn 2. AC-816 rule 3's own half worked: the
@@ -1453,8 +1497,11 @@ contact inside the synchronous request. Different contacts run in parallel.
   first point in the turn where this evidence exists. NOT `output_exchange`: the
   post-processor is the parser's own step and runs before anything is resolved. Five graded
   `resolve-exit-offer` captures carry the retype and NOTHING else in the sub's output moves
-  on any of them (measured, one at a time), registered field-scoped to the entity hint and
-  its diagnostic. Evidence:
+  on any of them (measured, one at a time). The registration strips the parser's ENTITY
+  ARRAY inside `ctx_resolved` (a strip addresses a path, not one field of one element), so
+  `test_resolve_gate_unit.py::TestTheRetypedEntityArrayDiffersOnlyInTheHint` grades that
+  array explicitly on all five: same length, same order, every field byte-equal except the
+  one `hint` that moved (review of #706, S3). Evidence:
   `tests/chatbot/test_resolve_gate_unit.py::TestAShipmentHintedTokenThatIsOnlyAProductIsRetyped`
   (nine cases, five of them guards including the "any eta" counter-example) and
   `tests/chatbot/test_r3_pending_end_to_end.py::...::test_a_container_hinted_product_code_answers_stock_not_incoming`
@@ -1487,9 +1534,10 @@ contact inside the synchronous request. Different contacts run in parallel.
   it. Its block is appended under the primary answer, so a line at the head of the block IS
   the stock section's last word. Not fixture-visible - n8n has no such line - so six graded
   `crossdomain-render` captures are registered field-scoped to `_xdBlock.block`, the only
-  key that moves on any of them; `exec-14126915`'s ETA sort is then graded explicitly in
-  `test_s6c_engine_paths.py::TestCrossdomainRenderEtaOnlyCaptureReplays` (the block compared
-  byte for byte with the one known sentence removed) rather than left to that strip.
+  key that moves on any of them; every one of the six is then graded explicitly in
+  `test_s6c_engine_paths.py::TestCrossdomainRenderBlockIsByteEqualMinusTheOneSidedLine` (the
+  block compared byte for byte with the one known sentence removed) rather than left to
+  that strip (review of #706, S3).
   Evidence: `tests/chatbot/test_s6c_answer_lane.py::TestAZeroStockCodeIsNamedBeforeTheIncomingBlock`
   (four cases, two of them guards). Console case: "a code with no stock is named before the
   incoming block". (H72)

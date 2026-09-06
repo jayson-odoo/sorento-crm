@@ -468,8 +468,13 @@ DIVERGENCES: list[Divergence] = [
             hazard="owner console pass 4, item F (6 Sep 2026)",
             reason=(
                 "a shipment-hinted token the resolver answers with products only is "
-                "retyped `product` before the gate. Field-scoped to the entity hint and "
-                "its diagnostic; every other byte of the sub's output is unchanged."
+                "retyped `product` before the gate. Field-scoped to the parser's ENTITY "
+                "ARRAY inside ctx_resolved plus the two diagnostics - `strip` cannot reach "
+                "one field of one element, so the whole array comes off, and "
+                "test_resolve_gate_unit.py::TestTheRetypedEntityArrayDiffersOnlyInTheHint "
+                "grades that array explicitly: same length, same order, every field "
+                "byte-equal except the one `hint` that moved inbound_shipment -> product. "
+                "Every other byte of the sub's output is unchanged."
             ),
             strip_paths=(
                 ("ctx_resolved", "ctx", "parse", "output", "entities"),

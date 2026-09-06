@@ -1084,3 +1084,180 @@ class TestAllOfThemOverADidYouMeanOfferAnswersEveryOfferedCode:
         reply = (done2.reply or {}).get("text") or ""
         for code in self.OFFERED:
             assert code in reply, f"the answer must name {code}: {reply!r}"
+
+
+class TestAPartialDidYouMeanPickReplacesOnlyTheMissingToken(
+    TestAllOfThemOverADidYouMeanOfferAnswersEveryOfferedCode
+):
+    """Review of #706, S4. `entity_op: "replace"` at `output_exchange.apply_dym_pick` is
+    the arm for a pick against `dym_last_result_set` - the PARTIAL did-you-mean's roster,
+    the one `compile_state._partial_dym_block` writes when some tokens answered - and the
+    sibling chain above only reaches the FULL-miss arm (`reuse`). This grades the replace
+    arm THROUGH THE ENGINE: the real resolver, the real head, turn 2 a numbered pick.
+
+    MEASURED, and the reason turn 1 does not produce the roster by itself: on this lane a
+    partial product miss is claimed by the ANSWER half's `dym-annotate-partial` ->
+    `build-suggest-offer` before the tail runs, so the turn persists `selection_context:
+    suggest_offer` with the siblings as `last_result_set`, and `_partial_dym_block` then
+    returns on its own `is_clarification` guard. `dym_last_result_set` is that block's
+    fallback for an answered turn no offer claimed - and the state the old spine wrote,
+    which is what a customer mid-offer on cutover day carries. So turn 1 is graded on what
+    it does, and the partial roster is then seeded in exactly the shape the block writes
+    (`for_raw`, `for_hint`, `for_canonical` linkage included) before the pick.
+    """
+
+    RESOLVED = "SRTKS6091"  # one of the seeded siblings, typed exactly
+
+    def _wire(self, session_factory, monkeypatch) -> None:
+        """The full-miss chain's wiring, with ROSTER-SHAPED answer rows: a stand-in row
+        of `{"note": code}` builds no roster row, and the tail's answered-turn arm reads
+        the answer's own `last_result_set`."""
+        super()._wire(session_factory, monkeypatch)
+
+        def _run_fetch(payload: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
+            codes = [
+                str(e.get("canonical_code") or e.get("raw"))
+                for e in ((payload.get("parser") or {}).get("entities") or [])
+                if (e or {}).get("hint") == "product" and (e or {}).get("uuid")
+            ]
+            response = "In stock: " + ", ".join(codes) if codes else "I need a product."
+            fetch = {
+                "answers": [
+                    {
+                        "title": c,
+                        "fields": [
+                            {"key": "product_code", "label": "Product Code", "value": c},
+                            {"key": "quantity_on_hand", "label": "Quantity On Hand", "value": 5},
+                        ],
+                    }
+                    for c in codes
+                ],
+                "response": response,
+                "has_result": bool(codes),
+                "_fetch_arm": "result",
+            }
+            return {
+                "kind": "result",
+                "_fetch_arm": "result",
+                "delegate": "business_query",
+                "delegate_payload": {**payload, "fetch": fetch},
+                "fetch": fetch,
+            }
+
+        monkeypatch.setattr(engine_mod.business, "run_fetch", _run_fetch)
+
+    def _seed_partial_roster(self, session_factory, stored: dict) -> list[dict]:
+        """`dym_last_result_set` in `_partial_dym_block`'s own row shape, built from the
+        siblings turn 1 actually found, written beside the state turn 1 persisted."""
+        roster = [
+            {
+                "idx": i + 1,
+                "label": c["code"],
+                "value": c["code"],
+                "product": c["code"],
+                "uuid": c["uuid"],
+                "entity_type": "product",
+                "for_raw": self.MISSING,
+                "for_hint": "product",
+                "for_canonical": None,
+            }
+            for i, c in enumerate((stored.get("dym_offer") or {}).get("candidates") or [])
+        ]
+        assert roster, stored
+        db = session_factory()
+        row = db.execute(
+            text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :cid"),
+            {"cid": CONTACT_ID},
+        ).first()
+        session_vars = json.loads(row.session_vars) if isinstance(row.session_vars, str) else dict(row.session_vars or {})
+        session_vars["variables"] = {**(session_vars.get("variables") or {}), "dym_last_result_set": roster}
+        db.execute(
+            text("UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) WHERE respond_io_id = :cid"),
+            {"sv": json.dumps(session_vars), "cid": CONTACT_ID},
+        )
+        db.commit()
+        return roster
+
+    def test_a_numbered_pick_over_a_partial_roster_scopes_to_the_resolved_code_and_the_pick(
+        self, seeded, session_factory, monkeypatch
+    ):
+        self._seed_scope_and_products(session_factory)
+        self._put_trgm_on_the_search_path(session_factory)
+        self._wire(session_factory, monkeypatch)
+
+        head1 = self._run(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="business_query",
+                intent_hint="check_stock",
+                domain_hint="inventory",
+                entities=[
+                    {
+                        "raw": self.RESOLVED,
+                        "hint": "product",
+                        "canonical_code": None,
+                        "current_message": True,
+                        "confident": True,
+                    },
+                    {
+                        "raw": self.MISSING,
+                        "hint": "product",
+                        "canonical_code": None,
+                        "current_message": True,
+                        "confident": True,
+                    },
+                ],
+            ),
+            text_body=f"{self.RESOLVED} and {self.MISSING} got stock",
+            msg_id="ZZT-dym-partial-t1",
+        )
+        assert head1.status in ("done", "delegated"), head1.error
+
+        stored = _session_of(session_factory)["variables"]
+        # The measured arm: the answer half's suggest offer claims the partial miss.
+        assert stored.get("selection_context") == "suggest_offer", stored.get("selection_context")
+        assert stored.get("dym_last_result_set") is None, (
+            "if the tail now writes the partial roster itself, drop `_seed_partial_roster` "
+            f"and grade the turn directly: {stored.get('dym_last_result_set')!r}"
+        )
+        raws = {str(e.get("raw")).upper() for e in stored.get("entities") or []}
+        assert {self.RESOLVED, self.MISSING} <= raws, raws
+        roster = self._seed_partial_roster(session_factory, stored)
+        picked = roster[1]["value"] if len(roster) > 1 else roster[0]["value"]
+        position = 2 if len(roster) > 1 else 1
+
+        # -- turn 2: the numbered pick.
+        head2 = self._run(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="clarification",
+                intent_hint=None,
+                domain_hint=None,
+                entities=[],
+                reference_positions=[position],
+                # The parser's own tag for a pick against the did-you-mean roster; the
+                # numbered handler is keyed on it. Without it the STOCK positional arm
+                # resolves the digit over `last_result_set` instead (measured: that arm
+                # came back `replace_combine` with only the pick in scope and the resolved
+                # SRTKS6091 dropped - a separate finding, reported, not graded here).
+                reference_target="dym",
+            ),
+            text_body=str(position),
+            msg_id="ZZT-dym-partial-t2",
+        )
+        qf2 = head2.ctx["parse"]["output"]
+        assert qf2.get("dym_pick_applied") is True, qf2
+        assert qf2.get("entity_op") == "replace", (
+            f"a did-you-mean pick names its op `replace`: {qf2.get('entity_op')!r}"
+        )
+        codes = sorted(
+            str(e.get("canonical_code") or e.get("raw")).upper() for e in (qf2.get("entities") or [])
+        )
+        assert codes == sorted([self.RESOLVED, picked]), (
+            f"the scope is the resolved code plus the pick, and never the missing token "
+            f"{self.MISSING} again - which is what `replace_combine` put back: "
+            f"{qf2.get('entities')!r}"
+        )
+        assert head2.branch_kind == "business_query", head2.branch_kind

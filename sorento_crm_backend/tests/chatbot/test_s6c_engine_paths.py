@@ -494,31 +494,44 @@ class TestTierAskFetchArmReachesAccessLevelChoiceEndToEnd:
 # --------------------------------------------------------------------------- #
 
 
-class TestCrossdomainRenderEtaOnlyCaptureReplays:
-    def test_the_eta_only_no_quantity_capture_replays_byte_equal(self) -> None:
+ONE_SIDED_LINE_FIXTURES = (
+    # The six graded `crossdomain-render` captures AC-820 moves, registered field-scoped on
+    # `_xdBlock.block` in divergences.py. `exec-14126915` is the ETA-only, no-quantity one.
+    "exec-13484326",
+    "exec-13488926",
+    "exec-14119800",
+    "exec-14120400",
+    "exec-14122546",
+    "exec-14126915",
+)
+
+
+def _one_sided_line_fixtures() -> list:
+    fixtures = _s6c_full_corpus("crossdomain-render")
+    return [f for f in fixtures if any(f.name.endswith(stem) for stem in ONE_SIDED_LINE_FIXTURES)]
+
+
+class TestCrossdomainRenderBlockIsByteEqualMinusTheOneSidedLine:
+    """AC-820 prefixes the block with the primary domain's own miss ("No stock for
+    MWB7626."), so six captures are registered field-scoped on `_xdBlock.block` - and
+    `block` is where everything these captures exist to grade lives (the ETA sort of
+    exec-14126915, the multi-company silent note, the discontinued flag). A strip would
+    quietly make all of that ungraded, so every one of the six is compared here EXACTLY,
+    with the one known sentence removed (review of #706, S3)."""
+
+    @pytest.mark.parametrize(
+        "stem", ONE_SIDED_LINE_FIXTURES, ids=lambda v: v
+    )
+    def test_the_block_is_byte_equal_with_the_one_known_sentence_removed(self, stem: str) -> None:
         fixtures = _s6c_full_corpus("crossdomain-render")
         if not fixtures:
             pytest.skip(_corpus.corpus_skip_reason())
-        matches = [f for f in fixtures if f.name.endswith("exec-14126915")]
+        matches = [f for f in fixtures if f.name.endswith(stem)]
         if not matches:
-            pytest.skip(
-                "the ETA-only, no-quantity_on_hand capture (exec-14126915) is no longer "
-                "present in the corpus - see COVERAGE.md before re-adding"
-            )
+            pytest.skip(f"{stem} is no longer present in the corpus - see COVERAGE.md")
         fixture = matches[0]
-        answers = fixture.data["input"][0]["json"].get("answers") or []
-        assert answers, "the fixture must carry at least one row to grade the ETA sort"
-        for row in answers:
-            fields = {f.get("key") for f in row.get("fields") or []}
-            assert "estimated_arrival_date" in fields
-            assert "quantity_on_hand" not in fields
-        _replay(fixture)
+        _replay(fixture)  # the registered field-scoped divergence still applies
 
-        # AC-820 prefixes this block with the primary domain's own miss ("No stock for
-        # MWB7626."), so the capture is registered field-scoped on `_xdBlock.block` - and
-        # `block` is where the ETA sort this fixture EXISTS to grade lives. So it is
-        # compared here exactly, with the one known sentence removed, rather than left to
-        # a strip that would quietly make this test say nothing.
         from tests.chatbot.test_s6c_answer_lane import _run_crossdomain_render
 
         actual = _corpus.json_round_trip(_run_crossdomain_render(fixture))
@@ -526,13 +539,30 @@ class TestCrossdomainRenderEtaOnlyCaptureReplays:
         got = ((actual[0].get("json") or {}).get("_xdBlock") or {}).get("block") or ""
         want = ((expected[0].get("json") or {}).get("_xdBlock") or {}).get("block") or ""
         head, sep, rest = got.partition("\n\n")
-        assert sep and head.startswith("No stock for ") and head.endswith("."), (
+        assert sep and (head.startswith("No stock for ") or head.startswith("No incoming for ")), (
             f"the AC-820 line is the ONLY expected difference; got {head!r}"
         )
+        assert head.endswith("."), head
         assert rest == want, (
             "with that one sentence removed the block must still be byte-equal to the "
-            f"capture, ETA order included:\n{rest!r}\n{want!r}"
+            f"capture:\n{rest!r}\n{want!r}"
         )
+
+    def test_the_eta_only_no_quantity_capture_is_among_them(self) -> None:
+        """The property the old single-fixture test pinned: exec-14126915's rows carry
+        `estimated_arrival_date` and no `quantity_on_hand`, so its block is the ETA sort."""
+        fixtures = _s6c_full_corpus("crossdomain-render")
+        if not fixtures:
+            pytest.skip(_corpus.corpus_skip_reason())
+        matches = [f for f in fixtures if f.name.endswith("exec-14126915")]
+        if not matches:
+            pytest.skip("exec-14126915 is no longer present in the corpus - see COVERAGE.md")
+        answers = matches[0].data["input"][0]["json"].get("answers") or []
+        assert answers, "the fixture must carry at least one row to grade the ETA sort"
+        for row in answers:
+            fields = {f.get("key") for f in row.get("fields") or []}
+            assert "estimated_arrival_date" in fields
+            assert "quantity_on_hand" not in fields
 
 
 # --------------------------------------------------------------------------- #

@@ -259,7 +259,9 @@ cases:
   # turn as case H, one code further on: MSK11A-QT has no stock but DOES have incoming, and
   # it was named only inside "But there is INCOMING stock (ETA) ..." - so a stock question
   # came back as two codes' stock followed by an incoming fact about a third, with nothing
-  # saying the third has no stock. Graded on the ORDER, which is the ruling.
+  # saying the third has no stock. The ORDER is the ruling and the unit test grades it
+  # (`TestAZeroStockCodeIsNamedBeforeTheIncomingBlock`); `reply_contains` has no order, so
+  # this case grades only that the line is SAID on the live turn.
   - name: a code with no stock is named before the incoming block
     text: "STOCK STATUS\nMWT5727SS-CR\nMHS1028\nMSK11A-QT"
     cold: true
