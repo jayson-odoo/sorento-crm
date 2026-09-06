@@ -79,6 +79,7 @@ from app.services.master_ingest_service import IngestOutcome, MasterIngestServic
 from app.services.order_service import CustomerService
 from app.services.procurement_service import SupplierService
 from app.services.product_service import ProductCategoryService, ProductService, UnitOfMeasureService
+from app.services.scm.sales_agent_service import normalize_code as normalize_agent_code
 
 from tests._pg_fixture import blank_session, unique_code
 
@@ -328,8 +329,13 @@ class TestAcP03NumericAndLabelPreservedOnOmit:
         svc = _esb(db, DEFAULT_COMPANY_ID)
         result = svc.ingest("sales_agents", [{"source_ref": f"DK-{code}", "code": code}])
         assert result.updated == 1, result.records[0].errors
+        # `sales_agents` stores the code upper-trimmed on create/adopt
+        # (tests/test_ingest_sales_agents.py AC-A2-1/A2-3), so the lookup must
+        # match on the SAME normalised form - `unique_code()` routinely mints
+        # a-f hex, and an un-normalised lookup misses non-deterministically.
         person_label = db.execute(
-            text("SELECT person_label FROM sales_agents WHERE sales_agent = :c"), {"c": code}
+            text("SELECT person_label FROM sales_agents WHERE sales_agent = :c"),
+            {"c": normalize_agent_code(code)},
         ).scalar()
         assert person_label == "Ah Seng"
 
@@ -558,8 +564,11 @@ class TestAcP06AuditEmbeddingUpdatedAtAndAgentSource:
         svc = _esb(db, DEFAULT_COMPANY_ID)
         result = svc.ingest("sales_agents", [{"source_ref": f"DK-{code}", "code": code}])
         assert result.created == 1, result.records[0].errors
+        # Same normalised-lookup reasoning as
+        # TestAcP03NumericAndLabelPreservedOnOmit.test_sales_agent_person_label_preserved_when_omitted.
         source = db.execute(
-            text("SELECT source FROM sales_agents WHERE sales_agent = :c"), {"c": code}
+            text("SELECT source FROM sales_agents WHERE sales_agent = :c"),
+            {"c": normalize_agent_code(code)},
         ).scalar()
         assert source == "autocount"
 

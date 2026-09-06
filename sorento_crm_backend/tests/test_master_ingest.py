@@ -283,9 +283,14 @@ class TestQuarantineNotBlock:
 
 
 class TestRetryableVsFatal:
-    def test_missing_referenced_master_is_retryable_not_failed(self, db, svc):
-        # AC-AC-16. A supplier arriving before its payment terms exist is a
-        # sequencing artefact, not bad data -- the ESB drains these on retry.
+    def test_payment_terms_code_is_accepted_with_a_deprecated_field_warning_not_retryable(
+        self, db, svc
+    ):
+        # Ingest-parity-standardisation UAC AC-P0-4/D15 retired the old
+        # "wait for the payment-terms master" behaviour: `payment_terms_code`
+        # is now accepted-and-ignored with warning `deprecated_field`, never
+        # a `MissingReference` - a supplier no longer stays unsynced for a
+        # master (payment terms) that still does not exist.
         result = svc.ingest(
             "suppliers",
             [
@@ -297,12 +302,18 @@ class TestRetryableVsFatal:
                 }
             ],
         )
-        assert result.retryable == 1
+        assert result.retryable == 0
         assert result.failed == 0
-        assert result.records[0].outcome is IngestOutcome.RETRYABLE
+        record = result.records[0]
+        assert record.outcome is IngestOutcome.CREATED, record.errors
+        assert "deprecated_field" in record.warnings
 
-    def test_a_retryable_record_is_not_persisted(self, db, svc):
+    def test_payment_terms_code_is_accepted_on_an_update_too_not_retryable(self, db, svc):
         svc.ingest(
+            "suppliers",
+            [{"source_ref": "DK-S1", "code": "ZZT-SUP-1", "name": "Acme"}],
+        )
+        result = svc.ingest(
             "suppliers",
             [
                 {
@@ -313,9 +324,12 @@ class TestRetryableVsFatal:
                 }
             ],
         )
-        assert db.execute(text("SELECT count(*) FROM suppliers WHERE supplier_code LIKE 'ZZT-%'")).scalar() == 0
-        # ...and no reference is written, or the retry would resolve to nothing.
-        assert db.query(IntegrationReference).filter(IntegrationReference.source_ref.like('DK-%')).count() == 0
+        record = result.records[0]
+        assert record.outcome is IngestOutcome.UPDATED, record.errors
+        assert "deprecated_field" in record.warnings
+        assert db.execute(
+            text("SELECT count(*) FROM suppliers WHERE supplier_code LIKE 'ZZT-%'")
+        ).scalar() == 1
 
     def test_retry_succeeds_once_the_reference_exists(self, db, svc):
         payload = {
