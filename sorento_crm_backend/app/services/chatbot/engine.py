@@ -2715,7 +2715,56 @@ def _attachments_src(answer: Any) -> Any:
     same value back on `reply.attachments_src` so the node reads one field instead.
     """
     fragment = jsc.get(answer, "outcome_fragment")
-    return jsc.get(fragment, "central-exchange") if isinstance(fragment, dict) else None
+    files = jsc.get(fragment, "central-exchange") if isinstance(fragment, dict) else None
+    return _dedupe_attachments(files)
+
+
+def _dedupe_attachments(files: Any) -> Any:
+    """One send per FILE, and a filename that says WHICH file it is.
+
+    Two company scopes reach the same attachment row, which sent the same file twice; and
+    two DIFFERENT files legitimately share a filename across companies (the console run's
+    "TLLU4618098 - WH.xlsx", Sorento's pending-allocation copy next to Mocha's allocated
+    one), which reads as a duplicate to the customer. So the id collapses a true duplicate,
+    and a surviving filename collision is qualified with its company. A distinct file is
+    never dropped for sharing a name.
+
+    The value is only ever the attachment LIST on this path; every other shape (the casual
+    lane hands back its answer envelope) passes through untouched.
+    """
+    if not isinstance(files, list):
+        return files
+    kept: list[Any] = []
+    seen_ids: set[Any] = set()
+    for entry in files:
+        if not isinstance(entry, dict):
+            kept.append(entry)
+            continue
+        attachment_id = entry.get("id")
+        if jsc.truthy(attachment_id):
+            if attachment_id in seen_ids:
+                continue
+            seen_ids.add(attachment_id)
+        kept.append(entry)
+
+    name_counts: dict[str, int] = {}
+    for entry in kept:
+        if isinstance(entry, dict) and jsc.truthy(entry.get("filename")):
+            name = jsc.js_string(entry.get("filename"))
+            name_counts[name] = name_counts.get(name, 0) + 1
+
+    labelled: list[Any] = []
+    for entry in kept:
+        if not isinstance(entry, dict) or not jsc.truthy(entry.get("filename")):
+            labelled.append(entry)
+            continue
+        name = jsc.js_string(entry.get("filename"))
+        company = entry.get("company")
+        if name_counts.get(name, 0) > 1 and jsc.truthy(company):
+            labelled.append({**entry, "filename": f"{name} ({jsc.js_string(company)})"})
+        else:
+            labelled.append(entry)
+    return labelled
 
 
 def run_tail(
