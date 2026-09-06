@@ -41,6 +41,7 @@ vi.mock('../lib/portal-client', async (importOriginal) => {
 
 import { fetchMe, fetchSubmission, fetchSubmissionNeighbours } from '../lib/portal-client';
 import { SubmissionForm } from './SubmissionForm';
+import { waitForSectionLoaded } from '@/test-utils';
 
 // Captures every render of the shared preview modal so the banner test can
 // assert on the exact `items` it was handed (staff uploads only - never the
@@ -135,24 +136,13 @@ beforeEach(() => {
   } satisfies PortalSubmissionNeighbours);
 });
 
-async function waitForLoaded() {
-  // The loading state renders `SectionSkeleton` (role="status", name "Loading"),
-  // not the old "Loading..." text - wait for the skeleton itself to unmount so
-  // callers doing a synchronous `getByText` right after this resolve never race
-  // the fetch's state update (PR #669, design-system M5 loading shells).
-  await waitFor(() => {
-    expect(screen.queryByText(/^loading/i)).toBeNull();
-    expect(screen.queryByRole('status', { name: 'Loading' })).toBeNull();
-  });
-}
-
 describe('SubmissionForm - staff attachment banner', () => {
   it('renders no attachment-count block or button when there are zero staff attachments', async () => {
     (fetchSubmission as ReturnType<typeof vi.fn>).mockResolvedValue(
       detail({ attachments: [contactFile()] }),
     );
     render(<SubmissionForm kind="stock_inquiry" submissionId="si-1" />);
-    await waitForLoaded();
+    await waitForSectionLoaded();
 
     expect(screen.getByText('Comment / reply by purchasing')).toBeInTheDocument();
     expect(screen.queryByText(/attachment.*from purchasing/i)).toBeNull();
@@ -167,7 +157,7 @@ describe('SubmissionForm - staff attachment banner', () => {
       detail({ attachments: [contactFile(), staffFile({ link_id: 's-1' })] }),
     );
     render(<SubmissionForm kind="stock_inquiry" submissionId="si-1" />);
-    await waitForLoaded();
+    await waitForSectionLoaded();
 
     expect(screen.getByText(/1 attachment from purchasing/)).toBeInTheDocument();
     expect(
@@ -187,7 +177,7 @@ describe('SubmissionForm - staff attachment banner', () => {
       }),
     );
     render(<SubmissionForm kind="stock_inquiry" submissionId="si-1" />);
-    await waitForLoaded();
+    await waitForSectionLoaded();
 
     expect(screen.getByText(/3 attachments from purchasing/)).toBeInTheDocument();
     expect(
@@ -206,7 +196,7 @@ describe('SubmissionForm - staff attachment banner', () => {
       }),
     );
     render(<SubmissionForm kind="stock_inquiry" submissionId="si-1" />);
-    await waitForLoaded();
+    await waitForSectionLoaded();
 
     fireEvent.click(screen.getByRole('button', { name: 'View attachments (2)' }));
 
@@ -234,7 +224,7 @@ describe('SubmissionForm - portal record navigation', () => {
       total: 5,
     });
     render(<SubmissionForm kind="stock_inquiry" submissionId="si-1" />);
-    await waitForLoaded();
+    await waitForSectionLoaded();
     await waitFor(() => expect(screen.getByText('2 / 5')).toBeInTheDocument());
 
     expect(screen.queryByLabelText('Previous submission')).toBeNull();
@@ -250,7 +240,7 @@ describe('SubmissionForm - portal record navigation', () => {
       total: 5,
     });
     render(<SubmissionForm kind="stock_inquiry" submissionId="si-1" />);
-    await waitForLoaded();
+    await waitForSectionLoaded();
     await waitFor(() => expect(screen.getByLabelText('Previous submission')).toBeInTheDocument());
     expect(screen.queryByLabelText('Next submission')).toBeNull();
   });
@@ -264,7 +254,7 @@ describe('SubmissionForm - portal record navigation', () => {
       total: 5,
     });
     render(<SubmissionForm kind="stock_inquiry" submissionId="si-1" />);
-    await waitForLoaded();
+    await waitForSectionLoaded();
     await waitFor(() => expect(screen.getByLabelText('Next submission')).toBeInTheDocument());
 
     document.body.focus();
@@ -282,7 +272,7 @@ describe('SubmissionForm - portal record navigation', () => {
       total: 5,
     });
     render(<SubmissionForm kind="stock_inquiry" submissionId="si-1" />);
-    await waitForLoaded();
+    await waitForSectionLoaded();
     await waitFor(() => expect(screen.getByLabelText('Next submission')).toBeInTheDocument());
 
     const additionalRemark = document.getElementById('additional_remark') as HTMLTextAreaElement;

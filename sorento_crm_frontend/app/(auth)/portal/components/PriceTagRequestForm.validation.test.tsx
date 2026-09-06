@@ -114,6 +114,7 @@ import {
 } from '../lib/price-tag-request-service';
 import { uploadAttachment } from '../lib/portal-client';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
+import { selectOption } from '@/test-utils';
 
 const DEBTORS = [{ code: 'ZZTD01', name: 'ZZT Dealer Sdn Bhd' }];
 const ITEMS = [
@@ -133,10 +134,7 @@ beforeEach(() => {
 
 async function addLineWithAProduct() {
   fireEvent.click(screen.getByRole('button', { name: /Add line/ }));
-  await screen.findByText('ZZT Kitchen Sink');
-  fireEvent.change(screen.getByLabelText('Search a set or product...'), {
-    target: { value: 'product:prod-uuid-1' },
-  });
+  await selectOption('Search a set or product...', 'product:prod-uuid-1');
 }
 
 describe('Save Draft validates nothing (D48a)', () => {
@@ -157,10 +155,7 @@ describe('Save Draft validates nothing (D48a)', () => {
 
   it('saves a form that has a debtor and nothing else', async () => {
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
-    fireEvent.change(screen.getByLabelText('Debtor'), {
-      target: { value: 'ZZTD01' },
-    });
+    await selectOption('Debtor', 'ZZTD01');
 
     fireEvent.click(screen.getByRole('button', { name: /Save Draft/ }));
 
@@ -246,10 +241,7 @@ describe('Submit says what is missing (D48b)', () => {
 
   it('names the row that has no item picked', async () => {
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
-    fireEvent.change(screen.getByLabelText('Debtor'), {
-      target: { value: 'ZZTD01' },
-    });
+    await selectOption('Debtor', 'ZZTD01');
     fireEvent.change(screen.getByLabelText(/Needed by/), {
       target: { value: '2026-09-30' },
     });
@@ -269,9 +261,7 @@ describe('Submit says what is missing (D48b)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
     await screen.findByText('Select the dealer these tags are for.');
 
-    fireEvent.change(screen.getByLabelText('Debtor'), {
-      target: { value: 'ZZTD01' },
-    });
+    await selectOption('Debtor', 'ZZTD01');
 
     await waitFor(() =>
       expect(
@@ -288,10 +278,7 @@ describe('Submit says what is missing (D48b)', () => {
       ),
     );
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
-    fireEvent.change(screen.getByLabelText('Debtor'), {
-      target: { value: 'ZZTD01' },
-    });
+    await selectOption('Debtor', 'ZZTD01');
     fireEvent.change(screen.getByLabelText(/Needed by/), {
       target: { value: '2026-09-30' },
     });
@@ -316,10 +303,7 @@ describe('Submit says what is missing (D48b)', () => {
       }),
     );
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
-    fireEvent.change(screen.getByLabelText('Debtor'), {
-      target: { value: 'ZZTD01' },
-    });
+    await selectOption('Debtor', 'ZZTD01');
     fireEvent.change(screen.getByLabelText(/Needed by/), {
       target: { value: '2026-09-30' },
     });

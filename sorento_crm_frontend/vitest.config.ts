@@ -32,6 +32,17 @@ export default defineConfig({
       diagnosis at all.
     */
     testTimeout: 20000,
+    /*
+      CI only: a failed test is re-run up to twice before it counts. The full
+      suite (~10.5k tests) runs on a 2-vCPU runner, and on 2026-09-06 five
+      consecutive deploy runs were each blocked by ONE different test hitting
+      its 5s async wait with a starved worker, while the same files pass in a
+      loop locally. A real failure still fails all three attempts and blocks.
+      Vitest reports a test that passed on retry as flaky in the summary, so
+      the signal is not lost. Local runs keep retry at 0 so a flake is seen
+      while it is being written.
+    */
+    retry: process.env.CI ? 2 : 0,
     exclude: ['node_modules/**', 'e2e/**', '.next/**'],
   },
 });
