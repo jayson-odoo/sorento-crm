@@ -12,6 +12,17 @@
 # text plus every `send_message` action, because the escalation lane's assignment arm sends
 # its sentences as actions and composes no reply at all.
 #
+# THE TEXT IS THE OWNER'S OWN, character for character. Three of these cases were written
+# from a paraphrase of the reported turn ("do you have X, Y and Z in stock" for a pasted
+# STOCK STATUS list; the full legal customer name where the owner typed one word), and a
+# paraphrase changes which branch runs: it resolved a variant exactly instead of a base
+# code, and it put the answer into the question so `reply_contains` graded an echo. Never
+# tidy a case's wording.
+#
+# `cold: true` sends `previous_conversation_state: {}` - the harness saying "this contact
+# remembers nothing" (AC-112). The script borrows a real contact's envelope and that
+# contact has real stored state, so a turn the owner hit cold needs the flag to reproduce.
+#
 # LANE 2 ADDS THE PICKER SEQUENCES. The multi-turn form is here (a `turns:` list feeds each
 # reply's session variables into the next as `previous_conversation_state`), and the picker
 # and did-you-mean sequences from the same console run belong in it once lane 2 lands.
@@ -20,11 +31,16 @@
 contact: "437264483"
 
 cases:
+  # H. THE OWNER'S OWN WORDS, not a paraphrase of them. The paraphrase ("do you have X, Y
+  # and Z in stock") passed on `MSK11A-QT` alone while the turn's cross-domain block was
+  # empty - the probe answered as a string the lane threw away - so what is graded now is
+  # the SENTENCE that block exists to produce.
   - name: three codes, the third has neither stock nor incoming
-    text: "do you have SRTWC8517, SRTWB7096 and MSK11A-QT in stock"
+    text: "STOCK STATUS\nMWT5727SS-CR\nMHS1028\nMSK11A-QT"
+    cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["MSK11A-QT"]
+      reply_contains: ["No stock and no incoming for MSK11A-QT", "escalate"]
       no_uuid: true
 
   - name: a container number is named, never its uuid
@@ -33,11 +49,28 @@ cases:
       reply_contains: ["TGHU6295708"]
       no_uuid: true
 
+  # B. The owner typed the BASE code, lower case, in a sentence - and that is the turn the
+  # family offer exists for. "check eta SRTWB1542-MG" named a variant that resolves
+  # exactly, so it never reached `sibling-gate` at all and the case passed on the base code
+  # being echoed back by the miss line.
   - name: eta for a partly typed variant code offers the family
-    text: "check eta SRTWB1542-MG"
+    text: "Pls check eta srtwb1542"
+    cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["SRTWB1542"]
+      reply_contains: ["Related products:", "SRTWB1542-MG"]
+      no_uuid: true
+
+  # Prod turn 631d4b65: the item A display-key ladder put `product_name` ahead of the code,
+  # so this answered "product: Iborn. Bidet. (+7 more)" - the code the customer typed, and
+  # the only string they can check the answer against, was gone.
+  - name: an eta miss names the product code, never its description
+    text: "check eta for IBKS7245-NG-BL"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["IBKS7245-NG-BL"]
+      reply_not_contains: ["product: Iborn"]
       no_uuid: true
 
   - name: an idea reaches the ideate lane
@@ -49,9 +82,10 @@ cases:
   - name: a cold "all of them" is a clarification, not small talk
     text: "all of them"
     # COLD, and that is the whole case: with the contact's stored state the parser
-    # correctly reads a continuation and answers it. `{}` is the harness saying "this
-    # contact remembers nothing", which is the shape the owner's turn arrived in.
-    previous_conversation_state: {}
+    # correctly reads a continuation and answers it. `cold: true` sends
+    # `previous_conversation_state: {}`, the harness saying "this contact remembers
+    # nothing", which is the shape the owner's turn arrived in (AC-112).
+    cold: true
     expect:
       branch_kind: clarify_menu
       reply_contains: ["Are you asking about"]
@@ -64,13 +98,86 @@ cases:
       reply_not_contains: ["1. *Filename:*"]
       no_uuid: true
 
+  # I. The owner typed "hanlim", not the full legal name, and that is what makes the two
+  # `customers` rows both resolve on one token. Spelling the name out in the case was
+  # feeding the answer to the assertion: "HANLIM" appeared in the reply because it had been
+  # in the QUESTION.
   - name: the not-found line labels its axes and hides the debtor code
-    text: "any orders for HANLIM TRADING SDN BHD with RPACC"
+    text: "delivery to hanlim customer, product rpacc"
+    cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["HANLIM"]
-      reply_not_contains: ["300-H070", "[A/C I]"]
+      reply_contains: ["customer HANLIM TRADING SDN BHD", "product RPACC"]
+      reply_not_contains: ["300-H070", "[A/C I]", "[A/C II]"]
       no_uuid: true
+
+  # Prod turn 1c175a0a: the picker resolved and the answer arrived with no header at all.
+  # A `turns:` case, because the defect only exists on the SECOND turn - the first one is
+  # the picker, and a single-turn case cannot reach the arm.
+  - name: a pick-resolved order list still states its search scope
+    cold: true
+    turns:
+      - text: "customer a craft delivery order"
+        expect:
+          branch_kind: business_query
+          no_uuid: true
+      - text: "1"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Customer: ", "Dates: "]
+          no_uuid: true
+
+  # Prod exec 15443838. Turn 3 came back `offer_hold` with zero entities and re-showed the
+  # same six-name roster: a bare token with no verb is emitted `casual`, and the casual arm
+  # wiped the entity before rule 3's filter arm could read it. Turn 2 already passed (a
+  # date window is a filter in any domain) and is here so turn 3 arrives in the real state.
+  - name: a pending order roster does not swallow a bare product code
+    cold: true
+    turns:
+      - text: "delivery to hanlim, product srtwc286"
+        expect:
+          branch_kind: business_query
+          no_uuid: true
+      - text: "last month"
+        expect:
+          branch_kind: business_query
+          no_uuid: true
+      - text: "rpacc"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["RPACC"]
+          reply_not_contains: ["not one of the options"]
+          no_uuid: true
+
+  # Prod execs 15445325 / 15445363. The out-of-range digit re-prompted correctly and kept
+  # the tier list, but persisted no product and no domain, so the valid "all" that followed
+  # answered "I need at least one filter". "9" and not "3": the #34 script offers THREE
+  # tiers, so "3" is in range and would grade the happy path instead.
+  #
+  # UNVERIFIED LOCALLY: no embedding provider. On the 6 Sep lane run this case went red
+  # with the offer turn persisting `selection_context: null` / `entities: []` /
+  # `domain_hint: null`, but that machine has an empty `OPENAI_API_KEY`, so every turn
+  # that reaches the fetch takes the tool-search error arm and none of those nulls says
+  # anything about the offer arm - `answer.access_level_choice_message` does set
+  # `tier_offer` + `tier_last_result_set`, which `compile_state` turns into
+  # `selection_context: tier_offer`. The carry itself is proven by
+  # `TestACarriedOfferKeepsTheSubjectItWasMadeAbout` and
+  # `TestAnOutOfRangePickKeepsTheProductInScope`. Re-run this case somewhere with a
+  # provider before drawing any conclusion from it.
+  - name: an out-of-range tier pick keeps the product in scope
+    cold: true
+    turns:
+      - text: "promotion 7445"
+        expect:
+          no_uuid: true
+      - text: "9"
+        expect:
+          no_uuid: true
+      - text: "all"
+        expect:
+          reply_contains: ["7445"]
+          reply_not_contains: ["at least one filter"]
+          no_uuid: true
 
   - name: a delivered-status miss names the status and the eta date
     text: "has DO12345 been delivered"

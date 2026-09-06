@@ -1590,6 +1590,24 @@ _DATE_SCOPE_DOMAINS = frozenset({"order"})
 
 _ORDER_TYPES = frozenset({"order", "customer_order", "order_number"})
 
+# Types whose CANONICAL CODE is the identity the customer recognises, so the resolver's
+# `display` name must never stand in for it (owner rule, 6 Sep 2026; prod turn 631d4b65).
+#
+# `product` and only `product`, and the set is one entry because that is what the evidence
+# supports. Item A put `product_name` at the head of `_DISPLAY_NAME_KEYS` so a shipment
+# with a null `shipment_number` could print its container, and "check eta for
+# IBKS7245-NG-BL" then answered "product: Iborn. Bidet. (+7 more)" - a free-text
+# description maintained for a different audience, with no way for the reader to tell it
+# means the code they asked about.
+#
+# Every OTHER type is already right and is deliberately left alone: a customer, a
+# transporter, a form and a brand have no customer-facing code (their `canonical_code` is
+# an internal account or slug), a promotion's canonical_code IS its uuid, an
+# `attachment_type` is known by its type name, and `spo` / `grn` / `warehouse` reach this
+# ladder through display keys that are themselves codes. The trigger for a second entry is
+# a measured turn where a coded type prints a name instead.
+_CODE_FIRST_TYPES = frozenset({"product"})
+
 # DENY-list, not an allow-list, ON PURPOSE. `brand` / `category` reach `compatible_entities`
 # on the product domains but `entity-ids-transformer` maps neither to a tool param, so a
 # category resolved in one company beside a product resolved in another would make
@@ -1924,6 +1942,27 @@ def not_found_error_message(
                     name = f"{jsc.js_string(code)} ({jsc.js_string(customer)})" if jsc.truthy(customer) else code
                 else:
                     name = customer if jsc.truthy(customer) else ""
+            elif jsc.get(match, "entity_type") in _CODE_FIRST_TYPES:
+                # CODE FIRST. The code is what the customer typed, what is on the carton and
+                # what they will type again; the name is a description for somebody else.
+                # It falls back to the display name only when there is no code at all, so
+                # the entity is still named rather than dropped.
+                #
+                # The name is deliberately NOT appended in parentheses today: on the turn
+                # this rule comes from it is junk, and "IBKS7245-NG-BL (Iborn. Bidet.)"
+                # publishes the junk next to the answer instead of in place of it. The
+                # trigger for adding it is a measured turn where the code alone is
+                # genuinely ambiguous to the reader.
+                code = jsc.get(match, "canonical_code")
+                if jsc.truthy(code):
+                    name = code
+                else:
+                    name = ""
+                    for key in _DISPLAY_NAME_KEYS:
+                        value = jsc.get(display, key)
+                        if jsc.truthy(value):
+                            name = value
+                            break
             else:
                 # `attachment_type` shows its `type_name`, NOT the long alias description;
                 # `description` stays ahead of `canonical_code` so a promotion (whose code IS

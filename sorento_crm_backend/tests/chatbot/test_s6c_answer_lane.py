@@ -2555,3 +2555,125 @@ class TestStatusAwareMissMessageIncludesTheEtaDate:
             "the owner's ruling wants the estimated delivery date in the message too, "
             f"not just the status: {message!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Owner console defect A, the REGRESSION (prod turn 631d4b65, 6 Sep 2026). Item A widened
+# `_DISPLAY_NAME_KEYS` so an `inbound_shipment` with a null `shipment_number` printed its
+# container rather than its uuid - and put `product_name` at the head of that list, so a
+# PRODUCT now prints its description instead of its code. `check eta for IBKS7245-NG-BL`
+# answered "product: Iborn. Bidet. (+7 more)": the code the customer typed, and the only
+# string they can check the answer against, was gone.
+# --------------------------------------------------------------------------- #
+
+
+class TestAProductIsNamedByItsCode:
+    """Owner rule: for a PRODUCT the CODE is the identity.
+
+    Name-first is right only for types with no customer-facing code - a customer, a
+    transporter, a form, a brand are known by name and their `canonical_code` is an
+    internal account or slug. A product code is what the customer typed, what is on the
+    carton and what they will type again; a `product_name` is a free-text description
+    maintained for a different audience ("Iborn. Bidet."), and there is no way for the
+    reader to tell that it means the code they asked about.
+    """
+
+    CODE = "IBKS7245-NG-BL"
+    UUID = "aaaa1111-1111-4a11-9a11-111111111111"
+
+    def _match(self, code: str, uuid: str, name: str) -> dict:
+        return {
+            "entity_type": "product",
+            "uuid": uuid,
+            "canonical_code": code,
+            "display": {"product_name": name, "is_active": True},
+        }
+
+    def _run(self, matches: list[dict], *, token: str) -> str:
+        from app.services.chatbot.lanes.business.answer import not_found_error_message
+
+        resolved = {
+            "tokens": [token],
+            "unresolved_tokens": [],
+            "resolutions": [{"token": token, "matches": matches}],
+            "intersection": matches,
+            "by_entity_type": {"product": matches},
+        }
+        parser = {
+            "domain_hint": "incoming",
+            "entities": [{"hint": "product", "raw": token}],
+            "routing": {"suggested_team": "purchasing"},
+            "access_levels": [],
+        }
+        gate = {
+            "gate_passed": True,
+            "compatible_entities": [
+                {"uuid": m["uuid"], "entity_type": "product", "code": m["canonical_code"]}
+                for m in matches
+            ],
+        }
+        out = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
+        return (out.get("found_summary") or "") + "\n" + (out.get("escalate_message") or "")
+
+    def test_the_breakdown_names_the_code_never_the_description_alone(self) -> None:
+        rendered = self._run(
+            [self._match(self.CODE, self.UUID, "Iborn. Bidet.")], token=self.CODE
+        )
+        assert f"product: {self.CODE}" in rendered, (
+            "the product line must open with the code the customer typed: "
+            f"{rendered!r}"
+        )
+        assert "product: Iborn. Bidet." not in rendered, (
+            f"the description must never stand in for the code: {rendered!r}"
+        )
+
+    def test_the_typed_code_is_the_representative_of_a_collapsed_family(self) -> None:
+        """The "(+7 more)" collapse stays; what must not happen is a SIBLING being the one
+        name the customer sees. The loose IB* prefix match that pulled the siblings in is
+        pre-existing and is a different problem."""
+        siblings = [
+            self._match(f"IBKS7245-NG-{n}", f"aaaa1111-1111-4a11-9a11-11111111111{i}", "Iborn. Bidet.")
+            for i, n in enumerate(("RD", "GR", "WH"), start=2)
+        ]
+        rendered = self._run(
+            [self._match(self.CODE, self.UUID, "Iborn. Bidet."), *siblings], token=self.CODE
+        )
+        assert f"product: {self.CODE}" in rendered, (
+            f"the typed code must be the representative of the collapsed set: {rendered!r}"
+        )
+
+    def test_a_customer_is_still_named_by_its_display_name(self) -> None:
+        """Item I stays green: a customer HAS no customer-facing code, so name-first is
+        the right ladder there and the account code is the internal identifier."""
+        from app.services.chatbot.lanes.business.answer import not_found_error_message
+
+        cust_uuid = "bbbb2222-2222-4b22-9b22-222222222222"
+        match = {
+            "entity_type": "customer",
+            "uuid": cust_uuid,
+            "canonical_code": "300-H070",
+            "display": {"customer_name": "HANLIM TRADING SDN BHD"},
+        }
+        resolved = {
+            "tokens": ["hanlim"],
+            "unresolved_tokens": [],
+            "resolutions": [{"token": "hanlim", "matches": [match]}],
+            "intersection": [match],
+            "by_entity_type": {"customer": [match]},
+        }
+        parser = {
+            "domain_hint": "order",
+            "entities": [{"hint": "customer", "raw": "hanlim"}],
+            "routing": {"suggested_team": "customer_service"},
+            "access_levels": [],
+        }
+        gate = {
+            "gate_passed": True,
+            "compatible_entities": [
+                {"uuid": cust_uuid, "entity_type": "customer", "code": "300-H070"}
+            ],
+        }
+        out = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
+        rendered = (out.get("found_summary") or "") + "\n" + (out.get("escalate_message") or "")
+        assert "HANLIM TRADING SDN BHD" in rendered, rendered
+        assert "300-H070" not in rendered, rendered

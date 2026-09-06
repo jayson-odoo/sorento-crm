@@ -31,6 +31,14 @@ from typing import Any, Mapping
 from app.services.chatbot import jsc
 
 
+# How many turns an UNANSWERED member offer survives, counted down on the marker. The
+# same 3 the did-you-mean offer uses, and the same rule for the same reason (owner ruling,
+# 6 Sep 2026, AC-816 rule 1): an offer is what is on the customer's screen, and it stops
+# being that when they move on. Living forever is what let a bare "yes" about something
+# else assign a human off an offer the customer had ignored.
+MEMBER_OFFER_TTL = 3
+
+
 def escalation_team(qf: Mapping[str, Any], gate: Any) -> Any:
     """The team an escalation offer names. ONE declaration, two callers.
 
@@ -50,6 +58,7 @@ def derive(
     qf: Mapping[str, Any],
     gate: Any = None,
     selection_context: Any = None,
+    member_offer_ttl: int | None = None,
 ) -> dict[str, Any] | None:
     """`variables.pending`, or None when nothing is pending.
 
@@ -65,6 +74,11 @@ def derive(
             "kind": "member_offer",
             "team": escalation_team(qf, gate),
             "domain": jsc.get(qf, "domain_hint"),
+            # The offer's remaining life. `None` means it was made THIS turn, so the clock
+            # starts; a carried offer arrives with the decremented value already worked
+            # out by `compile_state._offer_carry`, which is the block that decides whether
+            # there is anything left to carry at all.
+            "ttl": MEMBER_OFFER_TTL if member_offer_ttl is None else member_offer_ttl,
         }
     if not offer_open:
         return None

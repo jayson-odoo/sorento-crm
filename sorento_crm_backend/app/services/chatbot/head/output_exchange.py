@@ -646,8 +646,17 @@ def _offer_is_open(state: Any) -> bool:
     # BOTH offer kinds. A `member_offer` is an escalation offer with a roster attached -
     # its reply carries the same frozen phrase - so a reader that only knew the general
     # kind would go blind on every member-offer turn the day S8 deletes the regex below.
-    if jsc.get(jsc.get(state, "pending"), "kind") in ("escalation_offer", "member_offer"):
-        return True
+    #
+    # KIND IS NOT ENOUGH: a member offer has a lifetime (AC-816 rule 1), and this is the
+    # seam the lifetime exists for - "is an offer open?" is what turns a bare "yes" into
+    # `is_escalation_confirmation` twenty lines down. The tail stops writing the marker
+    # once the clock runs out, so an expired offer normally arrives as no marker at all;
+    # the explicit test is here anyway because this function is the one that decides, and
+    # a reader that trusted the kind alone would be one refactor away from the defect.
+    pending = jsc.get(state, "pending")
+    if jsc.get(pending, "kind") in ("escalation_offer", "member_offer"):
+        ttl = jsc.get(pending, "ttl")
+        return True if ttl is None else jsc.js_number(ttl) > 0
     response = jsc.get(state, "response")
     return bool(
         _OFFERED_ESCALATION_RE.search(jsc.js_string(response if jsc.truthy(response) else ""))
@@ -1613,6 +1622,46 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
                 continue
             o["entities"].append({**p, "current_message": True})
             cp_seen.add(k)
+
+    # -- a bare entity under an OPEN member roster is not small talk (AC-816 rule 3) ------ #
+    # Prod exec 15443838: under a six-name roster on the ORDER domain, "rpacc" came back
+    # `offer_hold` with zero entities and the roster re-shown, while the same turn under an
+    # inventory thread with no roster answered. The model calls a token with no verb
+    # `casual`; the casual arm 300 lines down then WIPES `entities`, and the continuity
+    # block immediately below skips casual outright - so by the time the member ladder asks
+    # "is this a filter?" there is nothing left that could be one, and it falls to the
+    # reprompt.
+    #
+    # D11: the label is decided by STATE, not by whether the model heard a verb. An offer
+    # is open and the customer named an entity, so this is a reply to the question the
+    # offer was made about. WHICH kind of reply - a narrowing (rule 3), a new query, or
+    # junk - is still the LADDER's decision and is deliberately not taken here: this block
+    # only stops the turn being thrown away before the ladder can read it.
+    #
+    # Narrow on purpose. A turn that engages the offer with a PICK signal (a yes / no, a
+    # number, a position) is a pick and must keep every arm it has today.
+    if o.get("message_type") == "casual":
+        _bf_prev = parent_input.get("previous_conversation_state") or {}
+        _bf_ents = [
+            e
+            for e in jsc.array(o.get("entities"))
+            if jsc.truthy(e) and jsc.get(e, "current_message") is True
+        ]
+        if (
+            _bf_ents
+            and jsc.get(_bf_prev, "selection_context") == "member_offer"
+            and _offer_is_open(_bf_prev)
+            and o.get("is_affirmative") is None
+            and not jsc.array(o.get("reference_positions"))
+            and not jsc.js_number(o.get("positions_resolved")) > 0
+        ):
+            o["message_type"] = "business_query"
+            # Diagnostic, and safe to add: MEASURED over the whole corpus on 6 Sep 2026,
+            # `bare_entity_under_offer` appears in 0 of the 3258 full-corpus fixture
+            # files and 0 of the 240 vendored ones, so no capture is graded differently
+            # for carrying it - the same check `gate._display_name` earned before its key
+            # was added.
+            o["bare_entity_under_offer"] = True
 
     # -- domain continuity for entity-bearing continuations (bare "Y" code) -------------- #
     # Key on the EFFECTIVE domain signal, NOT domain_hint===null. Must run BEFORE
