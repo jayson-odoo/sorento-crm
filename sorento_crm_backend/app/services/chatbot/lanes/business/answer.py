@@ -713,10 +713,21 @@ def crossdomain_render(
         by_code.setdefault(c.upper(), []).append(it)
 
     blocks: list[str] = []
+    # Codes that came back empty on BOTH sides. Owner ruling (6 Sep 2026): name them and
+    # offer an escalation, rather than dropping them so the reply lists only the codes that
+    # had something to show. "Positive facts only" still holds for a code the probe never
+    # ASKED about - one with no uuid was never probed, so "no incoming" would be an absence
+    # nothing established - so only a PROBED code earns the negative line.
+    nothing: list[str] = []
     for m in jsc.array(zs.get("missing")):
         rows = list(by_code.get(jsc.get(m, "_n"), []))
         if not rows:
-            continue  # positive facts only
+            code = jsc.get(m, "code") or jsc.get(m, "_n")
+            if jsc.truthy(jsc.get(m, "uuid")) and jsc.truthy(code) and not _ms_is_uuid(code):
+                label = jsc.js_string(code)
+                if label not in nothing:
+                    nothing.append(label)
+            continue
 
         def qty(it: Any) -> float:
             """`Number(fieldPref(it, 'quantity_on_hand', 'quantity on hand') ?? NaN)`.
@@ -799,9 +810,30 @@ def crossdomain_render(
             )
             silent_note = "\n\n" + "\n".join(f"*{n}:* no {what}." for n in silent)
 
+    # Same shape as `silent_note` above: a trailing paragraph on the same block, so one
+    # message carries both what WAS found and what was not.
+    nothing_note = ""
+    if nothing:
+        origin_incoming = zs.get("origin_domain") == "incoming"
+        primary_word = "incoming" if origin_incoming else "stock"
+        other_word = "stock" if origin_incoming else "incoming"
+        team = zs.get("team")
+        offer = (
+            f" Would you like me to escalate to {jsc.js_string(team)} team?"
+            if jsc.truthy(team)
+            else " Would you like me to escalate this?"
+        )
+        nothing_note = (
+            f"No {primary_word} and no {other_word} for {', '.join(nothing)}.{offer}"
+        )
+
+    body = (lead + "\n\n" + "\n\n".join(blocks) + silent_note + mention) if blocks else ""
+    if nothing_note:
+        body = f"{body}\n\n{nothing_note}" if body else nothing_note
+
     out["_xdBlock"] = {
-        "block": (lead + "\n\n" + "\n\n".join(blocks) + silent_note + mention) if blocks else "",
-        "any": len(blocks) > 0,
+        "block": body,
+        "any": bool(blocks) or bool(nothing_note),
         "attachments": xd_files,
         "team": zs.get("team") or None,
         "origin": zs.get("origin_domain") or None,

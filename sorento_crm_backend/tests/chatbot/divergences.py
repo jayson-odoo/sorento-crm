@@ -67,6 +67,26 @@ DIVERGENCES: list[Divergence] = [
     # S6c.
     # ------------------------------------------------------------------ #
     Divergence(
+        node="crossdomain-render",
+        fixture="exec-14131197",
+        hazard="H62 (owner console pass, 6 Sep 2026)",
+        reason=(
+            "'positive facts only' dropped a requested code that came back empty on BOTH "
+            "sides, so the reply named only the codes that had something to show. Owner "
+            "ruling: name it ('no stock and no incoming') and offer the escalation. This "
+            "capture is that case exactly - one probed missing code, zero probed rows - so "
+            "the port emits the negative paragraph where n8n emitted nothing. Field-scoped "
+            "to the two keys that carry it; every other byte is still compared, and the "
+            "other four crossdomain-render captures are byte-equal. Pinned by "
+            "tests/chatbot/test_s6c_answer_lane.py::"
+            "TestThirdCodeWithNoStockAndNoIncomingIsNamedWithEscalation."
+        ),
+        strip_paths=(
+            ("_xdBlock", "block"),
+            ("_xdBlock", "any"),
+        ),
+    ),
+    Divergence(
         node="build-suggest-offer",
         fixture="exec-14001140",
         hazard="D4 (AC-607) - the offer's identity is the TURN id",
