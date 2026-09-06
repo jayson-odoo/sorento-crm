@@ -170,18 +170,28 @@ def test_the_turn_path_never_reads_the_catalogue() -> None:
     import of it from the chatbot package or the external API would raise in every
     container and take every live business turn down through `run_fetch`'s broad `except`.
 
+    **Two doors, not one.** `mcp_tool_capability_service` is banned here as well, because
+    it is the back way to the same place: `_load_catalog_specs` inside it is what actually
+    imports the package, so a turn-path file that reaches for that module has the identical
+    failure with none of the obvious spelling. It is a perfectly good import everywhere
+    else - the seed script and the embedding backfill both use it - just never on a path a
+    customer's message runs down.
+
     A source scan rather than a mock, for `test_import_boundary.py`'s reason: an importer
-    that no test happens to execute is still an importer. It matches IMPORTS, not the word:
-    naming the package in a comment (this rule's own explanation lives in one) is fine, and
-    the four ways in are the same four that file enumerates.
+    that no test happens to execute is still an importer. It matches IMPORTS, not the name:
+    naming either module in a comment (this rule's own explanation lives in one) is fine,
+    and the ways in are the same ones that file enumerates.
     """
     import re
     from pathlib import Path
 
+    banned = r"(?:sorento_crm_mcp|mcp_tool_capability_service)"
     import_re = re.compile(
-        r"^\s*(?:from\s+sorento_crm_mcp\b|import\s+sorento_crm_mcp\b)"
-        r"|import_module\(\s*[\'\"]sorento_crm_mcp"
-        r"|__import__\(\s*[\'\"]sorento_crm_mcp",
+        rf"^\s*from\s+[\w.]*\b{banned}\b"
+        rf"|^\s*import\s+[\w.]*\b{banned}\b"
+        rf"|^\s*from\s+[\w.]+\s+import\s+(?:[^\n]*\b)?{banned}\b"
+        rf"|import_module\(\s*['\"][\w.]*{banned}"
+        rf"|__import__\(\s*['\"][\w.]*{banned}",
         re.MULTILINE,
     )
     backend_root = Path(__file__).resolve().parents[2]
@@ -197,7 +207,8 @@ def test_the_turn_path_never_reads_the_catalogue() -> None:
     ]
 
     assert not offenders, (
-        "these turn-path files IMPORT sorento_crm_mcp, which does not exist in the "
+        "these turn-path files reach the MCP catalogue - directly, or through "
+        "mcp_tool_capability_service, which loads it. The package does not exist in the "
         "deployed backend image (compose builds it with context: ./sorento_crm_backend), "
         "so every live business turn would fail: " + ", ".join(sorted(offenders))
     )
