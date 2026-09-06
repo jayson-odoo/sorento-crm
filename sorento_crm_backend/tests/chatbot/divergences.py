@@ -300,6 +300,27 @@ BROADEN_ALL_IS_A_CLARIFICATION = Divergence(
 )
 
 
+# Owner console pass, 6 Sep 2026. `not-found-error-message`'s status-aware arm derives
+# `eta` (` (estimated delivery <date>)`) and then never uses it - the JS computes the string
+# and drops it on the floor. The owner's ruling wants the date said: "Order <code>
+# (<customer>) hasn't been delivered yet - current status: <status> (estimated delivery
+# <date>)". The value is on the resolved order's own display, so nothing extra is read.
+#
+# Not fixture-visible: no graded `not-found-error-message` capture reaches the
+# `order_status: 'delivered'` arm with an estimated delivery date on the match. Pinned by
+# tests/chatbot/test_s6c_answer_lane.py::TestStatusAwareMissMessageIncludesTheEtaDate.
+STATUS_MISS_MESSAGE_STATES_THE_ETA = Divergence(
+    node="not-found-error-message",
+    fixture=None,
+    hazard="H61 (owner console pass, 6 Sep 2026)",
+    reason=(
+        "the delivered-status miss message states the estimated delivery date the JS "
+        "derives and discards. Not fixture-visible: no capture reaches that arm with a "
+        "date on the resolved order."
+    ),
+)
+
+
 def find(node: str, fixture: str) -> Divergence | None:
     """The registered divergence covering this replay, or None."""
     for d in DIVERGENCES:

@@ -2353,11 +2353,14 @@ def not_found_error_message(
                         eta_text = f" (estimated delivery {jsc.js_string(eta)})" if jsc.truthy(eta) else ""
                         status = jsc.get(display, "status")
                         status_text = f" - current status: {jsc.js_string(status)}" if jsc.truthy(status) else ""
-                        # `eta_text` is derived by the body and left unused on this arm, the
-                        # same as in the JS; kept so the two read line for line.
-                        del eta_text
+                        # The JS derives `eta` here and then never uses it. Owner ruling
+                        # (6 Sep 2026): the date is the one fact the customer asking "has it
+                        # been delivered" actually wants, so it is stated alongside the
+                        # status. The resolved order's OWN display carries it, so nothing is
+                        # re-read to say it.
                         escalate_message = (
-                            f"Order {label} hasn't been delivered yet{status_text}. "
+                            f"Order {label} hasn't been delivered yet{status_text}"
+                            f"{eta_text}. "
                             f"Would you like me to escalate to {team} team?"
                         )
                     else:
