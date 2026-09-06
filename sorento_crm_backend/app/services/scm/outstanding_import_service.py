@@ -301,9 +301,11 @@ class PreviewResult:
     missing_columns: list[str]
     row_problems: list[RowProblem] = field(default_factory=list)
     resolution_issues: list[ResolutionIssue] = field(default_factory=list)
-    # Documents whose demand class this file cannot decide (QP1). Non-empty means the
-    # upload is REFUSED - `ok` is False and `apply` writes nothing - so the confirm screen
-    # states the same verdict the commit would.
+    # Documents whose demand class this file cannot decide. Reported, never refused
+    # (D23, captain 2026-09-06, AC-P2-8 - reverses QP1/26 Aug 2026): the document still
+    # lands with `demand_class` NULL, on both this channel and the ESB, which has never
+    # refused on this (`WARN_UNCLASSIFIED_DEMAND`). Named so a re-upload once the customer's
+    # market segment or the agent's class is fixed can tell which orders still need it.
     unclassified_documents: list[str] = field(default_factory=list)
     samples: dict = field(default_factory=dict)
     # Documents this upload would lift to the live status. Same key as `apply`'s response, so
@@ -343,7 +345,10 @@ class PreviewResult:
 
     @property
     def ok(self) -> bool:
-        return not self.missing_columns and not self.unclassified_documents
+        # D23 (AC-P2-8): an unclassifiable document no longer refuses the file - it is
+        # reported (`unclassified_documents`) and lands with `demand_class` NULL, same
+        # end state the ESB has always reached via `WARN_UNCLASSIFIED_DEMAND`.
+        return not self.missing_columns
 
     def to_dict(self) -> dict:
         return {
@@ -2504,19 +2509,14 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
     if diff is None or resolved is None:
         return {"ok": False, "missing_columns": read.missing_columns, "counts": {}}
 
-    # QP1: an order nothing can classify refuses the FILE, before any write and before any
-    # outcome is recorded. Half a book is worse than none - the un-imported half is
-    # invisible while the imported half looks complete - and a defaulted class is worse
-    # still, because it is stable and no later upload surfaces it. The row problems name
-    # every offending order and its debtor; fixing the customer's market segment (or the
-    # order type, or the agent's class) and re-uploading is the whole remedy.
-    if plan.unclassified:
-        return {
-            "ok": False,
-            "unclassified_documents": list(plan.unclassified),
-            "row_problems": [asdict(p) for p in read.problems + plan.problems],
-            "counts": {},
-        }
+    # D23 (captain 2026-09-06, AC-P2-8, reverses QP1): an order nothing can classify no
+    # longer refuses the file - it lands with `demand_class` NULL (`_write_headers`'s own
+    # `cls = plan.demand.get(number)` already leaves the column untouched when nothing
+    # classified it) and is reported below, `unclassified_documents`/
+    # `unclassified_documents_numbers`, the same shape `suppliers_created`/
+    # `suppliers_created_codes` already use. Fixing the customer's market segment (or the
+    # order type, or the agent's class) and re-uploading is still the whole remedy - it is
+    # simply no longer the ONLY way the file is accepted at all.
 
     _record_rows_never_written(read, resolved, outcome)
 
@@ -3056,4 +3056,10 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         # AC-P2-1/D8 (S2): same shape, the customer side of the same fact.
         "customers_created": len(created_customer_codes),
         "customers_created_codes": created_customer_codes[:CREATED_SUPPLIERS_LISTED],
+        # D23/AC-P2-8: same shape again - the count is the whole truth, the list is
+        # capped so a book with hundreds of unclassifiable orders does not print all of
+        # them; `plan.unclassified` is document NUMBERS, not codes, hence `_numbers`
+        # rather than `_codes` to name what the values actually are.
+        "unclassified_documents": len(plan.unclassified),
+        "unclassified_documents_numbers": list(plan.unclassified)[:CREATED_SUPPLIERS_LISTED],
     }

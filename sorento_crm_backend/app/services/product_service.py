@@ -1419,68 +1419,45 @@ class ProductService:
         default_uom_id = self._get_default_uom_id()
         chunk_size = self.BULK_IMPORT_CHUNK_SIZE
 
-        # One-time lookups (3 queries total instead of 3 per row)
-        category_map = self._build_category_map()
-        brand_map = self._build_brand_map()
-        uom_map = self._build_uom_map()
         ref_counts = {"categories": 0, "brands": 0, "uoms": 0}
-
-        class _RefTooLong(ValueError):
-            """A source value that does not fit the code column."""
+        _REF_MODELS = {"category": ProductCategory, "brand": Brand, "uom": UnitOfMeasure}
+        _REF_COUNT_KEYS = {"category": "categories", "brand": "brands", "uom": "uoms"}
 
         def ensure_reference(kind: str, raw_value: str) -> str:
             """Resolve a master-data value, creating the row when it is unknown.
 
-            Committed immediately: a later row failing and rolling back its
-            transaction must not take an already-referenced category/brand/UOM
-            with it (the surviving rows would then point at a vanished id).
+            Reconciled onto `product_rules.ensure_reference` (review S2,
+            2026-09-06): this closure used to match a raw value against a
+            code OR name lower-cased dict of ITS OWN, a different semantic
+            than the shared function's code-only `upper(btrim())` match every
+            OTHER caller (manual create/edit, the ESB push) went through -
+            `product_rules.ensure_reference` now matches code-then-name too,
+            so this is one body, not two that can drift.
+
+            Committed immediately on create (unchanged from the closure this
+            replaces): a later row in this same import failing and rolling
+            back its transaction must not take an already-referenced
+            category/brand/UOM with it - `product_rules.ensure_reference`
+            only flushes, so the commit stays the caller's job here.
             """
             value = str(raw_value).strip()
-            lookup = {"category": category_map, "brand": brand_map, "uom": uom_map}[kind]
-            existing_id = lookup.get(value.lower())
-            if existing_id:
-                return existing_id
-            if len(value) > self.REF_CODE_MAX_LEN:
-                raise _RefTooLong(
-                    f"{kind} '{value}' is {len(value)} characters; the code column holds "
-                    f"{self.REF_CODE_MAX_LEN}"
-                )
-            new_id = str(uuid.uuid4())
-            if kind == "category":
-                self.db.add(
-                    ProductCategory(
-                        id=new_id,
-                        category_code=value,
-                        category_name=value,
-                        description=self.AUTO_CREATED_NOTE,
-                        created_by=user_id,
+            model = _REF_MODELS[kind]
+            # `ReferenceTooLong` propagates as-is - `_RefTooLong` below is an
+            # alias onto the SAME class, so the call site's existing
+            # `except _RefTooLong` still catches it.
+            ref_id, was_created = product_rules.ensure_reference(
+                self.db, model, value, company_id=None
+            )
+            if was_created:
+                if model is ProductCategory or model is Brand:
+                    setattr(
+                        self.db.get(model, ref_id), "created_by", user_id
                     )
-                )
-                ref_counts["categories"] += 1
-            elif kind == "brand":
-                self.db.add(
-                    Brand(
-                        id=new_id,
-                        brand_code=value,
-                        brand_name=value,
-                        description=self.AUTO_CREATED_NOTE,
-                        created_by=user_id,
-                    )
-                )
-                ref_counts["brands"] += 1
-            else:
-                self.db.add(
-                    UnitOfMeasure(
-                        id=new_id,
-                        uom_code=value,
-                        uom_name=value,
-                        description=self.AUTO_CREATED_NOTE,
-                    )
-                )
-                ref_counts["uoms"] += 1
-            self.db.commit()
-            lookup[value.lower()] = new_id
-            return new_id
+                self.db.commit()
+                ref_counts[_REF_COUNT_KEYS[kind]] += 1
+            return ref_id
+
+        _RefTooLong = product_rules.ReferenceTooLong
 
         # id -> code, for the rows that report a unit MOVE. Built lazily and once, because a
         # re-import of the stock item list moves thousands of rows at a stroke and a lookup

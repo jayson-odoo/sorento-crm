@@ -58,6 +58,29 @@ def normalize_code(code: Optional[str]) -> str:
     return (code or "").strip().upper()
 
 
+def resolve_master_by_name(
+    db: Session, model: type, name: Optional[str], company_id: Optional[str] = None
+) -> Optional[str]:
+    """A row matched by its NAME column, case/whitespace-insensitive, within
+    the company - the second rung `ensure_reference`'s code-or-name match
+    (D3, review S2) uses, for the three references a product push may
+    auto-create. `None` when `model` has no name column here (only
+    `_NAME_COLUMNS`'s three do) or nothing matches.
+    """
+    normalized = normalize_code(name)
+    if not normalized:
+        return None
+    name_column = _NAME_COLUMNS.get(model)
+    if name_column is None:
+        return None
+    column = getattr(model, name_column)
+    query = db.query(model.id).filter(func.upper(func.btrim(column)) == normalized)
+    if company_id is not None and hasattr(model, "company_id"):
+        query = query.filter(model.company_id == company_id)
+    row = query.first()
+    return str(row[0]) if row else None
+
+
 def resolve_master_by_code(
     db: Session, model: type, code: Optional[str], company_id: Optional[str] = None
 ) -> Optional[str]:

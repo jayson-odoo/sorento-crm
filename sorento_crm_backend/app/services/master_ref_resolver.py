@@ -99,6 +99,10 @@ class MasterRefResolver:
         # cache for `Customer`/`Supplier` would go stale the moment this same
         # batch back-creates the row the first miss reported.
         self._memo: dict[tuple[str, str, str], Optional[str]] = {}
+        # S4 (perf review): the supplier name->ids map `_supplier_name_map`
+        # builds lazily, once, the first time this batch resolves a supplier
+        # by name rather than by ref/code. `None` until then, never rebuilt.
+        self._supplier_name_memo: Optional[dict[str, list[str]]] = None
 
     def _resolve_ref(
         self, field: str, source_ref: Optional[str], model: type
@@ -298,12 +302,7 @@ class MasterRefResolver:
                 # match" and "more than one match" to the same `None` - a
                 # separate count tells them apart, since only the second one
                 # refuses to back-create.
-                if entity_id is None and (
-                    master_rules.count_supplier_name_matches(
-                        self.db, name, self.company_id
-                    )
-                    > 1
-                ):
+                if entity_id is None and self._count_supplier_name_matches(name) > 1:
                     ambiguous = True
             if entity_id is not None:
                 return entity_id
@@ -326,6 +325,14 @@ class MasterRefResolver:
                         self._memo[
                             (model.__tablename__, "code", code.strip().upper())
                         ] = entity_id
+                    if name and self._supplier_name_memo is not None:
+                        # S4: keeps the lazily-built name map in sync - a
+                        # SECOND document in this batch naming the same
+                        # supplier by NAME alone must find it too, not read a
+                        # map built before this back-create happened.
+                        cleaned = master_rules.clean_supplier_name(name).upper()
+                        if cleaned:
+                            self._supplier_name_memo.setdefault(cleaned, []).append(entity_id)
                     return entity_id
             return None
 
@@ -393,17 +400,60 @@ class MasterRefResolver:
             self._memo[memo_key] = entity_id
         return entity_id
 
+    def _supplier_name_map(self) -> dict[str, list[str]]:
+        """Every supplier of this company, keyed by its CLEANED name (perf
+        review S4, 2026-09-06): `_resolve_supplier_by_name` and its
+        ambiguity-count sibling each used to load every supplier of the
+        company AGAIN on every call - a two-full-table-load-per-DOCUMENT cost
+        for a batch push naming its supplier by name rather than by ref/code.
+        Built once, lazily, and reused for both; kept in sync when this same
+        batch back-creates a NEW supplier (`_resolve_by_fallback`'s Supplier
+        rung appends to it there), for the same staleness reason `self._memo`
+        never caches a negative Customer/Supplier lookup.
+        """
+        if self._supplier_name_memo is None:
+            rows = (
+                self.db.query(Supplier.id, Supplier.supplier_name)
+                .filter(Supplier.company_id == self.company_id)
+                .all()
+            )
+            memo: dict[str, list[str]] = {}
+            for supplier_id, name in rows:
+                cleaned = master_rules.clean_supplier_name(name).upper()
+                if cleaned:
+                    memo.setdefault(cleaned, []).append(str(supplier_id))
+            self._supplier_name_memo = memo
+        return self._supplier_name_memo
+
     def _resolve_supplier_by_name(self, name: str) -> Optional[str]:
-        """Delegates to `master_rules.resolve_supplier_by_name` (D2, S3
+        """A supplier matched by its cleaned name, within the company (D2, S3
         repoint): a cleaned name matching more than one supplier now REFUSES
         (returns `None`) rather than picking the most recent row, matching
         `po_history_service`'s own ambiguity rule. The caller
-        (`_resolve_by_fallback`) separately checks `master_rules
-        .count_supplier_name_matches` to tell that refusal apart from a
-        genuine "not found" and warn `supplier_ambiguous` only for the
-        former - this function itself does not distinguish the two, exactly
-        as `resolve_supplier_by_name`'s own existing contract does not
+        (`_resolve_by_fallback`) separately checks `_count_supplier_name_matches`
+        to tell that refusal apart from a genuine "not found" and warn
+        `supplier_ambiguous` only for the former - this function itself does
+        not distinguish the two, exactly as `master_rules
+        .resolve_supplier_by_name`'s own existing contract does not
         (`tests/test_ingest_parity_s1_products.py
         ::test_resolve_supplier_by_name_refuses_an_ambiguous_cleaned_name`).
+
+        Reads the memoised per-batch name map (S4) instead of calling
+        `master_rules.resolve_supplier_by_name` directly - same match rule
+        (`clean_supplier_name(...).upper()`), one query for the whole batch.
         """
-        return master_rules.resolve_supplier_by_name(self.db, name, self.company_id)
+        cleaned = master_rules.clean_supplier_name(name).upper()
+        if not cleaned:
+            return None
+        matches = self._supplier_name_map().get(cleaned, [])
+        if len(matches) != 1:
+            return None
+        return matches[0]
+
+    def _count_supplier_name_matches(self, name: str) -> int:
+        """How many suppliers share `name`'s cleaned form, within the company
+        (S4: memoised sibling of `_resolve_supplier_by_name`, same map)."""
+        cleaned = master_rules.clean_supplier_name(name).upper()
+        if not cleaned:
+            return 0
+        return len(self._supplier_name_map().get(cleaned, []))

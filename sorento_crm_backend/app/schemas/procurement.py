@@ -449,12 +449,16 @@ class SPOAllocationBase(BaseModel):
     product_id: str
     # D6 (S3): AutoCount's `PO.Ref` / the SPO xlsx Loading Date cell, already
     # cleaned (`shipping_order_rules.extract_container_number`) by the caller.
-    container_number: Optional[str] = None
+    # `max_length` matches `spo_allocations.container_number VARCHAR(100)`
+    # (security review advisory b) - unbounded otherwise, unlike every other
+    # writer of this column.
+    container_number: Optional[str] = Field(None, max_length=100)
     # Section 7 currency gap (S3): absent on every SPO xlsx row today, unlike
     # the PO side which has carried it since the outstanding upload's own
     # `DEFAULT_PO_CURRENCY` fill - added so the two writers' parity test can
-    # stop excluding this column.
-    currency: Optional[str] = None
+    # stop excluding this column. `max_length=3` (security review advisory
+    # b) - an ISO 4217 code, same width as every other currency column.
+    currency: Optional[str] = Field(None, max_length=3)
 
 
 class SPOAllocationCreate(SPOAllocationBase):

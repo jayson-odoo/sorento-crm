@@ -78,6 +78,7 @@ from app.services.integration_reference_service import (
     IntegrationReferenceService,
     ReferenceConflict,
 )
+from app.services.rules import customer_rules
 from app.services.rules.document_rules import derive_document_status
 from app.services.scm import outstanding_diff
 # `MasterRefResolver` is the ref/code/name/back-create ladder (D1/D2/D10),
@@ -574,11 +575,20 @@ class DocumentIngestService(MasterRefResolver):
         # (`lines.dropped`) rather than silently disappearing.
         line_values: list[dict[str, Any]] = []
         dropped = 0
+        # B1 review fix: the dropped line's own PERSISTED counterpart must be
+        # left exactly as-is, never swept as a leftover just because this
+        # push's incoming version of it never made it into `line_values`.
+        # `source_ref` is a required field on every canonical line - always
+        # present even when the reference on it failed to resolve.
+        dropped_refs: list[str] = []
         for index, line in enumerate(payload.lines):
             try:
                 line_values.append(self._line_values(spec, line, index, status, warnings))
             except MissingReference:
                 dropped += 1
+                ref = getattr(line, "source_ref", None)
+                if ref:
+                    dropped_refs.append(ref)
 
         if spec.entity_type == "sales_orders" and outcome is IngestOutcome.UPDATED:
             self._capture_planning_diff_before(header, payload)
@@ -594,7 +604,7 @@ class DocumentIngestService(MasterRefResolver):
             setattr(header, column, value)
         self.db.flush()
 
-        line_counts = self._sync_lines(spec, header, line_values)
+        line_counts = self._sync_lines(spec, header, line_values, dropped_refs=dropped_refs)
         if dropped:
             line_counts["dropped"] = dropped
         if spec.entity_type == "sales_orders":
@@ -881,6 +891,20 @@ class DocumentIngestService(MasterRefResolver):
         # same shape-driven guard the currency fill above uses.
         if hasattr(payload, "order_type"):
             self._classify_sales_order(payload, values, warnings, header, customer_code)
+        # D16 (S2, review B5): `customer_segment`/`customer_region` threaded
+        # onto the customer this push just resolved-or-back-created -
+        # `customer_rules.back_create_customer` already accepted `segment`/
+        # `region` kwargs, but nothing on the document ladder ever called it
+        # with them (confirmed: zero references to `payload.customer_segment`
+        # in this file before this fix). Shape-driven the same way the
+        # `order_type` classification above is (`CanonicalPurchaseOrder`
+        # carries neither field) and fill-only, matching the masters push's
+        # own `market_segment_code` rule: a hand-set value is never
+        # overwritten.
+        if hasattr(payload, "customer_segment"):
+            self._apply_customer_segment_and_region(
+                values.get("customer_id"), payload, warnings
+            )
         # Adoption takes ownership: from here on the row is AutoCount's, and the
         # next push has to find it by reference rather than by number again.
         values["source_system"] = SOURCE_SYSTEM
@@ -888,6 +912,36 @@ class DocumentIngestService(MasterRefResolver):
         if spec.doc_no_column:
             values[spec.doc_no_column] = getattr(payload, spec.number_field)
         return values
+
+    def _apply_customer_segment_and_region(
+        self, customer_id: Optional[str], payload: Any, warnings: list[str]
+    ) -> None:
+        """D16 (review B5): `customer_segment` folds through the SAME
+        `customer_rules.fold_market_segment` the masters push uses, so the
+        two entry points can never map a spelling two different ways - an
+        unrecognised value drops with `segment_unknown` on the DOCUMENT
+        record rather than failing it (`market_segment_code` is a foreign
+        key). `region` is free text, written whenever sent. Both fill-only:
+        a hand-set value on an existing customer is never overwritten,
+        matching `_customer_columns`' own rule.
+        """
+        if not customer_id:
+            return
+        segment_raw = getattr(payload, "customer_segment", None)
+        region = getattr(payload, "customer_region", None)
+        if not segment_raw and not region:
+            return
+        customer = self.db.query(Customer).filter(Customer.id == customer_id).first()
+        if customer is None:
+            return
+        if segment_raw:
+            canonical = customer_rules.fold_market_segment(self.db, segment_raw)
+            if canonical is None:
+                warnings.append("segment_unknown")
+            elif not customer.market_segment_code:
+                customer.market_segment_code = canonical
+        if region and not customer.region:
+            customer.region = region
 
     def _classify_sales_order(
         self,
@@ -1087,7 +1141,12 @@ class DocumentIngestService(MasterRefResolver):
         return values
 
     def _sync_lines(
-        self, spec: DocumentSpec, header: Any, line_values: list[dict[str, Any]]
+        self,
+        spec: DocumentSpec,
+        header: Any,
+        line_values: list[dict[str, Any]],
+        *,
+        dropped_refs: Optional[list[str]] = None,
     ) -> dict[str, int]:
         """Make the header's lines equal to the payload's, by the line's own ref.
 
@@ -1135,6 +1194,21 @@ class DocumentIngestService(MasterRefResolver):
             else:
                 pool.append(row)
 
+        # B1 review fix: a dropped line's own persisted counterpart is
+        # protected from the leftover sweep, BY REF when one already exists
+        # under that exact `source_ref` - popped out of `by_ref` here, before
+        # the by-ref matching loop below even runs, so it is never touched by
+        # anything and never reaches the sweep at the bottom of this method.
+        # A drop whose ref matches NOTHING in `by_ref` (the ref-less/xlsx-era
+        # counterpart case - there is no product/warehouse to key a POOL match
+        # on for a line that never resolved) is counted instead and handed to
+        # `_adopt_lines`, which protects that many POOL rows positionally,
+        # the same tie-break its own pass 3 already trusts.
+        unresolved_dropped = 0
+        for ref in dropped_refs or ():
+            if by_ref.pop(ref, None) is None:
+                unresolved_dropped += 1
+
         counts = {"adopted": 0, "created": 0, "updated": 0, "deleted": 0, "cancelled": 0}
 
         unmatched: list[dict[str, Any]] = []
@@ -1171,8 +1245,10 @@ class DocumentIngestService(MasterRefResolver):
             else:
                 unmatched.append(values)
 
-        if unmatched and pool:
-            self._adopt_lines(spec, unmatched, pool, counts)
+        if pool and (unmatched or unresolved_dropped):
+            self._adopt_lines(
+                spec, header, unmatched, pool, counts, dropped_count=unresolved_dropped
+            )
 
         for values in unmatched:
             row = spec.line_model(
@@ -1207,9 +1283,12 @@ class DocumentIngestService(MasterRefResolver):
     def _adopt_lines(
         self,
         spec: DocumentSpec,
+        header: Any,
         unmatched: list[dict[str, Any]],
         pool: list[Any],
         counts: dict[str, int],
+        *,
+        dropped_count: int = 0,
     ) -> None:
         """D11: claim ref-less POOL rows for ref-less UNMATCHED incoming lines.
 
@@ -1220,7 +1299,16 @@ class DocumentIngestService(MasterRefResolver):
         2. `(product_id, warehouse_id-or-None)` alone, only where exactly one
            pool row remains for it;
         3. position alone (incoming `line_number` order against the rows' own
-           `created_at, id` order), only where the remaining counts agree.
+           `created_at, id` order), only where the remaining counts agree -
+           widened by `dropped_count` (B1 review fix): a line dropped for an
+           unresolvable reference never reaches `unmatched` at all, so
+           without this its own would-be pool match is never attempted and
+           the sweep below cancels/deletes a row that never changed. There is
+           no product/warehouse to key an exact match on for a line that
+           never resolved, so the protection is positional, same tie-break
+           this pass already trusts: the trailing `dropped_count` pool rows
+           (by the same `created_at, id` order) are excluded from the sweep
+           entirely - never written, never counted as adopted.
 
         `outstanding` is `qty_ordered - qty_delivered|qty_received`, never
         `qty_ordered` alone - the upload writes `qty_ordered = outstanding` on
@@ -1267,6 +1355,30 @@ class DocumentIngestService(MasterRefResolver):
 
         def _claim(idx: int, values: dict[str, Any], row: Any) -> None:
             values.pop("line_number", None)
+            # D22 (review B4): the ref-less adoption path did a blind
+            # `setattr` with none of the by-ref branch's conflict recording -
+            # an adopted xlsx-era row's warehouse changing between what Order
+            # Inquiry set and what AutoCount now states must land in
+            # `order_inquiry_conflicts` here too, not only overwritten.
+            if spec.entity_type == "sales_orders" and "warehouse_id" in values:
+                new_warehouse_id = values["warehouse_id"]
+                old_warehouse_id = row.warehouse_id
+                if (
+                    new_warehouse_id
+                    and old_warehouse_id
+                    and str(new_warehouse_id) != str(old_warehouse_id)
+                ):
+                    self.db.add(
+                        OrderInquiryConflict(
+                            id=str(uuid.uuid4()),
+                            company_id=self.company_id,
+                            sales_order_id=str(header.id),
+                            sales_order_line_id=str(row.id),
+                            previous_warehouse_id=old_warehouse_id,
+                            new_warehouse_id=new_warehouse_id,
+                            source="autocount_esb",
+                        )
+                    )
             for column, value in values.items():
                 setattr(row, column, value)
             counts["adopted"] += 1
@@ -1321,13 +1433,25 @@ class DocumentIngestService(MasterRefResolver):
                 pw_pool[pw_key] = []
 
         # ---- pass 3: position alone, only when the remaining counts agree ----
+        # `+ dropped_count` (B1 review fix): a dropped line occupied a real
+        # position slot in the incoming payload, so its would-be match is
+        # still owed a pool row even though it never reached `unmatched`.
         remaining_indices = [i for i in range(len(unmatched)) if i not in claimed_lines]
         remaining_pool = [r for r in pool if id(r) not in claimed_rows]
-        if remaining_indices and len(remaining_indices) == len(remaining_pool):
+        if remaining_pool and len(remaining_indices) + dropped_count == len(remaining_pool):
             remaining_indices.sort(key=lambda i: _position(i, unmatched[i]))
             remaining_pool.sort(key=lambda r: (_row_created(r), str(r.id)))
-            for idx, row in zip(remaining_indices, remaining_pool):
+            claimable, protected = (
+                remaining_pool[: len(remaining_indices)],
+                remaining_pool[len(remaining_indices):],
+            )
+            for idx, row in zip(remaining_indices, claimable):
                 _claim(idx, unmatched[idx], row)
+            for row in protected:
+                # Left EXACTLY as it was - never written, never counted as
+                # adopted, and (via `claimed_rows` below) never reaching the
+                # caller's own leftover sweep either.
+                claimed_rows.add(id(row))
 
         for idx in sorted(claimed_lines, reverse=True):
             del unmatched[idx]

@@ -3650,30 +3650,20 @@ def _run_scm_upload_job(
         db.close()
 
 
-#: How many refused orders a failure message names before it stops listing them. Enough to
-#: recognise the pattern, short enough to read in a toast.
-_REFUSED_DOCUMENTS_LISTED = 10
-
-
 def _missing_columns_message(result: dict) -> Optional[str]:
-    """The outstanding books' way of saying "this is not the file you think it is"."""
+    """The outstanding books' way of saying "this is not the file you think it is".
+
+    D23 (captain 2026-09-06, AC-P2-8, reverses QP1): an order nothing can classify no
+    longer refuses the whole file - it lands with `demand_class` NULL and is reported on
+    the success response (`unclassified_documents`/`unclassified_documents_numbers`), so
+    `apply()` never returns `ok: False` for that reason any more and this function has
+    nothing to raise about it.
+    """
     if result.get("ok"):
         return None
     missing = ", ".join(c.replace("_", " ") for c in result.get("missing_columns") or [])
     if missing:
         return f"The file is missing required columns: {missing}."
-    # QP1: an order nothing can classify refuses the whole file, and the operator needs the
-    # order NUMBERS to go and fix the customer's market segment - "could not be read" would
-    # send them looking at the spreadsheet instead of at the master data.
-    unclassified = [str(d) for d in (result.get("unclassified_documents") or [])]
-    if unclassified:
-        shown = ", ".join(unclassified[:_REFUSED_DOCUMENTS_LISTED])
-        more = len(unclassified) - _REFUSED_DOCUMENTS_LISTED
-        tail = f" and {more} more" if more > 0 else ""
-        order = "order" if len(unclassified) == 1 else "orders"
-        return (f"Nothing was imported: {len(unclassified)} {order} carry no demand class "
-                f"({shown}{tail}). Give each customer a market segment, or state an order "
-                "type, then upload again.")
     return "The file could not be read."
 
 

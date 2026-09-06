@@ -145,21 +145,27 @@ def test_the_file_never_overwrites_an_order_type_someone_set(db, seeded):
         "the class was stamped from the file rather than from the document")
 
 
-def test_a_blank_order_type_cell_refuses_the_file(db, seeded):
+def test_a_blank_order_type_cell_lands_unclassified_not_a_guess(db, seeded):
     """A column present but empty is not evidence, and must not read as retail.
 
     Half-filled columns are how these exports actually arrive. Treating the blank as "not a
     project" would classify the row silently and stably, and nobody would ever learn which
-    documents were guessed at - so since QP1 the upload is REFUSED and nothing is written,
-    where before the document was imported unclassified and merely reported.
+    documents were guessed at.
+
+    Superseded 2026-09-06 (D23, captain ruling, AC-P2-8): QP1 (26 Aug 2026) made this
+    REFUSE the whole file; D23 reverses that back to the original "imported unclassified
+    and reported" shape this docstring already describes as what came before QP1 - the
+    order lands with `demand_class` NULL and is named on the success response instead of
+    blocking the rest of the book.
     """
     unknown = f"{MARKER}-NOCUST-{uuid.uuid4().hex[:8]}".upper()
 
     out = svc.apply(db, _upload(seeded, seeded.project_so, None, debtor=unknown), SO)
 
-    assert not out["ok"]
-    assert out["unclassified_documents"] == [seeded.project_so]
-    assert _header(db, seeded.project_so) is None, "a refused file wrote a header anyway"
-    assert any(seeded.project_so in " ".join(str(v) for v in p.values())
-               for p in out["row_problems"]), (
-        "a blank order type was refused without telling anyone which document")
+    assert out["ok"], out
+    assert out["unclassified_documents"] == 1, out
+    assert out["unclassified_documents_numbers"] == [seeded.project_so], out
+    header = _header(db, seeded.project_so)
+    assert header is not None, "D23: the order must land, not be refused"
+    order_type, demand_class = header
+    assert demand_class is None, "a blank order type must not be guessed at"

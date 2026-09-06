@@ -300,6 +300,100 @@ class TestAcP02AbsentUntouchedNullCleared:
         ).scalar()
         assert description == "Keep me"
 
+    def test_product_create_without_list_price_defaults_to_zero(self, db):
+        """Live fix, 2026-09-06: `products.list_price` is NOT NULL with no
+        server-side default - a create whose payload never sends `list_price`
+        at all used to reach the DB as a bare `NotNullViolation` (43 records
+        on `:8042`) instead of the same 0 the manual create form's own
+        bulk-import fallback already applies for a blank price cell."""
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        cat_code, uom_code = _code("P2CAT"), _code("P2UOM")
+        code = _code("P2PRD")
+        svc = _esb(db, DEFAULT_COMPANY_ID)
+
+        result = svc.ingest(
+            "products",
+            [
+                {
+                    "source_ref": f"DK-{code}",
+                    "code": code,
+                    "name": "Item",
+                    "category_code": cat_code,
+                    "uom_code": uom_code,
+                }
+            ],
+        )
+        assert result.records[0].outcome is IngestOutcome.CREATED, result.records[0].errors
+        list_price = db.execute(
+            text("SELECT list_price FROM products WHERE product_code = :c"), {"c": code}
+        ).scalar()
+        assert list_price == Decimal("0")
+
+    def test_product_update_with_list_price_null_resets_to_zero(self, db):
+        """An explicit `null` on a NOT NULL column with no server default
+        maps to the column's own create default (D14: "null = cleared" can
+        only mean cleared TO something on a NOT NULL column), never a
+        `NotNullViolation`."""
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        cat_code, uom_code = _code("P2CATB"), _code("P2UOMB")
+        code = _code("P2PRDB")
+        svc = _esb(db, DEFAULT_COMPANY_ID)
+        svc.ingest(
+            "products",
+            [
+                {
+                    "source_ref": f"DK-{code}",
+                    "code": code,
+                    "name": "Item",
+                    "category_code": cat_code,
+                    "uom_code": uom_code,
+                    "list_price": "12.50",
+                }
+            ],
+        )
+
+        result = svc.ingest(
+            "products",
+            [{"source_ref": f"DK-{code}", "code": code, "name": "Item", "list_price": None}],
+        )
+        assert result.records[0].outcome is IngestOutcome.UPDATED, result.records[0].errors
+        list_price = db.execute(
+            text("SELECT list_price FROM products WHERE product_code = :c"), {"c": code}
+        ).scalar()
+        assert list_price == Decimal("0")
+
+    def test_product_update_without_list_price_preserves_existing(self, db):
+        """Absent stays absent (D14): a re-sync that never mentions the price
+        at all must not reset it to the create default - only an explicit
+        `null` does that."""
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        cat_code, uom_code = _code("P2CATC"), _code("P2UOMC")
+        code = _code("P2PRDC")
+        svc = _esb(db, DEFAULT_COMPANY_ID)
+        svc.ingest(
+            "products",
+            [
+                {
+                    "source_ref": f"DK-{code}",
+                    "code": code,
+                    "name": "Item",
+                    "category_code": cat_code,
+                    "uom_code": uom_code,
+                    "list_price": "12.50",
+                }
+            ],
+        )
+
+        result = svc.ingest(
+            "products",
+            [{"source_ref": f"DK-{code}", "code": code, "name": "Item Renamed"}],
+        )
+        assert result.records[0].outcome is IngestOutcome.UPDATED, result.records[0].errors
+        list_price = db.execute(
+            text("SELECT list_price FROM products WHERE product_code = :c"), {"c": code}
+        ).scalar()
+        assert list_price == Decimal("12.50")
+
 
 class TestAcP03NumericAndLabelPreservedOnOmit:
     """D14, continued: `units_of_measure.decimal_places` and

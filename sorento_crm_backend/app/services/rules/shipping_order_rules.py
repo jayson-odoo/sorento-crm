@@ -60,7 +60,9 @@ def extract_container_number(text: Optional[str]) -> Optional[str]:
     return cleaned.upper() or None
 
 
-def link_allocation_to_shipment(db: Session, allocation, container: Optional[str]) -> bool:
+def link_allocation_to_shipment(
+    db: Session, allocation, container: Optional[str], *, company_id: Optional[str] = None
+) -> bool:
     """Stores `container` on `allocation` and links `inbound_shipment_id` when
     a shipment with that container exists (D6). Returns whether it linked -
     the caller warns `container_unresolved` on `False` rather than failing:
@@ -69,41 +71,57 @@ def link_allocation_to_shipment(db: Session, allocation, container: Optional[str
     `container` is expected already cleaned (`extract_container_number`'s
     output) - this function does not clean it again, so a caller comparing
     its own copy against what landed sees the same value.
+
+    `company_id` (security review, ingest-parity-standardisation, should-fix
+    3): a container number is not globally unique, and the ESB push always
+    knows its own company - passed here so the shipment lookup cannot bind an
+    allocation to a DIFFERENT company's shipment sharing the same container.
     """
     allocation.container_number = container
     if not container:
         return False
     from app.api.v1.external.utils import get_inbound_shipment_by_container_number
 
-    shipment = get_inbound_shipment_by_container_number(db, container)
+    shipment = get_inbound_shipment_by_container_number(db, container, company_id=company_id)
     if shipment is None:
         return False
     allocation.inbound_shipment_id = shipment.id
     return True
 
 
-def relink_allocations_for_container(db: Session, container: Optional[str]) -> int:
+def relink_allocations_for_container(
+    db: Session, container: Optional[str], *, company_id: Optional[str] = None
+) -> int:
     """Fills `inbound_shipment_id` on every allocation of `container` that has
     none yet (D6) - a nightly sweep or an on-shipment-create hook, for the
     allocation that was written before its shipment existed. Returns the
     count relinked.
+
+    `company_id` (security review, should-fix 3): scopes BOTH the shipment
+    lookup and the allocation query - the external packing-list route can run
+    with scope `None` when the attachment names no company, and without this
+    a container shared by two companies would relink company B's allocations
+    to company A's shipment (or vice versa). Callers always know their own
+    company (`_relink_allocations_for_shipment` passes `shipment.company_id`;
+    the ESB write passes its own anchor), so this is never optional in
+    practice even though the parameter itself stays optional for the pure
+    xlsx / nightly-sweep callers that predate company scoping here.
     """
     if not container:
         return 0
     from app.api.v1.external.utils import get_inbound_shipment_by_container_number
     from app.models.procurement import SPOAllocation
 
-    shipment = get_inbound_shipment_by_container_number(db, container)
+    shipment = get_inbound_shipment_by_container_number(db, container, company_id=company_id)
     if shipment is None:
         return 0
-    rows = (
-        db.query(SPOAllocation)
-        .filter(
-            SPOAllocation.container_number == container,
-            SPOAllocation.inbound_shipment_id.is_(None),
-        )
-        .all()
+    query = db.query(SPOAllocation).filter(
+        SPOAllocation.container_number == container,
+        SPOAllocation.inbound_shipment_id.is_(None),
     )
+    if company_id:
+        query = query.filter(SPOAllocation.company_id == company_id)
+    rows = query.all()
     for row in rows:
         row.inbound_shipment_id = shipment.id
     if rows:
@@ -111,8 +129,10 @@ def relink_allocations_for_container(db: Session, container: Optional[str]) -> i
     return len(rows)
 
 
-def received_guard(allocation, new_allocated: int) -> str:
-    """Whether `new_allocated` may be written onto `allocation` (D7).
+def received_guard(
+    allocation, new_allocated: int, new_received: Optional[int] = None
+) -> str:
+    """Whether `new_allocated`/`new_received` may be written onto `allocation` (D7).
 
     An allocation with `quantity_received > 0` may never be reduced below
     it - the receipt already happened, and shrinking the promise under it
@@ -120,8 +140,20 @@ def received_guard(allocation, new_allocated: int) -> str:
     ordered. Same rule `SPOAllocationService.upsert_allocation`'s
     `AllocationReceivedGuardError` already enforces on the xlsx path; shared
     here so the ESB push cannot enforce a different one.
+
+    `new_received` (security review, blocker 1): the xlsx path never writes
+    `quantity_received` on update, so the original single-argument guard only
+    ever needed to protect `allocated_quantity`. The ESB push DOES write
+    `quantity_received` on every record, straight from the payload's own
+    `qty_received` - so a re-push with `qty_received=0` against a row that
+    already shows `quantity_received=5` erased the receipt outright even
+    though `allocated_quantity` never moved. Optional and defaults to `None`
+    so the xlsx caller (`procurement_service.upsert_allocation`), which never
+    touches this column, is unaffected.
     """
     received = int(getattr(allocation, "quantity_received", 0) or 0)
     if new_allocated < received:
+        return GUARD_RECEIVED_LOCKED
+    if new_received is not None and new_received < received:
         return GUARD_RECEIVED_LOCKED
     return GUARD_OK

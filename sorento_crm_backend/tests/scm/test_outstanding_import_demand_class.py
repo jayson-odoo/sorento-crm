@@ -285,12 +285,14 @@ def test_a_book_naming_a_debtor_425_classified_is_accepted_as_retail(db, seeded)
     assert _demand_class(db, fresh) == DEFAULT_DEMAND_CLASS
 
 
-def test_a_book_naming_a_debtor_with_no_segment_is_refused_by_name(db, seeded):
-    """The other half, and the reason 425 has to touch the customers at all.
-
-    Leave one debtor unclassified and the whole book stops - so the refusal has to name the
-    order AND the debtor, because "give this customer a market segment" is the only thing
-    the operator can do about it.
+def test_a_book_naming_a_debtor_with_no_segment_lands_unclassified_by_name(db, seeded):
+    """Superseded 2026-09-06 (D23, captain ruling, AC-P2-8): this test's own docstring used
+    to describe the refusal itself as the rule ("leave one debtor unclassified and the
+    whole book stops") - D23 reverses QP1, the decision this test originally pinned. The
+    document now LANDS with `demand_class` NULL instead of stopping the book, and is
+    reported by name so "give this customer a market segment" is still the operator's
+    remedy - the only thing that changed is that a re-upload is no longer required before
+    the rest of the book is accepted.
     """
     debtor = f"{MARKER}-NOSEG-{uuid.uuid4().hex[:8]}".upper()
     db.add(Customer(id=_u(), customer_code=debtor, customer_name=debtor, is_active=True))
@@ -299,9 +301,14 @@ def test_a_book_naming_a_debtor_with_no_segment_is_refused_by_name(db, seeded):
 
     out = svc.apply(db, _upload(seeded, fresh, debtor), SO)
 
-    assert not out["ok"]
-    assert out["unclassified_documents"] == [fresh]
-    assert _demand_class(db, fresh) is None, "a refused file wrote the order anyway"
-    reported = " ".join(str(v) for p in out["row_problems"] for v in p.values())
-    assert fresh in reported, "the refusal never named the order"
-    assert debtor in reported, "the refusal never named the debtor to go and fix"
+    assert out["ok"], out
+    assert out["unclassified_documents"] == 1, out
+    assert out["unclassified_documents_numbers"] == [fresh], out
+    # Checked BEFORE the demand_class read (same reason the S2b parity test does):
+    # `scalar()` returning `None` is ambiguous between "no row" and "a row with NULL" -
+    # the row existing at all is the actual claim D23 makes over QP1's old refusal.
+    exists = db.execute(
+        text("SELECT count(*) FROM sales_orders WHERE so_number = :n"), {"n": fresh}
+    ).scalar()
+    assert exists == 1, "D23: the order must land, not be refused"
+    assert _demand_class(db, fresh) is None, "an order nothing can classify lands with NULL"

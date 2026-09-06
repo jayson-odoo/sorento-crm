@@ -709,8 +709,14 @@ class SupplierService:
     def update_supplier(self, supplier_id: str, supplier_data: SupplierUpdate):
         """Update a supplier."""
         supplier = self.get_supplier(supplier_id)
-        
+
         update_data = supplier_data.model_dump(exclude_unset=True)
+        # D2 (review nit): the trailing currency note (`"ACME (RMB)"`) is not
+        # part of the legal name on create - `update_supplier` used to write
+        # it through unstripped, so an edit could quietly restore the note
+        # `create_supplier`/the ESB push/the outstanding upload all clean.
+        if "supplier_name" in update_data:
+            update_data["supplier_name"] = clean_supplier_name(update_data["supplier_name"])
         for key, value in update_data.items():
             setattr(supplier, key, value)
         
@@ -1440,7 +1446,7 @@ class InboundShipmentService:
             return
         try:
             relinked = shipping_order_rules.relink_allocations_for_container(
-                self.db, container
+                self.db, container, company_id=shipment.company_id
             )
             if relinked:
                 self.db.commit()
@@ -1493,6 +1499,14 @@ class InboundShipmentService:
         self.db.commit()
         self.db.refresh(shipment)
         self.refresh_shipment_line_statuses(shipment_id)
+        if "shipping_container_number" in update_data:
+            # D6/S3 (review B6): `create_shipment` already relinks a
+            # leftover allocation waiting on this container - `update_shipment`
+            # never did, so SETTING a container on an existing container-less
+            # shipment (the operator filling it in after the fact) left any
+            # allocation already naming it stranded forever with
+            # `inbound_shipment_id` still NULL.
+            self._relink_allocations_for_shipment(shipment)
         return self._attach_capacity(shipment)
 
     def delete_shipment(self, shipment_id: str) -> None:

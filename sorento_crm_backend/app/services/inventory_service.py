@@ -170,17 +170,22 @@ class WarehouseService:
         return warehouse
     
     def create_warehouse(self, warehouse_data: WarehouseCreate):
-        """Create a new warehouse - adopts a case/whitespace variant of an
-        existing code instead of duplicating it (D17), the same rule the xlsx
-        import and the ESB masters push both apply."""
+        """Create a new warehouse.
+
+        Security review (should-fix 4): a case/whitespace variant used to be
+        SILENTLY ADOPTED here - every `WarehouseBase` default on the request
+        (`is_active`, `counts_as_available`, `pool_warehouse_id`, `segment`,
+        `fulfilment_planning`, `manager_id`, ...) overwrote the existing row's
+        own values, and the call still returned 201 as if a new warehouse had
+        been created. D17's case/whitespace-insensitive match stays the rule
+        for the xlsx import and the ESB push (both correct a book that spells
+        a code two ways), but a human's manual Create click is a mistake to
+        surface, not silently rewrite - the same conflict standard S1 already
+        applies to `create_supplier`/`create_category`/`create_uom`.
+        """
         existing_id = resolve_master_by_code(self.db, Warehouse, warehouse_data.warehouse_code)
         if existing_id:
-            warehouse = self.db.query(Warehouse).filter(Warehouse.id == existing_id).first()
-            for key, value in warehouse_data.model_dump(exclude={"warehouse_code"}).items():
-                setattr(warehouse, key, value)
-            self.db.commit()
-            self.db.refresh(warehouse)
-            return warehouse
+            raise handle_conflict("Warehouse code already exists.")
 
         warehouse = Warehouse(**warehouse_data.model_dump())
         self.db.add(warehouse)

@@ -67,12 +67,24 @@ def back_create_customer(
     row does not already hold one - true for a freshly created row by
     definition, and for an existing match it is exactly the "never overwrite
     a hand-set segment" rule the masters push also follows.
+
+    `segment` folds through the SAME `fold_market_segment` the masters push
+    uses (review B5) - it used to be written STRAIGHT onto
+    `market_segment_code`, a foreign key, so an unrecognised spelling would
+    have failed on flush rather than dropping quietly the way every other
+    entry point into this column already does. An unresolved spelling is
+    silently dropped here (no document/verdict for THIS function's own
+    caller to warn on - `document_ingest_service._apply_customer_segment_and_region`
+    is the caller that has one, and folds `customer_segment` itself before
+    ever reaching here).
     """
     customer = customer_back_create.get_or_create(db, code=code, name=name, company_id=company_id)
     if customer is None:
         return None
     if segment and not customer.market_segment_code:
-        customer.market_segment_code = segment
+        canonical = fold_market_segment(db, segment)
+        if canonical:
+            customer.market_segment_code = canonical
     if region and not customer.region:
         customer.region = region
     return customer

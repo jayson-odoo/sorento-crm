@@ -13,10 +13,15 @@ import uuid
 from decimal import Decimal
 from typing import Any, Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.procurement import ProductSupplier, Supplier
-from app.services.rules.master_rules import code_name_columns, resolve_master_by_code
+from app.services.rules.master_rules import (
+    code_name_columns,
+    resolve_master_by_code,
+    resolve_master_by_name,
+)
 
 #: The rollout fallback unit code (moved from `product_service.DEFAULT_UOM_CODE`).
 DEFAULT_UOM_CODE = "EA"
@@ -127,15 +132,22 @@ def ensure_reference(
 ) -> tuple[str, bool]:
     """Resolve a master-data value, creating the row when it is unknown (D3).
 
-    `code = name = raw value`, the same convention `bulk_import_products`'s
-    own `ensure_reference` closure already used. Returns `(id, created)` so a
-    caller can attach a `<kind>_created` warning only when it actually made
-    the row.
+    Matches by normalised CODE, then by normalised NAME (review S2, 2026-09-06):
+    `bulk_import_products`'s own `ensure_reference` closure matched a raw
+    value against both a code and a name column (lower-cased) - reconciled
+    here into the ONE body every caller (bulk import, manual create/edit, the
+    ESB push) now shares, rather than the closure's separate copy silently
+    drifting from this one's code-only match. `code = name = raw value` on
+    CREATE, the same convention the closure already used. Returns
+    `(id, created)` so a caller can attach a `<kind>_created` warning only
+    when it actually made the row.
     """
     value = (code or "").strip()
     if not value:
         raise ValueError("ensure_reference requires a non-blank code")
     existing_id = resolve_master_by_code(db, model, value, company_id)
+    if existing_id is None:
+        existing_id = resolve_master_by_name(db, model, value, company_id)
     if existing_id is not None:
         return existing_id, False
     if len(value) > REF_CODE_MAX_LEN:
@@ -171,7 +183,25 @@ def resolve_default_uom(db: Session, company_id: Optional[str], settings: Any = 
         settings = db.query(SystemSetting).first()
     configured = getattr(settings, "default_uom_id", None) if settings else None
     if configured:
-        return configured
+        # Security review advisory (c): `system_settings` is a single
+        # company-agnostic row (LESSONS-LEARNT "system_settings singleton"),
+        # so its `default_uom_id` can name a `UnitOfMeasure` belonging to a
+        # DIFFERENT company than this record's own anchor - whichever
+        # company an admin was viewing when they set it. Validated before
+        # use rather than trusted; an id that does not belong to this
+        # company (and is not a shared/global row) is treated as no default
+        # at all, falling through to the same `ensure_reference`/`EA` path a
+        # blank setting already takes.
+        valid = (
+            db.query(UnitOfMeasure.id)
+            .filter(
+                UnitOfMeasure.id == configured,
+                or_(UnitOfMeasure.company_id == company_id, UnitOfMeasure.company_id.is_(None)),
+            )
+            .first()
+        )
+        if valid:
+            return configured
     uom_id, _created = ensure_reference(db, UnitOfMeasure, DEFAULT_UOM_CODE, company_id)
     return uom_id
 

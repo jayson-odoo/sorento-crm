@@ -428,7 +428,7 @@ class TestHooksNeverRunOnADryRun:
 
 
 # ================================================================== AC-V5-5
-class TestPlanningChangeIsNotRunByIngest:
+class TestPlanningChangeRunsOnIngest:
     def test_planning_change_service_build_batch_is_called(self, env, monkeypatch):
         """AC-V5-5 / D10 (ingest-parity-standardisation S2, BL-058). This test
         used to guard the OPPOSITE - `build_batch` deferred by D7 pending "the

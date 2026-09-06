@@ -59,6 +59,7 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.models.base import company_scope
 from app.models.inventory import Warehouse
 from app.models.procurement import SPOAllocation, Supplier
 from app.models.product import Product
@@ -183,33 +184,16 @@ class ShippingOrderIngestService(MasterRefResolver):
                 # In a finally, so an error mid-batch cannot leave a partially
                 # applied preview in the session for whatever commits next.
                 self.db.rollback()
-        if not dry_run and self.spo_numbers_touched:
-            self._run_forward_match()
+        # Security review (blocker 2): the forward-match batch-end sweep used
+        # to run HERE, before the route's own `db.commit()`.
+        # `forward_match_grn_lines_for_spo` commits on success and rolls back
+        # on failure, so one exception mid-batch discarded every not-yet-
+        # committed record of the batch while the route still answered 200
+        # with entity ids. It now runs from the route's post-commit hook slot
+        # (`app.api.v1.external.ingest._run_document_hooks`, dispatched off
+        # `self.spo_numbers_touched`) instead, the same slot the SO/PO hooks
+        # use - this service only RECORDS which SPO numbers were touched.
         return result
-
-    def _run_forward_match(self) -> None:
-        """D7 (S3): `forward_match_grn_lines_for_spo_best_effort` once per SPO
-        number this batch touched, end of batch - correct already on the
-        xlsx path (`import_tasks.process_spo_import`, which fires it once per
-        file for the same reason: a waiting GRN line must be placed against
-        the allocation that actually covers its warehouse, not whichever one
-        this batch happened to write first). Runs HERE, inside `ingest()`,
-        rather than as a route-level post-commit hook like the SO/PO ones:
-        this service's own `ingest()` is the batch boundary a caller (this
-        module's own tests included) can drive directly, with no route in
-        between. `forward_match_grn_lines_for_spo_best_effort` is itself
-        already the best-effort wrapper (catches, rolls back, warns), so
-        nothing here needs its own try/except.
-
-        Called through the MODULE attribute so a caller monkeypatching
-        `grn_spo_matching` sees this call.
-        """
-        import app.services.grn_spo_matching as grn_spo_matching
-
-        for spo_number in sorted(self.spo_numbers_touched):
-            grn_spo_matching.forward_match_grn_lines_for_spo_best_effort(
-                self.db, spo_number, company_id=self.company_id
-            )
 
     def _ingest_one(self, raw: dict) -> RecordResult:
         source_ref = raw.get("source_ref") if isinstance(raw, dict) else None
@@ -324,6 +308,18 @@ class ShippingOrderIngestService(MasterRefResolver):
 
     # ------------------------------------------------------------ one document
     def _apply(self, payload: CanonicalShippingOrder, force_closed: bool) -> _Verdict:
+        """Pins `company_scope` for the WHOLE record (security review advisory
+        a / S9), same reason and same shape as `MasterIngestService._apply`:
+        the ladder resolves references and the adoption pass runs ordinary
+        ORM queries against company-scoped tables, and without this those
+        queries are filtered by whatever the ambient session scope happens to
+        be - which the `X-API-Key` principal's `None`/all-companies scope
+        never narrows on its own.
+        """
+        with company_scope(self.db, frozenset({self.company_id})):
+            return self._apply_scoped(payload, force_closed)
+
+    def _apply_scoped(self, payload: CanonicalShippingOrder, force_closed: bool) -> _Verdict:
         # S2 review fix: refused before anything else - a conflicting OPEN
         # claim on this spo_number is a fact about the DOCUMENT, not about
         # any one reference on it, so it is checked before the ladder runs.
@@ -371,7 +367,9 @@ class ShippingOrderIngestService(MasterRefResolver):
                 # GRN that already drew against it - the line is left
                 # exactly as it was, and the record still lands (rest of the
                 # document unaffected).
-                guard = shipping_order_rules.received_guard(row, values["allocated_quantity"])
+                guard = shipping_order_rules.received_guard(
+                    row, values["allocated_quantity"], values["quantity_received"]
+                )
                 if guard == shipping_order_rules.GUARD_RECEIVED_LOCKED:
                     warnings.append(WARN_RECEIVED_LOCKED)
                     continue
@@ -645,6 +643,16 @@ class ShippingOrderIngestService(MasterRefResolver):
     ) -> None:
         values = dict(values)
         values.pop("line_number", None)
+        if "quantity_received" in values:
+            # Security review (blocker 1), belt-and-suspenders on EVERY caller
+            # of this method: `quantity_received` can never regress below what
+            # the row already shows, even if some future path calls this
+            # without first running `received_guard` - the guard call sites
+            # (by-ref update, adoption) already refuse the whole write on a
+            # regression, so this is normally a no-op, but a brand new row's
+            # stored value is always 0/None and `max()` is a no-op there too.
+            stored_received = int(getattr(row, "quantity_received", 0) or 0)
+            values["quantity_received"] = max(stored_received, int(values["quantity_received"] or 0))
         for column, value in values.items():
             setattr(row, column, value)
         if force_closed:
@@ -658,7 +666,7 @@ class ShippingOrderIngestService(MasterRefResolver):
         # already set here.
         if container_number:
             linked = shipping_order_rules.link_allocation_to_shipment(
-                self.db, row, container_number
+                self.db, row, container_number, company_id=self.company_id
             )
             if not linked and warnings is not None:
                 warnings.append(WARN_CONTAINER_UNRESOLVED)
@@ -737,7 +745,24 @@ class ShippingOrderIngestService(MasterRefResolver):
         claimed_lines: set[int] = set()
         claimed_rows: set[int] = set()
 
-        def _claim(idx: int, values: dict[str, Any], row: SPOAllocation) -> None:
+        def _claim(idx: int, values: dict[str, Any], row: SPOAllocation) -> bool:
+            # Security review (blocker 1): the adoption path used to call
+            # `_write_row` with no guard at all - a legacy xlsx-era row with a
+            # real receipt on it could be adopted by an incoming line whose
+            # `qty_ordered`/`qty_received` shrink below what was already
+            # received, exactly the exposure `received_guard` already closed
+            # on the by-ref update path. Guarded here the same way: on a
+            # trip, this pairing is refused - the row is left completely
+            # unchanged, and both the row and the incoming line remain
+            # available to the next pass (or fall through to their normal
+            # unmatched/leftover handling) rather than being claimed.
+            guard = shipping_order_rules.received_guard(
+                row, values["allocated_quantity"], values["quantity_received"]
+            )
+            if guard == shipping_order_rules.GUARD_RECEIVED_LOCKED:
+                if warnings is not None:
+                    warnings.append(WARN_RECEIVED_LOCKED)
+                return False
             self._write_row(
                 row, values, force_closed,
                 container_number=container_number, warnings=warnings,
@@ -745,6 +770,7 @@ class ShippingOrderIngestService(MasterRefResolver):
             counts["adopted"] += 1
             claimed_lines.add(idx)
             claimed_rows.add(id(row))
+            return True
 
         # ---- pass 1: exact (product, location, warehouse, outstanding) key ----
         pool_by_key: dict[tuple, list] = {}

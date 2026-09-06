@@ -47,15 +47,18 @@ router = APIRouter()
 
 # New OPTIONAL fields per entity since v2 - additive only (D-final: nothing
 # here was ever required, so a v2-shaped payload still ingests unchanged).
-# `is_shipping_order` is parsed off the `purchase_orders` payload (it is what
-# REDIRECTS a push there to `shipping_orders` - D6/AC-P3-7), but documented
-# under `shipping_orders` too since that is the family it names.
+# `is_shipping_order` lives ONLY under `purchase_orders` (review S1, 2026-09-06):
+# it is parsed off the `purchase_orders` payload to REFUSE a push there and
+# redirect it to `shipping_orders` (D6/AC-P3-7) - `CanonicalShippingOrder`
+# itself has no such field and `extra="forbid"` would reject it outright, so
+# an earlier "documented under shipping_orders too, since that is the family
+# it names" note here was wrong and has been removed.
 FIELDS_ADDED: dict[str, list[str]] = {
     "products": ["is_discontinued", "remark", "brand_code"],
     "customers": ["market_segment_code", "region"],
     "sales_orders": ["customer_segment", "customer_region"],
     "purchase_orders": ["is_shipping_order"],
-    "shipping_orders": ["container_number", "is_shipping_order"],
+    "shipping_orders": ["container_number"],
 }
 
 # D15 end state (AC-P0-4): these now FAIL validation (extra=forbid), never

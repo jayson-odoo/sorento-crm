@@ -119,9 +119,23 @@ def integrity_conflict_errors(exc: IntegrityError) -> dict[str, str]:
     every `CanonicalXxx.code` masters payload and the v2 ladder's code rungs
     are spelled under); `errors["_"]` for the "unknown constraint" case where
     the DBAPI driver exposed no diagnostics at all to name one by.
+
+    Security review advisory (d): every caller catches a bare
+    ``except IntegrityError`` - not only a unique-constraint collision, but
+    also a FK, NOT NULL or CHECK violation can raise one, and THOSE carry a
+    DETAIL line that can name a value from a different row, table or
+    caller's own request than the one this record wrote. `message_detail` is
+    therefore only ever echoed for `pgcode == "23505"` (unique_violation);
+    every other IntegrityError maps to a field-less `conflict` with no
+    DETAIL text at all, constraint name included - the constraint name alone
+    (still logged with `exc_info=True` at the call site) is enough for an
+    operator, and is never sent to the ESB either way.
     """
     orig = getattr(exc, "orig", None)
     diag = getattr(orig, "diag", None)
+    pgcode = getattr(orig, "pgcode", None)
+    if pgcode != "23505":
+        return {"_": "conflict"}
     constraint = getattr(diag, "constraint_name", None) if diag else None
     detail = getattr(diag, "message_detail", None) if diag else None
     if constraint:
@@ -269,6 +283,48 @@ def _present(payload: Any, columns: dict[str, Any], *names: str) -> None:
     for name in names:
         if name in payload.model_fields_set:
             columns[name] = getattr(payload, name)
+
+
+# Live fix, 2026-09-06: every one of these columns is NOT NULL with no
+# server-side default the ORM insert can fall back on when the attribute is
+# explicitly set to `None` (a column-level Python `default=` only fires when
+# the attribute is never touched at all, so an explicit `None` bypasses it
+# the same way a bare `INSERT` naming the column as NULL would). D14 says "an
+# explicit null clears it" - but there is nothing to CLEAR a NOT NULL column
+# TO except its own create default, so that is what a `null` (or, on a
+# genuine create, an entirely ABSENT field - see `_insert`'s own use of this
+# table) resolves to here. One table, checked against the SAME default the
+# manual create form / bulk import already apply for that column - `EA`-style
+# FK fallbacks (`products.category_id`/`base_uom_id`) are NOT here, because
+# they need a lookup/creation rather than a static value; see
+# `_fill_create_only_product_gaps`.
+#: Distinguishes "never queried the singleton `system_settings` row yet" from
+#: "queried it and there was no row" (perf review S6) - `None` is a real,
+#: valid cached answer, not an unset marker.
+_UNSET = object()
+
+_NOT_NULL_DEFAULTS: dict[str, dict[str, Any]] = {
+    "product_categories": {"is_active": True},
+    "units_of_measure": {"is_active": True, "decimal_places": 0},
+    "warehouses": {"is_active": True},
+    "suppliers": {"is_active": True},
+    "customers": {"is_active": True},
+    "sales_agents": {"is_active": True},
+    "products": {"is_active": True, "list_price": Decimal("0")},
+}
+
+
+def _apply_not_null_defaults(entity_type: str, columns: dict[str, Any]) -> None:
+    """An explicit ``null`` on a NOT NULL column (with no server default the ORM
+    can rely on) maps to that column's create default instead of reaching the
+    DB - on BOTH the create and the update path, since an update's blind
+    ``setattr`` would violate the constraint exactly the same way an insert
+    does. Only touches a key already IN ``columns`` (D14: an absent field is
+    untouched on update; the absent-on-CREATE case is `_insert`'s own
+    ``setdefault`` pass over this same table)."""
+    for column, default in _NOT_NULL_DEFAULTS.get(entity_type, {}).items():
+        if column in columns and columns[column] is None:
+            columns[column] = default
 
 
 def _category_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:
@@ -550,6 +606,13 @@ class MasterIngestService:
         # whether to capture a before/after diff; the rollback that makes the
         # run harmless is handled in ingest().
         self._dry_run = False
+        # Perf review (S6): `system_settings` is a single row read once per
+        # BATCH, not once per product record - `_post_write_product_hooks`
+        # used to re-query it for every product, the same N+1 shape
+        # `bulk_import_products` already caches once for its own run.
+        # `_UNSET` (not `None`) distinguishes "never queried yet" from "queried
+        # and there is no row" - a real, if unusual, state on a fresh install.
+        self._settings_cache: Any = _UNSET
 
     def ingest(
         self, entity_type: str, records: list[dict], *, dry_run: bool = False
@@ -692,6 +755,7 @@ class MasterIngestService:
     ) -> tuple[IngestOutcome, str, Optional[dict[str, dict[str, Any]]], list[str]]:
         warnings: list[str] = []
         columns = spec.to_columns(payload, self.db, self.company_id, warnings)
+        _apply_not_null_defaults(entity_type, columns)
 
         existing_id = self.refs.resolve(entity_type=entity_type, source_ref=payload.source_ref)
         if existing_id is not None:
@@ -744,12 +808,35 @@ class MasterIngestService:
 
         if entity_type == "products":
             self._finalize_product_discontinued(payload, columns, None)
+            self._fill_create_only_product_gaps(columns)
         new_id = self._insert(entity_type, spec, columns)
         self._link(entity_type, new_id, payload)
         self._post_write_product_hooks(entity_type, new_id)
         # Nothing existed to overwrite, so there is no diff to report. Distinct
         # from {} -- see RecordResult.diff.
         return IngestOutcome.CREATED, new_id, None, warnings
+
+    def _fill_create_only_product_gaps(self, columns: dict[str, Any]) -> None:
+        """Live fix, 2026-09-06: `category_id`/`base_uom_id` are NOT NULL FKs
+        `_product_columns` leaves OUT of `columns` entirely when the payload
+        never names a category/uom at all - D14's "absent = untouched" is
+        correct for an UPDATE, but there is nothing to leave untouched on a
+        genuine CREATE, and the insert crashed with a `NotNullViolation`
+        instead. Called ONLY from the CREATE branch, immediately before
+        `_insert` - an UPDATE never reaches this and keeps D14's rule
+        unchanged.
+
+        `category_id` has no usable default - the manual create form
+        requires it too, with none - so an absent category is retryable, the
+        same verdict an unresolvable `category_code` already gets.
+        `base_uom_id` DOES have one: the same configured-default/`EA`
+        fallback `_product_columns` already applies when `uom_code` is sent
+        BLANK, widened here to the ABSENT case too.
+        """
+        if "category_id" not in columns:
+            raise MissingReference("category_code", "")
+        if "base_uom_id" not in columns:
+            columns["base_uom_id"] = product_rules.resolve_default_uom(self.db, self.company_id)
 
     def _finalize_product_discontinued(
         self, payload: Any, columns: dict[str, Any], existing_row_id: Optional[str]
@@ -797,6 +884,18 @@ class MasterIngestService:
         if current:
             columns.pop("market_segment_code")
 
+    def _system_settings(self) -> Optional[SystemSetting]:
+        """The singleton `system_settings` row, read ONCE per batch (perf
+        review S6) - this hook used to re-query it for every product record,
+        an N+1 the ESB's own 11.7k-product pushes pay for on every one of
+        them. Cached on the instance, which lives for exactly one batch
+        (`MasterIngestService` is constructed per request), the same
+        lifetime `bulk_import_products` already caches its own settings read
+        for."""
+        if self._settings_cache is _UNSET:
+            self._settings_cache = self.db.query(SystemSetting).first()
+        return self._settings_cache
+
     def _post_write_product_hooks(self, entity_type: str, product_id: str) -> None:
         """D5: the default-supplier `product_suppliers` link, on create AND
         update - exactly as the Excel import applies it, moved to
@@ -805,8 +904,7 @@ class MasterIngestService:
         share the one body."""
         if entity_type != "products":
             return
-        settings = self.db.query(SystemSetting).first()
-        product_rules.link_default_supplier(self.db, product_id, settings)
+        product_rules.link_default_supplier(self.db, product_id, self._system_settings())
 
     def _insert(self, entity_type: str, spec: EntitySpec, columns: dict[str, Any]) -> str:
         """D18: the ORM insert, so `before_insert` company-stamping, the audit
@@ -821,12 +919,17 @@ class MasterIngestService:
         happened to be ambient last.
         """
         insert_columns = dict(columns)
-        # `products.list_price` is NOT NULL with no column-level default (unlike
-        # `is_active`/UOM `decimal_places`/supplier `payment_terms_days`, which
-        # the model's own Python default fills on flush when left unset) - so
-        # D14's create-only default has to be filled here instead.
-        if entity_type == "products":
-            insert_columns.setdefault("list_price", Decimal("0"))
+        # Live fix, 2026-09-06: a NOT NULL column absent from `columns`
+        # entirely (never sent by the payload) reads as None to the ORM
+        # constructor below the same way an explicit null does - the model's
+        # own Python `default=` only fires when the attribute is never
+        # assigned at all, so this MUST run before `spec.model(**insert_columns)`,
+        # not rely on it. `_apply_not_null_defaults` (same table) already
+        # fixed the "explicit null" case for both create and update, before
+        # this method was ever called - `setdefault` here only ever fills a
+        # key that is genuinely missing, so the two never fight.
+        for column, default in _NOT_NULL_DEFAULTS.get(entity_type, {}).items():
+            insert_columns.setdefault(column, default)
         # The audit `before_flush` listener reads a pending object's PK straight
         # off the instance attribute - a PK still waiting on its column default
         # reads as None there and the create goes unrecorded (same gap

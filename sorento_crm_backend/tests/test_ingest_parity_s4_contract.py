@@ -82,7 +82,13 @@ class TestAcP43ContractV21:
             "products": {"is_discontinued", "remark", "brand_code"},
             "customers": {"market_segment_code", "region"},
             "sales_orders": {"customer_segment", "customer_region"},
-            "shipping_orders": {"container_number", "is_shipping_order"},
+            # `is_shipping_order` belongs to `purchase_orders` alone (review S1,
+            # 2026-09-06): it is parsed off a PO payload to refuse it there and
+            # redirect to `shipping_orders` (D6/AC-P3-7) - `CanonicalShippingOrder`
+            # itself has no such field, so an earlier version of this test
+            # wrongly also expected it under `shipping_orders`.
+            "purchase_orders": {"is_shipping_order"},
+            "shipping_orders": {"container_number"},
         }
         for entity, wanted in expected.items():
             got = set(fields_added.get(entity, []))
