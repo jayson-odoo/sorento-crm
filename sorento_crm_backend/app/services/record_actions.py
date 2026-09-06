@@ -1328,6 +1328,27 @@ register(
 )
 
 
+def _delete_shipment_line_photo(db: Session, payload: dict):
+    from app.services.scm import shipment_line_photos
+
+    return shipment_line_photos.delete_photo(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="shipment_line_photo.delete",
+        entity_types=("shipment_line_photo",),
+        execute=_delete_shipment_line_photo,
+        # Destructive: the file itself is removed (link, attachment row and object),
+        # same as every other file delete in this registry - re-adding it means
+        # uploading it again, not undoing a link.
+        window=WINDOW_DESTRUCTIVE,
+        permission="scm.reorder.run",
+        label="Delete shipment line photo",
+    )
+)
+
+
 def _delete_notification(db: Session, payload: dict):
     from app.services.error_handler import handle_not_found
     from app.services.notification_service import NotificationService

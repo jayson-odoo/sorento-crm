@@ -42,6 +42,7 @@ from app.services.scm import (
     supplier_code_alias_service,
     loading_plan_service,
     packing_list_service,
+    shipment_line_photos,
     spo_conversion_service,
     supplier_document_service,
     supplier_inventory_service,
@@ -1073,6 +1074,51 @@ def export_consolidated_packing_list(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": content_disposition(filename)},
     )
+
+
+@router.get("/inbound-shipments/{shipment_id}/line-photos")
+def get_shipment_line_photos(
+    shipment_id: str,
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """Every line's supplier photos on this container, keyed by line id (R25)."""
+    return shipment_line_photos.list_for_shipment(db, shipment_id)
+
+
+@router.post("/inbound-shipments/{shipment_id}/lines/{line_id}/photos")
+async def upload_shipment_line_photos(
+    shipment_id: str,
+    line_id: str,
+    files: list[UploadFile] = File(..., description="One or more image files"),
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Add photos to a shipment line, in upload order (R25). Returns the line's full
+    photo list, this upload included."""
+    return await shipment_line_photos.upload_photos(
+        db,
+        shipment_id=shipment_id,
+        line_id=line_id,
+        files=files,
+        actor_id=current_user.get("id"),
+    )
+
+
+@router.delete("/inbound-shipments/{shipment_id}/lines/{line_id}/photos/{photo_id}")
+def delete_shipment_line_photo(
+    shipment_id: str,
+    line_id: str,
+    photo_id: str,
+    _user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Immediate delete - same `shipment_line_photos.delete_photo` the deferred
+    `shipment_line_photo.delete` record action calls (`record_actions.py`); the FE's own
+    "x" on a thumbnail goes through that deferred path (D7), never this route directly.
+    """
+    shipment_line_photos.delete_photo(db, photo_id)
+    return {"message": "Photo deleted"}
 
 
 @router.post("/inbound-shipments/{shipment_id}/allocations")

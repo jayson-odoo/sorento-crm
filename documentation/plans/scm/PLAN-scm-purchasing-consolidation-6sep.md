@@ -4,7 +4,9 @@
 R11 clarified. UAC:
 `scm-purchasing-consolidation-6sep-acceptance-criteria.md`. Lavish page:
 `mockups/purchasing-consolidation-6sep-plan.html`. **Lane A (section 13: 1, 2 (R3 only), 3, 8,
-10 (R22)) built, browser-verified, review round 1 applied.** B/C/D awaiting GO.
+10 (R22)) built, browser-verified, review round 1 applied.** **Lane C built (C1-C3), awaiting
+review** - sections 6, 7, 12 (supplier documents, translation memory, shipment line photos).
+B/D awaiting GO.
 
 Feedback given 6 Sep on production (`fe-sorento.foundryx.my`). Twelve asks, four lanes, four
 PRs. Every "what exists" line below was measured on `origin/main` `cc0789971` (6 Sep), not on
@@ -550,3 +552,30 @@ No open questions remain. Waiting for GO.
   `OPENAI_API_KEY` `.env` carries for the app itself. Not asked for by R15/R16 in so many
   words, but a direct consequence of "the model only fills gaps" - an English remark has
   no gap.
+- **R25 (slice C3) reuses `EntityAttachmentLink` (`entity_attachment_links`) instead of
+  a new `inbound_shipment_line_photos` table.** The existing linkage mechanism already
+  carries every column the plan asked the new table to have - `entity_type`,
+  `entity_id`, `attachment_id` (FK, `ON DELETE CASCADE`), `sort_order`, `created_at`,
+  `created_by`, and the unique `(entity_type, entity_id, attachment_id)` - and it is
+  already the mechanism every other linked-attachment feature (complaint / stock-inquiry
+  / purchase-request manual attachments, the external entity-attachment route) uses.
+  `entity_type='inbound_shipment_line'`, `entity_id` the line's id. No migration; the
+  alembic head stays `484_translation_memory`.
+- **The photo delete goes through the deferred-action mechanism (D7,
+  `useDeferredRowAction`/`shipment_line_photo.delete`), not `ConfirmDeleteDialog`.** Same
+  reasoning as the Translations page's own delete (see this file's earlier deviation
+  note): this worktree's current `CLAUDE.md` has retired that dialog codebase-wide. A
+  plain immediate `DELETE .../lines/{line_id}/photos/{photo_id}` route still exists and
+  calls the exact same `shipment_line_photos.delete_photo` the record action wraps (the
+  registry's own "execute calls the EXISTING service method" rule) - the FE's own "x" on
+  a thumbnail never calls it directly.
+- **R26's `PHOTO 1 .. PHOTO n` columns are appended AFTER column V (`TOTAL AMOUNT`),
+  not inserted between REMARKS and RMB as section 12's literal text reads.** The
+  plan's own qualifier ("whichever keeps the existing formula column letters stable")
+  decides this: `to_xlsx`'s formulas hardcode `T`/`U`/`F` as literal strings
+  (`=T{row}*F{row}`, `=SUM(U{first_row}:U{last_row})`), and Q5's "no cap per line" means
+  `n` varies export to export - inserting a variable-width block ahead of RMB/TOTAL RM
+  would mean re-deriving every one of those letters, computed, on every export. Appending
+  after V is the smaller diff and leaves every existing letter (and therefore every
+  existing formula) unchanged. RMB stays `T`, TOTAL RM stays `U`, exactly as before this
+  slice.

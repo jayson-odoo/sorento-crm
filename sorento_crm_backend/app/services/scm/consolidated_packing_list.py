@@ -15,10 +15,14 @@ loading plan each factory was sent and add its own remarks ("Loading plan asked 
 document the forwarder, the factories and the clearance agent read, and a line on it for goods
 that never went into the container is read as goods that shipped.
 
-Reads only: `build` never writes, and `to_xlsx` is a pure function of what `build` returned.
+Reads only: `build` never writes, and `to_xlsx` is a pure function of what `build`
+returned - PLUS a storage read per photo (R26, section 12): `build` carries each line's
+photos as attachment refs only (`file_path`/`storage_provider`, never bytes), and
+`to_xlsx` fetches and embeds them at export time through `storage_router`.
 """
 from __future__ import annotations
 
+import logging
 import re
 from datetime import date, datetime
 from io import BytesIO
@@ -28,9 +32,12 @@ from sqlalchemy.orm import Session
 
 from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
 from app.models.product import Brand, Product
+from app.services.entity_attachment_service import EntityAttachmentService
 from app.services.error_handler import AppException
 from app.services.scm.container_capacity import line_cbm
 from app.services.scm.supplier_scope import is_uuid
+
+logger = logging.getLogger(__name__)
 
 #: The captain's own file counts SANDEL / CABANA / blank under SORENTO, so this is a single
 #: named brand rather than a lookup table: MOCHA is the one that is invoiced separately.
@@ -117,6 +124,26 @@ def build(db: Session, shipment_id: str) -> dict:
         if supplier_ids
         else {}
     )
+    # R25/R26: every line's supplier photos, ordered, so `to_xlsx` can print one PHOTO
+    # column per index (Q5: no cap). Read once for every line on the container rather
+    # than once per line - the same shape `suppliers` above already uses.
+    line_ids = [str(line.id) for line, _p, _b in rows]
+    links_by_line = (
+        EntityAttachmentService(db).list_links_for_entities("inbound_shipment_line", line_ids)
+        if line_ids
+        else {}
+    )
+    photos_by_line = {
+        lid: [
+            {
+                "attachment_id": str(link.attachment_id),
+                "file_path": getattr(link.attachment, "file_path", None),
+                "storage_provider": getattr(link.attachment, "storage_provider", None),
+            }
+            for link in links
+        ]
+        for lid, links in links_by_line.items()
+    }
     grouped: dict[Optional[str], list[dict]] = {}
     for line, product, brand in rows:
         brand_code = (brand.brand_code or "").strip() if brand else None
@@ -161,6 +188,10 @@ def build(db: Session, shipment_id: str) -> dict:
                 ),
                 "unit_cost": _f(line.unit_cost),
                 "currency": line.currency,
+                # Ordered attachment refs (R25/R26) - the JSON never inlines the bytes
+                # themselves; `to_xlsx` fetches those through `storage_router` at export
+                # time, from the `file_path`/`storage_provider` carried here.
+                "photos": photos_by_line.get(str(line.id), []),
             }
         )
 
@@ -340,6 +371,21 @@ _SUBTOTAL_FORMATS = {
 #: lookup rather than two spellings that drift.
 _LETTERS = [spec[0] for spec in _COLUMNS_SPEC]
 
+#: R26 (section 12): `PHOTO 1 .. PHOTO n` go AFTER W, not between REMARKS and RMB -
+#: the reference's own RMB/TOTAL RM formulas hardcode column letters (`T{row}*F{row}`,
+#: `U{row}`), and inserting a variable-width block ahead of them (no cap per line, Q5)
+#: would mean re-deriving every one of those letters for every export. Appending after
+#: V keeps every existing letter, and therefore every existing formula, unchanged - the
+#: smaller diff the plan's own wording allows ("whichever keeps the existing formula
+#: column letters stable"). `1` (not `0`) because column 1 is A.
+_FIRST_PHOTO_COLUMN = len(_LETTERS) + 1
+#: ~3cm at 96 dpi (a picture this wide never overflows the row height below).
+_PHOTO_BOX_PX = 113
+#: Row height in points for a line that carries at least one photo column (R26's "3 cm
+#: cap"): 3cm / 2.54 * 72.
+_PHOTO_ROW_HEIGHT = 85.04
+_PHOTO_COL_WIDTH = 16.0
+
 #: The header-block keys that carry a DATE. Written as dates, not as the ISO strings the
 #: payload holds, or Excel treats them as text.
 _HEADER_DATE_KEYS = {"loading_date", "etd", "eta"}
@@ -421,6 +467,57 @@ def _f_or_none(value) -> Optional[float]:
         return None
 
 
+def _max_photo_columns(payload: dict) -> int:
+    """`n` in `PHOTO 1 .. PHOTO n` (R26) - the most photos any single line on this
+    container carries, 0 when nobody has uploaded one (no photo column at all)."""
+    return max(
+        (
+            len(line.get("photos") or [])
+            for factory in payload.get("factories") or []
+            for line in factory["lines"]
+        ),
+        default=0,
+    )
+
+
+def _photo_bytes(ref: dict) -> Optional[bytes]:
+    """The photo's ORIGINAL bytes, fetched through `storage_router` at export time -
+    `build()` only ever carried the ref (`file_path`/`storage_provider`), never bytes
+    (R26). `None` for anything that cannot be fetched: a photo the export cannot read
+    is simply absent from its cell, never a reason the export itself fails."""
+    from app.services.storage_router import extract_key, get_backend, normalize_provider
+
+    key = extract_key(ref.get("file_path"))
+    if not key:
+        return None
+    try:
+        return get_backend(normalize_provider(ref.get("storage_provider"))).download_file(key)
+    except Exception:  # noqa: BLE001 - cosmetic, never fatal to the export
+        logger.warning(
+            "packing list export: cannot fetch photo %s", ref.get("attachment_id"), exc_info=True
+        )
+        return None
+
+
+def _anchor_photo(ws, row: int, column: int, data: bytes) -> None:
+    """Put the photo over that cell, scaled into `_PHOTO_BOX_PX` (same pattern
+    `project_quotation_excel_service._anchor` uses for its own PRODUCT IMAGE column).
+    The cell's VALUE stays empty - nothing shows through around the picture."""
+    from openpyxl.drawing.image import Image as XLImage
+    from openpyxl.utils import get_column_letter
+
+    try:
+        picture = XLImage(BytesIO(data))
+        scale = min(
+            _PHOTO_BOX_PX / max(picture.width, 1), _PHOTO_BOX_PX / max(picture.height, 1), 1
+        )
+        picture.width = int(picture.width * scale)
+        picture.height = int(picture.height * scale)
+        ws.add_image(picture, f"{get_column_letter(column)}{row}")
+    except Exception:  # noqa: BLE001 - cosmetic, never fatal to the export
+        logger.warning("packing list export: cannot anchor photo", exc_info=True)
+
+
 def to_xlsx(payload: dict) -> bytes:
     """The container workbook in the FSCU layout, arithmetic included as FORMULAS.
 
@@ -436,6 +533,7 @@ def to_xlsx(payload: dict) -> bytes:
     """
     import openpyxl
     from openpyxl.styles import Alignment, Font
+    from openpyxl.utils import get_column_letter
 
     wb = openpyxl.Workbook()
     ws = wb.active or wb.create_sheet()
@@ -503,6 +601,16 @@ def to_xlsx(payload: dict) -> bytes:
     ws.merge_cells(f"I{_HEADER_ROW}:K{_HEADER_ROW}")
     ws.merge_cells(f"V{_HEADER_ROW}:V{_SUBHEADER_ROW}")
 
+    # ---- PHOTO 1 .. PHOTO n, after V (R26 - see `_FIRST_PHOTO_COLUMN`'s own comment
+    # for why not between REMARKS and RMB) ----------------------------------- #
+    photo_columns = _max_photo_columns(payload)
+    for i in range(photo_columns):
+        column = _FIRST_PHOTO_COLUMN + i
+        letter = get_column_letter(column)
+        style(_HEADER_ROW, column, bold=True).value = f"PHOTO {i + 1}"
+        ws.merge_cells(f"{letter}{_HEADER_ROW}:{letter}{_SUBHEADER_ROW}")
+        ws.column_dimensions[letter].width = _PHOTO_COL_WIDTH
+
     # ---- one block per factory -------------------------------------------- #
     row = _FIRST_LINE_ROW
     number = 1
@@ -522,7 +630,10 @@ def to_xlsx(payload: dict) -> bytes:
             cartons = line.get("cartons")
 
             style_row(row, formats=_LINE_FORMATS)
-            ws.row_dimensions[row].height = _LINE_HEIGHT
+            # 3cm cap (R26): a photo needs more headroom than the reference's own line
+            # height, but only once the container actually carries one - a photo-less
+            # export must not grow every row for a column nobody filled.
+            ws.row_dimensions[row].height = _PHOTO_ROW_HEIGHT if photo_columns else _LINE_HEIGHT
 
             ws.cell(row=row, column=1, value=block["name"])
             ws.cell(row=row, column=2, value=number)
@@ -564,6 +675,15 @@ def to_xlsx(payload: dict) -> bytes:
             ws.cell(row=row, column=20, value=price)
             if price is not None:
                 ws.cell(row=row, column=21, value=f"=T{row}*F{row}")
+
+            for photo_index in range(photo_columns):
+                column = _FIRST_PHOTO_COLUMN + photo_index
+                style(row, column)
+                refs = line.get("photos") or []
+                if photo_index < len(refs):
+                    data = _photo_bytes(refs[photo_index])
+                    if data:
+                        _anchor_photo(ws, row, column, data)
 
             number += 1
             row += 1

@@ -1472,7 +1472,7 @@ export async function downloadPackingListExport(
  * Supplier photos on a shipment line (R25/R26, purchasing consolidation batch 6 Sep
  * 2026, section 12, lane C, slice C3).
  *
- * ── BACKEND CONTRACT (Phase 2, app/api/v1/scm/fulfilment.py) ────────────────
+ * ── BACKEND CONTRACT (app/api/v1/scm/fulfilment.py) ─────────────────────────
  *  GET    /api/v1/scm/inbound-shipments/{id}/line-photos
  *         -> 200 { [line_id]: ShipmentLinePhoto[] }
  *  POST   /api/v1/scm/inbound-shipments/{id}/lines/{lineId}/photos   multipart files[]
@@ -1483,10 +1483,6 @@ export async function downloadPackingListExport(
  *  Auth: `scm.dashboard.view` (GET), `scm.reorder.run` (POST) - the same pair every
  *  other inbound-shipments route in this file already uses.
  *
- * PHASE 1 (this commit): the two functions below are an in-memory mock - no network
- * call, no backend route yet (PRINCIPLES' frontend-first-against-mocks phase order).
- * Phase 2 replaces both bodies with the `apiFetch` calls documented above; the
- * exported shape does not change, so `ShipmentLinePhotosCell.tsx` needs no rewrite.
  * No photo cap per line (Q5, ruled 6 Sep 2026).
  */
 export interface ShipmentLinePhoto {
@@ -1500,14 +1496,11 @@ export interface ShipmentLinePhoto {
 
 export type ShipmentLinePhotosByLine = Record<string, ShipmentLinePhoto[]>;
 
-const _mockLinePhotos: ShipmentLinePhotosByLine = {};
-let _mockLinePhotoSeq = 0;
-
 export async function getShipmentLinePhotos(
   shipmentId: string,
 ): Promise<ShipmentLinePhotosByLine> {
-  void shipmentId;
-  return { ..._mockLinePhotos };
+  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/line-photos`);
+  return readJson<ShipmentLinePhotosByLine>(res, 'Failed to load shipment line photos');
 }
 
 export async function uploadShipmentLinePhotos(
@@ -1515,25 +1508,13 @@ export async function uploadShipmentLinePhotos(
   lineId: string,
   files: File[],
 ): Promise<ShipmentLinePhoto[]> {
-  void shipmentId;
-  const existing = _mockLinePhotos[lineId] ?? [];
-  const added = files.map((file): ShipmentLinePhoto => {
-    _mockLinePhotoSeq += 1;
-    // `URL.createObjectURL` so the mock thumbnail/preview is the actual picked file,
-    // not a placeholder - a reader can tell the upload worked before Phase 2 exists.
-    const url = typeof URL !== 'undefined' && URL.createObjectURL ? URL.createObjectURL(file) : '';
-    return {
-      id: `mock-photo-${_mockLinePhotoSeq}`,
-      attachment_id: `mock-attachment-${_mockLinePhotoSeq}`,
-      sort_order: existing.length + _mockLinePhotoSeq,
-      thumbnail_url: url || null,
-      url: url || null,
-      filename: file.name,
-    };
-  });
-  const next = [...existing, ...added];
-  _mockLinePhotos[lineId] = next;
-  return next;
+  const form = new FormData();
+  for (const file of files) form.append('files', file);
+  const res = await apiFetch(
+    `/api/v1/scm/inbound-shipments/${shipmentId}/lines/${lineId}/photos`,
+    { method: 'POST', body: form },
+  );
+  return readJson<ShipmentLinePhoto[]>(res, 'Failed to upload photos');
 }
 
 /**
