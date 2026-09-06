@@ -175,6 +175,15 @@ the retirement of the SO / PO history importers (superseded by the ESB's 3-year 
 - **AC-P3-8 [T]** Parity test: the SPO fixture through the SPO xlsx import and through the ESB
   push; diff empty including `container_number` and `inbound_shipment_id`.
 
+## Phase S2b: unclassified demand (D23, captain 2026-09-06)
+
+- **AC-P2-8 [BE][T]** (D23) Given an outstanding SO book containing a document whose agent has
+  no demand class and whose customer has no market segment, when it is previewed and applied,
+  then the file is NOT refused: the document lands with `demand_class` NULL, the preview and the
+  apply report list it under `unclassified_documents` (count + capped document numbers), and the
+  ESB push of the same document lands with warning `unclassified_demand`, as today. Parity test:
+  the same unclassified document through both channels yields identical rows.
+
 ## Phase S4: retire and clean up
 
 - **AC-P4-1 [BE]** The SO history and PO history importers (`so_history_service`,
