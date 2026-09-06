@@ -44,6 +44,7 @@ and stock stay upload-only and are untouched here.
 | D20 | `status` optional on every document payload; absent = shared `derive_document_status` (upload rules) |
 | D21 | B: no grant widening; DO / GRN / stock stay uploads |
 | D22 | AutoCount location on an SO line wins; Order Inquiry fills blanks only; conflicts listed on the worklist |
+| D24 | (captain 2026-09-06) Product column convention, both channels: `product_name` = the AutoCount item code, `description` = the AutoCount item Description text. The Excel import already does this; the ESB masters writer derives `product_name` from `code` and stores the Description text in `description` (from the payload's `description`, else its `name` during the transition). Every rule that reads the text (discontinued prefix, dimensions) reads `description`. Contract 2.1 note: products.`name` is transitional and maps to description when description is absent |
 | D23 | (captain 2026-09-06) An unclassifiable document lands on BOTH channels with `demand_class` NULL and warning `unclassified_demand`; the upload preview/apply list the documents instead of refusing the file |
 
 ## 2. Design

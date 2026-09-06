@@ -184,6 +184,15 @@ the retirement of the SO / PO history importers (superseded by the ESB's 3-year 
   ESB push of the same document lands with warning `unclassified_demand`, as today. Parity test:
   the same unclassified document through both channels yields identical rows.
 
+## Phase S1b: product column convention (D24, captain 2026-09-06)
+
+- **AC-P1-10 [BE][T][C]** (D24) Given an ESB product push with `code=SRTWT2114-NL` and
+  `name="****SORENTO TWO WAY WATER TAP"` and no `description`, when it lands (create or update),
+  then `product_name = "SRTWT2114-NL"`, `description = "****SORENTO TWO WAY WATER TAP"`,
+  `is_discontinued = true`, and dimensions are parsed from that description. The Excel import of
+  the same item (Item Code + Description columns) yields identical columns. A push carrying
+  `description` uses it and ignores `name` for the text.
+
 ## Phase S4: retire and clean up
 
 - **AC-P4-1 [BE]** The SO history and PO history importers (`so_history_service`,
