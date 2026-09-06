@@ -647,11 +647,9 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
                         pid_by_name = names_by_key.get(name_key)
                         if pid_by_name is not None:
                             party_by_doc.setdefault(l.doc_number, pid_by_name)
-                        else:
-                            issues.append(ResolutionIssue(
-                                row, "party_name", cleaned,
-                                f"no {bind.party.__name__.lower()} named {cleaned!r}; a new "
-                                f"{bind.party.__name__.lower()} is being created for it"))
+                        # Else: back-created on apply, and reported by the preview
+                        # under `suppliers_created_codes` (see the code branch below
+                        # for why it is no longer a resolution issue).
             continue
         pid_party = parties.get(code)
         if pid_party is None:
@@ -671,18 +669,18 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
                 # The purchase book has nowhere to put an unlinked code, and 2,177 of
                 # 5,243 documents in the captain's own file arrived exactly this way -
                 # not a typo, a supplier AutoCount already deals with that the master
-                # simply hasn't caught up on. `apply()` creates a minimal supplier row
-                # for it (mirrors `order_service`'s customer back-create) and links the
-                # document; still reported here, so it is visible rather than a surprise
-                # after the fact.
+                # simply hasn't caught up on. `apply()` creates a minimal party row
+                # for it and links the document. NOT a resolution issue any more
+                # (AC-P2-1, CI catch 2026-09-06): the row LANDS, and a resolution
+                # issue is what the FE counts as a skipped row - with D8 back-creating
+                # customers on the sales book too, an SO book full of debtors the master
+                # has not caught up on read as "N rows skipped" for N rows that import.
+                # The preview reports them under `suppliers_created_codes` /
+                # `customers_created_codes` instead (`_would_create_parties`).
                 party_code_by_doc.setdefault(l.doc_number, code)
                 party_raw_code_by_code.setdefault(code, extra.get("party_code") or code)
                 if code not in party_label_by_code and l.label:
                     party_label_by_code[code] = l.label
-                issues.append(ResolutionIssue(
-                    row, bind.party_code, code,
-                    f"no {bind.party.__name__.lower()} with this code; a new "
-                    f"{bind.party.__name__.lower()} is being created for it"))
             elif bind.party_code_header_col:
                 party_code_by_doc.setdefault(l.doc_number, code)
             else:

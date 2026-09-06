@@ -634,9 +634,11 @@ def test_a_creditor_code_owned_only_by_another_company_gets_its_own_row_back_cre
     file = _po_workbook([[po_number, creditor, item, 10, date(2026, 7, 1), ""]])
     preview = svc.preview(db, file, PO)
 
-    assert [(i.field, i.value) for i in preview.resolution_issues] == [
-        ("creditor_code", creditor)
-    ]
+    # AC-P2-1: a creditor the upload WILL back-create is a preview fact
+    # (`suppliers_created`), not a resolution issue - the row lands, and a
+    # resolution issue is what the FE counts as a skipped row.
+    assert preview.resolution_issues == []
+    assert preview.suppliers_created == [creditor]
     assert db.execute(
         text("SELECT count(*) FROM suppliers WHERE supplier_code = :c"), {"c": creditor}
     ).scalar() == 1, "preview must not write"
