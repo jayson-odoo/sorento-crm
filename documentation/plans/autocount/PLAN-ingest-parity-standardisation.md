@@ -182,3 +182,15 @@ missing product ref (line dropped instead).
 DO / GRN / stock / invoices (D21 B); non-AutoCount uploads (packing lists, container status,
 proforma invoices, supplier stock, certificates, flyers, promotions, project docs); category
 hierarchy and UOM conversion (absent in AutoCount); importer review aids (D19).
+
+## 7. Test debt (close before the PR is marked ready)
+
+- AC-P2-4: the red test spies `build_batch`; add a test asserting a real `planning_change_batches`
+  row with one row per changed line once S2 is green.
+- AC-P2-7: the red test uses one representative document; widen to the 30-document SO/PO fixture
+  the UAC names, then run the same fixture on the lane DB (DoD 4).
+- S2 migrations surfaced by the tester: `customers.region` (D16) and the `order_inquiry_conflicts`
+  table (D22); S1: `products.remark` (D4); S3: `spo_allocations.container_number` (D6). One
+  migration per slice, chained on main's head via `./scripts/alembic-reparent.sh` at PR time.
+- `tests/test_ingest_documents_v2_hooks.py::TestPlanningChangeIsNotRunByIngest` guards the old
+  D7 deferral and must be inverted when AC-P2-4 goes green.
