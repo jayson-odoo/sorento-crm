@@ -214,7 +214,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import date as _date
+from datetime import date as _date, datetime
 from decimal import Decimal
 from io import BytesIO
 from typing import Any, Optional, Sequence
@@ -675,6 +675,7 @@ def _match_takes_for_line(
     ln: InboundShipmentLine,
     need: float,
     only_po_lines: Optional[set[str]] = None,
+    restore: Optional[dict[str, float]] = None,
 ) -> tuple[Optional[str], list[tuple[PurchaseOrderLine, PurchaseOrder, float]]]:
     """The one PO-matching decision this module makes, shared by `suggest` (a read against
     `need = packed`) and `create` (a FRESH read, at write time, against `need = the confirmed
@@ -693,7 +694,16 @@ def _match_takes_for_line(
         (50 open) and PO B (100 open), the walk takes 50 and 30, and dropping A's take left
         30 - when B alone can cover all 80. The tick changes which lines are available, so
         the walk has to run again over what is left, not have a slice cut out of it.
+
+        `restore` (R24, `revise`/`planner_state`) hands a source line back the quantity THIS
+        SPO's own pull is currently holding on it, so the walk sees the world as it would be
+        without this SPO - which is the only world an edit of this SPO can be judged in.
         """
+        if restore:
+            candidates = [
+                (line, po, available + restore.get(str(line.id), 0.0))
+                for line, po, available in candidates
+            ]
         if only_po_lines is None:
             return candidates
         return [c for c in candidates if str(c[0].id) in only_po_lines]
@@ -1747,7 +1757,8 @@ def _spo_number(db: Session) -> str:
 
 
 def _validate_so_takes(
-    db: Session, product_id: str, so_takes: list[dict], need: float
+    db: Session, product_id: str, so_takes: list[dict], need: float,
+    *, own_taken: Optional[dict[str, float]] = None,
 ) -> dict[str, float]:
     """`so_takes` (`[{key, qty}]`, the FE's `SpoTakeItem[]`) -> `{key: qty}`, validated
     against this line's OWN coverage rows and its OWN SPO qty (R19/R20, AC-I2, AC-I3) - never
@@ -1759,6 +1770,11 @@ def _validate_so_takes(
     key no longer on offer (another confirm claimed the row since the screen was drawn) is
     dropped rather than refused - the same defensiveness `_match_takes_for_line` already
     gives a PO take taken elsewhere.
+
+    `own_taken` (R24, `revise`) is what THIS SPO already holds against each key, added back
+    onto that row's outstanding before the check. Without it, re-saving an SPO unchanged
+    would be refused for asking for a quantity the very SPO being saved is what spent -
+    the row reads 0 outstanding precisely because this SPO holds it.
     """
     wanted: dict[str, float] = {}
     for item in so_takes or []:
@@ -1780,7 +1796,7 @@ def _validate_so_takes(
         row = coverage_by_key.get(key)
         if row is None:
             continue
-        outstanding = float(row.get("qty") or 0)
+        outstanding = float(row.get("qty") or 0) + float((own_taken or {}).get(key, 0.0))
         if qty > outstanding + 1e-6:
             raise AppException(
                 422,
@@ -2402,6 +2418,673 @@ def _write_retail_claims(
                 continue
             out.append({"so_line_id": so_line_id, "spo_allocation_id": allocation_id, "qty": qty})
     return out
+
+
+# --------------------------------------------------------------------------- #
+# R24 - editing an SPO that already exists, through the same planner
+# --------------------------------------------------------------------------- #
+
+
+def _spo_scope(
+    db: Session, shipment_id: str, purchase_order_id: str, *, for_update: bool = False
+) -> tuple[InboundShipment, PurchaseOrder, dict[str, ShipmentLineSpoLink]]:
+    """The one resolution both `planner_state` and `revise` open with, so a read and the
+    write that follows it can never disagree about which rows are in scope.
+
+    Two guards, the SAME two `unwind` applies for the same reason: the header must be one
+    THIS shipment's own `create` produced (404 otherwise - the caller cannot use this to
+    reach an SPO belonging elsewhere), and it must carry `source_system == crm_spo` (409 -
+    an AutoCount import is never edited from this screen, however it ended up linked).
+
+    Returns the shipment, the purchase order, and the MATCHED link rows for it keyed by
+    shipment line. Skip rows (`unmatched_reason` set, no purchase order to scope by) are not
+    in scope: they explain a line's history and name no SPO line to edit.
+    """
+    shipment = _shipment_or_404(db, shipment_id, for_update=for_update)
+    links = [
+        l
+        for l in _existing_links(db, shipment.id)
+        if l.purchase_order_id
+        and str(l.purchase_order_id) == str(purchase_order_id)
+        and l.purchase_order_line_id
+    ]
+    if not links:
+        raise AppException(404, "This shipment has no SPO with that id.")
+    po = db.query(PurchaseOrder).filter(PurchaseOrder.id == str(purchase_order_id)).one_or_none()
+    if po is None:
+        raise AppException(404, "This shipment has no SPO with that id.")
+    if po.source_system != SOURCE_SYSTEM:
+        raise AppException(
+            409,
+            f"{po.po_number or 'This purchase order'} was not created by Create SPO and "
+            "cannot be edited from the planner.",
+            detail="not_crm_spo",
+        )
+    return shipment, po, {str(l.inbound_shipment_line_id): l for l in links}
+
+
+def _own_state(
+    db: Session, po: PurchaseOrder, links: dict[str, ShipmentLineSpoLink]
+) -> dict[str, dict[str, Any]]:
+    """What THIS SPO currently holds, per shipment line - the whole of "what it already is".
+
+    An allocation carries no shipment line of its own (`spo_allocations` names the shipment,
+    the product and the warehouse, never the packing-list LINE), so the chain that keys one
+    to its line is the one `create` itself wrote:
+
+        spo_allocations.po_line_id
+          -> purchase_order_lines.id             (the SPO's OWN line, not the source PO's)
+          -> shipment_line_spo_link.purchase_order_line_id
+          -> shipment_line_spo_link.inbound_shipment_line_id
+
+    Per line: `po_line` (the SPO line itself), `allocations`, `qty` (`qty_ordered`),
+    `received` (summed `quantity_received`), `pulls` (`{source po_line_id: qty}` off
+    `source_ref`) and `so_takes` (`{coverage key: qty}`).
+
+    The PROJECT half of `so_takes` is read from `projects.order_inquiry_links` and the RETAIL
+    half from the SPO line's own `source_ref.so_coverage` - each from the record its own
+    coverage reader nets against (`_project_coverage` sums the link rows; `_retail_coverage`
+    reads `source_ref` through `_spo_cover_by_so_line`). Reading the retail half from
+    `scm.order_link_claim` instead would be the same fact from a different row, and a claim
+    refused at create time (that write is best-effort) would then be missing from the state
+    while the coverage row still counted it as spent.
+    """
+    line_by_po_line = {str(l.purchase_order_line_id): sid for sid, l in links.items()}
+    po_lines = (
+        db.query(PurchaseOrderLine)
+        .filter(PurchaseOrderLine.id.in_(list(line_by_po_line.keys())))
+        .all()
+    )
+    out: dict[str, dict[str, Any]] = {}
+    for pl in po_lines:
+        sid = line_by_po_line[str(pl.id)]
+        parsed = parse_source_ref(pl.source_ref)
+        pulls: dict[str, float] = {}
+        for src_id, qty in parsed["pulls"]:
+            pulls[src_id] = pulls.get(src_id, 0.0) + qty
+        so_takes: dict[str, float] = {}
+        for so_line_id, qty in parsed["so_coverage"]:
+            key = f"{_COVERAGE_RETAIL}:{so_line_id}"
+            so_takes[key] = so_takes.get(key, 0.0) + qty
+        out[sid] = {
+            "po_line": pl,
+            "qty": float(pl.qty_ordered or 0),
+            "allocations": [],
+            "received": 0.0,
+            "pulls": pulls,
+            "so_takes": so_takes,
+        }
+
+    alloc_rows = (
+        db.query(SPOAllocation)
+        .filter(SPOAllocation.po_line_id.in_(list(line_by_po_line.keys())))
+        .all()
+    )
+    alloc_line: dict[str, str] = {}
+    for allocation in alloc_rows:
+        sid = line_by_po_line.get(str(allocation.po_line_id))
+        if sid is None:
+            continue
+        out[sid]["allocations"].append(allocation)
+        out[sid]["received"] += float(allocation.quantity_received or 0)
+        alloc_line[str(allocation.id)] = sid
+
+    if alloc_line:
+        from app.models.project_so import OrderInquiryLink
+
+        for row_id, spo_allocation_id, qty in (
+            db.query(
+                OrderInquiryLink.row_id,
+                OrderInquiryLink.spo_allocation_id,
+                OrderInquiryLink.qty,
+            )
+            .filter(OrderInquiryLink.spo_allocation_id.in_(list(alloc_line.keys())))
+            .all()
+        ):
+            sid = alloc_line.get(str(spo_allocation_id))
+            if sid is None:
+                continue
+            key = f"{_COVERAGE_PROJECT}:{row_id}"
+            takes = out[sid]["so_takes"]
+            takes[key] = takes.get(key, 0.0) + float(qty or 0)
+    return out
+
+
+def planner_state(db: Session, shipment_id: str, purchase_order_id: str) -> dict:
+    """What the planner re-opens an existing SPO with (R24, AC-K1) - a pure read.
+
+    One line per line of THIS SPO, each carrying BOTH halves of the screen:
+
+      * the `suggest` shape (`po_takes`, `so_coverage`, `location_options`, ...), so every
+        cell and both lightboxes read an edit-mode row exactly as they read a create-mode
+        one, with no second rendering path to keep in step;
+      * the STATE it was persisted with - `spo_qty`, `location_splits`, `po_take_ids`,
+        `so_takes`, `received_qty` - which is what the row is seeded from. The suggestion
+        walk is deliberately NOT re-run over it: the operator is looking at a decision
+        somebody already made, and a recomputed default would silently propose a different
+        SPO the moment the screen opened.
+
+    **THIS SPO's own claims are handed back.** `create` advanced the source PO line it
+    pulled from and netted the demand it was pointed at, so a plain `suggest` reads this
+    SPO's own pull as taken and its own ticked demand as spent - the state on screen would
+    be un-editable, greyed out as somebody else's. Every figure that says "already claimed"
+    therefore has this SPO's own share subtracted back out of it: `remaining_qty` gains its
+    `qty_ordered`, a source line's `open_qty` gains its pull (`_match_takes_for_line`'s
+    `restore`), and a coverage row's `qty` gains its take while `taken_qty` / `taken_by`
+    lose it. Any OTHER SPO's claim is left exactly where it is.
+
+    `default_ticked` is left as `_so_coverage` computed it. Edit mode never reads it - the
+    ticks come from `so_takes` - and recomputing it against a quantity nobody has typed yet
+    would state a default this screen is not going to apply.
+    """
+    shipment, po, links = _spo_scope(db, shipment_id, purchase_order_id)
+    own = _own_state(db, po, links)
+
+    shipment_lines = {
+        str(ln.id): ln
+        for ln in db.query(InboundShipmentLine)
+        .filter(InboundShipmentLine.id.in_(list(links.keys())))
+        .all()
+    }
+    already_spo = _already_spo_qty_by_line(db, list(shipment_lines.keys()))
+    product_ids = [str(ln.product_id) for ln in shipment_lines.values() if ln.product_id]
+    products = (
+        {
+            str(pid): (code, name)
+            for pid, code, name in db.query(*_product_cols()).filter(_product_id_in(product_ids)).all()
+        }
+        if product_ids
+        else {}
+    )
+    supplier_ids = {str(ln.supplier_id) for ln in shipment_lines.values() if ln.supplier_id}
+    suppliers = (
+        {str(s.id): s.supplier_name for s in db.query(Supplier).filter(Supplier.id.in_(supplier_ids)).all()}
+        if supplier_ids
+        else {}
+    )
+    stock = _stock_context(db, product_ids)
+    warehouse_codes = {
+        str(wid): code for wid, code in db.query(Warehouse.id, Warehouse.warehouse_code).all()
+    }
+    pulls_by_line = _spo_pulls_by_po_line(db)
+
+    out_lines: list[dict] = []
+    for sid, ln in sorted(
+        shipment_lines.items(),
+        key=lambda item: (products.get(str(item[1].product_id), (None, None))[0] or "", item[0]),
+    ):
+        held = own.get(sid)
+        if held is None:
+            continue
+        item_code, product_name = products.get(str(ln.product_id), (None, None))
+        packed = float(ln.quantity_shipped or 0)
+        already = already_spo.get(sid, {"qty": 0.0, "spo_numbers": []})
+        # What this SPO could grow to: the packed quantity, less what every OTHER SPO on
+        # this line holds. Its own quantity is editable, not spent.
+        remaining = max(packed - max(already["qty"] - held["qty"], 0.0), 0.0)
+        ctx = stock.get(str(ln.product_id), {"on_hand": 0.0, "incoming_spo": 0.0})
+
+        matched_by, takes = _match_takes_for_line(
+            db, ln, remaining, restore=held["pulls"]
+        )
+        _resolved, candidates = _candidate_lines_for_line(db, ln)
+        candidates = [
+            (line, candidate_po, available + held["pulls"].get(str(line.id), 0.0))
+            for line, candidate_po, available in candidates
+        ]
+
+        def _row(line, candidate_po, qty: float) -> dict:
+            entries = [
+                e
+                for e in pulls_by_line.get(str(line.id), [])
+                # This SPO's own pull is not "taken by another SPO" - it is the thing being
+                # edited, and naming it here would grey out its own take.
+                if e["spo_number"] != po.po_number
+            ]
+            return {
+                "po_line_id": str(line.id),
+                "po_number": candidate_po.po_number,
+                "qty": qty,
+                "expected_date": line.expected_date.isoformat() if line.expected_date else None,
+                "po_date": candidate_po.issue_date.isoformat() if candidate_po.issue_date else None,
+                "supplier_name": candidate_po.supplier.supplier_name if candidate_po.supplier else None,
+                "open_qty": max(
+                    float(line.qty_ordered or 0)
+                    - float(line.qty_received or 0)
+                    + held["pulls"].get(str(line.id), 0.0),
+                    0.0,
+                ),
+                "taken_qty": sum(e["qty"] for e in entries),
+                "taken_by": [e["spo_number"] for e in entries],
+            }
+
+        po_takes = [_row(line, candidate_po, qty) for line, candidate_po, qty in takes]
+        listed = {t["po_line_id"] for t in po_takes}
+        for line, candidate_po, available in candidates:
+            if str(line.id) in listed:
+                continue
+            # The persisted take ITSELF always makes the list, whatever the cascade would
+            # have walked to on its own: a take the operator hand-picked further down the
+            # queue must be re-tickable, and an id the screen cannot see cannot be sent back.
+            if str(line.id) in held["pulls"]:
+                po_takes.append(_row(line, candidate_po, held["pulls"][str(line.id)]))
+                listed.add(str(line.id))
+                continue
+            if available > 0:
+                continue
+            row = _row(line, candidate_po, 0.0)
+            if row["taken_qty"] > 0:
+                po_takes.append(row)
+                listed.add(str(line.id))
+
+        coverage = _so_coverage(db, str(ln.product_id), remaining)
+        for entry in coverage:
+            mine = held["so_takes"].get(entry["key"], 0.0)
+            if mine <= 0:
+                continue
+            entry["qty"] = float(entry["qty"]) + mine
+            entry["taken_qty"] = max(float(entry["taken_qty"]) - mine, 0.0)
+            entry["taken_by"] = [n for n in entry["taken_by"] if n != po.po_number]
+
+        location = _location_options(db, str(ln.product_id))
+        options = list(location["options"])
+        known = {o["warehouse_id"] for o in options}
+        splits: list[dict] = []
+        for allocation in held["allocations"]:
+            if not allocation.warehouse_id:
+                continue
+            warehouse_id = str(allocation.warehouse_id)
+            splits.append({
+                "warehouse_id": warehouse_id,
+                "warehouse_code": warehouse_codes.get(warehouse_id) or allocation.location_code,
+                "qty": float(allocation.allocated_quantity or 0),
+            })
+            if warehouse_id not in known:
+                # A destination this SPO already writes to, but which no longer ranks as a
+                # candidate (its demand was served, the location went quiet). It has to be
+                # offered, or the split editor cannot show - or keep - what is on file.
+                options.append({
+                    "warehouse_id": warehouse_id,
+                    "warehouse_code": warehouse_codes.get(warehouse_id) or allocation.location_code,
+                    "outstanding_so": 0.0,
+                    "on_hand": 0.0,
+                    "incoming_spo": 0.0,
+                    "available": 0.0,
+                    "rank_score": None,
+                    "demand_lines": [],
+                })
+                known.add(warehouse_id)
+
+        po_covered = sum(t[2] for t in takes)
+        out_lines.append({
+            "shipment_line_id": sid,
+            "product_id": str(ln.product_id),
+            "item_code": item_code,
+            "product_name": product_name,
+            "supplier_id": str(ln.supplier_id) if ln.supplier_id else None,
+            "supplier_name": suppliers.get(str(ln.supplier_id)) if ln.supplier_id else None,
+            "packed_qty": packed,
+            "remaining_qty": remaining,
+            "po_covered_qty": po_covered,
+            "matched_po_number": takes[0][1].po_number if takes else None,
+            "matched_by": matched_by,
+            "po_takes": po_takes,
+            "on_hand": ctx["on_hand"],
+            "incoming_spo": ctx["incoming_spo"],
+            "suggested_qty": po_covered,
+            "no_po_qty": max(remaining - po_covered, 0.0),
+            # A line ON an SPO always had a supplier - it could not have been written
+            # otherwise - so an edit-mode row is never `cannot_convert`.
+            "cannot_convert": False,
+            "reason": None,
+            "unit_cost": _f(ln.unit_cost),
+            "currency": ln.currency,
+            "location_options": options,
+            "suggested_warehouse_id": location["suggested_warehouse_id"],
+            "so_coverage": coverage,
+            # --- the persisted state the row is seeded from (AC-K1) ------------------
+            "spo_qty": held["qty"],
+            "location_splits": splits,
+            "po_take_ids": sorted(held["pulls"].keys()),
+            "so_takes": [
+                {"key": key, "qty": qty} for key, qty in sorted(held["so_takes"].items())
+            ],
+            "received_qty": held["received"],
+        })
+
+    return {
+        "shipment_id": str(shipment.id),
+        "shipment_number": shipment.shipment_number,
+        "purchase_order_id": str(po.id),
+        "po_number": po.po_number,
+        "supplier_name": po.supplier.supplier_name if po.supplier else None,
+        "lines": out_lines,
+    }
+
+
+def revise(
+    db: Session,
+    shipment_id: str,
+    purchase_order_id: str,
+    lines: list[dict],
+    *,
+    actor: Optional[str] = None,
+    actor_user_id: Optional[str] = None,
+) -> dict:
+    """Save the planner's edits to an SPO that already exists (R24, AC-K2..AC-K4).
+
+    Takes the SAME `lines` payload `create` does, so one screen builds one payload for both
+    actions. Only lines currently ON this SPO may appear - a line that is not is refused
+    (422) rather than silently added: growing an SPO by a line the container never converted
+    is what a second Create SPO run is for, and it mints its own number. A line LEFT OUT, or
+    sent `include: False` / `qty: 0`, is unwound for that line alone (AC-K4): its
+    allocations, its links, its SPO line and its `shipment_line_spo_link` row go, and the
+    pull it made is handed back to the source purchase order - exactly the per-line half of
+    `unwind`, which is why that function's own docstring is the reference for what "unwound"
+    means here. Emptying the SPO completely is refused: Delete is the action for that, and
+    a header with no lines is a document that says nothing.
+
+    **Validated in full before anything is written.** Every guard `create` applies - the
+    split has to add up, a take cannot exceed its row's outstanding or the line's own
+    quantity - runs here over EVERY line first, together with one guard of this action's
+    own: a quantity that would drop an allocation below what it has already RECEIVED is
+    refused (422) naming the product and the warehouse. The refusal is for the whole save,
+    so a valid change sitting beside a refused one is not applied either (AC-K3) - a
+    half-applied SPO is worse than a refused one, and the operator can see and fix the one
+    row the message names.
+
+    **What is re-dealt, and what is not.** The SPO's own number and header row are never
+    touched (AC-K2) - the whole point is that the document keeps its identity. Underneath
+    it, allocations are keyed by `(shipment line, warehouse)` and updated / inserted /
+    deleted to match the new splits; the pull is reversed and re-cascaded (`_reverse_
+    advances` then the same advance `create` makes); the links are deleted and re-written
+    from the new takes, through the SAME two writers `create` uses
+    (`_link_ticked_demand` / `_write_retail_claims`), never a second, quietly different set
+    of rules. `inbound_shipment_lines.spo_allocated_quantity` follows through
+    `refresh_shipment_line_statuses`, the one writer of that column.
+
+    `purchase_orders` carries no stored total of its own - `_existing_spos` sums
+    `qty_ordered` over the header's lines on read - so "the header total" recomputes itself
+    the moment the lines above do.
+    """
+    shipment, po, links = _spo_scope(db, shipment_id, purchase_order_id, for_update=True)
+    own = _own_state(db, po, links)
+
+    shipment_lines = {
+        str(ln.id): ln
+        for ln in db.query(InboundShipmentLine)
+        .filter(InboundShipmentLine.id.in_(list(links.keys())))
+        .all()
+    }
+    by_line = {str(item.get("shipment_line_id") or ""): item for item in (lines or [])}
+    foreign = [lid for lid in by_line if lid not in shipment_lines]
+    if foreign:
+        raise AppException(
+            422,
+            "A line that is not on this SPO cannot be added by editing it.",
+            detail=f"{len(foreign)} line(s) do not belong to this SPO - use Create SPO for them.",
+        )
+
+    already_spo = _already_spo_qty_by_line(db, list(shipment_lines.keys()))
+    product_names = {
+        str(pid): code
+        for pid, code, _name in db.query(*_product_cols()).filter(
+            _product_id_in([str(ln.product_id) for ln in shipment_lines.values() if ln.product_id])
+        ).all()
+    }
+    warehouse_codes = {
+        str(wid): code for wid, code in db.query(Warehouse.id, Warehouse.warehouse_code).all()
+    }
+
+    def _refuse_received(product_id: str, warehouse_id: Optional[str], new_qty: float, received: float):
+        where = warehouse_codes.get(str(warehouse_id)) if warehouse_id else None
+        raise AppException(
+            422,
+            "This SPO line has already received goods and cannot be reduced below them.",
+            detail=(
+                f"{product_names.get(str(product_id)) or 'This product'}"
+                f"{f' at {where}' if where else ''}: "
+                f"{_g(new_qty)} against {_g(received)} already received."
+            ),
+        )
+
+    # --- validation, over every line, before a single row is written ----------------- #
+    plan: dict[str, dict[str, Any]] = {}
+    dropped: list[str] = []
+    for sid, ln in shipment_lines.items():
+        held = own[sid]
+        item = by_line.get(sid)
+        include = bool(item.get("include")) if item else False
+        requested = float(item.get("qty") or 0) if item else 0.0
+
+        if not include or requested <= 0:
+            for allocation in held["allocations"]:
+                received = float(allocation.quantity_received or 0)
+                if received > 0:
+                    _refuse_received(ln.product_id, allocation.warehouse_id, 0.0, received)
+            dropped.append(sid)
+            continue
+
+        already = already_spo.get(sid, {"qty": 0.0, "spo_numbers": []})
+        remaining = max(
+            float(ln.quantity_shipped or 0) - max(already["qty"] - held["qty"], 0.0), 0.0
+        )
+        need = min(requested, remaining)
+        splits = [
+            {"warehouse_id": str(s.get("warehouse_id") or ""), "qty": float(s.get("qty") or 0)}
+            for s in (item.get("location_splits") or [])
+            if s.get("warehouse_id")
+        ]
+        if splits:
+            split_total = sum(s["qty"] for s in splits)
+            if abs(split_total - need) > 1e-6:
+                raise AppException(
+                    422,
+                    "A line's location split has to add up to its SPO qty.",
+                    detail=f"{_g(split_total)} split against {_g(need)} on the line.",
+                )
+        by_warehouse: dict[str, float] = {}
+        for split in splits:
+            by_warehouse[split["warehouse_id"]] = (
+                by_warehouse.get(split["warehouse_id"], 0.0) + split["qty"]
+            )
+        # AC-K3, per (shipment line, warehouse): what arrived AT a location cannot be
+        # written away by an allocation that no longer covers it - whether the split shrank
+        # or the destination was dropped altogether.
+        for allocation in held["allocations"]:
+            received = float(allocation.quantity_received or 0)
+            if received <= 0:
+                continue
+            warehouse_id = str(allocation.warehouse_id) if allocation.warehouse_id else ""
+            new_qty = by_warehouse.get(warehouse_id, 0.0)
+            if new_qty < received - 1e-6:
+                _refuse_received(ln.product_id, allocation.warehouse_id, new_qty, received)
+
+        take_ids = item.get("po_take_ids")
+        only = None if take_ids is None else {str(t) for t in take_ids}
+        _matched_by, takes = _match_takes_for_line(
+            db, ln, need, only, restore=held["pulls"]
+        )
+        validated_takes = _validate_so_takes(
+            db, str(ln.product_id), item.get("so_takes") or [], need,
+            own_taken=held["so_takes"],
+        )
+        plan[sid] = {
+            "line": ln,
+            "need": need,
+            "takes": takes,
+            "splits": [
+                {"warehouse_id": wid, "qty": qty}
+                for wid, qty in by_warehouse.items()
+                if qty > 0
+            ],
+            "project_takes": {
+                k: v for k, v in validated_takes.items() if k.startswith(f"{_COVERAGE_PROJECT}:")
+            },
+            "retail_cover": [
+                {"so_line_id": k.split(":", 1)[1], "qty": v}
+                for k, v in validated_takes.items()
+                if k.startswith(f"{_COVERAGE_RETAIL}:")
+            ],
+        }
+
+    if not plan:
+        raise AppException(
+            422,
+            "An SPO has to keep at least one line - delete it instead.",
+            detail="nothing_left",
+        )
+
+    # --- writes ---------------------------------------------------------------------- #
+    from app.models.project_so import OrderInquiryLink
+    from app.models.scm import OrderLinkClaim
+
+    all_po_lines = [held["po_line"] for held in own.values()]
+    restored_source_lines = _reverse_advances(db, all_po_lines)
+
+    all_alloc_ids = [
+        str(allocation.id) for held in own.values() for allocation in held["allocations"]
+    ]
+    if all_alloc_ids:
+        # This SPO's OWN placements, deleted before the allocations they point at can move -
+        # the same ordering `unwind`'s F9 fix explains (`ck_order_inquiry_links_one_target`
+        # forbids a link with neither target, so a SET NULL is never a legal end state).
+        unlinked_row_ids = [
+            str(row_id)
+            for (row_id,) in db.query(OrderInquiryLink.row_id)
+            .filter(OrderInquiryLink.spo_allocation_id.in_(all_alloc_ids))
+            .distinct()
+            .all()
+        ]
+        db.query(OrderInquiryLink).filter(
+            OrderInquiryLink.spo_allocation_id.in_(all_alloc_ids)
+        ).delete(synchronize_session=False)
+        db.query(OrderLinkClaim).filter(
+            OrderLinkClaim.spo_allocation_id.in_(all_alloc_ids),
+            OrderLinkClaim.source == "planner",
+        ).delete(synchronize_session=False)
+        if unlinked_row_ids:
+            # `state` is DERIVED from the links (`refresh_link_state` is its one writer), so
+            # deleting a link without re-deriving leaves the row reading `placed` with
+            # nothing placing it - and `_assert_linkable` then refuses to link it again,
+            # which is exactly what re-saving the SAME tick has to do. `unwind` does not hit
+            # this because it never links anything afterwards.
+            from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+            db.flush()
+            rows_to_refresh = (
+                db.query(_inquiry_row_model())
+                .filter(_inquiry_row_model().id.in_(unlinked_row_ids))
+                .all()
+            )
+            ProjectOrderInquiryService(db).refresh_link_state(rows_to_refresh)
+            db.flush()
+
+    removed_allocations = 0
+    written: list[dict] = []
+    to_insert: list[dict[str, Any]] = []
+    po_number_by_line: dict[str, str] = {}
+
+    for sid in dropped:
+        held = own[sid]
+        for allocation in held["allocations"]:
+            db.delete(allocation)
+            removed_allocations += 1
+        db.delete(held["po_line"])
+        db.delete(links[sid])
+
+    for sid, entry in plan.items():
+        held = own[sid]
+        ln = entry["line"]
+        need = entry["need"]
+        takes = entry["takes"]
+        po_line = held["po_line"]
+        covered_now = sum(qty for _src_line, _src_po, qty in takes)
+        po_line.qty_ordered = Decimal(str(need))
+        po_line.source_ref = json.dumps({
+            "pulls": [
+                {"po_line_id": str(src_line.id), "qty": qty}
+                for src_line, _src_po, qty in takes
+            ],
+            "so_coverage": entry["retail_cover"],
+            "no_po_qty": max(need - covered_now, 0.0),
+        })
+        for src_line, _src_po, qty in takes:
+            src_line.qty_received = float(src_line.qty_received or 0) + qty
+        po_number_by_line[sid] = po.po_number
+
+        wanted = {s["warehouse_id"]: s["qty"] for s in entry["splits"]}
+        for allocation in held["allocations"]:
+            warehouse_id = str(allocation.warehouse_id) if allocation.warehouse_id else ""
+            if warehouse_id in wanted:
+                allocation.allocated_quantity = int(round(wanted.pop(warehouse_id)))
+                allocation.updated_at = datetime.utcnow()
+                written.append({
+                    "shipment_line_id": sid,
+                    "warehouse_id": warehouse_id,
+                    "allocation_id": str(allocation.id),
+                    "qty": float(allocation.allocated_quantity),
+                })
+            else:
+                db.delete(allocation)
+                removed_allocations += 1
+        for warehouse_id, qty in wanted.items():
+            to_insert.append({
+                "shipment_line_id": sid,
+                "product_id": str(ln.product_id),
+                "warehouse_id": warehouse_id,
+                "qty": qty,
+                "po_number": po.po_number,
+                "po_line_id": po_line.id,
+            })
+    db.flush()
+
+    written.extend(
+        _write_allocations(db, shipment, to_insert, actor_user_id=actor_user_id)
+    )
+
+    demand_links = _link_ticked_demand(
+        db,
+        written,
+        {sid: entry["project_takes"] for sid, entry in plan.items()},
+        actor_user_id=actor_user_id,
+    )
+    from app.models.product import Product as _ProductForClaims
+
+    product_codes = {
+        str(pid): code
+        for pid, code in db.query(_ProductForClaims.id, _ProductForClaims.product_code)
+        .filter(_ProductForClaims.id.in_({ln.product_id for ln in shipment_lines.values()}))
+        .all()
+    }
+    _write_retail_claims(
+        db,
+        written,
+        {sid: entry["retail_cover"] for sid, entry in plan.items()},
+        po_number_by_line,
+        {sid: product_codes.get(str(ln.product_id)) for sid, ln in shipment_lines.items()},
+        actor_user_id=actor_user_id,
+    )
+    db.flush()
+
+    # `spo_allocated_quantity` / `quantity_received` / `line_status` on every shipment line,
+    # through the ONE writer of those columns - never recomputed here.
+    from app.services.procurement_service import InboundShipmentService
+
+    InboundShipmentService(db).refresh_shipment_line_statuses(str(shipment.id))
+
+    return {
+        "shipment_id": str(shipment.id),
+        "shipment_number": shipment.shipment_number,
+        "purchase_order_id": str(po.id),
+        "po_number": po.po_number,
+        "updated_line_count": len(plan),
+        "removed_line_count": len(dropped),
+        "allocations": written,
+        "removed_allocation_count": removed_allocations,
+        "restored_po_line_count": restored_source_lines,
+        "demand_links": demand_links,
+    }
 
 
 def unwind(db: Session, shipment_id: str, purchase_order_id: Optional[str] = None) -> dict:

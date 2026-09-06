@@ -470,3 +470,53 @@ this lane).
   with `kind` - see `SoCoverageRow`'s own doc comment). This reads the UAC's "one tab
   Project, one tab Retail" as a family split, matching how `_so_coverage`'s own server-side
   merge already groups the two.
+
+Measured while implementing section 11 (D3, "Edit in planner").
+
+- **`spo_qty` is the SPO line's own `purchase_order_lines.qty_ordered`, not the sum of its
+  allocated quantities.** A line whose splits were left empty writes no `spo_allocations`
+  row at all (`create`'s own "absent/empty means no allocation is written"), so a summed
+  figure would read 0 for an SPO line that plainly carries a quantity. Wherever splits
+  exist the two agree, because `create` refuses a split that does not add up to the line.
+- **The RETAIL half of `so_takes` is read from the SPO line's own `source_ref.so_coverage`,
+  not from `scm.order_link_claim(source='planner')`.** `_retail_coverage` nets a coverage
+  row against `source_ref` (through `_spo_cover_by_so_line`), and the claim write is
+  best-effort - a claim refused at create time would then be missing from the state while
+  the row it covers still read as spent. The PROJECT half IS read from
+  `projects.order_inquiry_links`, for the mirror-image reason: that is the record
+  `_project_coverage` nets against. Each half is read from the row its own reader trusts.
+- **"PO header totals recomputed" has nothing to recompute.** `purchase_orders` carries no
+  stored total; `_existing_spos` sums `qty_ordered` over the header's lines on read, so the
+  header total follows its lines with no second write.
+- **`planner_state` hands THIS SPO's own claims back out of every "already claimed"
+  figure** (not in R24 as written, and necessary): `create` advanced the source PO line and
+  netted the demand it was pointed at, so a plain `suggest` reads the SPO being edited as
+  taken by somebody else and its own state cannot be re-ticked. `remaining_qty` gains its
+  `qty_ordered`, a source line's `open_qty` gains its pull (`_match_takes_for_line`'s new
+  `restore`), a coverage row's `qty` gains its take while `taken_qty` / `taken_by` lose it,
+  and `_validate_so_takes` takes an `own_taken` map for the same reason. Any OTHER SPO's
+  claim is untouched.
+- **Deleting an `order_inquiry_links` row obliges a `refresh_link_state` call.** The
+  inquiry row's `state` is DERIVED from its links, and `_assert_linkable` refuses anything
+  but `raised` / `partly_linked` - so re-saving the SAME project tick was refused (409,
+  `order_inquiry_not_raised`) until `revise` re-derived the state between the delete and
+  the re-link. `unwind` does not hit this because it never links anything afterwards, so
+  this is a `revise`-only addition, not a change to `unwind`.
+- **Two refusals R24 does not name.** An SPO cannot be emptied by a revision (422) - Delete
+  is the action for that, and a header with no lines is a document that says nothing; and a
+  shipment line that is NOT on this SPO cannot be added by editing it (422) - growing a
+  container's conversion is what a second Create SPO run is for, and it mints its own
+  number.
+- **"Nothing written" on the received guard is achieved by validating first, not by one
+  database transaction.** `SPOAllocationService.create_allocation` commits (as `create`
+  already relies on), so `revise` runs every guard - split sums, PO take caps,
+  `_validate_so_takes`, and the received check per `(shipment line, warehouse)` - over
+  every line in the body BEFORE the first write. AC-K3's observable promise holds: a
+  refusal leaves a valid change on another line of the same body unapplied.
+- **AC-K5 is a page-header action, not a Lines-tab control.** `SPODocumentDetail`'s header
+  renders on both tabs, so one button serves the Lines tab and the Header tab; a second
+  control inside the Lines grid would be the same action twice. It is HIDDEN unless the
+  document's lines agree on exactly one packing list AND one purchase order - which is what
+  a CRM SPO always is (one `create` run, one header per supplier, one container). An
+  imported or split document has no single SPO for the planner to load, so it gets no
+  action rather than a link pointing at whichever half the query met first.
