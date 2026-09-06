@@ -27,6 +27,8 @@ import {
   type SupplierDocumentFilePreview,
   type SupplierDocumentsApplyResult,
   type SupplierDocumentsPreview,
+  type SupplierDocumentTextItem,
+  type SupplierDocumentTranslation,
 } from '@/app/(protected)/scm/services/fulfilmentService';
 
 /**
@@ -88,6 +90,80 @@ function headerSummary(f: SupplierDocumentFilePreview): string {
   return parts.length ? parts.join(' · ') : EM_DASH;
 }
 
+/** One phrase in a file's preview worth translating (R16): a line's description, a
+ *  line's remark, a block note, or the file's footer - flattened to one shape so the
+ *  dialog renders one list rather than four. Keyed by the SOURCE (Chinese) text, which
+ *  is also the translation memory's own key. */
+function translationItems(f: SupplierDocumentFilePreview): { key: string; item: SupplierDocumentTextItem }[] {
+  const out: { key: string; item: SupplierDocumentTextItem }[] = [];
+  for (const b of f.blocks) {
+    // Optional-chained: a preview read before Phase 2 backend wiring (or a stale test
+    // fixture) may not carry `lines`/`notes` at all.
+    for (const ln of b.lines ?? []) {
+      if (ln.description) {
+        out.push({
+          key: ln.description,
+          item: { text: ln.description, text_en: ln.description_en, text_en_source: ln.description_en_source },
+        });
+      }
+      if (ln.remark) {
+        out.push({
+          key: ln.remark,
+          item: { text: ln.remark, text_en: ln.remark_en, text_en_source: ln.remark_en_source },
+        });
+      }
+    }
+    for (const note of b.notes ?? []) out.push({ key: note.text, item: note });
+  }
+  if (f.footer_note) out.push({ key: f.footer_note.text, item: f.footer_note });
+  return out;
+}
+
+/** One editable row: the Chinese on the left, an English input on the right, a
+ *  `manual`/`ai` badge once something has translated it. Editing marks the cell
+ *  `manual` (R16) - the badge follows the edit immediately, before Confirm is ever
+ *  pressed, so the operator sees their own correction take effect. */
+function TranslationRow({
+  item,
+  value,
+  onChange,
+  disabled,
+}: {
+  item: SupplierDocumentTextItem;
+  value: string;
+  onChange: (next: string) => void;
+  disabled: boolean;
+}) {
+  const edited = value !== (item.text_en ?? '');
+  const source = edited && value ? 'manual' : item.text_en_source;
+  return (
+    <div className="flex items-center gap-2">
+      <span className="min-w-0 flex-1 truncate text-2xs text-muted-foreground" title={item.text}>
+        {item.text}
+      </span>
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="English"
+        className="h-7 flex-1 text-2xs"
+        disabled={disabled}
+      />
+      {source ? (
+        <Badge
+          variant={source === 'manual' ? 'primary' : 'secondary'}
+          appearance="light"
+          size="sm"
+          className="shrink-0"
+        >
+          {source === 'manual' ? 'manual' : 'ai'}
+        </Badge>
+      ) : (
+        <span className="w-10 shrink-0" />
+      )}
+    </div>
+  );
+}
+
 /** Rough figures for the Confirm label - block counts, split by what each file classified
  *  as. A `combined` file's blocks mix both kinds (rare in practice, neither real fixture
  *  produces one), so it is counted toward both rather than not counted at all. */
@@ -138,6 +214,11 @@ export function PackingListUploadDialog({
   const [preview, setPreview] = useState<SupplierDocumentsPreview | null>(null);
   const [result, setResult] = useState<SupplierDocumentsApplyResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Every translation cell the operator has touched this preview (R16), keyed by the
+  // SOURCE (Chinese) text - the same key `translationItems` reads off the preview and
+  // `translate_service`'s memory reads off the database. Only touched cells are sent on
+  // Confirm; an untouched one keeps whatever the memory/AI already said.
+  const [translationEdits, setTranslationEdits] = useState<Record<string, string>>({});
 
   // Cleared on every open, like every other upload dialog here: a file, a verdict or a
   // currency left over from the last upload must never silently apply to the next one.
@@ -150,6 +231,7 @@ export function PackingListUploadDialog({
     setError(null);
     setPreviewing(false);
     setApplying(false);
+    setTranslationEdits({});
     if (selfServe) setInternalSupplierId(null);
   }, [open, selfServe]);
 
@@ -163,6 +245,7 @@ export function PackingListUploadDialog({
         currency: trimmedCurrency,
       });
       setPreview(read);
+      setTranslationEdits({});
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to read the files.');
     } finally {
@@ -175,9 +258,13 @@ export function PackingListUploadDialog({
     setApplying(true);
     setError(null);
     try {
+      const translations: SupplierDocumentTranslation[] = Object.entries(translationEdits)
+        .filter(([, target]) => target.trim().length > 0)
+        .map(([source_text, target_text]) => ({ source_text, target_text: target_text.trim() }));
       const applied = await applySupplierDocuments(files, {
         supplierId,
         currency: trimmedCurrency,
+        translations,
       });
       setResult(applied);
       onImported?.(applied);
@@ -317,6 +404,24 @@ export function PackingListUploadDialog({
                       ) : null}
                     </div>
                   )}
+                  {f.kind !== 'unreadable' && translationItems(f).length > 0 ? (
+                    <div className="space-y-1 rounded-md border border-dashed p-2">
+                      <p className="text-2xs font-medium text-foreground">
+                        Translations - English beside the Chinese
+                      </p>
+                      {translationItems(f).map(({ key, item }) => (
+                        <TranslationRow
+                          key={key}
+                          item={item}
+                          value={translationEdits[key] ?? item.text_en ?? ''}
+                          onChange={(next) =>
+                            setTranslationEdits((prev) => ({ ...prev, [key]: next }))
+                          }
+                          disabled={previewing || applying}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               ))}
               {preview.price_matches.length ? (

@@ -275,6 +275,7 @@ describe('PackingListUploadDialog - Confirm', () => {
       expect(applySupplierDocuments).toHaveBeenCalledWith(files, {
         supplierId: 'sup-1',
         currency: null,
+        translations: [],
       }),
     );
     expect(await screen.findByText(/Created 2 invoices and 2 draft packing lists/)).toBeInTheDocument();
@@ -302,6 +303,81 @@ describe('PackingListUploadDialog - Confirm', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Confirm/ }));
 
     expect(await screen.findByText('supplier_id is required')).toBeInTheDocument();
+  });
+});
+
+describe('PackingListUploadDialog - translations, English beside the Chinese (R16)', () => {
+  const PL_WITH_TRANSLATIONS = {
+    name: 'packing-list.xls',
+    kind: 'packing_list',
+    blocks: [
+      {
+        container_no: 'WHSU6243088',
+        seal_no: 'WHA4528193',
+        cartons: 792,
+        cbm_total: 49.41,
+        amount: null,
+        line_count: 4,
+        note_count: 1,
+        lines: [
+          {
+            item_code: 'NOPE-1',
+            matched: false,
+            description: '座厕 S-250出水 对冲',
+            description_en: null,
+            description_en_source: null,
+            remark: null,
+            remark_en: null,
+            remark_en_source: null,
+          },
+        ],
+        notes: [{ text: '纸箱：2个', text_en: 'Carton: 2', text_en_source: 'ai' }],
+      },
+    ],
+    header: { pi_number: null, invoice_date: null, consignee: null, shipper: null, so_ref: null },
+    unmatched: ['NOPE-1'],
+    errors: [],
+    footer_note: null,
+  };
+
+  it('shows the English beside the Chinese, with a source badge', async () => {
+    previewSupplierDocuments.mockResolvedValue({ files: [PL_WITH_TRANSLATIONS], price_matches: [] });
+    openDialog();
+    pickFiles([xlsx('packing-list.xls')]);
+    fireEvent.click(testButton());
+
+    await screen.findByText('座厕 S-250出水 对冲');
+    expect(screen.getByText('纸箱：2个')).toBeInTheDocument();
+    expect(screen.getByText('ai')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Carton: 2')).toBeInTheDocument();
+  });
+
+  it('editing a cell marks it manual and sends the edit on Confirm', async () => {
+    previewSupplierDocuments.mockResolvedValue({ files: [PL_WITH_TRANSLATIONS], price_matches: [] });
+    applySupplierDocuments.mockResolvedValue({
+      proforma_invoice_ids: [],
+      shipment_ids: ['ship-1'],
+      links_written: 0,
+      attachment_ids: [],
+    });
+    openDialog();
+    const files = pickFiles([xlsx('packing-list.xls')]);
+    fireEvent.click(testButton());
+
+    await screen.findByText('座厕 S-250出水 对冲');
+    const [descriptionInput] = screen.getAllByPlaceholderText('English');
+    fireEvent.change(descriptionInput, { target: { value: 'Toilet bowl S-250' } });
+    expect(screen.getByText('manual')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Confirm/ }));
+
+    await waitFor(() =>
+      expect(applySupplierDocuments).toHaveBeenCalledWith(files, {
+        supplierId: 'sup-1',
+        currency: null,
+        translations: [{ source_text: '座厕 S-250出水 对冲', target_text: 'Toilet bowl S-250' }],
+      }),
+    );
   });
 });
 
@@ -356,6 +432,7 @@ describe('PackingListUploadDialog - the currency, asked for only when nothing el
       expect(applySupplierDocuments).toHaveBeenCalledWith(files, {
         supplierId: 'sup-1',
         currency: null,
+        translations: [],
       }),
     );
   });

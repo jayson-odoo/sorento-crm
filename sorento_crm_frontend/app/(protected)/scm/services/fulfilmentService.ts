@@ -1153,7 +1153,8 @@ export async function applyPackingList(
  * ── BACKEND CONTRACT (app/api/v1/scm/fulfilment.py) ────────────────────────
  *  POST /api/v1/scm/supplier-documents/preview  multipart: files[] + supplier_id +
  *       optional currency -> 200 SupplierDocumentsPreview. Writes nothing.
- *  POST /api/v1/scm/supplier-documents/apply    same body, supplier_id required ->
+ *  POST /api/v1/scm/supplier-documents/apply    same body, supplier_id required, PLUS
+ *       optional `translations` (JSON string, `SupplierDocumentTranslation[]`) ->
  *       200 SupplierDocumentsApplyResult. Auth: `scm.reorder.run`.
  *
  * Each file is classified by its own title cell (`发票`/`PROFORMA INVOICE` vs `装箱单`/
@@ -1162,9 +1163,48 @@ export async function applyPackingList(
  * container block, same as `applyPackingList`), then matches PI prices onto the shipment
  * lines they price by product, for every container this supplier holds - whichever order
  * the files were uploaded in.
+ *
+ * Translation memory (R15/R16): every block's `lines` (unmatched descriptions, matched
+ * remarks) and `notes`, plus the file's `footer_note`, gain `<field>_en` (the English,
+ * null when untranslated) and `<field>_en_source` (`'manual' | 'ai' | null`) beside the
+ * Chinese. Editing a cell in the preview and sending it back in `apply`'s `translations`
+ * writes a `manual` row that outranks any `ai` guess from then on.
  * ────────────────────────────────────────────────────────────────────────── */
 
 export type SupplierDocumentKind = 'proforma_invoice' | 'packing_list' | 'combined' | 'unreadable';
+
+/**
+ * A translated phrase, memory-first (R15/R16, purchasing consolidation batch, lane C):
+ * `text_en` is null when nobody has translated `text` yet (no AI key configured, or the
+ * call failed - never an error, just untranslated); `text_en_source` says whether a
+ * person typed it (`manual`, always wins) or the AI Assistant's configured model filled
+ * the gap (`ai`). Shared shape for a note/footer AND (folded into
+ * `SupplierDocumentLinePreview` below) a line's description/remark.
+ */
+export interface SupplierDocumentTextItem {
+  text: string;
+  text_en: string | null;
+  text_en_source: 'manual' | 'ai' | null;
+}
+
+/**
+ * One line worth translating in the preview - NOT every line in the block (Phase 2
+ * backend contract): an UNMATCHED line's own 品名 `description` (a matched line shows
+ * the product master name elsewhere and needs no translation, ruling 5 of the 3 Sep
+ * batch), or a MATCHED line's `remark` (only a matched line becomes a shipment line, so
+ * only its remark round-trips into `remarks` on apply). A line with neither is absent
+ * from this array entirely.
+ */
+export interface SupplierDocumentLinePreview {
+  item_code: string;
+  matched: boolean;
+  description: string | null;
+  description_en: string | null;
+  description_en_source: 'manual' | 'ai' | null;
+  remark: string | null;
+  remark_en: string | null;
+  remark_en_source: 'manual' | 'ai' | null;
+}
 
 export interface SupplierDocumentBlock {
   container_no: string | null;
@@ -1174,6 +1214,10 @@ export interface SupplierDocumentBlock {
   amount: number | null;
   line_count: number;
   note_count: number;
+  /** Only the lines that carry a translatable description or remark (see above). */
+  lines: SupplierDocumentLinePreview[];
+  /** The block's own accessory-line notes (`840 水箱空瓷：1个`), each translated. */
+  notes: SupplierDocumentTextItem[];
 }
 
 export interface SupplierDocumentHeader {
@@ -1192,6 +1236,10 @@ export interface SupplierDocumentFilePreview {
   header: SupplierDocumentHeader;
   unmatched: string[];
   errors: string[];
+  /** The `备注：` footer (R13), applying to the whole file - shown once here rather
+   *  than repeated inside every block, even though every shipment this file creates
+   *  stores it in its own `notes` column. Null when the file states none. */
+  footer_note: SupplierDocumentTextItem | null;
 }
 
 export interface SupplierDocumentPriceMatch {
@@ -1213,14 +1261,27 @@ export interface SupplierDocumentsApplyResult {
   attachment_ids: string[];
 }
 
+/** An edited translation cell, keyed by the ORIGINAL (Chinese) text - `apply` writes
+ *  each as a `manual` row before doing anything else, so a correction made in the
+ *  preview is what a remark or a note is stored with, never the AI's unedited guess. */
+export interface SupplierDocumentTranslation {
+  source_text: string;
+  target_text: string;
+}
+
 function supplierDocumentsForm(
   files: File[],
-  opts: { supplierId?: string | null; currency?: string | null },
+  opts: {
+    supplierId?: string | null;
+    currency?: string | null;
+    translations?: SupplierDocumentTranslation[];
+  },
 ): FormData {
   const body = new FormData();
   for (const file of files) body.append('files', file);
   if (opts.supplierId) body.append('supplier_id', opts.supplierId);
   if (opts.currency) body.append('currency', opts.currency);
+  if (opts.translations?.length) body.append('translations', JSON.stringify(opts.translations));
   return body;
 }
 
@@ -1237,7 +1298,11 @@ export async function previewSupplierDocuments(
 
 export async function applySupplierDocuments(
   files: File[],
-  opts: { supplierId?: string | null; currency?: string | null } = {},
+  opts: {
+    supplierId?: string | null;
+    currency?: string | null;
+    translations?: SupplierDocumentTranslation[];
+  } = {},
 ): Promise<SupplierDocumentsApplyResult> {
   const res = await apiFetch('/api/v1/scm/supplier-documents/apply', {
     method: 'POST',
