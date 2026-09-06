@@ -19,6 +19,7 @@ import {
   getSupplierNotices,
   getSupplierStock,
   getSupplierStockListFile,
+  previewContainerRequest,
   saveLoadingPlanEdits,
   sendContainerRequest,
   updateLoadingPlanCutOff,
@@ -181,6 +182,32 @@ export function useContainerRequestBuild(planId: string | null) {
     queryKey: [...KEY, 'container-request', planId],
     queryFn: () => buildContainerRequest(planId as string),
     enabled: !!planId,
+    retry: false,
+  });
+}
+
+/**
+ * The exact document a Send would produce (R9, AC-E2) - what the Preview page state shows,
+ * in place of Phase 1's client-side `mockSupplierSheet` (deleted with this change; both
+ * returned the same `SupplierSheetModel`, so nothing else about `LoadingPlanView` moves).
+ *
+ * `enabled` is the caller's own `docPreviewOpen`: this is a page state Ms Tee opens
+ * deliberately, not a background fetch every record page pays for. `lines` is expected
+ * DEBOUNCED by the caller - typing in the preview's own qty/remark inputs changes `lines` on
+ * every keystroke, and firing a request per character would be wasteful; `placeholderData`
+ * keeps the last document on screen while a new one is asked for, rather than blanking the
+ * table between keystrokes.
+ */
+export function useContainerRequestPreview(
+  planId: string | null,
+  lines: ContainerRequestLine[],
+  enabled: boolean,
+) {
+  return useQuery({
+    queryKey: [...KEY, 'container-request', 'preview', planId, JSON.stringify(lines)],
+    queryFn: () => previewContainerRequest(planId as string, lines),
+    enabled: enabled && !!planId,
+    placeholderData: (prev) => prev,
     retry: false,
   });
 }

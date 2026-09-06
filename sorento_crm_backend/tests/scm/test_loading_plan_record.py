@@ -426,6 +426,53 @@ def test_edits_replace_the_whole_map_rather_than_patching_it(scm_app):
     assert r.json()["line_edits"] == {product_a: 9}
 
 
+def test_a_remark_rides_beside_the_qty_and_a_bare_number_still_reads_as_qty_only(scm_app):
+    # AC-E5/R11: a bare number - what every plan saved before remarks existed, and still
+    # what a qty-only edit is stored as (`test_edits_replace_the_whole_map_rather_than_patching_it`
+    # above) - reads as `{qty: n}`; a row with a remark is stored (and read back) as the
+    # object form.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = _world(db)
+    client = TestClient(app)
+    plan = _create(client, str(w.supplier.id)).json()
+    product_a = str(w.product("A").id)
+
+    r = client.put(
+        f"{PLANS_URL}/{plan['id']}/edits",
+        json={"line_edits": {product_a: {"qty": 9, "remark": "pack in 2 cartons"}}},
+    )
+
+    assert r.status_code == 200, r.text
+    assert r.json()["line_edits"] == {product_a: {"qty": 9, "remark": "pack in 2 cartons"}}
+
+    build = client.post(BUILD_URL, json={"plan_id": plan["id"]}).json()
+    row = next(row for row in build["rows"] if row["row_key"] == product_a)
+    assert row["suggested_qty"] == 9
+    assert row["remark"] == "pack in 2 cartons"
+
+
+def test_a_remark_with_no_qty_override_leaves_the_engine_figure_alone(scm_app):
+    # A row can carry an instruction to the supplier without overriding its suggested qty.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = _world(db)
+    client = TestClient(app)
+    plan = _create(client, str(w.supplier.id)).json()
+    product_a = str(w.product("A").id)
+    engine = client.post(BUILD_URL, json={"plan_id": plan["id"]}).json()["rows"][0]["suggested_qty"]
+
+    client.put(
+        f"{PLANS_URL}/{plan['id']}/edits",
+        json={"line_edits": {product_a: {"remark": "check the glaze colour"}}},
+    )
+    build = client.post(BUILD_URL, json={"plan_id": plan["id"]}).json()
+    row = next(row for row in build["rows"] if row["row_key"] == product_a)
+
+    assert row["suggested_qty"] == engine
+    assert row["remark"] == "check the glaze colour"
+
+
 def test_a_cancelled_plan_takes_no_more_edits(scm_app):
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import (
     APIRouter,
@@ -602,14 +602,24 @@ def cancel_loading_plan(
     return out
 
 
+class LoadingPlanLineEditIn(BaseModel):
+    """One row's typed edit (R11): a qty override, a remark, or both."""
+
+    qty: Optional[float] = None
+    remark: Optional[str] = Field(None, max_length=2000)
+
+
 class LoadingPlanEdits(BaseModel):
-    """The WHOLE map of typed quantities, `row_key -> qty` (R6).
+    """The WHOLE map of typed quantities and remarks, `row_key -> qty | {qty?, remark?}`
+    (R6, R11).
 
     Not a patch: what is not in the map is not an edit any more, so a cleared cell cannot
-    survive as a stale override, and one Save is one transaction.
+    survive as a stale override, and one Save is one transaction. A bare number is still
+    accepted - it is what a qty-only edit is still STORED as (AC-E5); the object form only
+    carries something once a remark rides along with it (`loading_plan_service.save_edits`).
     """
 
-    line_edits: dict[str, float] = Field(default_factory=dict)
+    line_edits: dict[str, Union[float, LoadingPlanLineEditIn]] = Field(default_factory=dict)
 
 
 @router.put("/loading-plans/{plan_id}/edits")
@@ -621,7 +631,11 @@ def save_loading_plan_edits(
 ):
     plan = _plan_or_404(db, plan_id)
     _refuse_cancelled(plan)
-    loading_plan_service.save_edits(db, plan, body.line_edits)
+    edits = {
+        key: (value if isinstance(value, (int, float)) else value.model_dump())
+        for key, value in body.line_edits.items()
+    }
+    loading_plan_service.save_edits(db, plan, edits)
     out = loading_plan_service.record_dict(db, plan)
     db.commit()
     return out

@@ -30,6 +30,7 @@ import { EM_DASH, fmtDate, fmtInt } from '../../lib/format';
 import {
   loadingPlanPagerQuery,
   useContainerRequestBuild,
+  useContainerRequestPreview,
   useDownloadContainerRequestDocument,
   useSaveLoadingPlanEdits,
   useSendContainerRequest,
@@ -58,8 +59,13 @@ import { SendRequestDialog } from './SendRequestDialog';
 import { SentRequestsPanel } from './SentRequestsPanel';
 import { requestLinesFrom } from './containerRequestSummary';
 import { copyPublicLink } from './copyPublicLink';
-import { mockSupplierSheet } from './mockSupplierSheet';
 import { PageHeader } from '@/components/common/PageHeader';
+
+/** What the preview waits, off the last edit, before asking the server for a new document
+ *  (R9). A keystroke in the preview's own qty/remark inputs changes `lines` every character;
+ *  400ms is long enough that a typed number is one request rather than five, and short
+ *  enough that the highlight/remark she is checking still feels like it followed her. */
+const PREVIEW_DEBOUNCE_MS = 400;
 
 /** The record's three tabs (S2): Lines (default), Supplier codes, Sent. */
 type LoadingPlanTab = 'lines' | 'codes' | 'sent';
@@ -227,16 +233,21 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   })();
   const unsaved = unsavedCount > 0;
 
-  // R9: the exact document Send would produce. Phase 1 mocks it client-side
-  // (`mockSupplierSheet`); Phase 2 swaps in `POST /container-requests/preview`. A `useMemo`,
-  // not computed after the loading/error guards below: every hook here has to run on every
-  // render, loading and error passes included, or React sees a different hook count once the
-  // build resolves.
-  const previewSheet = useMemo(
-    () => mockSupplierSheet(rows, qtyFor, remarkFor),
+  // R9: the exact document Send would produce (`POST /container-requests/preview`), replacing
+  // Phase 1's client-side `mockSupplierSheet`. `lines` is debounced before it reaches the
+  // query - typing in the preview's own qty/remark inputs changes it on every keystroke, and
+  // firing a request per character would be wasteful - and the query itself only runs while
+  // the preview is the page state open (`docPreviewOpen`). Declared here, above the
+  // loading/error guards below: every hook here has to run on every render, loading and error
+  // passes included, or React sees a different hook count once the build resolves.
+  const [debouncedLines, setDebouncedLines] = useState(lines);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedLines(lines), PREVIEW_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [rows, edits],
-  );
+  }, [JSON.stringify(lines)]);
+  const preview = useContainerRequestPreview(planId, debouncedLines, docPreviewOpen);
+  const previewSheet = preview.data ?? null;
 
   // The browser's own guard for a hard navigation (close the tab, hit the address bar). The
   // in-app "Back to loading plans" gets the dialog below, which can say what is at stake.
@@ -447,12 +458,23 @@ export function LoadingPlanView({ planId }: { planId: string }) {
             </p>
           </PageHeader>
           <Card className="p-4">
-            <SupplierSheet
-              sheet={previewSheet}
-              editable
-              onQtyChange={handleQtyChange}
-              onRemarkChange={handleRemarkChange}
-            />
+            {previewSheet ? (
+              <SupplierSheet
+                sheet={previewSheet}
+                editable
+                onQtyChange={handleQtyChange}
+                onRemarkChange={handleRemarkChange}
+              />
+            ) : preview.isError ? (
+              <p className="text-sm text-muted-foreground">
+                {(preview.error as Error)?.message || 'Failed to build the request preview'}
+              </p>
+            ) : (
+              <>
+                <Skeleton className="h-6 w-64" />
+                <Skeleton className="mt-3 h-40 w-full rounded-lg" />
+              </>
+            )}
           </Card>
         </>
       ) : (

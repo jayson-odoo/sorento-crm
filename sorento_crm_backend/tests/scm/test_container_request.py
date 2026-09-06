@@ -589,9 +589,13 @@ def test_build_lists_every_site_pool_including_the_empty_ones(scm_app):
     assert group.warehouse_code in row["group_locations"]["warehouse_codes"]
 
 
-def test_build_incoming_packing_list_is_shown_and_never_subtracted(scm_app):
-    # AC-B4 / Q1: a packing list names no destination, so it cannot be netted against a pool
-    # the way an SPO can. It travels as a reference, with the shipment and ETA behind it.
+def test_build_incoming_packing_list_is_shown_and_nets_its_unallocated_part(scm_app):
+    # AC-B4 / R6 (revised 6 Sep, purchasing consolidation): `incoming_pl` itself is still
+    # shown as a whole reference, with the shipment and ETA behind it - but since neither
+    # line here has an SPO allocated against it, the WHOLE 50 is unallocated and nets
+    # against the ask (was "never subtracted" pre-R6; see
+    # `test_build_nets_incoming_pl_only_for_the_part_not_yet_on_an_spo` for the case where
+    # part of it already has an SPO and only the remainder nets).
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
@@ -604,7 +608,8 @@ def test_build_incoming_packing_list_is_shown_and_never_subtracted(scm_app):
     assert r.status_code == 200, r.text
     row = _row(r.json()["rows"], "A", w)
     assert row["incoming_pl"] == 50  # 60 shipped - 10 already received
-    assert row["suggested_qty"] == 100  # untouched
+    assert row["incoming_pl_unallocated"] == 50  # none of it has an SPO yet
+    assert row["suggested_qty"] == 50  # 100 - 50
     assert row["incoming_pl_shipments"] == [
         {
             "shipment_id": str(ship.id),
@@ -630,6 +635,64 @@ def test_build_incoming_packing_list_ignores_shipments_that_have_arrived(scm_app
     row = _row(r.json()["rows"], "A", w)
     assert row["incoming_pl"] == 0
     assert row["incoming_pl_shipments"] == []
+
+
+def test_build_nets_incoming_pl_only_for_the_part_not_yet_on_an_spo(scm_app):
+    # R6/AC-D1 (purchasing consolidation, 6 Sep): netting the FULL incoming_pl would
+    # double-subtract a container that already has its SPO. Shipment X's line (qty 50)
+    # already has 20 of itself turned into the SPO allocation counted in incoming_spo, so
+    # only the remaining 30 nets against the ask - not the wrong answer netting the whole
+    # 50 would give (100 - 10 - 20 - 50 = 20).
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=10, cbm=0.5)
+    _so(db, w, "A", 100, demand_class="retail")
+    wh = _warehouse(db)
+    _on_hand(db, w, "A", wh, 10)
+
+    ship = InboundShipment(
+        id=str(uuid.uuid4()),
+        shipment_number=f"{MARKER}-PL-{uuid.uuid4().hex[:8]}",
+        supplier_id=w.supplier.id,
+        shipment_date=date(2026, 1, 1),
+        shipment_status="in_transit",
+    )
+    db.add(ship)
+    db.flush()
+    db.add(
+        InboundShipmentLine(
+            id=str(uuid.uuid4()),
+            shipment_id=ship.id,
+            product_id=w.product("A").id,
+            supplier_id=w.supplier.id,
+            quantity_shipped=50,
+            quantity_received=0,
+            spo_allocated_quantity=20,
+        )
+    )
+    db.add(
+        SPOAllocation(
+            id=str(uuid.uuid4()),
+            spo_number=f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}",
+            inbound_shipment_id=ship.id,
+            product_id=w.product("A").id,
+            warehouse_id=wh.id,
+            allocated_quantity=20,
+            quantity_received=0,
+        )
+    )
+    db.flush()
+
+    r = TestClient(app).post(BUILD_URL, json={"plan_id": _plan(db, w)})
+
+    assert r.status_code == 200, r.text
+    row = _row(r.json()["rows"], "A", w)
+    assert row["on_hand"] == 10
+    assert row["incoming_spo"] == 20
+    assert row["incoming_pl"] == 50  # the whole unreceived quantity, unchanged meaning
+    assert row["incoming_pl_unallocated"] == 30  # 50 shipped - 20 allocated - 0 received
+    assert row["suggested_qty"] == 40  # 100 - 10 - 20 - 30, not 20
 
 
 def test_build_a_draft_packing_list_reads_as_a_draft_not_as_a_missing_number(scm_app):

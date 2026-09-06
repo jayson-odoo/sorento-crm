@@ -149,6 +149,34 @@ def container_request_history(
     )
 
 
+@router.post("/container-requests/preview")
+def preview_container_request(
+    body: ContainerRequestBody,
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """The exact document Send would produce, without writing anything (R9, AC-E2).
+
+    Same permission as `build` - a pure read of what a send would freeze. Ahead of
+    `POST /container-requests` in this file for readability only, and there is no
+    `/container-requests/{id}` here to shadow (the SLA lesson).
+
+    A cancelled plan is refused (409 `plan_cancelled`, AC-A8), same as the download route:
+    the record page is read-only once it is called off.
+    """
+    try:
+        plan = container_request_service._plan_or_404(db, body.plan_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    _refuse_cancelled(plan)
+    return supplier_notice_service.preview_request_sheet(
+        db,
+        supplier_id=str(plan.supplier_id),
+        lines=[ln.model_dump() for ln in body.lines],
+        loading_plan_id=str(plan.id),
+    )
+
+
 @router.post("/container-requests/document")
 def container_request_document(
     body: ContainerRequestBody,

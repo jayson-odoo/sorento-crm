@@ -41,6 +41,7 @@ import {
   saveBlobAs,
 } from '@/app/(protected)/project-sales/_shared/services/fileDownload';
 import type { SupplierCheck, UploadTestResult } from '../reorder/components/UploadTestVerdict';
+import type { SupplierSheetModel } from '../components/SupplierSheet';
 
 export interface StockListSummary {
   rows: number;
@@ -1026,6 +1027,33 @@ export async function getSupplierChatContacts(
     `/api/v1/scm/supplier-notices/chat-contacts?${params.toString()}`,
   );
   return readJson(res, 'Failed to load the chat contacts');
+}
+
+/**
+ * The exact document Send would produce, without writing anything (R9, AC-E2).
+ *
+ * Same body as `sendContainerRequest` - Ms Tee's reviewed lines - and the same read
+ * permission `build` uses (`scm.dashboard.view`), because nothing is created. The Preview
+ * page (`LoadingPlanView`) calls this in place of Phase 1's client-side `mockSupplierSheet`,
+ * so what she previews and what a Send freezes into the notice's own `sheet_json` can never
+ * disagree. A line's `remark` is NOT part of this body (`ContainerRequestLine` carries only
+ * `qty`) - the sheet's remark column is read off the PLAN's own saved `line_edits`
+ * (`supplier_notice_service._line_remarks`), the same as a Send does, so a remark typed but
+ * not yet saved does not show here either.
+ *
+ * ── BACKEND CONTRACT (app/api/v1/scm/container_requests.py) ────────────────
+ *  POST /api/v1/scm/container-requests/preview -> 200 SupplierSheetModel. Auth: `scm.dashboard.view`.
+ */
+export async function previewContainerRequest(
+  planId: string,
+  lines: ContainerRequestLine[],
+): Promise<SupplierSheetModel> {
+  const res = await apiFetch('/api/v1/scm/container-requests/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ plan_id: planId, lines }),
+  });
+  return readJson<SupplierSheetModel>(res, 'Failed to build the request preview');
 }
 
 /**

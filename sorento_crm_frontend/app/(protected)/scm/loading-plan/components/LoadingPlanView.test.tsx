@@ -185,6 +185,9 @@ vi.mock('../../hooks/useFulfilment', () => ({
     error: null,
     refetch: refetchBuild,
   }),
+  // R9: the preview page state is not exercised by this suite (no test opens it), so a
+  // steady "nothing yet" answer is enough to keep the hook count and the component happy.
+  useContainerRequestPreview: () => ({ data: null, isError: false, error: null }),
   useSaveLoadingPlanEdits: () => ({
     mutate: (v: unknown, o?: { onSuccess?: () => void }) => {
       saveEdits(v);

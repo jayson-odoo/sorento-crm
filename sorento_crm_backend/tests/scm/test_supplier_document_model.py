@@ -83,15 +83,18 @@ def _line(item_code: str, qty: float, *, product_id: str | None = None) -> dict:
 
 
 def test_the_columns_are_theirs_plus_ours(monkeypatch):
-    # AC-D1. Their ten spellings untouched, in their order, and column K appended (Q1).
+    # AC-D1. Their ten spellings untouched, in their order, column K appended (Q1), then
+    # column L (R11, purchasing consolidation 6 Sep) - OUR remark, next to the qty edit.
     with pg_session() as db:
         _world(db)
         sheet = _built(db, [], monkeypatch=monkeypatch)
 
         assert [c.label for c in sheet.columns] == THEIR_COLUMNS + [
-            model.QTY_TO_LOAD_LABEL_ZH
+            model.QTY_TO_LOAD_LABEL_ZH,
+            model.LINE_REMARK_LABEL_ZH,
         ]
-        assert sheet.columns[-1].label_en == model.QTY_TO_LOAD_LABEL_EN
+        assert sheet.columns[-2].label_en == model.QTY_TO_LOAD_LABEL_EN
+        assert sheet.columns[-1].label_en == model.LINE_REMARK_LABEL_EN
         assert sheet.title == "金百川库存表 2026年7月27日"
 
 
@@ -111,19 +114,20 @@ def test_a_family_becomes_a_rowspan_on_their_merged_columns(monkeypatch):
         assert second.cells[8].covered is True
 
 
-def test_their_fills_and_their_red_figures_are_carried(monkeypatch):
-    # AC-D1 / AC-D5. B:G and J are yellow on their sheet and a figure they want us to notice
-    # is red. Both are their own marks on their own document; a renderer that dropped them
-    # would hand back a sheet that no longer says what theirs said.
+def test_our_highlight_replaces_their_fills_and_red_figures(monkeypatch):
+    # R10 (purchasing consolidation, 6 Sep), revising AC-D5: the renderer no longer replays
+    # the supplier's own yellow fields or red figures - a row with nothing asked of it is
+    # plain, whatever their file marked, and a row WITH an ask is highlighted uniformly
+    # (every cell, not just the ones they coloured).
     with pg_session() as db:
         _world(db)
-        sheet = _built(db, [], monkeypatch=monkeypatch)
+        sheet = _built(db, [_line("SRTWC286-SH-150NEW", 40)], monkeypatch=monkeypatch)
 
-        first = _row_for(sheet, "SRTWC286-SH-150NEW")
-        assert first.cells[1].fill == "yellow"  # 型号
-        assert first.cells[5].fill == "yellow"  # 包装好库存
-        assert first.cells[5].value == 0 and first.cells[5].red is True
-        assert first.cells[7].fill is None  # 体积(cbm) is not filled
+        asked = _row_for(sheet, "SRTWC286-SH-150NEW")
+        assert all(c.fill == "highlight" and c.red is False for c in asked.cells)
+
+        untouched = _row_for(sheet, "SRTWC8355-RL-250")
+        assert all(c.fill is None and c.red is False for c in untouched.cells)
 
 
 def test_the_ask_lands_on_their_row_by_their_own_code(monkeypatch):
@@ -134,7 +138,7 @@ def test_the_ask_lands_on_their_row_by_their_own_code(monkeypatch):
         sheet = _built(db, [_line("SRTWC8355-RL-250", 300)], monkeypatch=monkeypatch)
 
         asked = _row_for(sheet, "SRTWC8355-RL-250")
-        assert asked.cells[-1].value == 300
+        assert asked.cells[sheet.qty_index].value == 300
         assert asked.appended is False
         assert not any(r.appended for r in sheet.rows)
 
@@ -165,7 +169,7 @@ def test_the_ask_lands_on_their_row_through_the_snapshot_binding(monkeypatch):
             lines=[_line(product.product_code, 11, product_id=str(product.id))],
         )
 
-        assert _row_for(sheet, "SRTSP131").cells[-1].value == 11
+        assert _row_for(sheet, "SRTSP131").cells[sheet.qty_index].value == 11
         assert not any(r.appended for r in sheet.rows)
 
 
@@ -176,7 +180,7 @@ def test_a_zero_ask_leaves_the_cell_empty(monkeypatch):
         _world(db)
         sheet = _built(db, [_line("SRTWC8355-RL-250", 0)], monkeypatch=monkeypatch)
 
-        assert _row_for(sheet, "SRTWC8355-RL-250").cells[-1].value is None
+        assert _row_for(sheet, "SRTWC8355-RL-250").cells[sheet.qty_index].value is None
 
 
 def test_a_product_they_never_listed_is_appended_with_a_continuing_serial(monkeypatch):
@@ -191,7 +195,7 @@ def test_a_product_they_never_listed_is_appended_with_a_continuing_serial(monkey
         row = appended[0]
         assert row.cells[0].value == 39  # their last 序号 is 38
         assert row.cells[1].value == "ZZT-NOT-ON-LIST"
-        assert row.cells[-1].value == 80
+        assert row.cells[sheet.qty_index].value == 80
         assert row.cells[sheet.column_index("remark")].value == model.NOT_ON_LIST_REMARK
         assert sheet.rows[-1] is row
 
@@ -213,7 +217,8 @@ def test_the_totals_row_sums_what_theirs_sums_and_our_column(monkeypatch):
         )
         assert totals.cells[5].value == packed
         assert totals.cells[3].value is None  # 规格 has no total on their sheet
-        assert totals.cells[-1].value == 300
+        assert totals.cells[sheet.qty_index].value == 300
+        assert totals.cells[-1].value is None  # R11: no total for a free-text remark column
 
 
 # --------------------------------------------------------------------------- #
@@ -221,9 +226,10 @@ def test_the_totals_row_sums_what_theirs_sums_and_our_column(monkeypatch):
 # --------------------------------------------------------------------------- #
 
 
-def test_without_a_retained_file_the_columns_are_the_same_eleven(monkeypatch):
+def test_without_a_retained_file_the_columns_are_the_same_twelve(monkeypatch):
     # AC-D6. The five-column sheet of our own is gone: a supplier who reads one document from
-    # us must not get a different document because of a file WE failed to keep.
+    # us must not get a different document because of a file WE failed to keep. Twelve, not
+    # eleven, since R11 (purchasing consolidation 6 Sep) added the remark column.
     with pg_session() as db:
         w = _world(db)
         monkeypatch.setattr(model, "_retained_stock_list", lambda _db, _sid, **_kw: None)
@@ -235,7 +241,8 @@ def test_without_a_retained_file_the_columns_are_the_same_eleven(monkeypatch):
         )
 
         assert [c.label for c in sheet.columns] == THEIR_COLUMNS + [
-            model.QTY_TO_LOAD_LABEL_ZH
+            model.QTY_TO_LOAD_LABEL_ZH,
+            model.LINE_REMARK_LABEL_ZH,
         ]
         assert sheet.source is None
         assert all(c.rowspan == 1 and not c.covered for r in sheet.rows for c in r.cells)
@@ -266,11 +273,13 @@ def test_without_a_retained_file_the_row_states_what_we_know(monkeypatch):
         assert row.cells[5].value == 120
         assert row.cells[6].value == 340
         assert row.cells[7].value == 0.21
-        assert row.cells[-1].value == 500
+        assert row.cells[sheet.qty_index].value == 500
 
 
-def test_without_a_retained_file_a_zero_holding_is_still_red(monkeypatch):
-    # AC-D6. Their own convention for "none packed", kept on the document we build for them.
+def test_without_a_retained_file_a_row_with_an_ask_is_highlighted_not_red(monkeypatch):
+    # R10 (revising AC-D6): the no-file document's own "0 packed = red" convention is, like
+    # every other mark, replaced by the highlight rule once there is an ask on the row - the
+    # value still reads 0, it just no longer carries the old red font.
     with pg_session() as db:
         w = _world(db)
         w.stock("A", packed=0, unfinished=12)
@@ -283,7 +292,8 @@ def test_without_a_retained_file_a_zero_holding_is_still_red(monkeypatch):
         )
 
         assert sheet.rows[0].cells[5].value == 0
-        assert sheet.rows[0].cells[5].red is True
+        assert sheet.rows[0].cells[5].red is False
+        assert sheet.rows[0].cells[5].fill == "highlight"
 
 
 def test_a_stored_file_that_will_not_open_falls_back_rather_than_failing(monkeypatch):
@@ -300,7 +310,8 @@ def test_a_stored_file_that_will_not_open_falls_back_rather_than_failing(monkeyp
 
         assert sheet.source is None
         assert [c.label for c in sheet.columns] == THEIR_COLUMNS + [
-            model.QTY_TO_LOAD_LABEL_ZH
+            model.QTY_TO_LOAD_LABEL_ZH,
+            model.LINE_REMARK_LABEL_ZH,
         ]
 
 
@@ -317,9 +328,13 @@ def test_the_model_serialises_for_the_public_page(monkeypatch):
 
         json.dumps(payload)  # no Decimal, no date, nothing the page cannot read
         assert payload["title"] == "金百川库存表 2026年7月27日"
-        assert payload["columns"][-1] == {
+        assert payload["columns"][-2] == {
             "label": model.QTY_TO_LOAD_LABEL_ZH,
             "label_en": model.QTY_TO_LOAD_LABEL_EN,
+        }
+        assert payload["columns"][-1] == {
+            "label": model.LINE_REMARK_LABEL_ZH,
+            "label_en": model.LINE_REMARK_LABEL_EN,
         }
         first = payload["rows"][0]
         assert first["cells"][0]["rowspan"] == 9
