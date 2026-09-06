@@ -349,6 +349,65 @@ class TestTierAndPromoOffersCarryUntilOverwritten:
         )
 
 
+class TestTheMemberOfferCarryStopsAtTheAnswer:
+    """Owner ruling K, rule 1's ONE safety condition (2026-09-06).
+
+    `_picker_carry`'s docstring excludes `member_offer` from any carry because re-seating
+    the arming pin invisibly lets a later bare "yes" assign a human to somebody who
+    already declined. The offer carry does not reopen that: it keeps `member_offer` only
+    while the escalation offer is still UNANSWERED, so a decline or an accepted assignment
+    ends it on the same turn.
+    """
+
+    ROSTER = [{"idx": i, "label": f"Member {i}", "uuid": f"u{i}"} for i in range(1, 7)]
+
+    def _ctx_with_open_offer(self, **qf_overrides):
+        ctx = _ctx(**qf_overrides)
+        ctx["session"] = {
+            "session_vars": {
+                "variables": {
+                    "selection_context": "member_offer",
+                    "last_result_set": self.ROSTER,
+                    "domain_hint": "order",
+                }
+            }
+        }
+        return ctx
+
+    def test_a_filter_reply_leaves_the_offer_pending(self) -> None:
+        """The tail half of rule 3: the customer narrowed the question instead of picking,
+        so the roster is still on their screen and the next "2" must resolve against it."""
+        patch = _compile({"outcome": {}}, self._ctx_with_open_offer(domain_hint="order"))
+        variables = patch["variables"]
+        assert variables["selection_context"] == "member_offer"
+        assert variables["last_result_set"] == self.ROSTER
+        pending = variables.get("pending") or {}
+        assert pending.get("kind") == "member_offer", (
+            f"the pending marker must describe the offer that is still open: {variables!r}"
+        )
+
+    def test_a_decline_ends_it(self) -> None:
+        ctx = self._ctx_with_open_offer(
+            domain_hint="order",
+            escalation={"is_escalation_confirmation": False, "escalation_declined": True},
+        )
+        variables = _compile({"outcome": {}}, ctx)["variables"]
+        assert variables["selection_context"] != "member_offer"
+        assert variables["last_result_set"] != self.ROSTER
+
+    def test_an_accepted_assignment_ends_it(self) -> None:
+        ctx = self._ctx_with_open_offer(
+            domain_hint="order",
+            escalation={"is_escalation_confirmation": True, "preferred_assignee_id": "u3"},
+        )
+        variables = _compile({"outcome": {}}, ctx)["variables"]
+        assert variables["selection_context"] != "member_offer"
+        assert variables["last_result_set"] != self.ROSTER
+
+    def test_a_domain_change_ends_it_too(self) -> None:
+        patch = _compile({"outcome": {}}, self._ctx_with_open_offer(domain_hint="inventory"))
+        assert patch["variables"]["selection_context"] != "member_offer"
+
 # --------------------------------------------------------------------------- #
 # AC-302: the canned copy, including the two arms with no vendored capture
 # --------------------------------------------------------------------------- #

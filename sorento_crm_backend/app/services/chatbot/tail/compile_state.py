@@ -33,7 +33,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from app.services.chatbot import jsc
+from app.services.chatbot import jsc, topic
 from app.services.chatbot.tail import pending as pending_marker
 
 UNDEFINED = jsc.UNDEFINED
@@ -889,6 +889,19 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         mem=mem,
         dym_last_result_set=dym_last_result_set,
         turn_state=turn_state,
+    )
+
+    # ---- the offer survives until the topic changes (owner ruling K1) ----- #
+    # AFTER miss-company-routing, so a clarify arm that armed its own context this turn
+    # still wins, and BEFORE the `pending` marker below, which describes what the
+    # customer is left looking at.
+    _offer_carry(
+        variables,
+        qf=qf,
+        prev=prev,
+        escalation=escalation,
+        escalated=escalated,
+        selection_context=selection_context,
     )
 
     # ---- search-scope disclosure (delivery orders only) ------------------- #
@@ -1822,6 +1835,63 @@ def _picker_carry(  # noqa: PLR0912 - one ported block, kept whole
         if fam_pinned and jsc.truthy(fam_keep) and len(fam_keep) > 0:
             variables["picker_families"] = fam_keep
             variables["picker_families_carried"] = True  # diagnostic
+
+
+def _offer_carry(
+    variables: dict[str, Any],
+    *,
+    qf: Mapping[str, Any],
+    prev: Mapping[str, Any],
+    escalation: Any,
+    escalated: bool,
+    selection_context: Any,
+) -> None:
+    """"Choosing 1, 2, 3 works sequentially until I change domain or ask for another
+    promotion." (owner, 2026-09-06)
+
+    An offer the customer can still see is not consumed by being answered once. The
+    ladder above recomputes `selection_context` from THIS turn's outcome, so a turn that
+    builds no offer of its own wrote `null` + the answer's own rows, and the second pick
+    had nothing to resolve against: "2" came back as order #2, or as nothing at all.
+
+    Three lifetimes, and only three:
+
+    * **A new offer this turn REPLACES the carried one.** That is the ladder's job and it
+      keeps it - this block only ever runs when the ladder produced no label, so a fresh
+      roster can never be written back to the previous turn's (H29 / AC-205).
+    * **A domain change CLEARS it.** `topic.changed` is the single definition, shared with
+      the head. A turn that names no domain is a continuation, not a change, which is
+      what makes the sequential picks work. A carried tier offer reads its domain as
+      `promotion` when the session recorded none, because a tier menu only ever exists
+      inside a promotion thread - the same rule `tier_menu`'s own carry already applies.
+    * **Otherwise it survives**, including across the answer this turn just produced.
+
+    **The member offer is the one arm with a safety condition, and it is deliberate.**
+    `_picker_carry`'s docstring excludes `member_offer` from any carry because re-seating
+    it invisibly lets a later bare "yes" assign a human to somebody who already declined.
+    That hazard is real and this block does not reopen it: `member_offer` is carried ONLY
+    while the escalation offer is still UNANSWERED - the customer has neither accepted
+    (`is_escalation_confirmation`, or a resolved `preferred_assignee_id`) nor declined
+    (`escalation_declined`) this turn. Either of those closes the offer and the carry
+    stops, so the arming pin can only survive a turn that left the question open.
+    """
+    if jsc.truthy(selection_context) or jsc.truthy(variables.get("selection_context")):
+        return  # this turn owns the roster
+    prev_ctx = jsc.get(prev, "selection_context")
+    prev_set = jsc.get(prev, "last_result_set")
+    if not jsc.truthy(prev_ctx) or not jsc.is_array(prev_set) or len(prev_set) == 0:
+        return
+    # A tier menu is a promotion-thread artifact by construction, so it reads its own
+    # domain even when the session recorded none (same rule as `tm_domain_ok` above).
+    prev_domain = jsc.get(prev, "domain_hint") or ("promotion" if prev_ctx == "tier_offer" else None)
+    if topic.changed(prev_domain, jsc.get(qf, "domain_hint")):
+        return
+    if prev_ctx == "member_offer":
+        declined = jsc.truthy(escalation) and jsc.get(escalation, "escalation_declined") is True
+        if escalated or declined:
+            return  # the offer was answered: never re-arm it
+    variables["selection_context"] = prev_ctx
+    variables["last_result_set"] = prev_set
 
 
 # --------------------------------------------------------------------------- #
