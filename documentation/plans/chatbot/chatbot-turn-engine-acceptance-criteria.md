@@ -1191,6 +1191,41 @@ contact inside the synchronous request. Different contacts run in parallel.
      Evidence: `tests/chatbot/test_tail_units.py::TestTierAndPromoOffersCarryUntilOverwritten`
      and `::TestTheMemberOfferCarryStopsAtTheAnswer`.
 
+     **And a member offer has the DID-YOU-MEAN OFFER'S LIFETIME** (owner ruling, 6 Sep
+     2026). "Unanswered" is not a licence to live forever: an offer the customer simply
+     ignored was re-armed on every later turn, so a bare "yes" about something else -
+     three, or twenty, turns on - still read as `is_escalation_confirmation` and assigned
+     a human to a conversation nobody had asked to escalate. Given a pending member offer
+     (`pending.kind = member_offer`, `selection_context = 'member_offer'`), when three
+     turns pass without a reply to it, OR when the customer asks something else on ONE
+     turn and gets an answer, then the offer is gone: `selection_context`,
+     `last_result_set` and the `pending` marker are all cleared, and a later affirmative
+     is not an escalation confirmation and assigns nobody
+     (`output_exchange._offer_is_open` reads the marker's liveness, not only its kind). An
+     accepted assignment or a decline still ends it on the turn it happens, unchanged. A
+     filter modification under the offer (rule 3) does NOT clear it - the roster is still
+     on screen - but it SPENDS one turn against the clock, or the narrow arm becomes the
+     unbounded carry again. `ttl` starts at 3 (`tail/pending.MEMBER_OFFER_TTL`) and rides
+     on the `pending` marker rather than a session key of its own, because the marker is
+     already what says the offer is open and a second key could disagree with it; a marker
+     with no `ttl` (written by n8n, or before this rule) is treated as open and starts its
+     clock on the next carry.
+
+     The rule is a deliberate divergence from the live spine, and the spine says why in
+     its own words: `export/sub-output-live/nodes/compile-current-state.js` around line
+     1307 gives the picker carry NO lifecycle on purpose - "NOT the suggest/did-you-mean
+     offer: that one already has a lifecycle of its own directly above (`dym_offer` with a
+     TTL ...), and two managers for one offer is how an offer ends up outliving both". The
+     hazard it names is real and the ruling answers it the other way round: ONE manager,
+     and it is the TTL, so the member offer and the did-you-mean offer expire by the same
+     rule instead of one of them not expiring at all. No capture moves - the blanket
+     H13/H14 divergence already strips `pending` from every `compile-current-state`
+     comparison, so `ttl` is invisible to the corpus and the 3600-test chatbot suite is
+     green with no new entry.
+     Evidence: `tests/chatbot/test_tail_units.py::TestTheMemberOfferHasTheSameTtlAsTheDymOffer`
+     (the clock, the answered arm, the filter arm and the `_offer_is_open` seam) and
+     `tests/chatbot/test_r3_pending_end_to_end.py::TestAnAbandonedMemberOfferStopsConfirming`
+     (the owner's own sequence, through the real head/tail round trip on the database).
   2. **Carried entities die on a topic change.** Given entities carried in the session
      block, when the customer asks an explicit question in a DIFFERENT domain that brings
      its own entity, then the carried set is dropped; when the domain is the same, or the

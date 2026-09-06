@@ -408,6 +408,125 @@ class TestTheMemberOfferCarryStopsAtTheAnswer:
         patch = _compile({"outcome": {}}, self._ctx_with_open_offer(domain_hint="inventory"))
         assert patch["variables"]["selection_context"] != "member_offer"
 
+
+# --------------------------------------------------------------------------- #
+# AC-816 rule 1, the TTL half (owner ruling, 6 Sep 2026): a member offer has the
+# SAME lifetime as a did-you-mean offer - three turns, or the first answered turn
+# that is not a pick.
+# --------------------------------------------------------------------------- #
+
+
+class TestTheMemberOfferHasTheSameTtlAsTheDymOffer:
+    """An UNANSWERED escalation offer cannot live forever.
+
+    Rule 1 gave `member_offer` an unbounded carry: while the customer neither accepted
+    nor declined, the arming pin was re-seated every turn, so a "yes" typed twenty turns
+    later about something else was still read as "yes, escalate" and assigned a human.
+    The owner ruled the lifetime is the dym offer's: `ttl` 3, and an answered turn with no
+    pick ends it (`compile_state`'s dym block, arms 5 to 7 - the precedent this copies,
+    with its own justification: an offer the customer has moved on from is not an offer).
+
+    The clock lives on the `pending` marker rather than on a new session key, because the
+    marker is already what says "this offer is open" and a second key could disagree with
+    it.
+    """
+
+    ROSTER = [{"idx": i, "label": f"Member {i}", "uuid": f"u{i}"} for i in range(1, 4)]
+
+    def _ctx(self, *, ttl=None, answered=False, **qf_overrides):
+        qf_overrides.setdefault("domain_hint", "order")
+        ctx = _ctx(**qf_overrides)
+        pending = {"kind": "member_offer", "team": "customer_service", "domain": "order"}
+        if ttl is not None:
+            pending["ttl"] = ttl
+        ctx["session"] = {
+            "session_vars": {
+                "variables": {
+                    "selection_context": "member_offer",
+                    "last_result_set": self.ROSTER,
+                    "domain_hint": "order",
+                    "pending": pending,
+                }
+            }
+        }
+        return ctx
+
+    def _answering_item(self):
+        """A turn that ANSWERED: `central-exchange` rows are what `answered` reads."""
+        return {
+            "outcome": {
+                "central-exchange": {
+                    "response": "Here are the orders.",
+                    "items": [{"title": "SO-1", "fields": []}],
+                }
+            }
+        }
+
+    def test_a_fresh_offer_starts_the_clock_at_three(self) -> None:
+        ctx = _ctx(domain_hint="order")
+        patch = _compile(
+            {
+                "outcome": {
+                    "build-cs-member-offer": {
+                        "member_offer": True,
+                        "selection_context": "member_offer",
+                        "cs_last_result_set": self.ROSTER,
+                        "response": "Who should I pass this to?",
+                        "manualResponse": True,
+                    }
+                }
+            },
+            ctx,
+        )
+        pending = patch["variables"].get("pending") or {}
+        assert pending.get("kind") == "member_offer"
+        assert pending.get("ttl") == 3, (
+            f"a member offer made this turn starts at ttl 3: {pending!r}"
+        )
+
+    def test_an_unanswered_turn_decrements_the_clock(self) -> None:
+        patch = _compile({"outcome": {}}, self._ctx(ttl=3))
+        variables = patch["variables"]
+        assert variables["selection_context"] == "member_offer"
+        assert (variables.get("pending") or {}).get("ttl") == 2
+
+    def test_the_offer_is_gone_on_the_third_carried_turn(self) -> None:
+        """ttl 3 at the offer, 2 after one carry, 1 after two - and the turn that would
+        make it 0 does not carry at all."""
+        variables = _compile({"outcome": {}}, self._ctx(ttl=1))["variables"]
+        assert variables.get("selection_context") != "member_offer", (
+            f"a member offer with one turn left must not survive another: {variables!r}"
+        )
+        assert (variables.get("pending") or {}).get("kind") != "member_offer"
+
+    def test_an_answered_turn_with_no_pick_ends_it_at_once(self) -> None:
+        """The dym block's arm 5, applied to the member offer: the customer asked
+        something else and got an answer, so the roster is no longer what is on screen."""
+        variables = _compile(self._answering_item(), self._ctx(ttl=3))["variables"]
+        assert variables.get("selection_context") != "member_offer", (
+            f"an answered turn abandons the offer: {variables!r}"
+        )
+        assert (variables.get("pending") or {}).get("kind") != "member_offer"
+
+    def test_a_filter_modification_keeps_it_and_spends_one_turn(self) -> None:
+        """Rule 3's tail half. The customer narrowed the SAME question, so the roster is
+        still on their screen even though the turn answered - but it is a turn, and the
+        clock does not stand still or the narrow arm becomes the unbounded carry again."""
+        ctx = self._ctx(ttl=3, member_offer_filter_modification=True)
+        variables = _compile(self._answering_item(), ctx)["variables"]
+        assert variables["selection_context"] == "member_offer"
+        assert variables["last_result_set"] == self.ROSTER
+        assert (variables.get("pending") or {}).get("ttl") == 2
+
+    def test_an_expired_offer_is_not_open_to_the_parser(self) -> None:
+        """The seam the whole rule exists for: `output_exchange._offer_is_open` is what
+        turns a bare "yes" into `is_escalation_confirmation`, and it must read the offer's
+        liveness rather than only its kind."""
+        from app.services.chatbot.head.output_exchange import _offer_is_open
+
+        assert _offer_is_open({"pending": {"kind": "member_offer", "ttl": 2}}) is True
+        assert _offer_is_open({"pending": {"kind": "member_offer", "ttl": 0}}) is False
+
 # --------------------------------------------------------------------------- #
 # AC-302: the canned copy, including the two arms with no vendored capture
 # --------------------------------------------------------------------------- #

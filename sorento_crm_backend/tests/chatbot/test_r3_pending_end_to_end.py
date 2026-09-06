@@ -185,3 +185,123 @@ class TestPendingPresenceMirrorsWhatWasComposed:
             session_factory, monkeypatch, item={"branch_kind": "not_supported", "allowed": True}
         )
         assert patch["variables"]["pending"] is None
+
+
+class TestAnAbandonedMemberOfferStopsConfirming:
+    """AC-816 rule 1's TTL half, end to end: the owner's own sequence.
+
+    A member offer went out, the customer ignored it and asked three stock questions
+    instead, and then typed "yes" - about the stock, not the offer. Before the TTL the
+    tail re-armed `selection_context` on every one of those turns, so `_offer_is_open` was
+    still true four turns later and the head read that "yes" as an escalation
+    confirmation: a human was assigned to a conversation nobody had asked to escalate.
+
+    Turn 1 is SEEDED as the persisted offer rather than composed, because building one
+    through `complete_turn` needs the CS gate, a roster plan and real team rows - none of
+    which this sequence is about. The shape seeded is exactly the shape the tail writes,
+    pinned by `test_tail_units.py::TestTheMemberOfferHasTheSameTtlAsTheDymOffer`.
+    """
+
+    ROSTER = [{"idx": i, "label": f"Member {i}", "uuid": f"u{i}"} for i in range(1, 4)]
+
+    def _seed_offer(self, session_factory) -> None:
+        db = session_factory()
+        db.execute(
+            text(
+                "UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) "
+                "WHERE respond_io_id = :cid"
+            ),
+            {
+                "cid": CONTACT_ID,
+                "sv": json.dumps(
+                    {
+                        "variables": {
+                            "message_type": "business_query",
+                            "domain_hint": "order",
+                            "selection_context": "member_offer",
+                            "last_result_set": self.ROSTER,
+                            "pending": {
+                                "kind": "member_offer",
+                                "team": "customer_service",
+                                "domain": "order",
+                                "ttl": 3,
+                            },
+                        }
+                    }
+                ),
+            },
+        )
+        db.commit()
+
+    def _answer_turn(self, session_factory, monkeypatch, *, n: int) -> None:
+        qf = _parser_output(
+            message_type="business_query",
+            intent_hint="check_order",
+            # The OFFER'S OWN domain, deliberately. A different domain already clears the
+            # carry through `topic.changed` (rule 1's second lifetime), so a sequence that
+            # switched domains would pass without the TTL and prove nothing about it.
+            domain_hint="order",
+            routing={
+                "suggested_team": "customer_service",
+                "suggested_agent": "order_enquiries",
+                "team_source": "parser",
+            },
+        )
+        _stub_parser(monkeypatch, qf)
+        envelope = _envelope(is_test=False)
+        envelope.message["message"]["messageId"] = f"ZZT-r3-member-ttl-{n}"
+        envelope.message["message"]["message"]["text"] = "any update on my orders"
+        head = engine_mod.run_turn(envelope, session_factory=session_factory)
+        engine_mod.complete_turn(
+            head.turn_id,
+            _fragments(
+                item={
+                    "allowed": True,
+                    "response": "Here are your orders.",
+                    "items": [{"title": "SO-10021", "fields": []}],
+                }
+            ),
+            session_factory=session_factory,
+        )
+
+    def test_three_stock_answers_later_a_bare_yes_escalates_nobody(
+        self, seeded, session_factory, monkeypatch
+    ):
+        self._seed_offer(session_factory)
+        for n in (2, 3, 4):
+            self._answer_turn(session_factory, monkeypatch, n=n)
+
+        stored = _session_of(session_factory)["variables"]
+        assert stored.get("selection_context") != "member_offer", (
+            f"the offer outlived three answered turns: {stored!r}"
+        )
+        assert (stored.get("pending") or {}).get("kind") != "member_offer", (
+            f"the pending marker still says an escalation is open: {stored!r}"
+        )
+
+        yes_qf = _parser_output(
+            message_type="casual",
+            intent_hint=None,
+            domain_hint=None,
+            entities=[],
+            is_affirmative=True,
+            escalation={"is_escalation_confirmation": False, "company_pick": None},
+            routing={
+                "suggested_team": "customer_service",
+                "suggested_agent": "order_enquiries",
+                "team_source": "parser",
+            },
+        )
+        _stub_parser(monkeypatch, yes_qf)
+        envelope = _envelope(is_test=False)
+        envelope.message["message"]["messageId"] = "ZZT-r3-member-ttl-yes"
+        envelope.message["message"]["message"]["text"] = "yes"
+        head = engine_mod.run_turn(envelope, session_factory=session_factory)
+
+        escalation = head.ctx["parse"]["output"].get("escalation") or {}
+        assert escalation.get("is_escalation_confirmation") is not True, (
+            "a 'yes' four turns after an ignored offer must not confirm it: "
+            f"{escalation!r}"
+        )
+        actions = [a for a in (head.actions or []) if a.get("kind") == "assign_conversation"]
+        assert not actions, f"the turn assigned a human off an abandoned offer: {actions!r}"

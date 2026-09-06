@@ -895,13 +895,14 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     # AFTER miss-company-routing, so a clarify arm that armed its own context this turn
     # still wins, and BEFORE the `pending` marker below, which describes what the
     # customer is left looking at.
-    _offer_carry(
+    carried_member_ttl = _offer_carry(
         variables,
         qf=qf,
         prev=prev,
         escalation=escalation,
         escalated=escalated,
         selection_context=selection_context,
+        answered=answered,
     )
 
     # ---- search-scope disclosure (delivery orders only) ------------------- #
@@ -933,6 +934,9 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         # still set it, and the marker must describe what the customer was actually left
         # looking at.
         selection_context=variables.get("selection_context"),
+        # `None` when the offer was made THIS turn (the clock starts at 3) and the
+        # decremented value when it was carried.
+        member_offer_ttl=carried_member_ttl,
     )
 
     sanitize_em_dash(output)
@@ -1845,7 +1849,8 @@ def _offer_carry(
     escalation: Any,
     escalated: bool,
     selection_context: Any,
-) -> None:
+    answered: bool,
+) -> int | None:
     """"Choosing 1, 2, 3 works sequentially until I change domain or ask for another
     promotion." (owner, 2026-09-06)
 
@@ -1874,24 +1879,56 @@ def _offer_carry(
     (`is_escalation_confirmation`, or a resolved `preferred_assignee_id`) nor declined
     (`escalation_declined`) this turn. Either of those closes the offer and the carry
     stops, so the arming pin can only survive a turn that left the question open.
+
+    **And it has the DYM OFFER'S LIFETIME** (owner ruling, 6 Sep 2026). "Unanswered" is
+    not a licence to live forever: an offer the customer never replied to was re-armed on
+    every later turn, so a "yes" about something else, twenty turns on, still read as "yes,
+    escalate" and assigned a human. The lifetime copied is the one three arms above
+    (`dym_offer`, arms 5 to 7) and it is copied WITH its justification, not as precedent:
+    an offer is what is on the customer's screen, and it stops being that when they ask
+    something else and get an answer, or when enough turns pass. So
+
+    * an ANSWERED turn with no pick ends it at once - except a filter modification, which
+      is a narrowing of the question the offer was made about (AC-816 rule 3, stamped by
+      `output_exchange` as `member_offer_filter_modification`), so the roster is still on
+      screen; and
+    * `ttl` counts down from 3 on every carried turn, filter modifications included, or
+      the narrow arm becomes the unbounded carry again.
+
+    The clock rides on the `pending` marker rather than a session key of its own, because
+    the marker is already the thing that says "this offer is open" - a second key could
+    disagree with it, and the one that lies is the one a bare "yes" would read.
+
+    Returns the carried `ttl` for `pending.derive`, or `None` when nothing was carried.
     """
     if jsc.truthy(selection_context) or jsc.truthy(variables.get("selection_context")):
-        return  # this turn owns the roster
+        return None  # this turn owns the roster
     prev_ctx = jsc.get(prev, "selection_context")
     prev_set = jsc.get(prev, "last_result_set")
     if not jsc.truthy(prev_ctx) or not jsc.is_array(prev_set) or len(prev_set) == 0:
-        return
+        return None
     # A tier menu is a promotion-thread artifact by construction, so it reads its own
     # domain even when the session recorded none (same rule as `tm_domain_ok` above).
     prev_domain = jsc.get(prev, "domain_hint") or ("promotion" if prev_ctx == "tier_offer" else None)
     if topic.changed(prev_domain, jsc.get(qf, "domain_hint")):
-        return
+        return None
+    carried_ttl: int | None = None
     if prev_ctx == "member_offer":
         declined = jsc.truthy(escalation) and jsc.get(escalation, "escalation_declined") is True
         if escalated or declined:
-            return  # the offer was answered: never re-arm it
+            return None  # the offer was answered: never re-arm it
+        if answered and jsc.get(qf, "member_offer_filter_modification") is not True:
+            return None  # the customer asked something else and got an answer
+        ttl = jsc.js_number(jsc.get(jsc.get(prev, "pending"), "ttl"))
+        # A marker written before this rule existed (or by n8n, which has no ttl at all)
+        # starts its clock now rather than being killed by a key it could not have.
+        ttl = pending_marker.MEMBER_OFFER_TTL if jsc.is_nan(ttl) or ttl <= 0 else ttl
+        if not (ttl > 1):
+            return None  # the clock ran out
+        carried_ttl = int(ttl) - 1
     variables["selection_context"] = prev_ctx
     variables["last_result_set"] = prev_set
+    return carried_ttl
 
 
 # --------------------------------------------------------------------------- #

@@ -518,8 +518,11 @@ def test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state(
     # on the customer's screen, so the marker says so. The next turn still resolves a
     # number against `selection_context` + `last_result_set`, which the assertions above
     # are what protect.
+    # `ttl` 3: the clarify arm RE-PERSISTS the roster, which is the bot asking again, so
+    # the offer's clock starts over rather than continuing to run down (AC-816 rule 1).
     assert variables.get("pending") == {
         "kind": "member_offer",
         "team": "customer_service",
         "domain": None,
+        "ttl": 3,
     }

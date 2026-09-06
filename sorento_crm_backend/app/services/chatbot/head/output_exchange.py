@@ -646,8 +646,17 @@ def _offer_is_open(state: Any) -> bool:
     # BOTH offer kinds. A `member_offer` is an escalation offer with a roster attached -
     # its reply carries the same frozen phrase - so a reader that only knew the general
     # kind would go blind on every member-offer turn the day S8 deletes the regex below.
-    if jsc.get(jsc.get(state, "pending"), "kind") in ("escalation_offer", "member_offer"):
-        return True
+    #
+    # KIND IS NOT ENOUGH: a member offer has a lifetime (AC-816 rule 1), and this is the
+    # seam the lifetime exists for - "is an offer open?" is what turns a bare "yes" into
+    # `is_escalation_confirmation` twenty lines down. The tail stops writing the marker
+    # once the clock runs out, so an expired offer normally arrives as no marker at all;
+    # the explicit test is here anyway because this function is the one that decides, and
+    # a reader that trusted the kind alone would be one refactor away from the defect.
+    pending = jsc.get(state, "pending")
+    if jsc.get(pending, "kind") in ("escalation_offer", "member_offer"):
+        ttl = jsc.get(pending, "ttl")
+        return True if ttl is None else jsc.js_number(ttl) > 0
     response = jsc.get(state, "response")
     return bool(
         _OFFERED_ESCALATION_RE.search(jsc.js_string(response if jsc.truthy(response) else ""))
