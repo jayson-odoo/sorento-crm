@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { Badge } from '@/components/ui/badge';
 import {
   useEmailTemplate,
@@ -58,7 +59,7 @@ export default function EmailTemplateDetailPage() {
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
               {isLoading || !template ? (
-                <p className="text-muted-foreground">Loading…</p>
+                <SectionSkeleton rows={3} />
               ) : (
                 <>
                   <div className="flex justify-between">

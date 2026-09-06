@@ -160,7 +160,7 @@ export function SpecKeyRecordDetail({ specKey }: { specKey: string }) {
         />
 
         <Tabs value={tab} onValueChange={setTab} className="w-full">
-          <TabsList variant="line" className="mb-4 w-full justify-start overflow-x-auto">
+          <TabsList variant="line" className="mb-4 w-full justify-start">
             <TabsTrigger value="header">Header</TabsTrigger>
             <TabsTrigger value="values">Values and words</TabsTrigger>
             <TabsTrigger value="rules">Rules</TabsTrigger>

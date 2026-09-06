@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import {
   applyBulkAccessLevels,
@@ -148,12 +149,7 @@ export default function BulkAttachmentAccessLevelsDialog({
           <DialogTitle>Adjust access levels</DialogTitle>
         </DialogHeader>
 
-        {previewLoading && (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground py-6">
-            <Loader2 className="size-4 animate-spin" />
-            Loading…
-          </div>
-        )}
+        {previewLoading && <SectionSkeleton rows={3} className="py-6" />}
 
         {previewError && (
           <p className="text-sm text-destructive py-2" role="alert">

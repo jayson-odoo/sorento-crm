@@ -17,7 +17,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Iterable, Optional
 
 import sqlalchemy as sa
 from sqlalchemy import func
@@ -53,7 +53,13 @@ from app.services.scm import sales_agent_service
 # check constraint, so a second copy of the word list would be a database that accepts what
 # the importer rejects.
 from app.services.scm.history_sources import HISTORY_SOURCE_SYSTEMS
-from app.services.scm.demand_class import class_of as _class_of
+from app.services.scm.demand_class import class_of as _class_of, classify_document
+# The segment DB read this module's `_classify_demand` used to define locally, moved to
+# `demand_classifier` (D4) so the AutoCount document ingest classifies off the SAME read
+# rather than a second one that could drift. Re-exported under the old name so this
+# module's own directly-testing callers (`tests/scm/test_outstanding_import_*`) are
+# unaffected.
+from app.services.scm.demand_classifier import segment_of as _segment_of
 from app.services.scm.customer_label import normalize_debtor_code
 from app.services.scm.outstanding_reader import PO, SO, ReadResult, RowProblem, read_workbook
 # The supplier back-create rule itself, shared with the purchase-HISTORY channel: the two
@@ -763,41 +769,16 @@ def _header_state(db: Session, docs: tuple[str, ...],
     return {r[0]: (r[1], str(r[2]) if r[2] else None) for r in rows}
 
 
-def _segment_of(db: Session, debtor_code: str) -> Optional[str]:
-    """This customer's market segment code, or None when there is no customer to read.
-
-    Three answers, and the caller needs all three apart: "no such customer" and "customer
-    with no segment" are both None and both nothing to go on, and a segment that says
-    retail is an answer. There is deliberately no defaulting wrapper around this any more
-    (QP1): the import refuses a document it cannot classify rather than writing a guess.
-    Since the amendment of 4 Aug 2026 the segment was the FALLBACK rather than the source of
-    truth, because it was NULL on 3,276 of 3,284 customers. Migration 425 changed that
-    balance - it stamped 503 customers retail so the real AutoCount export, which carries no
-    order type column, can classify at all - but not the rule: silence here is still
-    silence, and treating it as "retail" is exactly the invisible mis-prioritisation the
-    refusal exists to prevent.
-    """
-    if not debtor_code:
-        return None
-    # ORM again: customers are company-scoped too, and reading another company's customer
-    # would decide this order's fulfilment priority from the wrong row.
-    #
-    # ORDERED, because `LIMIT 1` without one picks whatever the planner returns first. The
-    # scope should leave at most one row per code (`customer_code` is unique per company),
-    # and on the day it leaves two - a company-shared row, an unscoped principal - the
-    # useful answer is the one that STATES a segment rather than a coin toss between an
-    # answer and a blank. `id` breaks the remaining tie so a re-run cannot classify the
-    # same file two ways.
-    return (
-        db.query(func.lower(func.coalesce(Customer.market_segment_code, "")))
-        .filter(func.upper(Customer.customer_code) == _norm(debtor_code))
-        .order_by(
-            (func.coalesce(func.trim(Customer.market_segment_code), "") == ""),
-            Customer.id,
-        )
-        .limit(1)
-        .scalar()
-    )
+# `_segment_of` itself now lives in `demand_classifier.py` (D4) and is imported above under
+# this name - moved rather than duplicated so the AutoCount document ingest classifies off
+# the exact same read. There is deliberately no defaulting wrapper around it (QP1): the
+# import refuses a document it cannot classify rather than writing a guess. Since the
+# amendment of 4 Aug 2026 the segment was the FALLBACK rather than the source of truth,
+# because it was NULL on 3,276 of 3,284 customers. Migration 425 changed that balance - it
+# stamped 503 customers retail so the real AutoCount export, which carries no order type
+# column, can classify at all - but not the rule: silence here is still silence, and
+# treating it as "retail" is exactly the invisible mis-prioritisation the refusal exists to
+# prevent.
 
 
 def _demand_state(db: Session, docs: tuple[str, ...],
@@ -912,17 +893,24 @@ def _classify_demand(db: Session, diff: Diff, resolved: _Resolved,
 
     out: dict[str, str] = {}
     problems: list[RowProblem] = []
+    # Resolved once, not per document: `None` on an ambiguous/unset scope leaves
+    # `classify_document`'s segment read exactly as ambient-scope-only as `_segment_of`
+    # always was, rather than inventing a company this upload never named.
+    company_id = resolve_write_company_id(get_company_scope(db), ambiguous=None)
     for number in diff.scope_documents:
         stored_split, current = state.get(number, (None, None))
         stated_split = resolved.header_by_doc.get(number, {}).get("order_type")
         agent_code = resolved.agent_by_doc.get(number, "")
-        cls = (_class_of(stored_split) or _class_of(stated_split)
-               # Taken as stored, NOT through `_class_of`: the column holds a class already,
-               # constrained to the vocabulary, so passing it through the segment matcher
-               # would turn a value that somehow escaped the constraint into `retail` - a
-               # guess, in the one place this module refuses to guess.
-               or agent_classes.get(agent_code)
-               or _class_of(_segment_of(db, resolved.party_code_by_doc.get(number, ""))))
+        # ONE ladder (D4): `classify_document` is also what the AutoCount document ingest
+        # calls, so the two can never decide the same order two different ways.
+        cls = classify_document(
+            db,
+            stored_order_type=stored_split,
+            stated_order_type=stated_split,
+            agent_demand_class=agent_classes.get(agent_code),
+            debtor_code=resolved.party_code_by_doc.get(number, ""),
+            company_id=company_id,
+        )
         if cls is not None:
             out[number] = cls
             continue
@@ -1925,55 +1913,56 @@ def _record_rows_never_written(read: ReadResult, resolved: _Resolved,
                      value=issue.value or None)
 
 
-def _supersede_crm_raised_pos(db: Session, resolved: _Resolved,
-                              outcome: ImportOutcome,
-                              lines: Optional[list[Line]] = None) -> tuple[int, list[dict]]:
+def supersede_crm_raised_pos(
+    db: Session,
+    triples: Iterable[tuple[str, str, str]],
+    *,
+    outcome: Optional[ImportOutcome] = None,
+) -> tuple[int, list[dict]]:
     """Close the CRM's own recommendation once AutoCount confirms the same order.
+
+    The shared body behind BOTH callers that state a confirmed physical purchase:
+    the outstanding-PO upload (`_supersede_crm_raised_pos` below, a thin adapter that
+    builds `triples` from its own resolved `Line`s) and the AutoCount ingest route's
+    PO hook (D7, S5), which has no `_Resolved`/`Line` of its own - only the
+    `(product_id, supplier_id, po_number)` a just-written line already carries.
 
     The captain's ruling of 21 Aug: the CRM can raise its own purchase order from a
     reorder-plan confirm (`source_system == "scm_recommendation"`, active after
-    `bulk_confirm`). When Joey keys the SAME physical order into AutoCount and this
-    outstanding-PO book is uploaded, the two must not both count as on-order for the
-    same (product, supplier) - AutoCount is the book of record (the same doctrine the
+    `bulk_confirm`). When the SAME physical order is later keyed into AutoCount -
+    whichever channel states it - the two must not both count as on-order for the
+    same (product, supplier); AutoCount is the book of record (the same doctrine the
     `adopted` handover above and `_preload_closed_lines`' history guard already follow), so
-    ITS import is what retires the CRM's own draft-turned-order, never the reverse.
+    its statement is what retires the CRM's own draft-turned-order, never the reverse.
 
     Matched on (product, supplier), never on document number: the CRM's own number
     and AutoCount's number for the same physical order are never the same string, so
     a document-number match would never fire. Only an ACTIVE, OPEN CRM line
     qualifies - a `draft_recommendation` PO is not on-order at all yet (M4-D5) and has
     nothing to supersede, and an already-closed line is left alone, which is what
-    makes re-running the same upload a no-op rather than a second attempt at
-    something already done.
+    makes re-running the same upload (or re-pushing the same document) a no-op rather
+    than a second attempt at something already done.
 
     Any order-inquiry row PLACED on a line this closes is untagged FIRST, through
     `ProjectOrderInquiryService.unplace_rows` rather than reimplemented here, so it
-    reads `raised` again before this SAME import's own auto-place cascade (one of
-    its three triggers, PLAN-demo-followups-19aug-ladder-v2.md section G.4) runs
-    against the freshly-written AutoCount lines - untagging AFTER that pass would
-    miss the very cascade this upload is about to feed, and leave the row `placed`
-    on a line that is about to disappear.
+    reads `raised` again before this SAME import's own auto-place pass to pick them
+    up again.
 
-    Recorded through the SAME `LINE_CLOSED` code the diff's own closes use above -
-    this module invents no new outcome vocabulary - with the `message` naming which
-    AutoCount document is the reason, so the job detail is where an operator finds
-    out a CRM-raised PO disappeared either way.
+    `outcome` is optional (`None` for the ingest route, which keeps no `ImportOutcome`
+    of its own): when given, each close is recorded through the SAME `LINE_CLOSED`
+    code the diff's own closes use, with the `message` naming which AutoCount
+    document is the reason, so the job detail is where an operator finds out a
+    CRM-raised PO disappeared either way. The item code for that identity is read
+    off the matched line's own product, not passed in - a triple names the product
+    by id, and every caller already knows it means the same product it resolved.
 
     Never called from `preview()`: like every other write in this module, a
-    supersession only happens on `apply`.
-
-    `lines`, default `resolved.lines`: `apply` (S5 review round 1, B2/B3) calls this once
-    PER DOCUMENT BATCH now, passing only the lines that batch's documents named, so the
-    supersession runs inside that batch's own transaction, before its commit, rather than
-    once for the whole file after every batch has already committed - a defect here fails
-    only the batch it belongs to, and the caller's counts/documents accumulate across calls.
+    supersession only happens on `apply` (or, for the ingest route, a non-dry run).
     """
-    pairs: dict[tuple[str, str], tuple[str, str]] = {}
-    for l in (lines if lines is not None else resolved.lines):
-        supplier_id = resolved.party_by_doc.get(l.doc_number)
-        product_id = resolved.product_by_code.get(_norm(l.item_code))
-        if supplier_id and product_id:
-            pairs.setdefault((product_id, supplier_id), (l.doc_number, l.item_code))
+    pairs: dict[tuple[str, str], str] = {}
+    for product_id, supplier_id, po_number in triples:
+        if product_id and supplier_id:
+            pairs.setdefault((str(product_id), str(supplier_id)), po_number)
     if not pairs:
         return 0, []
 
@@ -1995,15 +1984,15 @@ def _supersede_crm_raised_pos(db: Session, resolved: _Resolved,
         supplier_id = str(header.supplier_id) if header.supplier_id else None
         if supplier_id is None:
             continue
-        match = pairs.get((str(line.product_id), supplier_id))
-        if match:
-            to_close.append((line, header, match[0], match[1]))
+        ac_number = pairs.get((str(line.product_id), supplier_id))
+        if ac_number:
+            to_close.append((line, header, ac_number))
     if not to_close:
         return 0, []
 
     # Untagged BEFORE the close, so the rows this frees are `raised` in time for
     # THIS SAME import's own auto-place pass to pick them up again.
-    line_ids = [str(line.id) for line, _h, _n, _c in to_close]
+    line_ids = [str(line.id) for line, _h, _n in to_close]
     from app.models.project_so import INQUIRY_PLACED, OrderInquiryRow
 
     placed_row_ids = [
@@ -2020,19 +2009,32 @@ def _supersede_crm_raised_pos(db: Session, resolved: _Resolved,
 
         ProjectOrderInquiryService(db).unplace_rows(placed_row_ids)
 
+    # For the outcome identity only (below) - one query for the whole batch of
+    # matched products, rather than one per closed line.
+    item_codes: dict[str, str] = {}
+    if outcome is not None:
+        item_codes = dict(
+            db.query(Product.id, Product.product_code)
+            .filter(Product.id.in_({str(line.product_id) for line, _h, _n in to_close}))
+            .all()
+        )
+
     touched_headers: dict[str, PurchaseOrder] = {}
     superseded_documents: list[dict] = []
-    for line, header, ac_number, item_code in to_close:
+    for line, header, ac_number in to_close:
         line.line_status = "closed"
         touched_headers[str(header.id)] = header
-        outcome.updated(
-            code=oc.LINE_CLOSED,
-            identity=_identity(header.po_number, item_code, ""),
-            value=header.po_number,
-            message=f"{header.po_number} superseded by AutoCount PO {ac_number}",
-            entity_type="order_line",
-            entity_id=line.id,
-        )
+        if outcome is not None:
+            outcome.updated(
+                code=oc.LINE_CLOSED,
+                identity=_identity(
+                    header.po_number, item_codes.get(str(line.product_id), ""), ""
+                ),
+                value=header.po_number,
+                message=f"{header.po_number} superseded by AutoCount PO {ac_number}",
+                entity_type="order_line",
+                entity_id=line.id,
+            )
         superseded_documents.append({
             "po_number": header.po_number,
             "superseded_by": ac_number,
@@ -2057,6 +2059,28 @@ def _supersede_crm_raised_pos(db: Session, resolved: _Resolved,
     db.flush()
 
     return len(to_close), superseded_documents
+
+
+def _supersede_crm_raised_pos(db: Session, resolved: _Resolved,
+                              outcome: ImportOutcome,
+                              lines: Optional[list[Line]] = None) -> tuple[int, list[dict]]:
+    """Thin adapter over `supersede_crm_raised_pos` (extracted, S5): builds the
+    `(product_id, supplier_id, po_number)` triples the shared function wants from
+    this upload's own `_Resolved` state.
+
+    `lines`, default `resolved.lines`: `apply` (S5 review round 1, B2/B3) calls this once
+    PER DOCUMENT BATCH now, passing only the lines that batch's documents named, so the
+    supersession runs inside that batch's own transaction, before its commit, rather than
+    once for the whole file after every batch has already committed - a defect here fails
+    only the batch it belongs to, and the caller's counts/documents accumulate across calls.
+    """
+    triples = []
+    for l in (lines if lines is not None else resolved.lines):
+        supplier_id = resolved.party_by_doc.get(l.doc_number)
+        product_id = resolved.product_by_code.get(_norm(l.item_code))
+        if supplier_id and product_id:
+            triples.append((product_id, supplier_id, l.doc_number))
+    return supersede_crm_raised_pos(db, triples, outcome=outcome)
 
 
 #: Documents `apply` commits together (S5). A worker killed mid-run keeps every batch

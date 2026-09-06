@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Users, Contact, Trash2, LoaderCircleIcon } from 'lucide-react';
+import { Users, Contact, Trash2 } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -25,6 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { getUsersSelect } from '@/services/userSelectService';
 import {
   useAddCompanyContact,
@@ -186,9 +187,7 @@ function UsersTab({ companyId }: { companyId: string }) {
           <span className="text-muted-foreground font-normal"> ({assigned.length})</span>
         </p>
         {isLoading ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground py-6 justify-center">
-            <LoaderCircleIcon className="animate-spin size-4" /> Loading…
-          </div>
+          <SectionSkeleton rows={3} className="py-2" />
         ) : assigned.length === 0 ? (
           <div className="rounded-lg border border-dashed p-6 text-center">
             <p className="text-sm text-muted-foreground">No users can switch into this company yet.</p>
@@ -262,9 +261,7 @@ function ContactsTab({ companyId }: { companyId: string }) {
           <span className="text-muted-foreground font-normal"> ({assigned.length})</span>
         </p>
         {isLoading ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground py-6 justify-center">
-            <LoaderCircleIcon className="animate-spin size-4" /> Loading…
-          </div>
+          <SectionSkeleton rows={3} className="py-2" />
         ) : assigned.length === 0 ? (
           <div className="rounded-lg border border-dashed p-6 text-center">
             <p className="text-sm text-muted-foreground">No contacts belong to this company yet.</p>

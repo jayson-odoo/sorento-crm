@@ -17,6 +17,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { ScrollAreaZag } from '@/components/ui/scroll-area-zag';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { cn } from '@/lib/utils';
 import type { AttachmentDirectoryTreeNode } from '../../attachments/services/directoryService';
 import { useDirectoryTree, useRestoreDirectory, usePermanentDeleteDirectory } from '../../attachments/hooks/useAttachments';
@@ -261,7 +262,7 @@ export default function TrashTreeSidebar({ selectedId, onSelect }: TrashTreeSide
             All deleted items
           </button>
           {isLoading ? (
-            <div className="px-2 py-2 text-sm text-muted-foreground">Loading…</div>
+            <SectionSkeleton rows={5} className="px-2 py-2" />
           ) : deletedTree.length === 0 ? (
             <div className="px-2 py-2 text-sm text-muted-foreground">No deleted folders</div>
           ) : (

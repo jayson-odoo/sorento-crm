@@ -811,7 +811,10 @@ export const POIntakeLinesGrid = React.forwardRef<POIntakeLinesGridHandle, Props
             tableLayout={{
               width: 'fixed',
               columnsResizable: true,
-              headerSticky: true,
+              // The ScrollArea below already bounds the vertical viewport
+              // (M5-05: DataGridScroller's own max-height default would
+              // double-bound it otherwise).
+              scrollerMaxHeight: false,
             }}
           >
             <div className="min-w-0 rounded-lg border border-border">

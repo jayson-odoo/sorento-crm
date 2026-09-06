@@ -91,11 +91,13 @@ CASUAL_MODULE = "app.services.chatbot.lanes.casual"
 # The LIVE `Basic LLM Chain` system prompt (AC-401's "fallback = the inline n8n system
 # prompt verbatim"), read from `export/sub-casual-llm-live/workflow.json` at
 # test-authoring time (5 Sep 2026) and frozen here as a JSON string literal so the
-# curly quotes and the non-breaking hyphen it contains travel byte-for-byte rather than
-# risking mangling through an editor's encoding. `json.loads` is the decode step; the
-# `r'''...'''` below is a RAW string so its own backslash escapes reach `json.loads`
-# unmodified.
-_CLARIFIER_LIVE_PROMPT_JSON = r'''"You are the Sorento Small Talk and Clarification Assistant.\n\nYou ONLY handle:\n\ncasual messages (greetings, thanks, small talk), and\n\nunclear or incomplete business requests that need clarification.\n\nThe main business assistant and MCP tools are handled by other agents.\n\nINPUT CONTEXT:\n\nmessage_type can be \"clarification\", \"casual\", \"unknown\", or \"confirmation\".\n\nintent_hint and domain_hint may be null when the request is vague.\n\nuser_goal is a brief summary of what the user seems to want.\n\nRULES:\n\nBe brief, friendly, and professional.\n\nDo NOT mention tools, workflows, or internal systems.\n\nDo NOT ask for IDs, order numbers, or any detailed business data.\n\nDo NOT give detailed product, promotion, stock, or order answers. Another agent will handle detailed answers.\n\nIf message_type is \"clarification\" OR intent_hint and domain_hint are both null, your MAIN job is to ask ONE short clarifying question so you understand what the user wants.\n\nOnly use a reply like “the system will check and respond shortly” when the user’s request is already clear (intent and domain are non‑null) and they are not asking anything else.\n\nIf the user just greets, greet back.\n\nIf the user says thanks, acknowledge politely and close the loop.\n\nKeep responses short: 1–3 short sentences.\n\nOUTPUT FORMAT:\nReturn exactly one JSON object:\n\n{\n  \"response\": \"short natural-language message\"\n}"'''
+# curly quotes, the en dash and the non-breaking hyphen it contains travel byte-for-byte
+# rather than risking mangling through an editor's encoding. `json.loads` is the decode
+# step. Every non-ASCII character is written as a `\uXXXX` escape and every backslash is
+# doubled, so the literal is pure ASCII while decoding to exactly the live bytes - the
+# repo forbids a literal en dash anywhere, and `CLARIFIER_LIVE_PROMPT_SHA256` below is
+# what proves the escaping did not change a single byte.
+_CLARIFIER_LIVE_PROMPT_JSON = '''"You are the Sorento Small Talk and Clarification Assistant.\\n\\nYou ONLY handle:\\n\\ncasual messages (greetings, thanks, small talk), and\\n\\nunclear or incomplete business requests that need clarification.\\n\\nThe main business assistant and MCP tools are handled by other agents.\\n\\nINPUT CONTEXT:\\n\\nmessage_type can be \\"clarification\\", \\"casual\\", \\"unknown\\", or \\"confirmation\\".\\n\\nintent_hint and domain_hint may be null when the request is vague.\\n\\nuser_goal is a brief summary of what the user seems to want.\\n\\nRULES:\\n\\nBe brief, friendly, and professional.\\n\\nDo NOT mention tools, workflows, or internal systems.\\n\\nDo NOT ask for IDs, order numbers, or any detailed business data.\\n\\nDo NOT give detailed product, promotion, stock, or order answers. Another agent will handle detailed answers.\\n\\nIf message_type is \\"clarification\\" OR intent_hint and domain_hint are both null, your MAIN job is to ask ONE short clarifying question so you understand what the user wants.\\n\\nOnly use a reply like \u201cthe system will check and respond shortly\u201d when the user\u2019s request is already clear (intent and domain are non\u2011null) and they are not asking anything else.\\n\\nIf the user just greets, greet back.\\n\\nIf the user says thanks, acknowledge politely and close the loop.\\n\\nKeep responses short: 1\u20133 short sentences.\\n\\nOUTPUT FORMAT:\\nReturn exactly one JSON object:\\n\\n{\\n  \\"response\\": \\"short natural-language message\\"\\n}"'''
 CLARIFIER_LIVE_PROMPT = json.loads(_CLARIFIER_LIVE_PROMPT_JSON)
 CLARIFIER_LIVE_PROMPT_SHA256 = "97f1d279793d6125574bc33866e0cc079935b1d4ecb69cd235ba3e78ed1d4afa"
 
@@ -443,7 +445,7 @@ def _install_stub_lane(monkeypatch, casual, *, response_json="{\"response\": \"h
     the resolve body, the registry fallback and the fence-stripping parse are each
     covered directly above."""
     monkeypatch.setattr(casual, "resolve_for_prompt", lambda db, *, ctx: {"resolutions": []})
-    monkeypatch.setattr(casual, "resolve_clarifier_config", lambda db: object())
+    monkeypatch.setattr(casual, "resolve_clarifier_config", lambda db, **_: object())
 
     def fake_call_clarifier(config, user_prompt):
         if error is not None:
@@ -556,6 +558,9 @@ class TestLowSignalLaneIntegration:
         assert after_turns == before_turns + 1, "only the turn's own row may be written"
         assert result.actions
         assert all(a["dry_run"] is True for a in result.actions)
+        # The TOP-LEVEL flag too: this arm builds its own TurnResult and used to omit
+        # it, so the response said `is_test: false` on a turn that wrote nothing.
+        assert result.is_test is True
 
     def test_no_session_across_clarifier_call(
         self,
@@ -575,7 +580,7 @@ class TestLowSignalLaneIntegration:
         stub_parser(_parser_output(message_type="casual", domain_hint=None, intent_hint=None))
         stub_access()
         monkeypatch.setattr(casual, "resolve_for_prompt", lambda db, *, ctx: {"resolutions": []})
-        monkeypatch.setattr(casual, "resolve_clarifier_config", lambda db: object())
+        monkeypatch.setattr(casual, "resolve_clarifier_config", lambda db, **_: object())
 
         observed: list[int] = []
 

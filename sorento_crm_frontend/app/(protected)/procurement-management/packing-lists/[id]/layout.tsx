@@ -238,7 +238,7 @@ function PackingListTabs({ id }: { id: string }) {
 
   return (
     <Tabs value={active}>
-      <TabsList variant="line" className="mb-5 w-full justify-start overflow-x-auto">
+      <TabsList variant="line" className="mb-5 w-full justify-start">
         {TAB_ORDER.map(({ key, title, icon: Icon, segment }) => (
           <TabsTrigger
             key={key}

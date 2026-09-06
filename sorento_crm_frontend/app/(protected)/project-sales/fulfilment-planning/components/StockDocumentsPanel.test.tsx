@@ -358,19 +358,25 @@ describe('StockDocumentsPanel', () => {
   });
 
   /**
-   * The live book tops out at 501 documents for one product at one location, and this now opens
-   * INSIDE a row of the cell dialog. So the documents scroll in a region of their own rather
-   * than growing the dialog until nothing else is reachable.
+   * REVERSED on 5 Sep 2026, and this is the reason it was reversed.
+   *
+   * It used to scroll in a region of its own (`max-h-[35vh] overflow-y-auto`), so that a long
+   * ledger could not grow the dialog until nothing else was reachable. Measured in a browser
+   * at 1440x900 with the Site pool subtotal open, that window was the third of FOUR nested
+   * vertical scrollports on this tab, and it clipped the documents table's own header out of
+   * sight (the table's box was 580px tall inside a 315px window, so its header sat 33px above
+   * the visible top) while the wheel moved whichever region the pointer was over. The dialog
+   * body is the one scroll region for this tab now; a long ledger is scrolled past there.
    */
-  it('scrolls inside its own container', async () => {
+  it('does not open a scroll region of its own - the dialog body is the only one', async () => {
     getStockDetail.mockResolvedValue(captainsPosition());
 
     renderPanel();
     await screen.findByRole('table');
 
     const panel = screen.getByTestId('stock-documents-panel');
-    expect(panel.className).toContain('overflow-y-auto');
-    expect(panel.className).toContain('max-h-');
+    expect(panel.className).not.toContain('overflow-y-auto');
+    expect(panel.className).not.toContain('max-h-');
   });
 
   it('says so when the detail cannot be loaded, rather than showing an empty table', async () => {

@@ -132,6 +132,24 @@ class TestEndToEndThroughTheMemberPickArm:
             "reference_target": None,
             "person_mention": None,
             "is_affirmative": None,
+            # The rest of the parser's declared keys, at their neutral values. Not decoration:
+            # `post_process` refuses an emission that is missing a required key (AC-806-era
+            # hardening after production showed a bare `KeyError: 'reference_positions'` on a
+            # malformed mock), so a hand-built emission has to be a whole one.
+            "scope_intent": "specific",
+            "user_goal": "",
+            "access_levels": [],
+            "date_mode": None,
+            "date_filter_start": None,
+            "date_filter_end": None,
+            "match_mode": "and",
+            "demand_qty": None,
+            "scope_exclusive": False,
+            "requested_attributes": [],
+            "contains_flyer": False,
+            "is_active": None,
+            "order_status": None,
+            "correction": False,
             "escalation": {"is_escalation_confirmation": False},
             "routing": {"suggested_team": None, "suggested_agent": None, "team_source": None},
         }

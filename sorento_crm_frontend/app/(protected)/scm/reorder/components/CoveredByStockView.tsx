@@ -339,7 +339,7 @@ export function CoveredByStockView({
       table={table}
       recordCount={table.getFilteredRowModel().rows.length}
       listingKey={NO_COLUMN_PERSISTENCE}
-      tableLayout={{ width: 'fixed', columnsResizable: true, headerSticky: true }}
+      tableLayout={{ width: 'fixed', columnsResizable: true }}
       // Keeps the column names on screen while the body scrolls: 193 rows is far enough to
       // forget what a number column was.
       tableClassNames={{

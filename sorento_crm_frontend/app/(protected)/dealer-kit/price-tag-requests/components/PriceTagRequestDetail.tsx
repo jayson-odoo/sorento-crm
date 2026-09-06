@@ -423,7 +423,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
           layout, and there is no edit here beyond what the header's own
           actions already do. */}
       <Tabs value={tab} onValueChange={(v) => setTab(v as DetailTab)} className="w-full">
-        <TabsList variant="line" className="mb-4 w-full justify-start overflow-x-auto">
+        <TabsList variant="line" className="mb-4 w-full justify-start">
           <TabsTrigger value="request">
             <FileText />
             <span>Request</span>

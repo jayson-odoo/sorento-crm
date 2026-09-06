@@ -19,6 +19,7 @@ import {
   DataGridTableRowSpacer,
   headerRowSpan,
   useBodySkeleton,
+  skeletonRowCount,
   skipMergedLeafHeader,
 } from '@/components/ui/data-grid-table';
 import {
@@ -131,7 +132,14 @@ function DataGridTableDndCell<TData>({ cell }: { cell: Cell<TData, unknown> }) {
   );
 }
 
-function DataGridTableDnd<TData>({ handleDragEnd }: { handleDragEnd: (event: DragEndEvent) => void }) {
+function DataGridTableDnd<TData>({
+  handleDragEnd,
+  returnedFromId,
+}: {
+  handleDragEnd: (event: DragEndEvent) => void;
+  /** Resolved once by `DataGridTable` and passed down - see `useReturnedRowId`'s doc. */
+  returnedFromId: string | null;
+}) {
   const { table, props } = useDataGrid();
   const pagination = table.getState().pagination;
   const showBodySkeleton = useBodySkeleton();
@@ -184,7 +192,7 @@ function DataGridTableDnd<TData>({ handleDragEnd }: { handleDragEnd: (event: Dra
 
           <DataGridTableBody>
             {showBodySkeleton ? (
-              Array.from({ length: pagination.pageSize }).map((_, rowIndex) => (
+              Array.from({ length: skeletonRowCount(pagination.pageSize) }).map((_, rowIndex) => (
                 <DataGridTableBodyRowSkeleton key={rowIndex}>
                   {/* LEAF columns, as in DataGridTable: the flat list includes a group
                       PARENT, which is not a cell. */}
@@ -219,7 +227,7 @@ function DataGridTableDnd<TData>({ handleDragEnd }: { handleDragEnd: (event: Dra
                         </td>
                       </tr>
                     )}
-                    <DataGridTableBodyRow row={row} key={index}>
+                    <DataGridTableBodyRow row={row} returnedFromId={returnedFromId} key={index}>
                       {row.getVisibleCells().map((cell: Cell<TData, unknown>) => {
                         return (
                           <SortableContext

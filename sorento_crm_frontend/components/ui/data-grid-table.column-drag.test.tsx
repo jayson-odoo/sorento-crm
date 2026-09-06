@@ -202,12 +202,18 @@ describe('Column drag-and-drop', () => {
 });
 
 /**
- * A pinned column and a sticky header carry the SAME `--z-sticky-content`
- * token (css/config.reui.css) a bare `z-1`/`z-10` used to. That keeps them
- * below the app shell's `--z-header`/`--z-sidebar`, so the collapsed
- * sidebar's hover flyout renders over a frozen column instead of under it -
- * see FulfilmentBoardMatrix and the sibling schedule matrices for the same
- * fix on their own custom pinned cells.
+ * A pinned column carries the `--z-sticky-content` token (css/config.reui.css) a bare
+ * `z-1`/`z-10` used to, which keeps it below the app shell's `--z-header`/`--z-sidebar` -
+ * so the collapsed sidebar's hover flyout renders over a frozen column instead of under it
+ * - see FulfilmentBoardMatrix and the sibling schedule matrices for the same fix on their
+ * own custom pinned cells.
+ *
+ * The sticky HEADER carries the `-corner` step instead of that same token (S3, M5 review
+ * run 1): the two used to share `--z-sticky-content`, so on any grid with
+ * `columnsPinnable: true` a frozen column's own cell painted OVER the sticky header
+ * instead of scrolling under it. `-corner` is reserved for a cell pinned on both axes
+ * (`css/config.reui.css`), which the header effectively is - sticky on every column, not
+ * just a pinned one - so it has to beat a single-axis pinned cell.
  */
 describe('Sticky content stays below the app shell', () => {
   it('a pinned column carries the shared sticky-content z token, not a bare number', () => {
@@ -216,7 +222,7 @@ describe('Sticky content stays below the app shell', () => {
     expect(headerCell('Name').style.zIndex).toBe('var(--z-sticky-content)');
   });
 
-  it('a sticky header carries the same token', () => {
+  it('a sticky header carries the CORNER token, above a pinned column\'s own cell', () => {
     function StickyHeaderHarness() {
       const table = useReactTable({
         data: ROWS,
@@ -238,8 +244,8 @@ describe('Sticky content stays below the app shell', () => {
 
     render(<StickyHeaderHarness />);
 
-    expect(document.querySelector('thead')?.className).toContain(
-      'z-(--z-sticky-content)',
-    );
+    const headClassName = document.querySelector('thead')?.className;
+    expect(headClassName).toContain('z-(--z-sticky-content-corner)');
+    expect(headClassName).not.toContain('z-(--z-sticky-content)');
   });
 });

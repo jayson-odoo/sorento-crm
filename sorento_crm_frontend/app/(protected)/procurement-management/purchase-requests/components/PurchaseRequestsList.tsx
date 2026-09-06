@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   type Column,
@@ -42,6 +42,7 @@ import PurchaseRequestBulkDeleteDialog from './PurchaseRequestBulkDeleteDialog';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { purchaseRequestNumberFieldLabel } from '../lib/purchase-request-field-labels';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
   purchase_request: 'Purchase Request',
@@ -199,9 +200,9 @@ export default function PurchaseRequestsList({
     assignedTo: assignedToFilter !== '__all__' ? assignedToFilter : undefined,
   });
 
-  useEffect(() => {
-    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-  }, [statusFilter, assignedToFilter, searchQuery]);
+  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
+  useResetPageOnFilterChange(setPagination, [statusFilter, assignedToFilter, searchQuery]);
 
   // The whole row opens the record, carrying the list query the pager rebuilds its
   // key from. request_type rides along so a PR pager stays in PRs and an SF one in SFs.

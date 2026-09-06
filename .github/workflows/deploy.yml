@@ -435,6 +435,12 @@ jobs:
   #
   # tests/scm is excluded here because `test-backend-scm` runs it in parallel,
   # exactly as it did under the serial job.
+  #
+  # tests/test_migration_*.py is the one case loadfile cannot cover: several of
+  # those files run real DDL through `pg_session` against tables that OTHER
+  # files' tests also touch, so the collision is cross-file, not within one
+  # file. Those tests run in a dedicated serial step below, after this step,
+  # on shard 2 only.
   test-backend:
     name: Backend test suite (Postgres, xdist)
     needs: [changes]
@@ -541,7 +547,8 @@ jobs:
 
       # Everything except tests/ci_excluded.txt - see that file for why each entry
       # is out (they assert against business data a fresh database has no reason
-      # to contain) - MINUS tests/scm, which `test-backend-scm` runs in parallel.
+      # to contain) - MINUS tests/scm, which `test-backend-scm` runs in parallel,
+      # MINUS tests/test_migration_*.py, which the serial step below runs alone.
       #
       # `--durations=30` prints the 30 slowest tests of the run. It is the only
       # per-test timing this job produces, and reviewers are pointed at it by
@@ -551,10 +558,34 @@ jobs:
         working-directory: sorento_crm_backend
         run: |
           IGNORES=$(grep -vE '^\s*#|^\s*$' tests/ci_excluded.txt | sed 's|^|--ignore=|' | tr '\n' ' ')
-          echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus tests/scm; shard ${{ matrix.shard }} of 4"
+          echo "excluding $(echo "$IGNORES" | wc -w) path(s) plus tests/scm and tests/test_migration_*.py; shard ${{ matrix.shard }} of 4"
           python -m pytest -q -p no:cacheprovider -n auto --dist loadfile --durations=30 \
             --splits 4 --group ${{ matrix.shard }} \
+            --ignore-glob='tests/test_migration_*.py' \
             $IGNORES --ignore=tests/scm tests/
+
+      # Migration tests run serially, outside the xdist pool, on one shard only.
+      #
+      # Some of them (324, 325, 354, 370, 375_user_discontinued_scopes, 395, 400,
+      # 422, 443) run real ALTER TABLE / DROP against shared tables through
+      # `pg_session`, which holds the AccessExclusiveLock until the test's
+      # transaction rolls back. `--dist loadfile` above serializes the tests of
+      # ONE file; it does nothing for two files on two workers touching the same
+      # table. Run 33894859525 (main, 2026-09-04) hit exactly that: the 400 test's
+      # `ALTER TABLE projects.order_inquiry_rows DROP COLUMN` deadlocked against
+      # tests/test_order_inquiry_place_on_po.py's SELECT on another worker and
+      # Postgres killed the DDL side. The whole migration set is a few seconds of
+      # test time, so it runs here serially, after the xdist pool has drained,
+      # with nothing else on the database. Shard 2 is the shortest shard (about
+      # 7 minutes against shard 3's 18), so this adds nothing to the wall clock.
+      # Glob rather than a list: a future migration test with DDL is covered
+      # without anyone remembering to register it.
+      - name: Run migration tests serially (executing gate)
+        if: matrix.shard == 2
+        working-directory: sorento_crm_backend
+        run: |
+          python -m pytest -q -p no:cacheprovider -p no:xdist --durations=10 \
+            tests/test_migration_*.py
 
   validate-frontend:
     name: Validate frontend (vitest)

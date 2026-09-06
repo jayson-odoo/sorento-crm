@@ -29,6 +29,10 @@ if (!window.matchMedia) {
   });
 }
 
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+}));
+
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),

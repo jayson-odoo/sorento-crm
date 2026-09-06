@@ -207,18 +207,38 @@ def _resolve_user_scope(db: Session, token: str, request: Optional[Request] = No
     return frozenset({active}) if active else UNSET
 
 
+def resolve_contact_company_scope(
+    db: Session, contact_id: Optional[str], space_id: Optional[str]
+) -> frozenset:
+    """The companies a `(contact_id, space_id)` pair may see. ALWAYS a frozenset.
+
+    The contact-identity half of the X-API-Key rule above, as a plain function so a
+    caller with no `Request` uses the SAME rule rather than a second lookup that would
+    drift from it. Two callers today: `_resolve_api_key_scope` (the router dependency)
+    and the chatbot turn engine, which calls resolver/stock/promotion code IN PROCESS
+    and so never runs that dependency.
+
+    Fail-closed by construction: a blank identity, a contact the CRM does not know, or
+    a contact with no `respond_contact_companies` row all resolve to an EMPTY frozenset
+    (0 owned rows, AC-F3), never to `None` (which would mean every company).
+    """
+    from app.services.contact_access_type_service import ContactAccessTypeService
+
+    company_ids = ContactAccessTypeService(db).resolve_contact_company_ids(
+        (contact_id or "").strip(), (space_id or "").strip()
+    )
+    return frozenset(company_ids)
+
+
 def _resolve_api_key_scope(db: Session, request: Request) -> CompanyScope:
     contact_id = (request.query_params.get("contact_id") or "").strip()
     space_id = (request.query_params.get("space_id") or "").strip()
     if not contact_id or not space_id:
         return None  # no contact identity → all companies (backward-compat, AC-F1)
 
-    from app.services.contact_access_type_service import ContactAccessTypeService
-
-    # Empty list ⇒ no contact matched OR contact has no memberships → empty
-    # frozenset ⇒ 0 owned rows (fail-closed, AC-F3). Never falls through to "all".
-    company_ids = ContactAccessTypeService(db).resolve_contact_company_ids(contact_id, space_id)
-    return frozenset(company_ids)
+    # Empty frozenset ⇒ no contact matched OR contact has no memberships → 0 owned
+    # rows (fail-closed, AC-F3). Never falls through to "all".
+    return resolve_contact_company_scope(db, contact_id, space_id)
 
 
 def _portal_token_value(request: Request) -> Optional[str]:

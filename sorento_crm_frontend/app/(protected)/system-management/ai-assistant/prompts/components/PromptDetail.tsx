@@ -23,6 +23,7 @@ import { Input } from '@/components/ui/input';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { SearchableTextarea } from '@/components/common/find-in-text/SearchableTextarea';
 import {
   usePromptKeys,
@@ -32,6 +33,7 @@ import {
   useSetLabel,
 } from '../../hooks/useAIAssistantPrompts';
 import { validateVars } from '../../lib/promptVars';
+import { CHATBOT_TURN_PROMPT_KEYS } from '../../services/aiPromptsService';
 import type { SaveVersionError } from '../../services/aiPromptsService';
 import { AgentModelCard } from './AgentModelCard';
 import { DiffView } from './DiffView';
@@ -55,8 +57,13 @@ export function PromptDetail({ name }: { name: string }) {
   // list still in flight must not tell the user their key is outside the pipeline,
   // and the route refuses a non-runnable key with a 400 in any case.
   const keysQuery = usePromptKeys();
+  // The two chatbot keys are `dry_runnable: false` because they are not assistant-pipeline
+  // nodes, and that is still true - what changed at AC-807 is that their Test runs a
+  // dry-run chatbot TURN instead, which does exercise them. So the box stays enabled for
+  // them and `DryRunBox` decides which of the two things to run.
   const dryRunnable =
-    keysQuery.data?.find((row) => row.name === name)?.dry_runnable ?? true;
+    CHATBOT_TURN_PROMPT_KEYS.includes(name) ||
+    (keysQuery.data?.find((row) => row.name === name)?.dry_runnable ?? true);
 
   // Which version is loaded as the editor base. Defaults to production.
   const [baseVersion, setBaseVersion] = useState<number | null>(null);
@@ -131,9 +138,7 @@ export function PromptDetail({ name }: { name: string }) {
   if (versionsQuery.isLoading) {
     return (
       <Container>
-        <div className="flex items-center gap-2 text-muted-foreground">
-          <Loader2 className="size-4 animate-spin" /> Loading…
-        </div>
+        <SectionSkeleton rows={6} className="py-6" />
       </Container>
     );
   }
@@ -386,9 +391,7 @@ export function PromptDetail({ name }: { name: string }) {
                       bLabel={dirty ? 'current draft' : `v${baseVersion}`}
                     />
                   ) : (
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Loader2 className="size-3 animate-spin" /> Loading…
-                    </div>
+                    <SectionSkeleton rows={2} className="text-xs" />
                   )}
                 </div>
               ) : null}

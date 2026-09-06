@@ -129,7 +129,7 @@ export function StockTransferDetail({ id }: { id: string }) {
       </Card>
 
       <Tabs value={tab} onValueChange={setTab} className="w-full">
-        <TabsList variant="line" className="mb-4 w-full justify-start overflow-x-auto">
+        <TabsList variant="line" className="mb-4 w-full justify-start">
           <TabsTrigger value="general">
             <FileText />
             <span>General</span>

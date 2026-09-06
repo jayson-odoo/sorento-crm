@@ -91,6 +91,42 @@ def test_contact_filter(db):
     assert [r.message for r in rows] == ["b"]
 
 
+def test_several_contacts_filter_and_the_total_follows(db):
+    """S2b AC-255: "Failed turns only" sends the contacts the turn aggregate named.
+
+    The TOTAL matters as much as the rows: the previous shape filtered the fetched page in
+    the browser, so the pager counted messages it had just hidden.
+    """
+    _msg(db, sent_at=NOW, contact_id="111", message="a")
+    _msg(db, sent_at=NOW, contact_id="222", message="b")
+    _msg(db, sent_at=NOW, contact_id="333", message="c")
+    rows, total = svc.list_messages_page(
+        db,
+        contact_id=["111", "333"],
+        date_from=NOW - timedelta(hours=1),
+        date_to=NOW + timedelta(hours=1),
+    )
+    assert sorted(r.message for r in rows) == ["a", "c"]
+    assert total == 2
+
+
+def test_an_empty_contact_list_matches_nobody(db):
+    """`[]` is a filter that matched nobody; `None` is no filter at all.
+
+    The difference decides whether "Failed turns only" with nothing failing shows an empty
+    list or shows every message in the range, so it is pinned rather than left to
+    truthiness."""
+    _msg(db, sent_at=NOW, contact_id="111", message="a")
+    rows, total = svc.list_messages_page(
+        db,
+        contact_id=[],
+        date_from=NOW - timedelta(hours=1),
+        date_to=NOW + timedelta(hours=1),
+    )
+    assert rows == []
+    assert total == 0
+
+
 def test_direction_filter(db):
     _msg(db, sent_at=NOW, type="incoming", message="in")
     _msg(db, sent_at=NOW, type="outgoing", message="out")

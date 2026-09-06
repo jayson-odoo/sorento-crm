@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from sqlalchemy.orm import Session
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission
@@ -149,12 +149,33 @@ class SystemSettingUpdate(BaseModel):
     media_extraction_timeout_seconds: Optional[int] = Field(None, ge=5, le=110)
     media_max_entities: Optional[int] = Field(None, ge=1, le=100)
     chatbot_stock_denial_enabled: Optional[bool] = None
+    # AC-304 (D5): the unsupported-domain list. `List[str]`, so an owner cannot save a
+    # bare string that would then be iterated one CHARACTER at a time by the route's
+    # membership test.
+    chatbot_unsupported_domains: Optional[List[str]] = None
     # Which chatbot lanes the CRM may FINISH, by `branch_kind`. `[]` (the default) means
     # none, and every turn delegates to n8n exactly as today. Validated as a list of
     # strings only: an unknown branch kind is the ENGINE's problem to ignore-and-warn, not
     # this endpoint's to reject, because the vocabulary grows slice by slice and a settings
     # form that rejects tomorrow's lane name is a support ticket.
     chatbot_completed_lanes: Optional[list[str]] = None
+    # AC-810: the two switches that used to be environment flags. Same rule as every block
+    # above - they must appear HERE and in the GET dict, because both are manual.
+    chatbot_business_lane_enabled: Optional[bool] = None
+    chatbot_ordering_enabled: Optional[bool] = None
+
+
+class ChatbotLane(BaseModel):
+    """One branch kind on the Chatbot settings screen (AC-809).
+
+    `built` is what the SCREEN needs and the vocabulary alone cannot say: the three
+    business arms only run when `chatbot_business_lane_enabled` is on, so checking one
+    while that switch is off does nothing at all. The checkbox is disabled instead of
+    letting the owner discover it by pressing Save.
+    """
+
+    kind: str
+    built: bool
 
 
 class SmtpTestResult(BaseModel):
@@ -353,7 +374,10 @@ async def get_settings(
                 "media_extraction_timeout_seconds": getattr(settings, "media_extraction_timeout_seconds", 45) if settings else None,
                 "media_max_entities": getattr(settings, "media_max_entities", 10) if settings else None,
                 "chatbot_stock_denial_enabled": getattr(settings, "chatbot_stock_denial_enabled", False) if settings else None,
+                "chatbot_unsupported_domains": getattr(settings, "chatbot_unsupported_domains", None) if settings else None,
                 "chatbot_completed_lanes": getattr(settings, "chatbot_completed_lanes", None) or [] if settings else None,
+                "chatbot_business_lane_enabled": getattr(settings, "chatbot_business_lane_enabled", False) if settings else None,
+                "chatbot_ordering_enabled": getattr(settings, "chatbot_ordering_enabled", False) if settings else None,
                 "smtp": smtp_response,
             } if settings else None,
             "roles": [{"id": r.id, "name": r.name} for r in roles]
@@ -400,6 +424,53 @@ async def get_app_config(
             sponsorship_form_default_approver_user_id=sf_uid,
             sponsorship_form_default_approver_email=user_sf.email if user_sf else None,
         )
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
+def _completed_lane_vocabulary() -> frozenset[str]:
+    """The branch kinds the chatbot BUILD can finish, read at call time.
+
+    Through the chatbot MODULE's own surface (`app/modules/chatbot/lane_vocabulary.py`),
+    never `app/services/chatbot/` directly: this file is core, and core importing the
+    package is what AC-002 forbids and `tests/chatbot/test_import_boundary.py` fails on.
+    Lazily imported, the same shape `handling_lock_enabled_types` reads `FORM_SLA_TYPES`
+    with, and the module reads the attribute off `contracts` at call time so a slice that
+    adds a lane needs no edit here.
+    """
+    from app.modules.chatbot.lane_vocabulary import completed_lane_kinds
+
+    return completed_lane_kinds()
+
+
+@router.get("/chatbot-lanes", response_model=List[ChatbotLane])
+async def get_chatbot_lanes(
+    current_user: dict = Depends(require_permission("user_management.settings.view")),
+    db: Session = Depends(get_db),
+):
+    """The lane vocabulary the Chatbot settings screen renders (AC-809).
+
+    Declared ahead of every path-parameter route in this file, for the same reason
+    `/app-config` is: a `/{section}` added later must not shadow a static path.
+
+    The vocabulary is `contracts.CRM_COMPLETED_BRANCH_KINDS` and nothing else - the same
+    set `PUT /general` validates against, so the screen can never offer a lane the save
+    would refuse. `built` carries the one extra condition the vocabulary does not express:
+    the three business arms need `chatbot_business_lane_enabled` on before checking them
+    changes anything.
+    """
+    try:
+        from app.modules.chatbot.lane_vocabulary import lane_options
+
+        settings = db.query(SystemSetting).first()
+        return [
+            ChatbotLane(kind=kind, built=built)
+            for kind, built in lane_options(
+                business_lane_enabled=bool(
+                    getattr(settings, "chatbot_business_lane_enabled", False)
+                )
+            )
+        ]
     except Exception as e:
         raise handle_internal_error(str(e))
 
@@ -531,6 +602,46 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
                 ),
             )
 
+    # AC-809: a lane this build cannot complete is refused HERE, naming it, rather than
+    # saved and then ignored with a warning by the engine. The screen offers exactly this
+    # vocabulary, so a well-behaved form can never trip it; a direct PUT with a typo used
+    # to look saved while the lane kept delegating forever, which is the one failure an
+    # owner cannot see from the screen they set it on.
+    if update_data.get("chatbot_completed_lanes"):
+        vocabulary = _completed_lane_vocabulary()
+        unknown = [
+            str(kind)
+            for kind in update_data["chatbot_completed_lanes"]
+            if str(kind) not in vocabulary
+        ]
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "This build cannot complete "
+                    + ", ".join(sorted(unknown))
+                    + ". Only these lanes can be turned on: "
+                    + ", ".join(sorted(vocabulary))
+                    + "."
+                ),
+            )
+
+    # The chatbot columns are NOT NULL with a default, so an explicit `null` in the body
+    # means "reset to the default" - not a null write. Without this the loop below sends
+    # NULL into a NOT NULL column and the PUT 500s at commit, which reads to the caller as
+    # an outage rather than as the clear it asked for. The defaults repeat
+    # `SystemSetting`'s own (`app/models/user.py`), which is the source of truth.
+    _CHATBOT_COLUMN_DEFAULTS: dict[str, object] = {
+        "chatbot_unsupported_domains": ["goods_receive", "spo_allocation"],
+        "chatbot_completed_lanes": [],
+        "chatbot_stock_denial_enabled": False,
+        "chatbot_business_lane_enabled": False,
+        "chatbot_ordering_enabled": False,
+    }
+    for column, default in _CHATBOT_COLUMN_DEFAULTS.items():
+        if column in update_data and update_data[column] is None:
+            update_data[column] = list(default) if isinstance(default, list) else default
+
     for key, value in update_data.items():
         setattr(settings, key, value)
     db.commit()
@@ -541,10 +652,23 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
 @router.put("/general", status_code=status.HTTP_200_OK)
 async def update_general_settings(
     settings_data: SystemSettingUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.settings.edit")),
     db: Session = Depends(get_db)
 ):
-    """Update general system settings."""
+    """Update general system settings.
+
+    Gated on the EDIT slug, the same one `/upload-logo` and `/signin-background`
+    already use. Reading this blob has required `user_management.settings.view`
+    since the read-gate slice, and writing it required only authentication - so
+    any authenticated session could rewrite the tenant's settings. That gap
+    became load-bearing when the chatbot lane switches moved in here: clearing
+    `chatbot_unsupported_domains` makes the bot answer questions it is
+    deliberately not allowed to answer, and `chatbot_completed_lanes` decides
+    what a production turn does for a real customer.
+
+    No new slug and no grant sweep: every role holding `.view` today also holds
+    `.edit` (admin, warehouse_manager and the three integration roles).
+    """
     try:
         return _update_general_settings_impl(settings_data, db)
     except HTTPException:
@@ -556,10 +680,15 @@ async def update_general_settings(
 @router.post("/general", status_code=status.HTTP_200_OK)
 async def update_general_settings_post(
     settings_data: SystemSettingUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("user_management.settings.edit")),
     db: Session = Depends(get_db)
 ):
-    """Update general system settings (POST allowed for frontend form submit)."""
+    """Update general system settings (POST allowed for frontend form submit).
+
+    Same gate as the PUT above, and it has to be: the two write the same blob
+    through the same implementation, so gating only one would leave the other as
+    the way around it.
+    """
     try:
         return _update_general_settings_impl(settings_data, db)
     except HTTPException:

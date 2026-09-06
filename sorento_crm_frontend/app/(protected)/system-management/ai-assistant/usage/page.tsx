@@ -22,6 +22,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import {
   useQueryDetail,
   useRecentQueries,
@@ -38,6 +39,7 @@ const FEATURE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: 'ai_assistant', label: 'AI Assistant (chat)' },
   { value: 'ai_extract', label: 'AI Extract (portal forms)' },
   { value: 'ai_document_extract', label: 'Document reading (PO, delivery schedule)' },
+  { value: 'chatbot_parser', label: 'Chatbot (understanding a WhatsApp message)' },
 ];
 
 // One place, so a new feature cannot appear in the filter but read as a dash in the table.
@@ -45,6 +47,7 @@ const FEATURE_LABELS: Readonly<Record<string, string>> = {
   ai_assistant: 'AI Assistant',
   ai_extract: 'AI Extract',
   ai_document_extract: 'Document reading',
+  chatbot_parser: 'Chatbot parser',
 };
 
 const PERMISSION = 'system.ai_assistant_settings.view';
@@ -263,10 +266,7 @@ export default function AIUsagePage() {
             </CardHeader>
             <CardContent>
               {topUsersQuery.isLoading ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" />
-                  Loading...
-                </div>
+                <SectionSkeleton rows={3} />
               ) : (topUsersQuery.data || []).length === 0 ? (
                 <p className="text-sm text-muted-foreground">No user activity yet.</p>
               ) : (
@@ -306,10 +306,7 @@ export default function AIUsagePage() {
             </CardHeader>
             <CardContent>
               {topContactsQuery.isLoading ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" />
-                  Loading...
-                </div>
+                <SectionSkeleton rows={3} />
               ) : (topContactsQuery.data || []).length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   No portal contact activity in range.
@@ -354,10 +351,7 @@ export default function AIUsagePage() {
             </CardHeader>
             <CardContent>
               {recentQueriesQuery.isLoading ? (
-                <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" />
-                  Loading...
-                </div>
+                <SectionSkeleton rows={3} />
               ) : (recentQueriesQuery.data || []).length === 0 ? (
                 <p className="text-sm text-muted-foreground">No recent queries in range.</p>
               ) : (

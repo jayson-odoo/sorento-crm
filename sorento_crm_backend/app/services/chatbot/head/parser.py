@@ -44,7 +44,19 @@ PARSER_MAX_TOKENS = 2048
 
 
 class ParserError(RuntimeError):
-    """The parse could not be completed. The caller fails the `understood` stage."""
+    """The parse could not be completed. The caller fails the `understood` stage.
+
+    `usage` is what the provider billed for the attempt, when it got far enough to bill
+    anything: a truncated or non-JSON emission still costs tokens, and a spend the table
+    cannot see is the whole reason the usage row exists. Empty when the call never
+    returned (transport failure).
+    """
+
+    usage: dict[str, Any]
+
+    def __init__(self, *args: object, usage: dict[str, Any] | None = None) -> None:
+        super().__init__(*args)
+        self.usage = usage or {}
 
 
 @dataclass(frozen=True)
@@ -182,16 +194,26 @@ PARSE_OUTPUT_SCHEMA_NAME = "chatbot_parse_output"
 DECLARED_KEYS: frozenset[str] = frozenset(PARSE_OUTPUT_JSON_SCHEMA["required"])
 
 
-def resolve_config(db: Session, *, current_date: str) -> ParserConfig:
+def resolve_config(
+    db: Session, *, current_date: str, override_version_id: str | None = None
+) -> ParserConfig:
     """Read the prompt, the per-key model override and the API key. Session-bound.
 
     Call this, then CLOSE the session, then call `parse`. Everything that needs the
     database happens here so nothing needs it while the provider is answering.
+
+    `override_version_id` runs a specific prompt VERSION instead of the published one, and
+    the name is `ai_prompt_registry.render`'s own so there is one word for one thing all
+    the way down. It exists for the Prompts screen's "Run a turn" test (AC-807), which is
+    dry-run only: the engine refuses to read it off a live envelope, so a customer can
+    never be answered by an unpublished prompt.
     """
     from app.services.ai_assistant_service import AIAssistantConfigService
     from app.services.llm_provider import resolve_api_key
 
-    system_prompt, prompt_version = render(db, PROMPT_KEY, current_date=current_date)
+    system_prompt, prompt_version = render(
+        db, PROMPT_KEY, current_date=current_date, override_version_id=override_version_id
+    )
     provider_override, model_override = agent_model(db, PROMPT_KEY)
 
     config = AIAssistantConfigService(db).get()
@@ -236,8 +258,30 @@ def build_user_block(
     return "\n".join(lines)
 
 
-def parse(config: ParserConfig, user_block: str) -> dict[str, Any]:
+class ParsedOutput(dict):
+    """The parser's emission, with what the call COST hanging off it as `usage`.
+
+    A dict, not a `(parsed, usage)` pair, and deliberately: `parse` is the seam half a
+    dozen tests replace with a two-line stub returning a plain dict, and every reader of
+    the emission reads it by key. Renaming the seam for one telemetry number would make
+    the stubs lie about the shape. `getattr(out, "usage", {})` is the whole contract, and
+    a stub that does not carry one is a legitimate answer: no call, no cost.
+    """
+
+    usage: dict[str, Any]
+
+    def __init__(self, parsed: dict[str, Any], usage: dict[str, Any] | None = None) -> None:
+        super().__init__(parsed)
+        self.usage = usage or {}
+
+
+def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
     """One structured-output call. Raises `ParserError`; never returns a default.
+
+    The return is the parser's 26 keys; `.usage` on it carries provider, model and token
+    counts. Both have a reader: the `understood` trace facts (so an operator can see what
+    a turn cost without leaving the screen) and `ai_assistant_usage_logs` (so the
+    chatbot's spend lands in the same table every other LLM call here reports to).
 
     NOTHING here touches the database. That is the rule the capacity section states and
     the reason `ParserConfig` exists.
@@ -261,18 +305,33 @@ def parse(config: ParserConfig, user_block: str) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - provider/transport failure is a failed stage
         raise ParserError(f"parser provider call failed: {exc}") from exc
 
-    content = (result.content or "").strip()
-    if not content:
-        # An empty structured emission (e.g. an Anthropic max_tokens truncation with no
-        # tool_use) would validate as `{}` and route confidently on nothing.
-        raise ParserError("parser returned empty content")
+    usage = {
+        "provider": config.provider,
+        "model": config.model,
+        "prompt_tokens": int(getattr(result, "prompt_tokens", 0) or 0),
+        "completion_tokens": int(getattr(result, "completion_tokens", 0) or 0),
+        "total_tokens": int(getattr(result, "total_tokens", 0) or 0),
+    }
     try:
-        parsed = json.loads(content)
-    except Exception as exc:  # noqa: BLE001
-        raise ParserError(f"parser returned non-JSON content: {exc}") from exc
-    if not isinstance(parsed, dict):
-        raise ParserError("parser returned a non-object")
-    missing = DECLARED_KEYS - set(parsed)
-    if missing:
-        raise ParserError(f"parser output missing required key(s): {', '.join(sorted(missing))}")
-    return parsed
+        content = (result.content or "").strip()
+        if not content:
+            # An empty structured emission (e.g. an Anthropic max_tokens truncation with no
+            # tool_use) would validate as `{}` and route confidently on nothing.
+            raise ParserError("parser returned empty content")
+        try:
+            parsed = json.loads(content)
+        except Exception as exc:  # noqa: BLE001
+            raise ParserError(f"parser returned non-JSON content: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise ParserError("parser returned a non-object")
+        missing = DECLARED_KEYS - set(parsed)
+        if missing:
+            raise ParserError(
+                f"parser output missing required key(s): {', '.join(sorted(missing))}"
+            )
+    except ParserError as exc:
+        # The provider answered, so it billed. The turn fails either way; the spend is
+        # still real and still has to reach `ai_assistant_usage_logs`.
+        exc.usage = usage
+        raise
+    return ParsedOutput(parsed, usage)

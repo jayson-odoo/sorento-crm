@@ -4,6 +4,7 @@ import { Plus, Pencil, Trash2 } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { useOptions } from '../hooks/useLookupSets';
 import OptionFormDialog from './OptionFormDialog';
 import type { LookupOption } from '../types/lookup.types';
@@ -30,7 +31,7 @@ export default function OptionsSection({ setId }: { setId: string }) {
         </Button>
       </CardHeader>
       <CardContent>
-        {isLoading ? <div>Loading…</div> :
+        {isLoading ? <SectionSkeleton rows={3} /> :
           (options ?? []).length === 0 ? (
             <div className="py-6 text-muted-foreground text-sm">
               No options yet. Click &quot;Add option&quot; to populate this dropdown.

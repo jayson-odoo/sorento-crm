@@ -4,6 +4,7 @@ from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 import json
 import logging
+import re
 import httpx
 from app.config import settings
 from app.models.integration import IntegrationLog
@@ -21,6 +22,112 @@ logger = logging.getLogger(__name__)
 # retries unauthenticated meant n8n's fail-closed gate refused exactly the calls
 # that needed a second chance.
 WEBHOOK_AUTH_HEADER_CHANNELS = frozenset({"n8n_crm_chat_outbound", "n8n_crm_close_convo"})
+
+# What a masked header value reads as in `integration_logs.request_headers`. One
+# token, so an operator reading a log row can tell "we redacted this" from "the
+# caller sent this literal".
+MASKED_HEADER_VALUE = "***"
+
+# Header names whose VALUE is a credential. `dict(request.headers)` is serialised
+# whole into `integration_logs.request_headers`, which is written once per
+# customer message and never pruned, so anything here would otherwise sit in the
+# table in plaintext for the life of the install. Both `X-API-Key` and
+# `Authorization: Bearer` are accepted by `get_current_user_or_api_key`, so
+# masking only the first left the choice of which credential to keep to whoever
+# configured the n8n HTTP node.
+CREDENTIAL_HEADERS = frozenset(
+    {
+        "authorization",
+        "proxy-authorization",
+        "cookie",
+        "set-cookie",
+        "x-api-key",
+        "x-chatbot-retry-key",
+    }
+)
+
+# A denylist cannot name a header nobody has invented yet, and the cost of a miss
+# is a permanent plaintext secret, so the NAME is read as well: anything calling
+# itself a key, a token or a secret is treated as one. False positives cost an
+# operator one header value in a debugging session; a false negative costs a
+# credential.
+_CREDENTIAL_NAME_PARTS = ("key", "token", "secret", "auth")
+
+# The four shapes a hand-rolled mask takes, declared ONCE so the guardrail test and
+# any future scan read the same rule rather than two regexes drifting apart (AC-806).
+# The alternation is BUILT from `CREDENTIAL_HEADERS`, so adding a header to the
+# denylist widens the scan with it - the previous version hard-coded `x-api-key` and
+# therefore guarded one instance of the rule instead of the rule.
+#
+#   1. bracket assignment  - the header key indexed on the left of an `=` whose right
+#      side is the mask (a run of stars, or a name with "mask" in it);
+#   2. `.get` into a log   - the header key as a dict KEY whose value is a `.get` read;
+#   3. dict literal        - the header key as a dict key whose value is a run of stars;
+#   4. per-key conditional - a mask chosen by comparing the key against a credential
+#      header name, the shape a dict comprehension with a ternary takes.
+#
+# Written as prose rather than as literal examples on purpose: a comment carrying the
+# offending source would be flagged by the scan it describes.
+#
+# Shapes 2 and 3 are the ones that used to slip through: neither assigns to a header
+# key, so a scan looking for an indexed assignment alone never saw them, and both put a
+# credential VALUE straight into a dict that gets serialised into `integration_logs`.
+#
+# Shape 1 requires the mask on the RIGHT, so BUILDING an outbound credential header
+# (`base[<auth header>] = f"Bearer ..."`, further down this file) is not an offender:
+# that is a call being authorised, not a log being redacted, and flagging it would make
+# the guardrail something people learn to skip.
+_CREDENTIAL_HEADER_ALTERNATION = "|".join(
+    re.escape(name) for name in sorted(CREDENTIAL_HEADERS)
+)
+_MASK_RHS = r"""(?:["']\*+["']|[\w.]*mask[\w.]*)"""
+
+HAND_ROLLED_HEADER_MASK_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(source, re.IGNORECASE)
+    for source in (
+        rf"""\[\s*["']({_CREDENTIAL_HEADER_ALTERNATION})["']\s*\]\s*=\s*{_MASK_RHS}""",
+        # The read has to come off HEADERS (`headers.get(...)`, `request.headers.get(...)`).
+        # `[\w.]*\.get\(` matched any dict, so `{"Authorization": creds.get("token")}` -
+        # BUILDING an outbound credential header, the same legitimate shape the note above
+        # exempts from shape 1 - was a hit. No such line exists under `app/` today, so this
+        # was latent rather than broken; the cost of leaving it is that the next endpoint
+        # to build an auth header from a dict fails a test whose message tells it to call
+        # `sanitize_request_headers`, which is how a guardrail becomes something people
+        # learn to skip.
+        rf"""["']({_CREDENTIAL_HEADER_ALTERNATION})["']\s*:\s*[\w.]*headers\.get\s*\(""",
+        rf"""["']({_CREDENTIAL_HEADER_ALTERNATION})["']\s*:\s*["']\*+["']""",
+        # Shape 4, found by the S8a tester pass: none of the three above sees it. Shape 1
+        # wants the name as an assignment target, shape 2 a `.get(` call, shape 3 the mask
+        # as a dict literal's value; here the name sits on the RIGHT of a `==` inside a
+        # ternary, and the result is still a per-key mask rolled by hand instead of a call
+        # to `sanitize_request_headers`.
+        rf"""{_MASK_RHS}\s+if\s[^\n]*==\s*["']({_CREDENTIAL_HEADER_ALTERNATION})["']""",
+    )
+)
+
+
+def sanitize_request_headers(headers: Dict[str, str]) -> Dict[str, str]:
+    """The request headers as they may be stored, credentials masked.
+
+    ONE implementation for every external endpoint that logs its own call. Each
+    of them used to carry its own two-line copy that knew about `x-api-key` and
+    nothing else, and each new endpoint could forget a different key.
+
+    Absent stays absent: a header that was not sent is never added, or every log
+    row would claim a credential it never saw. The original key spelling is kept
+    so a log row still shows what the caller actually sent.
+    """
+    masked: Dict[str, str] = {}
+    for name, value in headers.items():
+        lowered = str(name).lower()
+        if lowered in CREDENTIAL_HEADERS or any(
+            part in lowered for part in _CREDENTIAL_NAME_PARTS
+        ):
+            masked[name] = MASKED_HEADER_VALUE
+        else:
+            masked[name] = value
+    return masked
+
 
 # How long a row created by a direct-send lane is held back from the sweeper.
 # The direct lane commits the row `pending` and then POSTs it on a daemon

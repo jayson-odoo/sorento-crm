@@ -17,7 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE } from '@/lib/status-pill';
 import { cn } from '@/lib/utils';
-import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { useStockDebtCellQuery } from '../hooks/useStockDebtQuery';
 import type {
   StockDebtDemandLine,
@@ -384,6 +384,8 @@ export function StockDebtCellDialog({
                   emptyTitle="Nothing is due here"
                   emptyBody="No sales order line falls in this column."
                   pageSize={10}
+                  // The DialogBody above already owns the scroll viewport (overflow-y-auto).
+                  scrollerMaxHeight={false}
                 />
                 <p className="mt-2 border-t pt-2 text-2xs text-muted-foreground">
                   {`Uncovered ${uncovered.toLocaleString()}`}
@@ -400,6 +402,8 @@ export function StockDebtCellDialog({
                   emptyTitle="Nothing arrives here"
                   emptyBody="No stock is held or on the way for this column."
                   pageSize={10}
+                  // The DialogBody above already owns the scroll viewport (overflow-y-auto).
+                  scrollerMaxHeight={false}
                 />
                 <p className="mt-2 border-t pt-2 text-2xs text-muted-foreground">
                   {`Free ${free.toLocaleString()}`}

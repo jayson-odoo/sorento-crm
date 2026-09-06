@@ -22,10 +22,13 @@ describe('orders loading.tsx (S7-04, representative)', () => {
   it('renders the content-pane skeleton only - no full-page overlay of its own', () => {
     const { container } = render(<Loading />);
 
-    // The shell fallback (LayoutLoadingFallback) uses a fixed, full-viewport,
-    // role="status" wrapper. A route loading.tsx must not reproduce that - it
-    // is meant to sit inside the shell, not replace it.
-    expect(container.querySelector('[role="status"]')).not.toBeInTheDocument();
+    // The shell fallback (LayoutLoadingFallback / ScreenLoader) is a fixed,
+    // full-viewport overlay with its own `data-slot="screen-loader"`. A route
+    // loading.tsx must not reproduce that - it is meant to sit inside the shell,
+    // not replace it. `ListPageSkeleton`/`SectionSkeleton` DO carry their own
+    // `role="status"` (M5-01 review S5), so that role is not what distinguishes
+    // "content-only" here - `ScreenLoader`'s own `data-slot` is.
+    expect(container.querySelector('[data-slot="screen-loader"]')).not.toBeInTheDocument();
     expect(container.querySelector('.fixed.inset-0')).not.toBeInTheDocument();
 
     // It does draw a recognizable list shape: a title bar and a card of rows.

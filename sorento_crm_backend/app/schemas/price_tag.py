@@ -313,6 +313,13 @@ class PolygonPointDoc(_StrictProps):
     y: float
 
 
+class PolygonPointDoc(_StrictProps):
+    """One polygon corner, normalized to [0, 1] against the layer's own box (S4)."""
+
+    x: float
+    y: float
+
+
 class ShapeLayerPropsDoc(_StrictProps):
     kind: Literal["shape"]
     shape: Literal["rect", "rounded_rect", "ellipse", "line", "polygon"]

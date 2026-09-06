@@ -41,6 +41,14 @@ Before merging, verify compliance with [ADR-PRODUCT-STANDARDS.md](./ADR-PRODUCT-
       segmented switch, which pins `variant="default"` explicitly
 - [ ] Every icon-only button (`mode="icon"` / `size="icon"`) has an `aria-label` or an
       `sr-only` label - a bare icon with no accessible name is a defect
+- [ ] Every list is a `DataGrid` with `headerSticky`, `columnsResizable` and `columnsMovable`
+      on by default (M5-05); a list that opts a default off, or a raw `<Table>` importer
+      outside `components/ui`, names why (`components/ui/raw-table.inventory.test.ts`'s
+      allowlist)
+- [ ] Row click carries `from=<row id>` to the detail href, and Back restores that exact row,
+      scrolled into view and highlighted (M5-07) - true for free once the list uses `rowHref`
+      and `useHrefWithListState`/`BackToList`, so this only needs checking on a list that
+      built its own navigation instead
 
 ## Design
 - [ ] `documentation/reference/DESIGN-LANGUAGE.md` hard-fails absent (`transition-all`,

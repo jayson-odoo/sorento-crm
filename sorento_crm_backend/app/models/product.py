@@ -33,7 +33,11 @@ class ProductCategory(Base, CompanyScopedMixin):
     __tablename__ = "product_categories"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    category_code = Column(String(50), unique=True, nullable=False)
+    # Unique PER COMPANY, not globally (migration 305): composite unique index in
+    # __table_args__ below. A bare unique=True here would make create_all build
+    # the old global product_categories_category_code_key and reject the same
+    # code in a second company (fix round 4).
+    category_code = Column(String(50), nullable=False)
     category_name = Column(String(150), nullable=False)
     description = Column(Text, nullable=True)
     parent_category_id = Column(UUID(as_uuid=False), ForeignKey("product_categories.id", ondelete="SET NULL"), nullable=True)
@@ -62,6 +66,11 @@ class ProductCategory(Base, CompanyScopedMixin):
     products = relationship("Product", back_populates="category")
     
     __table_args__ = (
+        Index(
+            "uq_product_categories_company_category_code",
+            "company_id", "category_code",
+            unique=True,
+        ),
         Index("ix_product_categories_parent_category_id", "parent_category_id"),
         Index("ix_product_categories_is_active", "is_active"),
     )
@@ -71,7 +80,11 @@ class Brand(Base, CompanyScopedMixin):
     __tablename__ = "brands"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    brand_code = Column(String(50), unique=True, nullable=False)
+    # Unique PER COMPANY, not globally (migration 305): composite unique index in
+    # __table_args__ below. A bare unique=True here would make create_all build
+    # the old global brands_brand_code_key and reject the same code in a second
+    # company (fix round 4).
+    brand_code = Column(String(50), nullable=False)
     brand_name = Column(String(150), nullable=False)
     manufacturer = Column(String(150), nullable=True)
     website = Column(String(255), nullable=True)
@@ -90,6 +103,9 @@ class Brand(Base, CompanyScopedMixin):
     products = relationship("Product", back_populates="brand")
 
     __table_args__ = (
+        Index(
+            "uq_brands_company_brand_code", "company_id", "brand_code", unique=True
+        ),
         Index("ix_brands_is_active", "is_active"),
         Index("ix_brands_access_levels", "access_levels", postgresql_using="gin"),
     )
@@ -99,7 +115,11 @@ class UnitOfMeasure(Base, CompanyScopedMixin):
     __tablename__ = "units_of_measure"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    uom_code = Column(String(50), unique=True, nullable=False)
+    # Unique PER COMPANY, not globally (migration 305): composite unique index in
+    # __table_args__ below. A bare unique=True here would make create_all build
+    # the old global units_of_measure_uom_code_key and reject the same code in a
+    # second company (fix round 4).
+    uom_code = Column(String(50), nullable=False)
     uom_name = Column(String(150), nullable=False)
     base_uom_id = Column(UUID(as_uuid=False), ForeignKey("units_of_measure.id", ondelete="SET NULL"), nullable=True)
     conversion_factor = Column(Numeric(10, 4), nullable=True)
@@ -121,6 +141,11 @@ class UnitOfMeasure(Base, CompanyScopedMixin):
     products = relationship("Product", back_populates="base_uom", foreign_keys="[Product.base_uom_id]")
     
     __table_args__ = (
+        Index(
+            "uq_units_of_measure_company_uom_code",
+            "company_id", "uom_code",
+            unique=True,
+        ),
         Index("ix_units_of_measure_base_uom_id", "base_uom_id"),
         Index("ix_units_of_measure_is_active", "is_active"),
         CheckConstraint(

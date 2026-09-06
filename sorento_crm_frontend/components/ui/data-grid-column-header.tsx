@@ -28,6 +28,7 @@ import {
   PinOff,
   Settings2,
 } from 'lucide-react';
+import { mergeColumnOrderWithLeafColumns } from '@/lib/listing-column-preferences/mergeColumnOrder';
 
 interface DataGridColumnHeaderProps<TData, TValue> extends HTMLAttributes<HTMLDivElement> {
   column: Column<TData, TValue>;
@@ -36,6 +37,38 @@ interface DataGridColumnHeaderProps<TData, TValue> extends HTMLAttributes<HTMLDi
   pinnable?: boolean;
   filter?: ReactNode;
   visibility?: boolean;
+}
+
+/**
+ * Whether `columnId` can move one step in `direction`, given an ALREADY-RESOLVED order
+ * (S4, M5 review run 1). Exported and pure so it can be unit-tested directly: the render
+ * path that would otherwise exercise it (`headerControls` below, the Move to Left/Right
+ * menu items) is not currently mounted - see the module doc on `headerControls`.
+ */
+export function canMoveColumnInOrder(
+  order: string[],
+  columnId: string,
+  direction: 'left' | 'right',
+): boolean {
+  const index = order.indexOf(columnId);
+  if (index === -1) return false;
+  return direction === 'left' ? index > 0 : index < order.length - 1;
+}
+
+/** The reorder `moveColumn` below applies, as a pure function of an already-resolved order. */
+export function moveColumnInOrder(
+  order: string[],
+  columnId: string,
+  direction: 'left' | 'right',
+): string[] {
+  const index = order.indexOf(columnId);
+  if (index === -1) return order;
+  if (direction === 'left' && index === 0) return order;
+  if (direction === 'right' && index === order.length - 1) return order;
+  const next = [...order];
+  const [moved] = next.splice(index, 1);
+  next.splice(direction === 'left' ? index - 1 : index + 1, 0, moved);
+  return next;
 }
 
 function DataGridColumnHeader<TData, TValue>({
@@ -48,36 +81,30 @@ function DataGridColumnHeader<TData, TValue>({
 }: DataGridColumnHeaderProps<TData, TValue>) {
   const { table, props, recordCount, columnPreferences } = useDataGrid();
 
+  // `table.getState().columnOrder` starts as `[]` until a caller sets it explicitly, which
+  // most grids never do (`useListingColumnPreferences` only calls `setColumnOrder` once
+  // personalization loads). Reading that raw, possibly-empty state gave `indexOf(column.id)
+  // === -1` on every column, so Move to Left/Right read as permanently disabled on the ~200
+  // grids without column-order state (S4, M5 review run 1). Falls back to the leaf column
+  // order exactly as the DnD drag handler already does (`data-grid-table.tsx`'s
+  // `handleDragEnd`).
+  const effectiveColumnOrder = (): string[] => {
+    const columnOrderState = table.getState().columnOrder as string[] | undefined;
+    const leafIds = table.getAllLeafColumns().map((c) => c.id);
+    const rawOrder =
+      Array.isArray(columnOrderState) && columnOrderState.length > 0 ? columnOrderState : leafIds;
+    return mergeColumnOrderWithLeafColumns(rawOrder, leafIds);
+  };
+
   const moveColumn = (direction: 'left' | 'right') => {
-    const currentOrder = [...table.getState().columnOrder]; // Get current column order
-    const currentIndex = currentOrder.indexOf(column.id); // Get current index of the column
-
-    if (direction === 'left' && currentIndex > 0) {
-      // Move column left
-      const newOrder = [...currentOrder];
-      const [movedColumn] = newOrder.splice(currentIndex, 1);
-      newOrder.splice(currentIndex - 1, 0, movedColumn);
-      table.setColumnOrder(newOrder); // Update column order
-    }
-
-    if (direction === 'right' && currentIndex < currentOrder.length - 1) {
-      // Move column right
-      const newOrder = [...currentOrder];
-      const [movedColumn] = newOrder.splice(currentIndex, 1);
-      newOrder.splice(currentIndex + 1, 0, movedColumn);
-      table.setColumnOrder(newOrder); // Update column order
-    }
+    const currentOrder = effectiveColumnOrder();
+    const nextOrder = moveColumnInOrder(currentOrder, column.id, direction);
+    if (nextOrder === currentOrder) return;
+    table.setColumnOrder(nextOrder);
   };
 
-  const canMove = (direction: 'left' | 'right'): boolean => {
-    const currentOrder = table.getState().columnOrder;
-    const currentIndex = currentOrder.indexOf(column.id);
-    if (direction === 'left') {
-      return currentIndex > 0;
-    } else {
-      return currentIndex < currentOrder.length - 1;
-    }
-  };
+  const canMove = (direction: 'left' | 'right'): boolean =>
+    canMoveColumnInOrder(effectiveColumnOrder(), column.id, direction);
 
   const headerLabel = () => {
     return (
@@ -298,6 +325,16 @@ function DataGridColumnHeader<TData, TValue>({
 
   // Used only by legacy dropdown mode (we currently render only sorting).
   // Keeps eslint from flagging the function as unused.
+  //
+  // M5 review run 1 (S4) found this the hard way: `headerControls` is where Move to
+  // Left/Right, Pin and per-column Hide live, and NONE of it renders anywhere today - the
+  // return below only ever produces `headerButton()` or `headerLabel()`. M5-05's own
+  // "Move to Left/Right on every header by default" default (`data-grid.tsx`) therefore has
+  // no visible effect on current main. `moveColumn`/`canMove` above got the real logic bug
+  // fixed (the empty-`columnOrder` fallback) because it was cheap and correct regardless,
+  // but wiring `headerControls` into the render tree is a separate, materially bigger
+  // change - a settings icon and dropdown appearing on every column header across ~200
+  // grids - and needs its own design call, not a side effect of this fix.
   void headerControls;
 
   if (column.getCanSort() || (props.tableLayout?.columnsResizable && column.getCanResize())) {

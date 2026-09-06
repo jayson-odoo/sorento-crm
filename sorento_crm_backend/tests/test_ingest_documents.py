@@ -481,7 +481,7 @@ class TestCreate:
         assert first["warehouse_id"] is not None
         assert first["line_status"] == "open"
         # Fully delivered, so this one is closed on arrival.
-        assert by_ref[line_b["source_ref"]]["line_status"] == "fulfilled"
+        assert by_ref[line_b["source_ref"]]["line_status"] == "closed"
 
     def test_the_projects_schema_table_of_the_same_name_is_untouched(self, env):
         """AC-A3-1. `projects.sales_orders` exists and is a DIFFERENT table.
@@ -797,7 +797,7 @@ class TestAdoption:
 
         entry = res.json()["records"][0]
         assert entry["outcome"] == "failed", res.text
-        assert "another company" in entry["errors"]["source_ref"]
+        assert "outside this company anchor" in entry["errors"]["source_ref"]
         assert env.so_lines(theirs.id) == []
 
 
@@ -822,16 +822,24 @@ class TestUnresolvedReferences:
         assert any("product_ref" in k for k in entry["errors"]), entry
         assert env.counts() == before
 
-    def test_an_unknown_warehouse_ref_is_retryable_too(self, env):
-        before = env.counts()
+    def test_an_unknown_warehouse_ref_lands_null_with_a_warning(self, env):
+        """v2 deviation (D10, AC-V1-7b): superseded 2026-09-05. A warehouse is
+        optional and an unlocated line is a supported state, so an unresolved
+        SENT `warehouse_ref` is no longer retryable - the line lands with a
+        NULL `warehouse_id` and a `warehouse_unresolved` warning instead. See
+        `tests/test_ingest_documents_v2_resolution.py::TestWarehouseUnresolvedIsAWarningNotARetry`.
+        """
         record = _so_record(
             env, lines=[_so_line(env, warehouse_ref="LOC:NOT-SYNCED-YET")]
         )
 
         res = env.post(INGEST_SO, [record])
 
-        assert res.json()["records"][0]["outcome"] == "retryable", res.text
-        assert env.counts() == before
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", res.text
+        assert "warehouse_unresolved" in entry.get("warnings", [])
+        header = env.header("sales_orders", record["source_ref"])
+        assert env.so_lines(header["id"])[0]["warehouse_id"] is None
 
     def test_an_absent_customer_ref_leaves_the_fk_null(self, env):
         """AC-A3-5. An order whose debtor Sorento does not hold is still an order;
@@ -870,24 +878,27 @@ class TestUnresolvedReferences:
 
         entry = res.json()["records"][0]
         assert entry["outcome"] == "failed", res.text
-        assert "another company" in str(entry["errors"])
+        assert "outside this company anchor" in str(entry["errors"])
         assert env.counts()["so"] == 0
 
 
 # =============================================================== status (AC-A3-6)
 class TestStatusVocabulary:
     @pytest.mark.parametrize(
-        "canonical,stored",
+        "canonical,stored,read_back",
         [
-            ("open", "open"),
-            ("partial", "partially_delivered"),
-            ("fulfilled", "fulfilled"),
-            ("closed", "closed"),
-            ("cancelled", "cancelled"),
+            ("open", "open", "open"),
+            # D6a: partial is stored open (PLAN-autocount-document-ingest-v2) - the
+            # map is no longer injective, so the round trip is NOT the same word:
+            # a canonical `partial` reads back `open`, same as a canonical `open`.
+            ("partial", "open", "open"),
+            ("fulfilled", "fulfilled", "fulfilled"),
+            ("closed", "closed", "closed"),
+            ("cancelled", "cancelled", "cancelled"),
         ],
     )
     def test_every_canonical_sales_order_status_maps_and_reads_back(
-        self, env, canonical, stored
+        self, env, canonical, stored, read_back
     ):
         """AC-A3-6. Five canonical words, two Sorento vocabularies. The map is the
         contract the shared service codes against, and it round-trips."""
@@ -898,7 +909,7 @@ class TestStatusVocabulary:
 
         assert env.header("sales_orders", record["source_ref"])["status"] == stored
         back = env.read(READ_SO, [record["source_ref"]]).json()["records"][0]
-        assert back["status"] == canonical
+        assert back["status"] == read_back
 
     @pytest.mark.parametrize(
         "canonical,stored",
@@ -942,9 +953,10 @@ class TestStatusVocabulary:
         res = env.post(INGEST_SO, [record])
 
         assert res.json()["records"][0]["outcome"] == "created", res.text
+        # D6a: partial is stored open (PLAN-autocount-document-ingest-v2)
         assert (
             env.header("sales_orders", record["source_ref"])["status"]
-            == "partially_delivered"
+            == "open"
         )
 
     def test_cancelled_on_a_re_push_keeps_the_rows(self, env):
@@ -995,7 +1007,11 @@ class TestDryRun:
         entry = res.json()["records"][0]
         assert entry["outcome"] == "updated", res.text
         assert entry["diff"]["internal_note"] == {"current": "first", "incoming": "second"}
-        assert entry["diff"]["status"]["incoming"] == "partially_delivered"
+        # D6a: partial is stored open (PLAN-autocount-document-ingest-v2) - the
+        # existing row is already open, so restating it as canonical `partial`
+        # writes the SAME stored value and is correctly absent from the diff,
+        # the same as pushing `open` onto an already-open row would be.
+        assert "status" not in entry["diff"], entry["diff"]
         after = env.header("sales_orders", record["source_ref"])
         assert after["internal_note"] == "first"
         assert after["status"] == "open"
@@ -1056,7 +1072,8 @@ class TestReadBack:
         assert got["sales_agent_ref"] == env.agent_ref
         assert got["doc_date"] == "2026-08-30"
         assert got["requested_delivery_date"] == "2026-09-15"
-        assert got["status"] == "partial"
+        # D6a: partial is stored open (PLAN-autocount-document-ingest-v2)
+        assert got["status"] == "open"
         assert got["internal_note"] == "Site A"
 
         assert len(got["lines"]) == 1
@@ -1166,7 +1183,7 @@ class TestPurchaseOrders:
         assert lines[0]["qty_received"] == 4
         assert lines[0]["unit_cost"] == Decimal("9.99")
         # Received in full, so the line is closed.
-        assert lines[0]["line_status"] == "fulfilled"
+        assert lines[0]["line_status"] == "closed"
 
     def test_a_re_push_upserts_purchase_order_lines(self, env):
         keep = _po_line(env, qty_ordered=4)

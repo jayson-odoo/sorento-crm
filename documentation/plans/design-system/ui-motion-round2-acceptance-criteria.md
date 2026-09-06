@@ -218,31 +218,348 @@ Baseline measured on `origin/main` e1adad4d2, 2 Sep 2026.
 
 - **M5-01** `[vitest]` Every route segment under `app/(protected)` whose directory renders a
   `<DataGrid` has a `loading.tsx`; the inventory test holds the count (baseline 10 of 123).
+  **Shipped (M5 run 2):** `app/(protected)/loading-inventory.test.tsx` rewritten from S7-04's
+  hard-coded ten-file list to a walk (same exclusions as `raw-table.inventory.test.ts`); proved
+  red at 113 of 123 segments missing, green after adding the 113 (123 of 123 covered - the walk
+  measured 123, not the plan's "roughly 123", so that is the number this test holds).
+  **Review fix (M5 run 2 review B1/S1):** the run-2 predicate counted a segment's own files OR
+  everything in its `components/` subdir, which false-positived on detail routes whose
+  `components/` folder holds an unrelated grid used by a sibling tab (`scm/purchase-orders/[id]`,
+  `project-sales/[projectId]`, `scm/sales-orders/[id]`, `scm/proforma-invoices/[id]`,
+  `project-sales/[projectId]/sales-orders/[psoId]` - 5 `loading.tsx` files deleted) and, on four
+  segments whose header comes from a parent `layout.tsx`, painted a second title/crumb bar under
+  the real one. Fixed: for a `[dynamic]`-named leaf segment, only its own `page.tsx` (and same-
+  directory imports) count - `components/` is never consulted for these. For every other
+  segment, the walk now follows relative/`@/` imports from `page.tsx` (bounded to
+  `app/(protected)`) instead of a single-hop directory scan, which found 12 real list routes the
+  run-2 walk missed (`procurement-management/sponsorship-forms`,
+  `workflow-forms-management/definitions`, `workflow-forms-management/submissions`,
+  `workflow-forms-management/forms/[definitionId]/submissions`, `project-sales/pipeline`,
+  `project-sales/reports`, `resource-management/trash`, `scm/market-signals`, plus 4 more the
+  walk turned up beyond the plan's own list: `procurement-management/packing-lists/[id]/lines`,
+  `procurement-management/packing-lists/[id]/spo`,
+  `project-sales/[projectId]/sales-orders/[psoId]/revisions`,
+  `user-management/contacts/[id]/access`). The predicate itself now measures 129 (not 123); a
+  manually curated `BODY_ONLY_SEGMENTS` map in the test adds a `bodyOnly` variant on 8 segments
+  (4 with a parent-layout header, 4 genuinely headerless) plus one exception the predicate does
+  not find at all - `user-management/contacts/[id]` keeps a `loading.tsx` even though it has no
+  `<DataGrid` of its own, the same "a record page under a list is held by the same shape"
+  reasoning `ListPageSkeleton`'s own doc comment gives - for 130 required segments total. Five
+  `dealer-kit` descendants (`design`, `design/summary`, `pages/[pageId]`, `bundles`,
+  `price-tag-requests/[id]/design`) that inherited `dealer-kit/loading.tsx`'s list skeleton by
+  Next.js's ancestor-fallback rule now carry their own `loading.tsx` rendering `SectionSkeleton`
+  instead.
+  **Evidence run 1, scope note (`project-sales/pipeline`):** the route's `loading.tsx` correctly
+  imports and returns `ListPageSkeleton` per the predicate above, but the route DEFAULTS to a
+  kanban/card view (a "grid card" vs "table" toggle, card view selected), so `ListPageSkeleton`'s
+  row-bar shape is the wrong shape for what actually paints once the client component mounts -
+  the evidence run's browser check caught a genuine card-shaped skeleton mid-load, not this
+  file's `ListPageSkeleton`. Ruling: keep `ListPageSkeleton` here - the route has a real list
+  view behind the toggle and the skeleton is content-shaped enough for either - rather than
+  building a per-view skeleton for one route; noted, no code change.
+  **Fixed (M5 run 3):** the DataGrid migration batch that landed on this branch (attachments,
+  complaints, procurement, orders line tables on `DataGrid`) turned 10 more segments into list
+  segments the walk now finds - `procurement-management/purchase-requests/new`,
+  `procurement-management/purchase-requests/[id]/edit`,
+  `procurement-management/sponsorship-forms/new`,
+  `procurement-management/sponsorship-forms/[id]/edit` (all four get `SectionSkeleton rows={6}`:
+  `PurchaseRequestForm` puts a line-items DataGrid inside a multi-field form, not a list page, and
+  each page draws its own `PageHeader` directly, so neither `ListPageSkeleton` nor its `bodyOnly`
+  variant fits), `system-management/app-store/bundles` and `system-management/email-event-configs`
+  (default `ListPageSkeleton` - real lists with their own `PageHeader`), `system-management/health`
+  (`SectionSkeleton rows={6}` - `HealthDashboard` is a stack of status cards, one of which holds a
+  DataGrid; the grid is a section, not the whole page), `system-management/mcp-tools`
+  (`ListPageSkeleton bodyOnly` - headerless, `McpToolsList` titles itself with a `CardTitle`, not a
+  route header), `ticket-management/tickets` (default `ListPageSkeleton`), and
+  `user-management/settings/notifications` (`ListPageSkeleton bodyOnly` - `user-management/
+  settings/layout.tsx` already renders the `PageHeader` for every settings page, same reason
+  `settings/portal-revisions` is `bodyOnly`). `BODY_ONLY_SEGMENTS` gained the latter two entries;
+  the required-segment total moves from 130 to **139** (two of the ten were already counted by the
+  walk before this run - being added to `BODY_ONLY_SEGMENTS` only changes their shape, not the
+  count).
 - **M5-02** `[vitest]` Zero non-demo files render the string `Loading...` or `Loading…`
   (baseline 50).
+  **Shipped (M5 run 2):** `app/(protected)/loading-strings.inventory.test.ts`; proved red at 50,
+  green after every occurrence became `ListPageSkeleton`/`ListPageSkeleton bodyOnly` (list
+  shapes), the new `components/common/SectionSkeleton.tsx` (card/dialog/sidebar/widget bodies -
+  the majority of the 50), an inline styled `span` where the real element is an `h2`/`p`
+  (`DialogTitle`, `SheetDescription`, which may only hold phrasing content, not the `Skeleton`
+  `div`), or a reworded label where the text stays a label (button/select/data-value "in
+  flight" text, not a skeleton candidate per the brief's own carve-out).
 - **M5-03** `[vitest] [browser]` `ListPageSkeleton` rows are 60px tall and the crumb bar is
   above the title; loading Products then landing shows no vertical shift of the title or the
   first row (measured with `getBoundingClientRect` before and after in the evidence run).
+  **Corrected against the real file (M5 run 2):** `components/common/PageHeader.tsx` (only
+  commit: #396) renders the `<h1>` title BEFORE the `<Breadcrumb>` trail in DOM order -
+  `ToolbarHeading` is a plain `flex-col`, no reverse - so the crumb sits BELOW the title, not
+  above it as this line and the plan's measured facts both assumed. `[vitest]` shipped:
+  `components/common/ListPageSkeleton.test.tsx`, proved red (rows were `px-5`, no `h-[60px]`, no
+  markers) then green: rows are `h-[60px] px-4` and the header row is `px-4`, matching
+  `data-grid-table.tsx` exactly; the title bar renders before the crumb bar, matching the real
+  order above. `[browser]` (Products load-then-land shift) still open for the tester.
 - **M5-04** `[browser]` `app/(protected)/error.tsx` exists; a forced render throw on a detail
   page shows a Reset button with the sidebar and header still present; Reset recovers without a
   full reload. `not-found.tsx` renders for an unknown record id inside the shell.
+  **Shipped (M5 run 2, `[vitest]` done, `[browser]` open):** `app/(protected)/error.tsx` and
+  `not-found.tsx` (a `Card`, the message/copy, a Try again `Button` calling `reset()` on the
+  error page, a `BackToList`-styled link to `/` on both); `app/(protected)/error.test.tsx` and
+  `not-found.test.tsx` cover the content (message shown, Try again calls `reset`, link href).
+  `grep -rn` for an existing `app/(protected)/**/error.tsx` or `not-found.tsx` found none before
+  this - every detail page still falls through to these two. The `[browser]` half (shell
+  survives a forced throw, Reset recovers, 404 renders inside the shell) is still open.
+  **Review fix (M5 run 2 review B2/S3):** `error.tsx` rendered raw `error.message` - in
+  production that is Next's own developer boilerplate (server-component throw), a generic
+  client-throw string, or a rethrown API message that can carry a record id (a UUID-in-the-UI
+  violation). Now fixed copy ("Something went wrong on this page.") plus a `Reference:
+  <digest>` line when `error.digest` is present - the one token that correlates with the
+  server log; `console.error(error)` unchanged. `error.test.tsx` asserts the fixed copy, the
+  digest line, and that the raw message is never rendered. `not-found.tsx` is a scaffold, not
+  yet adopted: zero protected pages call `notFound()` today (the only callers are the four
+  portal routes under `app/(auth)/portal`); its own comment previously implied otherwise and
+  is corrected. The adoption trigger is a detail page that today hand-rolls inline "X not
+  found" copy calling `notFound()` instead - `user-management/contacts/[id]/layout.tsx` (its
+  inline `<p>Contact not found</p>` branch) is the first candidate. No `notFound()` calls are
+  added in this fix; that is separate follow-up work.
 - **M5-05** `[UX] [vitest] [browser]` **Sticky header, absolute rule.** `DataGrid` defaults
   `headerSticky` to true with a bounded scroller; on Products, Orders and Stock at 1280 and 375
   the column header stays visible when scrolled to row 40. `columnsResizable` and
   `columnsMovable` default true; a column can be dragged to a new position and resized on
   Products without any per-list prop.
+  **Shipped (M5 run 1, `[vitest]` done, `[browser]` open):**
+  `components/ui/data-grid.defaults.test.tsx`; `DataGridScroller`'s default max-height comes
+  from a new `--grid-max-h` token (`css/config.reui.css`), overridable per list with
+  `tableLayout.scrollerMaxHeight`. The `[browser]` sweep (Products/Orders/Stock at 1280 and
+  375, drag-to-reorder + resize on Products) is still open - the next browser-verification pass
+  covers it.
+  **Captain ruling (M5 run 2 review):** the column-header Move Left/Right menu
+  (`headerControls` in `components/ui/data-grid-column-header.tsx`) is not rendered on main -
+  dead since `63b93d74b` ("personalized columns"), confirmed by that file's own module doc
+  comment (M5 review run 1, S4). Column reorder today is by drag (`columnsDraggable`, default
+  true), so M5-05 holds through drag regardless. `columnsMovable: true` stays the default for
+  whenever the menu is wired up - wiring `headerControls` into the render tree (a settings icon
+  and dropdown on every column header across roughly 200 grids) is a separate design call, not
+  part of M5.
+  **Evidence run 1, pinned-column check scope note:** no in-app list has a pinned column by
+  default and no sidebar/topbar/in-app link reaches one - the ONLY grid with
+  `initialState.columnPinning` set is `project-sales/stock-debt/components/StockDebtClient.tsx`,
+  and that route has no navigation entry anywhere in the app. The evidence run reached it by a
+  one-off deep URL (explicitly allowed for exactly this kind of unreachable-otherwise case), not
+  a sidebar walk. Verified there: a pinned header cell is `z-index:6` and a pinned body cell is
+  `z-index:5`, so the header wins the stacking order through a scroll with no visual collision -
+  M5-05 holds. Whether Stock Debt needs a nav entry is a separate captain's call, out of M5.
+  **Evidence run 1, Finding 2 (review B2, `BoardCellBreakdownDialog.tsx`):** four
+  simultaneously-scrollable `overflow-y:auto` regions were found nested inside the Fulfilment
+  Planning board cell breakdown dialog: (1) `DialogBody` itself
+  (`app/(protected)/project-sales/fulfilment-planning/components/BoardCellBreakdownDialog.tsx:947`),
+  (2) `CellStockTable.tsx:375` (`max-h-[50vh]` table wrapper), (3) `StockDocumentsPanel.tsx:745`
+  (`max-h-[35vh]` nested panel), (4) the Contributing lines tab's own `PanelDataGrid` scroller.
+  Checked against main (`b9150f493`): (1), (2) and (3) all predate M5 unchanged - PRE-EXISTING,
+  out of M5 scope, left as found. Only (4) is M5's: `scrollerMaxHeight={false}` (890ac2622,
+  M5 review run 1 B2) opted the grid's own bounded scroller OUT so it does not nest a second
+  scrollport inside `DialogBody`'s. This fix (evidence run 1 fix, commit 2) adds a test proving
+  the prop actually reaches the rendered scroller (`data-slot="data-grid-scroller"` carries no
+  `max-h-` class) - `BoardCellBreakdownDialog.test.tsx`, plus the same check on
+  `scm/components/PlanRowDialog.tsx`'s `DrillTable` (via `ProjectRetailTabs`) and
+  `scm/reorder/components/PlanRowDialogs.tsx`'s own file-local `DrillTable` (via
+  `PlanRowDialog`'s `project`/`retail` kind), the two other families the brief named as unreached
+  by the evidence run. All three pass: none of the three families' grid scrollers carries a
+  bounding `max-h-` inside its own dialog body today.
+  **Captain ruling (5 Sep 2026): page change keeps the scroller position by design.** A page,
+  sort or filter change does NOT return the grid's scroller to the top. The pager sits below the
+  scroller, so the reader keeps paging from the same spot without the page moving under the
+  cursor. Raised as a candidate fix on 5 Sep (a reader at the bottom of page 1 clicks Next and
+  page 2 arrives still scrolled, because M4's `keepPreviousData` holds the rows through the
+  fetch and `scrollTop` is never reset) and ruled against: the position is the feature.
+  **Evidence run 3, follow-up (5 Sep 2026): the four nested scroll regions, fixed.** Finding 2
+  above left (1), (2) and (3) as PRE-EXISTING and out of M5 scope. They were reported again
+  hands-on, on the lane AND in production, so they are fixed now: the Stock tab has exactly ONE
+  scroll region, the dialog body. `CellStockTable`'s half-viewport wrapper and
+  `StockDocumentsPanel`'s third-of-a-viewport panel are both unbounded, and the stock table's
+  header is no longer sticky - with those scrollports gone the only thing left to stick to is
+  the dialog body, where the dialog's own toolbar is already pinned at `top-0`, and clearing it
+  would need a hard-coded toolbar height that is wrong as soon as the toolbar wraps. The cost,
+  stated: an open ledger renders all its rows (up to 501) and the dialog body scrolls past it.
+  Measured before: four boxes overflowing at once, the inner header 33px above its clip.
+  Measured after: one, `dialog-body` 652/1907.
+  **And the rule behind it, as a DEFAULT (5 Sep 2026).** A grid that finds an enclosing
+  `DataGridContext` renders unbounded and non-sticky unless the caller names a value, so a grid
+  in another grid's body cannot open a scrollport inside one. Fourteen call sites already did
+  this by hand; the fifteenth forgot, which is what shipped. `headerSticky` now follows from the
+  scrollport rather than standing beside it - the M5-05 absolute rule is unchanged wherever it
+  can be observed, and on an unbounded grid the class only ever claimed something untrue.
+  `components/ui/data-grid.nested.test.tsx` (behaviour) and
+  `components/ui/data-grid.nested.inventory.test.ts` (the census of every nesting site, three
+  scans) hold it. One site stays an explicit opt-out: `StockDocumentsPanel`, because one of its
+  three parents is `CellStockTable`'s hand-rolled `<table>` carve-out, which has no grid context
+  for the default to read.
 - **M5-06** `[UX] [vitest]` No product file imports `@/components/ui/table` (baseline 24). Any
   file that cannot migrate sits on an allowlist in the test with a one-line reason, and the PR
   lists them.
+  **Shipped (M5 run 1, guardrail only - no migration yet, that is run 3):**
+  `components/ui/raw-table.inventory.test.ts`, proved red against an empty allowlist (27
+  offenders - the plan's 26 plus `PurchaseRequestForm.tsx`, found by this scan). All 27 land on
+  the allowlist as `pending migration, M5 run 3`; three are flagged for the captain's ruling on
+  whether they can migrate at all (`app/(auth)/approval/page.tsx`,
+  `app/(auth)/view/request/page.tsx`, `components/reports/ReportPivotTable.tsx`).
+  **Shipped (M5 run 3, migration complete):** all 27 `pending migration` entries removed from
+  the allowlist, one module per commit (SLA, system-management, tickets, user-management,
+  products, complaints, attachments, procurement, then the three inline-editing files). Most
+  moved to `PanelDataGrid` (`components/common/PanelDataGrid.tsx` - moved there from
+  `project-sales/_shared/components` in the SLA commit, its first caller outside project-sales);
+  a handful of standalone lists and one detail-page section already inside a `Card` use a plain
+  `DataGrid` + `DataGridTable` instead, matching the existing convention at
+  `master-data-management/units-of-measure`. The captain's ruling on the three flagged files
+  landed as PERMANENT exemptions (not migrations): the two `app/(auth)` portal pages are outside
+  the authenticated shell entirely, and `ReportPivotTable.tsx` reshapes rows into a matrix, which
+  is not a DataGrid's one-row-per-record model - both reasons are recorded in the allowlist
+  itself. The "inline editing may prove a real blocker" concern on `OrderLinesCard.tsx`,
+  `PurchaseRequestDocumentEditCard.tsx` and `PurchaseRequestForm.tsx` did not materialise:
+  `OrderLinesCard` turned out to be read-only (its add/import flows are modal dialogs, not
+  inline cells), and the two react-hook-form `useFieldArray` line tables migrated to a plain
+  `DataGrid` (`getCoreRowModel` only, no pagination row model, so no rows hidden behind a page 2
+  on a form) with a dedicated focus-retention test proving typing into a cell, and appending a
+  row, keep the same input identity a hand-rolled `<table>` keyed by `field.id` did. Final
+  allowlist: the three permanent exemptions above, nothing else.
+  **Review fix (M5 run 3 review, SF-5/SF-6):** the focus-retention claim above held for typing
+  and for row-append in isolation, but not together: `fields.length` sat in BOTH line tables'
+  columns `useMemo` deps (`PurchaseRequestForm.tsx`, `PurchaseRequestDocumentEditCard.tsx`), so
+  an append or remove recreated every cell type and remounted every input - values survived
+  (react-hook-form owns them), input IDENTITY did not. The delete button's
+  `disabled={fields.length <= 1}` is the only place inside the memo that read `fields.length`;
+  it now reads `table.getRowModel().rows.length` off the `CellContext` instead, and `fields.length`
+  is out of both deps arrays. Corrected claim: typing into row 1, THEN appending a row, keeps row
+  1's value AND its input node identity - proven by a new test in each `*.lineItems.test.tsx`
+  (`PurchaseRequestForm.lineItems.test.tsx`, `PurchaseRequestDocumentEditCard.lineItems.test.tsx`,
+  the latter's harness now also calling `form.watch('products')` so it re-renders on every
+  keystroke the way the real parent, `PurchaseRequestForm`, does - without that the harness never
+  re-rendered while typing and could not tell a memo keyed on `fields.length` apart from one that
+  is not).
+  **Ruling (M5 run 3 review, SF-8):** `PanelDataGrid`'s default `pageSize = 10` paginates detail
+  sections that previously rendered every row. A line table ON A DOCUMENT (an order's own lines,
+  a purchase request's own line items, a container's own source invoices) renders every row -
+  `PanelDataGrid` gains a `paginate` prop (default `true`, unchanged for the other ~15 callers);
+  `paginate={false}` sets `pageSize` to `Number.MAX_SAFE_INTEGER` and hides the pager. Applied to
+  `OrderLinesCard.tsx`, `PurchaseRequestDetail.tsx` (`PurchaseRequestLineItemsGrid`) and
+  `SourceProformaInvoicesCard.tsx`. `GRNDetail.tsx`'s picking lines and the two react-hook-form
+  line tables above were already unaffected - all three render on a plain `DataGrid` with
+  `getCoreRowModel` only, no pagination row model at all.
+  **Fix (M5 run 2 evidence, findings 1 and 2):** the SF-8 `paginate={false}` shape crashed every
+  time a caller mounted with rows and column preferences still resolving
+  (`RangeError: Invalid array length`) - Packing Lists > Proforma invoices, 100% reproducible, on
+  every record. Two causes, fixed at both ends. `PanelDataGrid` no longer fakes
+  `Number.MAX_SAFE_INTEGER` as its page size; `paginate={false}` now drops the pagination row model
+  entirely (`getPaginationRowModel` omitted), so `getRowModel()` is the pre-pagination model and no
+  page size is ever read - the same mechanism the two `useFieldArray` line tables already used
+  without incident. `data-grid-table.tsx`'s loading skeleton no longer trusts a truthiness check on
+  `pageSize` either: the row count goes through `skeletonRowCount()`, capped at `SKELETON_ROWS_MAX`
+  and read by all four body render paths (plain, column-drag, row-drag, and the drive's own list
+  body). The cap first landed at 10 (misread as the grid's own default page); a second pass
+  corrected it to 100, the LARGEST page size the grid offers (`DEFAULT_PAGE_SIZES`, `[25, 50,
+  100]`) rather than the smallest, since most lists open at 50 and a cap below the real page size
+  still drew a short skeleton that grew the moment the page landed - the same layout jump M4
+  removed. Separately, Settings > Notifications built its `useReactTable` `data` array inline on
+  every render (`data: [...notificationSettings]`); TanStack reads `data` by identity, so a fresh
+  array every render fed `autoResetPageIndex` a perpetual "something changed" signal - ~400
+  renders and ~6,000 DOM mutations a second with zero interaction, reported as "clicking a
+  checkbox hangs the tab" but reproducible on load alone. Fix: the row array is hoisted to a
+  module constant. Tests: `components/ui/data-grid-table.skeleton.test.tsx` (unbounded page size
+  renders 100 skeleton rows, not 10; a page size of 50 renders exactly 50),
+  `components/common/PanelDataGrid.paginate.test.tsx` (`paginate={false}` renders every row, no
+  pager, no throw while loading), `components/ui/data-grid.stable-data.inventory.test.ts` (the
+  guardrail: no grid anywhere builds its `data` array inline - hoist to a module constant or
+  `useMemo` it), `app/(protected)/user-management/settings/notifications/page.renderLoop.test.tsx`
+  (a `React.Profiler` commit counter proving one click is bounded and Save still carries the
+  toggled value).
 - **M5-07** `[UX] [vitest] [browser]` **Back to list restores the row, absolute rule.** A row
   click appends `from=<row id>` to the detail href; Back, the post-delete push and Edit all
   carry it; on list mount the row with that id is scrolled into view (`block: 'center'`) and
-  highlighted until the next pointer event. Browser: open row 38 on Products page 2, press Back,
-  row 38 is centred and highlighted; the same after stepping prev/next three times on the
-  detail pager.
+  highlighted until the next pointer or key event. Browser: open row 38 on Products page 2,
+  the in-app "Back to list" button restores it centred and highlighted; the browser's own Back
+  button does too, in one press, from a plain row-open. After stepping prev/next three times on
+  the detail pager, the in-app Back to list button restores the record the reader ended on in
+  one press; the browser Back button walks the pager's own history first (one press per step,
+  N steps need N presses to reach the list) before it restores the list the same way - the
+  pager keeps `router.push` per step on purpose (a reader may want to walk back through the
+  records it visited), so this is the honest shape of the guarantee, not a defect.
+  **Shipped (M5 run 1, `[vitest]` done, `[browser]` FAIL - see evidence run 1, Finding 1):**
+  `components/ui/data-grid-table.listState.test.tsx`, `lib/listNavQuery.test.ts` (reserved-key
+  case), `hooks/useListPager.test.ts` (`from=<landing id>` case). The browser walk found the
+  browser's native Back button returned to the list's BARE original URL (no page, no `from`) in
+  both the row-38-on-page-2 and pager-then-Back shapes, because `appendListState` only ever
+  wrote list state into the DETAIL href - nothing wrote it into the LIST's own history entry.
+  **Fix (evidence run 1 fix):** `LinkableBodyRow` (`components/ui/data-grid-table.tsx`) now
+  calls `window.history.replaceState(window.history.state, '', <list path>?<same list
+  state + from=<row id>>)` on the list's own history entry immediately BEFORE `router.push`ing
+  the detail href open (row click and keyboard Enter both go through this one function; the
+  middle-click/new-tab `window.open` path does not, since it leaves this tab's history alone).
+  `history.state` is passed through unchanged so Next's own router state on that entry survives;
+  `history.replaceState` is used rather than `router.replace` because the latter re-renders the
+  list (and can refetch) for a navigation that is about to leave it anyway. Both `appendListState`
+  and the new call build their params through the same `listStateParams`/`splitHref` helpers, so
+  the list's own entry and the detail href it hands the reader cannot disagree. Tests:
+  `components/ui/data-grid-table.listState.test.tsx` ("rewrites the list's own history entry
+  before pushing" describe block) - `replaceState` fires once, before `push` (call-order
+  assertion), naming page/limit/sort/dir/`from`, preserving `history.state`; the middle-click
+  path does not call it; a keyboard Enter open does. The row-click and page-1 shapes are fixed by
+  this same mechanism; the pager-step shape's `[browser]` half needs a **re-test** against the
+  honest wording above (in-app Back to list in one press; browser Back walks the pager history
+  first) rather than the original "press Back once" framing.
+  **Review run 1 fix (S5/S7):** `returnedFromId` used to be resolved by a hook called PER ROW
+  (N document listeners, N independent `cleared` states, a row mounting after the reader's
+  first pointer event re-armed its own highlight). Now resolved ONCE per rendered grid
+  (`DataGridTable`/`DataGridTableDnd`/`DataGridTableDndRows`) and passed down as a prop; a
+  `keydown` listener clears it alongside `pointerdown`, hence "next pointer OR key event" above.
+  **Review fix (M5 run 3 review, BL-2):** the history rewrite REPLACED the list's entire URL
+  search with the detail href's own search, which has two failure modes proven against real call
+  sites. (a) it wiped any param the list reads off its own URL but never echoes into `rowHref` -
+  `GRNList.tsx` reads `spo_allocation_id` off its own URL (`GRNList.tsx:48`) but its `rowHref`
+  (`:94-107`) never carries it, so Back landed on the unfiltered GRN list; `PurchaseOrdersList.tsx`'s
+  `documents` filter (`:155`) has the same shape. (b) it fired even when the grid is not the
+  current route's OWN list at all - `SeenInProductsTab.tsx`'s `rowHref` (`:91-92`) points at
+  `/master-data-management/products/${id}`, not a child of the spec-key detail route
+  (`SpecKeyRecordDetail.tsx`) it renders inside, so a row click there clobbered THAT page's own
+  pager state (`page=1&limit=10` from the tab) onto the spec-key detail page's URL. Two rules fix
+  both, in one place (`data-grid-table.tsx`'s `LinkableBodyRow`): (a) seed the replacement from
+  `new URLSearchParams(window.location.search)` (the list's CURRENT params) and `.set()` onto it
+  only the reserved list-state keys (`RESERVED_LIST_STATE_KEYS`: `page`, `limit`, `sort`, `dir`,
+  `query`, `advFilter`, `from`), read off the already-built detail href - every other existing
+  param survives untouched; (b) only rewrite when the detail href's path starts with
+  `window.location.pathname + '/'` (a child route of the current page) - anywhere else, history is
+  left alone entirely. Tests added to `data-grid-table.listState.test.tsx`: a list that arrived
+  with `?spo_allocation_id=X&page=2` keeps `spo_allocation_id` and gains `from` plus the grid's own
+  current page (`page=1`, from table state, overriding the stale `page=2` the URL arrived with); a
+  grid whose `rowHref` points outside the current pathname does not call `replaceState` at all. The
+  three run-1 tests (call order, middle-click, keyboard Enter) still pass unchanged.
+  **Fix (M5 run 2 evidence, finding 3):** the URL-level rewrite above was proven correct in both
+  directions, but the DataGrid itself never restored the page it named - Products page 2, Back
+  landed on `?page=2...` in the address bar with the footer reading "1 - 50 of 11672" and zero
+  `[data-returned="true"]` rows. `useListStateFromUrl` was not at fault; it restores the page
+  correctly, during the render. Every list also carried a bare
+  `useEffect(() => setPagination(p => ({ ...p, pageIndex: 0 })), [filters])`, and a `useEffect`
+  always runs once after the first commit whether or not anything changed - that mount run stamped
+  page 1 back over the page just restored, on every single list, every single time. Ten more lists
+  carried a hand-rolled `filtersMounted`/`searchMounted` ref instead, which React's StrictMode
+  defeats by running mount effects twice. One shared hook now knows the difference between
+  mounting and changing: `hooks/useResetPageOnFilterChange.ts` compares dependency VALUES rather
+  than counting effect runs, so it resets on an actual filter change and never on mount, StrictMode
+  double-invoke included. All 26 lists that read their state from the URL (§ full list in the
+  hook's own inventory test) now call it; the ten hand-rolled refs are gone. A list that also
+  clears its row selection keeps that in its own separate effect - clearing an already-empty
+  selection on mount is a no-op, so it does not need the mount/change distinction. Products is the
+  one deliberate exception: a HARD reload (`performance.getEntriesByType('navigation')[0].type ===
+  'reload'`) is treated as a clean slate, not a state restore, so `useListStateFromUrl` itself is
+  gated `enabled: !isReload` (`ProductsList.tsx:86-95`) rather than fighting the hook after the
+  fact - a soft in-app navigation back to the list still restores the page normally. Tests:
+  `hooks/useResetPageOnFilterChange.test.tsx` (a harness of the exact list shape: mount-restores-
+  page-2 stays on page 2; a real filter change resets to page 1; StrictMode's double-invoke on
+  mount does not read as a change), `hooks/useResetPageOnFilterChange.inventory.test.ts` (the
+  guardrail across all 26 lists: no bare `useEffect(...pageIndex: 0..., [filters])` and no
+  hand-rolled `filtersMounted`/`searchMounted` ref remains).
 - **M5-08** `[review]` `DESIGN-LANGUAGE.md` sections 4 and 7 and
   `documentation/reference/PR-CHECKLIST.md` state both rules; a new list without them is a
   checklist failure.
+  **Shipped (M5 run 1):** `DESIGN-LANGUAGE.md` section 4 (`DataGrid` roster row) and section 7
+  (bounded scroller + the `from=` rule); `PR-CHECKLIST.md` gains both under Apple Alignment.
 
 ## M6 Composer, mobile, toasts, focus
 

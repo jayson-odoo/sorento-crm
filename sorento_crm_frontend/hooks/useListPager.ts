@@ -102,7 +102,13 @@ export interface UseListPagerResult {
   isLoading: boolean;
 }
 
-/** The href a step lands on: the record, plus the page it now sits on. */
+/**
+ * The href a step lands on: the record, plus the page it now sits on.
+ *
+ * `from` (M5-07) names the id itself, so a reader who steps prev/next three
+ * times and then hits Back is restored to the row they actually END on, not
+ * the one they started from.
+ */
 function stepHref(
   detailPath: string,
   id: string,
@@ -116,7 +122,7 @@ function stepHref(
       sorting: params.sorting,
       searchQuery: params.searchQuery,
     },
-    params.filters,
+    { ...params.filters, from: id },
   );
   if (hrefFor) return hrefFor(id, search);
   return `${detailPath}/${id}${search ? `?${search}` : ''}`;

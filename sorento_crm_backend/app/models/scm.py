@@ -1174,10 +1174,12 @@ class OrderLinkClaim(Base, CompanyScopedMixin):
         # the Link dialog; `crm_supply` is the supply WRITER claiming a line it has just
         # created for known demand (`app/services/scm/supply_claim.py`, G12's write-time
         # rule); `order_inquiry` is the audit row `_write_link` writes in lockstep with
-        # a link, which therefore names a quantity that link already accounts for.
+        # a link, which therefore names a quantity that link already accounts for;
+        # `autocount` is the ESB naming a pairing via `from_so_numbers` on a pushed
+        # document (V4, migration 473).
         CheckConstraint(
             "source IN ('po_history', 'order_inquiry', 'so_upload', 'po_upload', "
-            "'manual', 'crm_supply')",
+            "'manual', 'crm_supply', 'autocount')",
             name="ck_scm_order_link_claim_source",
         ),
         {"schema": "scm"},

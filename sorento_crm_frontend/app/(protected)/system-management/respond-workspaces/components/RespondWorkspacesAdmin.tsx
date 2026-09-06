@@ -40,7 +40,9 @@ import {
   listRespondWorkspaces,
   setDefaultRespondWorkspace,
   updateRespondWorkspace,
+  updateRespondWorkspaceChatbotRetry,
   type RespondWorkspace,
+  type RespondWorkspaceChatbotRetryBody,
   type RespondWorkspaceCreateBody,
   type RespondWorkspaceUpdateBody,
 } from '../services/respondWorkspaceService';
@@ -57,6 +59,8 @@ interface FormState {
   ideation_embed_connection_id: string;
   ideation_embed_fe_base_url: string;
   ideation_embed_signing_secret: string;
+  chatbot_retry_ingress_url: string;
+  chatbot_retry_ingress_key: string;
   is_active: boolean;
   is_default: boolean;
 }
@@ -73,6 +77,8 @@ const EMPTY_FORM: FormState = {
   ideation_embed_connection_id: '',
   ideation_embed_fe_base_url: '',
   ideation_embed_signing_secret: '',
+  chatbot_retry_ingress_url: '',
+  chatbot_retry_ingress_key: '',
   is_active: true,
   is_default: false,
 };
@@ -83,6 +89,10 @@ export default function RespondWorkspacesAdmin() {
   const [editing, setEditing] = useState<RespondWorkspace | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  // The stored retry key is never sent to the browser, so the input is always blank and a
+  // blank input cannot mean "remove it". This flag is the explicit ask, and it is what
+  // makes the key sent as `''` on save.
+  const [clearRetryKey, setClearRetryKey] = useState(false);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   // Ideation-product dropdown state: fetched name cache (to resolve the stored id
   // to a human name) + the last upstream error surfaced under the select.
@@ -170,8 +180,30 @@ export default function RespondWorkspacesAdmin() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: RespondWorkspaceUpdateBody }) =>
-      updateRespondWorkspace(id, body),
+    // Two calls, because the two chatbot retry fields live behind their own route and
+    // their own permission - and each is sent only when something it carries changed.
+    //
+    // That INDEPENDENCE is the point (security review round 2). AC-804 gave the retry
+    // pair a narrow route so a principal holding `user_management.settings.edit` alone
+    // can set it without also being handed `api_key`, `base_url`, `space_id` and
+    // `is_default`. Sending the row PUT unconditionally handed that principal a 403 on
+    // the way in and they never reached the narrow route at all, which is the whole
+    // capability AC-804 was written to give them. The retry call goes first for the same
+    // reason: it is the one this operator is entitled to make.
+    //
+    // A refusal on either still leaves the operator in the dialog with what they typed.
+    mutationFn: async ({
+      id,
+      body,
+      retry,
+    }: {
+      id: string;
+      body: RespondWorkspaceUpdateBody | null;
+      retry: RespondWorkspaceChatbotRetryBody | null;
+    }) => {
+      if (retry) await updateRespondWorkspaceChatbotRetry(id, retry);
+      if (body) await updateRespondWorkspace(id, body);
+    },
     onSuccess: () => {
       invalidate();
       toast.success('Workspace updated');
@@ -202,6 +234,7 @@ export default function RespondWorkspacesAdmin() {
   function openCreate() {
     setEditing(null);
     setForm(EMPTY_FORM);
+    setClearRetryKey(false);
     setIdeationProductError(null);
     setDialogOpen(true);
   }
@@ -209,6 +242,7 @@ export default function RespondWorkspacesAdmin() {
   function openEdit(row: RespondWorkspace) {
     setEditing(row);
     setIdeationProductError(null);
+    setClearRetryKey(false);
     setForm({
       space_id: row.space_id,
       name: row.name ?? '',
@@ -221,6 +255,10 @@ export default function RespondWorkspacesAdmin() {
       ideation_embed_connection_id: row.ideation_embed_connection_id ?? '',
       ideation_embed_fe_base_url: row.ideation_embed_fe_base_url ?? '',
       ideation_embed_signing_secret: '',
+      chatbot_retry_ingress_url: row.chatbot_retry_ingress_url ?? '',
+      // Write-only: the stored key is never sent to the browser, so the input starts
+      // empty on every open and a blank save keeps whatever is on the row.
+      chatbot_retry_ingress_key: '',
       is_active: row.is_active,
       is_default: row.is_default,
     });
@@ -246,7 +284,46 @@ export default function RespondWorkspacesAdmin() {
         body.ideation_intake_api_key = form.ideation_intake_api_key.trim();
       if (form.ideation_embed_signing_secret.trim())
         body.ideation_embed_signing_secret = form.ideation_embed_signing_secret.trim();
-      updateMutation.mutate({ id: editing.id, body });
+      // ALWAYS the trimmed string, never null: `''` is what clears the stored URL, and
+      // the field's own copy says leaving it blank turns Retry off.
+      const retry: RespondWorkspaceChatbotRetryBody = {
+        chatbot_retry_ingress_url: form.chatbot_retry_ingress_url.trim(),
+      };
+      // The key is only MENTIONED when there is something to say about it: a new value,
+      // or the explicit ask to remove the stored one. An untouched blank input leaves it
+      // alone, which is the only reading a write-only field can have.
+      if (form.chatbot_retry_ingress_key.trim())
+        retry.chatbot_retry_ingress_key = form.chatbot_retry_ingress_key.trim();
+      else if (clearRetryKey) retry.chatbot_retry_ingress_key = '';
+
+      // ONLY the row PUT is skippable, and only because a 403 on it used to block the
+      // narrow retry route a `user_management.settings.edit` principal is entitled to
+      // (security review round 2). Which of its fields count as changed is derived from
+      // the body's OWN keys rather than a hand-kept list, so a field added above joins
+      // the comparison with nothing to remember: a key the row does not carry is one of
+      // the three write-only secrets, present only when typed, and a key the row does
+      // carry is compared with null and '' read as the same absence.
+      const current = editing as unknown as Record<string, unknown>;
+      const rowChanged = (Object.keys(body) as (keyof RespondWorkspaceUpdateBody)[]).some(
+        (key) =>
+          current[key] === undefined
+            ? true
+            : (body[key] ?? null) !== (current[key] ?? null),
+      );
+
+      // The RETRY call is always sent, and that is deliberate rather than lazy. Skipping
+      // it needs the draft to be compared against `editing`, which is a SNAPSHOT taken
+      // when the dialog opened: after any save that did not refresh it, or a list refetch
+      // that has not landed, a genuine edit compares equal to a stale row and the save is
+      // dropped with the dialog cheerfully reporting success. Blanking the URL is exactly
+      // where that costs the most, because "Retry is still on" is the state the operator
+      // was trying to leave. One idempotent PUT on the low-privilege route is the cheaper
+      // side of that trade (browser evidence, 6 Sep 2026).
+      updateMutation.mutate({
+        id: editing.id,
+        body: rowChanged ? body : null,
+        retry,
+      });
     } else {
       if (!form.space_id.trim() || !form.api_key.trim()) {
         toast.error('Space ID and API key are required');
@@ -266,6 +343,8 @@ export default function RespondWorkspacesAdmin() {
         ideation_embed_connection_id: form.ideation_embed_connection_id.trim() || null,
         ideation_embed_fe_base_url: form.ideation_embed_fe_base_url.trim() || null,
         ideation_embed_signing_secret: form.ideation_embed_signing_secret.trim() || null,
+        chatbot_retry_ingress_url: form.chatbot_retry_ingress_url.trim() || null,
+        chatbot_retry_ingress_key: form.chatbot_retry_ingress_key.trim() || null,
       };
       createMutation.mutate(body);
     }
@@ -634,6 +713,79 @@ export default function RespondWorkspacesAdmin() {
                 (e.g. <code>https://chat.foundryx.my</code>), NOT the backend / API URL
                 above. These are different values.
               </p>
+            </div>
+            <div className="border-t pt-4 mt-1">
+              <p className="text-sm font-medium">Chatbot retry</p>
+              <p className="text-xs text-muted-foreground">
+                Where a failed chatbot turn is re-sent from Chat History. Leave blank to
+                turn Retry off for this workspace.
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="ws-retry-url">Chatbot retry webhook URL</Label>
+              <Input
+                id="ws-retry-url"
+                value={form.chatbot_retry_ingress_url}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, chatbot_retry_ingress_url: e.target.value }))
+                }
+                placeholder="https://…/webhook/…"
+              />
+              <p className="text-xs text-muted-foreground">
+                Must be https, and must not point back at this system or at a private
+                address.
+              </p>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="ws-retry-key">
+                Retry key{' '}
+                {editing && editing.has_chatbot_retry_key && !clearRetryKey && (
+                  <span className="text-muted-foreground">
+                    (Key set - leave blank to keep current)
+                  </span>
+                )}
+              </Label>
+              <Input
+                id="ws-retry-key"
+                type="password"
+                value={form.chatbot_retry_ingress_key}
+                onChange={(e) => {
+                  setClearRetryKey(false);
+                  setForm((f) => ({ ...f, chatbot_retry_ingress_key: e.target.value }));
+                }}
+                placeholder={
+                  editing && editing.has_chatbot_retry_key && !clearRetryKey
+                    ? '•••• (unchanged)'
+                    : 'Sent with each retry so the receiving end can check it'
+                }
+                autoComplete="new-password"
+              />
+              {editing && editing.has_chatbot_retry_key && !clearRetryKey && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="justify-self-start"
+                  onClick={() => {
+                    setClearRetryKey(true);
+                    setForm((f) => ({ ...f, chatbot_retry_ingress_key: '' }));
+                  }}
+                >
+                  Remove stored key
+                </Button>
+              )}
+              {clearRetryKey && (
+                <p className="text-xs text-destructive">
+                  The stored key will be removed when you save.{' '}
+                  <button
+                    type="button"
+                    className="underline"
+                    onClick={() => setClearRetryKey(false)}
+                  >
+                    Keep it
+                  </button>
+                </p>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <Checkbox

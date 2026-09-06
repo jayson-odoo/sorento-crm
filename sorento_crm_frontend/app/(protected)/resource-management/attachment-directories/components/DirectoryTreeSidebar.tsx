@@ -44,6 +44,7 @@ import { useQuickAccess, useAddQuickAccess, useRemoveQuickAccess } from '@/hooks
 import { Star, StarOff } from 'lucide-react';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 
 interface DirectoryTreeSidebarProps {
   selectedId: string | null;
@@ -602,7 +603,7 @@ export default function DirectoryTreeSidebar({
               />
             )}
             {isLoading ? (
-              <div className="px-2 py-2 text-sm text-muted-foreground">Loading…</div>
+              <SectionSkeleton rows={5} className="px-2 py-2" />
             ) : filteredTree.length === 0 && searchQuery ? (
               <div className="px-2 py-2 text-sm text-muted-foreground">No folders match &quot;{searchQuery}&quot;</div>
             ) : (

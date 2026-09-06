@@ -217,6 +217,8 @@ function BlocksTable({ row }: { row: ContainerRequestRow }) {
       rows={blocks}
       getRowId={(b, i) => `${b.pi_number}-${b.block_index ?? 0}-${i}`}
       emptyMessage="No invoice on this plan names this product."
+      // Always rendered inside PlanRowDialog's own DialogBody (overflow-y-auto).
+      scrollerMaxHeight={false}
     />
   );
 }
@@ -249,7 +251,7 @@ function PeakCell({
   onOpen: () => void;
 }) {
   if (loading && !history) {
-    return <span className="text-2xs text-muted-foreground">Loading</span>;
+    return <Skeleton className="h-3 w-12" />;
   }
   const series = history?.[kind];
   if (!series || series.total === 0 || !series.peak_month) {

@@ -28,6 +28,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -959,7 +960,7 @@ export default function MyPendingSLAWidget() {
             <AlertCircle className="size-4" /> {teamError}
           </p>
         ) : teamItems === null ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
+          <SectionSkeleton rows={3} />
         ) : teamItems.length === 0 ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
             <CheckCircle2 className="size-4 text-emerald-600" />
@@ -978,7 +979,7 @@ export default function MyPendingSLAWidget() {
           <AlertCircle className="size-4" /> {error}
         </p>
       ) : mineItems === null ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <SectionSkeleton rows={3} />
       ) : mineItems.length === 0 ? (
         <p className="flex items-center gap-2 text-sm text-muted-foreground">
           <CheckCircle2 className="size-4 text-emerald-600" />

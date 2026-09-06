@@ -12,8 +12,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import require_any_permission, require_permission
 from app.schemas.respond_workspace import (
+    RespondWorkspaceChatbotRetryUpdate,
     RespondWorkspaceCreate,
     RespondWorkspaceResponse,
     RespondWorkspaceSelectItem,
@@ -28,6 +29,18 @@ router = APIRouter(prefix="/respond-workspaces", tags=["respond-workspaces"])
 
 _IDEATION_PRODUCTS_PATH = "/ideation/intake/products"
 _IDEATION_HTTP_TIMEOUT = 8.0
+
+# AC-804 says the chatbot retry ingress is edited "under `user_management.settings.edit`",
+# and that field lives on this row. The two slugs are therefore attached to a route that
+# writes THOSE TWO FIELDS AND NOTHING ELSE, not to the row PUT.
+#
+# The row PUT was widened to both slugs first, and that was the defect (S8a review B2):
+# `RespondWorkspaceUpdate` carries `api_key`, `base_url`, `space_id` and `is_default`, so
+# the settings slug bought the respond.io credential for the whole install, the host every
+# outbound respond.io call goes to, and which workspace is default - none of which the AC
+# asked for, and `base_url` has no SSRF guard on it at all. The row PUT keeps its single
+# slug, exactly like add, delete and set-default.
+_CHATBOT_RETRY_EDIT = ["system.respond_workspaces.edit", "user_management.settings.edit"]
 
 
 @router.get("/ideation-products")
@@ -156,6 +169,26 @@ def update_workspace(
     validate_uuid_path(workspace_id, resource="Respond Workspace")
     svc = RespondWorkspaceService(db)
     row = svc.update(workspace_id, data)
+    return svc.to_response_dict(row)
+
+
+@router.put("/{workspace_id}/chatbot-retry", response_model=RespondWorkspaceResponse)
+def update_workspace_chatbot_retry(
+    workspace_id: str,
+    data: RespondWorkspaceChatbotRetryUpdate,
+    _user: dict = Depends(require_any_permission(_CHATBOT_RETRY_EDIT)),
+    db: Session = Depends(get_db),
+):
+    """The chatbot retry webhook URL and key, under the Settings slug (AC-804).
+
+    A route of its own so `user_management.settings.edit` reaches these two fields and
+    stops there. See `_CHATBOT_RETRY_EDIT` above for why the row PUT is not the place for
+    it. Omitting a field leaves it alone; sending it blank or null CLEARS it, which is how
+    Retry is turned off and how the key is revoked.
+    """
+    validate_uuid_path(workspace_id, resource="Respond Workspace")
+    svc = RespondWorkspaceService(db)
+    row = svc.update_chatbot_retry(workspace_id, data)
     return svc.to_response_dict(row)
 
 

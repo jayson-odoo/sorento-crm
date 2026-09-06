@@ -54,31 +54,31 @@ const EDIT_FORMS: Array<{
     form: 'CustomerForm',
     detailPath: '/order-management/customers',
     hrefFor: (id, s) => `/order-management/customers/${id}/edit${s ? `?${s}` : ''}`,
-    expected: '/order-management/customers/r2/edit?page=1&limit=25',
+    expected: '/order-management/customers/r2/edit?page=1&limit=25&from=r2',
   },
   {
     form: 'ProductForm',
     detailPath: '/master-data-management/products',
     hrefFor: (id, s) => `/master-data-management/products/${id}/edit${s ? `?${s}` : ''}`,
-    expected: '/master-data-management/products/r2/edit?page=1&limit=25',
+    expected: '/master-data-management/products/r2/edit?page=1&limit=25&from=r2',
   },
   {
     form: 'SupplierForm',
     detailPath: '/procurement-management/suppliers',
     hrefFor: (id, s) => `/procurement-management/suppliers/${id}/edit${s ? `?${s}` : ''}`,
-    expected: '/procurement-management/suppliers/r2/edit?page=1&limit=25',
+    expected: '/procurement-management/suppliers/r2/edit?page=1&limit=25&from=r2',
   },
   {
     form: 'PromotionForm',
     detailPath: '/marketing-management/promotions',
     hrefFor: (id, s) => `/marketing-management/promotions/${id}/edit${s ? `?${s}` : ''}`,
-    expected: '/marketing-management/promotions/r2/edit?page=1&limit=25',
+    expected: '/marketing-management/promotions/r2/edit?page=1&limit=25&from=r2',
   },
   {
     form: 'ComplaintForm',
     detailPath: '/complaint-management/complaints',
     hrefFor: (id, s) => `/complaint-management/complaints/${id}/edit${s ? `?${s}` : ''}`,
-    expected: '/complaint-management/complaints/r2/edit?page=1&limit=25',
+    expected: '/complaint-management/complaints/r2/edit?page=1&limit=25&from=r2',
   },
 ];
 
@@ -169,6 +169,6 @@ describe('the edit forms keep the edit route when the pager steps', () => {
 
     act(() => result.current.goNext());
 
-    expect(push).toHaveBeenCalledWith('/order-management/customers/r2?page=1&limit=25');
+    expect(push).toHaveBeenCalledWith('/order-management/customers/r2?page=1&limit=25&from=r2');
   });
 });

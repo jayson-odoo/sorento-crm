@@ -231,12 +231,20 @@ export function DrillTable<TRow extends object>({
   getRowId,
   isLoading,
   emptyMessage,
+  scrollerMaxHeight,
 }: {
   columns: ColumnDef<TRow>[];
   rows: TRow[];
   getRowId?: (row: TRow, index: number) => string;
   isLoading?: boolean;
   emptyMessage: ReactNode;
+  /**
+   * Pass `false` for a caller inside a `DialogBody`/`SheetBody` that already owns the
+   * scroll viewport (B2, M5 review run 1) - most of `DrillTable`'s callers are inside
+   * `PlanRowDialog` and want that. Omit it for a caller rendering this on a plain page
+   * (e.g. `PoPlanCard`), which wants the grid's own bounded, sticky-header default.
+   */
+  scrollerMaxHeight?: string | false;
 }) {
   const table = useReactTable({
     columns,
@@ -255,7 +263,7 @@ export function DrillTable<TRow extends object>({
       recordCount={rows.length}
       isLoading={Boolean(isLoading)}
       listingKey={null}
-      tableLayout={{ width: 'fixed', columnsResizable: true }}
+      tableLayout={{ width: 'fixed', columnsResizable: true, scrollerMaxHeight }}
       emptyMessage={emptyMessage}
     >
       <DataGridTable />
@@ -566,6 +574,9 @@ export function ProjectRetailTabs({
           getRowId={(l, i) => `${l.so_number ?? 'unnumbered'}-${i}`}
           isLoading={loading}
           emptyMessage="Nothing open on this channel for this product."
+          // ProjectRetailTabs is only ever rendered inside PlanRowDialog's DialogBody
+          // (overflow-y-auto).
+          scrollerMaxHeight={false}
         />
       </TabsContent>
 
@@ -576,6 +587,7 @@ export function ProjectRetailTabs({
           getRowId={(p) => p.month}
           isLoading={loading}
           emptyMessage="Nothing was ordered in the last twelve months."
+          scrollerMaxHeight={false}
         />
       </TabsContent>
     </Tabs>
@@ -744,7 +756,12 @@ export function OnHandTable({ productId }: { productId: string }) {
         recordCount={rows.length}
         isLoading={stock.isLoading}
         listingKey={null}
-        tableLayout={{ width: 'fixed', columnsResizable: true }}
+        tableLayout={{
+          width: 'fixed',
+          columnsResizable: true,
+          // Always rendered inside PlanRowDialog's own DialogBody (overflow-y-auto).
+          scrollerMaxHeight: false,
+        }}
         onRowClick={(loc) => setOpenRow((cur) => (cur === loc.warehouse_id ? null : loc.warehouse_id))}
         emptyMessage="No stock rows for this product."
       >
@@ -873,6 +890,8 @@ export function SpoTabs({ supplierId, productId }: { supplierId: string; product
           getRowId={spoRowId}
           isLoading={drill.isLoading}
           emptyMessage={NO_SPO_TO_POOL}
+          // SpoTabs is only ever rendered inside a lightbox's own scrolling DialogBody.
+          scrollerMaxHeight={false}
         />
       </TabsContent>
       <TabsContent value="history">
@@ -882,6 +901,7 @@ export function SpoTabs({ supplierId, productId }: { supplierId: string; product
           getRowId={spoRowId}
           isLoading={drill.isLoading}
           emptyMessage="No shipping order has landed here for this product."
+          scrollerMaxHeight={false}
         />
       </TabsContent>
     </Tabs>
@@ -983,6 +1003,8 @@ export function IncomingPlTable({
       getRowId={(r) => r.shipment_id}
       isLoading={drill.isLoading}
       emptyMessage="Nothing is on its way on a packing list for this product."
+      // IncomingPlTable is only ever rendered inside a lightbox's own scrolling DialogBody.
+      scrollerMaxHeight={false}
     />
   );
 }
@@ -1130,6 +1152,8 @@ export function PoTabs({ supplierId, productId }: { supplierId: string; productI
           getRowId={poRowId}
           isLoading={drill.isLoading}
           emptyMessage="Nothing is on order for this product."
+          // PoTabs is only ever rendered inside a lightbox's own scrolling DialogBody.
+          scrollerMaxHeight={false}
         />
       </TabsContent>
       <TabsContent value="history">
@@ -1139,6 +1163,7 @@ export function PoTabs({ supplierId, productId }: { supplierId: string; productI
           getRowId={poRowId}
           isLoading={drill.isLoading}
           emptyMessage="No purchase order in the last twelve months names this product."
+          scrollerMaxHeight={false}
         />
       </TabsContent>
     </Tabs>
@@ -1500,7 +1525,12 @@ export function PoTakesPicker({
         table={table}
         recordCount={rows.length}
         listingKey={null}
-        tableLayout={{ width: 'fixed', columnsResizable: true }}
+        tableLayout={{
+          width: 'fixed',
+          columnsResizable: true,
+          // Always rendered inside PlanRowDialog's own DialogBody (overflow-y-auto).
+          scrollerMaxHeight: false,
+        }}
         rowClassName={(t) =>
           cn(
             isTaken(t) && 'text-muted-foreground',
@@ -1813,7 +1843,12 @@ export function SoCoveragePicker({
         table={table}
         recordCount={rows.length}
         listingKey={null}
-        tableLayout={{ width: 'fixed', columnsResizable: true }}
+        tableLayout={{
+          width: 'fixed',
+          columnsResizable: true,
+          // Always rendered inside PlanRowDialog's own DialogBody (overflow-y-auto).
+          scrollerMaxHeight: false,
+        }}
         rowClassName={(c) =>
           cn(isTaken(c) && 'text-muted-foreground', bucketHits?.has(c.key) && 'bg-primary/10')
         }

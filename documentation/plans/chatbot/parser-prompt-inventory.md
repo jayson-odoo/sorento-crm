@@ -257,3 +257,89 @@ the live re-port:
   live prompt never asked the model to resolve one against the company pool.
 * **entity carry / `entity_op`** - the executor already applies the op; choosing WHICH op a
   sentence means is understanding and stays.
+
+---
+
+## Turn 6, 5 Sep 2026: where "clarification vs unknown" actually came from
+
+One production turn, `"What is the weather in KL today"`, parsed `message_type:
+clarification` in the CRM (twice, reproduced 19 s apart) and `unknown` in the pre-S1
+n8n reformulator, and the question was whether the CRM sends the parser different
+bytes. Material: `sorento_crm_n8n/n8n-workflows-init/tests/runs/s1-2026-09-05-turn6/`
+(both CRM request envelopes and full responses including `ctx.parse._parser_raw`, plus
+the baseline reformulator's resolved workflow inputs and its output).
+
+### The user block is byte-identical. Both leads are refuted.
+
+| | bytes | value |
+|---|---|---|
+| n8n AI Agent `text`, evaluated | 211 | `Previous response: ...\nCurrent user message: What is the weather in KL today\n\n` |
+| CRM `build_user_block` | 211 | identical, byte for byte |
+
+* **Lead 1 (the trailing `"\n\n"`).** The baseline's `latest_user_message` does end
+  `"...today\n\n"`, and so does the CRM's: `build_latest_user_message` returns
+  `f"{line1}\n{line2}\n"`, and `line2` is empty when nothing was quoted. Same two
+  newlines, same position.
+* **Lead 2 (`referenced_result_set`).** The baseline input carries four keys and not
+  that one, and it could not have mattered either way: `referenced_result_set` never
+  enters the user block. `engine._run_stages` puts it in `parent_input`, which is
+  `output_exchange.post_process`'s input, not the prompt's.
+* **R3's `Pending:` line** - the one addition S1 makes to this prompt - did not fire:
+  the contact's stored `variables` carry no `pending` key, so `_pending_kind` is null.
+
+Pinned by `tests/chatbot/test_parser_user_block_parity.py` against the captured run
+(`tests/fixtures/chatbot/parser-user-block/turn6-weather-kl.json`). The n8n side of the
+comparison is COMPUTED in the test from the AI Agent node's own expression applied to
+the workflow inputs the sub was handed, so neither half can be edited into agreement.
+
+### The call parameters differ in two places, neither of which can pick the enum
+
+| | CRM | baseline n8n | verdict |
+|---|---|---|---|
+| model | `AIAssistantConfig.model`, overridable per agent | `gpt-5.4-mini` | same family; the run's own README records gpt-5.4-mini for the baseline |
+| temperature | `0.0` | `0` | same |
+| max tokens | `PARSER_MAX_TOKENS = 2048` | unset (provider default) | a truncation bound only; both emissions are complete 26-key objects |
+| response format | strict `json_schema` (R5) | **none** - the AI Agent has no output parser attached, only `ai_languageModel` | the real difference, and it cannot decide this |
+
+R5's strict schema is worth stating precisely because it looks like the obvious
+suspect: `PARSE_OUTPUT_JSON_SCHEMA` types `message_type` as `{"type": "string"}` with no
+enum, so `clarification` and `unknown` are equally admissible under it. Strict mode
+constrains the SHAPE (26 keys, no extras, all required) and not this value, so it cannot
+have pushed the model off `unknown`. No loosening is proposed and none is warranted.
+
+### The system message DID differ, and not the way it looks
+
+The baseline execution ran workflow `aLBzUk6CK4uVnwH1`, which is
+`sub-semantic-parser RS bare-carry` - the parser of the fail-closed CLONE spine
+`Hnd4S8SVH6pftjxs`, not the live one. Its body carries B-TEAM-1' (`team_source`, the
+rewritten ROUTING and COMPANY-NAME REPLY sections, the extra AFFIRMATION paragraph, the
+`resource_attachment` routing row), which is why the baseline's `_parser_raw.routing`
+has a `team_source` key at all. The CRM ships the LIVE body, 46,906 chars, per the
+re-port above.
+
+Measured: normalising n8n's date expression to `{{current_date}}`, the export is 49,318
+chars against the constant's 46,906, and the diff is 101 lines across five sections.
+So the two calls were not the same prompt, and the one the CRM sends is the one
+production was running.
+
+One further difference is the CRM's, and it is row 29a of the table above: the
+`Companies OFFERED` line is an n8n `{{ (() => {...})() }}` IIFE that the registry's
+`_TOKEN_RE` does not match, so the CRM hands the model ~700 characters of JavaScript
+where n8n handed it `Sorento (code SRT)`. It is deleted in the SLIM prompt and remains
+in version 1. **Not changed here** - the prompt text and the schema are not touched
+without a ruling - but it is the only known place where the CRM's system message says
+something n8n's did not, and it is a candidate if this class of divergence recurs.
+
+### What is left is the model
+
+The two emissions differ in the raw LLM output, not in what was sent: baseline read `KL`
+as a low-confidence `warehouse` and invented a same-day date filter; the CRM read it as a
+confident `customer` with no date filter. The control measured for AC-153 above is the
+answer to how much weight one turn carries: **the live prompt disagrees with ITSELF on 20
+of 1976 key-instances at temperature 0**, and this is a single key on a single off-topic
+message, run once on the baseline side. `clarification` and `unknown` are both plausible
+readings of "What is the weather in KL today", and neither prompt asks for either.
+
+No code change was made for this finding. What changed is that the user block is now
+graded, so the next divergence starts from the system message and the model rather than
+from re-litigating the prompt plumbing.

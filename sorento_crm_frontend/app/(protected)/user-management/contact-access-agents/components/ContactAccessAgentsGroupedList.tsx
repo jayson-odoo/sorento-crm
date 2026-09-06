@@ -18,6 +18,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { SectionSkeleton } from '@/components/common/SectionSkeleton';
 import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useContactAccessAgents } from '../hooks/useContactAccessAgents';
@@ -345,7 +346,7 @@ export default function ContactAccessAgentsGroupedList() {
                   {isLoading ? (
                     <tr>
                       <td colSpan={columns.length} className="p-4">
-                        <div className="text-center text-muted-foreground">Loading...</div>
+                        <SectionSkeleton rows={4} />
                       </td>
                     </tr>
                   ) : groupedData.length === 0 ? (

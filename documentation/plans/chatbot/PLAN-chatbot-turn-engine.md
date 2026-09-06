@@ -1,6 +1,6 @@
 # PLAN - Chatbot Turn Engine: n8n business logic moves into the CRM
 
-Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); approved "ok good to go", 6 review rounds, D1 to D16; re-ported onto the LIVE n8n body 5 Sep (see S1 "pending re-port"); S1b DELIVERED 5 Sep (-40.0% prompt, published unlabelled, promote is the owner's call); S2 (the tail) MERGED 5 Sep; S6a MERGED 5 Sep, behind `CHATBOT_BUSINESS_LANE_ENABLED` (default off) until the n8n edit in `n8n-changes.md` S6a is made
+Status: S0 + S1 IMPLEMENTED on lane feat/chatbot-turn-engine (4 Sep 2026); approved "ok good to go", 6 review rounds, D1 to D16; re-ported onto the LIVE n8n body 5 Sep (see S1 "pending re-port"); S1b DELIVERED 5 Sep (-40.0% prompt, published unlabelled, promote is the owner's call); S2 (the tail) MERGED 5 Sep; S6a MERGED 5 Sep, behind `system_settings.chatbot_business_lane_enabled` (default off) until the n8n edit in `n8n-changes.md` S6a is made; S4 (the `low_signal` clarifier lane) and S5 (the escalation lane) DELIVERED 5 Sep, both inert until the owner adds their `branch_kind` to `system_settings.chatbot_completed_lanes`; S6c + S7 MERGED 5 Sep (#674); **S8a DELIVERED 5 Sep** (AC-803, AC-804, AC-806, AC-807, AC-808) - chatbot config now lives on the respond workspace row and not in `.env`, and the hazard table below is closed out. **AC-809 + AC-810 DELIVERED 5 Sep** - System > Settings > Chatbot now owns the lane list, the stock-denial switch, the unsupported-domain list and the two switches that used to be `CHATBOT_BUSINESS_LANE_ENABLED` / `CHATBOT_ORDERING_ENABLED` (both are `system_settings` columns read per turn, migration `480_chatbot_switches`); `CHATBOT_TURN_ON_WORKER` stays a deployment property. S8b is still open and gated on the owner's S7 promote (AC-801, AC-802, AC-805)
 UAC: `documentation/plans/chatbot/chatbot-turn-engine-acceptance-criteria.md`
 Classification: **MODULE** (`chatbot`), own Postgres schema `chatbot` (D12)
 Owner decisions: D1 to D13 in the UAC; rulings R1 to R6 in the UAC
@@ -62,7 +62,7 @@ PII-scrubbed; 11 full-execution `worlds`; 5 `regression-guards`; 5 named canarie
 | the pattern | `app/services/ideation_turn_service.handle_turn` + `app/api/v1/external/ideation.py`: fail-closed config, LLM in a never-raising extractor, integration_log on every call |
 | LLM | `llm_provider.get_provider(...).chat(messages, json_schema=...)`, OpenAI / Anthropic / Gemini |
 | prompts | `ai_prompt_registry` (17 keys, versioned, 60 s cache, DB-down fallback, admin UI) |
-| MCP | `sorento_crm_mcp/catalog.py` (40 tools; ideation NOT yet a tool, added in S3 per D6) + `ai_assistant_service.MCPRuntimeClient` (in-process JSON-RPC client) |
+| MCP | `sorento_crm_mcp/catalog.py` (40 tools; ideation NOT yet a tool, added in S3 per D6) + `ai_assistant_service.MCPRuntimeClient` (HTTP JSON-RPC client for the streamable-HTTP MCP endpoint) |
 | tool search | `EmbeddingReadService` behind `POST /external/rag/tool-search` |
 | resolver | service behind `POST /system/references/resolve` (`app/api/v1/system/references.py:2133`), `entity_pins` supported |
 | access / teams / assignee / SLA | `mcp_access_service.evaluate_agent`, `ContactAccessTypeService`, `company_routing_service` (team members), next-assignee service (`next_assignee.py`, commits a round-robin cursor), `ConversationSLATrackingService` |
@@ -112,8 +112,10 @@ tests/chatbot/                   # replay + unit + endpoint + inbox + boundary
 tests/fixtures/chatbot/          # vendored golden subset (< 3 MB)
 ```
 
-Boundary rule (guardrail test): nothing outside `app/api/v1/external/chat.py`,
-`app/tasks/chat_turns.py`, `app/modules/chatbot/`, `tests/chatbot/` imports
+Boundary rule (guardrail test): nothing outside the module's own ROUTERS
+(`app/api/v1/external/chat.py`, the n8n-facing turn endpoint, and
+`app/api/v1/system/chatbot.py`, the admin turn-trace endpoint added at S2b),
+`app/tasks/chat_turns.py`, `app/modules/chatbot/` or `tests/chatbot/` imports
 `app.services.chatbot`. The package imports core services freely. That is the whole
 "liftable later" story: the day a measured trigger fires, the package moves behind an HTTP
 boundary with the same contracts. **Lift trigger (named, not built):** p95 turn latency above
@@ -130,20 +132,73 @@ POST /api/v1/external/chat/turn            body { envelope: A }
            reply?: {text, quick_replies, result_set, attachments_src},
            actions?: [...], session_patch?: {...} }      # session_patch only on dry run
 POST /api/v1/external/chat/turn/{id}/complete   body = sub-output input contract (S2 to S6)
-  -> 200 { reply, actions, session_patch? }
+POST /api/v1/external/chat/turn/complete        same body; the turn is identified from
+                                                (ctx.contact.id, ctx.text.message.messageId)
+  -> 200 { turn_id, reply, actions, is_test, session_patch? }
 ```
 
 `delegate` names the n8n lane that must still run during migration (`business_query`,
 `check_promotion`, `stock_denied`, `out_of_scope`, `low_signal`); n8n's `route` Switch
 shrinks by one output per migrated lane. `delegate = null` means the CRM finished the turn:
-the caller sends `reply` and executes `actions`. From S7 there is no `/complete` and no
-`delegate`.
+the caller sends `reply` and executes `actions`. From S7, with Ordering
+(`system_settings.chatbot_ordering_enabled`) on, the CRM owns the tail: `/turn` returns the finished reply and `/complete` answers 410
+Gone. The `/complete` ROUTE and `delegate.py` are deleted at S8, not S7, because n8n's S2
+tail keeps calling `/complete` until the S7 promote lands on the n8n side and deleting the
+route before that would strand every turn a lane still completes.
 
 `actions[]` vocabulary (the caller executes, in order): `send_message {text, quick_replies,
 result_set}`, `send_attachments {attachments_src, reply}`, `assign_conversation
 {respond_user_id}`, `add_comment {text, mention_user_ids}`, `update_contact_fields {fields}`.
 Every action carries `dry_run` (true on test envelopes, D14) so the clone's `test-guard`
-records instead of sends, exactly as today.
+records instead of sends, exactly as today. **A dry run returns every action it would have
+taken, flagged `dry_run`, with preview placeholders where a side effect would have supplied
+the value** (AC-507): the lane still reaches no seam, so where a real run would have read an
+id off `next-assignee` the preview carries `null` plus `preview: true`, and where it would
+have read a timestamp off `sla_create` the rendered text carries `<preview>`. Anything not
+behind a seam - a fixed sentence, or one interpolating state the turn already resolved -
+carries its real value on both. The shape, the order and the key set are therefore identical
+live and dry, which is what lets the executor render ONE set of expressions against both.
+
+**Implemented verbatim at S3** (5 Sep 2026, field shapes agreed with the n8n executor), so
+this line needs no amendment - but two properties of it are worth stating because an
+implementation could satisfy the field NAMES and still break the sender:
+
+- `quick_replies` is the SEALED `compile-current-state` value, unchanged: n8n's own
+  comma-joined string, or null when the turn offered none. `sub-sendmsg`'s `quick_reply`
+  input has never been given a list, and the sender is the half that did NOT move into the
+  CRM, so an action that normalised the type would break it. `result_set` is likewise
+  `variables.last_result_set` as sealed.
+- `send_attachments` is emitted ONLY when `reply.attachments_src` is non-null, and it comes
+  AFTER `send_message` for the reason n8n wires it that way: the text explains the files.
+  It carries the whole `reply` object because `sub-send-attachments` reads more than one
+  field off it.
+
+**The executor executes `actions[]` and NOTHING else (ruling, 5 Sep 2026, help-crm).**
+n8n never sends `reply.text`. `reply` is the record of what was composed (and what the
+trace screen and the duplicate-delivery replay read); `actions` is the instruction list,
+so a lane whose words are only on `reply.text` is a customer left in silence. Every lane
+that finishes in the CRM therefore puts its customer copy in an action:
+
+- the eight S3 kinds and `low_signal` all end at `_send_actions`, or (for `low_signal`)
+  at the one `send_message` the casual lane stamps before its tail runs;
+- a failed HEAD returns the parser's error reply as a `send_message` (AC-105);
+- a failed TAIL returns the same error reply as a `send_message` with the row's `dry_run`,
+  rather than a null `reply` and an empty list (5 Sep);
+- `/complete` also carries `is_test` (the row's), so the caller's test-guard reads one
+  field instead of remembering what `/turn` said two calls ago.
+
+One measured shape difference, recorded rather than smoothed over: `low_signal`'s action
+is stamped BEFORE the tail (it has to be on the row before the tail reads `prior_actions`,
+so a duplicate delivery replays the action as well as the reply, D15). It therefore carries
+the clarifier's text with `quick_replies: []` and no `result_set` key, where `_send_actions`
+would have carried the sealed `quick_reply` and `last_result_set`. Identical text; the
+executor reads a missing `result_set` the same way it reads a null.
+
+Measured while implementing: no canned lane can produce quick replies today.
+`compile-current-state` sets `quickReply` from `access-level-choice-message` or
+`build-suggest-offer` only, and no canned lane supplies either fragment, so every one of
+the eight seals a null. That is why the pass-through is what S3's own test asserts on a
+lane and the populated shape is asserted as a unit.
 
 **D14's input half (O2, AC-112).** A dry-run envelope may also carry three optional harness
 keys, and the engine honours them ONLY on a dry run: `mock_reformulator_output` replaces the
@@ -168,11 +223,19 @@ Returning the data keeps egress with the caller and keeps the harness's containm
 **Per-contact ordering moves to the CRM at S7 (round 4, owner: 50 dealers, 100 questions at
 once).** The n8n dispatcher pops ONE contact per 1 s tick, so a 50-contact burst is served one
 per second regardless of what the CRM does. From S7 the request itself serialises per contact:
-on arrival `ticket = INCR chatbot:seq:{contact}` (expire 1 h); the request waits (200 ms poll,
-max `CHATBOT_QUEUE_WAIT_SECONDS` = 45) until `chatbot:done:{contact} == ticket - 1`, runs the
-turn, and advances `done` in `finally`. A waiter that sees `done` stalled with no
-`chatbot:running:{contact}` key for more than 2 s (predecessor process died) repairs the
-counter and proceeds; both paths are pytest-covered. Different contacts never wait on each
+on arrival `ticket = INCR chatbot:seq:{contact}` (expire 1 h, stamped with its holder's
+liveness in the same script); the request waits (200 ms poll, max
+`CHATBOT_QUEUE_WAIT_SECONDS` = 45) until `chatbot:done:{contact} >= ticket - 1`, runs the
+turn, and advances `done` monotonically in a `finally` that covers the wait as well as the
+stages. Two repairs, for two different deaths, and **both are kept on purpose**: giving up
+after the queue budget advances `done` to your own ticket, which is what unblocks the
+contact when a process died mid-turn with its `chatbot:running:{contact}` key still set (it
+looks alive for the key's whole TTL, so no absence can be seen); and a waiter that sees
+`done` stalled with the key ABSENT for `STALL_GRACE_SECONDS` repairs the counter and
+proceeds, which is what covers a holder whose key has since lapsed, or was lost, while its
+successors are still arriving - there the absence is the only evidence there is, and
+waiting out the full budget would fail a turn that could have been answered. Both paths are
+pytest-covered. Different contacts never wait on each
 other. The dispatcher and its redis lists are retired; n8n's ingress posts each message
 directly. Until S7 the dispatcher stays and bounds load at ~1 turn/s. The CRM inbox row stays a
 record and a trace, never a queue. Retry from the trace screen re-posts the envelope through
@@ -322,8 +385,77 @@ suite on the shared DB.
   PgBouncer (compose) with the no-session-across-I/O rule; ~50 parser calls in flight at the
   LLM provider (429 = failed stage with backoff); MCP server run with 2 to 4 workers; **n8n
   queue mode's per-worker concurrency limit (default 10) is the first throttle** and is a
-  config change (`N8N_CONCURRENCY_PRODUCTION_LIMIT` or more n8n workers). Beyond ~250
-  concurrent, API threads become the limit: turn on the worker-offload flag and add replicas.
+  config change (`N8N_CONCURRENCY_PRODUCTION_LIMIT` or more n8n workers).
+- **The 5 Sep 2026 numbers just below measured `access_denied`, not a business turn** - the
+  load gate's seeded contacts carried no access grant until a 6 Sep 2026 fix (see
+  `n8n-changes.md`'s Step 4 and AC-711). Re-measured 6 Sep 2026, chatbot-s8 lane backend,
+  one uvicorn `--reload` worker, mocked parser, grant + business-lane switches on (`uptime`
+  immediately before: load averages 4.88 5.34 6.24). Raw numbers:
+  `wall 120.1s turns 100 p50 120.00s p95 120.06s`, `errors 95`,
+  `branch_kind: {'business_query': 30, '(none)': 3}`. `branch_kind` confirms real business
+  turns now run and zero `access_denied`; p95 120.06s is the CLIENT's own request timeout
+  (95 of 100 requests errored or were still waiting when it gave up), not a completion
+  time. This run predates the `_wait_for_turns_to_settle` fix shipped in the same PR: a
+  further 21 turns landed roughly 3 minutes later as
+  `branch_kind=None, stage=received, status=failed`, because cleanup had already deleted
+  their contacts while the single worker was still draining its backlog - the exact bug
+  that fix closes. Load average spiked to 52 right after (unrelated concurrent work,
+  confirmed via `ps`), which made a same-session repeat unsafe to compare against. The
+  pool/thread numbers below are therefore this section's own open question, not yet
+  re-answered on the corrected path; a multi-worker re-run (or the prod-host run
+  `n8n-changes.md` names) is the next step, not this fix's job.
+  **Re-verified 6 Sep 2026** after the settle-wait and STRICT-gate fix, `--timeout 240`
+  (load averages 4.16 5.16 6.27 before): `errors 100`,
+  `branch_kind: {'business_query': 25}`, `75 turn row(s) missing`, every GRADED row
+  `business_query / remembered / done`. 16 more rows landed as `stage=received, status=
+  failed` about 10 minutes after grading and cleanup had already run - the settle-wait
+  narrows this race, it does not close it once the backlog outlives even its 180s window,
+  since a row not yet inserted is invisible to a poller (see `n8n-changes.md`'s Step 4).
+  `db connections: baseline 19 peak 40` rules out Postgres; the single dev worker is
+  still the ceiling.
+- **The seeded contact carries no `contact_access_types` row.** A real dealer holds at
+  least one; an entitlement-filtered fetch against an untyped contact is therefore lighter
+  than what a real dealer's turn does, so the numbers above are a floor, not a ceiling, on
+  fetch cost. Not fixed here - noted so a future capacity run knows what it is not yet
+  measuring.
+- **What the ceiling actually is, measured (5 Sep 2026, load gate 3b).** The estimate that
+  used to sit here ("beyond ~250 concurrent, API threads become the limit") was wrong about
+  which resource binds first, and the review that found it was right: the auth dependencies
+  ran on the request's `Depends(get_db)` session and never ended their transaction, so every
+  in-flight turn pinned one PgBouncer server connection (pool 50) for its whole duration,
+  the 45 s ordering wait included. That is fixed (one `db.rollback()` before `run_turn`).
+  The gate then ran, with S7 mode on (then an env flag, a settings column since AC-810)
+  on ONE uvicorn worker, mocked
+  parser, against a local backend:
+  - 50 contacts x 2 messages fired at once (100 turns): zero errors, zero contacts answered
+    out of arrival order, no overlapping turns, p50 0.88 s, **p95 1.24 s** (target 12 s);
+  - the 300-turn repeat (50 x 6): zero errors, zero out of order, p50 1.89 s, **p95 3.77 s**;
+  - database connections: with the other processes on the shared dev database subtracted
+    (6 remained with this backend stopped), the burst drove the worker to roughly **29 of
+    its own 30** (`pool_size=10, max_overflow=20`) at peak - the ceiling. No request ever
+    waited long enough to fail (zero `QueuePool` timeouts), but that is not AC-711's "below
+    60%" on a single-worker lane box. Production runs `WEB_CONCURRENCY: 8`, so the same
+    burst spreads across eight pools; the number to watch there is PgBouncer's 50 server
+    connections, which the rollback above now frees between transactions instead of holding
+    for the whole turn. **Open with the owner: either the 60% clause is measured per
+    production worker (where it holds) or the lane box needs a bigger pool for the gate to
+    mean it.**
+  - the real limit at this size is uvicorn's 40-thread pool for sync routes, not the
+    database. At 300 concurrent, 25 to 48 of the 50 contacts had their two messages reach
+    the ENGINE out of send order, because 300 requests contend for 40 threads before any
+    engine code runs. The CRM answers in the order it received them, which is all a
+    per-request ticket can promise; ordering at the true ingress would need `/chat/turn` to
+    be `async` and take the ticket on the event loop. **That is the trigger to make it
+    async** - and the same change is what would make the worker offload raise the
+    concurrency ceiling, which today it does not (it moves the LLM's CPU off the API
+    process, not the thread; see `_run_on_worker`).
+  - **The 6 Sep load gate measured the MISS path and must be re-run after H56's fix.** Every
+    turn in that burst resolved with no company scope, so the resolver returned zero rows and
+    the turn stopped at "Couldn't find" before the fetch step: the p50 / p95 above are the
+    cost of a turn that never looked anything up. The fix adds two indexed reads per turn
+    (contact + memberships, on a session of its own) and, more importantly, lets the fetch
+    and answer halves actually run, so the numbers will move. Re-run the gate before the
+    R7 cutover and replace the figures above.
 - Sync vs async does not change any of this; a callback design would have moved the same
   work and left the 1/s dispatcher in place.
 - API: `WEB_CONCURRENCY: 8` uvicorn workers (compose), default 40-thread pool each for sync
@@ -548,7 +680,57 @@ Cleared memory rows; a "Failed turns only" filter on the list. Built against a m
 agent-browser from `/` via System > Chat History at 375 and 1280. **Phase 2:**
 `GET /api/v1/system/chatbot/turns` + `POST .../{id}/retry` (`app/api/v1/system/chatbot.py`,
 reads `chatbot.turns`, slugs `system.chat_history.view` / `.manage`), mock swapped at the
-service boundary. AC-251 to AC-259. Mockup: review page section 10.
+service boundary. AC-251 to AC-260. Mockup: review page section 10.
+
+**Delegated TTL (AC-260).** A turn handed to an n8n lane is `delegated` until that lane calls
+`/complete`. When the lane dies mid-turn the call never comes, so a minute-ly sweep
+(`app/services/chatbot_turn_sweep.py`, registered next to the existing ticks in
+`app/scheduler/task_scheduler.py`) fails every `delegated` row older than
+`CHATBOT_DELEGATED_TTL_MINUTES` (default 10) with a trace note. Two reasons it cannot wait for
+S7: the trace list otherwise fills with ghosts that read as work in progress, and R4 makes
+Retry available on FAILED turns only, so a stuck row is unrecoverable from the screen that
+exists to recover it. The sweep lives in core, not in `app/services/chatbot/`, because the
+scheduler is core and AC-002 forbids core importing the package - it settles a ROW, and the
+model is core.
+
+#### AC-259 evidence run (agent-browser, 5 Sep 2026)
+
+Against the REAL endpoints: dev server :3000 and the lane backend :8002 (`--reload`,
+`ENABLE_SCHEDULER=true`), isolated browser session `chatbot-s2b`. Data was three `ZZT9001`
+chat rows plus three turns (answered / failed-at-understood / stale delegated), seeded and
+deleted again in the same session; the screenshots are in the coder's scratchpad, and the
+run is written here so it can be re-walked.
+
+Steps, and what each one proved:
+
+1. `open http://localhost:3000`, sign in, then **sidebar only**: System > Messaging > Chat
+   History (never a deep URL, so the nav config and the permission gate are exercised).
+2. List loads: `GET /api/v1/system/chat-history?date_from=..&date_to=..&page=1&limit=50`.
+3. Filters > "Failed turns only: off" -> on. Two calls follow, in order:
+   `GET /api/v1/system/chatbot/turns/failed-contacts?from=..&to=..` then
+   `GET /api/v1/system/chat-history?...&contact_id=ZZT9001&contact_id=445239397&page=1...`.
+   That second call IS B1: the contacts the aggregate named are sent back as repeated
+   `contact_id`, so the rows, the total and the pager describe one set. Each row carries the
+   "failed at understood" badge.
+4. Row click opens the drawer: `GET /api/v1/system/chatbot/turns?contact_respond_id=ZZT9001&limit=200`.
+   Three turn panels, each with the short id chip (`#6791`, `#f713`, `#780a`).
+5. Expand the failed turn: Received ok, Understood failed with the provider error, the
+   collapsed "Access, Routed, Looked up, Replied, Remembered, Sent / not reached" row, and
+   `tokens 0` on the Understood facts (SEC2). "Technical details" opens the searchable raw
+   payload viewer.
+6. Retry is DISABLED with the reason "Retry is not configured in this environment.", read off
+   `retry_available` / `retry_unavailable_reason` on the LIST response (S7: no second route).
+7. AC-260 observed live rather than simulated: a turn left `delegated` since 4 Sep and a
+   seeded stale one were both flipped to `failed` / `Failed at Handover` by the minute-ly
+   sweep while the run was open, and the panel shows the sweep note as a FOOTER line under
+   the timeline ("Gave up waiting: n8n lane did not complete within 10 minutes.") rather than
+   as a ninth stage row (S8).
+8. Drawer's own "Failed turns only" toggle: 3 panels -> 1.
+9. 1280x800 and 375x812: `scrollWidth - clientWidth == 0` on both, drawer 375 wide at 375, no
+   panel overflow; drawer closed and reopened (end state, not a mid-transition frame).
+10. Console: zero errors, and zero warnings after the drawer was given
+    `aria-describedby={undefined}` (Radix warns for a `SheetContent` with no description; the
+    alternative, a sentence on screen, is an on-screen explanation).
 
 ### S3 - Canned lanes, offer-hold, ideation (150 lines + bridge)
 
@@ -591,13 +773,71 @@ both change what an operator sees:
 
 ### S5 - Escalation (400 lines)
 
-`lanes/escalation.py`: `escalation-input`, `fresh-entity-gate` (calls S6a's resolve + gate,
-so S5 lands AFTER S6a, or ships with a temporary in-process call to the resolver only; decide
-at ticketing, default = after S6a), `escalation-context` (six-rank ladder, null never
-defaults, H27), team / company clarify gates and replies (`pending.kind`), assignment path as
-`actions[]` with next-assignee + SLA create in-process behind a dry-run gate evaluated first
-(H37). H2 is structurally impossible in one function (AC-505). n8n: four spine nodes deleted,
-two subs unpublished; the outbound executes assign / comment (AC-506).
+`lanes/escalation.py`: `escalation-input`, `escalation-context`, the company clarify gate and
+reply (`pending.kind`), assignment path as `actions[]` with next-assignee + SLA create
+in-process behind a dry-run gate evaluated FIRST (H37). H2 is structurally impossible in one
+function (AC-505). n8n: four spine nodes deleted, two subs unpublished; the outbound executes
+assign / comment (AC-506).
+
+**Delivered 5 Sep 2026, and the plan above was wrong about the graph.** It described the
+EXPORT of `sub-escalation`, which carries uncommitted riders from two unpromoted builds. The
+LIVE workflow (`fr2u3e6FKg52cPvK` @ `bac9613b`, 10 nodes, confirmed by 33 captures on the
+version) is simpler, and the slice was ported from the live bodies:
+
+* **No `fresh-entity-gate`.** The lane never calls the resolver, so **H26 stays open**:
+  escalation routing is brand-blind exactly as it is in production. `resolve_and_gate` is in
+  the services bundle for the day B-HB-1 promotes and is asserted never called.
+* **No team clarify.** **H27 stays open** too, and the reason is worth writing down: a null
+  `suggested_team` is not reachable through the real pipeline at all, because
+  `head/output_exchange.derive_routing`'s nullish chain hard-defaults it to
+  `customer_service` long before this lane sees it. The hazard lives in the PARSER, not
+  here. Porting a clarify the live graph does not have would have shipped behaviour
+  production has never run.
+* **The ladder has five outcomes, not six, and no `gate` rank**: `picked_member` ->
+  `company_pick` -> `sameTeam` (`prior_state` / `prior_state_no_company` /
+  `multi_company_unpicked`) -> `stated_brand` -> `none`.
+
+Both omissions are `xfail(strict=True)` in `tests/chatbot/test_s5_escalation_lane.py`, so the
+promotion flips them green and forces the markers off rather than being remembered.
+
+**Two decisions, and one open question.**
+
+1. **The lane owns its own unit of work.** `next_assignee` and `sla_create` run on a session
+   of the lane's own, not the turn's routing transaction: a turn that fails later must not
+   roll an assignment back out from under the person who has already been told about it.
+2. **`assign_conversation` is the first action kind the spine does not already perform.**
+   Every earlier slice returned `send_message`, which `head-arm` already routes. The n8n
+   action executor is therefore a PREREQUISITE of switching this lane on, not a follow-up:
+   without it the customer is told a person is coming and nobody is assigned
+   (n8n-changes.md, S5 step 1).
+3. **The escalation arm RUNS THE TAIL** (decided 5 Sep). n8n sends this arm through
+   `tag-out-of-scope` -> `sub-output`, which persists the session - the routing axes and
+   `escalate-catalog`'s `includeResponse: false` state text - so skipping the tail would
+   have quietly dropped both the moment the lane was switched on. After the lane produces
+   its actions the arm hands `complete_turn` the `tag-out-of-scope` item
+   (`{branch_kind: "out_of_scope"}`, NOT `route-turn`'s item, which is what makes the entry
+   gate run `escalate-catalog`) plus the `clarify` fragment when the clarify arm fired.
+   Compile-state writes the session, or returns `session_patch` on a dry run, and the trace
+   ends `[..., looked_up, replied, remembered]`. The acknowledgement TEXT stays a tail
+   concern and is not one of the actions.
+4. **The lane writes no chat history** (decided 5 Sep). `sub-add-comment-respond` does two
+   things when it runs - the respond.io comment AND a CRM chat-history POST - and it keeps
+   doing both when the caller executes the `add_comment` action. Writing it here as well
+   would double the comment: one row from this lane, one from the sub, minutes apart and
+   under different authors. Asserted by ROW COUNT in
+   `tests/chatbot/test_s5_no_chat_history_write.py`, not by grep, because a count catches an
+   import three layers down.
+5. **Action shapes** (agreed with the n8n executor author, 5 Sep). `send_message` carries
+   `{kind, text, quick_replies, result_set, dry_run}`, with the two sealed halves filled from
+   the tail's reply after `complete_turn` returns; `assign_conversation` is
+   `{kind, respond_user_id, dry_run}`; `add_comment` is
+   `{kind, text, mention_user_ids, dry_run}` where `mention_user_ids` is exactly one RESPOND
+   user id (the executor maps it to `sub-add-comment-respond`'s `user_id`, which is what
+   respond.io needs for a mention) and the text carries no `{{@user.<id>}}` markup because
+   the sub prefixes that itself. A `send_attachments` action is appended last when the tail
+   produced an `attachments_src`. The comment text was verified byte for byte against the
+   live node expression, timestamps included (`%Y-%m-%d %H:%M:%S` at a fixed +08:00).
+   Sample responses for the executor: `documentation/plans/chatbot/samples/`.
 
 ### S6 - Business lane (about 7,000 lines, three PRs)
 
@@ -610,8 +850,9 @@ two subs unpublished; the outbound executes assign / comment (AC-506).
 
   **As built (5 Sep 2026), four things the slice learned and the plan did not say:**
 
-  1. **A config flag, not a silent cutover.** `CHATBOT_BUSINESS_LANE_ENABLED` (default
-     FALSE) decides whether the three business arms run the lane. It exists because the n8n
+  1. **A switch, not a silent cutover.** `chatbot_business_lane_enabled` (default
+     FALSE; a config flag at S6a, a `system_settings` column on the Chatbot settings
+     screen since AC-810) decides whether the three business arms run the lane. It exists because the n8n
      edit is a separate, hand-made, owner-gated step: until it happens n8n still calls
      `sub-resolve-and-gate` itself, so an unflagged CRM would run the resolver twice on
      every business turn, spec-search model call included. The flag is the shadow window's
@@ -662,8 +903,11 @@ two subs unpublished; the outbound executes assign / comment (AC-506).
 
 ### S7 - Thin spine + CRM per-contact ordering
 
-`/turn` and `/complete` collapse into `/turn` returning the finished reply; `delegate.py` is
-deleted. `dispatch.py`: redis ticket FIFO per contact inside the request (AC-709, AC-710).
+`/turn` and `/complete` collapse into `/turn` returning the finished reply: in S7 mode
+(`system_settings.chatbot_ordering_enabled`) `/complete` answers 410 Gone naming the mode. **Deleting the
+route and `delegate.py` moves to S8** - n8n's S2 tail still calls `/complete` until the S7
+promote lands on the n8n side, so the code stays until the caller is gone.
+`dispatch.py`: redis ticket FIFO per contact inside the request (AC-709, AC-710).
 D14 dry-run asserted by row counts (AC-702). Retry re-posts the envelope through the same
 ordering (AC-705). Optional worker offload behind `CHATBOT_TURN_ON_WORKER` (AC-703). Load gate
 3b before promote (AC-711). n8n: the dispatcher and its redis lists retired; ingress = webhook
@@ -672,58 +916,123 @@ assign / comment nodes; `N8N_CONCURRENCY_PRODUCTION_LIMIT` raised; old monolith 
 the clone calls the same endpoint with `is_test: true` (AC-706). H6, H12, H30, H31, H54 land
 here. Pilot on one contact first (AC-707), console containment proven (AC-708), then all.
 
-### S8 - Retire (small)
+### S8 - Retire and settle (two halves)
 
-Legacy regex readers removed (AC-801), disabled n8n nodes deleted and exports refreshed
-(AC-802), hazard table closed out (AC-803), n8n repo `CLAUDE.md` updated to say the turn path
-is the CRM. Worktree GC.
+**S8a, no promote needed (starts after #674 merges).** Chatbot config leaves the environment
+(owner ruling 5 Sep: nothing chatbot-shaped in `.env`, it does not scale past one tenant).
+The retry ingress URL and key move to the respond workspace row, the same shape the ideation
+intake already uses there (`ideation_shared_service_url` + Fernet ciphertext), edited on the
+Respond Workspaces screen under `user_management.settings.edit` (AC-804). The URL is validated
+on save and on use: https only, no redirects followed, host must not resolve to the CRM
+itself, loopback or a private range, so an admin-editable outbound URL is not an SSRF vector.
+`CHATBOT_RETRY_INGRESS_URL` / `_KEY` are deleted from `config.py`; the Retry button reads the
+workspace row and says "not configured" when it is empty. Security nits from the S2-S5
+review close (AC-806). The chatbot settings get a screen (AC-809, issue #679) and the two
+owner-operated switches leave the environment for system_settings (AC-810); only
+`CHATBOT_TURN_ON_WORKER` stays a deployment property. The Prompts screen gets a "Run a turn" test for the two chatbot keys,
+a dry-run envelope with the chosen prompt version whose trace renders inline (AC-807). S2's
+`tier_menu` STALE_FIXTURES entries migrate to CAPTURE_BODY_ADDITIONS (AC-808). Hazard table
+closed out (AC-803). Worktree GC.
+
+**S8a DELIVERED, 5 Sep 2026.** What landed, and the two things worth knowing:
+
+1. **The retry ingress is a workspace row, and the URL is checked twice** (AC-804).
+   `app/services/outbound_url_guard.py` runs on save AND on use - https only, every resolved
+   address checked (not just the first), loopback / RFC 1918 / CGNAT / link-local / IPv6 ULA
+   refused, the CRM's own hostname refused, `follow_redirects=False` passed explicitly. It does
+   NOT close DNS rebinding, and the guard says so with the trigger for building the pinned
+   transport that would. Documentation ranges (TEST-NET) are deliberately allowed: `is_private`
+   calls them private, which is true about their reservation and wrong about the risk.
+2. **AC-808 was a migration, not an exclusion.** All ten `STALE_FIXTURES` entries moved onto
+   `CAPTURE_BODY_ADDITIONS`, so those captures are graded on everything except the one key their
+   body predates. `build-ctx` / `media` is unconditional in the live body (measured: 114 of 118
+   captures carry it). `compile-current-state` / `tier_menu` is CONDITIONAL, so that entry is
+   justified by measurement instead: of 261 captures, 1 carries it on both sides, 254 on neither,
+   0 on the expected side alone, and the 6 the port emits it for are exactly the six former stale
+   names. The trigger to revisit is a NEW capture appearing in that "port only" column.
+
+**S8a security review, three decisions recorded here rather than left as omissions.** (1) The
+Settings slug reaches the two chatbot retry fields through a route of their own,
+`PUT /respond-workspaces/{id}/chatbot-retry`; widening the row PUT to that slug had handed it
+`api_key`, `base_url` and `is_default` as well. (2) A retry field sent blank or null now CLEARS,
+which is what the screen's "Leave blank to turn Retry off" always promised, and gives the key a
+revoke path. (3) AC-807's Prompts Test keeps a CALLER-SUPPLIED `contact_respond_id` rather than
+inventing a dev-contact column on the workspace, and the endpoint additionally requires
+`system.chat_history.view` - the slug the Chat History trace screen uses to show a contact's turn
+trace - so nobody reads a contact's remembered state with a weaker slug.
+
+Also closed at S8a, outside the AC list, from a production report: `post_process` used to raise a
+bare `KeyError: 'reference_positions'` on a malformed parser emission. It now validates the
+emission up front and raises `ParserOutputError` naming every missing key, so H44's guarantee
+(failed `understood`, no default routing) arrives with an explanation an operator can act on.
+
+**S8b, after the S7 spine is PUT and order measurement passes.** `/turn/{id}/complete`, the
+id-less `/turn/complete` and `delegate.py` are deleted (AC-805; S7 answers 410 until then),
+legacy regex readers removed (AC-801), disabled n8n nodes deleted and exports refreshed
+(AC-802, n8n side) - which is also where H10's per-node keep-or-drop audit and H54's dead
+`Update a Contact` fields land - and n8n repo `CLAUDE.md` updated to say the turn path is the
+CRM.
+
+Deferred to the backlog, not S8: the capacity split (service bundles taking a session factory)
+and the S9 idea of retargeting the corpus to turn-level behaviour and redesigning lane by lane
+behind it (owner, 5 Sep: the n8n code is not a design to keep; the characterization suite is
+what makes a rewrite safe).
 
 ## Hazard disposition
 
-From the n8n map's 55 catalogued hazards. `fix` = a named divergence with a test;
-`reproduce` = load-bearing behaviour kept; `moot` = cannot exist in a synchronous port;
-`backlog` = real but not this program.
+From the n8n map's 55 catalogued hazards. **Closed out at S8a (AC-803).** Every row carries
+one of three markers, and each one is traceable to code, a test or a backlog entry that
+exists today - nothing here is an intention:
 
-| id | hazard | disposition |
+* **fixed (AC-x)** - the hazard cannot happen in the port, and the AC names what proves it.
+  "by construction" means the port's shape removes it rather than a branch being added.
+* **reproduced (AC-x)** - the live behaviour is deliberately KEPT (D8: parity before
+  improvement), with the AC that pins it. Where the reproduction is registered as a
+  divergence it names the entry in `tests/chatbot/divergences.py`.
+* **backlog (id)** - real, and not this program. The id is a `documentation/backlogs/
+  backlog.md` entry, `S8b` (this plan's own second half, with its AC), or `S9`.
+
+| id | hazard | close-out |
 |---|---|---|
-| H1 | `stock_check` vs `check_stock`, two dead lanes | fix S1 + S3: correct vocabulary, lanes behind `chatbot_stock_denial_enabled` default off (R1 resolved). **Flag-off is not byte-identical and that is deliberate:** live still EVALUATES its dead predicate, so a contact with no `is_allowed_stock` custom field makes `custom_fields.find(...).value` throw and the turn dies; with the flag off the port skips the predicate and answers `business_query`. A strict improvement (an answered turn instead of a dropped one), invisible to the corpus because every captured contact carries the field, and visible in shadow mode as a CRM reply where live sent nothing. With the flag ON the throw is reproduced exactly, and the turn is recorded `failed` at `stage = routed` rather than escaping. The 4 Sep capture run found the first real turns the flag would wake: `rs1a-15118057`, `15129939`, `15137785`, `15139158`, all `check_stock` from contacts without stock access, all `business_query` in live and `demand_qty` with the flag on. |
-| H2 | clarify-company-reply race | fix S5 (AC-505) |
-| H3, H51 | fan-out order, 165 by-name reads | moot; each read enumerated in the port |
-| H4a | test surface reaches billable media endpoint | moot in pytest; n8n intake unchanged |
-| H5 | audio dead end | fix S1 (AC-107) |
-| H6 | second unlocked spine entry | fix S7 (thin spine has one trigger) |
-| H7 | orphaned answer LLM | reproduce: no answer LLM (D10) |
-| H8, H9, H47 | sendmsg fallback / presign error / mimeType | backlog (n8n outbound, stays n8n) |
-| H10 | dark-by-flag nodes | audit at S3; port intent or drop, per node |
-| H11 | zero tools = empty turn | fix S6b (AC-604) |
-| H12 | empty pop = silent success | fix S7 |
-| H13 | frozen string contracts | fix S1 + S2 + S8 (R3) |
-| H14 | pending state inferred from text | reproduce the principle: `pending` marker |
-| H15 | fresh object literal | fix S2: `SessionVars extra=forbid` (AC-203) |
-| H16 | by_entity_type keys rendered | reproduce as contract test S6a (AC-603) |
-| H17 to H21, H24, H25 | resolver / MCP data bugs (LESSONS 66 to 85) | backlog, CRM-side, own issues |
-| H22, H23 | cross-domain session pollution / dym leak | fix S2 (per-domain allowlist) + verify S6c |
-| H26, H27 | escalation brand-blind / hard team default | port the fix S5 |
-| H28 | enum drift | fix S0 (AC-109) |
-| H29 | carried picker beats born roster | fix S2 (AC-205) |
-| H30, H31 | per-contact FIFO + lock TTL | reproduce S7: redis ticket FIFO per contact, contacts parallel; the TTL check becomes load gate 3b |
-| H32 | failed turn dropped | fix S0/S7: recorded as `failed` + error reply, manual Retry on the trace screen, no auto-retry (R4 resolved) |
-| H33 to H36 | human-intervened sweeper | R6: backlog, own plan |
-| H37 | next-assignee before is_test guard | fix S5 (AC-503) |
-| H38 | duplicate codes across companies | port `entity_pins` S6a |
-| H39, H40 | dym dedupe drop / cert twins | S6c: reproduce first, fix as registered divergence if owner says go |
-| H41, H48 | parser prompt weaknesses | backlog (prompt, not port) |
-| H42 | menu-word substring mis-map | reproduce exact-match S1 |
-| H43 | missing `$4` | moot (in-process call binds domain) |
-| H44 | soft default on malformed parser output | fix S1: strict structured output at the provider; anything else = failed `understood` stage, no default routing (R5 resolved) |
-| H45 | did-you-mean offers rows already shown | fix S6c (AC-609) |
-| H46 | `_isTimeline` contains-sentinel | S6a declares the sentinel and its reading ONCE (`contracts.TIMELINE_SENTINEL` + `is_timeline`, contract test incl. the mixed-array case) - the node that USES it, `output-structurer`, is S6b and consumes that reading rather than re-deriving it |
-| H49 | `orders_by_product_list` never selected | verify before S6b |
-| H50 | brand / company derived in five places | REPRODUCED at S6a, not fixed: carrying it once changes real turns and D8 wants a named, tested divergence with evidence first. Trigger: a captured turn where the node's two derivations disagree plus the owner's ruling on which wins |
-| H52 | raw IP, plaintext MCP, SQL interpolation | fix S6b (config URL); SQL one is `live-respond-close-convo`, backlog |
-| H53 | n8n hits production Postgres | fix S6b (tool search in-process); SLA reads by `live-respond-*` backlog |
-| H54 | dead custom fields | fix S7 |
-| H55 | scope continuity never implemented | backlog after parity |
+| H1 | `stock_check` vs `check_stock`, two dead lanes | **fixed (AC-306)** - correct vocabulary in `head/route.py`, both lanes behind `system_settings.chatbot_stock_denial_enabled`, default off (R1 resolved); `tests/chatbot/test_route_unit.py`. **Flag-off is not byte-identical and that is deliberate:** live still EVALUATES its dead predicate, so a contact with no `is_allowed_stock` custom field makes `custom_fields.find(...).value` throw and the turn dies; with the flag off the port skips the predicate and answers `business_query`. A strict improvement (an answered turn instead of a dropped one), invisible to the corpus because every captured contact carries the field, and visible in shadow mode as a CRM reply where live sent nothing. With the flag ON the throw is reproduced exactly, and the turn is recorded `failed` at `stage = routed` rather than escaping. The 4 Sep capture run found the first real turns the flag would wake: `rs1a-15118057`, `15129939`, `15137785`, `15139158`, all `check_stock` from contacts without stock access, all `business_query` in live and `demand_qty` with the flag on. |
+| H2 | clarify-company-reply race | **fixed (AC-505)** - `lanes/escalation.py` builds the clarify ask from the turn's own resolved companies, not from a re-read; `tests/chatbot/test_s5_escalation_lane.py`. |
+| H3, H51 | fan-out order, 165 by-name reads | **fixed (AC-102, AC-103, by construction)** - one in-process call graph, so there is no fan-out to order and no `$('node')` to read; each of the 165 reads became a named parameter, and the replay of every `route-turn` / `output_exchange` fixture is what proves none was dropped. |
+| H4 | media lane guards: (a) a chat-console media turn reaches the billable `POST /external/media/process`, (b) `if-media-in` FALSE silently makes a media turn a text turn, (c) the async poll loop has zero observed live traffic | **backlog (BL-055)** - all three sit in `sub-media-intake`, which stays n8n by D1, so none of them moved with this port. The CRM half of (a) is closed by construction: the turn engine never calls the media endpoint at all - `ctx.media` arrives ON the envelope - and a dry-run turn writes nothing outside `chatbot.turns` (AC-702). The gate that (a) actually needs is on the CALLER, which is the n8n side. (c) was not ported: it has no live traffic to port. |
+| H5 | audio dead end | **fixed (AC-107)** - an unpatched audio attachment closes the turn at `intake` with the recorded reason instead of vanishing; `engine.py`, `tests/chatbot/test_engine.py`. |
+| H6 | second unlocked spine entry | **fixed (AC-701)** - S7 mode makes `/turn` the only trigger and `/complete` answers 410 Gone naming the mode; `tests/chatbot/test_s7_dispatch_edges.py`. The two `/complete` routes and `delegate.py` are DELETED at **S8b (AC-805)**, gated on the owner's S7 promote. |
+| H7 | orphaned answer LLM | **reproduced (AC-607)** - there is no answer LLM anywhere in the business lane (D10), which is what live actually does; `lanes/business/fetch.py` states it and `output_structurer` is deterministic string building. |
+| H8, H9, H47 | sendmsg fallback / presign error / mimeType | **backlog (BL-050)** - n8n outbound, stays n8n by D1. |
+| H10 | dark-by-flag nodes | **backlog (S8b, AC-802)** - no dark node's intent was ported into S1 to S6c (the lanes were ported from the LIVE reachable bodies), so the outstanding half is the n8n-side per-node keep-or-drop, which is the same pass that deletes the disabled nodes and refreshes the export. |
+| H11 | zero tools = empty turn | **fixed (AC-604)** - `tool-filter` emitting zero tools becomes a distinguishable `not_found` outcome instead of a silent dead end; `lanes/business/fetch.py`, `tests/chatbot/test_s6b_fetch_lane.py`. |
+| H12 | empty pop = silent success | **fixed (AC-701, by construction)** - there is no pop: the request IS the turn, so an empty queue cannot look like a completed run; `tests/chatbot/test_s7_ordering_and_offload.py`. |
+| H13 | frozen string contracts | **fixed (AC-203, AC-106)** - the escalation offer is read from a persisted `pending` marker (`tail/pending.py`), not from the bot's own previous words. Registered in `divergences.py` as `H13/H14 (R3)`, field-scoped so every other byte of the session patch is still graded. The legacy regex readers themselves are removed at **S8b (AC-801)**. |
+| H14 | pending state inferred from text | **reproduced (AC-202) then fixed (AC-203)** - the PRINCIPLE is kept (every bot question that expects a shaped answer persists a marker) and the text-sniffing is not; same divergence entry as H13. |
+| H15 | fresh object literal | **fixed (AC-203)** - `SessionVars` is Pydantic with `extra="forbid"`, so a key nobody declared cannot be written; `tests/chatbot/test_tail_units.py`. |
+| H16 | by_entity_type keys rendered | **reproduced (AC-603)** - kept as a contract test rather than changed, because the rendered keys are what customers read today; `lanes/business/gate.py`, `tests/chatbot/test_resolve_gate_unit.py`. |
+| H17 to H21, H24, H25 | resolver / MCP data bugs (LESSONS 66 to 85) | **backlog (BL-051)** - CRM-side, one issue each. |
+| H22, H23 | cross-domain session pollution / dym leak | **fixed (AC-609)** - per-domain allowlist at S2 and verified in the answer lane; registered in `divergences.py` as `H22 / H23`, and pinned by `tests/chatbot/test_s6c_answer_lane.py`. |
+| H26, H27 | escalation brand-blind / hard team default | **fixed (AC-502)** - `lanes/escalation.py` ports the brand-aware team ladder rather than the `?? 'customer_service'` default; `tests/chatbot/test_s5_escalation_lane.py`. |
+| H28 | enum drift | **fixed (AC-109)** - every enum the parser emits is declared once in `contracts.py` and asserted against the prompt; `tests/chatbot/test_contracts.py`. |
+| H29 | carried picker beats born roster | **fixed (AC-205)** - `tail/compile_state.py`; registered in `divergences.py` for `compile-current-state/b56-roster-turn`, whose capture IS the defect, and pinned by `test_tail_units.py::TestBornRosterWins`. |
+| H30, H31 | per-contact FIFO + lock TTL | **reproduced (AC-709, AC-710)** - per-contact FIFO kept, contacts parallel, on a redis ticket instead of n8n's one-per-second dispatcher; `services/chatbot/dispatch.py`. The TTL check became load gate 3b (AC-711, measured 5 Sep: 100 turns p95 1.24 s, 300 turns p95 3.77 s, zero out of order). |
+| H32 | failed turn dropped | **fixed (AC-704)** - every failure closes the row `failed` with its stage, error and trace, and answers with today's error reply; manual Retry only, no auto-retry (R4). `divergences.py` carries the `H32` entry; `tests/chatbot/test_engine_failure_paths.py`. |
+| H33 to H36 | human-intervened sweeper | **backlog (BL-049)** - R6, own plan. |
+| H37 | next-assignee before is_test guard | **fixed (AC-503)** - the dry-run check is evaluated BEFORE any side-effecting seam in `lanes/escalation.py`, and `lanes/ideate.py` was brought to the same rule after the round-2 security review; `tests/chatbot/test_s5_escalation_lane.py`. |
+| H38 | duplicate codes across companies | **fixed (AC-601)** - `entity_pins` ported at S6a; `lanes/business/resolve_gate.py`, `tests/chatbot/test_s6a_gate_dry_run_and_seams.py`. |
+| H39, H40 | dym dedupe drop / cert twins | **reproduced (AC-608)** - ported faithfully and pinned by the S6c replay; the fix stays a future registered divergence, which needs the owner's ruling. `tests/chatbot/test_s6c_answer_lane.py`. |
+| H41, H48 | parser prompt weaknesses | **backlog (BL-053)** - prompt, not port. |
+| H42 | menu-word substring mis-map | **reproduced (AC-102)** - exact-match kept, as live does; `head/route.py`, `tests/chatbot/test_route_unit.py`. |
+| H43 | missing `$4` | **fixed (AC-604, by construction)** - the in-process call binds the domain as a parameter, so `domain=None` can only mean "no filter", never "the caller forgot to wire it"; `lanes/business/fetch.py`. |
+| H44 | soft default on malformed parser output | **fixed (AC-105)** - strict structured output at the provider, and anything else is a failed `understood` stage with no default routing (R5). Hardened again at S8a: `post_process` validates the emission up front and raises `ParserOutputError` naming the missing key, so a malformed mock or model answer can no longer surface as a bare `KeyError` on the trace. `tests/chatbot/test_harness_injections.py`. |
+| H45 | did-you-mean offers rows already shown | **fixed (AC-609)** - one predicate in `lanes/business/answer.py`; `tests/chatbot/test_s6c_answer_lane.py`. |
+| H46 | `_isTimeline` contains-sentinel | **fixed (AC-603)** - the sentinel and its reading are declared ONCE (`contracts.TIMELINE_SENTINEL` + `is_timeline`) with a contract test including the mixed-array case, and `output-structurer` consumes that reading instead of re-deriving it. |
+| H49 | `orders_by_product_list` never selected | **reproduced (AC-604)** - verified before S6b and left alone: the tool has never been selected in any graded capture, so the lookup tables are ported verbatim and no per-tool branch was added. The measurement that would justify one has not been taken. `lanes/business/fetch.py` records this. |
+| H50 | brand / company derived in five places | **reproduced (AC-602)** - explicitly NOT fixed at S6a: carrying it once changes `resolved_company` / `resolved_companies` / `routing_brand` / `routing_companies` on real turns, and D8 wants a named, tested divergence with evidence first. Trigger: a captured turn where the node's two derivations disagree, plus the owner's ruling on which wins. |
+| H52 | raw IP, plaintext MCP, SQL interpolation | **fixed (AC-604)** for the CRM half - the MCP URL is configuration, not a literal, in `lanes/business/fetch.py`. The `live-respond-close-convo` SQL interpolation is **backlog (BL-049)**. |
+| H53 | n8n hits production Postgres | **fixed (AC-604)** - tool search runs in process against the request's own session. The SLA reads by `live-respond-*` are **backlog (BL-049)**. |
+| H54 | dead custom fields | **fixed (AC-108)** - the port emits exactly one contact-field write, `{"is_human_intervened": false}` (`engine.py`, the single `update_contact_fields` action site); none of the five `removed:true` legacy fields is carried. Deleting the fields from n8n's own `Update a Contact` node is **S8b (AC-802)**. |
+| H55 | scope continuity never implemented | **backlog (BL-052)** - an undelivered requirement, not a bug to reproduce; deliver after parity. |
+| H56 | in-process route call skipped the company-scope dependency | **fixed (AC-811, this PR)** - the engine calls the resolver ROUTE (and through it stock, promotions, product attachments) in process, so `apply_company_scope` never ran and every session read `UNSET`, which `build_company_predicate` compiles to `false()` for every owned model: every business turn answered "Couldn't find: `<code>` (product)" for a product in the contact's own company (measured in prod and locally, 6 Sep 2026). `run_turn` now resolves the contact's companies once, from the SAME rule the X-API-Key path uses (`company_scope_resolver.resolve_contact_company_scope`), and wraps the session factory so every session the turn opens carries it; an unknown contact fails closed to zero rows, never to "all companies". ALL THREE session seams under `app/services/chatbot/` are covered: (1) `engine._session`, every call site, via the wrapped factory; (2) the business lane's own `answer_services_for` family read, which opens off that same factory; (3) the escalation lane's `escalation_services.production_session()`, which reached for `SessionLocal` directly and now takes the turn's factory. Seam 3 was NOT a failing lane: `post_next_assignee` pins its own scope (`_scope_request_to_company`) before every `Team` / `AgentTeam` read, so the round-robin draw worked. What ran unscoped is the pre-pin half (`_routing_company_for_body`) and the lane's own unit of work; threading the factory is defence in depth and keeps one mechanism for the whole turn instead of a per-callee pin. The tail (`complete_turn`, n8n's `/complete` entry) stamps the row's contact unconditionally. Evidence: `tests/chatbot/test_engine_company_scope.py` (6 tests). |
 
 ## Non-goals
 

@@ -1,6 +1,6 @@
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, waitFor, fireEvent, cleanup } from '@testing-library/react';
 
 import { SearchableMultiSelect, type SearchableMultiSelectOption } from './SearchableMultiSelect';
 
@@ -250,5 +250,50 @@ describe('SearchableMultiSelect shows the whole option', () => {
     const spans = [...document.querySelectorAll('[role="option"] span')];
     expect(spans.length).toBeGreaterThan(0);
     for (const span of spans) expect(span.className).not.toMatch(/\btruncate\b/);
+  });
+});
+
+// Bug: a `renderTrigger` caller (e.g. Notify roles/users on the System Health page) left
+// `document.body[data-scroll-locked]` set with nothing open, because the scroll lock was
+// wired to "does this popover ever need the wrap", not "is it open right now".
+describe('SearchableMultiSelect scroll lock only while open (renderTrigger)', () => {
+  afterEach(() => {
+    cleanup();
+    document.body.removeAttribute('data-scroll-locked');
+  });
+
+  const renderWithCustomTrigger = () =>
+    render(
+      <SearchableMultiSelect
+        value={[]}
+        onChange={vi.fn()}
+        options={OPTIONS}
+        renderTrigger={({ open }) => (
+          <button type="button" data-testid="custom-trigger">
+            {open ? 'Open' : 'Closed'}
+          </button>
+        )}
+      />,
+    );
+
+  it('does not lock the page scroll before the popover is opened', () => {
+    renderWithCustomTrigger();
+    expect(document.body.hasAttribute('data-scroll-locked')).toBe(false);
+  });
+
+  it('locks while the popover is open and releases it on Escape', async () => {
+    renderWithCustomTrigger();
+    fireEvent.click(screen.getByTestId('custom-trigger'));
+
+    await waitFor(() =>
+      expect(document.body.hasAttribute('data-scroll-locked')).toBe(true),
+    );
+
+    const content = document.querySelector('[data-slot="popover-content"]')!;
+    fireEvent.keyDown(content, { key: 'Escape' });
+
+    await waitFor(() =>
+      expect(document.body.hasAttribute('data-scroll-locked')).toBe(false),
+    );
   });
 });

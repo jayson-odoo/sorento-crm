@@ -63,13 +63,14 @@ def run_until_exit(
 
     `item` is the router's own item, forwarded UNCHANGED.
 
-    An earlier version stamped `not_allowed_check_stock: true` here for the `stock_denied`
-    arm, mirroring the spine's `Edit Fields2`. It was dead and is gone: inside the sub the
-    item reaches only `tier-gate`'s `$('item')` read, which is on the `access_check` path
-    that `stock_denied` never takes, and the node that actually consumes the field -
-    `sub-main-processing`'s `validator` - reads it off `$('Edit Fields2')` BY NAME, not off
-    the flowing item. That Set node stays in n8n and keeps owning the value; a CRM copy
-    would have been a second writer of something it cannot be read from.
+    `not_allowed_check_stock` is the spine's `Edit Fields2`, which sits on the ONE edge
+    `If7`'s TRUE output takes (`If7 -> Edit Fields2 -> If8`) and sets the single boolean
+    `validator` reads. S6a left it unstamped because the reader then was n8n's own
+    `validator`, which reads `$('Edit Fields2')` by name; at S6c the CRM IS the validator
+    and reads the flag off this payload, so the arm that carries it has to carry it here.
+    The route already gates the arm: `stock_denied` can only be decided when
+    `system_settings.chatbot_stock_denial_enabled` is on (R1), so no second flag read is
+    needed - with the switch off no turn reaches this branch at all.
     """
     entry = ENTRY_BY_BRANCH_KIND[branch_kind]
     payload = resolve_gate.run(
@@ -81,6 +82,8 @@ def run_until_exit(
         probe_default_start=probe_default_start,
         dry_run=dry_run,
     )
+    if branch_kind == "stock_denied":
+        payload["not_allowed_check_stock"] = True
     return {"delegate": DELEGATE, "payload": payload}
 
 
@@ -135,7 +138,7 @@ def _fetch_semantic_input(
         "user_goal": parse_output.get("user_goal"),
         "access_levels": access_levels,
         "contact_id": jsc.js_string(contact_id) if contact_id is not None else None,
-        "space_id": space_id or fetch_mod.SPACE_ID,
+        "space_id": fetch_mod.space_id_or_default(space_id),
         "date_mode": parse_output.get("date_mode"),
         "date_filter_start": parse_output.get("date_filter_start"),
         "date_filter_end": parse_output.get("date_filter_end"),
@@ -150,8 +153,19 @@ def _fetch_semantic_input(
 
 
 def _error_fragment(reason: str, *, outcome: str | None = None) -> dict[str, Any]:
-    """`fetch-result`'s `error` arm, as the fragment the engine records a failure from."""
-    item = fetch_mod.fetch_result({"error": reason})
+    """`fetch-result`'s `error` arm, as the fragment the engine records a failure from.
+
+    `outcome` separates the two things this arm carries, and the separation is
+    load-bearing: `not_found` is a GENUINE ABSENCE (H11's zero-tool case - the question
+    was understood and nothing matches it), while an absent `outcome` is an
+    INFRASTRUCTURE failure (the MCP call raised, the tool returned an error envelope, the
+    tool search failed). Only the first may be told to the customer as "I could not find
+    anything". It rides on the ITEM as well as the fragment because `complete_answer`
+    receives the item, not the fragment.
+    """
+    item = fetch_mod.fetch_result(
+        {"error": reason, **({"outcome": outcome} if outcome is not None else {})}
+    )
     fragment: dict[str, Any] = {
         "kind": "error",
         "_fetch_arm": item["_fetch_arm"],
@@ -335,3 +349,357 @@ __all__ = [
     "run_fetch",
     "run_until_exit",
 ]
+
+
+def complete_answer(
+    payload: dict[str, Any],
+    *,
+    turn_id: str,
+    ctx: dict[str, Any],
+    item: dict[str, Any],
+    branch_kind: str,
+    services: Any,
+    session_factory: Any,
+    space_id: str | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """S6c: finish the business turn in process, and return `{reply, actions, ...}`.
+
+    The third and last call site into this package, after `run_until_exit` and `run_fetch`.
+    It runs the ANSWER half - `validator`, `promo-picker`, the three cross-domain nodes and
+    `build-result` - then `If6` dispatches into `sub-answer` or the miss lane, and the
+    `sub-output` fragments go to the S2 tail (`engine.complete_turn`), which composes the
+    reply and writes the session exactly as it does for every other completed lane.
+
+    `payload` is `run_until_exit`'s output with `run_fetch`'s `fetch` folded in, i.e. the
+    same object `delegate_payload` carries today.
+
+    **The ITEM handed to the tail is the LANE's own output, never `route-turn`'s** - the
+    same rule S4 learned the hard way. `complete_turn`'s entry gate runs `escalate-catalog`
+    only when the item carries a `branch_kind`, and `route-turn`'s (`business_query`) is a
+    kind the catalog has no case for, so it would fall through to an EMPTY response and the
+    reply would come out blank.
+
+    **The three non-answer arms stamp the tail's own kind, because the spine does.** Live
+    puts a Set node on each of those edges - `build-suggest-offer -> tag-not-found`,
+    `access-level-choice-message -> tag-access-choice`, and the two gate pickers reach
+    `tag-not-found` through `build-suggest-offer` - and `escalate-catalog` is what turns
+    their `escalate_message` into the customer's `response`. Without the stamp the catalog
+    is skipped, the compile-state ladder finds no `response` on the item (the miss lane
+    writes `escalate_message`, not `response`) and the customer reads nothing: H11's empty
+    turn, arriving through the CRM instead of through n8n. The ANSWER half carries no kind
+    and must not: its live path (`central-exchange -> ... -> compile-current-state`) has no
+    tag node, so the catalog is correctly skipped there.
+
+    **No database session is held across the probes.** Everything this function reads from
+    the database was read before it was called; `services` is the injected seam pair, and
+    the only session opened here is the tail's own, after every probe has answered.
+    """
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.lanes.business import answer as answer_mod
+    from app.services.chatbot.lanes.business import miss_suggest as miss_mod
+    from app.services.chatbot.lanes.business import sub_answer as sub_answer_mod
+
+    parser = ((ctx.get("parse") or {}).get("output")) or {}
+    session_block = ctx.get("session") or {}
+    contact = ctx.get("contact") or {}
+    contact_id = contact.get("id")
+    resolved = payload.get("resolved") if isinstance(payload.get("resolved"), dict) else {}
+    gate = payload.get("gate") if isinstance(payload.get("gate"), dict) else {}
+    fetch = payload.get("fetch") if isinstance(payload.get("fetch"), dict) else {}
+    exit_kind = payload.get("_exit_kind")
+    # The entitlement union the resolver's aggregate returned, when it ran. Two readers:
+    # `crossdomain-probe`'s access-level intersection and the promotion entitlement-miss
+    # sentence. `None` is "the aggregate did not run", which both arms handle.
+    aggregate = payload.get("aggregate") if isinstance(payload.get("aggregate"), dict) else None
+    entities_names = aggregate.get("name") if aggregate is not None else None
+
+    fragments: dict[str, Any] = {"ctx": ctx, "resolved": resolved, "gate": gate}
+    lane_item: dict[str, Any]
+
+    # `fetch-result`'s own arm names, spelled the way IT spells them: `tier-ask` with a
+    # hyphen (`fetch.fetch_result`), `error` and `result` without one.
+    fetch_arm = fetch.get("_fetch_arm")
+    if exit_kind == "access_ask" or fetch_arm == "tier-ask":
+        # The customer has to name an access tier before anything can be read.
+        # `access-level-choice-message` renders the ask, and S6b's per-tier probe is what
+        # makes it honest ("Dealer - has promotion").
+        tier_source = fetch if fetch_arm == "tier-ask" else payload
+        lane_item = {
+            **answer_mod.access_level_choice_message(tier_source, parser=parser),
+            # `tag-access-choice`
+            "branch_kind": "access_choice",
+        }
+        fragments["access_choice"] = lane_item
+
+    elif exit_kind == "offer":
+        # The gate rendered its own picker (incoming / customer). It is already the answer.
+        # Live sends both pickers through `build-suggest-offer` into `tag-not-found`, so the
+        # kind is `not_found` here too and the catalog reads the picker's own
+        # `escalate_message` off the `incoming_picker` fragment below.
+        # Confirmed a no-op on this arm's roster fields against a real capture:
+        # tests/chatbot/test_s6c_engine_paths.py::TestOfferArmSkipsBuildSuggestOfferSafely
+        lane_item = {**dict(payload), "branch_kind": "not_found"}
+        fragments["incoming_picker"] = lane_item
+
+    elif fetch_arm == "error" and fetch.get("outcome") != "not_found":
+        # An INFRASTRUCTURE failure, not an absence: the MCP call raised, the tool returned
+        # an error envelope, or the tool search failed. Rendering the miss lane here would
+        # tell the customer "I could not find anything" about a read that never ran - the
+        # same assertion `crossdomain-render`'s "positive facts only" rule refuses to make.
+        # Live agrees: `Call 'sub-get-results'` carries `onError: continueErrorOutput` and
+        # its ERROR output goes to `set-ran-query-formulator`, whose whole body is
+        # `output.response = 'There is some error encountered by the AI: ${...error}'`,
+        # sent straight out - it never reaches `not-found-error-message`.
+        #
+        # The engine decides this at `looked_up` and does not call this function for it, so
+        # reaching here means a caller went round that gate; raising puts the turn on the
+        # lane's own failure path (generic error reply, `failed`, R4 manual retry) instead
+        # of quietly answering with the wrong words.
+        raise RuntimeError(
+            "fetch failed before an answer existed: "
+            f"{jsc.nullish_str(fetch.get('error'), 'unknown fetch error')}"
+        )
+
+    elif exit_kind == "not_found" or fetch_arm == "error":
+        lane_item = _run_miss_half(
+            payload,
+            parser=parser,
+            resolved=resolved,
+            gate=gate,
+            services=services,
+            contact_id=contact_id,
+            space_id=space_id,
+            execution_id=turn_id,
+            fragments=fragments,
+            miss_mod=miss_mod,
+            answer_mod=answer_mod,
+            dry_run=dry_run,
+        )
+
+    else:
+        # The ANSWER half proper. `validator` stamps `is_valid` (and rewrites the response
+        # on the demand-quantity arm), `promo-picker` owns the promotion ordering / pick /
+        # roster, the cross-domain trio asks the OTHER domain about a code that came back
+        # empty, and `build-result` is the `result` contract every later reader keys on.
+        structured = fetch.get("result") if isinstance(fetch.get("result"), dict) else fetch
+        validated = answer_mod.validator(
+            dict(structured),
+            semantic_parser=(ctx.get("parse") or {}),
+            not_allowed_check_stock=bool(payload.get("not_allowed_check_stock")),
+        )
+        promo = answer_mod.promo_picker(
+            validated, parser=parser, resolved=resolved, gate=gate
+        )
+        # n8n feeds `crossdomain-zeroset` the PROMO-PICKER's output; this feeds it the
+        # VALIDATOR item. Equivalent only because `promo_picker` returns its input
+        # unchanged off the promotion domain and the zeroset gate accepts inventory /
+        # incoming only - so if that early return ever starts reshaping the item, this
+        # call has to take `promo` instead.
+        crossdomain = answer_mod.run_crossdomain(
+            validated,
+            parser=parser,
+            resolved=resolved,
+            session_block=session_block,
+            entities_names=entities_names,
+            services=services,
+            contact_id=contact_id,
+            space_id=space_id,
+            dry_run=dry_run,
+        )
+        result_item = answer_mod.build_result(
+            promo,
+            validator=validated,
+            promo=promo,
+            zeroset=crossdomain.get("zeroset"),
+            tool=(fetch.get("tool") if isinstance(fetch.get("tool"), dict) else None),
+            tier_probe=fetch.get("tier_probe"),
+            crossdomain_render=crossdomain.get("render"),
+        )
+        # `build-result`'s WHOLE item, not its inner `result` object: the tail reads the
+        # cross-domain block through `$('build-result').first().json.result.xd.block`, so
+        # the double `result` is the shape it expects (`tail/compose._cross_domain_block`,
+        # and `test_replay._run_crossdomain_compose` hands it the same thing). Passing the
+        # inner object made every answered turn fail in the tail.
+        fragments["result"] = result_item
+        fragments["crossdomain_render"] = crossdomain.get("render")
+
+        if answer_mod.dispatch(result_item.get("result")) == "sub_answer":
+            lane_item = _run_answer_half(
+                result_item,
+                parser=parser,
+                resolved=resolved,
+                gate=gate,
+                services=services,
+                contact_id=contact_id,
+                space_id=space_id,
+                fragments=fragments,
+                sub_answer_mod=sub_answer_mod,
+                miss_mod=miss_mod,
+            )
+        else:
+            # `Aggregate1` collects `response_intro` off the item before the miss lane
+            # runs, and the miss renderer's payload is what carries it forward.
+            miss_payload = {
+                **result_item,
+                "response_intro": answer_mod.aggregate_response_intro(
+                    result_item.get("result")
+                ),
+            }
+            lane_item = _run_miss_half(
+                miss_payload,
+                parser=parser,
+                resolved=resolved,
+                gate=gate,
+                services=services,
+                contact_id=contact_id,
+                space_id=space_id,
+                execution_id=turn_id,
+                fragments=fragments,
+                miss_mod=miss_mod,
+                answer_mod=answer_mod,
+                dry_run=dry_run,
+                build_result=result_item.get("result"),
+            )
+
+    # The row was closed `delegated` at `routed` by the caller before this function ran
+    # (`engine.close_turn_for_tail`), which is the state `complete_turn` refuses to run
+    # without and the state the turn is genuinely in while the tail has not folded the
+    # lane's result in yet.
+    completed = engine_mod.complete_turn(
+        turn_id,
+        {**fragments, "item": lane_item},
+        session_factory=session_factory,
+        # This lane is finishing the turn, so the caller needs the send to execute (D9).
+        # It cannot be built before the tail the way S4's clarifier builds its own: the
+        # words do not exist until the tail has composed them.
+        compose_send_action=True,
+    )
+    return {
+        "reply": completed.reply,
+        "actions": completed.actions,
+        "session_patch": completed.session_patch,
+        "status": completed.status,
+        "stage": completed.stage,
+    }
+
+
+def _run_answer_half(
+    result_item: dict[str, Any],
+    *,
+    parser: dict[str, Any],
+    resolved: dict[str, Any],
+    gate: dict[str, Any],
+    services: Any,
+    contact_id: Any,
+    space_id: str | None,
+    fragments: dict[str, Any],
+    sub_answer_mod: Any,
+    miss_mod: Any,
+) -> dict[str, Any]:
+    """`sub-answer`, in process: central-exchange, the miss roster, the partial did-you-mean."""
+    trigger = {"item": result_item}
+    entered = sub_answer_mod.answer_input(trigger)
+    central = sub_answer_mod.central_exchange(entered)
+    build_result_block = result_item.get("result") or {}
+
+    checked = sub_answer_mod.miss_roster_check(
+        central, build_result=build_result_block, parser=parser
+    )
+    member_offer = None
+    roster_plan = None
+    if checked.get("_offer") is True:
+        roster_plan = sub_answer_mod.miss_roster_plan(
+            checked,
+            build_result=build_result_block,
+            parser=parser,
+            gate=gate,
+            central_exchange=central,
+        )
+        member_offer = sub_answer_mod.build_miss_member_offer(
+            checked, central_exchange=central, roster_plan=roster_plan
+        )
+
+    # The PARTIAL did-you-mean: the answer came back, but some of the tokens the customer
+    # named resolved to nothing. Same planner as the miss lane's, deployed on this arm.
+    plan = sub_answer_mod.dym_transform_partial(
+        member_offer if member_offer is not None else central,
+        parser=parser,
+        gate=gate,
+        resolved=resolved,
+        central_exchange=central,
+    )
+    annotated = None
+    if plan.get("probe_needed") is True:
+        try:
+            probe = services.mcp_probe(
+                plan.get("probe_tool"),
+                miss_mod._probe_args(
+                    plan.get("dym_probe_entities") or [],
+                    parser=parser,
+                    contact_id=contact_id,
+                    space_id=space_id,
+                ),
+            )
+        except Exception:  # noqa: BLE001 - fail OPEN: no annotation, today's bare offer
+            logger.warning("chatbot: partial did-you-mean probe did not run", exc_info=True)
+            probe = {"error": "probe failed"}
+        annotated = sub_answer_mod.dym_annotate_partial(
+            probe,
+            payload=member_offer if member_offer is not None else central,
+            transform=plan,
+        )
+
+    answer = sub_answer_mod.answer_result(
+        annotated if annotated is not None else (member_offer or central),
+        central_exchange=central,
+        member_offer=member_offer,
+        dym_annotate_partial=annotated,
+    )
+    fragments["answer"] = answer
+    return answer
+
+
+def _run_miss_half(
+    payload: dict[str, Any],
+    *,
+    parser: dict[str, Any],
+    resolved: dict[str, Any],
+    gate: dict[str, Any],
+    services: Any,
+    contact_id: Any,
+    space_id: str | None,
+    execution_id: str,
+    fragments: dict[str, Any],
+    miss_mod: Any,
+    answer_mod: Any,
+    dry_run: bool,
+    build_result: Any = None,
+) -> dict[str, Any]:
+    """`not-found-error-message` -> `sub-miss-suggest` -> `build-suggest-offer` ->
+    `tag-not-found`.
+
+    The tag is the last node on this edge in the live spine and it is not decoration:
+    `escalate-catalog` only runs on an item that carries a `branch_kind`, and it is what
+    turns the offer's `escalate_message` into the customer's `response`. The FRAGMENT keeps
+    the composer's own output untagged, so what the tail grades is unchanged.
+    """
+    not_found = answer_mod.not_found_error_message(
+        payload, parser=parser, resolved=resolved, gate=gate
+    )
+    fragments["not_found"] = not_found
+
+    offer = miss_mod.run_miss_lane(
+        not_found,
+        parser=parser,
+        resolved=resolved,
+        gate=gate,
+        services=services,
+        build_result=build_result,
+        contact_id=contact_id,
+        space_id=space_id,
+        execution_id=execution_id,
+        dry_run=dry_run,
+    )
+    fragments["suggest_offer"] = offer
+    return {**offer, "branch_kind": "not_found"}

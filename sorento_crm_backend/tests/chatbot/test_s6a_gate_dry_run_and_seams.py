@@ -18,6 +18,7 @@ from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.lanes.business import resolve_gate
 from app.services.chatbot.lanes.business.services import ResolveGateServices, production_services
 from app.services.error_handler import AppException
+from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_engine import (  # noqa: F401  - fixtures used by name
     CONTACT_ID,
     _envelope,
@@ -58,7 +59,7 @@ class TestS6aDelegateSeamFlagGating:
     def test_flag_on_the_three_business_arms_delegate_with_an_exit_kind_payload(
         self, session_factory, seeded, stub_parser, stub_access, monkeypatch, branch_kind
     ) -> None:
-        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", True)
+        set_chatbot_switches(session_factory, business_lane=True)
         calls: list[str] = []
         bundle = _stub_bundle(calls, names=["Sorento Dealer"])
         monkeypatch.setattr(
@@ -82,7 +83,7 @@ class TestS6aDelegateSeamFlagGating:
     def test_flag_on_the_ten_other_arms_never_touch_the_lane(
         self, session_factory, seeded, stub_parser, stub_access, monkeypatch, branch_kind
     ) -> None:
-        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", True)
+        set_chatbot_switches(session_factory, business_lane=True)
         calls: list[str] = []
         bundle = _stub_bundle(calls)
         monkeypatch.setattr(
@@ -104,7 +105,7 @@ class TestS6aDelegateSeamFlagGating:
         self, session_factory, seeded, stub_parser, stub_access, monkeypatch
     ) -> None:
         """Default (off) behaviour: unchanged from before S6a shipped."""
-        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", False)
+        set_chatbot_switches(session_factory, business_lane=False)
         calls: list[str] = []
         bundle = _stub_bundle(calls)
         monkeypatch.setattr(
@@ -127,7 +128,7 @@ class TestS6aDelegateSeamFlagGating:
     ) -> None:
         """With the flag off, `delegate` is n8n's own tag - never overwritten to
         `business_query`, which is only what the LANE resumes on once it runs."""
-        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", False)
+        set_chatbot_switches(session_factory, business_lane=False)
         monkeypatch.setattr(engine_mod, "decide", lambda *args, **kwargs: (branch_kind, {}))
         stub_parser()
         stub_access()
@@ -147,7 +148,7 @@ class TestShadowFailurePath:
     def test_a_resolver_failure_still_completes_the_turn_delegated(
         self, session_factory, seeded, stub_parser, stub_access, monkeypatch
     ) -> None:
-        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", True)
+        set_chatbot_switches(session_factory, business_lane=True)
 
         def _boom(body):
             raise RuntimeError("resolve-entity is down")
@@ -213,7 +214,7 @@ class TestD14ZeroWritesWithTheLaneOnRealResolver:
         (app/services/product_spec_understanding.py:597-614, inside `understand_phrase`),
         with no dry-run guard anywhere in that call chain.
         """
-        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", True)
+        set_chatbot_switches(session_factory, business_lane=True)
         # `understand_phrase` writes `user_id=current_user.get("id")` off this setting; a
         # non-existent id makes the INSERT fail on a users.id FK instead of on dry-run
         # gating - which would make this test pass for the WRONG reason (measured: with
@@ -299,7 +300,7 @@ class TestCapacityRuleDuringResolverSeam:
     def test_no_db_session_is_open_during_the_resolver_seam_call(
         self, counting_session_factory, session_factory, seeded, stub_parser, stub_access, monkeypatch
     ) -> None:
-        monkeypatch.setattr(settings, "chatbot_business_lane_enabled", True)
+        set_chatbot_switches(session_factory, business_lane=True)
         observed: list[int] = []
 
         def _resolve_entity(body):

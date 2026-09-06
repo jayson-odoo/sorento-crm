@@ -2,23 +2,21 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
+import type { ColumnDef, PaginationState, RowSelectionState } from '@tanstack/react-table';
+import { useReactTable, getCoreRowModel } from '@tanstack/react-table';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridTable } from '@/components/ui/data-grid-table';
+import { DataGridPagination } from '@/components/ui/data-grid-pagination';
+import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { ListBoardViewToggle } from '@/components/common/ListBoardViewToggle';
 import { useListBoardViewPreference } from '@/hooks/useListBoardViewPreference';
 import { Plus, Trash2 } from 'lucide-react';
-import { Checkbox } from '@/components/ui/checkbox';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
@@ -43,7 +41,6 @@ import TicketsKanban from './TicketsKanban';
 const PAGE_SIZE = 50;
 
 export default function TicketsList() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const { mode, setMode, hydrated } = useListBoardViewPreference('tickets', 'list');
 
@@ -58,7 +55,10 @@ export default function TicketsList() {
 
   const [rows, setRows] = useState<Ticket[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: PAGE_SIZE,
+  });
   const [loading, setLoading] = useState(true);
   const {
     value: search,
@@ -70,19 +70,28 @@ export default function TicketsList() {
   const [priorityFilter, setPriorityFilter] = useState<TicketPriority | 'all'>('all');
   const [categoryFilter, setCategoryFilter] = useState<TicketCategory | 'all'>('all');
   const [sourceFilter, setSourceFilter] = useState<TicketSourceChannel | 'all'>('all');
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
 
   // Reset to page 1 whenever filters change.
   useEffect(() => {
-    setPage(1);
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
   }, [debouncedSearch, statusFilter, priorityFilter, categoryFilter, sourceFilter]);
 
   // Clear selection on filter / page change.
   useEffect(() => {
-    setSelected(new Set());
-  }, [page, debouncedSearch, statusFilter, priorityFilter, categoryFilter, sourceFilter, mode]);
+    setRowSelection({});
+  }, [
+    pagination.pageIndex,
+    pagination.pageSize,
+    debouncedSearch,
+    statusFilter,
+    priorityFilter,
+    categoryFilter,
+    sourceFilter,
+    mode,
+  ]);
 
   // Only fetch list-mode data when in list mode.
   useEffect(() => {
@@ -90,8 +99,8 @@ export default function TicketsList() {
     let cancelled = false;
     setLoading(true);
     const filters: TicketListFilters & { page: number; limit: number } = {
-      page,
-      limit: PAGE_SIZE,
+      page: pagination.pageIndex + 1,
+      limit: pagination.pageSize,
     };
     if (debouncedSearch) filters.q = debouncedSearch;
     if (statusFilter !== 'all') filters.status = statusFilter;
@@ -113,33 +122,137 @@ export default function TicketsList() {
     return () => {
       cancelled = true;
     };
-  }, [mode, page, debouncedSearch, statusFilter, priorityFilter, categoryFilter, sourceFilter, reloadTick]);
+  }, [
+    mode,
+    pagination.pageIndex,
+    pagination.pageSize,
+    debouncedSearch,
+    statusFilter,
+    priorityFilter,
+    categoryFilter,
+    sourceFilter,
+    reloadTick,
+  ]);
 
-  const allSelectedOnPage = rows.length > 0 && rows.every((r) => selected.has(r.id));
-  const someSelectedOnPage = rows.some((r) => selected.has(r.id));
+  // D3: the row opens the ticket.
+  const rowHref = (row: Ticket) => `/ticket-management/tickets/${row.id}`;
 
-  function toggleAllOnPage(checked: boolean) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (checked) rows.forEach((r) => next.add(r.id));
-      else rows.forEach((r) => next.delete(r.id));
-      return next;
-    });
-  }
-
-  function toggleRow(id: string, checked: boolean) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  }
-
-  const totalPages = useMemo(
-    () => Math.max(1, Math.ceil(total / PAGE_SIZE)),
-    [total],
+  const columns = useMemo<ColumnDef<Ticket>[]>(
+    () => [
+      buildSelectColumn<Ticket>({
+        rowLabel: (row) => `Select ticket ${row.original.ticket_number ?? row.original.id}`,
+      }),
+      {
+        accessorKey: 'ticket_number',
+        header: ({ column }) => <DataGridColumnHeader title="Ticket #" column={column} />,
+        cell: ({ row }) => (
+          <span className="whitespace-nowrap font-mono text-xs">
+            {row.original.ticket_number ?? '-'}
+          </span>
+        ),
+        size: 140,
+        meta: { headerTitle: 'Ticket #', skeleton: <Skeleton className="h-4 w-24" /> },
+      },
+      {
+        accessorKey: 'title',
+        header: ({ column }) => <DataGridColumnHeader title="Title" column={column} />,
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.title}>
+            {row.original.title}
+          </span>
+        ),
+        size: 320,
+        meta: { headerTitle: 'Title', skeleton: <Skeleton className="h-4 w-48" /> },
+      },
+      {
+        accessorKey: 'status',
+        header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
+        cell: ({ row }) => <TicketStatusBadge status={row.original.status} />,
+        size: 120,
+        meta: { headerTitle: 'Status', skeleton: <Skeleton className="h-4 w-16" /> },
+      },
+      {
+        accessorKey: 'priority',
+        header: ({ column }) => <DataGridColumnHeader title="Priority" column={column} />,
+        cell: ({ row }) => <TicketPriorityBadge priority={row.original.priority} />,
+        size: 120,
+        meta: { headerTitle: 'Priority', skeleton: <Skeleton className="h-4 w-16" /> },
+      },
+      {
+        accessorKey: 'category',
+        header: ({ column }) => <DataGridColumnHeader title="Category" column={column} />,
+        cell: ({ row }) => <span className="capitalize">{row.original.category}</span>,
+        size: 120,
+        meta: { headerTitle: 'Category' },
+      },
+      {
+        accessorKey: 'source_channel',
+        header: ({ column }) => <DataGridColumnHeader title="Source" column={column} />,
+        cell: ({ row }) => (
+          <span className="text-xs">
+            {row.original.source_channel === 'ai_assistant'
+              ? 'AI Assistant'
+              : row.original.source_channel === 'whatsapp_respond'
+                ? 'WhatsApp'
+                : 'Manual'}
+          </span>
+        ),
+        size: 120,
+        meta: { headerTitle: 'Source' },
+      },
+      {
+        accessorKey: 'due_date',
+        header: ({ column }) => <DataGridColumnHeader title="Due date" column={column} />,
+        cell: ({ row }) => (
+          <span className={row.original.is_overdue_resolution ? 'text-destructive' : ''}>
+            {row.original.due_date ?? '-'}
+          </span>
+        ),
+        size: 140,
+        meta: { headerTitle: 'Due date' },
+      },
+      {
+        id: 'assignee',
+        accessorFn: (row) => row.assigned_to_user?.display_name ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Assignee" column={column} />,
+        cell: ({ row }) =>
+          row.original.assigned_to_user?.display_name ?? (
+            <span className="text-muted-foreground">Unassigned</span>
+          ),
+        size: 180,
+        meta: { headerTitle: 'Assignee' },
+      },
+      {
+        accessorKey: 'updated_at',
+        header: ({ column }) => <DataGridColumnHeader title="Updated" column={column} />,
+        cell: ({ row }) => (
+          <span className="text-xs text-muted-foreground">
+            {new Date(row.original.updated_at).toLocaleString()}
+          </span>
+        ),
+        size: 160,
+        meta: { headerTitle: 'Updated' },
+      },
+    ],
+    [],
   );
+
+  const table = useReactTable({
+    columns,
+    data: rows,
+    pageCount: Math.max(1, Math.ceil(total / pagination.pageSize)),
+    getRowId: (row) => row.id,
+    state: { pagination, rowSelection },
+    enableRowSelection: true,
+    onRowSelectionChange: setRowSelection,
+    onPaginationChange: setPagination,
+    getCoreRowModel: getCoreRowModel(),
+    manualPagination: true,
+    enableSorting: false,
+    columnResizeMode: 'onChange',
+  });
+
+  const selectedCount = Object.keys(rowSelection).length;
 
   return (
     <div className="flex flex-col gap-4">
@@ -211,13 +324,13 @@ export default function TicketsList() {
         )}
         <ListBoardViewToggle value={mode} onChange={setMode} />
         <div className="ms-auto flex items-center gap-2">
-          {mode === 'list' && selected.size > 0 && (
+          {mode === 'list' && selectedCount > 0 && (
             <Button
               variant="destructive"
               onClick={() => setBulkDeleteOpen(true)}
             >
               <Trash2 className="size-4" />
-              Delete {selected.size} selected
+              Delete {selectedCount} selected
             </Button>
           )}
           <Button asChild>
@@ -237,130 +350,22 @@ export default function TicketsList() {
           }}
         />
       ) : (
-        <>
+        <DataGrid
+          table={table}
+          recordCount={total}
+          isLoading={loading}
+          rowHref={rowHref}
+          listingKey="tickets.tickets.view"
+          emptyMessage="No tickets match these filters."
+          tableLayout={{ width: 'fixed', columnsResizable: true }}
+        >
           <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[40px]">
-                    <Checkbox
-                      checked={
-                        allSelectedOnPage
-                          ? true
-                          : someSelectedOnPage
-                          ? 'indeterminate'
-                          : false
-                      }
-                      onCheckedChange={(v) => toggleAllOnPage(v === true)}
-                      aria-label="Select all rows on this page"
-                    />
-                  </TableHead>
-                  <TableHead className="w-[160px]">Ticket #</TableHead>
-                  <TableHead>Title</TableHead>
-                  <TableHead className="w-[120px]">Status</TableHead>
-                  <TableHead className="w-[120px]">Priority</TableHead>
-                  <TableHead className="w-[120px]">Category</TableHead>
-                  <TableHead className="w-[120px]">Source</TableHead>
-                  <TableHead className="w-[140px]">Due date</TableHead>
-                  <TableHead className="w-[180px]">Assignee</TableHead>
-                  <TableHead className="w-[160px]">Updated</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {loading ? (
-                  Array.from({ length: 5 }).map((_, i) => (
-                    <TableRow key={`skel-${i}`}>
-                      {Array.from({ length: 10 }).map((__, j) => (
-                        <TableCell key={j}>
-                          <Skeleton className="h-4 w-full" />
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))
-                ) : rows.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={10}
-                      className="h-24 text-center text-muted-foreground"
-                    >
-                      No tickets match these filters.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  rows.map((t) => (
-                    <TableRow
-                      key={t.id}
-                      className="cursor-pointer hover:bg-muted/30"
-                      onClick={() => router.push(`/ticket-management/tickets/${t.id}`)}
-                    >
-                      <TableCell onClick={(e) => e.stopPropagation()}>
-                        <Checkbox
-                          checked={selected.has(t.id)}
-                          onCheckedChange={(v) => toggleRow(t.id, v === true)}
-                          aria-label={`Select ticket ${t.ticket_number ?? t.id}`}
-                        />
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap font-mono text-xs">
-                        {t.ticket_number ?? '-'}
-                      </TableCell>
-                      <TableCell className="max-w-[420px] truncate">{t.title}</TableCell>
-                      <TableCell>
-                        <TicketStatusBadge status={t.status} />
-                      </TableCell>
-                      <TableCell>
-                        <TicketPriorityBadge priority={t.priority} />
-                      </TableCell>
-                      <TableCell className="capitalize">{t.category}</TableCell>
-                      <TableCell className="text-xs">
-                        {t.source_channel === 'ai_assistant'
-                          ? 'AI Assistant'
-                          : t.source_channel === 'whatsapp_respond'
-                          ? 'WhatsApp'
-                          : 'Manual'}
-                      </TableCell>
-                      <TableCell className={t.is_overdue_resolution ? 'text-destructive' : ''}>
-                        {t.due_date ?? '-'}
-                      </TableCell>
-                      <TableCell>
-                        {t.assigned_to_user?.display_name ?? <span className="text-muted-foreground">Unassigned</span>}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {new Date(t.updated_at).toLocaleString()}
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
-              </TableBody>
-            </Table>
+            <DataGridTable />
           </div>
-
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">
-              {total} total {total === 1 ? 'ticket' : 'tickets'}
-            </span>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page <= 1 || loading}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-              >
-                Previous
-              </Button>
-              <span className="text-sm">
-                Page {page} of {totalPages}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page >= totalPages || loading}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                Next
-              </Button>
-            </div>
+          <div className="flex items-center justify-end pt-2">
+            <DataGridPagination />
           </div>
-        </>
+        </DataGrid>
       )}
 
       <ConfirmDeleteDialog
@@ -368,16 +373,16 @@ export default function TicketsList() {
         onOpenChange={setBulkDeleteOpen}
         description={
           <>
-            Permanently delete <strong>{selected.size}</strong>{' '}
-            {selected.size === 1 ? 'ticket' : 'tickets'}? This action cannot be undone.
+            Permanently delete <strong>{selectedCount}</strong>{' '}
+            {selectedCount === 1 ? 'ticket' : 'tickets'}? This action cannot be undone.
           </>
         }
         onDelete={async () => {
-          await bulkDeleteTickets(Array.from(selected));
+          await bulkDeleteTickets(Object.keys(rowSelection));
         }}
-        successMessage={`${selected.size} ${selected.size === 1 ? 'ticket' : 'tickets'} deleted`}
+        successMessage={`${selectedCount} ${selectedCount === 1 ? 'ticket' : 'tickets'} deleted`}
         onSuccess={() => {
-          setSelected(new Set());
+          setRowSelection({});
           setReloadTick((n) => n + 1);
         }}
       />

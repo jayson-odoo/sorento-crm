@@ -163,14 +163,14 @@ export function AmendmentAutocountChangeList({
         <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 break-words">
             <CardTitle className="text-sm">AutoCount change list</CardTitle>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              {isLoading
-                ? 'Loading…'
-                : `${rows.length.toLocaleString()} accepted row${rows.length === 1 ? '' : 's'} ready for AutoCount` +
-                  (declinedCount > 0
-                    ? ` · ${declinedCount} declined and excluded`
-                    : '')}
-            </p>
+            {isLoading ? (
+              <Skeleton className="mt-1 h-3.5 w-48" />
+            ) : (
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {`${rows.length.toLocaleString()} accepted row${rows.length === 1 ? '' : 's'} ready for AutoCount` +
+                  (declinedCount > 0 ? ` · ${declinedCount} declined and excluded` : '')}
+              </p>
+            )}
           </div>
           <CardToolbar>
             <Button

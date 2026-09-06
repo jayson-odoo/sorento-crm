@@ -18,6 +18,13 @@ import { useForm } from 'react-hook-form';
 
 import { Form } from '@/components/ui/form';
 
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+}));
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/procurement-management/purchase-requests/pr-1',
+}));
+
 vi.mock('@/hooks/useCurrencyFormat', () => ({
   useCurrencyFormat: () => 'RM {value}',
 }));

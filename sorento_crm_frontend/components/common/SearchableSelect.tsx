@@ -197,6 +197,9 @@ export function SearchableSelect({
     setTriggerInsideDialog(isInsideOpenDialog(triggerElRef.current));
   }, []);
   const needsDialogScrollLock = renderTrigger ? true : triggerInsideDialog;
+  // `PopoverScrollLock` additionally requires `open`: RemoveScroll locks the body for as
+  // long as it is MOUNTED, not for as long as anything is visibly open, so this component's
+  // own popover-open state has to gate it directly rather than only through this flag.
 
   // Async state
   const [asyncOptions, setAsyncOptions] = React.useState<SearchableSelectOption[]>([]);
@@ -400,7 +403,7 @@ export function SearchableSelect({
       </PopoverTrigger>
       {/* Portalled so a dialog's overflow can't clip the menu when it flips upward. */}
       <PopoverPortal>
-      <PopoverScrollLock active={needsDialogScrollLock}>
+      <PopoverScrollLock open={open} active={needsDialogScrollLock}>
       <PopoverContent
         className={cn(
             // Cap to the space Radix measured, or a long list makes the menu taller than
@@ -499,8 +502,11 @@ export function SearchableSelect({
                   disabled={loadingMore}
                   className="flex w-full items-center justify-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent disabled:opacity-60"
                 >
-                  {loadingMore ? <Loader2 className="size-4 animate-spin" /> : null}
-                  {loadingMore ? 'Loading…' : 'Load more'}
+                  {loadingMore ? (
+                    <Loader2 className="size-4 animate-spin" aria-label="Loading" />
+                  ) : (
+                    'Load more'
+                  )}
                 </button>
               </div>
             ) : null}

@@ -22,7 +22,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { ViewToggle } from '../../_shared/components/ViewToggle';
 import {
   useProjectParties,

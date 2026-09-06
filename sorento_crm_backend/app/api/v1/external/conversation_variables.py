@@ -24,7 +24,10 @@ from app.services.conversation_variables_service import (
     get_referenced_state,
     overwrite_for_contact,
 )
-from app.services.integration_service import IntegrationLogService
+from app.services.integration_service import (
+    IntegrationLogService,
+    sanitize_request_headers,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -113,9 +116,7 @@ def overwrite_conversation_state(
         )
 
     try:
-        request_headers = dict(request.headers)
-        if "x-api-key" in request_headers:
-            request_headers["x-api-key"] = "***"
+        request_headers = sanitize_request_headers(dict(request.headers))
         IntegrationLogService(db).create_integration_log(
             IntegrationLogCreate(
                 integration_channel="n8n",

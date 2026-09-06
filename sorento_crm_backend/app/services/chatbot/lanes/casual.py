@@ -261,16 +261,24 @@ def central_exchange(item: dict | None) -> Any:
 # --------------------------------------------------------------------------- #
 
 
-def resolve_clarifier_config(db: Session) -> ClarifierConfig:
+def resolve_clarifier_config(
+    db: Session, *, override_version_id: str | None = None
+) -> ClarifierConfig:
     """Read the prompt, the per-key model override and the API key. Session-bound.
 
     Call this, then CLOSE the session, then call `call_clarifier`.
+
+    `override_version_id` mirrors `head/parser.resolve_config`: it pins a specific prompt
+    VERSION for the Prompts screen's dry-run turn (AC-807), and the engine only ever
+    supplies it on a dry run.
     """
     from app.services.ai_assistant_service import AIAssistantConfigService
     from app.services.ai_prompt_registry import agent_model, render
     from app.services.llm_provider import resolve_api_key
 
-    system_prompt, prompt_version = render(db, PROMPT_KEY)
+    system_prompt, prompt_version = render(
+        db, PROMPT_KEY, override_version_id=override_version_id
+    )
     provider_override, model_override = agent_model(db, PROMPT_KEY)
 
     config = AIAssistantConfigService(db).get()

@@ -165,8 +165,9 @@ describe('ContactAccessAgentsGroupedList - the outbound column', () => {
 
   it('keeps the loading and empty states', () => {
     mockState({ isLoading: true, data: undefined });
-    const { rerender } = renderWithClient(<ContactAccessAgentsGroupedList />);
-    expect(screen.getByText('Loading...')).toBeInTheDocument();
+    const { container, rerender } = renderWithClient(<ContactAccessAgentsGroupedList />);
+    // M5-02: the bare "Loading..." text became a SectionSkeleton.
+    expect(container.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
 
     cleanup();
     mockState({ data: { data: [], pagination: { total: 0, page: 1, limit: 10000 } } });

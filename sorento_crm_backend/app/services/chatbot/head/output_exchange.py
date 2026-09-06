@@ -34,13 +34,22 @@ from app.services.chatbot.contracts import ENTITY_HINTS, INTENT_HINTS
 
 
 class ParserOutputError(ValueError):
-    """The parser did not emit a JSON object.
+    """The parser emission is not usable, and the message says why.
 
     n8n limped on with `output.output` as a raw string and threw a few lines later on
     `reference_positions.length`; R5 makes that explicit instead - a failed `understood`
     stage with today's error reply and NO default routing (H44 closed). With the strict
     `json_schema` the CRM sends, this cannot be reached from a well-formed provider
     response at all.
+
+    **It is also the ONLY exception `post_process` may raise** (see `_assert_emission` and
+    the wrapper at the bottom of `post_process`). Measured on production, 5 Sep 2026: a
+    dry run with `mock_reformulator_output = {"nope": true}` did fail at `understood` as
+    R5 requires, but the row's error read `KeyError: 'reference_positions'` - a Python
+    traceback artefact, which tells an operator nothing about what the model got wrong and
+    would read as a CRM bug rather than a bad emission. A real model answer missing a
+    required key produced the same. The class of message this raises now is
+    "parser emission missing 'reference_positions'".
     """
 
 
@@ -562,7 +571,10 @@ def _offer_is_open(state: Any) -> bool:
     carries only the string and a session written by the CRM carries the marker, so the
     reader accepts either and neither deployment order strands a customer mid-offer.
     """
-    if jsc.get(jsc.get(state, "pending"), "kind") == "escalation_offer":
+    # BOTH offer kinds. A `member_offer` is an escalation offer with a roster attached -
+    # its reply carries the same frozen phrase - so a reader that only knew the general
+    # kind would go blind on every member-offer turn the day S8 deletes the regex below.
+    if jsc.get(jsc.get(state, "pending"), "kind") in ("escalation_offer", "member_offer"):
         return True
     response = jsc.get(state, "response")
     return bool(
@@ -598,7 +610,86 @@ def output_exchange(json_item: dict, parent_input: dict) -> dict:
     return post_process(_unwrap(json_item), json_item, parent_input or {})
 
 
-def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
+# The declared keys the emission must actually CARRY, and the container each of the
+# structured ones must be.
+#
+# The list is the parser's own `required` (`head/parser.py`'s `PARSE_OUTPUT_JSON_SCHEMA`)
+# MINUS `broaden_axis`, and the exemption is measured rather than assumed: across the 481
+# real emissions in the replay corpus every other declared key is present in all of them,
+# while `broaden_axis` is absent from 216 - it is a later addition, and the body only ever
+# WRITES it (`o["broaden_axis"] = ...`) or reads it through `jsc.get`, so its absence
+# cannot raise. Requiring it would fail 216 captured turns that the live node handles.
+#
+# Imported rather than restated: one list of required keys, in the file that declares the
+# schema the provider is held to.
+_EXEMPT_FROM_REQUIRED = frozenset({"broaden_axis"})
+_EMISSION_ARRAY_KEYS = ("entities", "access_levels", "requested_attributes", "reference_positions")
+_EMISSION_OBJECT_KEYS = ("routing", "escalation")
+
+
+def _required_emission_keys() -> frozenset[str]:
+    from app.services.chatbot.head.parser import DECLARED_KEYS
+
+    return DECLARED_KEYS - _EXEMPT_FROM_REQUIRED
+
+
+def _assert_emission(o: dict) -> None:
+    """Refuse an emission that cannot be post-processed, naming what is wrong.
+
+    Up front, before any of the 1,600 lines below touch it, because the alternative is
+    what production actually did: the first hard subscript (`o["reference_positions"]`,
+    hundreds of lines in) raised a `KeyError` whose whole message was the key name, with
+    no statement that this was the MODEL's output being wrong rather than the CRM's code.
+    Checking here also means the message names EVERY missing key at once, so a mock or a
+    prompt regression is fixed in one pass instead of one key per run.
+    """
+    missing = sorted(key for key in _required_emission_keys() if key not in o)
+    if missing:
+        raise ParserOutputError(
+            "parser emission missing " + ", ".join(repr(key) for key in missing)
+        )
+    for key in _EMISSION_ARRAY_KEYS:
+        if not isinstance(o.get(key), list):
+            raise ParserOutputError(
+                f"parser emission key {key!r} must be an array, got "
+                f"{type(o.get(key)).__name__}"
+            )
+    for key in _EMISSION_OBJECT_KEYS:
+        if not isinstance(o.get(key), dict):
+            raise ParserOutputError(
+                f"parser emission key {key!r} must be an object, got "
+                f"{type(o.get(key)).__name__}"
+            )
+
+
+def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:
+    """`{output: <the LLM object>}` post-processed, or `ParserOutputError`.
+
+    A thin wrapper on `_post_process` whose ONLY job is that this function raises
+    `ParserOutputError` and nothing else. The engine catches exactly that class and turns
+    it into a turn failed at `understood` with today's error reply (R5, H44); anything
+    else escapes as a bare exception, and what the operator then reads on the trace is a
+    Python type name - which is what production showed on 5 Sep.
+
+    `KeyError` is translated with its key, because that key IS the answer: `KeyError:
+    'reference_positions'` becomes "parser emission missing 'reference_positions'". The
+    up-front check should already have caught it; this is the net under the check, so a
+    key the check does not know about still fails legibly instead of raw.
+    """
+    try:
+        return _post_process(output, json_item, parent_input)
+    except ParserOutputError:
+        raise
+    except KeyError as exc:
+        key = exc.args[0] if exc.args else "?"
+        raise ParserOutputError(f"parser emission missing {key!r}") from exc
+    except (TypeError, AttributeError, IndexError) as exc:
+        raise ParserOutputError(
+            f"parser emission could not be post-processed ({type(exc).__name__}: {exc})"
+        ) from exc
+
+
+def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
     """The body. `output` is `{output: <the LLM object>}`; returns it with `_parser_raw`.
 
     The CRM calls this directly: `parser.parse` already returns a validated dict, so there
@@ -614,6 +705,7 @@ def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  # 
         raise ParserOutputError("parser did not emit a JSON object")
 
     o: dict[str, Any] = output["output"]
+    _assert_emission(o)
 
     # -- state-transition monitor: snapshot the RAW LLM object BEFORE any post-processing.
     # Everything below mutates `o`; this is the only point where the pre-code shape exists.

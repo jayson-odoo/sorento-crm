@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
@@ -36,6 +36,7 @@ import {
   validateCustomerImport,
 } from '../services/customerImportService';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 
@@ -77,16 +78,9 @@ export default function CustomersList() {
     setRowSelection({});
   }, [searchQuery, statusFilter, pagination.pageIndex, pagination.pageSize, sorting]);
 
-  // A search brings the reader back to page 0 to see the matches; the mounted
-  // guard keeps the URL-restored page from being clobbered on first render.
-  const searchMounted = useRef(false);
-  useEffect(() => {
-    if (!searchMounted.current) {
-      searchMounted.current = true;
-      return;
-    }
-    setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [searchQuery]);
+  // Page one when a filter CHANGES, never on mount - the mount run used to stamp
+  // page 1 over the page `useListStateFromUrl` had just restored from the URL.
+  useResetPageOnFilterChange(setPagination, [searchQuery]);
 
   // The whole row opens the record, carrying the list query the pager rebuilds
   // its key from - the status filter included, or the pager would page a wider

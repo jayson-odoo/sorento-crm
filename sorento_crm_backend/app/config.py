@@ -75,14 +75,47 @@ class Settings(BaseSettings):
     # call is skipped with a warning and the resolve is unaffected.
     n8n_close_convo_webhook_url: str | None = None
 
-    # Chatbot turn engine: run the ported business lane (resolve + gate, S6a) in process.
-    # OFF by default, and that default is the strangler's whole point (D7). Until the n8n
-    # edits in documentation/plans/chatbot/n8n-changes.md section S6a are made, n8n STILL
-    # calls `sub-resolve-and-gate` itself, so turning this on runs the resolver twice per
-    # business turn - including the spec-search model call. Enable it in one environment to
-    # gather shadow evidence, confirm `delegate_payload` matches what n8n produced, then
-    # make the n8n edit and leave it on. CHATBOT_BUSINESS_LANE_ENABLED.
-    chatbot_business_lane_enabled: bool = False
+    # S2b Retry (AC-705). The trace screen's Retry re-posts the ORIGINAL respond.io
+    # webhook body to n8n's inject webhook, so the turn re-enters at the SAME ingress a
+    # live message uses and gets the same ordering and the same lanes. The CRM never
+    # sends to the customer itself (D9).
+    #
+    # The ingress URL and its key are NOT here. They live on the respond workspace ROW
+    # and are edited on System > Respond Workspaces: that config is per tenant and an
+    # environment variable does not scale past one (owner ruling, 5 Sep 2026; AC-804).
+    # See `app/models/respond_workspace.py` for the two columns. What stays here is the
+    # timing knob below, which is behaviour of the endpoint rather than a tenant address.
+    #
+    # How long a `retry_requested_at` marker blocks a second Retry. The marker is
+    # cleared by the re-injected turn arriving; if it never arrives (n8n dropped it,
+    # the contact was deleted) the row would otherwise be un-retryable forever, so an
+    # older marker is treated as stale and the operator may try again.
+    chatbot_retry_stale_minutes: int = 5  # CHATBOT_RETRY_STALE_MINUTES
+    # How long a turn may sit `delegated` before the sweep calls it failed. A delegated
+    # turn is one an n8n lane took over and is expected to finish by calling `/complete`;
+    # when that lane dies mid-turn the call never comes and the row would stay `delegated`
+    # forever - a ghost in the trace list that Retry (failed turns only, R4) cannot touch.
+    chatbot_delegated_ttl_minutes: int = 10  # CHATBOT_DELEGATED_TTL_MINUTES
+
+    # S7 MODE and the business lane's own switch are NOT here (AC-810). Both are columns
+    # on the `system_settings` row now, toggled on System > Settings > Chatbot and read
+    # per turn, because the owner turns them on and off while watching live turns and an
+    # environment variable makes each flip a deploy. The two settings below stay here:
+    # they are deployment properties of THIS box, not owner decisions.
+    #
+    # The longest a turn waits for its contact's earlier turns. Past it the turn is failed
+    # at stage `queued` with today's error reply rather than holding the request open: n8n's
+    # HTTP node waits 60 s, so a wait that outlives that would turn one stuck turn into a
+    # stuck n8n execution as well. CHATBOT_QUEUE_WAIT_SECONDS.
+    chatbot_queue_wait_seconds: float = 45.0
+    # Optional worker offload (AC-703). OFF by default: in-process is simpler and the
+    # measured trigger for moving the turn off the API threads (beyond ~250 concurrent) has
+    # not arrived. When true the request enqueues on the `chat` queue and waits for the
+    # result, the pattern `/external/media` already uses. CHATBOT_TURN_ON_WORKER.
+    chatbot_turn_on_worker: bool = False
+    # How long the request waits for the offloaded turn before giving up on it.
+    # CHATBOT_TURN_WAIT_SECONDS.
+    chatbot_turn_wait_seconds: int = 60
     # Per-MCP-call bound for the chatbot's fetch step. The plan's capacity section says 10
     # seconds; the AI assistant's own 20 is a different budget for a different surface (a
     # user watching a screen, not a customer waiting inside a whole WhatsApp turn's latency

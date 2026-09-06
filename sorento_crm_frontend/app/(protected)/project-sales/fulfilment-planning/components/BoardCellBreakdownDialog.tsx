@@ -32,7 +32,7 @@ import {
 import { cn } from '@/lib/utils';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { spoDetailHref, spoNumberFromLabel } from '@/lib/spo-detail';
-import { PanelDataGrid } from '../../_shared/components/PanelDataGrid';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { OrderInquiryStatePill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
   PILL_TONE,
@@ -1262,6 +1262,8 @@ export function BoardCellBreakdownDialog({
                 }
                 emptyBody="Nothing in the selection is outstanding for this product by this date."
                 pageSize={25}
+                // The DialogBody above already owns the scroll viewport (overflow-y-auto).
+                scrollerMaxHeight={false}
               />
             </TabsContent>
           </Tabs>

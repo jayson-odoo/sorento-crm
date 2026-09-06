@@ -1,5 +1,5 @@
 """Procurement models."""
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, Numeric, Index, Date, Computed, UniqueConstraint
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Text, Integer, Numeric, Index, Date, Computed, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -41,7 +41,11 @@ class Supplier(Base, CompanyScopedMixin):
     __audit_track__ = True  # who changed what (Sub-plan D Tier-2)
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    supplier_code = Column(String(50), unique=True, nullable=False)
+    # Unique PER COMPANY, not globally (migration 305): composite unique index in
+    # __table_args__ below. A bare unique=True here would make create_all build
+    # the old global suppliers_supplier_code_key and reject the same code in a
+    # second company (fix round 4).
+    supplier_code = Column(String(50), nullable=False)
     supplier_name = Column(String(255), nullable=False)
     contact_name = Column(String(150), nullable=True)
     email = Column(String(150), nullable=True)
@@ -64,6 +68,11 @@ class Supplier(Base, CompanyScopedMixin):
     inbound_shipments = relationship("InboundShipment", back_populates="supplier")
     
     __table_args__ = (
+        Index(
+            "uq_suppliers_company_supplier_code",
+            "company_id", "supplier_code",
+            unique=True,
+        ),
         Index("ix_suppliers_is_active", "is_active"),
         Index("ix_suppliers_country", "country"),
         Index("ix_suppliers_city", "city"),
@@ -104,7 +113,12 @@ class InboundShipment(Base, CompanyScopedMixin):
     __tablename__ = "inbound_shipments"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    shipment_number = Column(String(50), unique=True, nullable=True)
+    # Unique PER COMPANY, not globally (migration 305): composite partial unique
+    # index in __table_args__ below (WHERE shipment_number IS NOT NULL, same
+    # multiple-NULL semantics 305 preserved). A bare unique=True here would make
+    # create_all build the old global inbound_shipments_shipment_number_key and
+    # reject the same number in a second company (fix round 4).
+    shipment_number = Column(String(50), nullable=True)
     supplier_id = Column(UUID(as_uuid=False), ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True)
     shipment_date = Column(Date, nullable=False)
     estimated_arrival_date = Column(Date, nullable=True)
@@ -229,6 +243,12 @@ class InboundShipment(Base, CompanyScopedMixin):
         return self.total_cartons
 
     __table_args__ = (
+        Index(
+            "uq_inbound_shipments_company_shipment_number",
+            "company_id", "shipment_number",
+            unique=True,
+            postgresql_where=text("shipment_number IS NOT NULL"),
+        ),
         Index("ix_inbound_shipments_supplier_id", "supplier_id"),
         Index("ix_inbound_shipments_shipment_number", "shipment_number"),
         Index("ix_inbound_shipments_shipment_status", "shipment_status"),
@@ -482,6 +502,16 @@ class SPOAllocation(Base, CompanyScopedMixin):
     #: `open` / `closed`, the same word the purchase-order line carries. History lands
     #: closed, so it can never read as supply however its receipt status is later edited.
     line_status = Column(String(50), nullable=False, server_default="open", default="open")
+    # --- AutoCount ingest v2 (S3, D3) -------------------------------------------------
+    #: AutoCount's DtlKey - the LINE's own identity across re-pushes. NULL on every
+    #: pre-existing (xlsx-era) row; D11 adoption is what claims those without ever
+    #: writing a ref onto them retroactively.
+    source_ref = Column(String(255), nullable=True)
+    #: AutoCount's DocKey - names the DOCUMENT this line belongs to (the group of rows
+    #: sharing one `spo_number`), since a shipping order has no header table of its own
+    #: (D3). A push finds its rows by this column, falling back to `spo_number` alone
+    #: for a document's first sync.
+    source_doc_ref = Column(String(255), nullable=True)
 
     inbound_shipment = relationship("InboundShipment", back_populates="spo_allocations")
     supplier = relationship("Supplier", foreign_keys=[supplier_id])
@@ -506,6 +536,16 @@ class SPOAllocation(Base, CompanyScopedMixin):
         # What the triple key was also doing, kept as a plain lookup: every reader that
         # asks "what is coming for this product, here" hits these three columns.
         Index("ix_spo_allocations_spo_product_warehouse", "spo_number", "product_id", "warehouse_id"),
+        # AutoCount ingest v2 (S3): a push finds its document's rows by DocKey.
+        Index("ix_spo_allocations_company_source_doc_ref", "company_id", "source_doc_ref"),
+        # One DtlKey can adopt at most one line, company-wide - partial so the
+        # countless ref-less xlsx-era rows never collide with each other or with it.
+        Index(
+            "uq_spo_allocations_company_source_ref",
+            "company_id", "source_ref",
+            unique=True,
+            postgresql_where=text("source_ref IS NOT NULL"),
+        ),
     )
 
 
@@ -513,7 +553,11 @@ class PickingHeader(Base, CompanyScopedMixin):
     __tablename__ = "picking_headers"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    picking_number = Column(String(50), unique=True, nullable=False)
+    # Unique PER COMPANY, not globally (migration 305): composite unique index in
+    # __table_args__ below. A bare unique=True here would make create_all build
+    # the old global picking_headers_picking_number_key and reject the same
+    # number in a second company (fix round 4).
+    picking_number = Column(String(50), nullable=False)
     # DISPLAY-width, not match-width: a multi-SPO GRN stores every SPO it covers
     # ("SPO-A, SPO-B") so the list says so instead of showing a dash. Allocation
     # matching stays scalar (`_spo_match_key` / `_normalize_spo_number` compare ONE
@@ -557,6 +601,11 @@ class PickingHeader(Base, CompanyScopedMixin):
     picking_lines = relationship("PickingLine", back_populates="picking_header")
     
     __table_args__ = (
+        Index(
+            "uq_picking_headers_company_picking_number",
+            "company_id", "picking_number",
+            unique=True,
+        ),
         Index("ix_picking_headers_picking_type", "picking_type"),
         Index("ix_picking_headers_picking_number", "picking_number"),
         Index("ix_picking_headers_picking_status", "picking_status"),

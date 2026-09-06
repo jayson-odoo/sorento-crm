@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import {
@@ -72,6 +72,7 @@ import { SalesOrderFormModal } from './SalesOrderFormModal';
 import { OutstandingUploadDialog } from '../../reorder/components/OutstandingUploadDialog';
 import { runHistoryKey, todayRunKey } from '../../reorder/hooks/useReorderRun';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { useListingViewPreferences } from '@/lib/listing-column-preferences/useListingViewPreferences';
@@ -405,18 +406,10 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
 
   // A search brings the reader back to page 0 to see the matches - but not on the FIRST
   // run, or this would wipe the page `useListStateFromUrl` just restored from Back's own
-  // query string, landing every "Back to sales orders" on page 1 (mirrors
-  // `StockInquiriesList.tsx`'s own `searchMounted` guard). Filter changes reset the page
-  // themselves (`applyFilters`/`clearFilters`); search is the only thing left that needs
-  // its own reset here.
-  const searchMounted = useRef(false);
-  useEffect(() => {
-    if (!searchMounted.current) {
-      searchMounted.current = true;
-      return;
-    }
-    setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [searchQuery]);
+  // query string, landing every "Back to sales orders" on page 1. Filter changes reset the
+  // page themselves (`applyFilters`/`clearFilters`); search is the only thing left that
+  // needs its own reset here.
+  useResetPageOnFilterChange(setPagination, [searchQuery]);
 
   const rows = useMemo<SalesOrder[]>(() => data?.data ?? [], [data]);
 

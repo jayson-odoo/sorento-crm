@@ -4,6 +4,10 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import ComplaintFulfilmentOrdersSection from './ComplaintFulfilmentOrdersSection';
 import type { FulfilmentOrder } from '../services/complaintFulfilmentService';
 
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+}));
+
 const useComplaintFulfilmentOrders = vi.fn();
 
 vi.mock('../hooks/useComplaintFulfilmentOrders', () => ({

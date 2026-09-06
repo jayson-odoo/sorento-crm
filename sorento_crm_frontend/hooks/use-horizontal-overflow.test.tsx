@@ -14,9 +14,18 @@ import { act, fireEvent, render } from '@testing-library/react';
 import { useHorizontalOverflow } from './use-horizontal-overflow';
 
 function Harness() {
-  const { ref, isOverflowing, isAtEnd } = useHorizontalOverflow<HTMLDivElement>();
+  const { ref, isOverflowing, isAtEnd, isFadingStart, isFadingEnd, isFading } =
+    useHorizontalOverflow<HTMLDivElement>();
   return (
-    <div ref={ref} data-testid="scroller" data-overflowing={isOverflowing} data-at-end={isAtEnd}>
+    <div
+      ref={ref}
+      data-testid="scroller"
+      data-overflowing={isOverflowing}
+      data-at-end={isAtEnd}
+      data-fading-start={isFadingStart}
+      data-fading-end={isFadingEnd}
+      data-fading={isFading}
+    >
       content
     </div>
   );
@@ -59,5 +68,56 @@ describe('useHorizontalOverflow', () => {
 
     expect(el).toHaveAttribute('data-overflowing', 'true');
     expect(el).toHaveAttribute('data-at-end', 'true');
+  });
+
+  it('fades only the end while still at the start', () => {
+    const { getByTestId } = render(<Harness />);
+    const el = getByTestId('scroller');
+
+    setMetrics(el, { scrollWidth: 1200, clientWidth: 375, scrollLeft: 0 });
+    act(() => {
+      fireEvent(window, new Event('resize'));
+    });
+
+    expect(el).toHaveAttribute('data-fading-start', 'false');
+    expect(el).toHaveAttribute('data-fading-end', 'true');
+    // `isFading` is the old, single-edge name kept as an alias of `isFadingEnd`
+    // so the DataGrid scroller (and anything else already reading it) keeps working.
+    expect(el).toHaveAttribute('data-fading', 'true');
+  });
+
+  it('fades both edges once scrolled past the start and short of the end', () => {
+    const { getByTestId } = render(<Harness />);
+    const el = getByTestId('scroller');
+
+    setMetrics(el, { scrollWidth: 1200, clientWidth: 375, scrollLeft: 400 });
+    act(() => {
+      fireEvent.scroll(el);
+    });
+
+    expect(el).toHaveAttribute('data-fading-start', 'true');
+    expect(el).toHaveAttribute('data-fading-end', 'true');
+  });
+
+  it('fades only the start once scrolled all the way to the end', () => {
+    const { getByTestId } = render(<Harness />);
+    const el = getByTestId('scroller');
+
+    setMetrics(el, { scrollWidth: 1200, clientWidth: 375, scrollLeft: 825 });
+    act(() => {
+      fireEvent.scroll(el);
+    });
+
+    expect(el).toHaveAttribute('data-fading-start', 'true');
+    expect(el).toHaveAttribute('data-fading-end', 'false');
+    expect(el).toHaveAttribute('data-fading', 'false');
+  });
+
+  it('fades neither edge when the content fits', () => {
+    const { getByTestId } = render(<Harness />);
+    const el = getByTestId('scroller');
+
+    expect(el).toHaveAttribute('data-fading-start', 'false');
+    expect(el).toHaveAttribute('data-fading-end', 'false');
   });
 });

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
+import type { ColumnDef } from '@tanstack/react-table';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
@@ -24,7 +25,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useQueryClient } from '@tanstack/react-query';
 import { LoaderCircleIcon } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { formatDate } from '@/lib/helpers';
 import DetailActions from '@/components/common/DetailActions';
 import {
@@ -78,63 +80,85 @@ function LinkagesTable({
   items: LinkedEntityRef[];
   emptyMessage: string;
 }) {
-  if (items.length === 0) {
-    return <p className="text-sm text-muted-foreground">{emptyMessage}</p>;
-  }
-  return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Name</TableHead>
-          <TableHead>Description</TableHead>
-          <TableHead className="w-[80px]">Action</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {items.map((item) => {
+  const columns = useMemo<ColumnDef<LinkedEntityRef>[]>(
+    () => [
+      {
+        accessorKey: 'name',
+        header: ({ column }) => <DataGridColumnHeader title="Name" column={column} />,
+        cell: ({ row }) => {
           // Only a SHARED attachment's rows carry a company (R3, S5): a
           // single-company attachment's items have no company_name and render
           // exactly as before, no badges anywhere in the row.
-          const outOfScope = item.in_scope === false;
+          const outOfScope = row.original.in_scope === false;
           return (
-            <TableRow key={item.id}>
-              <TableCell className="font-medium">
-                <span className="inline-flex items-center gap-1.5">
-                  {outOfScope ? (
-                    <span className="text-muted-foreground">{item.name}</span>
-                  ) : (
-                    item.name
-                  )}
-                  {item.company_name && (
-                    <Badge appearance="light" size="sm">
-                      {item.company_name}
-                    </Badge>
-                  )}
-                </span>
-              </TableCell>
-              <TableCell className="text-muted-foreground max-w-md line-clamp-2" title={item.description ?? undefined}>
-                {item.description ?? '-'}
-              </TableCell>
-              <TableCell>
-                {outOfScope ? (
-                  <span className="text-xs text-muted-foreground">-</span>
-                ) : (
-                  <Link
-                    href={`${ENTITY_ROUTES[type].path}/${item.id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-primary hover:underline inline-flex items-center gap-1 text-sm"
-                  >
-                    View
-                    <ExternalLink className="size-3.5 shrink-0" />
-                  </Link>
-                )}
-              </TableCell>
-            </TableRow>
+            <span className="inline-flex items-center gap-1.5 font-medium">
+              {outOfScope ? (
+                <span className="text-muted-foreground">{row.original.name}</span>
+              ) : (
+                row.original.name
+              )}
+              {row.original.company_name && (
+                <Badge appearance="light" size="sm">
+                  {row.original.company_name}
+                </Badge>
+              )}
+            </span>
           );
-        })}
-      </TableBody>
-    </Table>
+        },
+        size: 240,
+        meta: { headerTitle: 'Name' },
+      },
+      {
+        id: 'description',
+        accessorFn: (row) => row.description ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Description" column={column} />,
+        cell: ({ row }) => (
+          <span
+            className="text-muted-foreground block max-w-md line-clamp-2"
+            title={row.original.description ?? undefined}
+          >
+            {row.original.description ?? '-'}
+          </span>
+        ),
+        size: 320,
+        meta: { headerTitle: 'Description' },
+      },
+      {
+        id: 'action',
+        header: () => <span className="sr-only">Action</span>,
+        cell: ({ row }) => {
+          const outOfScope = row.original.in_scope === false;
+          return outOfScope ? (
+            <span className="text-xs text-muted-foreground">-</span>
+          ) : (
+            <Link
+              href={`${ENTITY_ROUTES[type].path}/${row.original.id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-primary hover:underline inline-flex items-center gap-1 text-sm"
+              onClick={(e) => e.stopPropagation()}
+            >
+              View
+              <ExternalLink className="size-3.5 shrink-0" />
+            </Link>
+          );
+        },
+        size: 80,
+        enableResizing: false,
+        meta: { headerTitle: 'Action' },
+      },
+    ],
+    [type],
+  );
+
+  return (
+    <PanelDataGrid<LinkedEntityRef>
+      columns={columns}
+      rows={items}
+      getRowId={(row) => row.id}
+      listingKey={`resource.attachments.view::linkages-${type}`}
+      emptyTitle={emptyMessage}
+    />
   );
 }
 

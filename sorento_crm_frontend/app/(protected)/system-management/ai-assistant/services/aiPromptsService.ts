@@ -47,6 +47,7 @@
  * ============================================================================
  */
 import { apiFetch } from '@/lib/api';
+import type { ChatbotTurn } from '../../chat-history/types/chatbotTurn.types';
 import { extractApiError } from '@/lib/api-client';
 import {
   MOCK_PROMPT_KEYS,
@@ -138,9 +139,22 @@ export interface SetLabelResponse {
   labels: { production: number | null; staging: number | null };
 }
 
+/**
+ * The two prompt keys whose Test action runs a dry-run CHATBOT TURN instead of an
+ * assistant chat turn (AC-807). Neither is an assistant-pipeline node, so the chat dry
+ * run answered from prompts the operator did not edit; the turn is what exercises them.
+ * Declared once here because two places read it: the detail page (to keep the box
+ * enabled for a key the pipeline calls non-runnable) and the box itself (to render a
+ * turn instead of an assistant answer).
+ */
+export const CHATBOT_TURN_PROMPT_KEYS = ['chatbot_semantic_parser', 'chatbot_clarifier'];
+
 export interface DryRunPayload {
   message: string;
   version_id: string;
+  /** Required for the two chatbot keys: the turn reads this contact's access level and
+   *  remembered state. Ignored by every other key. */
+  contact_respond_id?: string;
 }
 
 export interface DryRunResponse {
@@ -148,6 +162,16 @@ export interface DryRunResponse {
   token_usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
   tool_calls: { name: string; ok: boolean }[];
   used_overrides: Record<string, string>;
+  // AC-807, chatbot keys only. The turn is a dry run: it writes `chatbot.turns` and
+  // nothing else. `turn` is the same row shape Chat History renders, so the result is
+  // shown with that screen's own `TurnPanel` rather than a second trace viewer.
+  turn_id?: string;
+  status?: string | null;
+  branch_kind?: string | null;
+  stage?: string | null;
+  error?: string | null;
+  trace?: unknown[];
+  turn?: ChatbotTurn | null;
 }
 
 const BASE = '/api/v1/system/ai-assistant/prompts';

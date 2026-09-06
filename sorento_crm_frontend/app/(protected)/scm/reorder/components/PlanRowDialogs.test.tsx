@@ -259,6 +259,23 @@ describe('PlanRowDialog - project / retail demand (F2, F3)', () => {
     const historyFooter = screen.getByText('Total').closest('tr') as HTMLElement;
     expect(within(historyFooter).getByText('5')).toBeInTheDocument();
   });
+
+  /**
+   * M5 evidence run 1, B2: this file's own local `DrillTable` (not `PlanRowDialog.tsx`'s) is
+   * only ever rendered inside `PlanRowDialog`'s `DialogBody` (`overflow-y-auto`), so its ONE
+   * definition hardcodes `scrollerMaxHeight: false` rather than exposing a pass-through
+   * (890ac2622). This pins that it reaches the rendered scroller.
+   */
+  it('DrillTable inside it carries no bounding max-h- on its own scroller (B2)', () => {
+    useRecommendationDemand.mockImplementation((_r, _id, _en, _ch, scope) =>
+      scope === 'product' ? { data: historyData, isLoading: false } : { data: openData, isLoading: false },
+    );
+    renderDialog('project', line());
+
+    const scroller = document.querySelector('[data-slot="data-grid-scroller"]');
+    expect(scroller).not.toBeNull();
+    expect(scroller!.className).not.toMatch(/\bmax-h-/);
+  });
 });
 
 describe('PlanRowDialog - On hand (F4)', () => {

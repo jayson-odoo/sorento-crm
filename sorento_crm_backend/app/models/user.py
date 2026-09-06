@@ -526,6 +526,15 @@ class SystemSetting(Base):
     # have been dead by typo since they were written (0/150 live fixtures). Turning them
     # on is therefore a DATA change with a test, not a surprise on deploy. Default off.
     chatbot_stock_denial_enabled = Column(Boolean, nullable=False, server_default="false", default=False)
+    # AC-304 (D5): the ONE list the owner has actually changed, so it is a column and not
+    # a table. `not_supported` is decided against this instead of the two literals the JS
+    # carries, and the default IS those two literals.
+    chatbot_unsupported_domains = Column(
+        JSONB,
+        nullable=False,
+        server_default='["goods_receive", "spo_allocation"]',
+        default=lambda: ["goods_receive", "spo_allocation"],
+    )
     # Which lanes the CRM is allowed to FINISH, by `branch_kind`, one at a time.
     #
     # `contracts.CRM_COMPLETED_BRANCH_KINDS` says what the code CAN complete; this says
@@ -540,6 +549,24 @@ class SystemSetting(Base):
     # is ignored with a warning rather than raising, because this is operator data and a
     # typo must not take the turn engine down.
     chatbot_completed_lanes = Column(JSONB, nullable=False, server_default="[]", default=list)
+    # AC-810: the two switches that used to be `.env` flags. They are here rather than in
+    # `app/config.py` because the owner turns them on and off while watching live turns,
+    # and an environment variable makes that a deploy. Read per turn by the engine.
+    #
+    # `chatbot_business_lane_enabled` says the ported business lane (resolve + gate, S6a)
+    # may RUN; `chatbot_completed_lanes` says its arms may ANSWER. Both are required, and
+    # they stay independent so deploy, compare, switch on and cut n8n remain four
+    # separately reversible steps.
+    chatbot_business_lane_enabled = Column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
+    # S7 mode: the CRM orders turns per contact AND owns the tail, so `/chat/turn` returns
+    # the finished reply and `/turn/{id}/complete` answers 410 Gone. Its precondition is
+    # that every lane in `chatbot_completed_lanes` is one this build can complete, which is
+    # why the settings screen confirms before turning it on.
+    chatbot_ordering_enabled = Column(
+        Boolean, nullable=False, server_default="false", default=False
+    )
 
 
 class UserQuickAccess(Base):
