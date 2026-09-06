@@ -42,6 +42,16 @@ to be inferred from the code:
 A new offer this turn always wins, whatever the domains say: the roster on the
 customer's screen is the one this turn just rendered, and carrying the previous one back
 over it arms the session against a list nobody can see (H29).
+
+**One older reader of "did the domain change?" is deliberately NOT folded in here.** The
+did-you-mean lifecycle (`tail/compile_state.py`, rule 2 of the eight) compares this turn's
+domain against `dym_offer.domain` - the domain the OFFER itself recorded - rather than
+against the previous turn's. That is a different question with a different answer (an
+offer can outlive the turn that made it, and then a domain the session moved on from is
+still the offer's own), it is a faithful port of the n8n rule, and its eight-rule order is
+graded against captures. Rewriting it to call this function would be a behaviour change
+smuggled in as a tidy-up. If a future ruling makes the two one question, that is the point
+to fold them, and this paragraph is the note saying where the other copy lives.
 """
 from __future__ import annotations
 

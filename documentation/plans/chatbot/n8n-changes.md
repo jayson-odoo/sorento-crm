@@ -1286,7 +1286,7 @@ port, these are the four hunks that must ride with them.
 | --- | --- | --- |
 | `compile-current-state` | recomputes `selection_context` / `last_result_set` from THIS turn's outcome only, so both reset to `null` / the answer's own rows whenever the turn builds no offer of its own | `tail/compile_state.py::_offer_carry` carries the previous label and roster forward on exactly those turns. A new offer this turn still replaces it, a domain change still clears it, and `member_offer` carries only while the escalation offer is unanswered |
 | `route-turn` | `is_offer_hold`'s last condition is `routing_roster_plan.length > 1`, so an out-of-range digit against a single-company roster falls through to `low_signal` | a live `last_result_set` under `selection_context: member_offer` is enough to reach `offer_hold`, so the roster is reprompted |
-| `output_exchange` (member-offer arm) | a reply carrying a date window or an entity reaches "Tier 4 - junk" and is reprompted as a bad pick, or "Tier 3 - new query" and abandons the offer | a FILTER MODIFICATION arm runs first: the window and the entity are kept, the carried domain is inherited, nothing is reprompted, and the offer stays pending |
+| `output_exchange` (member-offer arm) | a reply carrying a date window or an entity reaches "Tier 4 - junk" and is reprompted as a bad pick, or "Tier 3 - new query" and abandons the offer | a FILTER MODIFICATION arm runs first, for a date window in any domain or an entity that is a filter axis of the carried domain with no new intent: the window and the entity are kept, the carried domain is inherited, nothing is reprompted, and the offer stays pending. A new intent or a new subject type still abandons it |
 | `output_exchange` (domain continuity) | blocks the domain carry on the model's own hint (`domain_inherit_blocked`) | a bare single-entity turn inherits the carried business domain and the entity is TYPED by it; the resolver decides, and `disallowed-entity-gate` is the guard |
 
 The last row is a divergence from the LIVE parser body in a second sense worth recording:
@@ -1299,8 +1299,8 @@ without RETYPING the entity. The retype is the owner's own addition.
 
 Every capture the ruling moves is registered in `tests/chatbot/divergences.py`, field
 scoped, so the rest of each capture is still graded byte for byte: 13
-`compile-current-state` (rule 1), 4 `output_exchange` (rule 4), 2 `output_exchange`
-(rule 2), and one blanket entry for the three diagnostic keys the port ADDS. 19 world
+`compile-current-state` (rule 1), 3 `output_exchange` (rule 4), 2 `output_exchange`
+(rule 2), and one blanket entry for the three diagnostic keys the port ADDS. 16 world
 replays skip by NAME through `worlds.body_difference`. Behaviour is pinned by
 `test_tail_units.py`, `test_output_exchange_rules.py`, `test_route_unit.py`,
 `test_resolve_gate_unit.py` and `test_topic_unit.py`.

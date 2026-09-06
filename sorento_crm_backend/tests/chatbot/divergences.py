@@ -188,14 +188,22 @@ DIVERGENCES: list[Divergence] = [
     # ------------------------------------------------------------------ #
     # OWNER RULING K, rule 4 (6 Sep 2026): a BARE entity turn is typed by the
     # carried domain, not by the model's guess at the token's shape. Four
-    # captures show the old typing. The retype only changes which type the
-    # resolver tries FIRST - `resolve_entity_body` sends
+    # captures show the old typing, and all THREE are one class: a
+    # product-shaped code under a carried `order` thread, retyped `customer`
+    # (`srtwc286`, `CSK11A`, `ib2700ss rta`). The retype only changes which type
+    # the resolver tries FIRST - `resolve_entity_body` sends
     # `fallback_to_all_types: true`, which is the "the resolver then decides"
-    # half of the ruling - so no answer is closed off by it. The measured cost
-    # is named rather than hidden: on `parser-15101983` a product-shaped code
-    # (CSK11A) under a carried `order` thread is now offered to the resolver as
-    # a customer first, and reaches it unfolded because the separator fold in
-    # `_token_of` is product-hint-only.
+    # half of the ruling - so no answer is closed off by it. The cost is named
+    # rather than hidden: those three reach the resolver as customers first, and
+    # unfolded, because the separator fold in `_token_of` is product-hint-only.
+    #
+    # A FOURTH capture was registered here on the first pass and is now graded
+    # again: `parser-15129616` is a positional pick ("17" against a numbered
+    # list of orders) that qualified as bare only because the fork's token test
+    # asks whether the raw CONTAINS the token, and "17" is inside `M2609-0173`.
+    # It was a defect wearing a ruling's clothes. `_message_is_only_these_entities`
+    # now matches by equality against the raw's own tokens and an entity carrying
+    # an `ordinal` is never bare, so the capture is byte-equal.
     #
     # This is a deliberate divergence from the LIVE parser body: the hunk it
     # comes from (`_bareEntityTurn`) exists only on the unpromoted
@@ -223,7 +231,6 @@ DIVERGENCES: list[Divergence] = [
             "s57-ok-parser",
             "parser-15101983",
             "parser-15115339",
-            "parser-15129616",
         )
     ),
     # OWNER RULING K, rule 2 (6 Sep 2026): carried entities die on a topic
@@ -267,7 +274,12 @@ DIVERGENCES: list[Divergence] = [
             "`member_offer_filter_modification`, `bare_entity_retyped` and "
             "`entities_dropped_on_topic_change` are diagnostics the port emits and n8n "
             "has no equivalent of. Field-scoped: the rest of every capture still grades, "
-            "and the behaviour behind each key is pinned by its own unit test."
+            "and the behaviour behind each key is pinned by its own unit test. Only the "
+            "first is reached by the corpus today (3 captures, all of them turns where "
+            "the filter arm and n8n's Tier 3 both touch nothing, so the key is the whole "
+            "difference); the other two are listed with it because they are the same "
+            "class - a key no capture can contain - and a capture that reached one would "
+            "otherwise fail on a diagnostic rather than on behaviour."
         ),
         strip_paths=(
             ("output", "member_offer_filter_modification"),

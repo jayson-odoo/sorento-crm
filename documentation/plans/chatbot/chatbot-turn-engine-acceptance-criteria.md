@@ -1133,11 +1133,19 @@ contact inside the synchronous request. Different contacts run in parallel.
      is legal in the new domain and still belongs to the old subject.
      Evidence: `tests/chatbot/test_output_exchange_rules.py`, two registered captures.
   3. **A pending offer never captures non-pick text.** Given a pending member offer, when
-     the reply carries a genuine FILTER - a date window or an entity - then it is a
-     modification of the question the offer was made about: the window and the entity are
-     kept, the carried domain is inherited, no `member_reprompt` is stamped, no
-     `correction` is set, and the offer stays pending for the tail to carry. When the reply
-     is instead a genuinely out-of-range digit, then the roster is reprompted and kept -
+     the reply carries a genuine FILTER then it is a modification of the question the offer
+     was made about: the window and the entity are kept, the carried domain is inherited,
+     no `member_reprompt` is stamped, no `correction` is set, and the offer stays pending
+     for the tail to carry. "A filter" is NARROW, because "any entity at all" would swallow
+     a genuinely new question asked in the same domain and leave the offer armed behind it:
+     a date window counts in any domain, and an entity counts only when the customer named
+     no new intent AND every entity they typed is a filter axis of the CARRIED domain
+     (`MEMBER_OFFER_FILTER_HINTS` - customer/product for order, product for inventory, the
+     two the owner ruled; a domain with no row takes only the date half, and the trigger
+     for a third row is a measured turn read as a new query there). A new intent, or an
+     entity type that is the new subject rather than a filter on the old one, is a new
+     query and abandons the offer. When the reply is instead a genuinely out-of-range
+     digit, then the roster is reprompted and kept -
      `route.decide` reaches `offer_hold` on an ordinary SINGLE-company roster too, never
      `low_signal`, which is what handed the customer a clarifier in place of the list they
      were answering. Evidence: `tests/chatbot/test_output_exchange_rules.py` (the date case
@@ -1145,7 +1153,8 @@ contact inside the synchronous request. Different contacts run in parallel.
      entity survived, the domain is kept - rather than on the absence of a reprompt, which
      passed for the wrong reason) and `test_route_unit.py`.
   4. **A bare entity inherits the carried business domain.** Given a carried business
-     domain and a turn that is nothing but ONE entity, with the model naming neither a
+     domain and a turn that is nothing but ONE entity - no `ordinal` on it, because a
+     positional pick names a ROW and is never bare - with the model naming neither a
      domain nor an intent, when the turn is post-processed, then the domain is inherited
      and the entity is TYPED by it - `product` for inventory / incoming / promotion,
      `customer` for order - with no `domain_inherit_blocked` stamped, whatever the model
@@ -1154,6 +1163,10 @@ contact inside the synchronous request. Different contacts run in parallel.
      parser's hint. A domain with no bare-entity type does not take the rule: inheriting
      there would let the blocklist drop the entity outright, which is worse than not
      inheriting, and the trigger for a fifth row is a measured turn of that shape.
+     "Nothing but that entity" is decided by EQUALITY against the raw's own tokens (plus
+     its fully joined form, so a customer who typed `srtwc286` still matches a raw the
+     parser echoed as `SRTWC-286`), never by containment: the fork asks whether the raw
+     `includes` the token and a short numeric token is inside almost any code.
      Evidence: `tests/chatbot/test_output_exchange_rules.py` (the inventory and order
      cases) and `test_resolve_gate_unit.py::TestBareEntityInheritanceIsBlockedAtResolveTime`
      (both sides of the resolve-time guard).
@@ -1162,6 +1175,8 @@ contact inside the synchronous request. Different contacts run in parallel.
   the hunk it descends from (`_bareEntityTurn`) exists only on the unpromoted
   `sub-semantic-parser-FORK`, and even there it does not RETYPE. Every capture the four
   rules move is registered in `tests/chatbot/divergences.py` field-scoped, so the rest of
-  each capture is still graded byte for byte, and 19 world replays skip by NAME through
-  `worlds.body_difference` rather than failing. Full chatbot suite green: 3561 passed,
-  131 skipped, 5 xfailed. (H60, H61)
+  each capture is still graded byte for byte - 13 `compile-current-state` (rule 1), 3
+  `output_exchange` (rule 4), 2 `output_exchange` (rule 2) and one blanket entry for the
+  three diagnostic keys the port adds - and 16 world replays skip by NAME through
+  `worlds.body_difference` rather than failing. Full chatbot suite green: 3564 passed,
+  128 skipped, 5 xfailed. (H60, H61)

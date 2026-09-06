@@ -580,6 +580,7 @@ def body_difference(
     if (
         actual_variables.get("selection_context")
         and not world.expected_variables.get("selection_context")
+        and actual_variables.get("selection_context") == prev_variables.get("selection_context")
         and actual_variables.get("last_result_set") == prev_variables.get("last_result_set")
     ):
         return (
@@ -587,7 +588,9 @@ def body_difference(
             "customer's screen now survives a turn that builds no offer of its own, so "
             "'1', then '2', then '3' answer against the same list. This capture records "
             "the old lifetime - the roster cleared the moment the turn had no offer of "
-            "its own - and the port re-seats exactly the list the session already held. "
+            "its own - and the port re-seats exactly the LABEL AND THE LIST the session "
+            "already held, which is what keys this skip: anything else the port persisted "
+            "here would be a defect, not the ruling. "
             "The node-level half is registered in tests/chatbot/divergences.py and the "
             "rule is pinned by tests/chatbot/test_tail_units.py"
         )
