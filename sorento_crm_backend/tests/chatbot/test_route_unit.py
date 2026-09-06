@@ -173,6 +173,36 @@ class TestTierRePick:
         assert stamp == {}
 
 
+class TestOutOfRangeMemberPickReprompsInsteadOfLowSignal:
+    def test_a_bare_out_of_range_digit_against_a_single_company_roster_is_not_low_signal(
+        self,
+    ) -> None:
+        qf = {
+            "message_type": "casual",
+            "domain_hint": None,
+            "member_pick_context": True,
+            "escalation": {"is_escalation_confirmation": False, "member_reprompt": "out_of_range"},
+        }
+        ctx = _ctx(
+            qf,
+            custom_fields=[],
+            text="9",
+            variables={
+                "selection_context": "member_offer",
+                "last_result_set": [
+                    {"idx": i, "label": f"Member {i}", "uuid": f"u{i}"} for i in range(1, 7)
+                ],
+                # Deliberately NO routing_roster_plan: this is a single-company CS-member
+                # roster, not a multi-company unpicked continuation.
+            },
+        )
+        branch, _ = decide(ctx)
+        assert branch != "low_signal", (
+            "an out-of-range member pick against a real 6-member roster must reprompt, "
+            f"never read as a content-free casual message; got {branch!r}"
+        )
+
+
 # --------------------------------------------------------------------------- #
 # Owner console defect C (item 6): `wants_escalation_or_help()` (route.py:78-83) fires on
 # `message_type == 'request_for_help'` (unless `domain_hint == 'portal_link'`) ONE ARM

@@ -29,7 +29,7 @@ import json
 import re
 from typing import Any
 
-from app.services.chatbot import jsc
+from app.services.chatbot import jsc, topic
 from app.services.chatbot.contracts import ENTITY_HINTS, INTENT_HINTS
 
 
@@ -347,6 +347,43 @@ DOMAIN_BLOCKED_HINTS: dict[str, list[str]] = {
     "spo_allocation": ["forms", "form", "product", "attachment", "promotion", "customer", "transporter", "order", "customer_order", "order_number", "spo", "grn", "goods_receive", "inbound_shipment", "access_levels", "category", "brand", "attachment_type", "flyer"],
 }
 
+# OWNER RULING K, rule 3 (2026-09-06): which entity types are a FILTER on a carried
+# domain, as opposed to a new subject. Read only under a PENDING member offer, to tell a
+# customer narrowing the question the offer was made about ("rpacc", "hing seng") from one
+# asking a different question entirely - the first leaves the offer on the table, the
+# second abandons it.
+#
+# Named sets, not derived from `AXIS_BY_DOMAIN`: that map sends customer, transporter AND
+# product to `order_scope` under the order domain, so "is this the subject or a filter?"
+# cannot be answered from it at all. Two rows, the two the owner ruled. A domain with no
+# row takes only the DATE half of the rule; the trigger for a third row is a measured turn
+# where an entity reply to a pending offer in that domain is read as a new query.
+MEMBER_OFFER_FILTER_HINTS: dict[str, frozenset[str]] = {
+    "order": frozenset({"customer", "product"}),
+    "inventory": frozenset({"product"}),
+}
+
+# OWNER RULING K, rule 4 (2026-09-06): what a BARE entity IS, under a carried domain.
+# A turn that is nothing but a code or a name carries no evidence of its own type - the
+# model guesses the hint from the token's SHAPE, and it guesses wrong often enough that
+# blocking the domain carry on it surfaced a genuine product code as an ambiguous
+# "did you mean the customer?" (turn a8472efe: "rpacc" under a carried inventory thread,
+# hinted `customer`). The DOMAIN the customer is already in is the better evidence, so the
+# entity is TYPED BY IT and the RESOLVER gets to decide - `disallowed-entity-gate` already
+# refuses a token that comes back as an incompatible type, which is the guard that belongs
+# at resolve time rather than at parse time.
+#
+# Four domains, the four the owner ruled, and NO entry means the rule does not apply: a
+# domain with no bare-entity type would inherit and then have the blocklist drop the
+# entity entirely, which is worse than not inheriting. The trigger for a fifth row is a
+# measured turn where a bare token under that domain is mis-hinted - add the row then.
+BARE_ENTITY_TYPE_BY_DOMAIN: dict[str, str] = {
+    "inventory": "product",
+    "incoming": "product",
+    "promotion": "product",
+    "order": "customer",
+}
+
 # Broaden-only blocked: hints that NARROW the result and therefore contradict an
 # "all / everything" request. Brand/access stay - they are context, not a subset filter.
 DOMAIN_BROADEN_BLOCKED_HINTS: dict[str, list[str]] = {
@@ -533,6 +570,41 @@ _DASHES = re.compile("[‐-―−﹘﹣－]")
 def _split_reply_to(message: Any) -> str:
     """`String(m ?? '').split(/\\s*reply to:/i)[0]` - strip the quoted tail n8n appends."""
     return _REPLY_TO_SPLIT.split(jsc.nullish_str(message))[0]
+
+
+def _message_is_only_these_entities(message: Any, entities: list) -> bool:
+    """True when every content token the customer typed IS one of `entities`.
+
+    The n8n fork's own `_bareEntityTurn` (sub-semantic-parser-FORK, exec 13687305), which
+    never got promoted to the live parser and is registered as a divergence. It is what
+    separates a naked "rpacc" from "delivery for rpacc": both carry one entity, only the
+    first carries no other evidence of what the customer is asking, and only the first
+    may therefore be typed by the carried domain.
+
+    **Matched by EQUALITY against the raw's own tokens, never by containment.** The fork
+    asks whether the raw `includes` the token, and a short numeric token is inside almost
+    any code: on capture `parser-15129616` the customer typed "17" to pick item 17 off a
+    numbered list, "17" is a substring of the resolved order `M2609-0173`, and the turn
+    qualified as bare - so the order was retyped `customer` under the carried order
+    domain and the pick was answered as a customer lookup. The raw's fully JOINED form is
+    a candidate alongside its tokens, which is what still lets a customer who typed
+    "srtwc286" match a raw the parser echoed as "SRTWC-286".
+    """
+    msg = _split_reply_to(message).lower()
+    tokens = [t for t in _TOKEN_RE.findall(msg) if t not in SWITCH_FILLER]
+    if not tokens:
+        return False
+    candidates: set[str] = set()
+    for e in entities:
+        raw = jsc.nullish_str(jsc.get(e, "raw")).lower()
+        parts = _TOKEN_RE.findall(raw)
+        if not parts:
+            continue
+        candidates.update(parts)
+        candidates.add("".join(parts))
+    if not candidates:
+        return False
+    return all(t in candidates for t in tokens)
 
 
 def _ce_norm(value: Any) -> str:
@@ -963,6 +1035,13 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # -- REVISION 4: intent-only effective domain signal --------------------------------- #
     explicit = o.get("intent_hint") in DECISIVE_INTENTS and jsc.truthy(o.get("domain_hint"))
     o["domain_signal_source"] = "intent_explicit" if explicit else "intent_none"
+    # WHERE THIS IS COMPUTED IS LOAD-BEARING, not incidental. It reads the model's OWN
+    # emission, before the continuity block (and rule 4's bare-entity inheritance) can
+    # overwrite `domain_hint` with the carried one. The topic-change pass near the end of
+    # this function reads it back for exactly that reason: an INHERITED domain is never
+    # "the customer named a different domain", so recomputing `explicit` down there - on a
+    # `domain_hint` the carry has just rewritten - would let a bare continuation drop the
+    # very scope it is continuing.
 
     # -- #6: deterministic domain-SWITCH word signal (this-turn-only) -------------------- #
     # A bare/dominant domain word in the CURRENT message must SWITCH domain, not let the
@@ -1547,8 +1626,29 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
                 if jsc.truthy(e) and jsc.get(e, "current_message") is True
             ]
             if jsc.truthy(prev_dom) and len(cur_ents) > 0:
+                # OWNER RULING K, rule 4: a BARE entity turn is typed by the carried
+                # domain, not by the model's guess at the token's shape. Narrow on
+                # purpose - ONE current entity, the model named neither a domain nor an
+                # intent, and the message is nothing but that entity - because those are
+                # the turns that carry no type evidence of their own. Anything wider is a
+                # real query and keeps the hint-based check below.
+                bare_type = BARE_ENTITY_TYPE_BY_DOMAIN.get(jsc.js_string(prev_dom))
+                bare_entity_turn = (
+                    bare_type is not None
+                    and len(cur_ents) == 1
+                    # A PICK IS NEVER BARE. An entity carrying an `ordinal` was produced
+                    # by a positional reply against a numbered list, so the customer named
+                    # a ROW, not an entity, and the row already knows what type it is
+                    # (capture parser-15129616: "17" against a list of orders).
+                    and not any(jsc.get(e, "ordinal") is not None for e in cur_ents)
+                    and not jsc.truthy(jsc.get(parser_raw_snapshot, "domain_hint"))
+                    and not jsc.truthy(jsc.get(parser_raw_snapshot, "intent_hint"))
+                    and _message_is_only_these_entities(
+                        parent_input.get("latest_user_message"), cur_ents
+                    )
+                )
                 blocked_for_prev = set(DOMAIN_BLOCKED_HINTS.get(prev_dom, []))
-                compatible = all(
+                compatible = bare_entity_turn or all(
                     jsc.lower_or_empty(jsc.get(e, "hint")) not in blocked_for_prev for e in cur_ents
                 )
                 if compatible:
@@ -1560,6 +1660,19 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
                         else (o.get("intent_hint") if jsc.truthy(o.get("intent_hint")) else None)
                     )
                     o["domain_inherited_compatible"] = True
+                    if bare_entity_turn:
+                        # RETYPE, in place: `cur_ents` holds the same dicts `o.entities`
+                        # does, so the blocklist below, the axis map and the resolver all
+                        # see the domain's own type rather than the guessed one. Stamped
+                        # only when the type actually MOVED - a diagnostic that fires on
+                        # every turn it agrees with says nothing about the ones it changed.
+                        retyped = False
+                        for e in cur_ents:
+                            if jsc.lower_or_empty(jsc.get(e, "hint")) != bare_type:
+                                e["hint"] = bare_type
+                                retyped = True
+                        if retyped:
+                            o["bare_entity_retyped"] = bare_type  # diagnostic
                 else:
                     o["domain_inherit_blocked"] = prev_dom  # topic switch, kept current
 
@@ -1693,6 +1806,53 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             o["entities_emptied_by_filter"] = before > 0 and after == 0
             if dropped:
                 o["broaden_dropped"] = dropped
+
+    # -- OWNER RULING K, rule 2: CARRIED ENTITIES DIE ON A TOPIC CHANGE ------------------- #
+    # The entity-op executor keeps every prior entity whose axis this turn did not name,
+    # which is right within one subject and wrong across two: a customer named on an order
+    # turn kept scoping the promotion question that followed it, because nothing had ever
+    # asked whether the subject was still the same one (H66).
+    #
+    # Placed AFTER the blocklist rather than inside the executor, deliberately. The
+    # blocklist already removes a carried entity whose HINT cannot belong to the new
+    # domain, and pre-empting it would only move that same removal one step earlier while
+    # rewriting the diagnostics that describe it (measured: 13 captures changed nothing
+    # but those diagnostics). What is left for this pass is exactly what the blocklist
+    # cannot see: an entity whose hint is perfectly legal in the new domain and which
+    # nevertheless belongs to the old subject. The domain is also FINAL here - after the
+    # continuity carry and the #6 switch - so no reader has to know whether it was the
+    # model's guess or the carried one.
+    #
+    # THREE conditions, and each one is load-bearing:
+    #
+    # * `explicit` - a DECISIVE intent plus a domain, so this is the customer's own domain
+    #   and not the model's guess at a bare token's shape. A guessed domain reads as a
+    #   change on exactly the turns that are not one (the naked code after a customer
+    #   pick, fork exec 13687305) and dropping the pick there answered for a customer
+    #   nobody had mentioned.
+    # * a this-turn entity - the new question brings its own scope. A turn that names no
+    #   entity has the carry as its ONLY scope ("stock?" after a promo for a product), and
+    #   clearing it turns a continuation into "which product?".
+    # * `topic.changed` - the SAME definition the tail's offer carry uses. A turn that
+    #   names no domain, or the same one, is a continuation.
+    #
+    # `new_offer` is False here because the head cannot see one: offers are built in the
+    # tail, and the tail applies that half of the rule itself.
+    if not jsc.truthy(o.get("is_menu_label")) and jsc.is_array(o.get("entities")):
+        tc_current = [e for e in o["entities"] if jsc.truthy(e) and not ce_is_carried(e)]
+        if (
+            explicit
+            and len(tc_current) > 0
+            and topic.changed(prev_state_domain, o.get("domain_hint"))
+        ):
+            tc_dropped = [
+                f"{jsc.get(e, 'hint')}:{jsc.get(e, 'raw')}"
+                for e in o["entities"]
+                if jsc.truthy(e) and ce_is_carried(e)
+            ]
+            if tc_dropped:
+                o["entities"] = tc_current
+                o["entities_dropped_on_topic_change"] = tc_dropped  # diagnostic
 
     prior_routing = jsc.get(parent_input.get("previous_conversation_state"), "routing")
     if prior_routing is None:
@@ -2063,6 +2223,40 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             or o.get("is_affirmative") is True
             or o.get("is_affirmative") is False
         )
+        # A reply that carries a FILTER is a modification of the question the offer was
+        # made about, never an out-of-range pick. NARROW on purpose: "any entity at all"
+        # would swallow a genuinely new question asked in the same domain and leave the
+        # offer armed behind it.
+        #
+        # A date window counts in ANY domain - it is an axis of the question whatever the
+        # question is. An ENTITY counts only when the customer named no new intent AND
+        # every entity they typed is a filter axis of the CARRIED domain
+        # (`MEMBER_OFFER_FILTER_HINTS`). A new intent, or an entity type that is the new
+        # subject rather than a filter on the old one, is a new query and takes the arm
+        # below. The intent is read off the model's own emission, not off `o`, because
+        # rule 4's inheritance may already have copied the carried one in.
+        prior_state = parent_input.get("previous_conversation_state") or {}
+        prior_domain = jsc.get(prior_state, "domain_hint")
+        prior_intent = jsc.get(prior_state, "intent_hint")
+        fm_dates = (
+            jsc.truthy(o.get("date_filter_start"))
+            or jsc.truthy(o.get("date_filter_end"))
+            or jsc.truthy(o.get("date_mode"))
+        )
+        fm_cur_ents = [
+            e
+            for e in jsc.array(o.get("entities"))
+            if jsc.truthy(e) and jsc.get(e, "current_message") is True
+        ]
+        fm_llm_intent = jsc.get(parser_raw_snapshot, "intent_hint")
+        fm_new_intent = jsc.truthy(fm_llm_intent) and fm_llm_intent != prior_intent
+        fm_axes = MEMBER_OFFER_FILTER_HINTS.get(jsc.js_string(prior_domain), frozenset())
+        fm_entities = (
+            len(fm_cur_ents) > 0
+            and not fm_new_intent
+            and all(jsc.lower_or_empty(jsc.get(e, "hint")) in fm_axes for e in fm_cur_ents)
+        )
+        has_filter_signal = fm_dates or fm_entities
 
         if req_help and jsc.truthy(llm_team_n) and llm_team_n != prior_team:
             # Tier 1 - RETARGET: the LLM named a DIFFERENT team mid-offer -> abandon the CS
@@ -2169,8 +2363,24 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             o["escalation"] = {"is_escalation_confirmation": True, "company_pick": co_pick_any}
             o["entities"] = []
             o["member_pick_context"] = True
+        elif has_filter_signal:
+            # Tier 3 - FILTER MODIFICATION (OWNER RULING K, rule 3, 2026-09-06).
+            # "last month" against a six-name roster carries a real date window and no
+            # pick signal whatever, and the ladder used to fall to Tier 4 and hand it
+            # back as "that is not one of the options". A reply that names a date window
+            # or an entity is the customer NARROWING the question the offer was made
+            # about, so the window and the entity are kept, the carried domain is
+            # inherited (this turn named none, and without it the date gate below drops
+            # the window it just kept), and NOTHING is reprompted. The offer stays
+            # pending: nothing here answers or declines it, so `_offer_carry` in the tail
+            # carries it to the next turn.
+            if not jsc.truthy(o.get("domain_hint")) and jsc.truthy(prior_domain):
+                o["domain_hint"] = prior_domain
+                if not jsc.truthy(o.get("intent_hint")) and jsc.truthy(prior_intent):
+                    o["intent_hint"] = prior_intent
+            o["member_offer_filter_modification"] = True  # diagnostic
         elif is_new_query:
-            # Tier 3 - NEW QUERY: abandon the offer. Touch nothing.
+            # Tier 3b - NEW QUERY: abandon the offer. Touch nothing.
             pass
         else:
             # Tier 4 - junk / no signal: reprompt the member list once.

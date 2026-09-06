@@ -275,6 +275,140 @@ class TestBornRosterWins:
 
 
 # --------------------------------------------------------------------------- #
+# Owner console defect K, rule 1 (owner ruling, 2026-09-06): "retain until the next
+# picker overwrites it; choosing 1, 2, 3 works sequentially until I change domain or ask
+# for another promotion; this is the old spine behaviour". `_picker_carry`'s own
+# docstring documents the OPPOSITE as a deliberate safety property today: "The member and
+# tier offers are never CARRIED... tier_offer is one round trip by decision D4" - this is
+# the owner explicitly REVERSING that decision for tier_offer (and, per the ruling's
+# text, promo/did-you-mean/member offers too - this class pins the TIER case, the
+# concrete example in the ruling's own scripted sequence: "any promotion for srtwc286" ->
+# tier menu offered -> "1" answers item 1 AND the patch still carries the list ->
+# eventually a domain change or a new offer clears/replaces it).
+#
+# Old-JS check (owner's own instruction): grep of
+# `/Users/tehjayson/Documents/foundryx/sorento_crm_n8n` `compile-current-state.js` for
+# `tier_offer`/`selection_context` shows the SAME `... || null` reset the Python port
+# reproduces here - the old spine did NOT carry `tier_offer` across a turn with no fresh
+# offer either. This is therefore a NEW rule the owner is asking for, not a port bug.
+# --------------------------------------------------------------------------- #
+
+
+class TestTierAndPromoOffersCarryUntilOverwritten:
+    TIER_MENU = [
+        {"idx": 1, "label": "Dealer"},
+        {"idx": 2, "label": "End User"},
+    ]
+
+    def _ctx_with_tier_offer(self, **qf_overrides):
+        ctx = _ctx(**qf_overrides)
+        ctx["session"] = {
+            "session_vars": {
+                "variables": {
+                    "selection_context": "tier_offer",
+                    "last_result_set": self.TIER_MENU,
+                }
+            }
+        }
+        return ctx
+
+    def test_a_bare_pick_with_no_new_offer_carries_the_tier_menu_forward(self) -> None:
+        """The customer's "1" names no domain and this turn builds no offer of its own -
+        the tier roster must still be there to resolve against, and to answer a
+        follow-up "2" against next."""
+        patch = _compile({"outcome": {}}, self._ctx_with_tier_offer(domain_hint=None))
+        variables = patch["variables"]
+        assert variables.get("selection_context") == "tier_offer", (
+            f"the carried tier offer must survive a no-new-offer turn: {variables!r}"
+        )
+        assert variables.get("last_result_set") == self.TIER_MENU
+
+    def test_a_domain_change_clears_the_carried_tier_offer(self) -> None:
+        """"until I change domain" - an explicit DIFFERENT domain ends the thread."""
+        patch = _compile({"outcome": {}}, self._ctx_with_tier_offer(domain_hint="inventory"))
+        variables = patch["variables"]
+        assert variables.get("selection_context") != "tier_offer", (
+            f"a domain change must end the tier thread: {variables!r}"
+        )
+        assert variables.get("last_result_set") != self.TIER_MENU
+
+    def test_a_new_tier_offer_this_turn_replaces_the_carried_one(self) -> None:
+        """"or ask for another promotion" - a FRESH offer this turn wins over the carry,
+        never merges with it."""
+        new_menu = [{"idx": 1, "label": "Wholesale"}]
+        outcome = {
+            "access-level-choice-message": {
+                "tier_offer": True,
+                "tier_last_result_set": new_menu,
+            }
+        }
+        patch = _compile({"outcome": outcome}, self._ctx_with_tier_offer(domain_hint="promotion"))
+        variables = patch["variables"]
+        assert variables.get("last_result_set") == new_menu, (
+            f"a fresh offer must replace the carried one, not merge with it: {variables!r}"
+        )
+
+
+class TestTheMemberOfferCarryStopsAtTheAnswer:
+    """Owner ruling K, rule 1's ONE safety condition (2026-09-06).
+
+    `_picker_carry`'s docstring excludes `member_offer` from any carry because re-seating
+    the arming pin invisibly lets a later bare "yes" assign a human to somebody who
+    already declined. The offer carry does not reopen that: it keeps `member_offer` only
+    while the escalation offer is still UNANSWERED, so a decline or an accepted assignment
+    ends it on the same turn.
+    """
+
+    ROSTER = [{"idx": i, "label": f"Member {i}", "uuid": f"u{i}"} for i in range(1, 7)]
+
+    def _ctx_with_open_offer(self, **qf_overrides):
+        ctx = _ctx(**qf_overrides)
+        ctx["session"] = {
+            "session_vars": {
+                "variables": {
+                    "selection_context": "member_offer",
+                    "last_result_set": self.ROSTER,
+                    "domain_hint": "order",
+                }
+            }
+        }
+        return ctx
+
+    def test_a_filter_reply_leaves_the_offer_pending(self) -> None:
+        """The tail half of rule 3: the customer narrowed the question instead of picking,
+        so the roster is still on their screen and the next "2" must resolve against it."""
+        patch = _compile({"outcome": {}}, self._ctx_with_open_offer(domain_hint="order"))
+        variables = patch["variables"]
+        assert variables["selection_context"] == "member_offer"
+        assert variables["last_result_set"] == self.ROSTER
+        pending = variables.get("pending") or {}
+        assert pending.get("kind") == "member_offer", (
+            f"the pending marker must describe the offer that is still open: {variables!r}"
+        )
+
+    def test_a_decline_ends_it(self) -> None:
+        ctx = self._ctx_with_open_offer(
+            domain_hint="order",
+            escalation={"is_escalation_confirmation": False, "escalation_declined": True},
+        )
+        variables = _compile({"outcome": {}}, ctx)["variables"]
+        assert variables["selection_context"] != "member_offer"
+        assert variables["last_result_set"] != self.ROSTER
+
+    def test_an_accepted_assignment_ends_it(self) -> None:
+        ctx = self._ctx_with_open_offer(
+            domain_hint="order",
+            escalation={"is_escalation_confirmation": True, "preferred_assignee_id": "u3"},
+        )
+        variables = _compile({"outcome": {}}, ctx)["variables"]
+        assert variables["selection_context"] != "member_offer"
+        assert variables["last_result_set"] != self.ROSTER
+
+    def test_a_domain_change_ends_it_too(self) -> None:
+        patch = _compile({"outcome": {}}, self._ctx_with_open_offer(domain_hint="inventory"))
+        assert patch["variables"]["selection_context"] != "member_offer"
+
+# --------------------------------------------------------------------------- #
 # AC-302: the canned copy, including the two arms with no vendored capture
 # --------------------------------------------------------------------------- #
 

@@ -48,6 +48,64 @@ DIVERGENCES: list[Divergence] = [
             "tests/chatbot/test_tail_units.py::TestBornRosterWins."
         ),
     ),
+    # ------------------------------------------------------------------ #
+    # OWNER RULING K, rule 1 (6 Sep 2026): an offer roster lives until the topic
+    # changes. Thirteen captures record the OLD lifetime, in which the ladder
+    # recomputed `selection_context` from THIS turn's outcome alone, so a turn
+    # that built no offer of its own wrote `null` plus the ANSWER's own rows -
+    # and the customer's second pick ("2" after "1") had nothing to resolve
+    # against. `_offer_carry` now keeps the previous label and roster on exactly
+    # those turns.
+    #
+    # This is the owner REVERSING a decision, not a port defect: the old n8n
+    # spine's own `compile-current-state.js` carries the same `... || null` reset
+    # the port reproduced, so no capture can show the new behaviour and every
+    # capture of the shape shows the old one. Pinned by
+    # test_tail_units.py::TestTierAndPromoOffersCarryUntilOverwritten and
+    # ::TestTheMemberOfferCarryStopsAtTheAnswer.
+    #
+    # FIELD-SCOPED, deliberately: only the two fields the rule moves come off,
+    # in both the sealed and the unwrapped shape, plus the `pending` marker the
+    # blanket H13/H14 entry below would otherwise have handled (a per-fixture
+    # entry wins the `find` lookup, so it has to carry that strip itself).
+    # Every other byte of these thirteen captures is still graded.
+    *(
+        Divergence(
+            node="compile-current-state",
+            fixture=name,
+            hazard="owner ruling K rule 1 (AC-816)",
+            reason=(
+                "the capture records the pre-ruling lifetime: the offer roster died the "
+                "moment a turn built no offer of its own, so a sequential pick had no "
+                "list to resolve against. Owner-ruled on 6 Sep 2026; the old spine's own "
+                "compile-current-state.js has the same reset, so this is a new rule, not "
+                "a port bug."
+            ),
+            strip_paths=(
+                ("reply", "session_patch", "variables", "selection_context"),
+                ("reply", "session_patch", "variables", "last_result_set"),
+                ("reply", "session_patch", "variables", "pending"),
+                ("variables", "selection_context"),
+                ("variables", "last_result_set"),
+                ("variables", "pending"),
+            ),
+        )
+        for name in (
+            "rs34-02-escalation",
+            "rs34-05-promopicker",
+            "rs51-02-promoattach",
+            "rs51-03-escalation",
+            "rs6-04-promopicker",
+            "rs6-05-escalation",
+            "s57-t1",
+            "s57-t2",
+            "exec-14001191",
+            "exec-14119800",
+            "exec-14123374",
+            "exec-14126915",
+            "out-15143898",
+        )
+    ),
     Divergence(
         node="compile-current-state",
         fixture=None,
@@ -163,6 +221,108 @@ DIVERGENCES: list[Divergence] = [
             ("dym_ambiguous_codes",),
             ("dym_ambiguous_uuids",),
             ("dym_probe_meta", "key_mode"),
+        ),
+    ),
+    # ------------------------------------------------------------------ #
+    # OWNER RULING K, rule 4 (6 Sep 2026): a BARE entity turn is typed by the
+    # carried domain, not by the model's guess at the token's shape. Four
+    # captures show the old typing, and all THREE are one class: a
+    # product-shaped code under a carried `order` thread, retyped `customer`
+    # (`srtwc286`, `CSK11A`, `ib2700ss rta`). The retype only changes which type
+    # the resolver tries FIRST - `resolve_entity_body` sends
+    # `fallback_to_all_types: true`, which is the "the resolver then decides"
+    # half of the ruling - so no answer is closed off by it. The cost is named
+    # rather than hidden: those three reach the resolver as customers first, and
+    # unfolded, because the separator fold in `_token_of` is product-hint-only.
+    #
+    # A FOURTH capture was registered here on the first pass and is now graded
+    # again: `parser-15129616` is a positional pick ("17" against a numbered
+    # list of orders) that qualified as bare only because the fork's token test
+    # asks whether the raw CONTAINS the token, and "17" is inside `M2609-0173`.
+    # It was a defect wearing a ruling's clothes. `_message_is_only_these_entities`
+    # now matches by equality against the raw's own tokens and an entity carrying
+    # an `ordinal` is never bare, so the capture is byte-equal.
+    #
+    # This is a deliberate divergence from the LIVE parser body: the hunk it
+    # comes from (`_bareEntityTurn`) exists only on the unpromoted
+    # `sub-semantic-parser-FORK`, and even there it does not RETYPE - the retype
+    # is the owner's addition. Pinned by
+    # test_output_exchange_rules.py::test_a_bare_entity_inherits_the_carried_domain_and_is_retyped_by_it
+    # and its `order` twin, with the resolve-time guard in
+    # test_resolve_gate_unit.py::TestBareEntityInheritanceIsBlockedAtResolveTime.
+    *(
+        Divergence(
+            node="output_exchange",
+            fixture=name,
+            hazard="owner ruling K rule 4 (AC-816)",
+            reason=(
+                "the capture records the model's own hint for a bare entity under a "
+                "carried business domain; the port types it by the domain and lets the "
+                "resolver decide. Field-scoped to the entity list."
+            ),
+            strip_paths=(
+                ("output", "entities"),
+                ("output", "bare_entity_retyped"),
+            ),
+        )
+        for name in (
+            "s57-ok-parser",
+            "parser-15101983",
+            "parser-15115339",
+        )
+    ),
+    # OWNER RULING K, rule 2 (6 Sep 2026): carried entities die on a topic
+    # change. TWO captures in the whole corpus change their entity list, and
+    # both are the shape the rule exists for - an explicit new query, in a
+    # different domain, bringing its own scope, with a carried entity from the
+    # old subject still narrowing it (`customer_order:M2609-0086` on an incoming
+    # question, `category:faucets for bath tub` on a stock question). Everything
+    # the domain blocklist already removed it still removes: this pass runs
+    # AFTER it and only sees what the blocklist cannot, which is why the other
+    # captures of the shape are byte-equal.
+    *(
+        Divergence(
+            node="output_exchange",
+            fixture=name,
+            hazard="owner ruling K rule 2 (AC-816)",
+            reason=(
+                "the capture keeps an entity carried from the previous subject into an "
+                "explicit new-domain query. Owner-ruled to die with the topic (H66). "
+                "Field-scoped to the entity list."
+            ),
+            strip_paths=(
+                ("output", "entities"),
+                ("output", "entities_dropped_on_topic_change"),
+            ),
+        )
+        for name in ("parser-15124806", "parser-15151771")
+    ),
+    # The three keys rules 2, 3 and 4 ADD to `output_exchange`'s emission. No
+    # capture can contain a key the node did not emit when it was taken, so this
+    # is the same class as the `pending` marker above and is handled the same
+    # way: FIELD-SCOPED and blanket, so every other byte of every
+    # `output_exchange` capture is still graded. Listed LAST on purpose - `find`
+    # returns the first matching entry, so the per-fixture entries above win for
+    # the captures whose behaviour genuinely moved.
+    Divergence(
+        node="output_exchange",
+        fixture=None,
+        hazard="owner ruling K rules 2/3/4 (AC-816) - added diagnostics",
+        reason=(
+            "`member_offer_filter_modification`, `bare_entity_retyped` and "
+            "`entities_dropped_on_topic_change` are diagnostics the port emits and n8n "
+            "has no equivalent of. Field-scoped: the rest of every capture still grades, "
+            "and the behaviour behind each key is pinned by its own unit test. Only the "
+            "first is reached by the corpus today (3 captures, all of them turns where "
+            "the filter arm and n8n's Tier 3 both touch nothing, so the key is the whole "
+            "difference); the other two are listed with it because they are the same "
+            "class - a key no capture can contain - and a capture that reached one would "
+            "otherwise fail on a diagnostic rather than on behaviour."
+        ),
+        strip_paths=(
+            ("output", "member_offer_filter_modification"),
+            ("output", "bare_entity_retyped"),
+            ("output", "entities_dropped_on_topic_change"),
         ),
     ),
 ]
