@@ -46,7 +46,6 @@ import {
   RIGHT,
   SpoTabs,
   TOTAL_LABEL,
-  monthLabel,
   type PlanDemandLineRow,
   type PlanHistoryPoint,
   type PlanRowDialogKind,
@@ -227,43 +226,6 @@ function BlocksTable({ row }: { row: ContainerRequestRow }) {
 interface OpenPlanRowDialog {
   kind: PlanRowDialogKind;
   row: ContainerRequestRow;
-  /** Set by the two peak cells, which open the channel dialog on its 12-month tab (AC-B6). */
-  onHistory?: boolean;
-}
-
-/**
- * A channel's biggest month in the last twelve, and a click into that series (AC-B6).
- *
- * Peak, not total, because the question the column answers is "how big does this product get
- * in a month". The dialog it opens is the channel's OWN - the same one the Project / Retail
- * figure opens - landed on its history tab, so the twelve months and the open orders behind
- * them are never two different lightboxes.
- */
-function PeakCell({
-  history,
-  loading,
-  kind,
-  onOpen,
-}: {
-  history: ContainerRequestHistoryProduct | undefined;
-  loading: boolean;
-  kind: 'project' | 'retail';
-  onOpen: () => void;
-}) {
-  if (loading && !history) {
-    return <Skeleton className="h-3 w-12" />;
-  }
-  const series = history?.[kind];
-  if (!series || series.total === 0 || !series.peak_month) {
-    return <span className="text-2xs text-muted-foreground">{EM_DASH}</span>;
-  }
-  return (
-    <PlanNumberButton
-      value={`${fmtInt(series.peak_qty)} ${monthLabel(series.peak_month)}`}
-      label={`${kind === 'project' ? 'Project' : 'Retail'} ordered, last 12 months`}
-      onClick={onOpen}
-    />
-  );
 }
 
 /** The build's SO lines in the shape the shared lightbox lists them (AC-B2). Every line
@@ -305,6 +267,8 @@ export function ContainerRequestSection({
   supplierName,
   qtyFor,
   onQtyChange,
+  remarkFor,
+  onRemarkChange,
   readOnly = false,
 }: {
   /** The plan this section belongs to (R2). Supplier and cut-off are the plan row's, so the
@@ -316,6 +280,10 @@ export function ContainerRequestSection({
    *  Save and Send live on ITS toolbar (R5) and both have to act on what the grid shows. */
   qtyFor: (row: ContainerRequestRow) => number;
   onQtyChange: (rowKey: string, qty: number) => void;
+  /** The instruction to the supplier for this row (R11) - same field, same save as the
+   *  preview's own Remarks input. */
+  remarkFor: (row: ContainerRequestRow) => string;
+  onRemarkChange: (rowKey: string, remark: string) => void;
   /** A cancelled plan is a record of what was asked, not a form (AC-A8). */
   readOnly?: boolean;
 }) {
@@ -380,7 +348,6 @@ export function ContainerRequestSection({
   );
 
   const historyRef = useRef(new Map<string, ContainerRequestHistoryProduct>());
-  const historyLoadingRef = useRef(false);
 
   // Read through refs for the same reason the history sidecar is: a column definition that
   // depended on the record page's edit state would rebuild the whole grid on every keystroke.
@@ -389,6 +356,10 @@ export function ContainerRequestSection({
   qtyForRef.current = qtyFor;
   const onQtyChangeRef = useRef(onQtyChange);
   onQtyChangeRef.current = onQtyChange;
+  const remarkForRef = useRef(remarkFor);
+  remarkForRef.current = remarkFor;
+  const onRemarkChangeRef = useRef(onRemarkChange);
+  onRemarkChangeRef.current = onRemarkChange;
   const readOnlyRef = useRef(readOnly);
   readOnlyRef.current = readOnly;
 
@@ -396,6 +367,9 @@ export function ContainerRequestSection({
   // see and change her mind about it, it just does not go on the document.
   const renderQtyCell = useCallback((ctx: CellContext<ContainerRequestRow, unknown>) => {
     const original = ctx.row.original;
+    // R6: the fourth term, mocked off `incoming_pl` until Phase 2 sends the real figure
+    // (the part of it not yet turned into an SPO).
+    const incomingPlUnallocated = original.incoming_pl_unallocated ?? original.incoming_pl;
     return (
       <Input
         type="number"
@@ -406,11 +380,27 @@ export function ContainerRequestSection({
         // The netting rule with this row's own numbers in it (F2): what the figure IS, on
         // the figure, so nobody has to remember whether the packing list was subtracted.
         // `engine_qty`, never the edited figure: it is the formula's own answer.
-        title={`${fmtInt(original.open_so_need)} need - ${fmtInt(original.on_hand)} on hand - ${fmtInt(original.incoming_spo)} incoming SPO = ${fmtInt(original.engine_qty)}`}
+        title={`${fmtInt(original.open_so_need)} need - ${fmtInt(original.on_hand)} on hand - ${fmtInt(original.incoming_spo)} incoming SPO - ${fmtInt(incomingPlUnallocated)} incoming PL (not yet on an SPO) = ${fmtInt(original.engine_qty)}`}
         onChange={(e) => {
           const next = Math.max(0, Number(e.target.value) || 0);
           onQtyChangeRef.current(original.row_key, next);
         }}
+      />
+    );
+  }, []);
+
+  // R11: the plan table's own Remarks input, next to the qty edit - the same field the
+  // preview's Remarks cell writes.
+  const renderRemarkCell = useCallback((ctx: CellContext<ContainerRequestRow, unknown>) => {
+    const original = ctx.row.original;
+    return (
+      <Input
+        type="text"
+        className="h-8 w-40"
+        value={remarkForRef.current(original)}
+        disabled={readOnlyRef.current}
+        placeholder="Instruction to the supplier"
+        onChange={(e) => onRemarkChangeRef.current(original.row_key, e.target.value)}
       />
     );
   }, []);
@@ -519,13 +509,17 @@ export function ContainerRequestSection({
             <DataGridColumnHeader title="Suggested qty" column={column} />
             <FormulaTip
               label="How the suggested quantity is worked out"
-              formula="suggested = need - on hand - incoming SPO"
+              formula="suggested = need - on hand - incoming SPO - incoming PL (not yet on an SPO)"
               terms={[
                 { name: 'Need', note: 'open SO lines, project and retail, until the plan date' },
                 { name: 'On hand', note: 'site pools only' },
                 { name: 'Incoming SPO', note: 'site pools only' },
+                {
+                  name: 'Incoming PL',
+                  note: 'unreceived packing lists, minus whatever of them already has an SPO',
+                },
               ]}
-              footer="Never below 0. Incoming packing lists and open POs are shown beside it, not subtracted."
+              footer="Never below 0. An open PO is shown beside it, not subtracted."
             />
           </span>
         ),
@@ -533,6 +527,14 @@ export function ContainerRequestSection({
         size: 140,
         enableSorting: false,
         meta: { headerTitle: 'Suggested qty' },
+      },
+      {
+        id: 'remark',
+        header: ({ column }) => <DataGridColumnHeader title="Remarks" column={column} />,
+        cell: renderRemarkCell,
+        size: 170,
+        enableSorting: false,
+        meta: { headerTitle: 'Remarks' },
       },
       {
         id: 'open_so_need',
@@ -654,6 +656,20 @@ export function ContainerRequestSection({
         meta: { headerTitle: 'Incoming PL' },
       },
       {
+        id: 'total_supply',
+        header: ({ column }) => <DataGridColumnHeader title="Total supply" column={column} />,
+        // R7: On hand + SPO + Incoming PL, plain - no lightbox of its own, the three source
+        // columns and theirs are untouched.
+        cell: ({ row }) => (
+          <span className="tabular-nums">
+            {fmtInt(row.original.on_hand + row.original.incoming_spo + row.original.incoming_pl)}
+          </span>
+        ),
+        size: 110,
+        enableSorting: false,
+        meta: { headerTitle: 'Total supply' },
+      },
+      {
         accessorKey: 'outstanding_po',
         header: ({ column }) => <DataGridColumnHeader title="PO" column={column} />,
         cell: ({ row }) => (
@@ -666,20 +682,6 @@ export function ContainerRequestSection({
         size: 80,
         enableSorting: false,
         meta: { headerTitle: 'PO' },
-      },
-      {
-        accessorKey: 'earliest_required_date',
-        header: ({ column }) => <DataGridColumnHeader title="Earliest need-by" column={column} />,
-        cell: ({ row }) => (
-          <span className="tabular-nums">
-            {row.original.earliest_required_date
-              ? formatDateInMalaysia(row.original.earliest_required_date)
-              : EM_DASH}
-          </span>
-        ),
-        size: 130,
-        enableSorting: false,
-        meta: { headerTitle: 'Earliest need-by' },
       },
       {
         id: 'holding',
@@ -697,42 +699,8 @@ export function ContainerRequestSection({
         sortDescFirst: true,
         meta: { headerTitle: 'Packed' },
       },
-      // Read through a ref for the same reason the editable qty cell does: the sidecar is
-      // fetched for the page THIS table decides, which is not known until the table exists,
-      // so the column cannot depend on it without a cycle. Cell functions run on every
-      // render, so an arriving sidecar still paints. One column per series (captain, 27 Aug).
-      {
-        id: 'project_peak',
-        header: ({ column }) => <DataGridColumnHeader title="Project peak" column={column} />,
-        cell: ({ row }) => (
-          <PeakCell
-            history={historyRef.current.get(row.original.product_id)}
-            loading={historyLoadingRef.current}
-            kind="project"
-            onOpen={() => setDialog({ kind: 'project', row: row.original, onHistory: true })}
-          />
-        ),
-        size: 120,
-        enableSorting: false,
-        meta: { headerTitle: 'Project peak' },
-      },
-      {
-        id: 'retail_peak',
-        header: ({ column }) => <DataGridColumnHeader title="Retail peak" column={column} />,
-        cell: ({ row }) => (
-          <PeakCell
-            history={historyRef.current.get(row.original.product_id)}
-            loading={historyLoadingRef.current}
-            kind="retail"
-            onOpen={() => setDialog({ kind: 'retail', row: row.original, onHistory: true })}
-          />
-        ),
-        size: 120,
-        enableSorting: false,
-        meta: { headerTitle: 'Retail peak' },
-      },
     ],
-    [renderQtyCell, linesByProduct],
+    [renderQtyCell, renderRemarkCell, linesByProduct],
   );
 
   const table = useReactTable({
@@ -792,7 +760,6 @@ export function ContainerRequestSection({
     for (const p of history.data?.products ?? []) map.set(p.product_id, p);
     return map;
   }, [history.data]);
-  historyLoadingRef.current = history.isFetching;
 
   // `qtyFor` follows the record page's edits, so the cards move as she types - which is the
   // whole point of putting them above the grid.
@@ -1056,9 +1023,8 @@ export function ContainerRequestSection({
                     ),
               )}
               history={toHistoryPoints(historyRef.current.get(dialog.row.product_id))}
-              initialTab={dialog.onHistory ? 'history' : 'open'}
               horizon={build.data?.plan_horizon_date ?? null}
-              loading={build.isFetching || (dialog.onHistory && history.isFetching)}
+              loading={build.isFetching || history.isFetching}
             />
           ) : dialog.kind === 'on_hand' ? (
             <OnHandTable productId={dialog.row.product_id} />

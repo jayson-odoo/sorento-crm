@@ -34,9 +34,9 @@ export interface SupplierRequestLine {
 
 /**
  * The supplier's own sheet, as the backend's ONE `SheetModel` (R12): their ten columns in
- * their own spellings plus `需装数量 / Qty to load`, their row order, and their merged
- * families as `rowspan`. The xlsx and the PDF are drawn from this same model, which is what
- * makes the three tally.
+ * their own spellings plus `需装数量 / Qty to load` and (R11) `备注 / Remarks`, their row
+ * order, and their merged families as `rowspan`. The xlsx and the PDF are drawn from this
+ * same model, which is what makes the three tally.
  */
 export interface SupplierRequestSheetColumn {
   /** Their heading, in their own words. */
@@ -51,8 +51,10 @@ export interface SupplierRequestSheetCell {
   colspan: number;
   /** True when a merge starting above or to the left covers this position: draw nothing. */
   covered: boolean;
-  /** Their own marks on their own document: a maintained field, and a figure to notice. */
-  fill: 'yellow' | null;
+  /** R10: `'highlight'` is OUR mark (rows with a quantity to load); `'yellow'` survives only
+   *  on a notice sent before R10, whose frozen `sheet_json` still carries their own fill
+   *  (review round 1, S8 - this was typed as their-marks-only before the highlight existed). */
+  fill: 'yellow' | 'highlight' | null;
   red: boolean;
 }
 
@@ -62,6 +64,11 @@ export interface SupplierRequestSheetRow {
   family_span: number;
   /** True for a line we added because their list never named the product. */
   appended: boolean;
+  /** The plan row this line came from (R11). Unused on this read-only page - the shared
+   *  `SupplierSheet` renderer only writes back to it when `editable`, which this page never
+   *  passes - but carried on the type (review round 1, S8) since the wire shape always has
+   *  it. */
+  row_key?: string | null;
 }
 
 export interface SupplierRequestSheet {

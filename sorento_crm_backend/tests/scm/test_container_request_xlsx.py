@@ -22,6 +22,7 @@ from io import BytesIO
 from pathlib import Path
 
 import openpyxl
+from openpyxl.cell.cell import MergedCell
 
 from app.services.scm import container_request_xlsx as svc
 from app.services.scm import supplier_document_model as model
@@ -48,6 +49,8 @@ LAST_DATA_ROW = 119
 TOTALS_ROW = 120
 THEIR_COLS = 10
 QTY_COL = 11
+#: R11 (purchasing consolidation, 6 Sep): OUR remark, one column after the qty to load.
+REMARK_COL = 12
 
 
 def _world(db) -> World:
@@ -100,10 +103,30 @@ def _style(cell) -> tuple:
 # --------------------------------------------------------------------------- #
 
 
-def test_every_cell_they_wrote_survives_untouched(monkeypatch):
-    # AC-D1. The whole point of R13: this is THEIR file with one column written into it, not
-    # a copy of their data in a workbook of ours. Value, font, fill, border and number format,
-    # on every one of their 1,200 cells.
+def _shape(cell) -> tuple:
+    """`_style` minus fill and font colour - what a DATA row keeps under R10, which repaints
+    fill (and clears any red) off the qty-to-load ask rather than replaying the source."""
+    return (
+        cell.font.name,
+        cell.font.sz,
+        cell.font.b,
+        cell.border.left.style,
+        cell.border.right.style,
+        cell.border.top.style,
+        cell.border.bottom.style,
+        cell.alignment.horizontal,
+        cell.alignment.vertical,
+        cell.number_format,
+    )
+
+
+def test_every_cell_they_wrote_keeps_its_value_and_shape(monkeypatch):
+    # AC-D1, revised by R10 (purchasing consolidation, 6 Sep): still THEIR file with one
+    # column written into it - value, border, number format, alignment, merge, width and row
+    # height survive cell for cell. What no longer survives on a DATA row (3..119) is the
+    # fill or a red font: those are replaced by OUR highlight on the row actually asked for,
+    # and cleared everywhere else (see `test_only_the_asked_row_is_highlighted` below). Title
+    # (1), header (2) and the 合计 row (120) keep their own style whole - a sum is not an ask.
     with pg_session() as db:
         _world(db)
         sheet = _sheet_model(db, [_line("SRTWC8355-RL-250", 300)], monkeypatch=monkeypatch)
@@ -115,7 +138,46 @@ def test_every_cell_they_wrote_survives_untouched(monkeypatch):
             for c in range(1, THEIR_COLS + 1):
                 mine, yours = out.cell(row=r, column=c), theirs.cell(row=r, column=c)
                 assert mine.value == yours.value, f"value at {mine.coordinate}"
-                assert _style(mine) == _style(yours), f"style at {mine.coordinate}"
+                if r in (1, HEADER_ROW, TOTALS_ROW):
+                    assert _style(mine) == _style(yours), f"style at {mine.coordinate}"
+                else:
+                    assert _shape(mine) == _shape(yours), f"shape at {mine.coordinate}"
+
+
+def test_only_the_asked_row_is_highlighted(monkeypatch):
+    # AC-E3/R10: the row that carries the ask is highlighted whole; a row that carries none
+    # of it - including one their own file marked yellow or red - is left plain.
+    with pg_session() as db:
+        _world(db)
+        sheet = _sheet_model(db, [_line("SRTWC8355-RL-250", 300)], monkeypatch=monkeypatch)
+
+        out = _open(svc.render(sheet))
+        asked_row = next(
+            r
+            for r in range(FIRST_DATA_ROW, LAST_DATA_ROW + 1)
+            if out.cell(row=r, column=2).value == "SRTWC8355-RL-250"
+        )
+        # SRTWC286-SH-150NEW is their own yellow-and-red row (see
+        # test_supplier_document_model.py's model-level test), and it was not asked here.
+        untouched_row = next(
+            r
+            for r in range(FIRST_DATA_ROW, LAST_DATA_ROW + 1)
+            if out.cell(row=r, column=2).value == "SRTWC286-SH-150NEW"
+        )
+
+        # A `MergedCell` (a covered position within one of the fixture's own families - they
+        # merge different columns for different families, per the model's own docstring) does
+        # not round-trip its own style through openpyxl's writer, so it is not the thing to
+        # assert here - only the top-left of any merge, and every column a family does not
+        # cover, are.
+        for c in range(1, REMARK_COL + 1):
+            asked_cell = out.cell(row=asked_row, column=c)
+            untouched_cell = out.cell(row=untouched_row, column=c)
+            if isinstance(asked_cell, MergedCell) or isinstance(untouched_cell, MergedCell):
+                continue
+            assert asked_cell.fill.fgColor.rgb == "FFFFF2CC"
+            assert untouched_cell.fill.fill_type is None
+            assert untouched_cell.font.color is None
 
 
 def test_their_merges_widths_and_row_heights_survive(monkeypatch):
@@ -250,8 +312,9 @@ def test_the_export_reads_back_through_the_stock_list_reader(monkeypatch):
 
 
 def test_without_a_retained_file_the_sheet_is_their_layout_in_our_hand(monkeypatch):
-    # AC-D6. Same eleven columns, same title line, same yellow fields, same 合计 row - what
-    # changes is only that we have no merges to draw, because we hold no family information.
+    # AC-D6. Same eleven-plus-one columns, same title line, same 合计 row - what changes is
+    # that we have no merges to draw (no family information) and, since R10, that a row with
+    # an ask is highlighted rather than replaying the old "yellow field" convention.
     with pg_session() as db:
         w = _world(db)
         w.stock("A", packed=120, unfinished=340, cbm=0.21)
@@ -265,7 +328,7 @@ def test_without_a_retained_file_the_sheet_is_their_layout_in_our_hand(monkeypat
 
         out = _open(svc.render(sheet))
 
-        assert [out.cell(row=2, column=c).value for c in range(1, QTY_COL + 1)] == [
+        assert [out.cell(row=2, column=c).value for c in range(1, REMARK_COL + 1)] == [
             "序号",
             "型号",
             "商标",
@@ -277,10 +340,12 @@ def test_without_a_retained_file_the_sheet_is_their_layout_in_our_hand(monkeypat
             "总体积(cbm)",
             "备注",
             svc.QTY_TO_LOAD_HEADER,
+            model.LINE_REMARK_HEADER,
         ]
         assert out.cell(row=1, column=1).value == model.NO_FILE_TITLE
         assert out.cell(row=2, column=1).font.b is True
-        assert out.cell(row=3, column=2).fill.fgColor.rgb == "FFFFFF00"
+        # R10: highlighted, not their old yellow - this row carries qty 500.
+        assert out.cell(row=3, column=2).fill.fgColor.rgb == "FFFFF2CC"
         assert out.cell(row=3, column=2).font.name == "宋体"
         assert out.row_dimensions[3].height == 18.75
         assert out.column_dimensions["B"].width == 28.7109375

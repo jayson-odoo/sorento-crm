@@ -356,7 +356,8 @@ def test_a_notice_that_never_had_a_link_is_not_reported_as_retired(scm_app):
 
 def test_the_page_carries_the_same_sheet_the_documents_draw(scm_app):
     # AC-D5. The link view is the third renderer of the ONE model (R12): the supplier's own
-    # columns, in their words, with the bilingual labels as a second line and our column K.
+    # columns, in their words, with the bilingual labels as a second line, our column K, and
+    # (R11) our remark column L after it.
     app, db, *_ = scm_app
     _w, token = _sent(db)
 
@@ -364,8 +365,10 @@ def test_the_page_carries_the_same_sheet_the_documents_draw(scm_app):
 
     labels = [c["label"] for c in sheet["columns"]]
     assert labels[:2] == ["序号", "型号"]
-    assert labels[-1] == "需装数量"
-    assert sheet["columns"][-1]["label_en"] == "Qty to load"
+    assert labels[-2] == "需装数量"
+    assert labels[-1] == "备注"
+    assert sheet["columns"][-2]["label_en"] == "Qty to load"
+    assert sheet["columns"][-1]["label_en"] == "Remarks"
     assert sheet["columns"][1]["label_en"] == "Model"
     assert sheet["rows"], "the request's lines are the sheet's rows"
     assert sheet["totals"]["cells"][0]["value"] == "合计："
