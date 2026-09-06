@@ -386,6 +386,38 @@ suite on the shared DB.
   LLM provider (429 = failed stage with backoff); MCP server run with 2 to 4 workers; **n8n
   queue mode's per-worker concurrency limit (default 10) is the first throttle** and is a
   config change (`N8N_CONCURRENCY_PRODUCTION_LIMIT` or more n8n workers).
+- **The 5 Sep 2026 numbers just below measured `access_denied`, not a business turn** - the
+  load gate's seeded contacts carried no access grant until a 6 Sep 2026 fix (see
+  `n8n-changes.md`'s Step 4 and AC-711). Re-measured 6 Sep 2026, chatbot-s8 lane backend,
+  one uvicorn `--reload` worker, mocked parser, grant + business-lane switches on (`uptime`
+  immediately before: load averages 4.88 5.34 6.24). Raw numbers:
+  `wall 120.1s turns 100 p50 120.00s p95 120.06s`, `errors 95`,
+  `branch_kind: {'business_query': 30, '(none)': 3}`. `branch_kind` confirms real business
+  turns now run and zero `access_denied`; p95 120.06s is the CLIENT's own request timeout
+  (95 of 100 requests errored or were still waiting when it gave up), not a completion
+  time. This run predates the `_wait_for_turns_to_settle` fix shipped in the same PR: a
+  further 21 turns landed roughly 3 minutes later as
+  `branch_kind=None, stage=received, status=failed`, because cleanup had already deleted
+  their contacts while the single worker was still draining its backlog - the exact bug
+  that fix closes. Load average spiked to 52 right after (unrelated concurrent work,
+  confirmed via `ps`), which made a same-session repeat unsafe to compare against. The
+  pool/thread numbers below are therefore this section's own open question, not yet
+  re-answered on the corrected path; a multi-worker re-run (or the prod-host run
+  `n8n-changes.md` names) is the next step, not this fix's job.
+  **Re-verified 6 Sep 2026** after the settle-wait and STRICT-gate fix, `--timeout 240`
+  (load averages 4.16 5.16 6.27 before): `errors 100`,
+  `branch_kind: {'business_query': 25}`, `75 turn row(s) missing`, every GRADED row
+  `business_query / remembered / done`. 16 more rows landed as `stage=received, status=
+  failed` about 10 minutes after grading and cleanup had already run - the settle-wait
+  narrows this race, it does not close it once the backlog outlives even its 180s window,
+  since a row not yet inserted is invisible to a poller (see `n8n-changes.md`'s Step 4).
+  `db connections: baseline 19 peak 40` rules out Postgres; the single dev worker is
+  still the ceiling.
+- **The seeded contact carries no `contact_access_types` row.** A real dealer holds at
+  least one; an entitlement-filtered fetch against an untyped contact is therefore lighter
+  than what a real dealer's turn does, so the numbers above are a floor, not a ceiling, on
+  fetch cost. Not fixed here - noted so a future capacity run knows what it is not yet
+  measuring.
 - **What the ceiling actually is, measured (5 Sep 2026, load gate 3b).** The estimate that
   used to sit here ("beyond ~250 concurrent, API threads become the limit") was wrong about
   which resource binds first, and the review that found it was right: the auth dependencies

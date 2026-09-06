@@ -855,14 +855,47 @@ contact inside the synchronous request. Different contacts run in parallel.
   in the n8n repo. (A5, D15)
 - AC-711 `[E2E]` Given `scripts/chatbot_load.py` against the S7 backend with 50 contacts x 2
   messages fired at once (dry run), when it completes, then p95 turn time is under 12 s, zero
-  errors, DB pool usage below 60%, and every contact's two replies come back in the order the
-  CRM RECEIVED that contact's messages, with no two of that contact's turns overlapping (both
+  errors, DB pool usage below 60%, every turn's `branch_kind` landing on the business lane
+  (not `access_denied` or anything else - the script refuses before firing unless
+  `system_settings.chatbot_business_lane_enabled` and `chatbot_completed_lanes` already let
+  the business arm ANSWER), and every contact's two replies come back in the order the CRM
+  RECEIVED that contact's messages, with no two of that contact's turns overlapping (both
   graded from `chatbot.turns` after the run, never from the client's send order - AC-709's
   guarantee is arrival order); repeated at 300 turns. (A5)
-  **Measured 5 Sep 2026** (ordering on, one uvicorn worker, mocked parser): 100 turns, zero
-  errors, zero out of order, p95 1.24 s; 300-turn repeat p95 3.77 s. The pool clause is the
-  one that did not hold as written - see the plan's capacity section, where the number and
-  the question for the owner are recorded.
+  **The 5 Sep 2026 measurement below is SUPERSEDED - it measured `access_denied`, not the
+  business path.** The seeded contacts carried no access grant, so `branch_kind` was
+  `access_denied` on 100% of the run's rows and every turn took the free canned-reply lane;
+  a 6 Sep 2026 fix seeds the grant (and checks the two settings above before firing) so the
+  gate reaches resolve/tier-gate/fetch/answer instead. ~~Measured 5 Sep 2026 (ordering on, one
+  uvicorn worker, mocked parser): 100 turns, zero errors, zero out of order, p95 1.24 s;
+  300-turn repeat p95 3.77 s.~~
+  **Re-measured 6 Sep 2026**, chatbot-s8 lane backend, one uvicorn `--reload` worker,
+  mocked parser, business lane switched on (`uptime` immediately before: load averages
+  4.88 5.34 6.24). Raw numbers: `wall 120.1s turns 100 p50 120.00s p95 120.06s`,
+  `errors 95`, `branch_kind: {'business_query': 30, '(none)': 3}`. `branch_kind` confirms
+  the fix - real business turns land, zero `access_denied` - but p95 120.06s is the
+  CLIENT's own request timeout, not a completion time, and this run predates the
+  `_wait_for_turns_to_settle` fix that shipped in the same PR: cleanup ran the instant the
+  client gave up, and 21 more turns landed roughly 3 minutes later as
+  `branch_kind=None, stage=received, status=failed` because their contacts had already
+  been deleted mid-drain - the exact bug that fix closes, caught by this run's own
+  evidence. Load average spiked to 52 right after (unrelated concurrent work on the
+  shared machine, confirmed via `ps`), which made a same-session repeat unsafe to compare
+  against. None of this is a regression from this fix - it is the capacity question this
+  AC was always meant to surface, previously hidden by the wrong-path measurement above;
+  see the plan's capacity section for the pool clause's open question and the trigger for
+  a multi-worker re-run.
+  **Re-verified 6 Sep 2026** after the settle-wait and STRICT-gate fix, `--timeout 240`
+  (load averages 4.16 5.16 6.27 before): `wall 240.2s p50 240.00s p95 240.07s`,
+  `errors 100`, `branch_kind: {'business_query': 25}`, `75 turn row(s) missing`. Every one
+  of the 25 GRADED rows is `business_query / remembered / done`. The settle-wait narrows
+  the race but does not close it at this much backlog: a further 16 rows landed as
+  `stage=received, status=failed` roughly 10 minutes after grading and cleanup had
+  already run, past even the 180s settle window - a row not yet inserted is invisible to
+  a poller, and cleaned up by hand once read (see `n8n-changes.md`'s Step 4 for the
+  detail). Still RED on timing (single dev worker, unchanged finding);
+  `db connections: baseline 19 peak 40` rules out Postgres
+  as the ceiling here.
 - AC-707 `[E2E]` Given live traffic for one pilot contact routed through S7, when they send
   three messages quickly, then the three replies arrive in order and `chatbot.turns` shows
   three `done` rows with `finished_at` ascending. (A5)
