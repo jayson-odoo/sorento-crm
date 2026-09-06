@@ -21,13 +21,13 @@ Constraint only for `source`, plus the additive column - no data moves, and no e
 needs migrating.
 
 Revision ID: 486_scm_claim_qty_planner
-Revises: 482_attachment_type_default_dir
+Revises: 485_shipment_line_photo_type
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "486_scm_claim_qty_planner"
-down_revision = "482_attachment_type_default_dir"
+down_revision = "485_shipment_line_photo_type"
 branch_labels = None
 depends_on = None
 
