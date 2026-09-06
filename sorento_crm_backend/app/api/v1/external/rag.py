@@ -21,7 +21,7 @@ from app.services.embedding_service import EmbeddingReadService
 router = APIRouter()
 
 
-def _embed_query(query: str, db: Session) -> list[float]:
+def _embed_query(db: Session, query: str) -> list[float]:
     from app.services.llm_provider import resolve_openai_api_key
 
     api_key = resolve_openai_api_key(db)
@@ -52,7 +52,7 @@ def semantic_search(
     if not query:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="query is required")
 
-    query_embedding = _embed_query(query, db)
+    query_embedding = _embed_query(db, query)
     rows = EmbeddingReadService(db).search_current(
         query_embedding,
         top_k=body.top_k,
@@ -93,7 +93,7 @@ def tool_search(
     query = (body.query or "").strip()
     if not query:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="query is required")
-    query_embedding = _embed_query(query, db)
+    query_embedding = _embed_query(db, query)
     rows = EmbeddingReadService(db).search_tool_candidates(
         query_embedding,
         query=query,

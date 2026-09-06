@@ -178,18 +178,28 @@ def resolve_openai_api_key(db: Any) -> str:
     provider the assistant itself is configured for (embeddings, RAG search, the
     chatbot business lane's tool search, ...).
 
-    Reads the SAME singleton row ``resolve_api_key`` reads (``AIAssistantConfigService``
-    - the row `AIAssistantConfigService.get`/`_ensure_singleton` already returns, not a
-    second query), then falls back to ``OPENAI_API_KEY``. This is the fix for the prod
-    401: those call sites read the environment only, so an owner who enters the key on
+    Reads the singleton ``ai_assistant_configs`` row (READ ONLY - no
+    ``AIAssistantConfigService.get()``/``_ensure_singleton``, which INSERT+COMMITs a
+    blank row when the table is empty; several callers here run mid-transaction,
+    e.g. right after a flush in ``embedding_worker.process_embedding_queue_item``, so
+    a helper that reads a key must not commit their unit of work out from under
+    them), then falls back to ``OPENAI_API_KEY``. This is the fix for the prod 401:
+    those call sites read the environment only, so an owner who enters the key on
     System Management > AI Assistant (and never touches .env, by design) leaves them
     with no key at all outside whatever hardcoded fallback compose supplies.
 
+    A missing row resolves through ``resolve_api_key(None, "openai")`` - same as
+    an empty/unconfigured one - straight to the environment fallback.
+
     Empty string means neither is configured; the caller decides how to say so.
     """
-    from app.services.ai_assistant_service import AIAssistantConfigService
+    from app.models.ai_assistant import AIAssistantConfig
 
-    row = AIAssistantConfigService(db).get()
+    row = (
+        db.query(AIAssistantConfig)
+        .order_by(AIAssistantConfig.created_at.asc())
+        .first()
+    )
     return resolve_api_key(row, "openai")
 
 

@@ -31,7 +31,7 @@ def main() -> None:
         top3_hits = 0
         top5_hits = 0
         for case in BENCHMARK_CASES:
-            vec = _embed_query(case["query"])
+            vec = _embed_query(db, case["query"])
             picks = svc.search_tool_candidates(vec, query=case["query"], top_k=args.top_k, include_planned=True)
             names = [p["tool_name"] for p in picks]
             expected = case["expected"]

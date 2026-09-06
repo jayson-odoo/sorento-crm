@@ -52,7 +52,7 @@ def resolve_via_embedding_then_ilike(
             from app.api.v1.external.rag import _embed_query
             from app.services.embedding_service import EmbeddingReadService
 
-            vec = _embed_query(term)
+            vec = _embed_query(db, term)
             hits = EmbeddingReadService(db).search_current(
                 vec, source_type=source_type, top_k=top_k
             )
