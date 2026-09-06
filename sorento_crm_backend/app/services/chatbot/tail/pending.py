@@ -8,7 +8,7 @@ understanding text is the parser's job, everything after it works on structured 
 Two replacements, and they are deliberately different in kind:
 
 * **Across turns** the answer is a persisted marker. `variables.pending` is written here
-  and read by `output_exchange._offer_is_open`, which accepts BOTH forms during the
+  and read by `output_exchange.offer_is_open`, which accepts BOTH forms during the
   migration window (AC-106) and loses the regex at S8.
 * **Within a turn** there is nothing to persist. `crossdomain-compose`'s `isAnswered`
   asks whether THIS turn's own business-summary arm ran, and the compiler knows that

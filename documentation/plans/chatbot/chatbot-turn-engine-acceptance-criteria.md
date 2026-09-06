@@ -1201,7 +1201,7 @@ contact inside the synchronous request. Different contacts run in parallel.
      turn and gets an answer, then the offer is gone: `selection_context`,
      `last_result_set` and the `pending` marker are all cleared, and a later affirmative
      is not an escalation confirmation and assigns nobody
-     (`output_exchange._offer_is_open` reads the marker's liveness, not only its kind). An
+     (`output_exchange.offer_is_open` reads the marker's liveness, not only its kind). An
      accepted assignment or a decline still ends it on the turn it happens, unchanged. A
      filter modification under the offer (rule 3) does NOT clear it - the roster is still
      on screen - but it SPENDS one turn against the clock, or the narrow arm becomes the
@@ -1223,7 +1223,7 @@ contact inside the synchronous request. Different contacts run in parallel.
      comparison, so `ttl` is invisible to the corpus and the 3600-test chatbot suite is
      green with no new entry.
      Evidence: `tests/chatbot/test_tail_units.py::TestTheMemberOfferHasTheSameTtlAsTheDymOffer`
-     (the clock, the answered arm, the filter arm and the `_offer_is_open` seam) and
+     (the clock, the answered arm, the filter arm and the `offer_is_open` seam) and
      `tests/chatbot/test_r3_pending_end_to_end.py::TestAnAbandonedMemberOfferStopsConfirming`
      (the owner's own sequence, through the real head/tail round trip on the database).
 
@@ -1329,3 +1329,216 @@ contact inside the synchronous request. Different contacts run in parallel.
   filter axis ("stock for rpacc" under an order roster) are both asserted NOT to be filter
   modifications, and both go red when the arm is widened back. Full chatbot suite green:
   3589 passed, 128 skipped, 5 xfailed. (H65, H66)
+
+- AC-817 `[BE][T]` **Console pass 3 (6 Sep 2026): the customer picker says which ledger and
+  whether there is a DO, "all of them" picks every offered code, and an explicitly named
+  team beats a pending offer.** Three owner rulings, one lane.
+
+  1. **The ambiguous-customer picker line reads `N. <name> (<company code>) - has DO` /
+     `- no DO`.** Evidence turns 5ea477a6 (#15) and 934d4c18 (#16). Two defects, both fixed:
+     (a) the line rendered the account name alone, which does not say which ledger a pick
+     reaches - `_rep_label` folds a family to its bare name, so a line stood for accounts the
+     customer could not tell apart; (b) the `- has delivery` stamp was built from EVERY order
+     row the probe returned, so a customer whose orders had not shipped read as having a
+     delivery. Given an ambiguous customer token, when the picker renders, then each line
+     names EVERY company ledger its family spans, first-seen order ("(SRT, MOCHA)"; the
+     resolver stamps `company_code` beside `company_name` in `_attach_company_info`, a row
+     with none contributes nothing), and the suffix counts ONLY order rows carrying an
+     `Actual Delivery Date`. The roster's `title` carries the same label as the printed line,
+     so a reply by name resolves to the row that was read. Which window was measured stays
+     on `customer_probe_window_days`; the per-line suffix is not hedged with it.
+
+     **Withdrawn (review of #706, S2):** this AC first said the two ledgers' copies of one
+     name rendered as "two identical lines". They do not: `_cust_base` groups a family by
+     normalised name, so one name in two ledgers is ONE family and the gate passes silently
+     with both ledgers' rows, and the picker only appears when two DIFFERENT names match.
+     The owner's own turns are not in the local prod copy, so the exact shape they saw
+     cannot be re-read here. Kept as live has it, on measured evidence: the two production
+     captures of the shape (rg-15114061, JYL JUBIN under Mocha and Sorento; rg-15125764, YI
+     HONG TILING under both) render one line whose pick carries both ledgers, the order
+     answer downstream is already labelled per company (`routing_companies`), and a
+     per-ledger split - tried, measured - moved eight captures and printed two identical
+     lines wherever a payload lacks `company_code`. Stated as a test:
+     `tests/chatbot/test_s6a_gate_dry_run_and_seams.py::TestAPickerLineNamesEveryLedgerItsFamilySpans`.
+
+     **And the probe seam is wired.** `ResolveGateServices.probe`'s production binding raised
+     `NotImplementedError`, so `resolve_gate._run_probe` caught it on every live turn and the
+     annotator rendered the BARE picker - the stamp could not appear in production however
+     right the annotator was. It is bound to `_mcp_probe`, the same sub-workflow seam
+     `AnswerServices` already uses (`entity_ids_transformer` at the boundary,
+     `parse_mcp_content` on the way back, both landed in #705 / lesson 102). Evidence:
+     `tests/chatbot/test_s6a_gate_dry_run_and_seams.py::TestOwnerRulingACustomerPickerLabelCarriesCompanyCode`,
+     `::TestOwnerRulingACustomerPickerDOStamp`,
+     `::TestOwnerRulingATheCustomerPickerReachesTheProductionProbeSeam` (the whole seam on
+     real Postgres rows, stopping only at the socket),
+     `tests/chatbot/test_resolve_gate_unit.py::TestPickerProbeArms`.
+
+  2. **"all of them" over a pending did-you-mean picks every offered code.** Given a turn that
+     offered N codes and persisted them, when the customer replies "all of them", then the
+     turn is a `business_query` in the OFFER's domain scoped to every offered code, each
+     carrying the roster's own uuid so nothing re-resolves, and the answer names all of them.
+     A cold "all of them" with nothing pending stays a clarify menu. `apply_dym_pick` now
+     stamps `entity_op: "replace"` rather than `"replace_combine"`: it has already folded
+     every prior entity it keeps into the returned list, so the only thing the executor's
+     axis-wise `kept_prior` could add back is the very token the pick replaced. Evidence:
+     `tests/chatbot/test_output_exchange_rules.py::TestOwnerRulingBAllOfThemOverPendingDymOffer`
+     (the post-processor, both arms) and
+     `tests/chatbot/test_r3_pending_end_to_end.py::TestAllOfThemOverADidYouMeanOfferAnswersEveryOfferedCode`
+     (the real two-turn chain: a missing code, three REAL siblings found by the trigram tier
+     on seeded Postgres rows, and the answer naming all three) and
+     `::TestAPartialDidYouMeanPickReplacesOnlyTheMissingToken` (review of #706, S4: the
+     `replace` arm through the engine - one code resolves, one misses, a numbered pick
+     against the partial roster scopes the turn to the resolved code plus the pick and never
+     the missing token). Measured while writing it: on this lane a partial product miss is
+     claimed by the answer half's `dym-annotate-partial` -> `build-suggest-offer` before the
+     tail runs, so turn 1 persists `selection_context: suggest_offer`, and
+     `compile_state._partial_dym_block` (which writes `dym_last_result_set`) returns on its
+     own clarification guard; the partial roster is therefore seeded in the block's own row
+     shape before the pick. Also measured, reported, not fixed: a numbered pick over that
+     `suggest_offer` roster without a `dym_last_result_set` roster in state takes the stock
+     positional arm whatever the parser's `reference_target` says (None, "result" and "dym"
+     all measured alike), and comes back `replace_combine` with only the pick in scope and
+     the resolved code dropped. `apply_dym_pick` keys on the roster's presence.
+
+  3. **A pending escalation offer never consumes a request for a DIFFERENT team.** Evidence
+     turns 9a40182a and 8b3a3b80: a pending `{kind: escalation_offer, team: warehouse}` offer
+     was open, "escalate to marketing" arrived, and the turn confirmed the offer and assigned
+     + commented "Team: warehouse". Given an open offer, when the parser's OWN routing (the
+     pre-derivation snapshot, never the derived value that has already inherited the offer's
+     team) names a different team, then the turn is not a confirmation and routes to the named
+     team. When the parser names NO team on a `request_for_help` and neither its own
+     `escalation.is_escalation_confirmation` says the customer accepted,
+     then `escalation.team_unresolved` is set, the turn is not a confirmation, and the lane
+     asks which team with quick replies. A bare "yes" still confirms. "Accepted" is the
+     model's own `escalation.is_escalation_confirmation` and NOTHING else (review of #706,
+     B2): the first cut kept an accept-word list over the raw message to rescue the one
+     capture where the model's flag is wrong ("YES ESCALTE", parser-15074293), which is the
+     D11 hard-fail the plan names as a merge blocker and which re-opened D1 ("ok, can someone
+     else help me" read "ok" as an acceptance). That capture is a registered divergence; the
+     parser prompt is where a typo'd acceptance gets read as one.
+
+     At the lane's own boundary (review of #706, B1): an acceptance is never asked which
+     team - `is_escalation_confirmation` skips the clarify first, so a bare "yes" that the
+     post-processor confirmed is assigned to the offered team end to end, not only at the
+     post-processor. The clarify then needs one of two premises, because the previous
+     routing is NEVER absent (the chain's hard default is persisted every turn, so "a
+     previous turn had a routing" was true on every turn from the second): D1's - an
+     escalation offer is OPEN, read through `output_exchange.offer_is_open`; or H64's -
+     the team this turn would assign to is INHERITED, meaning the parser named none, the
+     domain derives none (`derive_routing`, the chain's own function) and the previous
+     routing is not the carried `DEFAULT_SUGGESTED_TEAM` (`contracts.py`, the one place the
+     default is named). Scoping to the open offer alone would have assigned the owner's
+     "escalate to marketing" turn to `purchasing` again. Evidence:
+     `tests/chatbot/test_output_exchange_rules.py::TestOwnerRulingD1PendingOfferTeamMismatch`
+     (four cases including the bare-"yes" and the "ok, ..." guards),
+     `tests/chatbot/test_s5_escalation_lane.py::TestOwnerRulingD1LaneTeamMismatch` and
+     `::TestAnAcceptanceIsNeverAskedWhichTeam` (seven cases through the lane's `run()`: the
+     three the review measured, the kept 9a40182a case, an expired offer, the H64 case and a
+     domain-routed guard).
+
+  Registered divergences (`tests/chatbot/divergences.py`), all field-scoped so the rest of
+  every capture still grades byte for byte: 4 `output_exchange` on `entity_op` /
+  `entity_op_applied` (measured - the entity list is byte-equal on all four), 1
+  `output_exchange` on `escalation` (parser-15074293, above), 4 `annotate-customer-picker`
+  and 2 `sub-resolve-and-gate` exit arms on `escalate_message`.
+  None of the three rules can be fixture-visible: n8n's own bodies say "delivery", stamp
+  `replace_combine` and read `is_affirmative` alone. Full chatbot suite green on the PR's
+  final head (count in the PR body). (H67, H68, H69)
+
+- AC-818 `[BE][T]` **A filter reply under an open roster is ANSWERED, not re-asked.** Live
+  turn 0d1fc129 (exec 15456707), case 69 turn 2. AC-816 rule 3's own half worked: the
+  offer's `ttl` dropped 3 to 2, `member_offer_filter_modification` was set, the session
+  carried the August window and both entities, and the domain stayed `order`. The customer
+  still got "Sure, I can help with that. Please share the date range you want checked" -
+  over a date range they had just given - because the parser emitted `message_type: casual`
+  for "last month" and `route.decide`'s `is_low_signal` arm fires on that word alone, above
+  the business arm, however much state the post-processor restored underneath it. Given a
+  turn the post-processor flagged `member_offer_filter_modification` AND a `domain_hint`,
+  when the router decides, then the turn is not low signal and reaches the business lane;
+  the roster stays pending and spends one turn against its clock, exactly as rule 3 says.
+  Given the flag with NO domain, the turn is still low signal - there is no open question
+  for it to have narrowed, which is `is_low_signal`'s own fourth clause. Ordinary small talk
+  is untouched. A router backstop over the UNDERSTOOD turn, reading only structured state
+  (D11), same class as the broaden-all clarify and `is_offer_hold`'s single-company roster
+  arm. Evidence: `tests/chatbot/test_route_unit.py::TestAFilterModificationIsNeverLowSignal`
+  (four cases, two of them guards) and
+  `tests/chatbot/test_r3_pending_end_to_end.py::TestAPendingOrderRosterDoesNotSwallowABareProductCode::test_both_narrowed_turns_are_ANSWERED_and_the_roster_stays_pending`
+  (the real three-turn chain: the branch and the persisted `ttl`, on both filter turns).
+  Console case: "a filter reply under an open roster is answered, not re-asked". (H70)
+
+- AC-819 `[BE][T]` **A container-hinted token the resolver answers with products only is a
+  product.** Live turn ace4cec6. With a stock question already in play (previous domain
+  `inventory`, a warehouse escalation offer pending) the customer typed a bare "srtwc287";
+  the parser hinted the token `inbound_shipment` and emitted `check_incoming` / `incoming`,
+  so `domain_signal_source` was `intent_explicit`, AC-816 rule 4's bare-entity inheritance
+  was bypassed by a domain the model had invented from a mis-shaped token, and the reply led
+  with "No incoming stock (ETA) found for SRTWC287" - while the resolver's own answer for
+  that token was two products (SRTWC287, SRTWC287-LID) and no shipment at all.
+
+  Given a `inbound_shipment`-hinted entity, when the resolver returns ZERO shipment matches
+  and at least one product match for that token, then the entity is retyped `product`
+  (`shipment_hint_retyped` records it). Both halves are required: a real container keeps its
+  type even when a product shares the token, and a token that resolved to nothing stays a
+  miss rather than being answered as the wrong thing. Given ALSO exactly one entity in
+  scope, `domain_signal_source == "intent_explicit"`, and NO incoming word in the customer's
+  own message, then the invented `incoming` domain is dropped for the carried business
+  domain (which is what rule 4 would have done); with nothing carried, the domain stands
+  rather than being replaced by a second guess.
+
+  **The message condition is not belt-and-braces, it is the whole discriminator.**
+  `domain_signal_source` is stamped for ANY decisive intent plus a domain, said aloud or
+  invented, so "M90ss any eta" (capture `sub-resolve-and-gate-rs/rg-15123789`) is IDENTICAL
+  to the owner's turn in structured state. A product legitimately HAS incoming stock - the
+  incoming picker lists product codes - so the entity retype is right in both cases and only
+  the domain drop needs the customer's own word, read through
+  `output_exchange.DOMAIN_SWITCH_WORDS`, the vocabulary that already decides a this-turn
+  domain switch (imported, not copied).
+
+  The seam is `resolve_gate.run`, between `services.resolve_entity` and `run_gate` - the
+  first point in the turn where this evidence exists. NOT `output_exchange`: the
+  post-processor is the parser's own step and runs before anything is resolved. Five graded
+  `resolve-exit-offer` captures carry the retype and NOTHING else in the sub's output moves
+  on any of them (measured, one at a time). The registration strips the parser's ENTITY
+  ARRAY inside `ctx_resolved` (a strip addresses a path, not one field of one element), so
+  `test_resolve_gate_unit.py::TestTheRetypedEntityArrayDiffersOnlyInTheHint` grades that
+  array explicitly on all five: same length, same order, every field byte-equal except the
+  one `hint` that moved (review of #706, S3). Evidence:
+  `tests/chatbot/test_resolve_gate_unit.py::TestAShipmentHintedTokenThatIsOnlyAProductIsRetyped`
+  (nine cases, five of them guards including the "any eta" counter-example) and
+  `tests/chatbot/test_r3_pending_end_to_end.py::...::test_a_container_hinted_product_code_answers_stock_not_incoming`
+  (the real resolver on seeded rows). Console cases: "a bare product code under a stock
+  thread answers stock, not incoming" and its "still answers incoming" counter-example.
+  **Outside this lane:** the parser prompt should state the container shape (4 letters + 7
+  digits) and that product-family prefixes are products - a D2-style prompt change, noted in
+  the PR body, not made here. (H71)
+
+- AC-820 `[BE][T]` **A requested code with nothing in the domain that was ASKED is named
+  there, before the other domain's block.** Prod turn 858c9c54, after #705. The three-code
+  stock turn named MSK11A-QT only INSIDE the cross-domain block ("But there is INCOMING
+  stock (ETA) for the requested products: MSK11A-QT container TEMU6355180 ..."), so read top
+  to bottom the reply answered a stock question with two codes' stock and then, with no seam
+  between them, an incoming fact about a third - leaving the customer to infer the thing
+  they had actually asked. Given a requested code the PRIMARY render did not echo and the
+  OTHER domain answered with rows, when the cross-domain block is built, then the block
+  opens with "No {stock|incoming} for <codes>." and the other domain's lead follows it. The
+  word follows the question that was asked (`origin_domain`), exactly as the both-empty
+  sentence already does, and no escalation is offered - something IS being shown. Guarded by
+  the same `can_state_absence` test as the both-empty sentence, so a render that answered
+  ABOUT the code without printing it (a warehouse breakdown, a demand verdict) never gets
+  "no stock" underneath the stock it just showed; and a code with nothing on EITHER side
+  still gets its single combined sentence plus the offer (AC-814 / H62), never two
+  half-sentences.
+
+  It is built in `answer.crossdomain_render` rather than in the stock composer upstream,
+  because that is the only place that knows BOTH facts the sentence rests on: that the
+  primary render did not echo the code, and that the other domain was actually probed for
+  it. Its block is appended under the primary answer, so a line at the head of the block IS
+  the stock section's last word. Not fixture-visible - n8n has no such line - so six graded
+  `crossdomain-render` captures are registered field-scoped to `_xdBlock.block`, the only
+  key that moves on any of them; every one of the six is then graded explicitly in
+  `test_s6c_engine_paths.py::TestCrossdomainRenderBlockIsByteEqualMinusTheOneSidedLine` (the
+  block compared byte for byte with the one known sentence removed) rather than left to
+  that strip (review of #706, S3).
+  Evidence: `tests/chatbot/test_s6c_answer_lane.py::TestAZeroStockCodeIsNamedBeforeTheIncomingBlock`
+  (four cases, two of them guards). Console case: "a code with no stock is named before the
+  incoming block". (H72)

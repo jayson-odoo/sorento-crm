@@ -578,13 +578,13 @@ class TestTheMemberOfferHasTheSameTtlAsTheDymOffer:
                 assert (variables.get("pending") or {}).get("kind") != "member_offer"
 
     def test_an_expired_offer_is_not_open_to_the_parser(self) -> None:
-        """The seam the whole rule exists for: `output_exchange._offer_is_open` is what
+        """The seam the whole rule exists for: `output_exchange.offer_is_open` is what
         turns a bare "yes" into `is_escalation_confirmation`, and it must read the offer's
         liveness rather than only its kind."""
-        from app.services.chatbot.head.output_exchange import _offer_is_open
+        from app.services.chatbot.head.output_exchange import offer_is_open
 
-        assert _offer_is_open({"pending": {"kind": "member_offer", "ttl": 2}}) is True
-        assert _offer_is_open({"pending": {"kind": "member_offer", "ttl": 0}}) is False
+        assert offer_is_open({"pending": {"kind": "member_offer", "ttl": 2}}) is True
+        assert offer_is_open({"pending": {"kind": "member_offer", "ttl": 0}}) is False
 
 # --------------------------------------------------------------------------- #
 # AC-302: the canned copy, including the two arms with no vendored capture
@@ -622,7 +622,7 @@ class TestCannedCopy:
         assert out["response"].startswith("I see you're asking about stock, Let me understand more.")
 
     def test_the_escalate_offer_keeps_the_frozen_prefix_with_and_without_a_team(self) -> None:
-        """`output_exchange._offer_is_open` matches this prefix. Reword it and ladder rank
+        """`output_exchange.offer_is_open` matches this prefix. Reword it and ladder rank
         2 dies silently on every accepted offer."""
         with_team = escalate_catalog({"branch_kind": "escalate_offer"}, _ctx(), copy_mod.fallback_copy())
         assert "Would you like me to escalate to customer service team?" in with_team["response"]
@@ -684,7 +684,7 @@ class TestPendingMarker:
 
     def test_the_marker_the_tail_writes_is_the_one_the_head_reads(self) -> None:
         """The two halves of R3 in one assertion: S2 writes it, S1's reader accepts it."""
-        from app.services.chatbot.head.output_exchange import _offer_is_open
+        from app.services.chatbot.head.output_exchange import offer_is_open
 
         outcome = {
             "escalate-catalog": {
@@ -695,7 +695,7 @@ class TestPendingMarker:
             }
         }
         variables = _compile({"outcome": outcome}, _ctx())["variables"]
-        assert _offer_is_open(variables) is True
+        assert offer_is_open(variables) is True
 
     def test_no_open_offer_writes_an_explicit_null(self) -> None:
         """Explicit, never left to key absence - the dym lifecycle's own lesson."""

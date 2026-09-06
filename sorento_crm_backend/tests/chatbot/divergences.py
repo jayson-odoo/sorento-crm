@@ -183,8 +183,9 @@ DIVERGENCES: list[Divergence] = [
             "ruling: name it ('no stock and no incoming') and offer the escalation. This "
             "capture is that case exactly - one probed missing code, zero probed rows - so "
             "the port emits the negative paragraph where n8n emitted nothing. Field-scoped "
-            "to the two keys that carry it; every other byte is still compared, and the "
-            "other four crossdomain-render captures are byte-equal. Pinned by "
+            "to the two keys that carry it; every other byte is still compared. (The "
+            "sibling one-sided line, AC-820, later moved five more captures on `block` "
+            "alone - registered below.) Pinned by "
             "tests/chatbot/test_s6c_answer_lane.py::"
             "TestThirdCodeWithNoStockAndNoIncomingIsNamedWithEscalation."
         ),
@@ -192,6 +193,42 @@ DIVERGENCES: list[Divergence] = [
             ("_xdBlock", "block"),
             ("_xdBlock", "any"),
         ),
+    ),
+    # OWNER CONSOLE PASS 4, item G (6 Sep 2026): a requested code the PRIMARY domain
+    # answered with nothing, and the OTHER one answered with something, is now named
+    # ("No stock for MSK11A-QT.") above the cross-domain lead instead of appearing only
+    # inside it. Turn 858c9c54: a stock question came back as two codes' stock followed
+    # by an incoming fact about a third, with nothing saying the third had no stock.
+    #
+    # Not fixture-visible by construction - n8n's `crossdomain-render` has no such line,
+    # so every capture of the shape records its absence. Six graded captures carry it
+    # and the ONLY difference on each is the prefixed sentence (measured, one at a
+    # time), so the divergence is `_xdBlock.block` alone: `any`, `attachments`, `team`,
+    # `origin`, `probed_rows`, `rendered_rows` and the whole envelope passthrough are
+    # still compared byte for byte. `exec-14126915`'s ETA sort is graded explicitly in
+    # `test_s6c_engine_paths.py::TestCrossdomainRenderEtaOnlyCaptureReplays` rather than
+    # left to this strip. Pinned by
+    # test_s6c_answer_lane.py::TestAZeroStockCodeIsNamedBeforeTheIncomingBlock.
+    *(
+        Divergence(
+            node="crossdomain-render",
+            fixture=name,
+            hazard="owner console pass 4, item G (6 Sep 2026)",
+            reason=(
+                "the primary domain's own miss is stated above the cross-domain block "
+                "('No stock for <code>.'), where n8n said nothing at all. Field-scoped to "
+                "`_xdBlock.block`; every other key of the render is still compared."
+            ),
+            strip_paths=(("_xdBlock", "block"),),
+        )
+        for name in (
+            "exec-13484326",
+            "exec-13488926",
+            "exec-14119800",
+            "exec-14120400",
+            "exec-14122546",
+            "exec-14126915",
+        )
     ),
     Divergence(
         node="build-suggest-offer",
@@ -327,6 +364,153 @@ DIVERGENCES: list[Divergence] = [
             ),
         )
         for name in ("parser-15124806", "parser-15151771")
+    ),
+    # OWNER RULING B, console pass 3 (6 Sep 2026): a did-you-mean pick stamps
+    # `entity_op: "replace"` where the JS stamped `"replace_combine"`. The four
+    # captures below are every graded `output_exchange` capture in the corpus that
+    # reaches `applyDymPick`, and on every one of them the ENTITY LIST is byte-equal
+    # - measured, one capture at a time. That is the point: `applyDymPick` already
+    # folds every prior entity it keeps into the returned list with
+    # `current_message: true`, so the executor's axis-wise `kept_prior` had nothing
+    # left to add on these turns and the two ops produce the same scope. They stop
+    # agreeing on the turn the ruling is about, where the pick's candidate type
+    # differs from the source token's hint and `replace_combine` puts the replaced
+    # token back. Field-scoped to the op and its diagnostic; the entities, the
+    # domain, the dates and everything else still grade byte for byte. Pinned by
+    # test_output_exchange_rules.py::TestOwnerRulingBAllOfThemOverPendingDymOffer
+    # and the real two-turn chain in
+    # test_r3_pending_end_to_end.py::TestAllOfThemOverADidYouMeanOfferAnswersEveryOfferedCode.
+    *(
+        Divergence(
+            node="output_exchange",
+            fixture=name,
+            hazard="owner ruling B (console pass 3, 6 Sep 2026)",
+            reason=(
+                "a did-you-mean pick names its op `replace`, not `replace_combine` - the "
+                "picks ARE the scope. Field-scoped to the op; the entity list this "
+                "capture records is byte-equal either way."
+            ),
+            strip_paths=(
+                ("output", "entity_op"),
+                ("output", "entity_op_applied"),
+            ),
+        )
+        for name in (
+            "parser-15118060",
+            "parser-15136058",
+            "parser-15143320",
+            "parser-15143474",
+        )
+    ),
+    # OWNER RULING A, console pass 3 (6 Sep 2026): the ambiguous-customer picker
+    # stamps "- has DO" / "- no DO" instead of "- has delivery" / "- no recent
+    # delivery" / "- no delivery", and the set it stamps from now counts only order
+    # rows that carry an `Actual Delivery Date`. Both halves are the owner's ruling
+    # and neither can be fixture-visible: n8n's own body says "delivery" and builds
+    # the set from every row the probe returned, so every capture of this node
+    # records the old wording and the old membership by construction. Field-scoped
+    # to the rendered message; `customer_probe_hits`, `customer_probe_window_days`,
+    # `customer_probe_skip_reason`, `is_clarification` and the untouched roster all
+    # still grade. Pinned by
+    # test_s6a_gate_dry_run_and_seams.py::TestOwnerRulingACustomerPickerDOStamp.
+    *(
+        Divergence(
+            node="annotate-customer-picker",
+            fixture=name,
+            hazard="owner ruling A (console pass 3, 6 Sep 2026)",
+            reason=(
+                "the picker suffix reads '- has DO' / '- no DO' and counts only orders "
+                "with a delivery-order date. Live says 'delivery' and counts any order. "
+                "Field-scoped to `escalate_message`."
+            ),
+            strip_paths=(("escalate_message",),),
+        )
+        for name in (
+            "exec-14095480",
+            "exec-14001898",
+            "exec-14091114",
+            "exec-14109393",
+        )
+    ),
+    # The same ruling seen through the WHOLE sub: `resolve-exit-offer` carries the
+    # annotator's message onward, so these two exit-arm captures move on exactly the
+    # one field and nothing else (measured - `gate_clarification` is byte-equal,
+    # because the whole-sub replay is fed the CAPTURED gate rather than re-running
+    # `run_gate`).
+    *(
+        Divergence(
+            node="sub-resolve-and-gate",
+            fixture=name,
+            hazard="owner ruling A (console pass 3, 6 Sep 2026)",
+            reason=(
+                "the exit arm carries the customer picker's own '- has DO' / '- no DO' "
+                "message. Field-scoped to `escalate_message`."
+            ),
+            strip_paths=(("escalate_message",),),
+        )
+        for name in ("rg-15114061", "rg-15125764")
+    ),
+    # OWNER CONSOLE PASS 4, item F (6 Sep 2026): a container-hinted token that the
+    # resolver answers with PRODUCTS and no shipment is retyped `product` before the
+    # gate runs. Five graded `resolve-exit-offer` captures carry that shape, and on
+    # every one of them the retype changes NOTHING else - measured, one at a time: the
+    # exit kind, the gate, the picker text, `specific_options` and the roster are all
+    # byte-equal, because the incoming lane is keyed by product code anyway. So the
+    # divergence is the entity's own `hint` and the diagnostic that says why it moved,
+    # and the rest of each capture still grades. Four of the five say "eta" or
+    # "incoming" in the message, which is exactly why the DOMAIN half of the rule needs
+    # the customer's own word and cannot run off `domain_signal_source`. Pinned by
+    # test_resolve_gate_unit.py::TestAShipmentHintedTokenThatIsOnlyAProductIsRetyped.
+    *(
+        Divergence(
+            node="sub-resolve-and-gate",
+            fixture=name,
+            hazard="owner console pass 4, item F (6 Sep 2026)",
+            reason=(
+                "a shipment-hinted token the resolver answers with products only is "
+                "retyped `product` before the gate. Field-scoped to the parser's ENTITY "
+                "ARRAY inside ctx_resolved plus the two diagnostics - `strip` cannot reach "
+                "one field of one element, so the whole array comes off, and "
+                "test_resolve_gate_unit.py::TestTheRetypedEntityArrayDiffersOnlyInTheHint "
+                "grades that array explicitly: same length, same order, every field "
+                "byte-equal except the one `hint` that moved inbound_shipment -> product. "
+                "Every other byte of the sub's output is unchanged."
+            ),
+            strip_paths=(
+                ("ctx_resolved", "ctx", "parse", "output", "entities"),
+                ("ctx_resolved", "ctx", "parse", "output", "shipment_hint_retyped"),
+                ("ctx_resolved", "ctx", "parse", "output", "domain_dropped_with_shipment_hint"),
+            ),
+        )
+        for name in (
+            "rg-15123789",
+            "rg-15128371",
+            "rg-15192977",
+            "rs8-t2-picker",
+            "rs8a-t2-picker-T1",
+        )
+    ),
+    # OWNER RULING D1 (console pass 3) as struck by the review of #706, blocker B2: the
+    # model's own `escalation.is_escalation_confirmation` is the ONE accept signal over an
+    # open offer, and on this capture the model got it wrong - "YES ESCALTE" (a typo of
+    # ESCALATE) came back `request_for_help`, null routing, `is_escalation_confirmation:
+    # false`. Live confirmed it through `is_affirmative` alone, which is the same test
+    # that confirmed "can someone else help me" (turn 9a40182a). The first cut rescued this
+    # capture with an accept-word list over the raw message; that is a D11 hard-fail and it
+    # re-opened D1 ("ok, can someone else help me" confirmed the stale offer). Ruling:
+    # register, do not sniff. The port asks which team here; the parser prompt is where a
+    # typo'd acceptance gets read as one. Field-scoped to `escalation`; the entities, the
+    # routing and everything else on the capture still grade.
+    Divergence(
+        node="output_exchange",
+        fixture="parser-15074293",
+        hazard="owner ruling D1 (console pass 3) / review of #706 B2",
+        reason=(
+            "a request_for_help with a null routing over an open offer asks which team "
+            "unless the model's own is_escalation_confirmation says it accepted; on this "
+            "capture the model says false for 'YES ESCALTE'. Field-scoped to `escalation`."
+        ),
+        strip_paths=(("output", "escalation"),),
     ),
     # The three keys rules 2, 3 and 4 ADD to `output_exchange`'s emission. No
     # capture can contain a key the node did not emit when it was taken, so this

@@ -203,3 +203,69 @@ cases:
       branch_kind: out_of_scope
       reply_contains: ["human assistance"]
       no_uuid: true
+
+  # Owner console pass 4, item E (prod turn 0d1fc129, exec 15456707). Case 69, three turns:
+  # the roster goes up, then TWO filter replies narrow the question it was made about. Both
+  # must be ANSWERED - the second turn came back "Sure, I can help with that. Please share
+  # the date range you want checked" over a date range the customer had just given, because
+  # the parser called it `casual` and the router's low-signal arm fires on that word above
+  # the business one.
+  - name: a filter reply under an open roster is answered, not re-asked
+    cold: true
+    turns:
+      - text: "delivery to hanlim, product srtwc286"
+        expect:
+          no_uuid: true
+      - text: "last month"
+        expect:
+          branch_kind: business_query
+          reply_not_contains: ["share the date range", "not one of the options"]
+          no_uuid: true
+      - text: "rpacc"
+        expect:
+          branch_kind: business_query
+          reply_not_contains: ["share the date range", "not one of the options"]
+          no_uuid: true
+
+  # Owner console pass 4, item F (prod turn ace4cec6). A bare product code with a stock
+  # question already in play was answered "No incoming stock (ETA) found for SRTWC287",
+  # because the parser hinted the token as a container and invented an incoming intent for
+  # it. The resolver's own answer was two PRODUCTS and no shipment.
+  - name: a bare product code under a stock thread answers stock, not incoming
+    cold: true
+    turns:
+      - text: "check stock srtwc286"
+        expect:
+          branch_kind: business_query
+          no_uuid: true
+      - text: "srtwc287"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["SRTWC287"]
+          reply_not_contains: ["No incoming stock (ETA) found for SRTWC287"]
+          no_uuid: true
+
+  # ... and its counter-example, which must NOT move: the customer who says the word gets
+  # the incoming answer they asked for (capture sub-resolve-and-gate-rs/rg-15123789).
+  - name: an eta question about a product code still answers incoming
+    text: "srtwc287 any eta"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["SRTWC287"]
+      no_uuid: true
+
+  # Owner console pass 4, item G (prod turn 858c9c54, after #705). The same three-code
+  # turn as case H, one code further on: MSK11A-QT has no stock but DOES have incoming, and
+  # it was named only inside "But there is INCOMING stock (ETA) ..." - so a stock question
+  # came back as two codes' stock followed by an incoming fact about a third, with nothing
+  # saying the third has no stock. The ORDER is the ruling and the unit test grades it
+  # (`TestAZeroStockCodeIsNamedBeforeTheIncomingBlock`); `reply_contains` has no order, so
+  # this case grades only that the line is SAID on the live turn.
+  - name: a code with no stock is named before the incoming block
+    text: "STOCK STATUS\nMWT5727SS-CR\nMHS1028\nMSK11A-QT"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["No stock", "MSK11A-QT"]
+      no_uuid: true

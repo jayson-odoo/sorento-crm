@@ -123,6 +123,127 @@ def _parser_output(ctx: dict[str, Any]) -> dict[str, Any]:
     return output if isinstance(output, dict) else {}
 
 
+def _prev_variables(ctx: dict[str, Any]) -> dict[str, Any]:
+    """The previous turn's session variables, both shapes (`head/route._prev_variables`)."""
+    session = jsc.get(ctx, "session")
+    nested = jsc.get(jsc.get(session, "session_vars"), "variables")
+    if jsc.truthy(nested):
+        return nested if isinstance(nested, dict) else {}
+    flat = jsc.get(session, "variables")
+    return flat if isinstance(flat, dict) else {}
+
+
+def _matched_types_by_token(resolved: Any) -> dict[str, set[str]]:
+    """`{lower(token): {entity_type, ...}}` from a resolver payload's `resolutions`."""
+    out: dict[str, set[str]] = {}
+    for res in jsc.array(jsc.get(resolved, "resolutions")):
+        token = jsc.nullish_str(jsc.get(res, "token")).strip().lower()
+        if not token:
+            continue
+        types = out.setdefault(token, set())
+        for match in jsc.array(jsc.get(res, "matches")):
+            entity_type = jsc.nullish_str(jsc.get(match, "entity_type")).strip().lower()
+            if entity_type:
+                types.add(entity_type)
+    return out
+
+
+_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def _incoming_named_in_message(message: Any) -> bool:
+    """Did the customer's OWN words say incoming this turn?
+
+    `output_exchange.DOMAIN_SWITCH_WORDS` is the table, imported rather than copied: it is
+    already the inventoried vocabulary that decides a this-turn domain switch, and a second
+    list of the same words is how two readers of one question start disagreeing. Local
+    import for the same reason every other seam in this package uses one - the head module
+    is heavy and is not needed to answer a turn that never reaches this arm.
+    """
+    from app.services.chatbot.head.output_exchange import DOMAIN_SWITCH_WORDS
+
+    # ANY token, where `output_exchange`'s switch reader (its ~line 1125) demands EVERY
+    # remaining content token name the same domain. Different questions: the switch asks
+    # "is this message nothing but a domain word", this asks "did the customer say incoming
+    # at all", and one incoming word anywhere is enough to keep the domain theirs.
+    text = jsc.nullish_str(message).lower()
+    return any(DOMAIN_SWITCH_WORDS.get(tok) == "incoming" for tok in _WORD_RE.findall(text))
+
+
+def retype_shipment_miss(
+    parser: dict[str, Any], resolved: Any, *, carried_domain: Any, message: Any = None
+) -> bool:
+    """A container-hinted token that is ONLY a product is a product. Mutates `parser`.
+
+    Owner console pass 4, item F (live turn ace4cec6). The customer typed "srtwc287" with
+    a stock question already in play; the parser hinted the token `inbound_shipment` and
+    emitted `check_incoming` / `incoming`, so `domain_signal_source` was `intent_explicit`,
+    AC-816 rule 4's bare-entity inheritance was bypassed, and the reply led with "No
+    incoming stock (ETA) found for SRTWC287" - while the RESOLVER's answer for that same
+    token was two products (SRTWC287, SRTWC287-LID) and no shipment at all.
+
+    Nothing at parse time can tell a container number from a product code, and guessing at
+    the shape of one is the prompt's job, not this lane's (noted in the PR body). This
+    reads resolver output and nothing else (D11):
+
+    * ZERO `inbound_shipment` matches AND at least one `product` match for the token -
+      both halves required, so a real container is untouched even when a product happens
+      to share its token, and a genuine miss stays a miss rather than being answered as
+      the wrong thing.
+    * The DOMAIN is dropped only when its sole support was that entity: exactly one entity
+      in scope, `domain_signal_source == "intent_explicit"`, and NO incoming word anywhere
+      in the customer's own message. That last condition is the one the captures forced.
+      `domain_signal_source` is stamped for ANY decisive intent plus a domain, said aloud
+      or invented, so "M90ss any eta" (capture `sub-resolve-and-gate-rs/rg-15123789`) and
+      the owner's bare "srtwc287" are IDENTICAL in structured state and differ only in that
+      one of them says ETA. A product legitimately HAS incoming stock - the incoming picker
+      lists product codes - so the entity retype is right in both and only the domain needs
+      the customer's own word. The vocabulary is `output_exchange.DOMAIN_SWITCH_WORDS`,
+      imported, not copied.
+    * With the domain dropped, the CARRIED business domain applies - which is what rule 4
+      would have done had the invented domain not bypassed it. With nothing carried the
+      domain stands: inventing one would be a second guess on top of the first.
+
+    Returns True when any entity was retyped, and stamps `shipment_hint_retyped` with the
+    raw tokens, so the trace says why the turn changed shape.
+    """
+    entities = jsc.array(jsc.get(parser, "entities"))
+    if not entities:
+        return False
+    by_token = _matched_types_by_token(resolved)
+
+    retyped: list[str] = []
+    for entity in entities:
+        if not jsc.truthy(entity):
+            continue
+        if jsc.lower_or_empty(jsc.get(entity, "hint")) != "inbound_shipment":
+            continue
+        raw = jsc.nullish_str(jsc.get(entity, "raw")).strip()
+        types = by_token.get(raw.lower())
+        if not types or "inbound_shipment" in types or "product" not in types:
+            continue
+        entity["hint"] = "product"
+        retyped.append(raw)
+
+    if not retyped:
+        return False
+    parser["shipment_hint_retyped"] = retyped  # diagnostic
+
+    sole_support = len(entities) == 1 and len(retyped) == 1
+    if (
+        sole_support
+        and not _incoming_named_in_message(message)
+        and jsc.get(parser, "domain_signal_source") == "intent_explicit"
+        and jsc.lower_or_empty(jsc.get(parser, "domain_hint")) == "incoming"
+        and jsc.truthy(carried_domain)
+        and jsc.lower_or_empty(carried_domain) != "incoming"
+    ):
+        parser["domain_hint"] = carried_domain
+        parser["intent_hint"] = None
+        parser["domain_dropped_with_shipment_hint"] = "incoming"  # diagnostic
+    return True
+
+
 # --------------------------------------------------------------------------- #
 # get-access-types -> Aggregate
 # --------------------------------------------------------------------------- #
@@ -477,6 +598,20 @@ def run(
 
     # ── resolve-entity ──────────────────────────────────────────────────────
     resolved = services.resolve_entity(resolve_entity_body(ctx, dry_run=dry_run))
+
+    # ── a container-hinted token that is ONLY a product is a product (item F) ─
+    # Placed HERE, between the resolver and the gate, because this is the first point in
+    # the turn where the evidence exists: the parser cannot tell a container number from a
+    # product code, and `output_exchange` runs before anything has been resolved. `parser`
+    # IS `ctx.parse.output`, so the correction reaches the gate, the answer lane and the
+    # persisted state through the one object they all read.
+    retype_shipment_miss(
+        parser,
+        resolved,
+        carried_domain=jsc.get(_prev_variables(ctx), "domain_hint"),
+        message=jsc.get(jsc.get(jsc.get(jsc.get(ctx, "text"), "message"), "message"), "text"),
+    )
+
     resolved_snapshot = _snapshot(resolved)
 
     # ── disallowed-entity-gate. Its input IS resolve-entity's item, and it MUTATES
