@@ -125,6 +125,44 @@ DIVERGENCES: list[Divergence] = [
     # S6c.
     # ------------------------------------------------------------------ #
     Divergence(
+        node="output-structurer",
+        fixture="gr-15145805",
+        hazard="H63 (owner console pass, 6 Sep 2026)",
+        reason=(
+            "the multi-company 'which company came back empty' line is axis-labelled now "
+            "('no incoming stock records found for product A, B and C') instead of a bare "
+            "comma list of raw entity codes, because the un-labelled form printed an "
+            "internal debtor code and one alias row per customer alongside the products, "
+            "as four separate things that had been searched. Owner ruling: label it. This "
+            "is the ONE graded output-structurer capture that reaches the block (four "
+            "products, one silent company); field-scoped to `response`, so every other key "
+            "of the envelope is still compared byte for byte. Pinned by "
+            "tests/chatbot/test_s6b_fetch_lane.py::"
+            "TestLabelledNotFoundLineNeverLeaksInternalDebtorCode."
+        ),
+        strip_paths=(("response",),),
+    ),
+    Divergence(
+        node="crossdomain-render",
+        fixture="exec-14131197",
+        hazard="H62 (owner console pass, 6 Sep 2026)",
+        reason=(
+            "'positive facts only' dropped a requested code that came back empty on BOTH "
+            "sides, so the reply named only the codes that had something to show. Owner "
+            "ruling: name it ('no stock and no incoming') and offer the escalation. This "
+            "capture is that case exactly - one probed missing code, zero probed rows - so "
+            "the port emits the negative paragraph where n8n emitted nothing. Field-scoped "
+            "to the two keys that carry it; every other byte is still compared, and the "
+            "other four crossdomain-render captures are byte-equal. Pinned by "
+            "tests/chatbot/test_s6c_answer_lane.py::"
+            "TestThirdCodeWithNoStockAndNoIncomingIsNamedWithEscalation."
+        ),
+        strip_paths=(
+            ("_xdBlock", "block"),
+            ("_xdBlock", "any"),
+        ),
+    ),
+    Divergence(
         node="build-suggest-offer",
         fixture="exec-14001140",
         hazard="D4 (AC-607) - the offer's identity is the TURN id",
@@ -249,7 +287,7 @@ DIVERGENCES: list[Divergence] = [
             hazard="owner ruling K rule 2 (AC-816)",
             reason=(
                 "the capture keeps an entity carried from the previous subject into an "
-                "explicit new-domain query. Owner-ruled to die with the topic (H61). "
+                "explicit new-domain query. Owner-ruled to die with the topic (H66). "
                 "Field-scoped to the entity list."
             ),
             strip_paths=(
@@ -408,6 +446,107 @@ SIBLING_TIEBREAK_IS_CODE_POINT = Divergence(
         "the sibling picker's tiebreak is ICU collation in n8n and code-point order in "
         "Python. Not fixture-visible: no captured family holds two codes differing only "
         "in punctuation or case."
+    ),
+)
+
+
+# Owner console pass, 6 Sep 2026. `route-turn`'s `wants_escalation_or_help` fires on
+# `message_type === 'request_for_help'` (portal_link exempted) ONE ARM BEFORE
+# `is_ideate_domain`, so a turn the parser tagged `domain_hint: 'ideate'` never reached the
+# ideate lane at all - the console run answered "I have an idea for you" with `out_of_scope`.
+# The ladder order is faithful to the live workflow; it hid the ideate arm the moment access
+# flipped to `allow`, which is a defect in the ORIGINAL, not in the port. The port therefore
+# exempts `ideate` beside `portal_link` rather than reproducing the shadow.
+#
+# Not fixture-visible: no captured `route-turn` turn carries `domain_hint: 'ideate'` (the
+# ideate lane shipped after the capture window), so no replay changes. Pinned by
+# tests/chatbot/test_route_unit.py::TestIdeateNeverShadowedByHelpRequest.
+IDEATE_NOT_SHADOWED_BY_REQUEST_FOR_HELP = Divergence(
+    node="route-turn",
+    fixture=None,
+    hazard="H59 (owner console pass, 6 Sep 2026)",
+    reason=(
+        "`domain_hint: 'ideate'` is exempted from the request_for_help arm so the ideate "
+        "lane is reachable. Live's ladder order shadows it permanently. Not "
+        "fixture-visible: no capture carries an ideate domain hint."
+    ),
+)
+
+
+# Owner console pass, 6 Sep 2026. A cold "all of them" - the customer answering a
+# clarification menu with the broadest option - comes back `message_type: 'casual'` with a
+# null `domain_hint`, alongside the `scope_intent: 'broaden'` / `broaden_axis: 'all'` the
+# parser reads correctly. `is_low_signal` fires on `casual` ALONE and sits above
+# `is_clarification`, so the turn was answered "Hi!". The port reads the two scope keys in
+# `is_clarification` and moves that arm above `is_low_signal`; the two message_type sets are
+# disjoint, so nothing the live ladder ever saw changes branch.
+#
+# A ROUTER backstop rather than a parser change on purpose: the scope keys are already
+# right, and re-teaching the prompt to stop stamping `casual` on a two-word reply is a
+# retune with no upper bound. Not fixture-visible: no captured `route-turn` turn carries
+# `broaden_axis: 'all'` with a null domain. Pinned by
+# tests/chatbot/test_route_unit.py::TestBroadenAllNeverReadAsLowSignal.
+BROADEN_ALL_IS_A_CLARIFICATION = Divergence(
+    node="route-turn",
+    fixture=None,
+    hazard="H60 (owner console pass, 6 Sep 2026)",
+    reason=(
+        "scope_intent 'broaden' + broaden_axis 'all' + null domain routes clarify_menu "
+        "instead of low_signal, and the clarification arm moves above the low-signal one. "
+        "Not fixture-visible: no capture carries that shape."
+    ),
+)
+
+
+# Owner console pass, 6 Sep 2026. `not-found-error-message`'s status-aware arm derives
+# `eta` (` (estimated delivery <date>)`) and then never uses it - the JS computes the string
+# and drops it on the floor. The owner's ruling wants the date said: "Order <code>
+# (<customer>) hasn't been delivered yet - current status: <status> (estimated delivery
+# <date>)". The value is on the resolved order's own display, so nothing extra is read.
+#
+# Not fixture-visible: no graded `not-found-error-message` capture reaches the
+# `order_status: 'delivered'` arm with an estimated delivery date on the match. Pinned by
+# tests/chatbot/test_s6c_answer_lane.py::TestStatusAwareMissMessageIncludesTheEtaDate.
+STATUS_MISS_MESSAGE_STATES_THE_ETA = Divergence(
+    node="not-found-error-message",
+    fixture=None,
+    hazard="H61 (owner console pass, 6 Sep 2026)",
+    reason=(
+        "the delivered-status miss message states the estimated delivery date the JS "
+        "derives and discards. Not fixture-visible: no capture reaches that arm with a "
+        "date on the resolved order."
+    ),
+)
+
+
+# Owner console pass, 6 Sep 2026. Two console turns - "escalate to Nurain" (a customer
+# service person) and "escalate to marketing" - both arrived with
+# `routing = {suggested_team: null, suggested_agent: null}`, and the turn was assigned to
+# whatever team the PREVIOUS turn had been routed to: the comment named marketing_product
+# for the person and purchasing for the marketing ask. Live has no gate for either case (the
+# `clarify-team-gate` in the export belongs to the unpromoted B-TEAM-1' build), so the lane
+# assigns whatever team reaches it.
+#
+# The port adds a two-armed gate ahead of the assignment: a `person_mention` is resolved
+# against the staff roster (exactly one match routes to THEIR team as a direct pick, no
+# match or more than one ASKS), and a turn with no person, no team and a PREVIOUS routing to
+# inherit asks rather than inheriting. With no previous routing there is nothing to inherit
+# and the lane carries on unchanged, which is what keeps
+# `test_no_team_clarify_on_live_team_flows_through_unguarded` (live's own behaviour) green
+# and `test_no_hard_default_team` (B-TEAM-1') still xfailing.
+#
+# Not fixture-visible: the four graded escalation nodes are `escalation-input`,
+# `escalation-context`, `clarify-company-reply` and `escalation-result`, none of which this
+# touches - the gate lives in `run()`, which has no capture. Pinned by
+# tests/chatbot/test_s5_escalation_lane.py::TestPersonMentionEscalationRoutesByStaffLookup.
+ESCALATION_ROUTES_BY_STAFF_LOOKUP = Divergence(
+    node="sub-escalation",
+    fixture=None,
+    hazard="H64 (owner console pass, 6 Sep 2026)",
+    reason=(
+        "a named person routes to their own team by staff lookup, and a null-team ask with "
+        "a previous routing asks instead of inheriting it. Live has neither gate. Not "
+        "fixture-visible: the gate is in `run()`, and the four graded nodes are unchanged."
     ),
 )
 

@@ -313,6 +313,36 @@ _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z", re.IGNORECASE
 )
 
+
+# Tools that answer a DOCUMENT request and must be given something to narrow by.
+# `crm_resource_attachments_list`'s own contract says it: "They named NO document at all ->
+# this tool returns NOTHING, by design. `contact_id` alone is NOT a narrowing filter". The
+# transformer is uuid-only, so an entity it could not resolve contributes no `*_ids` key at
+# all, and the call went out carrying `view` / `contact_id` / `space_id` only - a listing of
+# every attachment the contact is entitled to, which is a directory dump, not an answer.
+ENTITY_FILTER_REQUIRED_TOOLS: frozenset[str] = frozenset({"crm_resource_attachments_list"})
+
+# What counts as narrowing on those tools: every entity-id param the transformer can emit,
+# plus the document-type filters the tool takes by name.
+NARROWING_PARAMS: frozenset[str] = frozenset(TYPE_TO_PARAM.values()) | frozenset(
+    {
+        "attachment_type_code",
+        "attachment_type_codes",
+        "attachment_type_id",
+        "directory_id",
+        "uploaded_by",
+    }
+)
+
+
+def has_narrowing_filter(args: Any) -> bool:
+    """True when the built args carry at least one non-empty narrowing key."""
+    if not isinstance(args, dict):
+        return False
+    return any(jsc.truthy(args.get(key)) for key in NARROWING_PARAMS)
+
+
+
 # Params the tool takes as a SCALAR string rather than a list. Empty today: the
 # `attachment_type_id` singular was removed when the plural landed. Kept because the shape
 # matters as much as the spelling - sending an array where a scalar is expected is the same
@@ -790,6 +820,112 @@ def _humanise(key: str) -> str:
     return text[:1].upper() + text[1:] if text else text
 
 
+# Types whose rows carry ALIAS variants of one name. A debtor master holds "NAME",
+# "NAME [A/C I]", "NAME [A/C II]" as separate accounts of the same customer, and naming all
+# three reads as three customers. Product codes are NOT in here and must never be: a variant
+# code that extends another code ("SRT100-BL" under "SRT100") is a different product.
+_ALIAS_COLLAPSE_TYPES: frozenset[str] = frozenset({"customer"})
+
+
+def _axis_labelled_subject(entities: Any) -> str:
+    """What was searched, said the way the customer said it: "customer X, product Y".
+
+    The line this feeds used to flatten every `entities[].code` into one comma list, so a
+    multi-alias customer arrived as an INTERNAL debtor code plus one bullet per alias row -
+    "no order records for 300-H070, HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD,
+    RPACC" - un-labelled, so it read as four separate things.
+
+    Three STRUCTURAL rules, no text patterns over the customer's words (D11):
+
+    * One label per RECORD. A customer reached both by its account code and by its name
+      arrives as two rows on one uuid; the longer of the two is the name, and the account
+      code is an internal identifier the customer never typed and cannot check. (The gate
+      drops the resolver's `match_field` today; when it carries it, that field is the exact
+      test and replaces the length tie-break.)
+    * An alias row collapses into its base, for the types that HAVE aliases only.
+    * The label comes from `_AXES`, the miss lane's own axis vocabulary, so the two lanes
+      cannot drift. A type no axis claims keeps today's bare, unlabelled code.
+    """
+    # `_AXES` lives in `answer.py`, which imports THIS module, so the import is
+    # function-level to keep that cycle open. One vocabulary, one place: a second copy here
+    # would drift the moment an axis is added.
+    from app.services.chatbot.lanes.business.answer import _AXES
+
+    by_record: dict[str, dict[str, str]] = {}
+    unkeyed: list[dict[str, str]] = []
+    for x in jsc.array(entities):
+        code = jsc.nullish_str(jsc.get(x, "code")).strip()
+        uuid = jsc.nullish_str(jsc.get(x, "uuid")).strip()
+        # `code` is the canonical code the customer recognises, never a uuid: for types with
+        # no code the resolver fills it with the record's OWN uuid, and four promotion uuids
+        # once printed under "no promotions records for ...".
+        if not code or code == uuid or _UUID_RE.match(code):
+            continue
+        row = {"type": jsc.nullish_str(jsc.get(x, "entity_type")).strip().lower(), "code": code}
+        if not uuid:
+            unkeyed.append(row)
+            continue
+        held = by_record.get(uuid)
+        if held is None or len(code) > len(held["code"]):
+            by_record[uuid] = row
+    rows = [*by_record.values(), *unkeyed]
+
+    kept: list[dict[str, str]] = []
+    for row in rows:
+        lowered = row["code"].lower()
+        if row["type"] in _ALIAS_COLLAPSE_TYPES and any(
+            other is not row
+            and other["type"] == row["type"]
+            and other["code"].lower() != lowered
+            and lowered.startswith(other["code"].lower())
+            for other in rows
+        ):
+            continue  # an alias of a base this axis already names
+        if any(k["code"].lower() == lowered for k in kept):
+            continue
+        kept.append(row)
+
+    parts: list[str] = []
+    claimed: set[str] = set()
+    for axis in _AXES:
+        types = {jsc.nullish_str(t).strip().lower() for t in (axis.get("types") or [])}
+        claimed |= types
+        codes = [r["code"] for r in kept if r["type"] in types]
+        if codes:
+            # "A", "A and B", "A, B and C" - the last join is a word so the axis boundary
+            # stays readable next to the comma that separates axes.
+            listed = (
+                codes[0]
+                if len(codes) == 1
+                else f"{', '.join(codes[:-1])} and {codes[-1]}"
+            )
+            parts.append(f"{jsc.js_string(axis['label']).lower()} {listed}")
+    # A type no axis claims keeps today's bare code, so a promotion or an attachment type is
+    # still named rather than dropped by a vocabulary that does not know it.
+    leftovers = [r["code"] for r in kept if r["type"] not in claimed]
+    if leftovers:
+        parts.append(", ".join(leftovers))
+    return ", ".join(parts)
+
+
+def _date_window_phrase(semantic_input: Any) -> str:
+    """", dates 01/09/2026 to 30/09/2026" - the window that was searched, or "" for none.
+
+    A miss inside a date window is a different fact from a miss over all time, and the
+    customer cannot tell which they got without being told.
+    """
+    si = semantic_input if isinstance(semantic_input, dict) else {}
+    start = _fmt_ts(si.get("date_filter_start")) if jsc.truthy(si.get("date_filter_start")) else None
+    end = _fmt_ts(si.get("date_filter_end")) if jsc.truthy(si.get("date_filter_end")) else None
+    if start and end:
+        return f", dates {start}" if start == end else f", dates {start} to {end}"
+    if start:
+        return f", dates from {start}"
+    if end:
+        return f", dates up to {end}"
+    return ""
+
+
 def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
     """The MCP render envelope becomes a WhatsApp message. Deterministic, no LLM (H7).
 
@@ -1066,17 +1202,12 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         entities0 = ctx.get("entities")
         if isinstance(entities0, str):
             entities0 = _safe_json(entities0)
-        codes: list[str] = []
-        for x in jsc.array(entities0):
-            code = jsc.nullish_str(jsc.get(x, "code")).strip()
-            uuid = jsc.nullish_str(jsc.get(x, "uuid")).strip()
-            if code and code != uuid and not _UUID_RE.match(code) and code not in codes:
-                codes.append(code)
+        subject = _axis_labelled_subject(entities0)
         # The noun comes from the envelope's own `result_type`, so there is no local
         # vocabulary here to go stale.
         noun = jsc.js_string(e.get("result_type") or "").replace("_", " ").strip()
         what = (f"{noun} records" if noun else "records") + (
-            f" for {', '.join(codes)}" if codes else ""
+            f" found for {subject}{_date_window_phrase(semantic_input)}" if subject else ""
         )
         silent = [
             n
@@ -1084,7 +1215,17 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             if n and n not in shown_cos
         ]
         if can_attribute and silent:
-            msg += "\n".join(f"*{n}:* no {what}." for n in silent) + "\n\n"
+            # ONE sentence for all the silent companies, not one per company. The subject is
+            # the same in every copy, so repeating it per company said the customer's own
+            # name back to them once per lookup - and on a total miss (nothing found
+            # anywhere) that is the whole reply, twice over. A single silent company is
+            # byte-identical to before.
+            names = (
+                silent[0]
+                if len(silent) == 1
+                else f"{', '.join(silent[:-1])} and {silent[-1]}"
+            )
+            msg += f"*{names}:* no {what}." + "\n\n"
 
     if access_notes:
         msg += "\n".join(access_notes) + "\n\n"

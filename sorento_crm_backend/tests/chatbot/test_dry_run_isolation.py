@@ -732,3 +732,61 @@ class TestLiveTailSessionPatchAbsentIsPreserved:
             f"a dry run must never write session_vars regardless of session_patch shape "
             f"(D14); got {after!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Owner console defect J (part b): a dry-run escalation's `assign_conversation` preview
+# must carry the assignee the LIVE turn would pick (respond_user_id + name), with
+# `preview: true` - never `respond_user_id: null` (today's placeholder, pinned by
+# `test_s5_escalation_lane.py::test_dry_run_never_reaches_next_assignee`, which this fix
+# is expected to flip red - the coder amends that test's AC-507 assertion once this
+# lands). The real round-robin arithmetic is proven separately, against real Postgres, by
+# `test_team_hierarchy_and_round_robin.py::test_preview_next_assignee_does_not_advance_the_cursor`;
+# this test proves the ESCALATION LANE actually wires that preview into the dry-run
+# action, and that neither the LIVE draw (`next_assignee`) nor the SLA write
+# (`sla_create`) ever fires on a dry run, and no round-robin cursor row exists afterwards.
+# --------------------------------------------------------------------------- #
+
+
+class TestDryRunEscalationPreviewsTheRealNextAssignee:
+    def test_assign_conversation_preview_carries_the_would_be_assignee(
+        self, session_factory
+    ) -> None:
+        from app.models.access import AgentTeamRoundRobinCursor
+        from app.models.sla import ConversationSLATracking
+        from app.services.chatbot.lanes.escalation import run
+        from tests.chatbot.test_s5_escalation_lane import (
+            _assignment_ctx_and_item,
+            _services,
+        )
+
+        ctx, item = _assignment_ctx_and_item()
+        services = _services()
+        # The contract does not mandate this exact seam name (the coder may rename it),
+        # but SOME seam on the bundle must be what a dry run reads the preview assignee
+        # from - `next_assignee` itself stays untouched (H37).
+        preview_assignee = {
+            "assignee_id": "usr-member-2",
+            "assignee_name": "Member Two",
+            "assignee_respond_user_id": "respond-usr-member-2",
+        }
+        services.preview_assignee = MagicMock(return_value=preview_assignee)
+
+        result = run(ctx, item, services=services, dry_run=True)
+
+        assign = next(a for a in result["actions"] if a["kind"] == "assign_conversation")
+        assert assign.get("respond_user_id") == "respond-usr-member-2", (
+            "the dry-run preview must name the assignee the live turn WOULD pick, not "
+            f"leave respond_user_id null: {assign!r}"
+        )
+        assert assign.get("preview") is True
+        assert assign.get("dry_run") is True
+
+        services.next_assignee.assert_not_called()
+        services.sla_create.assert_not_called()
+
+        db = session_factory()
+        assert db.query(AgentTeamRoundRobinCursor).count() == 0, (
+            "a dry-run preview must never create or advance a round-robin cursor row"
+        )
+        assert db.query(ConversationSLATracking).count() == 0

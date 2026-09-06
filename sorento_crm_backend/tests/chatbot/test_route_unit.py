@@ -171,6 +171,8 @@ class TestTierRePick:
         branch, stamp = decide(ctx)
         assert branch == "low_signal"
         assert stamp == {}
+
+
 class TestOutOfRangeMemberPickReprompsInsteadOfLowSignal:
     def test_a_bare_out_of_range_digit_against_a_single_company_roster_is_not_low_signal(
         self,
@@ -198,4 +200,55 @@ class TestOutOfRangeMemberPickReprompsInsteadOfLowSignal:
         assert branch != "low_signal", (
             "an out-of-range member pick against a real 6-member roster must reprompt, "
             f"never read as a content-free casual message; got {branch!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Owner console defect C (item 6): `wants_escalation_or_help()` (route.py:78-83) fires on
+# `message_type == 'request_for_help'` (unless `domain_hint == 'portal_link'`) ONE ARM
+# BEFORE `is_ideate_domain()` (route.py:95-98, checked at :248) - so a parse whose
+# `domain_hint` is `ideate` (submit-an-idea intent) never reaches the ideate branch at all
+# and is routed `out_of_scope` instead.
+# --------------------------------------------------------------------------- #
+
+
+class TestIdeateNeverShadowedByHelpRequest:
+    def test_a_request_for_help_with_ideate_domain_hint_routes_to_ideate(self) -> None:
+        qf = {
+            "message_type": "request_for_help",
+            "domain_hint": "ideate",
+            "intent_hint": "submit_idea",
+        }
+        ctx = _ctx(qf, custom_fields=[])
+        branch, _ = decide(ctx)
+        assert branch == "ideate", (
+            "a domain_hint of 'ideate' must route to the ideate lane even when the "
+            f"parser also stamped message_type request_for_help; got {branch!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Owner console defect E (items 8/9): `is_low_signal()` (route.py:134-142) returns True on
+# `message_type == 'casual'` ALONE and is checked (at :258) before `is_clarification()`
+# (:144-146, checked at :260) - neither predicate reads `scope_intent` / `broaden_axis`, so
+# a cold "all of them" (a broaden-scope reply the parser correctly tags `scope_intent:
+# 'broaden'`, `broaden_axis: 'all'`, but which also gets stamped `message_type: 'casual'`
+# with no `domain_hint`) is answered "Hi!" (`low_signal`) instead of being read as the
+# clarification-menu continuation it is.
+# --------------------------------------------------------------------------- #
+
+
+class TestBroadenAllNeverReadAsLowSignal:
+    def test_a_casual_broaden_all_reply_routes_to_clarify_menu_not_low_signal(self) -> None:
+        qf = {
+            "message_type": "casual",
+            "domain_hint": None,
+            "scope_intent": "broaden",
+            "broaden_axis": "all",
+        }
+        ctx = _ctx(qf, custom_fields=[])
+        branch, _ = decide(ctx)
+        assert branch == "clarify_menu", (
+            "message_type casual + scope_intent broaden + broaden_axis all must route to "
+            f"clarify_menu, not be swallowed by is_low_signal; got {branch!r}"
         )

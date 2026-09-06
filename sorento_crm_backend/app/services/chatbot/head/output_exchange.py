@@ -1811,7 +1811,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # The entity-op executor keeps every prior entity whose axis this turn did not name,
     # which is right within one subject and wrong across two: a customer named on an order
     # turn kept scoping the promotion question that followed it, because nothing had ever
-    # asked whether the subject was still the same one (H61).
+    # asked whether the subject was still the same one (H66).
     #
     # Placed AFTER the blocklist rather than inside the executor, deliberately. The
     # blocklist already removes a carried entity whose HINT cannot belong to the new

@@ -713,10 +713,21 @@ def crossdomain_render(
         by_code.setdefault(c.upper(), []).append(it)
 
     blocks: list[str] = []
+    # Codes that came back empty on BOTH sides. Owner ruling (6 Sep 2026): name them and
+    # offer an escalation, rather than dropping them so the reply lists only the codes that
+    # had something to show. "Positive facts only" still holds for a code the probe never
+    # ASKED about - one with no uuid was never probed, so "no incoming" would be an absence
+    # nothing established - so only a PROBED code earns the negative line.
+    nothing: list[str] = []
     for m in jsc.array(zs.get("missing")):
         rows = list(by_code.get(jsc.get(m, "_n"), []))
         if not rows:
-            continue  # positive facts only
+            code = jsc.get(m, "code") or jsc.get(m, "_n")
+            if jsc.truthy(jsc.get(m, "uuid")) and jsc.truthy(code) and not _ms_is_uuid(code):
+                label = jsc.js_string(code)
+                if label not in nothing:
+                    nothing.append(label)
+            continue
 
         def qty(it: Any) -> float:
             """`Number(fieldPref(it, 'quantity_on_hand', 'quantity on hand') ?? NaN)`.
@@ -799,9 +810,39 @@ def crossdomain_render(
             )
             silent_note = "\n\n" + "\n".join(f"*{n}:* no {what}." for n in silent)
 
+    # Same shape as `silent_note` above: a trailing paragraph on the same block, so one
+    # message carries both what WAS found and what was not.
+    # `missing` means "the PRIMARY render did not echo this code", and that is only the same
+    # statement as "this code has nothing" when the render is product-keyed (some row named
+    # a product code) or when it came back empty altogether. A warehouse breakdown and a
+    # demand-quantity verdict both answer ABOUT the code without ever printing it, and
+    # "no stock" underneath the stock just printed is a worse defect than the silence this
+    # note exists to fix.
+    named_codes = [c for c in jsc.array(zs.get("returned_codes")) if jsc.truthy(c)]
+    can_state_absence = bool(named_codes) or jsc.get(passthrough, "has_result") is not True
+
+    nothing_note = ""
+    if nothing and can_state_absence:
+        origin_incoming = zs.get("origin_domain") == "incoming"
+        primary_word = "incoming" if origin_incoming else "stock"
+        other_word = "stock" if origin_incoming else "incoming"
+        team = zs.get("team")
+        offer = (
+            f" Would you like me to escalate to {jsc.js_string(team)} team?"
+            if jsc.truthy(team)
+            else " Would you like me to escalate this?"
+        )
+        nothing_note = (
+            f"No {primary_word} and no {other_word} for {', '.join(nothing)}.{offer}"
+        )
+
+    body = (lead + "\n\n" + "\n\n".join(blocks) + silent_note + mention) if blocks else ""
+    if nothing_note:
+        body = f"{body}\n\n{nothing_note}" if body else nothing_note
+
     out["_xdBlock"] = {
-        "block": (lead + "\n\n" + "\n\n".join(blocks) + silent_note + mention) if blocks else "",
-        "any": len(blocks) > 0,
+        "block": body,
+        "any": bool(blocks) or bool(nothing_note),
         "attachments": xd_files,
         "team": zs.get("team") or None,
         "origin": zs.get("origin_domain") or None,
@@ -1581,6 +1622,32 @@ _HUMAN_SCOPE = {
     "goods_receive": "goods receipt",
 }
 
+# The human-readable label on a resolver `display`, in priority order. Every key here is one
+# `entity_resolver.py` actually emits: `type_name` stays ahead of `description` so an
+# attachment type shows its name and not its long alias text, and `description` stays ahead of
+# the canonical code so a promotion (whose code IS its uuid) still reads as a name. The
+# shipment keys matter because `canonical_code` for an `inbound_shipment` is its
+# `shipment_number`, and that column is null on most rows - the container number is then the
+# only identifier the customer has.
+_DISPLAY_NAME_KEYS: tuple[str, ...] = (
+    "product_name",
+    "customer_name",
+    "debtor_name",
+    "type_name",
+    "description",
+    "shipment_number",
+    "shipping_container_number",
+    "spo_number",
+    "grn_number",
+    "warehouse_name",
+    "supplier_name",
+    "form_name",
+    "filename",
+    "title",
+    "name",
+)
+
+
 # Which axes are active comes from the GATE (`compatible_entities`), never from the parser's
 # hints: a bare code is often hinted `order` and matched by the resolver as a product.
 _AXES: tuple[dict[str, Any], ...] = (
@@ -1862,7 +1929,7 @@ def not_found_error_message(
                 # `description` stays ahead of `canonical_code` so a promotion (whose code IS
                 # its uuid) still shows its name.
                 name = ""
-                for key in ("product_name", "customer_name", "debtor_name", "type_name", "description"):
+                for key in _DISPLAY_NAME_KEYS:
                     value = jsc.get(display, key)
                     if jsc.truthy(value):
                         name = value
@@ -1918,9 +1985,10 @@ def not_found_error_message(
             base = disp_by_uuid.get(jsc.get(c, "uuid"))
             if not jsc.truthy(base):
                 base = jsc.get(c, "code")
-            if not jsc.truthy(base):
-                base = jsc.get(c, "uuid")
-            if not jsc.truthy(base):
+            # A uuid is not a name. When neither the resolver display nor the code yields a
+            # human-readable identifier the candidate is DROPPED, never printed raw - the
+            # console run rendered "inbound_shipment: ecfdaf8f-... (Mocha)" from this arm.
+            if not jsc.truthy(base) or _ms_is_uuid(base):
                 continue
             company = co_by_uuid.get(jsc.get(c, "uuid"))
             # Qualify ONLY in the multi-company case: one company keeps today's bare label
@@ -2326,11 +2394,14 @@ def not_found_error_message(
                         eta_text = f" (estimated delivery {jsc.js_string(eta)})" if jsc.truthy(eta) else ""
                         status = jsc.get(display, "status")
                         status_text = f" - current status: {jsc.js_string(status)}" if jsc.truthy(status) else ""
-                        # `eta_text` is derived by the body and left unused on this arm, the
-                        # same as in the JS; kept so the two read line for line.
-                        del eta_text
+                        # The JS derives `eta` here and then never uses it. Owner ruling
+                        # (6 Sep 2026): the date is the one fact the customer asking "has it
+                        # been delivered" actually wants, so it is stated alongside the
+                        # status. The resolved order's OWN display carries it, so nothing is
+                        # re-read to say it.
                         escalate_message = (
-                            f"Order {label} hasn't been delivered yet{status_text}. "
+                            f"Order {label} hasn't been delivered yet{status_text}"
+                            f"{eta_text}. "
                             f"Would you like me to escalate to {team} team?"
                         )
                     else:

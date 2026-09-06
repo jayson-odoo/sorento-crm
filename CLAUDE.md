@@ -326,6 +326,7 @@ Reference docs this file defers to, so nothing is stated twice:
 | `PRINCIPLES.md` | The binding contract: methodology, DoD gate, design mandates, layering, hard-fail rules. **Governs on conflict.** |
 | `LESSONS-LEARNT.md` | 80 gotchas. Read before debugging anything non-obvious. |
 | `documentation/agents/browser-verification.md` | Full agent-browser policy + command table. |
+| `documentation/agents/chatbot-verification.md` | The chatbot's equivalent: the console check, run per PR and after deploy. |
 | `documentation/reference/ADR-PRODUCT-STANDARDS.md` | CRUD/UX standard in full. |
 | `documentation/reference/DESIGN-LANGUAGE.md` | Tokens, motion presets, primitives roster, external-skill precedence. |
 | `documentation/reference/PR-CHECKLIST.md` | Reviewer checklist. |

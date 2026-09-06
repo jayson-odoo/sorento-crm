@@ -1300,8 +1300,10 @@ without RETYPING the entity. The retype is the owner's own addition.
 Every capture the ruling moves is registered in `tests/chatbot/divergences.py`, field
 scoped, so the rest of each capture is still graded byte for byte: 13
 `compile-current-state` (rule 1), 3 `output_exchange` (rule 4), 2 `output_exchange`
-(rule 2), and one blanket entry for the three diagnostic keys the port ADDS. 16 world
-replays skip by NAME through `worlds.body_difference`. Behaviour is pinned by
+(rule 2), and one blanket entry for the three diagnostic keys the port ADDS. 22 world
+replays move from graded to skipped, each with a named reason through
+`worlds.body_difference`: 14 through the ruling's own clause, 7 through that file's
+pre-existing parser-body-difference arm, and 1 multi-turn chain grading a shorter prefix. Behaviour is pinned by
 `test_tail_units.py`, `test_output_exchange_rules.py`, `test_route_unit.py`,
 `test_resolve_gate_unit.py` and `test_topic_unit.py`.
 
