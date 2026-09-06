@@ -1929,6 +1929,25 @@ def _offer_carry(
         carried_ttl = int(ttl) - 1
     variables["selection_context"] = prev_ctx
     variables["last_result_set"] = prev_set
+
+    # THE OFFER CARRIES ITS SUBJECT (prod exec 15445325). `variables` is built FROM
+    # SCRATCH out of THIS turn's parse, and the model reads a bare out-of-range digit as
+    # `casual` with no positions and no entities - so the re-prompt turn kept the tier
+    # list and threw away the product it was a list FOR, and the customer's next "all"
+    # arrived with nothing in scope and fell to "I need at least one filter"
+    # (exec 15445363). An offer whose subject is gone is an offer nobody can answer.
+    #
+    # FILLS A GAP, never overwrites: a turn that named its own domain or its own entities
+    # keeps them, and a turn that named a DIFFERENT domain never reached this line
+    # (`topic.changed` returned above). So this can only restore what the turn did not
+    # say, on a turn that was already carrying the offer.
+    if not jsc.truthy(variables.get("domain_hint")) and jsc.truthy(prev_domain):
+        variables["domain_hint"] = prev_domain
+    prev_entities = [e for e in jsc.array(jsc.get(prev, "entities")) if jsc.truthy(e)]
+    if not jsc.array(variables.get("entities")) and prev_entities:
+        # `current_message: False` - these are CARRIED, not typed this turn, and the head's
+        # own carried-entity rules (AC-816 rule 2) key on exactly that flag.
+        variables["entities"] = [{**e, "current_message": False} for e in prev_entities]
     return carried_ttl
 
 

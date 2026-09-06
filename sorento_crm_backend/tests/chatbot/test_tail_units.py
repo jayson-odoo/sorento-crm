@@ -943,3 +943,93 @@ class TestThePickResolvedOrderListStatesItsScope:
         assert "300-A011" not in text, (
             f"an internal debtor code must never reach the header: {text!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# AC-816 rule 1: an offer that is carried carries its SUBJECT (prod exec 15445325).
+# --------------------------------------------------------------------------- #
+
+
+class TestACarriedOfferKeepsTheSubjectItWasMadeAbout:
+    """"promotion 7445" -> a three-tier picker -> "9" -> "all" answered nothing.
+
+    The out-of-range "9" re-prompted correctly and rule 1 kept the tier list, but the
+    session patch it wrote had `entities: []` and `domain_hint: null` - the model reads a
+    bare digit as `casual` with no positions extracted (exec 15445325), and the variables
+    object is built FROM SCRATCH from this turn's parse. So the next reply, a perfectly
+    valid "all", arrived with no product in scope and fell to the generic "I need at least
+    one filter" instead of every tier's promotions for 7445 (exec 15445363).
+
+    An offer whose subject is gone is an offer nobody can answer, so the carry takes the
+    subject with it: when the ladder produced no domain and no entities of its own, the
+    carried ones stand. Narrow by construction - this only runs on the turns
+    `_offer_carry` already carries (the ladder was silent AND the topic did not change),
+    and a turn that names its own domain or entities keeps them.
+    """
+
+    TIERS = [
+        {"idx": 1, "label": "Dealer", "value": "Dealer"},
+        {"idx": 2, "label": "End User", "value": "End User"},
+        {"idx": 3, "label": "Contractor", "value": "Contractor"},
+    ]
+    ENTITY = {
+        "raw": "7445",
+        "hint": "product",
+        "canonical_code": "SRTWC7445",
+        "current_message": False,
+        "confident": True,
+    }
+
+    def _out_of_range_ctx(self):
+        """The "9" turn as the model really emits it: casual, no positions, no entities."""
+        ctx = _ctx(
+            message_type="casual",
+            intent_hint=None,
+            domain_hint=None,
+            entities=[],
+        )
+        ctx["text"] = {"message": {"message": {"text": "9"}}}
+        ctx["session"] = {
+            "session_vars": {
+                "variables": {
+                    "message_type": "business_query",
+                    "domain_hint": "promotion",
+                    "intent_hint": "check_promotion",
+                    "selection_context": "tier_offer",
+                    "last_result_set": self.TIERS,
+                    "entities": [self.ENTITY],
+                    "response": "Which access level?",
+                }
+            }
+        }
+        return ctx
+
+    def test_the_tier_list_survives_an_out_of_range_digit(self) -> None:
+        variables = _compile({"outcome": {}}, self._out_of_range_ctx())["variables"]
+        assert variables["selection_context"] == "tier_offer"
+        assert variables["last_result_set"] == self.TIERS
+
+    def test_the_product_and_the_domain_survive_with_it(self) -> None:
+        variables = _compile({"outcome": {}}, self._out_of_range_ctx())["variables"]
+        assert variables["domain_hint"] == "promotion", (
+            "the next reply resolves against the offer's own domain, and the re-prompt "
+            f"turn named none: {variables!r}"
+        )
+        raws = [str(e.get("raw")) for e in (variables.get("entities") or [])]
+        assert raws == ["7445"], (
+            "the product the offer was made about must ride with it, or the next 'all' "
+            f"has nothing to be all OF: {variables!r}"
+        )
+        assert all(
+            e.get("current_message") is False for e in (variables.get("entities") or [])
+        ), "a carried entity is not one the customer typed this turn"
+
+    def test_a_turn_that_names_its_own_subject_keeps_it(self) -> None:
+        """The guard: the carry FILLS a gap, it never overwrites."""
+        ctx = self._out_of_range_ctx()
+        ctx["parse"]["output"]["domain_hint"] = "promotion"
+        ctx["parse"]["output"]["entities"] = [
+            {"raw": "8899", "hint": "product", "current_message": True, "confident": True}
+        ]
+        variables = _compile({"outcome": {}}, ctx)["variables"]
+        assert [str(e.get("raw")) for e in variables["entities"]] == ["8899"]

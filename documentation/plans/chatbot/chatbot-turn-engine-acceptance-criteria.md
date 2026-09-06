@@ -1226,6 +1226,24 @@ contact inside the synchronous request. Different contacts run in parallel.
      (the clock, the answered arm, the filter arm and the `_offer_is_open` seam) and
      `tests/chatbot/test_r3_pending_end_to_end.py::TestAnAbandonedMemberOfferStopsConfirming`
      (the owner's own sequence, through the real head/tail round trip on the database).
+
+     **A carried offer carries its SUBJECT.** Given an offered list that survives a turn,
+     when that turn named no domain and no entities of its own, then the carried
+     `domain_hint` and `entities` ride forward with `selection_context` and
+     `last_result_set` - an offer whose subject is gone is an offer nobody can answer.
+     Prod execs 15445325 / 15445363: "promotion 7445" offered three tiers, the
+     out-of-range "9" re-prompted correctly and kept the list, and the session it wrote
+     had `entities: []` and `domain_hint: null` (the model reads a bare digit as `casual`
+     with no positions, and `variables` is built from scratch out of that parse) - so the
+     valid "all" that followed answered "I need at least one filter" instead of every
+     tier's promotions for 7445. The carry FILLS a gap and never overwrites: a turn that
+     names its own domain or entities keeps them, and a turn naming a different domain
+     never reaches the carry at all. Carried entities are stamped `current_message:
+     false`, which is the flag rule 2 keys on. Five of the thirteen owner-ruling-K
+     captures move on these two fields and are registered per NAME rather than for the
+     whole group, so the other eight go on being graded on them.
+     Evidence: `tests/chatbot/test_tail_units.py::TestACarriedOfferKeepsTheSubjectItWasMadeAbout`
+     and `tests/chatbot/test_r3_pending_end_to_end.py::TestAnOutOfRangePickKeepsTheProductInScope`.
   2. **Carried entities die on a topic change.** Given entities carried in the session
      block, when the customer asks an explicit question in a DIFFERENT domain that brings
      its own entity, then the carried set is dropped; when the domain is the same, or the

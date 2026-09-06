@@ -137,6 +137,25 @@ cases:
           reply_not_contains: ["not one of the options"]
           no_uuid: true
 
+  # Prod execs 15445325 / 15445363. The out-of-range digit re-prompted correctly and kept
+  # the tier list, but persisted no product and no domain, so the valid "all" that followed
+  # answered "I need at least one filter". "9" and not "3": the #34 script offers THREE
+  # tiers, so "3" is in range and would grade the happy path instead.
+  - name: an out-of-range tier pick keeps the product in scope
+    cold: true
+    turns:
+      - text: "promotion 7445"
+        expect:
+          no_uuid: true
+      - text: "9"
+        expect:
+          no_uuid: true
+      - text: "all"
+        expect:
+          reply_contains: ["7445"]
+          reply_not_contains: ["at least one filter"]
+          no_uuid: true
+
   - name: a delivered-status miss names the status and the eta date
     text: "has DO12345 been delivered"
     expect:

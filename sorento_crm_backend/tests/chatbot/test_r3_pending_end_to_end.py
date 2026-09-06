@@ -532,3 +532,121 @@ class TestAPendingOrderRosterDoesNotSwallowABareProductCode:
             "the resolver must still reach the product through `fallback_to_all_types`, "
             f"whatever type rule 4 stamped on the bare token: {resolved!r}"
         )
+
+
+class TestAnOutOfRangePickKeepsTheProductInScope:
+    """"promotion 7445" -> a three-tier picker -> "9" -> "all" (prod execs 15445325 /
+    15445363).
+
+    The re-prompt was right and the tier list survived, but the session it wrote had no
+    product and no domain in it, so the valid "all" that followed answered "I need at
+    least one filter" instead of every tier's promotions for 7445. Graded here as the real
+    chain, because the defect is entirely in what ONE turn persisted and what the NEXT one
+    read back off the database.
+
+    Turn 1 is seeded as the persisted tier offer, for the same reason as the two chains
+    above: composing a real tier picker needs the entitlement read and the tier probe, and
+    what this chain is about is the two turns after it.
+    """
+
+    TIERS = [
+        {"idx": 1, "label": "Dealer", "value": "Dealer"},
+        {"idx": 2, "label": "End User", "value": "End User"},
+        {"idx": 3, "label": "Contractor", "value": "Contractor"},
+    ]
+
+    def _seed_offer(self, session_factory) -> None:
+        db = session_factory()
+        db.execute(
+            text(
+                "UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) "
+                "WHERE respond_io_id = :cid"
+            ),
+            {
+                "cid": CONTACT_ID,
+                "sv": json.dumps(
+                    {
+                        "variables": {
+                            "message_type": "business_query",
+                            "domain_hint": "promotion",
+                            "intent_hint": "check_promotion",
+                            "selection_context": "tier_offer",
+                            "last_result_set": self.TIERS,
+                            "entities": [
+                                {
+                                    "raw": "7445",
+                                    "hint": "product",
+                                    "canonical_code": "SRTWC7445",
+                                    "current_message": False,
+                                    "confident": True,
+                                }
+                            ],
+                            "response": "Which access level?",
+                        }
+                    }
+                ),
+            },
+        )
+        db.commit()
+
+    def _run(self, session_factory, monkeypatch, *, qf, text_body, msg_id):
+        _stub_parser(monkeypatch, qf)
+        envelope = _envelope(is_test=False)
+        envelope.message["message"]["messageId"] = msg_id
+        envelope.message["message"]["message"]["text"] = text_body
+        return engine_mod.run_turn(envelope, session_factory=session_factory)
+
+    def test_the_next_reply_still_knows_which_product_it_is_all_of(
+        self, seeded, session_factory, monkeypatch
+    ):
+        self._seed_offer(session_factory)
+
+        # -- turn 2: "9". Out of range against a three-row list, and the model emits it
+        #    `casual` with no positions and no entities of its own. `complete_turn` is
+        #    called explicitly because the TAIL is what persists the session, and this
+        #    chain is entirely about what that turn wrote down.
+        head2 = self._run(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual", intent_hint=None, domain_hint=None, entities=[]
+            ),
+            text_body="9",
+            msg_id="ZZT-tier-oor-9",
+        )
+        engine_mod.complete_turn(
+            head2.turn_id,
+            _fragments(item={"allowed": True, "response": "Please choose 1, 2 or 3."}),
+            session_factory=session_factory,
+        )
+
+        stored = _session_of(session_factory)["variables"]
+        assert stored.get("selection_context") == "tier_offer", (
+            f"the tier list must survive the bad digit: {stored!r}"
+        )
+        assert [str(e.get("raw")) for e in (stored.get("entities") or [])] == ["7445"], (
+            f"the re-prompt turn persisted no product to be 'all' OF: {stored!r}"
+        )
+        assert stored.get("domain_hint") == "promotion", stored
+
+        # -- turn 3: "all". Valid, and it must reach the promotion lane with 7445 in scope.
+        head = self._run(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="business_query",
+                intent_hint=None,
+                domain_hint=None,
+                entities=[],
+                access_levels=["Dealer", "End User", "Contractor"],
+            ),
+            text_body="all",
+            msg_id="ZZT-tier-oor-all",
+        )
+        qf3 = head.ctx["parse"]["output"]
+        assert qf3.get("domain_hint") == "promotion", (
+            f"the 'all' turn lost the offer's domain: {qf3!r}"
+        )
+        assert "7445" in {str(e.get("raw")) for e in (qf3.get("entities") or [])}, (
+            f"the 'all' turn has nothing to be all OF: {qf3.get('entities')!r}"
+        )
