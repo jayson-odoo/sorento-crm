@@ -610,9 +610,10 @@ jobs:
         working-directory: sorento_crm_frontend
         run: npm ci --force
 
-      # The FULL vitest suite (198 files / 1168 tests) — green and verified
-      # deterministic across repeated runs, so gating on all of it is safe.
-      # Needs no database or service containers; api-client calls are mocked.
+      # The FULL vitest suite (~950 files / ~10.5k tests). Needs no database
+      # or service containers; api-client calls are mocked. Single-test flakes
+      # under runner load are absorbed by `retry: 2` in vitest.config.ts (CI
+      # only); a test that fails three times in a row still blocks the deploy.
       - name: Run vitest suite (executing gate)
         working-directory: sorento_crm_frontend
         run: npx vitest run
