@@ -199,3 +199,9 @@ hierarchy and UOM conversion (absent in AutoCount); importer review aids (D19).
   the ESB lands the document with warning `unclassified_demand`. Not in the grill; captain's call
   (recommend: both channels land the document unclassified with the warning, and the upload
   preview lists the unclassified documents instead of refusing).
+- AC-P2-4 as built: `planning_change_batches` rows are project-keyed (ProjectSalesOrder), so a core
+  SO batch produces the hook call but no rows, exactly as the upload does today. D10 is satisfied
+  by the hook wiring; the guard test for a real row is skipped with that evidence.
+- Browser verification (tester, 2026-09-06): upload menu shows the four surviving kinds, order
+  inquiry dialog previews, SO list/detail render at 1280px and 375px, SPO allocations list renders;
+  zero console errors. Screenshots in the session scratchpad `browser-s4/`.
