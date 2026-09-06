@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { MoveLeft } from 'lucide-react';
@@ -30,7 +31,14 @@ export interface BackToListProps {
  */
 export function useHrefWithListState(path: string, appendListState = true): string {
   const searchParams = useSearchParams();
-  const search = appendListState ? searchParams.toString() : '';
+  // `tab` is the detail page's own state (which tab is open), not list state, so
+  // it must not ride along to the list, the edit screen, or a post-delete redirect.
+  const search = useMemo(() => {
+    if (!appendListState) return '';
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('tab');
+    return params.toString();
+  }, [appendListState, searchParams]);
   return search ? `${path}?${search}` : path;
 }
 

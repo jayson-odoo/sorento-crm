@@ -48,7 +48,7 @@ import {
   subtractMoney,
   sumMoney,
 } from '@/app/(protected)/project-sales/_shared/lib/money';
-import { useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { usePurchaseOrder, useUpdatePurchaseOrder } from '../../../hooks/usePurchaseOrders';
 import { useWarehouseOptions } from '../../../hooks/useScmOptions';
 import {
@@ -257,6 +257,8 @@ function productFallback(
 
 export function PurchaseOrderDetail({ id }: { id: string }) {
   const { data, isLoading, isError } = usePurchaseOrder(id);
+  const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   // Back returns to the list the user actually had open, filters and page included.
 
@@ -335,7 +337,22 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
     setValue: setLineSearchInput,
     debouncedValue: lineSearch,
   } = useDebouncedSearch();
-  const [tab, setTab] = useState('general');
+  // Kept in the URL, not component state (mirrors `SalesOrderDetail`'s own `tab` param), so a
+  // bookmarked or shared link (`?tab=lines`) opens directly on that tab.
+  const tab = searchParams.get('tab') || 'general';
+  const handleTabChange = useCallback(
+    (next: string) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (next === 'general') {
+        params.delete('tab');
+      } else {
+        params.set('tab', next);
+      }
+      const qs = params.toString();
+      router.replace(`${pathname}${qs ? `?${qs}` : ''}`, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
 
   /** The currency this order's figures are IN. Per order rather than per line: a purchase
    *  order is written in one currency, and the line column exists only because the import
@@ -475,15 +492,21 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
               </>
             );
           }
+          const showProductName =
+            !!row.original.product_name?.trim() &&
+            row.original.product_name.trim().toLowerCase() !==
+              row.original.sku?.trim().toLowerCase();
           return (
             <div className="flex min-w-0 flex-col">
               <span className="font-medium">{row.original.sku}</span>
-              <span
-                className="truncate text-xs text-muted-foreground"
-                title={row.original.product_name}
-              >
-                {row.original.product_name}
-              </span>
+              {showProductName && (
+                <span
+                  className="truncate text-xs text-muted-foreground"
+                  title={row.original.product_name}
+                >
+                  {row.original.product_name}
+                </span>
+              )}
             </div>
           );
         },
@@ -1016,7 +1039,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
       {/* One tab per concern of the order, the same shape as the sales-order screen. The tab
           set is the SAME in view and in edit - editing swaps a value for an input inside the
           tab it already lived in. */}
-      <Tabs value={tab} onValueChange={setTab} className="w-full">
+      <Tabs value={tab} onValueChange={handleTabChange} className="w-full">
         <TabsList variant="line" className="mb-4 w-full justify-start">
           <TabsTrigger value="general">
             <FileText />

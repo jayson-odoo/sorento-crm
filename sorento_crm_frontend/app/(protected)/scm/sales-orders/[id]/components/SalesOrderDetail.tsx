@@ -56,7 +56,7 @@ import {
   sumMoney,
 } from '@/app/(protected)/project-sales/_shared/lib/money';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { useSearchParams } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useSalesOrder, useUpdateSalesOrder } from '../../../hooks/useSalesOrders';
 import { useWarehouseOptions } from '../../../hooks/useScmOptions';
 import {
@@ -87,7 +87,6 @@ import type {
 // ONE vocabulary for where supply comes from (PLAN-scm-cs-planning-uat.md section 2), shared
 // with the planning board rather than restated here.
 import { describe as describeSupply } from '../../../../project-sales/_shared/lib/supplyVocabulary';
-import { useRouter } from 'next/navigation';
 import BackToList, { useBackToListHref } from '@/components/common/BackToList';
 import { useSalesOrderActions } from '../../actions';
 
@@ -343,6 +342,7 @@ function SupplyText({
 
 export function SalesOrderDetail({ id }: { id: string }) {
   const router = useRouter();
+  const pathname = usePathname();
   const { data, isLoading, isError } = useSalesOrder(id);
   const backHref = useBackToListHref('/scm/sales-orders');
   // The set the list row's "..." renders too (D15). Delete used to be a red icon
@@ -453,7 +453,22 @@ export function SalesOrderDetail({ id }: { id: string }) {
     setValue: setLineSearchInput,
     debouncedValue: lineSearch,
   } = useDebouncedSearch();
-  const [tab, setTab] = useState('general');
+  // Kept in the URL, not component state (mirrors `ProductDetail`'s own `tab` param), so a
+  // bookmarked or shared link (`?tab=lines`) opens directly on that tab.
+  const tab = searchParams.get('tab') || 'general';
+  const handleTabChange = useCallback(
+    (next: string) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (next === 'general') {
+        params.delete('tab');
+      } else {
+        params.set('tab', next);
+      }
+      const qs = params.toString();
+      router.replace(`${pathname}${qs ? `?${qs}` : ''}`, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
 
   // While an edit session is open every figure below is read off the DRAFT, so a typed
   // quantity or price moves the row AND the totals row at once. Outside a session they read
@@ -563,15 +578,21 @@ export function SalesOrderDetail({ id }: { id: string }) {
               </>
             );
           }
+          const showProductName =
+            !!row.original.product_name?.trim() &&
+            row.original.product_name.trim().toLowerCase() !==
+              row.original.sku?.trim().toLowerCase();
           return (
             <div className="flex min-w-0 flex-col">
               <span className="font-medium">{row.original.sku}</span>
-              <span
-                className="truncate text-xs text-muted-foreground"
-                title={row.original.product_name}
-              >
-                {row.original.product_name}
-              </span>
+              {showProductName && (
+                <span
+                  className="truncate text-xs text-muted-foreground"
+                  title={row.original.product_name}
+                >
+                  {row.original.product_name}
+                </span>
+              )}
             </div>
           );
         },
@@ -1237,7 +1258,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
       {/* One tab per concern of the order, the same shape as the user detail page. The tab
           set is the SAME in view and in edit - editing swaps a value for an input inside the
           tab it already lived in. */}
-      <Tabs value={tab} onValueChange={setTab} className="w-full">
+      <Tabs value={tab} onValueChange={handleTabChange} className="w-full">
         <TabsList variant="line" className="mb-4 w-full justify-start">
           <TabsTrigger value="general">
             <FileText />
