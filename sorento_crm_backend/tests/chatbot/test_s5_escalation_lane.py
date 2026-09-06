@@ -208,6 +208,9 @@ def _services(
         {
             "resolve_and_gate": Mock(return_value=gate),
             "next_assignee": Mock(return_value={**default_assignee, **(assignee or {})}),
+            # The READ-ONLY twin of `next_assignee` (AC-507, amended 6 Sep 2026): a dry run
+            # names the assignee the live turn would draw, without advancing the cursor.
+            "preview_assignee": Mock(return_value={**default_assignee, **(assignee or {})}),
             "sla_create": Mock(return_value={**default_sla, **(sla or {})}),
             "team_members": Mock(return_value=members or []),
         },
@@ -530,14 +533,19 @@ def test_dry_run_never_reaches_next_assignee(session_factory) -> None:
     own `test-guard` If sits before `sorento-sub-respond-sendmsg-respond-routed-to-pic2` and
     everything after it, which is exactly this ordering).
 
-    Ruling (5 Sep 2026, AC-503/AC-507): a dry run still RETURNS all four would-be actions,
-    in order, with `dry_run: true` and PREVIEW placeholders in place of whatever only a real
-    `next_assignee`/`sla_create` call could produce - `assign_conversation.respond_user_id`
-    is `null` (no draw happened) with `preview: true`; `add_comment.mention_user_ids` is `[]`
-    (nobody to mention) with `preview: true`, and the comment text carries the literal
+    Ruling (5 Sep 2026, AC-503/AC-507, AMENDED 6 Sep 2026): a dry run still RETURNS all four
+    would-be actions, in order, with `dry_run: true` and PREVIEW placeholders in place of
+    whatever only a WRITING seam could produce - the comment text carries the literal
     `<preview>` marker in place of the SLA timestamps (no `conversation-sla-tracking-create`
-    row exists to read them from). This is what lets a dry-run turn's trace/preview UI show
-    the customer AND the CRM exactly what would happen, not just that something would.
+    row exists to read them from), and every action is flagged `preview: true`. This is what
+    lets a dry-run turn's trace/preview UI show the customer AND the CRM exactly what would
+    happen, not just that something would.
+
+    The amendment (owner console pass, 6 Sep 2026): the ASSIGNEE is no longer a null
+    placeholder. `preview_assignee` reads the same pool and the same cursor as the live draw
+    and advances neither, so the preview names who the live turn WOULD pick. What this test
+    pins is therefore no longer "nobody was named" but the thing that actually matters: the
+    round-robin cursor did not move and no SLA row exists.
 
     Row counts on the real (blank) Postgres schema are the second net for H37 itself: even
     if the coder's `run()` bypassed the injected `services` and called a real production
@@ -557,17 +565,22 @@ def test_dry_run_never_reaches_next_assignee(session_factory) -> None:
     assert all(a.get("dry_run") is True for a in result["actions"])
 
     _first_send, assign, comment, _second_send = result["actions"]
-    assert assign["respond_user_id"] is None
+    assert assign["respond_user_id"] == "respond-usr-1", (
+        "the preview names the assignee the live turn would draw (AC-507 as amended)"
+    )
     assert assign.get("preview") is True
-    assert comment["mention_user_ids"] == []
+    assert comment["mention_user_ids"] == ["respond-usr-1"]
     assert comment.get("preview") is True
     assert "<preview>" in comment["text"]
 
+    # The WRITING seams stay untouched: the preview is a read.
     services.next_assignee.assert_not_called()
     services.sla_create.assert_not_called()
 
     db = session_factory()
-    assert db.query(AgentTeamRoundRobinCursor).count() == 0
+    assert db.query(AgentTeamRoundRobinCursor).count() == 0, (
+        "a dry run must not create or advance a round-robin cursor row"
+    )
     assert db.query(ConversationSLATracking).count() == 0
 
 

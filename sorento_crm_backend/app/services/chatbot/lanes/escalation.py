@@ -458,11 +458,16 @@ def run(
     team = jsc.get(context_item, "team")
 
     if dry_run:
-        # D14 / H37, AC-507. The seams are NOT reached - no assignee is picked, no cursor
+        # D14 / H37, AC-507. No WRITING seam is reached - nothing is drawn, no cursor
         # advances, no SLA row is written - and the turn still returns every action it WOULD
         # have taken, in order, each flagged `dry_run` and `preview`. The executor renders
         # its expressions against this shape, so a dry run that returned a shorter list
         # would be a different contract from the live one and could not be rendered against.
+        #
+        # The assignee is PREVIEWED, not left blank: `preview_assignee` reads the same pool
+        # and the same cursor as the live draw and advances neither, so the owner sees the
+        # name the live turn would have picked. "Would assign to somebody" answered the
+        # question nobody was asking.
         #
         # `assign_conversation` is always present here: whether the live run omits it
         # depends on `is_already_assigned`, which only the seam knows, so a preview cannot
@@ -475,7 +480,7 @@ def run(
         actions = _assignment_actions(
             ctx,
             team,
-            assignee=None,
+            assignee=_preview_assignee(ctx, context_item, services, session_factory),
             sla=preview_sla,
             include_assign=True,
             dry_run=True,
@@ -495,6 +500,34 @@ def run(
     with escalation_services.production_session(session_factory) as db:
         actions = _assign(ctx, context_item, team, production_services(db))
     return {**result, "actions": actions, "pending": None}
+
+
+def _preview_assignee(
+    ctx: dict[str, Any], context_item: dict[str, Any], services: Any, session_factory: Any
+) -> Any:
+    """The assignee a LIVE turn would draw, read without drawing. `None` when unknowable.
+
+    Fails soft in both directions on purpose: a bundle with no preview seam (an older
+    injected stub) and a preview that raises both leave the action's `respond_user_id`
+    null, which is the placeholder AC-507 shipped with - a dry run must never fail a turn
+    over the extra detail it is trying to show.
+    """
+    body = {**_next_assignee_body(ctx, context_item), "preview": True}
+    seam = getattr(services, "preview_assignee", None) if services is not None else None
+    try:
+        if seam is not None:
+            return seam(body)
+        if services is not None or session_factory is None:
+            return None
+        # Production dry run: the same read-only unit of work the live branch uses, so the
+        # preview is scoped to the contact's company exactly as the draw would be (H56).
+        from app.services.chatbot.lanes import escalation_services
+
+        with escalation_services.production_session(session_factory) as db:
+            return escalation_services.build(db).preview_assignee(body)
+    except Exception:  # noqa: BLE001 - a preview is never worth failing a test turn for
+        logger.warning("chatbot: dry-run assignee preview did not run", exc_info=True)
+        return None
 
 
 def _assign(

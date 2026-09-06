@@ -8,6 +8,7 @@ is what lets the 66-fixture replay run as JSON in, JSON out.
 | n8n node | this seam | CRM service |
 | --- | --- | --- |
 | `get-round-robin-assignee` (httpRequest) | `next_assignee` | `POST /api/v1/external/next-assignee`'s own handler |
+| (the same node, previewed) | `preview_assignee` | the same handler with `preview: true` |
 | `conversation-sla-tracking-create` (httpRequest) | `sla_create` | `ConversationSLATrackingService.create_tracking` |
 | (B-HB-1, not live) | `resolve_and_gate` | S6a's `business.run_until_exit` |
 | (the member roster) | `team_members` | `app.api.v1.external.team_members` |
@@ -40,6 +41,7 @@ class EscalationServices:
 
     resolve_and_gate: Any
     next_assignee: Any
+    preview_assignee: Any
     sla_create: Any
     team_members: Any
 
@@ -59,6 +61,28 @@ def _next_assignee(db: Any):
 
         return asyncio.run(
             post_next_assignee(body=body, current_user={"id": None, "email": "chatbot"}, db=db)
+        )
+
+    return call
+
+
+def _preview_assignee(db: Any):
+    def call(body: dict[str, Any]) -> dict[str, Any]:
+        """The SAME handler, asked who it WOULD draw (`preview: true`).
+
+        A dry run has to name the real next assignee, and it shares the round-robin cursor
+        with live traffic, so it must not advance it. Going through the handler rather than
+        reaching for the service keeps ONE implementation of team resolution, the company
+        pin, segments and brands - the same reason `next_assignee` calls it.
+        """
+        from app.api.v1.external.next_assignee import post_next_assignee
+
+        return asyncio.run(
+            post_next_assignee(
+                body={**body, "preview": True},
+                current_user={"id": None, "email": "chatbot"},
+                db=db,
+            )
         )
 
     return call
@@ -145,6 +169,7 @@ def build(db: Any) -> EscalationServices:
     return EscalationServices(
         resolve_and_gate=_not_live("resolve_and_gate"),
         next_assignee=_next_assignee(db),
+        preview_assignee=_preview_assignee(db),
         sla_create=_sla_create(db),
         team_members=_not_live("team_members"),
     )
