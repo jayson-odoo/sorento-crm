@@ -17,11 +17,12 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { formatDate } from '@/lib/helpers';
 import { formatStatusLabel } from '@/lib/status-badge';
 import { spoDetailHref } from '@/lib/spo-detail';
-import { useConsolidatedPackingList } from '@/app/(protected)/scm/hooks/useFulfilment';
+import { useConsolidatedPackingList, useShipmentLinePhotos } from '@/app/(protected)/scm/hooks/useFulfilment';
 import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
 import { ProductComboboxSearchable } from './ProductComboboxSearchable';
 import { SupplierCombobox } from './SupplierCombobox';
 import { PackingListSplitCard } from './PackingListSplitCard';
+import { ShipmentLinePhotosCell } from './ShipmentLinePhotosCell';
 import { deriveLineCells, fmtDp, fmtStated, toNum } from './packingListLineMath';
 import {
   usePackingListRecord,
@@ -176,6 +177,8 @@ export function PackingListLinesTab() {
 
   const packingListId = packingList?.id ?? null;
   const consolidated = useConsolidatedPackingList(packingListId);
+  // R25 (lane C, slice C3): every line's photos in one read, not one per row.
+  const linePhotos = useShipmentLinePhotos(packingListId);
 
   const {
     value: searchInput,
@@ -864,6 +867,24 @@ export function PackingListLinesTab() {
         enableSorting: false,
         meta: { headerTitle: 'Status' },
       },
+      {
+        id: 'photos',
+        header: ({ column }) => <DataGridColumnHeader title="Photos" column={column} />,
+        cell: ({ row }) => {
+          const line = row.original;
+          return (
+            <ShipmentLinePhotosCell
+              shipmentId={packingListId as string}
+              lineId={line.id ?? null}
+              productLabel={line.product_code || 'this line'}
+              photos={line.id ? (linePhotos.data?.[line.id] ?? []) : []}
+            />
+          );
+        },
+        size: 220,
+        enableSorting: false,
+        meta: { headerTitle: 'Photos' },
+      },
     ];
 
     if (editing) {
@@ -896,7 +917,7 @@ export function PackingListLinesTab() {
     // `setLineField` and `removeLine` are stable (`useCallback`, empty deps, in
     // `packing-list-context.tsx`) so they cost nothing as dependencies here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing, suppliers, supplierNameById, setLineField, removeLine]);
+  }, [editing, suppliers, supplierNameById, setLineField, removeLine, packingListId, linePhotos.data]);
 
   const table = useReactTable({
     data: rows,

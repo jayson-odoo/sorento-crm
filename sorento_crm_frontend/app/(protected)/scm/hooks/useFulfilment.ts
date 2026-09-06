@@ -14,6 +14,7 @@ import {
   getContainerSizes,
   getFulfilmentSuppliers,
   getLoadingPlanList,
+  getShipmentLinePhotos,
   getSpoSuggestion,
   getSupplierChatContacts,
   getSupplierNotices,
@@ -365,5 +366,15 @@ export function useDownloadSpoWorksheet(shipmentId: string | null) {
     mutationFn: (fallbackName?: string | null) =>
       downloadSpoWorksheet(shipmentId as string, fallbackName),
     onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/** Supplier photos on a shipment line (R25, lane C, slice C3) - every line's photos in
+ *  one read, keyed by line id, so the Lines tab fetches once rather than once per row. */
+export function useShipmentLinePhotos(shipmentId: string | null) {
+  return useQuery({
+    queryKey: [...KEY, 'line-photos', shipmentId],
+    queryFn: () => getShipmentLinePhotos(shipmentId as string),
+    enabled: !!shipmentId,
   });
 }
