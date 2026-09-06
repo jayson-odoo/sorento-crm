@@ -1,8 +1,8 @@
 """RED test for ingest parity standardisation, Phase S2b (D23, captain 2026-09-06).
 
-UAC: documentation/plans/autocount/ingest-parity-standardisation-acceptance-criteria.md
+UAC: documentation/plans/_archive/autocount/ingest-parity-standardisation-acceptance-criteria.md
      Phase S2b, AC-P2-8.
-PLAN: documentation/plans/autocount/PLAN-ingest-parity-standardisation.md D23.
+PLAN: documentation/plans/_archive/autocount/PLAN-ingest-parity-standardisation.md D23.
 
 D23 reverses QP1 (captain, 26 Aug 2026, `outstanding_import_service._classify_demand`'s own
 docstring): an unclassifiable document no longer refuses the whole file. It lands on BOTH
