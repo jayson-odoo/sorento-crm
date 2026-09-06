@@ -697,8 +697,15 @@ def _person_routing(
             "options": _team_clarify_options(hits),
         }
 
+    # The PARSER's own team, never the derived one - the same distinction the person arm
+    # above makes, and for the same measured reason (owner ruling D1, console pass 3,
+    # 6 Sep 2026). A turn that named no team arrives here with `team` already inherited
+    # from the stale pending offer (`output_exchange`'s nullish routing chain falls back to
+    # the previous turn's), so gating on `team` made this clarify inert on exactly the turn
+    # it exists for: turn 9a40182a asked "can someone else help me" over a pending
+    # warehouse offer and was silently re-assigned to warehouse.
     prev_team = jsc.get(jsc.get(_prev_variables(ctx), "routing"), "suggested_team")
-    if not jsc.truthy(team) and jsc.truthy(prev_team):
+    if not jsc.truthy(_parser_team(ctx, team)) and jsc.truthy(prev_team):
         return {
             "kind": "clarify",
             "text": _team_clarify_text(None, []),

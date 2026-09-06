@@ -1329,3 +1329,73 @@ contact inside the synchronous request. Different contacts run in parallel.
   filter axis ("stock for rpacc" under an order roster) are both asserted NOT to be filter
   modifications, and both go red when the arm is widened back. Full chatbot suite green:
   3589 passed, 128 skipped, 5 xfailed. (H65, H66)
+
+- AC-817 `[BE][T]` **Console pass 3 (6 Sep 2026): the customer picker says which ledger and
+  whether there is a DO, "all of them" picks every offered code, and an explicitly named
+  team beats a pending offer.** Three owner rulings, one lane.
+
+  1. **The ambiguous-customer picker line reads `N. <name> (<company code>) - has DO` /
+     `- no DO`.** Evidence turns 5ea477a6 (#15) and 934d4c18 (#16). Two defects, both fixed:
+     (a) the line rendered the account name alone, and the same name exists once per company
+     ledger ("A CRAFT IDEA SDN BHD" under SRT and again under MOCHA) while `_repLabel`
+     deletes exactly the marker that told them apart, so two lines of the picker read
+     identically; (b) the `- has delivery` stamp was built from EVERY order row the probe
+     returned, so a customer whose orders had not shipped read as having a delivery. Given an
+     ambiguous customer token, when the picker renders, then each line names the owning
+     company's `companies.code` (the resolver stamps `company_code` beside `company_name` in
+     `_attach_company_info`, and a match with none prints as it does today), and the suffix
+     counts ONLY order rows carrying an `Actual Delivery Date`. The roster's `title` carries
+     the same label as the printed line, so a reply by name resolves to the row that was
+     read. Which window was measured stays on `customer_probe_window_days`; the per-line
+     suffix is not hedged with it.
+
+     **And the probe seam is wired.** `ResolveGateServices.probe`'s production binding raised
+     `NotImplementedError`, so `resolve_gate._run_probe` caught it on every live turn and the
+     annotator rendered the BARE picker - the stamp could not appear in production however
+     right the annotator was. It is bound to `_mcp_probe`, the same sub-workflow seam
+     `AnswerServices` already uses (`entity_ids_transformer` at the boundary,
+     `parse_mcp_content` on the way back, both landed in #705 / lesson 102). Evidence:
+     `tests/chatbot/test_s6a_gate_dry_run_and_seams.py::TestOwnerRulingACustomerPickerLabelCarriesCompanyCode`,
+     `::TestOwnerRulingACustomerPickerDOStamp`,
+     `::TestOwnerRulingATheCustomerPickerReachesTheProductionProbeSeam` (the whole seam on
+     real Postgres rows, stopping only at the socket),
+     `tests/chatbot/test_resolve_gate_unit.py::TestPickerProbeArms`.
+
+  2. **"all of them" over a pending did-you-mean picks every offered code.** Given a turn that
+     offered N codes and persisted them, when the customer replies "all of them", then the
+     turn is a `business_query` in the OFFER's domain scoped to every offered code, each
+     carrying the roster's own uuid so nothing re-resolves, and the answer names all of them.
+     A cold "all of them" with nothing pending stays a clarify menu. `apply_dym_pick` now
+     stamps `entity_op: "replace"` rather than `"replace_combine"`: it has already folded
+     every prior entity it keeps into the returned list, so the only thing the executor's
+     axis-wise `kept_prior` could add back is the very token the pick replaced. Evidence:
+     `tests/chatbot/test_output_exchange_rules.py::TestOwnerRulingBAllOfThemOverPendingDymOffer`
+     (the post-processor, both arms) and
+     `tests/chatbot/test_r3_pending_end_to_end.py::TestAllOfThemOverADidYouMeanOfferAnswersEveryOfferedCode`
+     (the real two-turn chain: a missing code, three REAL siblings found by the trigram tier
+     on seeded Postgres rows, and the answer naming all three).
+
+  3. **A pending escalation offer never consumes a request for a DIFFERENT team.** Evidence
+     turns 9a40182a and 8b3a3b80: a pending `{kind: escalation_offer, team: warehouse}` offer
+     was open, "escalate to marketing" arrived, and the turn confirmed the offer and assigned
+     + commented "Team: warehouse". Given an open offer, when the parser's OWN routing (the
+     pre-derivation snapshot, never the derived value that has already inherited the offer's
+     team) names a different team, then the turn is not a confirmation and routes to the named
+     team. When the parser names NO team on a `request_for_help` and neither its own
+     `escalation.is_escalation_confirmation` nor an accept word says the customer accepted,
+     then `escalation.team_unresolved` is set, the turn is not a confirmation, and the lane
+     asks which team with quick replies. A bare "yes" still confirms. At the lane's own
+     boundary, `_person_routing`'s "no team, no person, a previous turn had one" clarify reads
+     `_parser_team(ctx, team)` rather than the already-inherited `team`, which is what made it
+     inert on exactly the turns it exists for. Evidence:
+     `tests/chatbot/test_output_exchange_rules.py::TestOwnerRulingD1PendingOfferTeamMismatch`
+     (three cases including the bare-"yes" guard) and
+     `tests/chatbot/test_s5_escalation_lane.py::TestOwnerRulingD1LaneTeamMismatch`.
+
+  Registered divergences (`tests/chatbot/divergences.py`), all field-scoped so the rest of
+  every capture still grades byte for byte: 4 `output_exchange` on `entity_op` /
+  `entity_op_applied` (measured - the entity list is byte-equal on all four), 4
+  `annotate-customer-picker` and 2 `sub-resolve-and-gate` exit arms on `escalate_message`.
+  None of the three rules can be fixture-visible: n8n's own bodies say "delivery", stamp
+  `replace_combine` and read `is_affirmative` alone. Full chatbot suite green: 3628 passed,
+  129 skipped, 5 xfailed. (H67, H68, H69)

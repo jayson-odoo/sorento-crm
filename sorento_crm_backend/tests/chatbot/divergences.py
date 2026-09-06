@@ -328,6 +328,91 @@ DIVERGENCES: list[Divergence] = [
         )
         for name in ("parser-15124806", "parser-15151771")
     ),
+    # OWNER RULING B, console pass 3 (6 Sep 2026): a did-you-mean pick stamps
+    # `entity_op: "replace"` where the JS stamped `"replace_combine"`. The four
+    # captures below are every graded `output_exchange` capture in the corpus that
+    # reaches `applyDymPick`, and on every one of them the ENTITY LIST is byte-equal
+    # - measured, one capture at a time. That is the point: `applyDymPick` already
+    # folds every prior entity it keeps into the returned list with
+    # `current_message: true`, so the executor's axis-wise `kept_prior` had nothing
+    # left to add on these turns and the two ops produce the same scope. They stop
+    # agreeing on the turn the ruling is about, where the pick's candidate type
+    # differs from the source token's hint and `replace_combine` puts the replaced
+    # token back. Field-scoped to the op and its diagnostic; the entities, the
+    # domain, the dates and everything else still grade byte for byte. Pinned by
+    # test_output_exchange_rules.py::TestOwnerRulingBAllOfThemOverPendingDymOffer
+    # and the real two-turn chain in
+    # test_r3_pending_end_to_end.py::TestAllOfThemOverADidYouMeanOfferAnswersEveryOfferedCode.
+    *(
+        Divergence(
+            node="output_exchange",
+            fixture=name,
+            hazard="owner ruling B (console pass 3, 6 Sep 2026)",
+            reason=(
+                "a did-you-mean pick names its op `replace`, not `replace_combine` - the "
+                "picks ARE the scope. Field-scoped to the op; the entity list this "
+                "capture records is byte-equal either way."
+            ),
+            strip_paths=(
+                ("output", "entity_op"),
+                ("output", "entity_op_applied"),
+            ),
+        )
+        for name in (
+            "parser-15118060",
+            "parser-15136058",
+            "parser-15143320",
+            "parser-15143474",
+        )
+    ),
+    # OWNER RULING A, console pass 3 (6 Sep 2026): the ambiguous-customer picker
+    # stamps "- has DO" / "- no DO" instead of "- has delivery" / "- no recent
+    # delivery" / "- no delivery", and the set it stamps from now counts only order
+    # rows that carry an `Actual Delivery Date`. Both halves are the owner's ruling
+    # and neither can be fixture-visible: n8n's own body says "delivery" and builds
+    # the set from every row the probe returned, so every capture of this node
+    # records the old wording and the old membership by construction. Field-scoped
+    # to the rendered message; `customer_probe_hits`, `customer_probe_window_days`,
+    # `customer_probe_skip_reason`, `is_clarification` and the untouched roster all
+    # still grade. Pinned by
+    # test_s6a_gate_dry_run_and_seams.py::TestOwnerRulingACustomerPickerDOStamp.
+    *(
+        Divergence(
+            node="annotate-customer-picker",
+            fixture=name,
+            hazard="owner ruling A (console pass 3, 6 Sep 2026)",
+            reason=(
+                "the picker suffix reads '- has DO' / '- no DO' and counts only orders "
+                "with a delivery-order date. Live says 'delivery' and counts any order. "
+                "Field-scoped to `escalate_message`."
+            ),
+            strip_paths=(("escalate_message",),),
+        )
+        for name in (
+            "exec-14095480",
+            "exec-14001898",
+            "exec-14091114",
+            "exec-14109393",
+        )
+    ),
+    # The same ruling seen through the WHOLE sub: `resolve-exit-offer` carries the
+    # annotator's message onward, so these two exit-arm captures move on exactly the
+    # one field and nothing else (measured - `gate_clarification` is byte-equal,
+    # because the whole-sub replay is fed the CAPTURED gate rather than re-running
+    # `run_gate`).
+    *(
+        Divergence(
+            node="sub-resolve-and-gate",
+            fixture=name,
+            hazard="owner ruling A (console pass 3, 6 Sep 2026)",
+            reason=(
+                "the exit arm carries the customer picker's own '- has DO' / '- no DO' "
+                "message. Field-scoped to `escalate_message`."
+            ),
+            strip_paths=(("escalate_message",),),
+        )
+        for name in ("rg-15114061", "rg-15125764")
+    ),
     # The three keys rules 2, 3 and 4 ADD to `output_exchange`'s emission. No
     # capture can contain a key the node did not emit when it was taken, so this
     # is the same class as the `pending` marker above and is handled the same

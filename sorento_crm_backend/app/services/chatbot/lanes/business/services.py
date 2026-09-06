@@ -163,8 +163,13 @@ def _resolve_entity(db: Session) -> ResolveEntityFn:
     return call
 
 
-def _probe() -> ProbeFn:
-    """No session parameter: the probe is an MCP call, not a database one (D10)."""
+def _probe(db: Session | None = None) -> ProbeFn:
+    """No session parameter is USED: the probe is an MCP call, not a database one (D10).
+
+    The parameter exists so the bundle builder can pass its session without knowing that,
+    exactly as `_mcp_probe` takes one and ignores it.
+    """
+    probe = _mcp_probe(db)
 
     def call(
         *,
@@ -181,17 +186,32 @@ def _probe() -> ProbeFn:
         the tool's own render envelope, which is what both annotators read
         (`{answers|items: [...]}`).
 
-        **Argument BUILDING (`entity-ids-transformer`) and result RENDERING
-        (`output-structurer`) are S6b and are not ported yet.** Until S6b lands this seam
-        raises, and `resolve_gate` turns that into the annotators' own documented
-        "unprobed" arm - the bare picker for the customer probe, and today's behaviour for
-        the incoming probe. It never fabricates an answer set, because a probe that did
-        not run must not read as a probe that found nothing.
+        This seam raised `NotImplementedError` until 7 Sep 2026, on the grounds that
+        `sub-get-results`' first node (`entity-ids-transformer`) and its renderer had not
+        been ported - so every ambiguous-customer turn rendered the BARE picker and the
+        owner's "has DO" / "no DO" stamp could never appear on a live turn. Both halves
+        landed with `_mcp_probe` (#705, lesson 102): the transformer runs at the
+        sub-workflow boundary and `parse_mcp_content` turns the client's STRING back into
+        the envelope. The picker probe is the same sub-workflow call with the same
+        `workflowInputs`, so it is wired to the same seam rather than to a second one -
+        `crm_order_management_orders_list` is the orders read the CRM already serves, and
+        rebuilding its render envelope in process would be a second presenter to keep in
+        step with `sorento_crm_mcp/presenters.py`, which is the file the annotators' field
+        labels ("Customer", "Actual Delivery Date") are read from.
+
+        A failure still reaches the annotators as the documented UNPROBED arm:
+        `resolve_gate._run_probe` catches, logs and returns None, which renders the bare
+        picker rather than a confident miss on evidence nobody gathered.
         """
-        raise NotImplementedError(
-            "the picker probe needs sub-get-results' entity-ids-transformer and "
-            "output-structurer, which land in S6b; until then the annotators render the "
-            "unprobed picker"
+        return probe(
+            tool,
+            {
+                "tool": tool,
+                "contact_id": contact_id,
+                "entities": entities,
+                "semantic_input": semantic_input,
+                "user_prompt": user_prompt,
+            },
         )
 
     return call
@@ -464,5 +484,5 @@ def production_services(db: Session, *, space_id: str | None = None) -> ResolveG
     return ResolveGateServices(
         access_types=_access_types(db, default_space_id=space_id),
         resolve_entity=_resolve_entity(db),
-        probe=_probe(),
+        probe=_probe(db),
     )

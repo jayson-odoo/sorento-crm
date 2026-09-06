@@ -45,7 +45,18 @@ def seeded(session_factory):
     return db
 
 
-def _stub_parser(monkeypatch, output: dict[str, Any]) -> None:
+def _stub_parser(monkeypatch, output: dict[str, Any], *, space_id: str | None = None) -> None:
+    """The parser + access seams, canned.
+
+    `space_id` defaults to None, which is what every test in this file that does NOT care
+    about company scope wants. It is a REAL lever, not decoration: `engine._contact_company_scope`
+    resolves the contact's companies through `(contact_id, space_id)`, and
+    `ContactAccessTypeService.resolve_contact_company_ids` returns `[]` the moment either
+    side is blank - so a null space id means an EMPTY company scope on every session the
+    turn opens, `_company_scope_sql` compiles that to ` AND FALSE`, and the resolver's raw
+    SQL trigram probe (the did-you-mean tier) can never return a row. Pass the seeded
+    workspace's own space id for any chain that has to resolve a real product.
+    """
     def fake_resolve_config(db, *, current_date, override_version_id=None):
         return parser_mod.ParserConfig(
             system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
@@ -58,7 +69,7 @@ def _stub_parser(monkeypatch, output: dict[str, Any]) -> None:
         "check_access",
         lambda db, **kw: {"allowed": True, "decision": "allow", "agent_name": "General"},
     )
-    monkeypatch.setattr(engine_mod, "default_space_id", lambda db: None)
+    monkeypatch.setattr(engine_mod, "default_space_id", lambda db: space_id)
 
 
 def _session_of(session_factory) -> dict:
@@ -650,3 +661,265 @@ class TestAnOutOfRangePickKeepsTheProductInScope:
         assert "7445" in {str(e.get("raw")) for e in (qf3.get("entities") or [])}, (
             f"the 'all' turn has nothing to be all OF: {qf3.get('entities')!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Owner ruling B, console pass 3 (6 Sep 2026), as the REAL two-turn chain.
+#
+# `test_output_exchange_rules.py::TestOwnerRulingBAllOfThemOverPendingDymOffer` grades the
+# post-processor alone, against a hand-built `dym_last_result_set`. This grades the whole
+# thing: turn 1 asks about a code that does not exist, the REAL resolver's trigram tier
+# finds three REAL siblings under the contact's own company and the tail persists the offer;
+# turn 2 says "all of them" and must come back scoped to all three.
+#
+# THE HARNESS GAP THIS FILE HAD, written down so it is not reintroduced: `seeded` above
+# inserts a bare `respond_contacts` row - no workspace, no `respond_contact_companies` - and
+# `_stub_parser` pointed `default_space_id` at None. `engine.run_turn` resolves the
+# contact's scope from exactly that pair, so every session the turn opened carried an EMPTY
+# frozenset, `entity_resolver._company_scope_sql` compiled it to ` AND FALSE`, and the
+# trigram probe returned nothing however good the seed data was. The rule-3 chain above
+# side-steps it by monkeypatching `engine._contact_company_scope`; this one does NOT - it
+# seeds the workspace and the membership and lets the production path resolve the scope, so
+# the chain also proves that path still works.
+# --------------------------------------------------------------------------- #
+
+DYM_SPACE_ID = "364817"
+
+
+class TestAllOfThemOverADidYouMeanOfferAnswersEveryOfferedCode:
+    OFFERED = ("SRTKS6091", "SRTKS8047", "SRTKS8050")
+    MISSING = "SRTKS8091"
+
+    def _seed_scope_and_products(self, session_factory) -> str:
+        """A default workspace, a company, the contact's membership in it, and the three
+        REAL sibling products the trigram tier has to find. Returns the company id."""
+        from app.models.company import Company, RespondContactCompany
+        from app.models.product import Product, ProductCategory, UnitOfMeasure
+        from app.models.respond_workspace import RespondWorkspace
+        from tests._pg_fixture import unique_code
+
+        db = session_factory()
+        workspace = RespondWorkspace(
+            space_id=DYM_SPACE_ID,
+            name="ZZT dym chain workspace",
+            api_key_ciphertext="ZZT-cipher",
+            is_default=True,
+        )
+        company = Company(name="Sorento", code=unique_code("SRT")[:50])
+        db.add_all([workspace, company])
+        db.flush()
+        contact_id = db.execute(
+            text("SELECT id FROM respond_contacts WHERE respond_io_id = :cid"),
+            {"cid": CONTACT_ID},
+        ).scalar()
+        db.execute(
+            text("UPDATE respond_contacts SET workspace_id = :w WHERE id = :c"),
+            {"w": workspace.id, "c": contact_id},
+        )
+        db.add(RespondContactCompany(respond_contact_id=contact_id, company_id=company.id))
+        category = ProductCategory(
+            category_code=unique_code("CAT")[:50],
+            category_name="ZZT dym chain category",
+            company_id=company.id,
+        )
+        uom = UnitOfMeasure(uom_code=unique_code("UOM")[:20], uom_name="Each", company_id=company.id)
+        db.add_all([category, uom])
+        db.flush()
+        for code in self.OFFERED:
+            db.add(
+                Product(
+                    product_code=code,
+                    product_name=f"ZZT sink {code}",
+                    category_id=category.id,
+                    base_uom_id=uom.id,
+                    list_price=10,
+                    is_active=True,
+                    company_id=company.id,
+                )
+            )
+        db.commit()
+        return str(company.id)
+
+    def _put_trgm_on_the_search_path(self, session_factory) -> None:
+        """The SECOND half of the harness gap, and the one that survives fixing the scope.
+
+        `tests/chatbot/conftest.py`'s `session_factory` pins `search_path` to the scratch
+        schemas so a raw-SQL write cannot escape into the real tables - which also drops the
+        schema that holds `similarity()` and the `%` operator, so every trigram probe raises
+        "function similarity(text, unknown) does not exist" INSIDE its own savepoint, is
+        swallowed by the probe's except-block, and the token comes back with no
+        alternatives at all. Appending the extension's schema LAST is the recipe
+        `tests/test_entity_resolver_trgm_normalized.py` already uses and for the same
+        reason: every table name still resolves to the scratch schema first, so the guard
+        that fixture exists for still holds, and the append dies with this test's own
+        transaction.
+        """
+        db = session_factory()
+        trgm_schema = db.execute(
+            text(
+                "SELECT n.nspname FROM pg_extension e "
+                "JOIN pg_namespace n ON n.oid = e.extnamespace "
+                "WHERE e.extname = 'pg_trgm'"
+            )
+        ).scalar()
+        assert trgm_schema, "pg_trgm is not installed; the did-you-mean tier cannot run"
+        current = db.execute(text("SHOW search_path")).scalar()
+        db.execute(text(f'SET LOCAL search_path TO {current}, "{trgm_schema}"'))
+
+    def _wire(self, session_factory, monkeypatch) -> None:
+        from tests.chatbot.conftest import set_chatbot_switches
+        from tests.chatbot.test_engine_company_scope import (
+            _wire_answer_services,
+            _wire_real_resolve_entity,
+        )
+
+        set_chatbot_switches(session_factory, business_lane=True)
+        db = session_factory()
+        db.execute(
+            text("UPDATE system_settings SET chatbot_completed_lanes = CAST(:l AS jsonb)"),
+            {"l": '["business_query"]'},
+        )
+        db.commit()
+        _wire_real_resolve_entity(monkeypatch)
+        _wire_answer_services(monkeypatch)
+
+        def _run_fetch(payload: dict[str, Any], **_kwargs: Any) -> dict[str, Any]:
+            """The stock answer, named per product IN SCOPE.
+
+            Not a canned sentence: this chain's whole question is which products reached
+            the answer, so the stand-in says which ones it was given. The RAG tool pick and
+            the MCP read are what a canned fetch is standing in for; the scope is not.
+            """
+            codes = [
+                str(e.get("canonical_code") or e.get("raw"))
+                for e in ((payload.get("parser") or {}).get("entities") or [])
+                if (e or {}).get("hint") == "product"
+            ]
+            response = "In stock: " + ", ".join(codes) if codes else "I need a product."
+            fetch = {
+                "answers": [{"note": c} for c in codes],
+                "response": response,
+                "has_result": bool(codes),
+                "_fetch_arm": "result",
+            }
+            return {
+                "kind": "result",
+                "_fetch_arm": "result",
+                "delegate": "business_query",
+                "delegate_payload": {**payload, "fetch": fetch},
+                "fetch": fetch,
+            }
+
+        monkeypatch.setattr(engine_mod.business, "run_fetch", _run_fetch)
+
+    def _run(self, session_factory, monkeypatch, *, qf, text_body, msg_id):
+        _stub_parser(monkeypatch, qf, space_id=DYM_SPACE_ID)
+        envelope = _envelope(is_test=False)
+        envelope.message["message"]["messageId"] = msg_id
+        envelope.message["message"]["message"]["text"] = text_body
+        return engine_mod.run_turn(envelope, session_factory=session_factory)
+
+    def test_a_missing_code_offers_its_siblings_and_all_of_them_answers_for_every_one(
+        self, seeded, session_factory, monkeypatch
+    ):
+        self._seed_scope_and_products(session_factory)
+        self._put_trgm_on_the_search_path(session_factory)
+        self._wire(session_factory, monkeypatch)
+
+        # -- turn 1: "Srtks8091 got stock". No such product; the three seeded siblings are
+        #    the trigram tier's neighbours, and the tail persists them as the offer.
+        head1 = self._run(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="business_query",
+                intent_hint="check_stock",
+                domain_hint="inventory",
+                entities=[
+                    {
+                        "raw": self.MISSING,
+                        "hint": "product",
+                        "canonical_code": None,
+                        "current_message": True,
+                        "confident": True,
+                    }
+                ],
+            ),
+            text_body=f"{self.MISSING} got stock",
+            msg_id="ZZT-dym-chain-t1",
+        )
+        assert head1.status in ("done", "delegated"), head1.error
+
+        stored = _session_of(session_factory)["variables"]
+        offered = [
+            str(jsc_code)
+            for jsc_code in (
+                (c or {}).get("code") for c in ((stored.get("dym_offer") or {}).get("candidates") or [])
+            )
+            if jsc_code
+        ]
+        assert sorted(offered) == sorted(self.OFFERED), (
+            f"turn 1 did not persist a did-you-mean offer over the three real siblings: "
+            f"{stored.get('dym_offer')!r}"
+        )
+        roster = stored.get("dym_last_result_set") or stored.get("last_result_set") or []
+        assert [r.get("value") for r in roster] == list(self.OFFERED), (
+            f"the numbered roster the pick resolves against was not persisted: {stored!r}"
+        )
+        assert stored.get("selection_context") == "suggest_offer", stored
+
+        # -- turn 2: "all of them". The parser hears small talk; the state is what makes
+        #    this a pick-all over the offer.
+        head2 = self._run(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual",
+                intent_hint=None,
+                domain_hint=None,
+                entities=[],
+            ),
+            text_body="all of them",
+            msg_id="ZZT-dym-chain-t2",
+        )
+
+        qf2 = head2.ctx["parse"]["output"]
+        assert qf2["message_type"] == "business_query", qf2
+        assert qf2["domain_hint"] == "inventory", (
+            f"the pick-all must stay in the offer's own domain: {qf2.get('domain_hint')!r}"
+        )
+        codes = sorted(
+            str(e.get("canonical_code"))
+            for e in (qf2.get("entities") or [])
+            if e.get("canonical_code")
+        )
+        assert codes == sorted(self.OFFERED), (
+            f"'all of them' must scope the turn to every offered code: {qf2.get('entities')!r}"
+        )
+        assert qf2.get("select_all_expanded") is True, (
+            f"'all of them' must expand to every offered position: {qf2!r}"
+        )
+        # WHICH pick-all arm this chain takes, stated because it is not the one
+        # `test_output_exchange_rules.py::TestOwnerRulingBAllOfThemOverPendingDymOffer`
+        # grades. A FULL miss (no token resolved) is `build-suggest-offer`'s roster, and
+        # the tail writes it as `last_result_set` + `selection_context: suggest_offer`, so
+        # `output_exchange`'s select-all arm for a picker roster runs and its op is
+        # "reuse" - the positional resolution downstream is what puts the three codes in
+        # scope. `dym_last_result_set` (and with it `entity_op: "replace"`) is the PARTIAL
+        # did-you-mean's separate roster, written only when some tokens DID answer
+        # (`compile_state._partial_dym_block`). Two rosters, two arms, one visible
+        # contract: every offered code ends up in scope with a uuid.
+        assert qf2.get("entity_op") == "reuse", qf2.get("entity_op")
+        assert all(e.get("uuid") for e in qf2["entities"]), (
+            f"each picked code must carry the roster's own uuid, so the answer step needs "
+            f"no re-resolution: {qf2['entities']!r}"
+        )
+
+        done2 = engine_mod.complete_turn(
+            head2.turn_id,
+            _fragments(item={"allowed": True}),
+            session_factory=session_factory,
+        ) if head2.status == "delegated" else head2
+        reply = (done2.reply or {}).get("text") or ""
+        for code in self.OFFERED:
+            assert code in reply, f"the answer must name {code}: {reply!r}"

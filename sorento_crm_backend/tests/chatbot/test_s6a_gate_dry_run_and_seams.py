@@ -613,7 +613,19 @@ class TestOwnerRulingACustomerPickerLabelCarriesCompanyCode:
     def test_which_customer_lines_carry_the_company_code(self) -> None:
         """`gate.py`'s ambiguous-customer block renders "N. <name>" only today - no
         company code. Built from `ResolvedEntity.as_dict()`'s own field shape
-        (app/services/entity_resolver.py), never a hand-built n8n dict."""
+        (app/services/entity_resolver.py), never a hand-built n8n dict.
+
+        AMENDED 7 Sep 2026 (coder, with the captain): this test first asserted the
+        CUSTOMER code ("ZZTDOA"). The owner's words were "company code", and the shape
+        they named it from is the old spine's own "A CRAFT IDEA SDN BHD (SRT)" - SRT is
+        the CRM company (`companies.code`; the two rows on this install are SRT and
+        MOCHA), not a customer code. That is also the only reading that does any work
+        here: the picker exists because ONE customer name resolves to several accounts,
+        and printing a per-account code next to each line would still leave two lines of
+        the same name to choose between when the duplicate is one account per company
+        ledger. The resolver now stamps `company_code` beside `company_name`
+        (`_attach_company_info`), and the fixture below carries it exactly as the real
+        payload does."""
         resolver = {
             "resolutions": [
                 {
@@ -626,8 +638,9 @@ class TestOwnerRulingACustomerPickerLabelCarriesCompanyCode:
                             "match_field": "customer_name",
                             "match_tier": "substring",
                             "similarity": None,
-                            "company_id": None,
-                            "company_name": None,
+                            "company_id": "zzt-co-srt",
+                            "company_name": "Sorento",
+                            "company_code": "SRT",
                             "display": {
                                 "customer_name": "ZZT Ambigco Alpha Sdn Bhd",
                                 "phone_number": None,
@@ -641,8 +654,9 @@ class TestOwnerRulingACustomerPickerLabelCarriesCompanyCode:
                             "match_field": "customer_name",
                             "match_tier": "substring",
                             "similarity": None,
-                            "company_id": None,
-                            "company_name": None,
+                            "company_id": "zzt-co-mocha",
+                            "company_name": "Mocha",
+                            "company_code": "MOCHA",
                             "display": {
                                 "customer_name": "ZZT Ambigco Beta Sdn Bhd",
                                 "phone_number": None,
@@ -667,14 +681,20 @@ class TestOwnerRulingACustomerPickerLabelCarriesCompanyCode:
             f"gate_reason={out.get('gate_reason')!r}"
         )
         clarification = out["gate_clarification"]
-        assert "(ZZTDOA)" in clarification, (
-            f"RED (the actual gap): the picker line must carry the company code "
-            f"'(ZZTDOA)' next to the customer name: {clarification!r}"
+        assert "ZZT Ambigco Alpha Sdn Bhd (SRT)" in clarification, (
+            f"the picker line must carry the owning company's code next to the customer "
+            f"name: {clarification!r}"
         )
-        assert "(ZZTDOB)" in clarification, (
-            f"RED (the actual gap): the picker line must carry the company code "
-            f"'(ZZTDOB)' next to the customer name: {clarification!r}"
+        assert "ZZT Ambigco Beta Sdn Bhd (MOCHA)" in clarification, (
+            f"the picker line must carry the owning company's code next to the customer "
+            f"name: {clarification!r}"
         )
+        # The roster the pick resolves against carries the SAME label, so a customer who
+        # types the whole line back resolves to the row they read.
+        assert [e["title"] for e in out["compatible_entities"]] == [
+            "ZZT Ambigco Alpha Sdn Bhd (SRT)",
+            "ZZT Ambigco Beta Sdn Bhd (MOCHA)",
+        ], out["compatible_entities"]
 
 
 class TestOwnerRulingACustomerPickerDOStamp:
@@ -779,3 +799,209 @@ class TestOwnerRulingACustomerPickerDOStamp:
         # only appends a suffix, it must never reorder or renumber the roster.
         assert gate["compatible_entities"][0]["uuid"] == cust_a.id
         assert gate["compatible_entities"][0]["title"] == cust_a.customer_name
+
+
+# --------------------------------------------------------------------------- #
+# Owner ruling A, the PRODUCTION seam. The stamp above is worth nothing until the
+# ambiguous-customer branch actually reaches a probe on a live turn:
+# `ResolveGateServices.probe`'s production binding raised `NotImplementedError` until
+# 7 Sep 2026, so `resolve_gate._run_probe` caught it on every single turn and the
+# annotator rendered the BARE picker.
+#
+# This test crosses the whole seam and stops at the socket (lesson 102): the gate's own
+# `run_gate` decides the branch, `resolve_gate.run` calls the PRODUCTION bundle's `probe`,
+# `entity_ids_transformer` builds the tool arguments, and only `MCPRuntimeClient.call_tool`
+# is replaced - with a fake that answers the STRING the real client answers (the shape that
+# defeated three fixes in #700), built from a REAL `OrderService(db).list_orders(...)` read
+# of the seeded rows using the arguments the transformer actually emitted. So the customer
+# uuids, the delivery window, the string parse and the annotator all run for real.
+# --------------------------------------------------------------------------- #
+
+
+class TestOwnerRulingATheCustomerPickerReachesTheProductionProbeSeam:
+    SPACE_ID = "364817"
+
+    def _seed(self, db: Any) -> tuple[Any, Any, str]:
+        from datetime import date
+
+        from app.models.company import Company
+        from app.models.order import Customer, Order
+        from tests._pg_fixture import unique_code
+
+        company = Company(name="ZZT Probe Seam Co", code=unique_code("ZPS")[:50])
+        db.add(company)
+        db.flush()
+        cust_a = Customer(
+            customer_code="ZZTSEAMA",
+            customer_name="ZZT Seamco Alpha Sdn Bhd",
+            company_id=company.id,
+        )
+        cust_b = Customer(
+            customer_code="ZZTSEAMB",
+            customer_name="ZZT Seamco Beta Sdn Bhd",
+            company_id=company.id,
+        )
+        db.add_all([cust_a, cust_b])
+        db.commit()
+        db.add_all(
+            [
+                Order(
+                    order_number="ZZTSEAMORD-A1",
+                    customer_id=cust_a.id,
+                    debtor_name=cust_a.customer_name,
+                    actual_delivery_date=date(2026, 9, 1),
+                    company_id=company.id,
+                ),
+                Order(
+                    order_number="ZZTSEAMORD-B1",
+                    customer_id=cust_b.id,
+                    debtor_name=cust_b.customer_name,
+                    actual_delivery_date=None,
+                    company_id=company.id,
+                ),
+            ]
+        )
+        db.commit()
+        return cust_a, cust_b, str(company.code)
+
+    def _resolver_payload(self, cust_a: Any, cust_b: Any, company_code: str) -> dict[str, Any]:
+        def _match(cust: Any) -> dict[str, Any]:
+            return {
+                "entity_type": "customer",
+                "canonical_code": cust.customer_code,
+                "uuid": cust.id,
+                "match_field": "customer_name",
+                "match_tier": "substring",
+                "similarity": None,
+                "company_id": cust.company_id,
+                "company_name": "ZZT Probe Seam Co",
+                "company_code": company_code,
+                "display": {"customer_name": cust.customer_name},
+            }
+
+        return {
+            "tokens": ["seamco"],
+            "resolutions": [
+                {
+                    "token": "seamco",
+                    "resolved": False,
+                    "ambiguous": True,
+                    "matches": [_match(cust_a), _match(cust_b)],
+                    "alternatives": [],
+                }
+            ],
+            "unresolved_tokens": [],
+        }
+
+    def test_the_ambiguous_customer_branch_probes_through_the_production_bundle(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """`resolve_gate.run` -> `services.probe` -> `entity_ids_transformer` -> the MCP
+        client, then the answer back through `parse_mcp_content` into the annotator. The
+        seam is graded on what it ASKS (both seeded customer uuids, the render view, the
+        90-day delivery window) and on what the customer then reads."""
+        import json as _json
+
+        from app.services.ai_assistant_service import MCPRuntimeClient
+        from app.services.order_service import OrderService
+
+        from app.models.base import set_company_scope
+
+        db = session_factory()
+        cust_a, cust_b, company_code = self._seed(db)
+        # The scope the ENGINE stamps on every session it opens (`engine._scoped_factory`,
+        # from the contact's own `respond_contact_companies` rows). Without it the suite's
+        # Sorento default hides the seeded company's orders and the probe reads zero rows -
+        # which is the "no DO" answer, arrived at for the wrong reason.
+        set_company_scope(db, frozenset({cust_a.company_id}))
+        resolver = self._resolver_payload(cust_a, cust_b, company_code)
+
+        asked: list[tuple[str, dict[str, Any]]] = []
+
+        def _fake_call_tool(self_client, tool_name: str, args: dict[str, Any]) -> str:
+            asked.append((tool_name, args))
+            rows = OrderService(db).list_orders(
+                customer_ids=list(args.get("customer_ids") or []), limit=100
+            )["data"]
+            # `sorento_crm_mcp/presenters.py::_orders_list`, field for field, over the REAL
+            # rows - and returned as the STRING `MCPRuntimeClient.call_tool` returns.
+            return _json.dumps(
+                {
+                    "answers": [
+                        {
+                            "title": row.order_number,
+                            "fields": [
+                                {"label": "Order Number", "value": row.order_number},
+                                {"label": "Customer", "value": row.debtor_name},
+                                {
+                                    "label": "Actual Delivery Date",
+                                    "value": row.actual_delivery_date.isoformat()
+                                    if row.actual_delivery_date
+                                    else None,
+                                },
+                            ],
+                        }
+                        for row in rows
+                    ]
+                }
+            )
+
+        monkeypatch.setattr(MCPRuntimeClient, "call_tool", _fake_call_tool)
+
+        services = production_services(db, space_id=self.SPACE_ID)
+
+        def _resolve_entity(body: dict[str, Any]) -> dict[str, Any]:
+            return resolver
+
+        services = ResolveGateServices(
+            access_types=services.access_types,
+            resolve_entity=_resolve_entity,
+            probe=services.probe,  # THE seam under test, production binding
+        )
+
+        ctx = {
+            "contact": {"id": CONTACT_ID},
+            "parse": {
+                "output": {
+                    "domain_hint": "order",
+                    "intent_hint": "check_order",
+                    "entities": [
+                        {
+                            "raw": "seamco",
+                            "hint": "customer",
+                            "canonical_code": None,
+                            "current_message": True,
+                        }
+                    ],
+                }
+            },
+            "session": {},
+        }
+
+        out = resolve_gate.run(
+            ctx,
+            "resolve",
+            {},
+            services=services,
+            space_id=self.SPACE_ID,
+            probe_default_start="2026-06-09",
+        )
+
+        assert asked, (
+            "the ambiguous-customer branch never reached `ResolveGateServices.probe` - "
+            "the production binding is unwired again, and every live picker renders bare"
+        )
+        tool_name, args = asked[0]
+        assert tool_name == resolve_gate.CUSTOMER_PROBE_TOOL, tool_name
+        assert set(args.get("customer_ids") or []) == {cust_a.id, cust_b.id}, args
+        assert args.get("view") == "render", args
+        assert args.get("actual_delivery_date_from") == "2026-06-09", args
+
+        message = out["escalate_message"]
+        lines = [line for line in message.splitlines() if line[:1].isdigit()]
+        assert len(lines) == 2, message
+        assert lines[0].endswith(" - has DO"), message
+        assert lines[1].endswith(" - no DO"), message
+        assert f"({company_code})" in lines[0], (
+            f"the picker line must still name the owning company: {message!r}"
+        )

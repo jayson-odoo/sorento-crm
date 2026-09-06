@@ -792,9 +792,21 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                 s = _TRAILING_WS_DASH.sub("", _WS_RUN.sub(" ", s)).strip()
                 return s or name
 
+            # ── the option line NAMES THE LEDGER the account sits in ────────
+            # Owner ruling, console pass 3 (6 Sep 2026): "N. <name> (<company code>)".
+            # The same account name exists once per company ("A CRAFT IDEA SDN BHD" under
+            # SRT and again under MOCHA), and `_repLabel` deletes exactly the marker that
+            # told them apart when it folds a family, so without the code two lines of the
+            # picker read identically and the pick is a coin toss. The resolver stamps
+            # `company_code` on every company-scoped match (`_attach_company_info`); a
+            # match with none - a shared row, or an older payload - prints as it does today.
+            def _company_suffix(m: Any) -> str:
+                code = jsc.js_string(jsc.get(m, "company_code") or "").strip()
+                return f" ({code})" if code else ""
+
             # computed ONCE and indexed by i in BOTH renders, so the printed line and the
             # roster `title` are byte-equal by construction.
-            rep_labels = [_rep_label(m) for m in reps]
+            rep_labels = [_rep_label(m) + _company_suffix(m) for m in reps]
             require_specific = True
             gate_passed = False
             gate_reason = (
@@ -806,7 +818,10 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
             )
             # The roster must be the SAME rows in the SAME order as the numbered lines or
             # the positional pick misresolves. `title` is what compile-current-state
-            # labels the row with, so a reply by name resolves as well as one by number.
+            # labels the row with, so a reply by name resolves as well as one by number -
+            # which is why the company code goes into `rep_labels` itself rather than only
+            # into the printed line: a customer who types the whole line back must resolve
+            # to the row they read.
             compatible_entities = [
                 {
                     "uuid": jsc.get(m, "uuid"),

@@ -277,17 +277,43 @@ class TestPickerProbeArms:
         assert out["customer_probe_skip_reason"] == "page_saturated"
 
     def test_a_defaulted_window_bounds_the_miss_claim(self) -> None:
+        """The WINDOW is still reported and still shapes the trailing sentence; the
+        per-line suffix is not hedged with it any more (owner ruling A, console pass 3,
+        6 Sep 2026 - "N. <name> (<company code>) - has DO" / "- no DO"). Which window was
+        measured stays on `customer_probe_window_days`, where a reader can act on it."""
         out = pickers.annotate_customer(dict(self.GATE), probe={"answers": []}, parser={})
         assert out["customer_probe_window_days"] == 90
-        assert out["escalate_message"].endswith("None of these have a recent delivery.")
-        assert " - no recent delivery" in out["escalate_message"]
+        assert out["escalate_message"].endswith("None of these have a recent DO.")
+        assert " - no DO" in out["escalate_message"]
 
     def test_a_customer_dated_window_makes_the_plain_claim(self) -> None:
         out = pickers.annotate_customer(
             dict(self.GATE), probe={"answers": []}, parser={"date_filter_start": "2026-01-01"}
         )
         assert out["customer_probe_window_days"] is None
-        assert out["escalate_message"].endswith("None of these have a matching delivery.")
+        assert out["escalate_message"].endswith("None of these have a matching DO.")
+
+    def test_an_order_with_no_delivery_order_is_not_counted_as_one(self) -> None:
+        """The substantive half of the ruling: `crm_order_management_orders_list` returns
+        every matching ORDER, and the old set counted all of them - so a customer whose
+        orders had not shipped read "- has delivery"."""
+        rows = [
+            {
+                "title": "ZZT-1",
+                "fields": [
+                    {"label": "Customer", "value": "ACME SDN BHD"},
+                    {"label": "Actual Delivery Date", "value": None},
+                ],
+            }
+        ]
+        out = pickers.annotate_customer(dict(self.GATE), probe={"answers": rows}, parser={})
+        assert " - no DO" in out["escalate_message"], out["escalate_message"]
+        assert out["customer_probe_hits"] == 0
+
+        rows[0]["fields"][1]["value"] = "2026-09-01"
+        out = pickers.annotate_customer(dict(self.GATE), probe={"answers": rows}, parser={})
+        assert " - has DO" in out["escalate_message"], out["escalate_message"]
+        assert out["customer_probe_hits"] == 1
 
     def test_the_incoming_picker_keeps_the_numbering_and_the_order(self) -> None:
         gate = {"gate_clarification": "Choose:\n1. AAA-1\n2. BBB-2"}

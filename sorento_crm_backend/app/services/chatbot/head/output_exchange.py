@@ -540,6 +540,38 @@ DATE_FILTER_DOMAINS = frozenset({"promotion", "order"})
 # one leading word boundary is written out as a lookbehind, and `\s` is left alone.
 _REPLY_TO_SPLIT = re.compile(r"\s*reply to:", re.IGNORECASE)
 _OFFERED_ESCALATION_RE = re.compile(r"would you like me to escalate", re.IGNORECASE)
+
+# Words that ACCEPT an open escalation offer, for the one question `message_type` cannot
+# answer: "ESCALATE", "YES ESCALTE" and "can someone else help me" are all emitted
+# `request_for_help` with `is_affirmative: true` and a null routing, and the first two are
+# acceptances while the third is a fresh ask. Measured against every capture in the replay
+# corpus that reaches this arm (output_exchange/exec-13484619, parser-15074683,
+# parser-15074293), which is also why the list is short: it holds only what an acceptance
+# has actually been said with, and it is a fallback behind the model's own
+# `escalation.is_escalation_confirmation`, never the primary reading. Inventoried with the
+# module's other deterministic text tiers (`_ALL_RE`, `CO_FILLERS`) in the plan's
+# text-sniffing table.
+ESCALATION_ACCEPT_WORDS = frozenset(
+    {
+        "yes",
+        "ya",
+        "yah",
+        "yeah",
+        "yep",
+        "yup",
+        "ok",
+        "ok",
+        "okay",
+        "okey",
+        "sure",
+        "escalate",
+        "proceed",
+        "ahead",
+        "confirm",
+        "setuju",
+        "boleh",
+    }
+)
 _ALL_RE = re.compile(
     r"^(all|all of them|all of it|everything|every one|semua|semuanya|semua sekali|both|kedua|kedua-duanya)[.!\s]*$",
     re.IGNORECASE,
@@ -661,6 +693,21 @@ def _offer_is_open(state: Any) -> bool:
     return bool(
         _OFFERED_ESCALATION_RE.search(jsc.js_string(response if jsc.truthy(response) else ""))
     )
+
+
+def _offered_team(state: Any, prior_routing: Any) -> Any:
+    """The team the OPEN offer was made for, normalised, or None.
+
+    `pending.team` is what the tail wrote alongside the offer, so it is the answer whenever
+    the marker is there. A session written by the old n8n spine carries only the frozen
+    sentence and no marker, and there the previous turn's routing is the same fact by
+    another route - the offer's copy is composed FROM that routing.
+    """
+    pending = jsc.get(state, "pending")
+    team = jsc.get(pending, "team") if jsc.truthy(pending) else None
+    if not jsc.truthy(team):
+        team = jsc.get(prior_routing, "suggested_team")
+    return jsc.norm(team)
 
 
 def _unwrap(json_item: dict) -> dict:
@@ -968,7 +1015,16 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             final = [picked] + [{**e, "current_message": True} for e in prior]
             o["dym_replace_unmatched"] = True
 
-        o["entity_op"] = "replace_combine"
+        # "replace", not "replace_combine" (owner ruling B, console pass 3, 6 Sep 2026).
+        # `final` above ALREADY carries every prior entity this turn keeps, re-stamped
+        # current_message true, and the source token is GONE - overwritten in place by the
+        # candidate that was picked. Asking the executor to combine that with the previous
+        # state a second time can only put the replaced token back: `kept_prior` keeps a
+        # prior entity whose AXIS no current one names, and a pick whose candidate type
+        # differs from the source token's hint (a "customer"-hinted token answered by a
+        # product candidate) leaves exactly that hole. The pick set IS the scope - "all of
+        # them" over a did-you-mean offer must answer for the offered codes and nothing else.
+        o["entity_op"] = "replace"
         o["scope_exclusive"] = False  # IGNORE the LLM's scope_exclusive=true
         o["message_type"] = "business_query"
         # carry the prior date window if THIS turn named none
@@ -1226,10 +1282,17 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
                         else (o.get("intent_hint") if jsc.truthy(o.get("intent_hint")) else None)
                     )
                     o["domain_reused_entityless"] = True
-        else:  # 'modify' | 'replace_combine' | anything else
+        else:  # 'modify' | 'replace' | 'replace_combine' | anything else
             current_axes = {axis_of(e) for e in current}
             exclusive = o.get("scope_exclusive") is True
-            if exclusive:
+            if op == "replace" and len(current) > 0:
+                # 'replace' = this turn's entities ARE the whole scope, on every axis
+                # (owner ruling B). Only `apply_dym_pick` stamps it, and it has already
+                # folded every prior entity it means to keep into `current` - so the only
+                # thing an axis-wise `kept_prior` can add back here is the very token the
+                # pick replaced.
+                kept_prior = []
+            elif exclusive:
                 if len(current) == 0:
                     # "restrict to only [nothing]" is meaningless - almost always a
                     # tier/attribute change, not an entity narrow. Keep prior.
@@ -1920,7 +1983,63 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         or o.get("select_all_expanded") is True
         or (jsc.is_array(o.get("reference_positions")) and len(o["reference_positions"]) > 0)
     )
-    if offered_escalation and is_affirmative:
+    # -- D1: a pending offer never consumes a request that asks for someone ELSE -------- #
+    # Owner ruling, console pass 3 (6 Sep 2026), from turn 9a40182a: a pending
+    # {kind: escalation_offer, team: warehouse} offer was open, the customer typed
+    # "escalate to marketing", and the turn read `is_affirmative` alone - so the offer was
+    # confirmed and the conversation was assigned to WAREHOUSE, with a comment saying so.
+    #
+    # `llm_team_n` is the parser's OWN team for THIS message, snapshotted at the top of
+    # this body before the routing chain below can inherit the pending offer's team. The
+    # derived `o["routing"]` cannot answer this question: on a turn that named no team it
+    # has already fallen back to the stale offer's team, so it always agrees with itself.
+    #
+    # Only a `request_for_help` is graded. A bare "yes" is emitted `casual`, names nothing,
+    # and IS an acceptance of whatever was offered - which is the whole point of the marker.
+    offered_team = _offered_team(parent_input.get("previous_conversation_state"), prior_routing)
+    names_other_team = (
+        offered_escalation
+        and req_help
+        and llm_team_n is not None
+        and offered_team is not None
+        and llm_team_n != offered_team
+    )
+    # No team named at all on a request_for_help over an open offer: the customer asked for
+    # help again rather than answering, so the lane has to ASK which team (#700 item L's
+    # clarify, with its quick replies), not re-accept the offer they ignored.
+    #
+    # UNLESS the parser itself already read the message as accepting the offer. "Yes
+    # escalate" and a bare "ESCALATE" are BOTH emitted `request_for_help` with a null
+    # routing (captures output_exchange/exec-13484619 and parser-15074683), and they are
+    # acceptances - so `message_type` alone cannot tell them from "can someone else help
+    # me". The model's own `escalation.is_escalation_confirmation` can, and does on all 481
+    # emissions in the replay corpus: it is `true` on those two and `false` on the ask.
+    # Read off the FROZEN pre-derivation snapshot, because the live object is rewritten
+    # several times above this line.
+    parser_said_confirm = (
+        jsc.get(jsc.get(parser_raw_snapshot, "escalation"), "is_escalation_confirmation") is True
+    )
+    # ... and behind that, an accept WORD, because the model gets its own flag wrong: on
+    # capture parser-15074293 ("YES ESCALTE", a typo of ESCALATE) it emitted
+    # `is_escalation_confirmation: false` and the deterministic `is_affirmative` + open
+    # offer is the only thing that carried the acceptance through.
+    accept_msg = _split_reply_to(parent_input.get("latest_user_message")).lower()
+    said_accept = any(t in ESCALATION_ACCEPT_WORDS for t in _TOKEN_RE.findall(accept_msg))
+    team_unresolved = (
+        offered_escalation
+        and req_help
+        and llm_team_n is None
+        and not parser_said_confirm
+        and not said_accept
+    )
+
+    if names_other_team or team_unresolved:
+        o["escalation"] = {"is_escalation_confirmation": False}
+        if team_unresolved:
+            o["escalation"]["team_unresolved"] = True
+        else:
+            o["escalation"]["retargeted_team"] = llm_team_n
+    elif offered_escalation and is_affirmative:
         o["escalation"] = {"is_escalation_confirmation": True}
     elif offered_escalation and is_decline and not is_position_pick and not req_help:
         o["escalation"] = {"is_escalation_confirmation": False, "escalation_declined": True}

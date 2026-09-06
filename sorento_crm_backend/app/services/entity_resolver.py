@@ -511,6 +511,11 @@ class ResolvedEntity:
     # prompt for the former. See `_attach_company_info`.
     company_id: Optional[str] = None
     company_name: Optional[str] = None
+    # The owning company's short CODE ("SRT", "MOCHA"), alongside its name. The chatbot's
+    # ambiguous-customer picker prints it next to the account name, because the SAME
+    # customer name exists once per company ledger ("A CRAFT IDEA SDN BHD (SRT)") and the
+    # code is what tells the two lines apart in a WhatsApp-width list.
+    company_code: Optional[str] = None
     # The exact text this row was matched AGAINST, set by the AND probes so
     # `token_word_coverage_for_rows` can report which query words actually
     # landed. It is the probe's blob, NOT everything in `display`: the product
@@ -656,6 +661,7 @@ class ResolutionResult:
                             "similarity": m.similarity,
                             "company_id": m.company_id,
                             "company_name": m.company_name,
+                            "company_code": m.company_code,
                             "display": m.display,
                         }
                         for m in tr.matches
@@ -670,6 +676,7 @@ class ResolutionResult:
                             "similarity": a.similarity,
                             "company_id": a.company_id,
                             "company_name": a.company_name,
+                            "company_code": a.company_code,
                             "display": a.display,
                         }
                         for a in tr.alternatives
@@ -3822,6 +3829,7 @@ class IntersectionResolutionResult:
                 "match_tier": m.match_tier,
                 "company_id": m.company_id,
                 "company_name": m.company_name,
+                "company_code": m.company_code,
                 "display": m.display,
             })
         result: dict[str, Any] = {
@@ -3837,6 +3845,7 @@ class IntersectionResolutionResult:
                     "match_tier": m.match_tier,
                     "company_id": m.company_id,
                     "company_name": m.company_name,
+                    "company_code": m.company_code,
                     "display": m.display,
                     # Transport key for `token_word_coverage_for_rows`: the
                     # text this row's probe actually scored. Coverage cannot
@@ -3861,6 +3870,7 @@ class IntersectionResolutionResult:
                     "similarity": a.similarity,
                     "company_id": a.company_id,
                     "company_name": a.company_name,
+                    "company_code": a.company_code,
                     "display": a.display,
                 }
                 for a in self.alternatives
@@ -4058,8 +4068,8 @@ def _scope_allows(scope: Any, company_id: Optional[str], *, shared: bool) -> boo
 
 
 def _attach_company_info(db: Session, matches: list[ResolvedEntity]) -> set[tuple[str, str]]:
-    """Stamp ``company_id`` / ``company_name`` on every company-scoped match, and
-    report the ones this caller's company scope must not see.
+    """Stamp ``company_id`` / ``company_name`` / ``company_code`` on every
+    company-scoped match, and report the ones this caller's company scope must not see.
 
     Attribution and isolation are one pass because they need the same fact from
     opposite sides of the isolation filter:
@@ -4147,8 +4157,8 @@ def _attach_company_info(db: Session, matches: list[ResolvedEntity]) -> set[tupl
         from app.models.company import Company
 
         names = {
-            str(cid): name
-            for cid, name in db.query(Company.id, Company.name)
+            str(cid): (name, code)
+            for cid, name, code in db.query(Company.id, Company.name, Company.code)
             .filter(Company.id.in_(company_ids))
             .all()
         }
@@ -4156,7 +4166,9 @@ def _attach_company_info(db: Session, matches: list[ResolvedEntity]) -> set[tupl
         logger.exception("company name lookup failed")
         return blocked
     for match, cid in pending:
-        match.company_name = names.get(cid)
+        name, code = names.get(cid, (None, None))
+        match.company_name = name
+        match.company_code = code
     return blocked
 
 
