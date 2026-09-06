@@ -76,10 +76,16 @@ def decide(
         return jsc.get(jsc.get(ctx, "access"), "allowed") is True
 
     def wants_escalation_or_help() -> bool:
-        # OR of the two clauses, `==` / `!=` kept loose as written.
+        # OR of the two clauses, `==` / `!=` kept loose as written, plus the `ideate`
+        # exemption beside the `portal_link` one. DIVERGENCE from the live ladder,
+        # registered as `divergences.IDEATE_NOT_SHADOWED_BY_REQUEST_FOR_HELP`: "I have an
+        # idea" parses as `request_for_help` with `domain_hint: ideate`, and this arm sits
+        # one BEFORE `is_ideate_domain`, so the ideate lane was unreachable the moment
+        # access flipped to allow - the turn answered `out_of_scope` instead.
         return esc.get("is_escalation_confirmation") is True or (
             qf.get("message_type") == "request_for_help"
             and qf.get("domain_hint") != "portal_link"
+            and qf.get("domain_hint") != "ideate"
         )
 
     def is_cs_order_enquiry_pick() -> bool:

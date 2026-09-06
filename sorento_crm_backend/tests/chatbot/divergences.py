@@ -252,6 +252,29 @@ SIBLING_TIEBREAK_IS_CODE_POINT = Divergence(
 )
 
 
+# Owner console pass, 6 Sep 2026. `route-turn`'s `wants_escalation_or_help` fires on
+# `message_type === 'request_for_help'` (portal_link exempted) ONE ARM BEFORE
+# `is_ideate_domain`, so a turn the parser tagged `domain_hint: 'ideate'` never reached the
+# ideate lane at all - the console run answered "I have an idea for you" with `out_of_scope`.
+# The ladder order is faithful to the live workflow; it hid the ideate arm the moment access
+# flipped to `allow`, which is a defect in the ORIGINAL, not in the port. The port therefore
+# exempts `ideate` beside `portal_link` rather than reproducing the shadow.
+#
+# Not fixture-visible: no captured `route-turn` turn carries `domain_hint: 'ideate'` (the
+# ideate lane shipped after the capture window), so no replay changes. Pinned by
+# tests/chatbot/test_route_unit.py::TestIdeateNeverShadowedByHelpRequest.
+IDEATE_NOT_SHADOWED_BY_REQUEST_FOR_HELP = Divergence(
+    node="route-turn",
+    fixture=None,
+    hazard="H59 (owner console pass, 6 Sep 2026)",
+    reason=(
+        "`domain_hint: 'ideate'` is exempted from the request_for_help arm so the ideate "
+        "lane is reachable. Live's ladder order shadows it permanently. Not "
+        "fixture-visible: no capture carries an ideate domain hint."
+    ),
+)
+
+
 def find(node: str, fixture: str) -> Divergence | None:
     """The registered divergence covering this replay, or None."""
     for d in DIVERGENCES:
