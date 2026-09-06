@@ -42,6 +42,7 @@ from app.services.scm import (
     loading_plan_service,
     packing_list_service,
     spo_conversion_service,
+    supplier_document_service,
     supplier_inventory_service,
     supplier_notice_service,
 )
@@ -868,6 +869,49 @@ async def apply_packing_list(
         content_type=file.content_type,
         file_in_drive=True,
         actor_id=current_user.get("id"),
+    )
+    db.commit()
+    return out
+
+
+@router.post("/supplier-documents/preview")
+async def preview_supplier_documents(
+    files: list[UploadFile] = File(..., description="One or more proforma invoices / packing lists"),
+    supplier_id: Optional[str] = Form(None),
+    currency: Optional[str] = Form(
+        None, description="Only needed when neither the file nor the price list says"
+    ),
+    _user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """One dialog, several supplier documents (R12): each file classified by its title
+    cell, previewed by whichever reader(s) it is - proforma invoice, packing list, or both.
+    Writes nothing."""
+    read = [(f.filename, await read_upload(f)) for f in files]
+    return supplier_document_service.preview(db, read, supplier_id=supplier_id, currency=currency)
+
+
+@router.post("/supplier-documents/apply")
+async def apply_supplier_documents(
+    files: list[UploadFile] = File(..., description="The same files the preview was taken from"),
+    supplier_id: str = Form(..., description="Whose documents these are"),
+    currency: Optional[str] = Form(
+        None, description="Only needed when neither the file nor the price list says"
+    ),
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Proforma invoices first, then packing lists, then price links (R12-R14). Each file
+    is filed in Drive under its own type (Proforma Invoice / Packing List)."""
+    read = [(f.filename, await read_upload(f), f.content_type) for f in files]
+    out = await run_in_threadpool(
+        supplier_document_service.apply,
+        db,
+        read,
+        supplier_id=supplier_id,
+        currency=currency,
+        actor_id=current_user.get("id"),
+        actor_name=_actor(current_user),
     )
     db.commit()
     return out

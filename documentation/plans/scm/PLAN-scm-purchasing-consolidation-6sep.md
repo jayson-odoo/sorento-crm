@@ -477,3 +477,52 @@ No open questions remain. Waiting for GO.
 - **`consolidated_packing_list.build()` keeps emitting `costs` in its JSON payload.** The plan
   offered either choice ("may keep emitting costs ... or drop it; pick the smaller diff"); keeping
   it is the smaller diff and harmless - only `to_xlsx()` (the export) stops reading it.
+
+## Deviations (lane C)
+
+- **Q1's `forwarder_order_ref` reassignment is a change to `packing_list_service.apply()`
+  itself, not something layered on top for the new dialog only.** `bl_no` fed
+  `bill_of_lading_number` there since before this lane; the plan's own R14 text says the
+  value moves to `forwarder_order_ref` instead, with `bill_of_lading_number` left for the
+  manual form - so the SAME "Upload packing list" CTA lane A shipped (still the same
+  function) now fills the SO field instead of the B/L field too, not only uploads made
+  through the new supplier-documents dialog. The one existing regression test that pinned
+  the old mapping (`test_packing_list_import.py`) is updated to the new one, named for what
+  it now proves.
+- **A stated `pi_number` shared by two containers gets a container suffix at STORAGE time,
+  not at read time.** The Jiexia proforma invoice states ONE invoice number
+  (`2026JXL0726`) for two containers, and `scm.proforma_invoice`'s identity is
+  `(company, supplier, pi_number)` - one row per number. Applying both container
+  "documents" the reader now yields would have the second silently overwrite the first
+  (same row, its lines replaced). `proforma_invoice_service.pi_number_for` now appends the
+  container when the document ALSO names one (`2026JXL0726-WHSU6243088`), so each container
+  gets its own row and its own priced lines; a document naming no container (every fixture
+  before this one) is unaffected and keeps its number verbatim. The READER's own
+  `pi_number` field (what the preview shows, what AC-F2 pins) is untouched - only the
+  service's derived storage key changed.
+- **`classify()` does not use bare `"INVOICE"` as a proforma-invoice title marker**, only
+  `发票` / `PROFORMA INVOICE`. The packing list's own labelled cell states `INVOICE NO.:
+  ...` (the SAME invoice number both documents carry), which made every packing list
+  misclassify as `combined` under the plan's literal marker list.
+- **R14's price matching does not call `convert_to_draft_shipment`.** That function's whole
+  job is minting a brand NEW draft shipment; the shipment already exists here (packing_list
+  apply already created it, one per block, before the match runs). `supplier_document_
+  service._match_prices` instead writes `proforma_invoice_shipment_link` rows directly, in
+  the exact shape that function writes them, matched by the shipment line's and the PI
+  line's shared `product_id` - not the supplier's own item-code text, which the two
+  documents do not always spell alike (`洁厦型号`/`JIEXIA MODEL` vs `客户型号`). Runs for
+  every (supplier, container) pair the supplier holds on every apply, rather than only the
+  files just uploaded, so all three upload orders (together, PL after PI, PI after PL) are
+  answered by the same, idempotent pass.
+- **No live `TestClient` route test for `/supplier-documents/preview|apply`.** Migration
+  483 has not been run with `alembic upgrade head` against the shared dev database (see
+  `sorento_crm_backend/CLAUDE.md`'s note on that gap), so a route test built the usual way
+  (`test_fulfilment_routes.py`'s `requires_pg` + real DB) would read an alias table missing
+  this batch's rows. `tests/scm/test_supplier_document_service.py` exercises the exact same
+  service the route calls, end to end, against a scratch schema seeded with the migrations'
+  own `seed()` functions (`test_packing_list_kailu.py`'s pattern) instead. The tester should
+  add the route-level test once the migration has actually run somewhere reachable.
+- **`ProformaUploadDialog.tsx` is NOT deleted.** `PlanContainerDialog.tsx` (the loading
+  plan) still imports `verdictFromPreview` from it - a named function, not the component -
+  so the file stays; only `ProformaInvoicesView.tsx`'s own usage of the DIALOG COMPONENT
+  moved to the shared `PackingListUploadDialog`.

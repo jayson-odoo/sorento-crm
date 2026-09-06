@@ -36,10 +36,12 @@ from app.services.scm.outstanding_reader import RowProblem, sheet_rows
 # the wild, and a private copy of the block scanner here is how they would start disagreeing
 # about where one document ends and the next begins.
 from app.services.scm.packing_list_reader import (
+    _FOOTER_FIELD,
     _header_map,
     _is_header,
     _labelled,
     _number,
+    _shipper_of,
     _text,
 )
 
@@ -49,8 +51,11 @@ DOC_TYPE = "proforma_invoice"
 _REQUIRED_COLUMNS = ("item_code", "qty", "unit_price")
 
 #: Fields describing the DOCUMENT rather than a line. Written as labelled cells above the
-#: table (`货单号：`, `日期：`) or, rarely, as columns in it.
-_BLOCK_FIELDS = ("pi_number", "invoice_date", "container_no", "bl_no", "currency")
+#: table (`货单号：`, `日期：`) or, rarely, as columns in it. `seal_no` and `consignee` are R13
+#: additions (purchasing consolidation batch, lane C).
+_BLOCK_FIELDS = (
+    "pi_number", "invoice_date", "container_no", "bl_no", "currency", "seal_no", "consignee",
+)
 
 #: How the two suppliers write "total". Normalised, so `合 计` and `合计` are one key.
 _TOTAL_LABELS = {
@@ -119,6 +124,11 @@ class ProformaDocument:
     invoice_date: Optional[date] = None
     container_no: Optional[str] = None
     bl_no: Optional[str] = None
+    #: The container's seal number (`封签号`, R13). Per document/block, like `container_no`.
+    seal_no: Optional[str] = None
+    #: Who is billed (`客户：`, R13). Stated once per file and carried onto every later
+    #: document a mid-stream label splits off (see `_split_document`).
+    consignee: Optional[str] = None
     #: What the document says its money is (`RMB`, `单价(元)`). A hint, never applied here:
     #: the service decides whether the form, the document or the price list wins (AC-P3.1).
     currency_hint: Optional[str] = None
@@ -162,6 +172,13 @@ class ProformaReadResult:
     #: there. `None` when the header sits on row 1, which is the honest answer to "what did
     #: the file say above its table" when the file said nothing at all.
     letterhead: Optional[str] = None
+    #: The SAME company, read a stricter way (R13/R14): only the first non-empty cell of
+    #: ROW 0, and only when it resolves to no known field and is not itself a label.
+    #: `letterhead` stays as `_supplier_mismatch_warning` already reads it; this is what a
+    #: created shipment's `shipper` column is filled from.
+    shipper: Optional[str] = None
+    #: Everything from the `备注：` label row to the end of the sheet, verbatim (R13).
+    footer_notes: Optional[str] = None
 
     @property
     def ok(self) -> bool:
@@ -380,9 +397,51 @@ def read_workbook(
     #: The most complete header candidate seen, so a file whose table has an item code and a
     #: quantity but NO price says exactly that instead of naming all three columns.
     best_header: set[str] = set()
+    in_footer = False
+    footer_lines: list[str] = []
+    #: A label seen while `current` ALREADY has lines describes the NEXT container, not the
+    #: one just filled - but it must not become a new document until the row after it turns
+    #: out NOT to be a repeated header row (Jinbaichuan's shape, unchanged): a header
+    #: immediately following the label is what actually starts the next document, via
+    #: `pending`, exactly as before. Set False whenever `pending` is consumed.
+    pending_is_new_block = False
+
+    def _apply_pending() -> None:
+        """Resolve whatever `_labelled` has accumulated since the last document, right
+        before the first LINE that needs to know which document it is on - mirrors
+        `packing_list_reader`'s `_apply_pending` (same third shape, same reason for the
+        deferral)."""
+        nonlocal current, pending, pending_is_new_block
+        if not pending:
+            return
+        if pending_is_new_block and current is not None and current.lines:
+            found = {k: v[0] for k, v in pending.items() if v[0]}
+            current = _split_document(current, found, len(result.documents) + 1, row_number)
+            result.documents.append(current)
+        elif current is not None:
+            if pending.get("container_no", (None,))[0]:
+                current.container_no = pending["container_no"][0]
+            if pending.get("bl_no", (None,))[0]:
+                current.bl_no = pending["bl_no"][0]
+            if pending.get("seal_no", (None,))[0]:
+                current.seal_no = pending["seal_no"][0]
+            if pending.get("consignee", (None,))[0]:
+                current.consignee = pending["consignee"][0]
+        pending = {}
+        pending_is_new_block = False
 
     for idx, raw in enumerate(all_rows):
         row_number = idx + 1
+
+        if idx == 0 and result.shipper is None:
+            result.shipper = _shipper_of(raw, resolver)
+
+        if in_footer:
+            text = "; ".join(t for c in raw if (t := _text(c)))
+            if text:
+                footer_lines.append(text)
+            continue
+
         mapped = _header_map(raw, resolver)
 
         if _is_header(mapped, _REQUIRED_COLUMNS):
@@ -404,6 +463,7 @@ def read_workbook(
             )
             result.documents.append(current)
             pending = {}
+            pending_is_new_block = False
             continue
 
         fields = set(mapped.values())
@@ -420,6 +480,14 @@ def read_workbook(
             _absorb(pending, _labelled(raw, resolver, _BLOCK_FIELDS), row_number)
             continue
 
+        # A `备注：` label row: everything from here to the end of the sheet is a footer
+        # note, never a line or the next document's identity (R13).
+        first_text = next((_text(c) for c in raw if _text(c)), None)
+        if first_text and resolver.field_for_header(first_text) == _FOOTER_FIELD:
+            in_footer = True
+            footer_lines.append(first_text)
+            continue
+
         line = _pi_line_from(raw, col_field, row_number)
         if line is None:
             total = _stated_total(raw)
@@ -427,21 +495,32 @@ def read_workbook(
                 if current is not None and current.stated_total is None:
                     current.stated_total = total
                 continue
-            # Not a line and not a total. It may be the labels introducing the NEXT document,
-            # which is how a stacked file separates one invoice from the one before it.
+            # Not a line and not a total. It may be the label(s) introducing the NEXT
+            # container - either a genuinely new invoice (a repeated header row, handled
+            # above) or, on the Jiexia sample, a bare labelled row splitting one invoice
+            # into its several containers with no repeated header at all. Held in
+            # `pending` rather than acted on immediately: a REPEATED header row right after
+            # this one is what actually starts the document (existing shape), and deciding
+            # here too would create it twice.
             labelled = _labelled(raw, resolver, _BLOCK_FIELDS)
-            if not labelled:
-                # A labelled row is not a failed line, so only a row that carries none of
-                # those labels is complained about (`货单号：` sitting in the item-code column
-                # would otherwise read as an item whose quantity went missing).
-                problem = _unreadable_qty(raw, col_field, row_number)
-                if problem is not None:
-                    result.problems.append(problem)
-            _absorb(pending, labelled, row_number)
+            if labelled:
+                _absorb(pending, labelled, row_number)
+                if current is not None and current.lines:
+                    pending_is_new_block = True
+                continue
+            # A labelled row is not a failed line, so only a row that carries none of
+            # those labels is complained about (`货单号：` sitting in the item-code column
+            # would otherwise read as an item whose quantity went missing).
+            problem = _unreadable_qty(raw, col_field, row_number)
+            if problem is not None:
+                result.problems.append(problem)
             continue
 
+        _apply_pending()
         if current is not None:
             current.lines.append(line)
+
+    result.footer_notes = "\n".join(footer_lines) if footer_lines else None
 
     if not saw_header:
         result.missing_columns = [c for c in _REQUIRED_COLUMNS if c not in best_header] or list(
@@ -490,8 +569,31 @@ def _document_from(
         invoice_date=invoice_date,
         container_no=pending.get("container_no", (None, 0))[0],
         bl_no=pending.get("bl_no", (None, 0))[0],
+        seal_no=pending.get("seal_no", (None, 0))[0],
+        consignee=pending.get("consignee", (None, 0))[0],
         currency_hint=price_column_currency(
             raw_header, col_field, extra=[labelled_currency] if labelled_currency else []
         ),
         header_row=header_row,
+    )
+
+
+def _split_document(
+    previous: ProformaDocument, found: dict[str, str], index: int, row_number: int
+) -> ProformaDocument:
+    """A new container inside the SAME invoice (the Jiexia sample: one header table, a new
+    block per LABELLED row rather than a repeated header - AC-F2/F3). The labelled row states
+    its own container and seal; everything the invoice states ONCE - the PI number, its date,
+    who is billed, the money it is priced in - carries over from the block before it, because
+    the file only ever writes those facts the first time."""
+    return ProformaDocument(
+        index=index,
+        pi_number=previous.pi_number,
+        invoice_date=previous.invoice_date,
+        container_no=found.get("container_no"),
+        bl_no=found.get("bl_no"),
+        seal_no=found.get("seal_no"),
+        consignee=found.get("consignee") or previous.consignee,
+        currency_hint=previous.currency_hint,
+        header_row=row_number,
     )

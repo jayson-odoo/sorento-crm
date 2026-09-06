@@ -121,12 +121,23 @@ def _parse(db: Session, data: bytes) -> ProformaReadResult:
 def pi_number_for(doc: ProformaDocument, *, source_ref: Optional[str]) -> str:
     """What this invoice is called, so two blocks in one file are two invoices.
 
-    The document's own number when it states one, verbatim. Otherwise the file's own name
-    plus the block's position: the pre-loading list numbers none of its five invoices, and
-    deriving rather than generating is what makes a re-upload update them in place (AC-P2.5).
+    The document's own number when it states one, verbatim - UNLESS it also names a
+    container: the Jiexia sample (lane C, purchasing consolidation batch) states ONE
+    invoice number for several containers, and `scm.proforma_invoice`'s identity is
+    `(company, supplier, pi_number)` - one row per number, not per container. Suffixing
+    with the container is what keeps each one its own row and its own priced lines rather
+    than the second container's apply silently overwriting the first's (a bare stated
+    number with no container, every fixture before this one, is unaffected).
+
+    With no stated number at all: the file's own name plus the block's position - the
+    pre-loading list numbers none of its five invoices, and deriving rather than
+    generating is what makes a re-upload update them in place (AC-P2.5).
     """
     if doc.pi_number:
-        return doc.pi_number.strip()[:100]
+        base = doc.pi_number.strip()
+        if doc.container_no:
+            return f"{base}-{doc.container_no}"[:100]
+        return base[:100]
     # The STEM is truncated, not the composed name: a long filename would otherwise push the
     # block index off the end of a `String(100)` column and turn five distinct invoices into
     # one name that each block in turn overwrites.

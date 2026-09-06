@@ -23,6 +23,7 @@ Every header spelling is already an `import_field_alias` row for doc type `packi
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -39,7 +40,17 @@ _REQUIRED_COLUMNS = ("item_code", "qty")
 
 #: Fields that describe the CONTAINER rather than a line. They may appear as columns in the
 #: table or as labelled cells above it; either way they belong to the block, not the row.
-_BLOCK_FIELDS = ("container_no", "bl_no")
+#: `seal_no` and `consignee` are R13 additions (purchasing consolidation batch, lane C).
+_BLOCK_FIELDS = ("container_no", "bl_no", "seal_no", "consignee")
+
+#: A cell may state TWO block fields side by side (`箱号:WHSU6243088 / 封签号:WHA4528193`,
+#: the Jiexia sample). Split on the supplier's own separator BEFORE the label test, so both
+#: are read rather than only the first (AC-F9).
+_MULTI_SEP = re.compile(r"\s*/\s*|／")
+
+#: The label that means "everything from here to the end of the sheet is a footer note",
+#: not a block field or a line - `备注：` on the Jiexia packing list, captured verbatim.
+_FOOTER_FIELD = "remark"
 
 
 @dataclass
@@ -58,6 +69,10 @@ class PackingLine:
     amount: Optional[float] = None
     brand: Optional[str] = None
     remark: Optional[str] = None
+    #: The factory's OWN model number (`洁厦型号` / `JIEXIA MODEL`), distinct from `item_code`
+    #: (`客户型号` - OUR catalogue code, a separate column on the Jiexia documents). Resolved
+    #: but not consumed by anything yet - kept so a future preview can show it beside ours.
+    supplier_code: Optional[str] = None
     #: Set only when the table carries a container COLUMN. It is what the row said, and it is
     #: used to split one table into blocks; the block is what owns the container from then on.
     container_no: Optional[str] = None
@@ -70,10 +85,20 @@ class PackingBlock:
     index: int
     container_no: Optional[str] = None
     bl_no: Optional[str] = None
+    #: The container's seal number (`封签号`, R13). Per block, never carried over: two
+    #: containers in one file never share a seal.
+    seal_no: Optional[str] = None
+    #: Who is billed (`客户：`, R13). Stated once, above the first block, and carried onto
+    #: every later block in the same file - a packing list never bills two customers.
+    consignee: Optional[str] = None
     #: The row the block's table starts on. Part of its identity when it has no container
     #: number, and the only thing that distinguishes two otherwise identical pre-load blocks.
     header_row: int = 0
     lines: list[PackingLine] = field(default_factory=list)
+    #: A data row that named something but stated no usable quantity - the accessory lines a
+    #: packing list writes around its coded rows (`840 水箱空瓷：1个`). Kept against the block
+    #: as a note rather than dropped or miscounted as a line (AC-F3).
+    notes: list[str] = field(default_factory=list)
 
     @property
     def total_qty(self) -> float:
@@ -83,6 +108,16 @@ class PackingBlock:
     def total_cartons(self) -> Optional[float]:
         vals = [ln.cartons for ln in self.lines if ln.cartons is not None]
         return sum(vals) if vals else None
+
+    @property
+    def total_amount(self) -> Optional[float]:
+        vals = [ln.amount for ln in self.lines if ln.amount is not None]
+        return sum(vals) if vals else None
+
+    @property
+    def total_cbm(self) -> Optional[float]:
+        vals = [ln.cbm_total for ln in self.lines if ln.cbm_total is not None]
+        return round(sum(vals), 4) if vals else None
 
 
 @dataclass
@@ -97,6 +132,14 @@ class PackingReadResult:
     #: Without it a parsed unit price could only be stored with no currency, which is the
     #: same as not storing it (AC-P5.1).
     currency_hint: Optional[str] = None
+    #: The letterhead company (R13/R14) - the first non-empty cell of ROW 0, when it resolves
+    #: to no known field and is not itself a label. Applies to the WHOLE file: one packing
+    #: list is written by one factory, however many containers it lists.
+    shipper: Optional[str] = None
+    #: Everything from the `备注：` label row to the end of the sheet, verbatim (R13). File
+    #: level for the same reason `shipper` is: the footer describes the shipment, not one
+    #: container in it.
+    footer_notes: Optional[str] = None
 
     @property
     def ok(self) -> bool:
@@ -173,23 +216,32 @@ def _labelled(
     date; without this the scan walked past the second label and read the date as the B/L
     number (AC-P2.4). The colon test is what corrects the PACKING-LIST channel, where
     `Date 日期：` resolves to nothing at all and so would not be recognised as a label.
+
+    A cell may ALSO state two of these fields side by side (`箱号:WHSU6243088 /
+    封签号:WHA4528193`, the Jiexia sample) - split on the supplier's own separator before the
+    inline colon test, so both land rather than only the first half of the cell (AC-F9).
     """
     out: dict[str, str] = {}
     for pos, cell in enumerate(raw):
         label = _text(cell)
         if not label:
             continue
-        # `货柜号：XXXU123` in ONE cell is as common as two cells, so split on either colon.
-        inline = None
-        for sep in ("：", ":"):
-            if sep in label:
-                head, _, tail = label.partition(sep)
-                f = resolver.field_for_header(head)
-                if f in fields and _text(tail):
-                    inline = (f, _text(tail))
-                break
-        if inline:
-            out.setdefault(inline[0], inline[1])
+        parts = [p for p in _MULTI_SEP.split(label) if p.strip()] or [label]
+        matched_inline = False
+        for part in parts:
+            # `货柜号：XXXU123` in ONE cell is as common as two cells, so split on either colon.
+            inline = None
+            for sep in ("：", ":"):
+                if sep in part:
+                    head, _, tail = part.partition(sep)
+                    f = resolver.field_for_header(head)
+                    if f in fields and _text(tail):
+                        inline = (f, _text(tail))
+                    break
+            if inline:
+                out.setdefault(inline[0], inline[1])
+                matched_inline = True
+        if matched_inline:
             continue
 
         f = resolver.field_for_header(label)
@@ -256,8 +308,41 @@ def _line_from(raw: list, col_field: dict[int, str], row_number: int) -> Optiona
         amount=_number(vals.get("amount")),
         brand=_text(vals.get("brand")),
         remark=_text(vals.get("remark")),
+        supplier_code=_text(vals.get("supplier_code")),
         container_no=_text(vals.get("container_no")),
     )
+
+
+def _note_from(raw: list, col_field: dict[int, str]) -> Optional[str]:
+    """A data row that named something but stated no usable quantity.
+
+    The four accessory lines the Jiexia packing list writes around its coded rows
+    (`840 水箱空瓷：1个`, `纸箱：2个`) fail `_line_from` - some for lacking an item code, one
+    for lacking a quantity even though it names one (AC-F3) - and both are the same answer
+    here: whatever the row's description column says, kept as a note against the block
+    rather than dropped on the floor or miscounted as a line.
+    """
+    vals: dict[str, Any] = {}
+    for pos, f in col_field.items():
+        if pos < len(raw):
+            vals[f] = raw[pos]
+    return _text(vals.get("product_name")) or _text(vals.get("description"))
+
+
+def _shipper_of(raw: list, resolver: AliasResolver) -> Optional[str]:
+    """The letterhead company, from the FIRST non-empty cell of row 0.
+
+    Only when that cell resolves to no known field and is not itself a label - a file whose
+    row 0 is already the address block's first line, or the header row itself, states no
+    shipper this way and gets none, rather than a guess (R13/R14).
+    """
+    first = next((c for c in raw if _text(c)), None)
+    text = _text(first)
+    if not text:
+        return None
+    if resolver.field_for_header(text) is not None or _is_label(text, resolver):
+        return None
+    return text
 
 
 def read_workbook(
@@ -283,12 +368,70 @@ def read_workbook(
 
     result.total_rows = len(all_rows)
     pending: dict[str, str] = {}
+    #: A label seen while `current` ALREADY has lines describes the NEXT container, not the
+    #: one just filled - but it must not become a new block until the row after it turns
+    #: out NOT to be a repeated header row (the Jinbaichuan/Kailu shape this reader already
+    #: handled): a header immediately following the label is what actually starts the next
+    #: block, via `pending`, exactly as before. Set False whenever `pending` is consumed.
+    pending_is_new_block = False
     current: Optional[PackingBlock] = None
     col_field: dict[int, str] = {}
     saw_header = False
+    # Carried across blocks WITHIN one file - a packing list bills one customer however many
+    # containers it lists, even though the label stating so appears only once (R13).
+    sticky_consignee: Optional[str] = None
+    in_footer = False
+    footer_lines: list[str] = []
+
+    def _apply_pending() -> None:
+        """Resolve whatever `_labelled` has accumulated since the last block, right before
+        the first real content (a line or a note) that needs to know which block it is on.
+
+        A NEW block only when the CURRENT one already has lines AND the label(s) arrived
+        with no repeated header row in between (`pending_is_new_block`) - the third shape
+        this reader handles, a labelled row splitting one table with no header of its own.
+        Otherwise the pending fields are the CURRENT block's own identity, still being
+        filled in between its header row and its first line.
+        """
+        nonlocal current, pending, pending_is_new_block, sticky_consignee
+        if not pending:
+            return
+        if pending_is_new_block and current is not None and current.lines:
+            current = PackingBlock(
+                index=len(result.blocks) + 1,
+                container_no=pending.get("container_no"),
+                bl_no=pending.get("bl_no"),
+                seal_no=pending.get("seal_no"),
+                consignee=pending.get("consignee") or sticky_consignee,
+                header_row=row_number,
+            )
+            result.blocks.append(current)
+        elif current is not None:
+            if pending.get("container_no"):
+                current.container_no = pending["container_no"]
+            if pending.get("bl_no"):
+                current.bl_no = pending["bl_no"]
+            if pending.get("seal_no"):
+                current.seal_no = pending["seal_no"]
+            if pending.get("consignee"):
+                current.consignee = pending["consignee"]
+        if current is not None and current.consignee:
+            sticky_consignee = current.consignee
+        pending = {}
+        pending_is_new_block = False
 
     for idx, raw in enumerate(all_rows):
         row_number = idx + 1
+
+        if idx == 0 and result.shipper is None:
+            result.shipper = _shipper_of(raw, resolver)
+
+        if in_footer:
+            text = "; ".join(t for c in raw if (t := _text(c)))
+            if text:
+                footer_lines.append(text)
+            continue
+
         mapped = _header_map(raw, resolver)
 
         if _is_header(mapped):
@@ -305,27 +448,55 @@ def read_workbook(
                 index=len(result.blocks) + 1,
                 container_no=pending.get("container_no"),
                 bl_no=pending.get("bl_no"),
+                seal_no=pending.get("seal_no"),
+                consignee=pending.get("consignee") or sticky_consignee,
                 header_row=row_number,
             )
             result.blocks.append(current)
+            if current.consignee:
+                sticky_consignee = current.consignee
             pending = {}
+            pending_is_new_block = False
             continue
 
         if not saw_header:
             pending.update(_labelled(raw, resolver))
             continue
 
+        # A `备注：` label row: everything from here to the end of the sheet is a footer
+        # note, never a line or the next block's identity (R13).
+        first_text = next((_text(c) for c in raw if _text(c)), None)
+        if first_text and resolver.field_for_header(first_text) == _FOOTER_FIELD:
+            in_footer = True
+            footer_lines.append(first_text)
+            continue
+
         line = _line_from(raw, col_field, row_number)
         if line is None:
-            # Not a line. It may be the labels introducing the NEXT block, which is how a
-            # stacked file separates one container from the next.
+            # Not a line. It may be the label(s) introducing the NEXT container - the third
+            # shape this reader handles (module docstring): one header table, and a new
+            # block starts at each LABELLED row rather than at a repeated header. Held in
+            # `pending` rather than acted on immediately: a REPEATED header row right after
+            # this one is what actually starts the block (existing shape, above), and
+            # deciding here too would create it twice.
             found = _labelled(raw, resolver)
             if found:
                 pending.update(found)
+                if current is not None and current.lines:
+                    pending_is_new_block = True
+                continue
+            note = _note_from(raw, col_field)
+            if note is not None:
+                _apply_pending()
+                if current is not None:
+                    current.notes.append(note)
             continue
 
+        _apply_pending()
         if current is not None:
             current.lines.append(line)
+
+    result.footer_notes = "\n".join(footer_lines) if footer_lines else None
 
     if not saw_header:
         result.missing_columns = list(_REQUIRED_COLUMNS)
