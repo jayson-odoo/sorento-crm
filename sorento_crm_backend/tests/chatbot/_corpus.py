@@ -278,8 +278,24 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
 #   other three (a `company` key inside `specific_options`, the F16 company-suffixed label,
 #   and the `_dfSpecAnswered` refinement of the dropped-filter gate) are reachable only
 #   through inputs the older captures do not contain.
+# `display_name` on the gate's entities is the ONE key here that the n8n body will never
+# emit, rather than one it emits since a later commit. It is a CRM addition, and it is the
+# fix for a defect the customer reads: `canonical_code` for a customer is the ACCOUNT code
+# or the denormalised `debtor_name`, so the not-found line printed "no order records found
+# for 300-H070, RPACC" at a customer who has never seen that string
+# (`fetch._axis_labelled_subject`, `gate._display_name`). Registered on the same mechanism
+# because it is the same GRADING problem - the capture cannot carry a key the port emits -
+# and because the alternative, a blanket `Divergence`, would stop grading these 243 gate
+# captures entirely instead of grading everything except this key.
+#
+# MEASURED over the whole corpus on 6 Sep 2026: `display_name` appears in 0 of the 934
+# fixture files, vendored and full, so nothing anywhere is masked by this entry today and
+# the strip is a pure no-op on every node that does not emit it. 12 gate captures replay
+# differently without it (the 9 `live-spine-sorento-consume-main` and 3 `clone-spine-RS` /
+# `sub-resolve-and-gate-rs` turns that name a customer); the trigger to revisit is n8n
+# emitting a key by this name of its own.
 CAPTURE_BODY_ADDITIONS: dict[str, tuple[str, ...]] = {
-    "disallowed-entity-gate": ("specific_options",),
+    "disallowed-entity-gate": ("specific_options", "display_name"),
     "tier-gate": ("tier_pick_domain",),
     # S8a, AC-808: the ten entries that used to sit in `STALE_FIXTURES` are graded here
     # instead of skipped. Both groups are the same class as the two keys above - a key
@@ -309,14 +325,14 @@ CAPTURE_BODY_ADDITIONS: dict[str, tuple[str, ...]] = {
     "compile-current-state": ("tier_menu",),
     # These carry the gate's / tier-gate's item onwards, so an old capture of them is
     # missing the same keys one or more levels down.
-    "build-ctx-resolved": ("specific_options",),
-    "annotate-incoming-picker": ("specific_options",),
-    "annotate-customer-picker": ("specific_options",),
-    "resolve-exit-continue": ("specific_options", "tier_pick_domain"),
-    "resolve-exit-access-ask": ("specific_options", "tier_pick_domain"),
-    "resolve-exit-not-found": ("specific_options", "tier_pick_domain"),
-    "resolve-exit-offer": ("specific_options", "tier_pick_domain"),
-    "sub-resolve-and-gate": ("specific_options", "tier_pick_domain"),
+    "build-ctx-resolved": ("specific_options", "display_name"),
+    "annotate-incoming-picker": ("specific_options", "display_name"),
+    "annotate-customer-picker": ("specific_options", "display_name"),
+    "resolve-exit-continue": ("specific_options", "tier_pick_domain", "display_name"),
+    "resolve-exit-access-ask": ("specific_options", "tier_pick_domain", "display_name"),
+    "resolve-exit-not-found": ("specific_options", "tier_pick_domain", "display_name"),
+    "resolve-exit-offer": ("specific_options", "tier_pick_domain", "display_name"),
+    "sub-resolve-and-gate": ("specific_options", "tier_pick_domain", "display_name"),
 }
 
 

@@ -394,6 +394,15 @@ clone or live. Each AC traces to a journey step (A1 to D1).
   - `previous_conversation_state` (the variables dict) and `referenced_result_set` REPLACE
     what the session read returned, for that turn only. Never written back - D14's
     zero-writes rule is unchanged and is what the test asserts.
+  - **Membership decides, not truthiness, and the value IS the variables map.**
+    `previous_conversation_state: {}` is an explicit override meaning "this contact
+    remembers NOTHING" - a COLD turn - and it is a different instruction from not sending
+    the key at all, which leaves the stored row in place. The value is assigned straight to
+    `session_vars.variables`, so it is the variables map itself and never a wrapper around
+    one. (`engine._harness_keys_present` at `engine.py:351`, `_inject_harness_session` at
+    `engine.py:378-380`.) The console check spells the same thing as `cold: true` on a case
+    (`scripts/chatbot_console_check.py`), which is what makes an owner-reported cold turn
+    reproducible against a contact who has real stored state.
 
   And given a LIVE envelope, when it carries any of the three, then all three are IGNORED
   and the `received` record carries `facts.harness_keys_ignored` naming them in the declared
@@ -1181,6 +1190,7 @@ contact inside the synchronous request. Different contacts run in parallel.
      stays closed. The rule the module chose is stated in `_offer_carry`'s docstring.
      Evidence: `tests/chatbot/test_tail_units.py::TestTierAndPromoOffersCarryUntilOverwritten`
      and `::TestTheMemberOfferCarryStopsAtTheAnswer`.
+
   2. **Carried entities die on a topic change.** Given entities carried in the session
      block, when the customer asks an explicit question in a DIFFERENT domain that brings
      its own entity, then the carried set is dropped; when the domain is the same, or the
