@@ -13,10 +13,10 @@
 import React from 'react';
 import { describe, it, expect } from 'vitest';
 import { configure, getConfig } from '@testing-library/dom';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { SectionSkeleton } from '@/components/common/SectionSkeleton';
-import { selectOption, waitForSectionLoaded } from './index';
+import { selectOption, tickCheckbox, waitForSectionLoaded } from './index';
 
 /** The real skeleton, swapped for content one macrotask later. */
 function LoadsAfterATick() {
@@ -109,6 +109,88 @@ describe('selectOption', () => {
       render(<LateOptions />);
 
       await expect(selectOption('Debtor', 'ZZTD99')).rejects.toThrow();
+    } finally {
+      configure({ asyncUtilTimeout });
+    }
+  });
+});
+
+/**
+ * A checkbox whose NODE is replaced once its data lands: the key flips, so
+ * React unmounts the first button and mounts a second one in its place. That
+ * is what a grid does between "skeleton" and "rows", and it is why a handle
+ * held across an `await` is not safe to fire an event at.
+ */
+function ReplacedOnLoad() {
+  const [loaded, setLoaded] = React.useState(false);
+  const [checked, setChecked] = React.useState(false);
+  React.useEffect(() => {
+    const timer = setTimeout(() => setLoaded(true), 0);
+    return () => clearTimeout(timer);
+  }, []);
+  return (
+    <div>
+      <button
+        key={loaded ? 'rows' : 'skeleton'}
+        type="button"
+        role="checkbox"
+        aria-checked={checked}
+        aria-label="Select all rows on this page"
+        onClick={() => setChecked(true)}
+      />
+      {checked ? <button type="button">Delete</button> : null}
+    </div>
+  );
+}
+
+describe('tickCheckbox', () => {
+  it('the trap it exists for: clicking a handle React has replaced does nothing', async () => {
+    render(<ReplacedOnLoad />);
+    const stale = screen.getByLabelText('Select all rows on this page');
+    await waitFor(() =>
+      expect(screen.getByLabelText('Select all rows on this page')).not.toBe(
+        stale,
+      ),
+    );
+
+    fireEvent.click(stale);
+
+    // No throw and no warning - the click simply went nowhere, which is how a
+    // selection ends up empty and the failure lands on whatever was supposed
+    // to appear afterwards.
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+  });
+
+  it('clicks the current node, so the replacement above does not lose it', async () => {
+    render(<ReplacedOnLoad />);
+    const stale = screen.getByLabelText('Select all rows on this page');
+    await waitFor(() =>
+      expect(screen.getByLabelText('Select all rows on this page')).not.toBe(
+        stale,
+      ),
+    );
+
+    await tickCheckbox('Select all rows on this page');
+
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeInTheDocument();
+  });
+
+  it('reports a click that did not tick the box', async () => {
+    const { asyncUtilTimeout } = getConfig();
+    configure({ asyncUtilTimeout: 150 });
+    try {
+      render(
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked="false"
+          aria-label="Select all rows on this page"
+        />,
+      );
+
+      await expect(
+        tickCheckbox('Select all rows on this page'),
+      ).rejects.toThrow();
     } finally {
       configure({ asyncUtilTimeout });
     }

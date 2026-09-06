@@ -62,11 +62,54 @@ export async function selectOption(
   label: string | RegExp,
   value: string,
 ): Promise<HTMLSelectElement> {
-  const select = (await screen.findByLabelText(label)) as HTMLSelectElement;
+  await screen.findByLabelText(label);
   await waitFor(() =>
-    expect(Array.from(select.options).map((o) => o.value)).toContain(value),
+    expect(
+      Array.from(
+        (screen.getByLabelText(label) as HTMLSelectElement).options,
+      ).map((o) => o.value),
+    ).toContain(value),
   );
+  // Re-queried, never the handle the wait above started with: see the note on
+  // `tickCheckbox` for why a held handle is not safe to fire an event at.
+  const select = screen.getByLabelText(label) as HTMLSelectElement;
   fireEvent.change(select, { target: { value } });
   expect(select.value).toBe(value);
   return select;
+}
+
+/** Is this control ticked, whether it is a native input or an ARIA checkbox? */
+function isTicked(element: HTMLElement): boolean {
+  return element instanceof HTMLInputElement
+    ? element.checked
+    : element.getAttribute('aria-checked') === 'true';
+}
+
+/**
+ * Tick the checkbox labelled `label` and confirm the tick took.
+ *
+ * Two silent no-ops live here, and a DataGrid selection meets both.
+ *
+ * The first is a stale handle: `const box = await screen.findByLabelText(...)`
+ * followed by `fireEvent.click(box)` fires at the node the query returned, and
+ * an `await` in between hands the machine back to React - a commit that lands
+ * in that gap (a fetch resolving, a provider mounting) can replace that node,
+ * and a click on a node no longer in the tree does nothing at all. So the
+ * click here is always fired at the CURRENT node.
+ *
+ * The second is the assertion's distance from the click. `TagTemplatesList`
+ * clicked "Select all rows on this page" and then waited for the bulk strip's
+ * Delete button, which exists only if the click selected something: when it
+ * did not, CI reported a missing Delete button (twice, once after the wait had
+ * been widened to 8s in the belief it was slowness), and the DOM it dumped had
+ * no selection in it at all. Waiting for `aria-checked` puts the failure on
+ * the control that was clicked.
+ */
+export async function tickCheckbox(
+  label: string | RegExp,
+): Promise<HTMLElement> {
+  await screen.findByLabelText(label);
+  fireEvent.click(screen.getByLabelText(label));
+  await waitFor(() => expect(isTicked(screen.getByLabelText(label))).toBe(true));
+  return screen.getByLabelText(label);
 }
