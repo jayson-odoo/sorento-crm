@@ -133,7 +133,7 @@ def _shipping_order_svc(db, company_id=DEFAULT_COMPANY_ID) -> ShippingOrderInges
 class TestAcP31ContainerNumberColumn:
     """D6: `spo_allocations` gains `container_number VARCHAR(100) NULL`."""
 
-    def test_spo_allocations_has_no_container_number_column_yet(self):
+    def test_spo_allocations_has_a_container_number_column(self):
         from app.models.procurement import SPOAllocation
 
         assert "container_number" in SPOAllocation.__table__.columns, (
@@ -162,10 +162,10 @@ class TestAcP32ExtractContainerNumberAndLinking:
         for raw, expected in self.GOLDEN_SET:
             assert extract_container_number(raw) == expected, raw
 
-    def test_link_allocation_to_shipment_does_not_exist_yet(self):
+    def test_link_allocation_to_shipment_exists(self):
         from app.services.rules.shipping_order_rules import link_allocation_to_shipment  # noqa: F401
 
-    def test_esb_shipping_order_payload_does_not_yet_accept_container_number(self, db):
+    def test_esb_shipping_order_payload_accepts_container_number(self, db):
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         _product_id, product_ref = _seed_product(db)
         spo_number = _code("SPO")
@@ -211,7 +211,25 @@ class TestAcP34ForwardMatchOnceAndReceivedGuard:
     lands."""
 
     def test_non_dry_esb_shipping_orders_batch_calls_forward_match_once(self, db, monkeypatch):
+        """Security review (blocker 2), 2026-09-06: the forward-match sweep
+        moved OUT of `ShippingOrderIngestService.ingest()` and into the
+        route's post-commit hook slot (`app.api.v1.external.ingest
+        ._run_document_hooks`) - `forward_match_grn_lines_for_spo` commits on
+        success and rolls back on failure, so running it BEFORE the route's
+        own commit let one exception mid-batch discard every not-yet-
+        committed record while the route still answered 200.
+
+        Drives `ingest()` + `db.commit()` + the hook directly (the shape
+        `tests/test_ingest_documents_v2_hooks.py` exercises through a full
+        `env.post` HTTP round trip) rather than pulling in that file's
+        company/auth scaffolding - the assertion here is only about WHEN the
+        call happens, which does not need an HTTP layer to prove. The
+        intermediate `assert not calls` right after `ingest()` is the actual
+        regression pin: it fails again the moment forward-match is called
+        back inside `ingest()` itself.
+        """
         import app.services.grn_spo_matching as grn_spo_matching
+        from app.api.v1.external.ingest import _run_document_hooks
 
         calls: list[Any] = []
         monkeypatch.setattr(
@@ -247,9 +265,17 @@ class TestAcP34ForwardMatchOnceAndReceivedGuard:
             ],
         )
         assert result.records[0].outcome is IngestOutcome.CREATED, result.records[0].errors
+        assert not calls, (
+            "forward-match must not run before the route's own commit - "
+            "ingest() alone must never trigger it any more"
+        )
+
+        db.commit()
+        _run_document_hooks(db, "shipping_orders", svc, actor=None)
+
         assert calls, (
             "expected forward_match_grn_lines_for_spo_best_effort to be called "
-            "after a non-dry shipping_orders batch"
+            "by the route's post-commit hook after a non-dry shipping_orders batch"
         )
         assert len(calls) == 1, f"expected exactly one call (batch end), got {len(calls)}"
 
@@ -369,7 +395,7 @@ class TestAcP35AdoptionAndCloseSweepAcrossSources:
         ).scalar()
         assert count == 1, "the upload must adopt the ESB-written row, not duplicate it"
 
-    def test_close_sweep_ignores_esb_written_open_rows(self, db):
+    def test_close_sweep_considers_esb_written_open_rows(self, db):
         from app.services.scm.outstanding_import_service import _spo_lines_to_close
 
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
@@ -412,7 +438,7 @@ class TestAcP36StatusOptionalOnShippingOrders:
     golden-cases test already covers the derivation logic itself - not
     repeated here). Today `status` is still required."""
 
-    def test_esb_shipping_orders_payload_status_is_still_required_today(self, db):
+    def test_esb_shipping_orders_payload_status_is_optional(self, db):
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         _product_id, product_ref = _seed_product(db)
         spo_number = _code("SPO")
@@ -436,7 +462,7 @@ class TestAcP37DocFamilyAcceptsFlagOrPrefix:
     at all. The outstanding book's own `doc_family` (prefix-only, no flag
     concept) is correct as-is and is not re-tested."""
 
-    def test_esb_po_with_is_shipping_order_flag_is_not_yet_redirected(self, db):
+    def test_esb_po_with_is_shipping_order_flag_is_rejected_as_a_shipping_order(self, db):
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         _product_id, product_ref = _seed_product(db)
         po_number = _code("NOTSPO")  # deliberately NOT "SPO-" prefixed

@@ -120,20 +120,34 @@ class TestAcP11CaseInsensitiveCodeMatchingAcrossPaths:
     is already correct - only the manual-create and ESB paths are red.
     """
 
-    def test_warehouse_manual_create_does_not_adopt_a_case_and_whitespace_variant(self, db):
+    def test_warehouse_manual_create_refuses_a_case_and_whitespace_variant_as_a_conflict(self, db):
+        """Superseded 2026-09-06 (security review, should-fix 4): the manual
+        Create path no longer ADOPTS a case/whitespace variant - it did so by
+        silently overwriting every `WarehouseBase` default on the existing
+        row (is_active, counts_as_available, pool_warehouse_id, segment,
+        fulfilment_planning, manager_id) while still answering 201. D17's
+        case/whitespace-insensitive match stays the rule for the xlsx import
+        and the ESB push (both below, unaffected) - only a human's manual
+        Create click now gets the same 409-conflict standard S1 already gave
+        `create_supplier`/`create_category`/`create_uom`.
+        """
+        from app.services.error_handler import AppException
+
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         code = _code("BRW")
         db.add(Warehouse(warehouse_code=code, warehouse_name="Main"))
         db.flush()
 
-        WarehouseService(db).create_warehouse(
-            WarehouseCreate(warehouse_code=f" {code.lower()} ", warehouse_name="Duplicate")
-        )
+        with pytest.raises(AppException) as exc_info:
+            WarehouseService(db).create_warehouse(
+                WarehouseCreate(warehouse_code=f" {code.lower()} ", warehouse_name="Duplicate")
+            )
+        assert exc_info.value.status_code == 409
         count = db.execute(
             text("SELECT count(*) FROM warehouses WHERE upper(btrim(warehouse_code)) = upper(btrim(:c))"),
             {"c": code},
         ).scalar()
-        assert count == 1, "manual create must adopt a case+whitespace variant, not duplicate"
+        assert count == 1, "the refused create must not have written a second row either"
 
     def test_warehouse_esb_push_does_not_adopt_a_case_and_whitespace_variant(self, db):
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
@@ -329,7 +343,7 @@ class TestAcP13DiscontinuedFlagWinsAndWatermarkReset:
         ).scalar()
         assert is_discontinued is True, "a **** description must derive discontinued on the ESB path too"
 
-    def test_esb_payload_does_not_yet_accept_an_explicit_discontinued_flag(self, db):
+    def test_esb_payload_accepts_an_explicit_discontinued_flag(self, db):
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         cat_code, uom_code = _code("DC3CAT"), _code("DC3UOM")
         svc = _esb(db, DEFAULT_COMPANY_ID)
@@ -456,10 +470,11 @@ class TestAcP14UnknownReferencesCreatedWithWarnings:
         assert record.outcome is IngestOutcome.CREATED, record.errors
         assert "uom_created" in record.warnings
 
-    def test_unknown_brand_code_is_silently_ignored_not_created(self, db):
-        """`brand_code` already exists on `CanonicalProduct`; the gap is that
-        `_product_columns` never reads it, so an unknown brand is neither
-        created nor reported - not a validation failure."""
+    def test_unknown_brand_code_is_created_with_a_warning(self, db):
+        """`brand_code` on `CanonicalProduct` resolves through the same
+        created-with-warning ladder as category/uom (D14-adjacent): an
+        unknown brand is CREATED, not silently ignored, and reported via
+        `brand_created`."""
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         cat_code, uom_code = _code("P4CAT3"), _code("P4UOM3")
         svc = _esb(db, DEFAULT_COMPANY_ID)
@@ -546,7 +561,7 @@ class TestAcP16RemarkStoredNeverConcatenated:
     `Item.Desc2`), stored on its own column, never concatenated into
     `description` the way the xlsx import's Desc 2 handling does."""
 
-    def test_esb_payload_does_not_yet_accept_remark(self, db):
+    def test_esb_payload_accepts_remark(self, db):
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         cat_code, uom_code = _code("P6CAT"), _code("P6UOM")
         svc = _esb(db, DEFAULT_COMPANY_ID)
@@ -568,7 +583,7 @@ class TestAcP16RemarkStoredNeverConcatenated:
         )
         assert result.created == 1, result.records[0].errors
 
-    def test_products_table_has_no_remark_column_yet(self):
+    def test_products_table_has_a_remark_column(self):
         assert "remark" in Product.__table__.columns, (
             "S1 must add products.remark (or an equivalent nullable column) so "
             "Item.Desc2 lands without being concatenated into description"

@@ -1,5 +1,11 @@
-"""RED tests for ingest parity standardisation, Phase S2 (sales order and
-purchase order rules).
+"""Tests for ingest parity standardisation, Phase S2 (sales order and purchase
+order rules). Several of these now PASS against the shipped code (`customer_segment`/
+`customer_region`/`region` exist on the schemas and models, `order_inquiry_conflicts`
+now exists) - each such test/class says so in its own docstring rather than
+carrying a stale "not yet" name; a handful of real gaps remain and are still red
+(see `tests/test_ingest_parity_review_guards.py` for the ones the reviewer pass
+found with no guard at all, e.g. the SO push half of customer_segment/region
+never actually threading through to a back-create).
 
 UAC: documentation/plans/autocount/ingest-parity-standardisation-acceptance-criteria.md
      Phase S2, AC-P2-1 .. AC-P2-7.
@@ -50,10 +56,14 @@ Model facts verified in code before relying on them:
   own docstring calls skipping-on-unresolved-location "the judgement call" -
   today it SKIPS the line the same as an unresolvable item, where S2 wants
   it KEPT with `warehouse_id` NULL and a warning, matching the ESB.
-* `CanonicalCustomer` has no `market_segment_code`/`region`; `Customer` (in
-  `app/models/order.py`) already has `market_segment_code` (an FK column) but
-  has **no `region` column at all** - confirmed by grep, zero hits.
-  `CanonicalSalesOrder` has no `customer_segment`/`customer_region`.
+* `Customer` (in `app/models/order.py`) now has BOTH `market_segment_code` and
+  `region`; `CanonicalSalesOrder` now carries `customer_segment`/
+  `customer_region` too (`app/schemas/canonical_documents.py`) - all shipped.
+  What is NOT wired: `document_ingest_service.py` never reads
+  `payload.customer_segment`/`customer_region` at all, even though
+  `customer_rules.back_create_customer` already accepts `segment`/`region`
+  kwargs - see `tests/test_ingest_parity_review_guards.py::TestB5...` for the
+  still-red test.
 * `planning_change_service.build_batch` (`app/services/planning_change_service.py` -
   NOT under `app/services/scm/`) and its tables
   (`app.models.planning_change.PlanningChangeBatch`/`PlanningChangeRow`, the
@@ -67,13 +77,12 @@ Model facts verified in code before relying on them:
   turn red if some future change wired it in by mistake". This UAC's D10 is
   that future change (BL-058) - the guard test itself is untouched here (not
   mine to edit), but making AC-P2-4 green will require updating it.
-* No `order_inquiry_conflicts` table exists anywhere in `app/` (grep, zero
-  hits). **Chosen shape for the red test**: assert the TABLE exists (via
-  `sqlalchemy.inspect(...).has_table(...)`), not a
-  `document_rules.record_warehouse_conflict` function - the PLAN's own words
-  name a table ("a new small table... which the worklist renders"), so
-  asserting the concrete, queryable artefact is more falsifiable than picking
-  an unstated function name.
+* `OrderInquiryConflict` (`order_inquiry_conflicts`, migration 476) now
+  exists and is recorded by `_sync_lines`' by-ref branch when the ESB states a
+  DIFFERENT warehouse than an already-resolved line carries. The ref-less
+  ADOPTION path (`_adopt_lines`) does not yet record it - see
+  `tests/test_ingest_parity_review_guards.py::TestB4...` for the still-red
+  test.
 
 Every behavioural test below drives the real, already-existing service and
 fails on an assertion; only the two pure-function tests (`derive_document_status`,
@@ -196,7 +205,7 @@ class TestAcP22CustomerSegmentAndRegion:
     the SO payload gains `customer_segment`/`customer_region`, used only on
     back-create."""
 
-    def test_customer_masters_payload_does_not_yet_accept_segment_or_region(self, env):
+    def test_customer_masters_payload_accepts_segment_and_region(self, env):
         code = unique_code(DOC_MARKER)
         svc = MasterIngestService(env.db, integration_id=None, company_id=env.company_a)
         result = svc.ingest(
@@ -222,7 +231,7 @@ class TestAcP22CustomerSegmentAndRegion:
             "confirmed absent by reading app/models/order.py"
         )
 
-    def test_so_payload_does_not_yet_accept_customer_segment_or_region(self, env):
+    def test_so_payload_accepts_customer_segment_and_region(self, env):
         record = _so_record(
             env, customer_segment="DEALER", customer_region="Klang Valley"
         )
@@ -328,7 +337,7 @@ class TestAcP25StatusOptionalAndDerived:
     is `Field(..., ...)` (required) on `_CanonicalDocument` - omitting it is a
     validation failure, not a derivation."""
 
-    def test_esb_so_payload_status_is_still_required_today(self, env):
+    def test_esb_so_payload_status_is_optional(self, env):
         record = _so_record(env)
         del record["status"]
 
@@ -336,7 +345,7 @@ class TestAcP25StatusOptionalAndDerived:
 
         assert res.json()["records"][0]["outcome"] == "created", res.text
 
-    def test_esb_po_payload_status_is_still_required_today(self, env):
+    def test_esb_po_payload_status_is_optional(self, env):
         record = _po_record(env)
         del record["status"]
 
