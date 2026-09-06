@@ -181,3 +181,8 @@ removed copy, for whoever restores a UI for them:
   value naming the ESB; the xlsx path stamps `'import'`. Cosmetic today, misleading on the agent
   master screen. Fix: the sales_agents EntitySpec sets `source = 'autocount'` on create, never on
   update. | `plans/autocount/PLAN-autocount-document-ingest-v2.md` | Low | Open |
+- **BL-060** (2026-09-06, ingest parity D22): `order_inquiry_conflicts` rows are written when an
+  ESB sales-order push overrides a warehouse the Order Inquiry sheet had set, and a read route
+  exists, but the Order Inquiry worklist has no surface for them. **Trigger:** the planner asks
+  why an inquiry location changed. Fix: a Conflicts tab on the order-inquiry worklist listing
+  (so_number, line, previous, new, when). | `plans/autocount/PLAN-ingest-parity-standardisation.md` | Low | Open |
