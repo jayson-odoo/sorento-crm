@@ -15,6 +15,7 @@ import JsBarcode from 'jsbarcode';
 
 import type {
   ImpositionConfig,
+  LayerPadding,
   PlacedTag,
   TagBindingData,
   TagImage,
@@ -42,6 +43,7 @@ import {
   humanReadableBarcode,
   MM_TO_PT,
 } from '@/lib/dealer-kit/barcode';
+import { paddedBox } from '@/lib/dealer-kit/text-reflow';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -129,6 +131,17 @@ function bindingOf(resolved: ResolvedLineData | null): TagBindingData | null {
   };
 }
 
+/**
+ * `padding` as one CSS shorthand, T/R/B/L in that order - CSS's own order,
+ * so a value out of `LayerPadding` never has to be re-ordered by hand (S3).
+ * Absent is `0mm` on every side, which prints identically to no padding
+ * property at all (AC-S3-3).
+ */
+function paddingCss(padding: LayerPadding | undefined): string {
+  const p = padding ?? { top: 0, right: 0, bottom: 0, left: 0 };
+  return `${p.top}mm ${p.right}mm ${p.bottom}mm ${p.left}mm`;
+}
+
 function renderTextLayer(layer: TagLayer, resolved: ResolvedLineData | null) {
   const props = layer.props;
   if (props.kind !== 'text') return null;
@@ -157,6 +170,8 @@ function renderTextLayer(layer: TagLayer, resolved: ResolvedLineData | null) {
         textAlign: props.align,
         lineHeight: props.lineHeight,
         letterSpacing: props.letterSpacing ? `${props.letterSpacing}px` : undefined,
+        padding: paddingCss(props.padding),
+        boxSizing: 'border-box',
         overflow: 'hidden',
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
@@ -322,6 +337,11 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
   });
   const typo = priceBadgeTypography(props);
 
+  // The un-padded box, at the layer's own position and rotation - unchanged
+  // by padding, so a padded badge rotates around the same point it always
+  // did. `padded`, below, is the SMALLER box padding leaves inside it (S3,
+  // AC-S3-2): the figure's own container, sized in millimetres so the SVG
+  // callout's viewBox agrees with what CSS actually draws it at.
   const frame: CSSProperties = {
     position: 'absolute',
     left: `${layer.x_mm}mm`,
@@ -330,11 +350,24 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
     height: `${layer.height_mm}mm`,
     transform: layer.rotation_deg ? `rotate(${layer.rotation_deg}deg)` : undefined,
     transformOrigin: layer.rotation_deg ? '0 0' : undefined,
+    overflow: 'hidden',
+  };
+  const padded = paddedBox(layer.width_mm, layer.height_mm, props.padding);
+
+  // The badge's own text container (S3): `padding` + `box-sizing: border-box`
+  // shrink its CONTENT box by the same amount `padded` computes, so a 100%
+  // child - the polygon callout below - fills exactly that shrunk area with
+  // no separate position math of its own.
+  const content: CSSProperties = {
+    position: 'relative',
+    width: '100%',
+    height: '100%',
     fontFamily: typo.fontFamily || 'DM Sans, sans-serif',
     display: 'flex',
     flexDirection: 'column',
     justifyContent: 'center',
-    overflow: 'hidden',
+    padding: paddingCss(props.padding),
+    boxSizing: 'border-box',
   };
 
   /**
@@ -358,14 +391,16 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
   if (!parts.boxed) {
     return (
       <div style={frame}>
-        <span
-          style={{
-            ...figureStyle(13, 700),
-            color: parts.amountText ? '#000000' : '#999999',
-          }}
-        >
-          {parts.plainText}
-        </span>
+        <div style={content}>
+          <span
+            style={{
+              ...figureStyle(13, 700),
+              color: parts.amountText ? '#000000' : '#999999',
+            }}
+          >
+            {parts.plainText}
+          </span>
+        </div>
       </div>
     );
   }
@@ -373,33 +408,46 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
   // The flyer's white callout: the badge IS the box (r4b, AC-S6-2). Inline
   // SVG whose user units ARE millimetres, from the SAME path builder the
   // Konva canvas draws with, so a corner dragged on the proof is the corner
-  // that prints.
+  // that prints. Positioned in mm off `frame`, NOT sized 100% inside
+  // `content`: an absolutely positioned child resolves against its nearest
+  // positioned ancestor's PADDING box, so a 100%-wide SVG nested inside
+  // `content` (which padding shrinks) drew at the full unpadded size while
+  // its viewBox stated the padded one - the callout printed off-centre from
+  // the figure it surrounds. `padded.x`/`padded.y`/`padded.width`/
+  // `padded.height` are the same box the Konva canvas insets its Group to.
   if (parts.polygonBox) {
     return (
       <div style={frame}>
         <svg
-          viewBox={`0 0 ${layer.width_mm} ${layer.height_mm}`}
-          width={`${layer.width_mm}mm`}
-          height={`${layer.height_mm}mm`}
-          style={{ position: 'absolute', left: 0, top: 0, overflow: 'visible' }}
+          viewBox={`0 0 ${padded.width} ${padded.height}`}
+          style={{
+            position: 'absolute',
+            left: `${padded.x}mm`,
+            top: `${padded.y}mm`,
+            width: `${padded.width}mm`,
+            height: `${padded.height}mm`,
+            overflow: 'visible',
+          }}
         >
           <path
             d={roundedPolygonPath(
-              scalePolygonPoints(polygonPoints(props), layer.width_mm, layer.height_mm),
+              scalePolygonPoints(polygonPoints(props), padded.width, padded.height),
               props.cornerRadius,
             )}
             fill={props.fill === 'transparent' ? 'none' : props.fill}
           />
         </svg>
-        <span
-          style={{
-            ...figureStyle(13, 700),
-            position: 'relative',
-            color: props.textColor,
-          }}
-        >
-          {parts.plainText}
-        </span>
+        <div style={content}>
+          <span
+            style={{
+              ...figureStyle(13, 700),
+              position: 'relative',
+              color: props.textColor,
+            }}
+          >
+            {parts.plainText}
+          </span>
+        </div>
       </div>
     );
   }
@@ -411,42 +459,44 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
 
   return (
     <div style={frame}>
-      {parts.struckText && (
-        <span
+      <div style={content}>
+        {parts.struckText && (
+          <span
+            style={{
+              fontSize: `${figureSize * 0.5625}pt`,
+              color: '#666666',
+              textAlign: 'center',
+              textDecoration: 'line-through',
+            }}
+          >
+            {parts.struckText}
+          </span>
+        )}
+        <div
           style={{
-            fontSize: `${figureSize * 0.5625}pt`,
-            color: '#666666',
-            textAlign: 'center',
-            textDecoration: 'line-through',
+            flex: 1,
+            backgroundColor: props.fill,
+            color: props.textColor,
+            borderRadius: `${props.cornerRadius}mm`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '1mm',
+            padding: '0.5mm 1mm',
           }}
         >
-          {parts.struckText}
-        </span>
-      )}
-      <div
-        style={{
-          flex: 1,
-          backgroundColor: props.fill,
-          color: props.textColor,
-          borderRadius: `${props.cornerRadius}mm`,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '1mm',
-          padding: '0.5mm 1mm',
-        }}
-      >
-        {parts.spLabel && (
-          <span style={{ fontSize: `${figureSize * 0.5}pt`, fontWeight: 700 }}>
-            {parts.spLabel}
-          </span>
-        )}
-        <span style={figureStyle(16, 800)}>{parts.amountText}</span>
-        {parts.nettLabel && (
-          <span style={{ fontSize: `${figureSize * 0.5}pt`, fontWeight: 700 }}>
-            {parts.nettLabel}
-          </span>
-        )}
+          {parts.spLabel && (
+            <span style={{ fontSize: `${figureSize * 0.5}pt`, fontWeight: 700 }}>
+              {parts.spLabel}
+            </span>
+          )}
+          <span style={figureStyle(16, 800)}>{parts.amountText}</span>
+          {parts.nettLabel && (
+            <span style={{ fontSize: `${figureSize * 0.5}pt`, fontWeight: 700 }}>
+              {parts.nettLabel}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );

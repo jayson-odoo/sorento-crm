@@ -189,6 +189,10 @@ describe('the price badge box on the print page (r4b, AC-S6-1/2/5)', () => {
     expect(path?.getAttribute('d')).toBe('M 0 0 L 40 0 L 40 20 L 0 20 Z');
     expect(path?.getAttribute('fill')).toBe('#ffffff');
     expect(screen.getByText('RM 1,599')).toHaveStyle({ color: '#111111' });
+
+    // The frame clips: a callout whose corners round inward must not bleed a
+    // square edge past the badge's own box (r5 review).
+    expect(svg?.parentElement).toHaveStyle({ overflow: 'hidden' });
   });
 
   it('follows the layer own corners, so the callout slants in the PDF too (AC-S6-2)', () => {
@@ -901,5 +905,179 @@ describe('polygon shape on the print page (S4, AC-S4-6)', () => {
     expect(container.querySelector('path')?.getAttribute('d')).toBe(
       'M 0 0 L 40 0 L 40 20 L 0 20 Z',
     );
+  });
+});
+
+describe('padding on text and price badge layers (S3, AC-S3-1/2/3/4)', () => {
+  it('adds no padding to a text layer when it is absent (AC-S3-3)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'text-1',
+            type: 'text',
+            props: {
+              kind: 'text',
+              text: 'Sale',
+              fontFamily: 'DM Sans',
+              fontSize: 10,
+              fontWeight: 400,
+              color: '#000',
+              align: 'left',
+              lineHeight: 1.2,
+              letterSpacing: 0,
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    expect(screen.getByText('Sale')).toHaveStyle({
+      padding: '0mm 0mm 0mm 0mm',
+      boxSizing: 'border-box',
+    });
+  });
+
+  it('prints the padding as one CSS shorthand, T R B L (AC-S3-1)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'text-1',
+            type: 'text',
+            props: {
+              kind: 'text',
+              text: 'Sale',
+              fontFamily: 'DM Sans',
+              fontSize: 10,
+              fontWeight: 400,
+              color: '#000',
+              align: 'left',
+              lineHeight: 1.2,
+              letterSpacing: 0,
+              padding: { top: 2, right: 4, bottom: 6, left: 8 },
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    expect(screen.getByText('Sale')).toHaveStyle({
+      padding: '2mm 4mm 6mm 8mm',
+      boxSizing: 'border-box',
+    });
+  });
+
+  it('pads the badge text container the same way, and the callout shrinks with it (AC-S3-2)', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            width_mm: 40,
+            height_mm: 20,
+            props: {
+              ...defaultPriceBadgeProps('list_only'),
+              showBox: true,
+              cornerRadius: 0,
+              padding: { top: 0, right: 0, bottom: 0, left: 10 },
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    // 40mm less the 10mm left pad leaves 30mm of drawable width, and the
+    // callout - the badge is the box (r4b, AC-S6-2) - shrinks with it.
+    const svg = container.querySelector('svg');
+    expect(svg?.getAttribute('viewBox')).toBe('0 0 30 20');
+    expect(svg?.querySelector('path')?.getAttribute('d')).toBe('M 0 0 L 30 0 L 30 20 L 0 20 Z');
+
+    const figure = screen.getByText('RM 1,599');
+    expect(figure.parentElement).toHaveStyle({
+      padding: '0mm 0mm 0mm 10mm',
+      boxSizing: 'border-box',
+    });
+  });
+
+  it('positions the callout SVG at the padded inset, not the full unpadded box (r5 review)', () => {
+    // An asymmetric pad on both axes - the bug this pins collapsed the SVG
+    // back to the layer's full 40x20 box (`width`/`height: 100%` resolves
+    // against the padding box of its `position: absolute` ancestor, not the
+    // content box padding shrinks), so the viewBox alone could not catch it:
+    // it still read the padded numbers while CSS drew the SVG somewhere else.
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            width_mm: 40,
+            height_mm: 20,
+            props: {
+              ...defaultPriceBadgeProps('list_only'),
+              showBox: true,
+              cornerRadius: 0,
+              padding: { top: 10, right: 0, bottom: 0, left: 10 },
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    const svg = container.querySelector('svg');
+    expect(svg?.getAttribute('viewBox')).toBe('0 0 30 10');
+    expect(svg).toHaveStyle({
+      left: '10mm',
+      top: '10mm',
+      width: '30mm',
+      height: '10mm',
+    });
+  });
+
+  it('pads the unboxed list-only badge the same way (AC-S3-2)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            props: {
+              ...defaultPriceBadgeProps('list_only'),
+              padding: { top: 2, right: 2, bottom: 2, left: 2 },
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    expect(screen.getByText('RM 1,599').parentElement).toHaveStyle({
+      padding: '2mm 2mm 2mm 2mm',
+      boxSizing: 'border-box',
+    });
+  });
+
+  it('pads the promotional badge too, its filled box included (AC-S3-2)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            props: {
+              ...defaultPriceBadgeProps('promo'),
+              padding: { top: 1, right: 1, bottom: 1, left: 1 },
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    // amount span -> filled box div -> the padded text container.
+    const content = screen.getByText('RM 599').parentElement?.parentElement;
+    expect(content).toHaveStyle({ padding: '1mm 1mm 1mm 1mm', boxSizing: 'border-box' });
   });
 });

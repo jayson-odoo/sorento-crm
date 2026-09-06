@@ -227,6 +227,18 @@ describe('buildSetBlock', () => {
     ).toBe('- CAB-01 (Cabinet) 800 x 460 x 550 mm');
   });
 
+  it('drops the parenthetical when a member name only repeats its code (S2, r5 review)', () => {
+    expect(
+      formatSetMemberLine({
+        product_id: 'p1',
+        code: 'CAB-01',
+        name: 'cab-01',
+        dimensions: '800 x 460 x 550 mm',
+        quantity: 1,
+      }),
+    ).toBe('- CAB-01 800 x 460 x 550 mm');
+  });
+
   it('binds the group to the set and fills the members slot', () => {
     const set = productSet();
     const layers = buildSetBlock(set, OPTS);
@@ -247,6 +259,65 @@ describe('buildSetBlock', () => {
       listPrice: 2400,
       offerPrice: 1800,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveSlotText - name equal to code is redundant (S2, AC-S2-2)
+// ---------------------------------------------------------------------------
+
+describe('resolveSlotText name slot (S2, AC-S2-2)', () => {
+  const nameLayer = { slot_binding: 'name' as const };
+
+  it('blanks the name for a product whose name is its code, case- and space-insensitive', () => {
+    expect(
+      resolveSlotText(nameLayer, { kind: 'product', product: product({ name: 'SK-1234' }) }),
+    ).toBe('');
+    expect(
+      resolveSlotText(nameLayer, {
+        kind: 'product',
+        product: product({ code: 'SK-1234', name: ' sk-1234 ' }),
+      }),
+    ).toBe('');
+  });
+
+  it('keeps the name for a product whose name differs from its code (AC-S2-3)', () => {
+    expect(
+      resolveSlotText(nameLayer, { kind: 'product', product: product({ name: 'Kitchen Sink' }) }),
+    ).toBe('Kitchen Sink');
+  });
+
+  it('blanks the name for a set whose name is its set code', () => {
+    const set = { ...productSet(), set_code: 'BF-SET-01', name: 'bf-set-01' };
+    expect(resolveSlotText(nameLayer, { kind: 'set', set })).toBe('');
+  });
+
+  it('keeps the name for a set whose name differs from its set code', () => {
+    const set = productSet();
+    expect(resolveSlotText(nameLayer, { kind: 'set', set })).toBe('Bathroom Furniture Set');
+  });
+
+  it('blanks the name for a line whose name is its code', () => {
+    const line = {
+      kind: 'line' as const,
+      line: {
+        line_id: 'l1',
+        code: 'SK-1234',
+        name: 'SK-1234',
+        dimensions: '800 x 500 x 220 mm',
+        spec_lines: '',
+        specs: [],
+        set_members: '',
+        images: [],
+        list_price: 1599,
+        sell_price: null,
+        show_promo_price: false,
+        included_accessories: '',
+        quantity: 1,
+        barcode: null,
+      },
+    };
+    expect(resolveSlotText(nameLayer, line)).toBe('');
   });
 });
 
@@ -289,6 +360,31 @@ describe('buildAlternativesRow', () => {
     const layers = buildAlternativesRow([product(), product({ id: 'b' })], OPTS);
 
     expect(layers.some((layer) => layer.props.kind === 'group')).toBe(false);
+  });
+
+  it('blanks a duplicate name at build time instead of slot-binding it to the tag (r5 fix)', () => {
+    const layers = buildAlternativesRow(
+      [
+        product({ id: 'a', code: 'TAP-1', name: 'Tap One' }),
+        product({ id: 'b', code: 'TAP-2', name: 'tap-2' }),
+      ],
+      OPTS,
+    );
+
+    const textValues = layers
+      .filter((layer) => layer.props.kind === 'text')
+      .map((layer) => (layer.props as { text: string }).text);
+
+    expect(textValues).toContain('TAP-1');
+    expect(textValues).toContain('Tap One');
+    expect(textValues).toContain('TAP-2');
+    // name === code (case-insensitive) blanks to '' rather than repeating the code
+    expect(textValues.filter((text) => text === '')).toHaveLength(1);
+
+    // neither layer is bound to a slot - an ungrouped slot resolves against the
+    // WHOLE tag's binding, so a slot here would make every alternative print
+    // the tag's own product instead of its own (D28/r5 review)
+    expect(layers.every((layer) => layer.slot_binding === null)).toBe(true);
   });
 });
 

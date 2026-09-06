@@ -215,6 +215,33 @@ export function refitPolygon(box: PolygonBox): {
   };
 }
 
+/** tan(22.5deg): the ratio below which a delta counts as "on that axis" (S1). */
+const SNAP_RATIO = Math.tan(Math.PI / 8);
+
+/**
+ * A drag delta bucketed to horizontal, vertical or the 45-degree diagonal
+ * (S1, AC-S1-1/3): PowerPoint's Shift-drag behaviour.
+ *
+ * The dominant axis wins outright when the other one is small enough next to
+ * it (within `tan(22.5deg)` of it, i.e. the cursor is closer to that axis
+ * than to the diagonal); otherwise both axes are set to the SAME magnitude -
+ * their average, so a 45-degree-ish drag lands exactly on the diagonal
+ * rather than favouring whichever axis happened to be larger - each keeping
+ * its own sign.
+ */
+export function snapDelta(dx: number, dy: number): { dx: number; dy: number } {
+  const absDx = Math.abs(dx);
+  const absDy = Math.abs(dy);
+  if (absDx === 0 && absDy === 0) return { dx: 0, dy: 0 };
+  if (absDy <= absDx * SNAP_RATIO) return { dx, dy: 0 };
+  if (absDx <= absDy * SNAP_RATIO) return { dx: 0, dy };
+  const magnitude = (absDx + absDy) / 2;
+  return {
+    dx: Math.sign(dx) * magnitude,
+    dy: Math.sign(dy) * magnitude,
+  };
+}
+
 /**
  * One corner moved by a normalized delta.
  *

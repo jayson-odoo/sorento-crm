@@ -17,6 +17,7 @@ import {
   refitPolygon,
   roundedPolygonPath,
   scalePolygonPoints,
+  snapDelta,
 } from './polygon-path';
 
 const SQUARE_PX = [
@@ -197,6 +198,26 @@ describe('moveEdge (AC-S4-2/3)', () => {
     const next = moveEdge(slanted, 0, 0.9, 0);
     expect(next[0]).toEqual({ x: 0.9, y: 0 });
     expect(next[1]).toEqual({ x: 1.4, y: 0 });
+  });
+});
+
+describe('snapDelta (S1, AC-S1-1/3)', () => {
+  it('snaps to the dominant axis when the two deltas differ by more than tan(22.5deg)', () => {
+    expect(snapDelta(20, 3)).toEqual({ dx: 20, dy: 0 });
+    expect(snapDelta(3, 20)).toEqual({ dx: 0, dy: 20 });
+  });
+
+  it('snaps to the diagonal, both magnitudes averaged, once the deltas are close enough', () => {
+    expect(snapDelta(10, 12)).toEqual({ dx: 11, dy: 11 });
+  });
+
+  it('keeps the sign of each axis in the diagonal case', () => {
+    expect(snapDelta(-10, 12)).toEqual({ dx: -11, dy: 11 });
+    expect(snapDelta(10, -12)).toEqual({ dx: 11, dy: -11 });
+  });
+
+  it('is a no-op at the origin', () => {
+    expect(snapDelta(0, 0)).toEqual({ dx: 0, dy: 0 });
   });
 });
 
