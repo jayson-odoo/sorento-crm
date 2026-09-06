@@ -1596,6 +1596,13 @@ export interface SpoLocationSplit {
   qty: number;
 }
 
+/** One SO covered take (R19, AC-I2/AC-I3): `key` is a `SpoCoverageLine.key`, `qty` is what
+ *  the operator typed for it (or the cascade default, when she never touched the row). */
+export interface SpoTakeItem {
+  key: string;
+  qty: number;
+}
+
 export interface SpoConfirmLine {
   shipment_line_id: string;
   qty: number;
@@ -1606,9 +1613,16 @@ export interface SpoConfirmLine {
   /** Which PO takes to draw from (AC-G1). Absent means every take the server re-derives;
    *  present means ONLY these, and the SPO quantity falls to what they cover (AC-G2). */
   po_take_ids?: string[];
-  /** Which demand this SPO is being pointed at - `SpoCoverageLine.key`s (AC-G3). Drives the
-   *  location split on screen, and the link rows the create writes for the project half. */
-  so_line_ids?: string[];
+  /**
+   * Which demand this SPO is being pointed at, AND how much of it (R19, replaces the plain
+   * `so_line_ids: string[]` array a picker-only tick list used to send). A PROJECT key
+   * (`project:<row id>`) writes `qty` onto `order_inquiry_links` outright; a RETAIL key
+   * (`retail:<so line id>`) writes `qty` onto `scm.order_link_claim` (`source: 'planner'`) -
+   * see `spo_conversion_service.create`'s own docstring. The server re-validates every qty
+   * against that row's own outstanding and against this line's own SPO qty (422 either way),
+   * never trusting the FE's own cascade.
+   */
+  so_takes?: SpoTakeItem[];
 }
 
 export interface CreatedSpo extends SpoRef {

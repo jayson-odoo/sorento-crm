@@ -80,6 +80,23 @@ export interface SPODocumentLine {
   line_status?: string | null;
   /** GRNs whose picking lines name this allocation directly (sparse on live data). */
   grns: LinkedGRNRef[];
+  /**
+   * The purchase-order line this SPO line PULLED from, via `po_line_id` (R23, AC-J2).
+   * Optional in Phase 1 - the backend does not populate it until Phase 2 (`get_document`'s
+   * join); an older/un-migrated response simply renders the PO column as a dash.
+   */
+  po?: { po_number: string; purchase_order_id: string; line_no: number | null } | null;
+  /**
+   * Every sales order this line's allocation covers - `order_inquiry_links` (project) +
+   * `scm.order_link_claim` where `source='planner'` (retail), joined on this allocation
+   * (R23, AC-J2). Optional/absent in Phase 1 for the same reason `po` is.
+   */
+  so_covered?: {
+    document: string;
+    customer: string | null;
+    demand_class: 'project' | 'retail';
+    qty: number;
+  }[];
 }
 
 /** The document form view's payload: header rollup + every line (UAC AC-6). */
@@ -96,6 +113,20 @@ export interface SPODocument {
   lines: SPODocumentLine[];
   /** GRNs received against this SPO number (variant number formats matched by key). */
   linked_grns: LinkedGRNRef[];
+  /**
+   * The header linkage strip (R23, AC-J3): PO / SPO lines / SO covered / packing list / GRN,
+   * each a rollup across every line on this document. Optional in Phase 1 - absent until the
+   * backend computes it in Phase 2, in which case the strip does not render at all rather
+   * than show zeroes nothing backs.
+   */
+  linkage?: {
+    po_count: number;
+    line_count: number;
+    so_count: number;
+    so_qty: number;
+    packing_list?: { id: string; container: string | null } | null;
+    grn_count: number;
+  };
 }
 
 export interface LinkedGRNRef {
