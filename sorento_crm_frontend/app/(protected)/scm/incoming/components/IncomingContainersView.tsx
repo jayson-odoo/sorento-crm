@@ -160,9 +160,9 @@ export function IncomingContainersView() {
         onOpenChange={setUploadOpen}
         supplierId={supplierId}
         supplierName={supplierName}
-        onImported={(results) => {
+        onImported={(result) => {
           qc.invalidateQueries({ queryKey: ['scm', 'fulfilment', 'incoming', supplierId] });
-          setSelected(results[0]?.shipment_id ?? null);
+          setSelected(result.shipment_ids[0] ?? null);
         }}
       />
     </div>

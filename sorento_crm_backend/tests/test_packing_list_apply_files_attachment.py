@@ -322,6 +322,54 @@ def test_apply_still_applies_the_shipment_when_filing_fails(db, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# `file_supplier_document` files a proforma invoice too, once migration 485 seeds
+# the type (browser-test round, finding 3)
+# --------------------------------------------------------------------------- #
+
+
+def _proforma_invoice_type(db, *, default_directory_id: str | None = None) -> AttachmentType:
+    t = AttachmentType(
+        id=str(uuid.uuid4()),
+        type_name="Proforma Invoice",
+        code="proforma_invoice",
+        allowed_extensions="xlsx,xls,pdf",
+        max_file_size_mb=10,
+        default_directory_id=default_directory_id,
+    )
+    db.add(t)
+    db.flush()
+    return t
+
+
+def test_file_supplier_document_files_a_proforma_invoice(db, monkeypatch):
+    """Before migration 485 (browser-test round) no attachment type resolved
+    `code = 'proforma_invoice'` at all, so a proforma invoice uploaded through the
+    supplier-documents dialog was never filed in Drive - it landed a PI row, but the
+    workbook itself vanished. This proves the SAME `file_supplier_document`
+    `packing_list_service.apply()` already uses files a proforma just as well, once
+    the type this migration seeds exists."""
+    att_type = _proforma_invoice_type(db)
+    db.commit()
+    _stub_backend(monkeypatch)
+
+    attachment_id = packing_list_service.file_supplier_document(
+        db,
+        data=b"pretend proforma invoice bytes",
+        filename="2026JXL0726.xls",
+        content_type="application/vnd.ms-excel",
+        actor_id=None,
+        type_code="proforma_invoice",
+        type_name="Proforma Invoice",
+    )
+    db.commit()
+
+    assert attachment_id is not None
+    attachment = db.query(Attachment).filter(Attachment.id == attachment_id).one()
+    assert str(attachment.attachment_type_id) == str(att_type.id)
+    assert attachment.original_filename == "2026JXL0726.xls"
+
+
+# --------------------------------------------------------------------------- #
 # No Packing List type at all - apply must still succeed
 # --------------------------------------------------------------------------- #
 

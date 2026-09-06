@@ -1,11 +1,15 @@
 # PLAN - purchasing consolidation batch (6 Sep 2026)
 
-**Status:** Integrated A+B+D, C pending. Markup round 1 applied (captain, 6 Sep 2026): Q1-Q5
-ruled, R1 and R7 revised, R11 clarified. UAC:
+**Status:** Integrated A+B+C+D, awaiting the captain's test. Markup round 1 applied (captain,
+6 Sep 2026): Q1-Q5 ruled, R1 and R7 revised, R11 clarified. UAC:
 `scm-purchasing-consolidation-6sep-acceptance-criteria.md`. Lavish page:
 `mockups/purchasing-consolidation-6sep-plan.html`. Lane A (section 13: 1, 2 (R3 only), 3, 8,
-10 (R22)), lane B (sections 4, 5) and lane D (sections 9, 10 (R21), 11) built, review round 1
-applied on all three, lane A browser-verified.
+10 (R22)), lane B (sections 4, 5), lane C (sections 6, 7, 12) and lane D (sections 9,
+10 (R21), 11) built, review round 1 applied on all four. Lane A browser-verified; lane C
+also carries a browser-test round (7 Sep 2026) whose three findings are fixed (line reuse on
+re-upload keeps photos, per-container PI totals, Proforma Invoice attachment type seeded -
+see `## Deviations (lane C)`'s "Browser-test round" entry). Lanes B and D have not been
+walked in a browser yet.
 
 Feedback given 6 Sep on production (`fe-sorento.foundryx.my`). Twelve asks, four lanes, four
 PRs. Every "what exists" line below was measured on `origin/main` `cc0789971` (6 Sep), not on
@@ -636,3 +640,271 @@ Two more deviations this round makes explicit, neither a change of behaviour:
 - **`so_line_ids` is gone from the confirm payload**, replaced by `so_takes: [{key, qty}]`
   (R19). Nothing else sent it: the planner is its only caller, and the service's own validation
   is what turns a key into a quantity.
+
+## Deviations (lane C)
+
+- **Q1's `forwarder_order_ref` reassignment is a change to `packing_list_service.apply()`
+  itself, not something layered on top for the new dialog only.** `bl_no` fed
+  `bill_of_lading_number` there since before this lane; the plan's own R14 text says the
+  value moves to `forwarder_order_ref` instead, with `bill_of_lading_number` left for the
+  manual form - so the SAME "Upload packing list" CTA lane A shipped (still the same
+  function) now fills the SO field instead of the B/L field too, not only uploads made
+  through the new supplier-documents dialog. The one existing regression test that pinned
+  the old mapping (`test_packing_list_import.py`) is updated to the new one, named for what
+  it now proves.
+- **A stated `pi_number` shared by two containers gets a container suffix at STORAGE time,
+  not at read time.** The Jiexia proforma invoice states ONE invoice number
+  (`2026JXL0726`) for two containers, and `scm.proforma_invoice`'s identity is
+  `(company, supplier, pi_number)` - one row per number. Applying both container
+  "documents" the reader now yields would have the second silently overwrite the first
+  (same row, its lines replaced). `proforma_invoice_service.pi_number_for` now appends the
+  container when the document ALSO names one (`2026JXL0726-WHSU6243088`), so each container
+  gets its own row and its own priced lines; a document naming no container (every fixture
+  before this one) is unaffected and keeps its number verbatim. The READER's own
+  `pi_number` field (what the preview shows, what AC-F2 pins) is untouched - only the
+  service's derived storage key changed.
+- **`classify()` does not use bare `"INVOICE"` as a proforma-invoice title marker**, only
+  `发票` / `PROFORMA INVOICE`. The packing list's own labelled cell states `INVOICE NO.:
+  ...` (the SAME invoice number both documents carry), which made every packing list
+  misclassify as `combined` under the plan's literal marker list.
+- **R14's price matching does not call `convert_to_draft_shipment`.** That function's whole
+  job is minting a brand NEW draft shipment; the shipment already exists here (packing_list
+  apply already created it, one per block, before the match runs). `supplier_document_
+  service._match_prices` instead writes `proforma_invoice_shipment_link` rows directly, in
+  the exact shape that function writes them, matched by the shipment line's and the PI
+  line's shared `product_id` - not the supplier's own item-code text, which the two
+  documents do not always spell alike (`洁厦型号`/`JIEXIA MODEL` vs `客户型号`). Runs for
+  every (supplier, container) pair the supplier holds on every apply, rather than only the
+  files just uploaded, so all three upload orders (together, PL after PI, PI after PL) are
+  answered by the same, idempotent pass.
+- **No live `TestClient` route test for `/supplier-documents/preview|apply`.** Migration
+  483 has not been run with `alembic upgrade head` against the shared dev database (see
+  `sorento_crm_backend/CLAUDE.md`'s note on that gap), so a route test built the usual way
+  (`test_fulfilment_routes.py`'s `requires_pg` + real DB) would read an alias table missing
+  this batch's rows. `tests/scm/test_supplier_document_service.py` exercises the exact same
+  service the route calls, end to end, against a scratch schema seeded with the migrations'
+  own `seed()` functions (`test_packing_list_kailu.py`'s pattern) instead. The tester should
+  add the route-level test once the migration has actually run somewhere reachable.
+- **`ProformaUploadDialog.tsx` is NOT deleted.** `PlanContainerDialog.tsx` (the loading
+  plan) still imports `verdictFromPreview` from it - a named function, not the component -
+  so the file stays; only `ProformaInvoicesView.tsx`'s own usage of the DIALOG COMPONENT
+  moved to the shared `PackingListUploadDialog`.
+- **AC-G4's Translations page uses the deferred-action delete pattern
+  (`useDeferredRowAction`/`translation_memory.delete`, D7), not `ConfirmDeleteDialog`.**
+  The UAC's own words ("hard delete with confirmation") predate this codebase's own
+  retirement of that dialog: this worktree's current `CLAUDE.md` says "Delete = hard
+  delete, no confirmation dialog ... `ConfirmDeleteDialog` is retired - a new importer of
+  it ... is a defect", and every other admin list built since (message snippets,
+  supplier code aliases) already uses the countdown-toast delete instead. Followed the
+  code over the plan text; the row itself is still a genuine hard delete, only the
+  confirmation UX changed to match the rest of the app.
+- **`_pl_blocks`/`_pi_blocks`'s new `lines` array is NOT every line in the block.** Only
+  a line that carries something translatable: an UNMATCHED line's own 品名 description
+  (ruling 5, 3 Sep batch: a matched line shows the product master name, needs no
+  translation) or a MATCHED line's remark (only a matched line becomes a shipment line,
+  so only its remark ever round-trips into `remarks`). A block with a hundred plain
+  matched lines and no remarks shows an empty `lines` array, which is correct, not a bug.
+- **Text with no CJK character is never sent to the AI, even on a genuine miss.** A
+  supplier's own English remark ("loaded first", "as packed") is not Chinese and has
+  nothing to translate; asking anyway would be a network round trip on every apply,
+  memory or not, and would have made every existing packing-list test whose fixtures use
+  a plain-English remark column (`test_packing_list_multi_supplier.py`,
+  `test_packing_list_apply_files_attachment.py`) issue a live call to the real
+  `OPENAI_API_KEY` `.env` carries for the app itself. Not asked for by R15/R16 in so many
+  words, but a direct consequence of "the model only fills gaps" - an English remark has
+  no gap.
+- **R25 (slice C3) reuses `EntityAttachmentLink` (`entity_attachment_links`) instead of
+  a new `inbound_shipment_line_photos` table.** The existing linkage mechanism already
+  carries every column the plan asked the new table to have - `entity_type`,
+  `entity_id`, `attachment_id` (FK, `ON DELETE CASCADE`), `sort_order`, `created_at`,
+  `created_by`, and the unique `(entity_type, entity_id, attachment_id)` - and it is
+  already the mechanism every other linked-attachment feature (complaint / stock-inquiry
+  / purchase-request manual attachments, the external entity-attachment route) uses.
+  `entity_type='inbound_shipment_line'`, `entity_id` the line's id. No migration; the
+  alembic head stays `484_translation_memory`.
+- **The photo delete goes through the deferred-action mechanism (D7,
+  `useDeferredRowAction`/`shipment_line_photo.delete`), not `ConfirmDeleteDialog`.** Same
+  reasoning as the Translations page's own delete (see this file's earlier deviation
+  note): this worktree's current `CLAUDE.md` has retired that dialog codebase-wide. A
+  plain immediate `DELETE .../lines/{line_id}/photos/{photo_id}` route still exists and
+  calls the exact same `shipment_line_photos.delete_photo` the record action wraps (the
+  registry's own "execute calls the EXISTING service method" rule) - the FE's own "x" on
+  a thumbnail never calls it directly.
+- **R26's `PHOTO 1 .. PHOTO n` columns are appended AFTER column V (`TOTAL AMOUNT`),
+  not inserted between REMARKS and RMB as section 12's literal text reads.** The
+  plan's own qualifier ("whichever keeps the existing formula column letters stable")
+  decides this: `to_xlsx`'s formulas hardcode `T`/`U`/`F` as literal strings
+  (`=T{row}*F{row}`, `=SUM(U{first_row}:U{last_row})`), and Q5's "no cap per line" means
+  `n` varies export to export - inserting a variable-width block ahead of RMB/TOTAL RM
+  would mean re-deriving every one of those letters, computed, on every export. Appending
+  after V is the smaller diff and leaves every existing letter (and therefore every
+  existing formula) unchanged. RMB stays `T`, TOTAL RM stays `U`, exactly as before this
+  slice.
+
+### Lane C review round 1 (6 Sep 2026) - captain's rulings and the fixes they decided
+
+- **Q1 stands.** `提单号` -> `forwarder_order_ref` is unchanged; the readers that search
+  by `bill_of_lading_number` (`incoming_stock_service.py`, `entity_resolver.py`'s exact
+  and prefix inbound-shipment probes, `procurement_service.py`'s `code_fields`) are
+  extended to match `forwarder_order_ref` too, and the listing/export `bl_no` fields
+  (`fulfilment.py`'s `/inbound-shipments`, `consolidated_packing_list.build()`) coalesce
+  to it when `bill_of_lading_number` is unstated. The n8n external route still writes
+  `bill_of_lading_number` from its own payload - untouched.
+- **A stated PI number is suffixed with the container ONLY when this parse yields more
+  than one document sharing that number** (the Jiexia condition) - `pi_number_for` now
+  takes the parse's `siblings` and counts how many share the base number before
+  deciding to suffix. A single-container PI with a stated number and a filled container
+  cell keeps the number verbatim, so a re-upload updates the same row in place
+  (AC-P2.5) rather than minting a container-suffixed name nobody asked for.
+- **Price links written by `supplier_document_service._match_prices` mirror
+  `convert_to_draft_shipment`'s own semantics**, not a shape of their own: `qty` is what
+  landed on THIS shipment line (the line's own `quantity_shipped`, never the PI line's,
+  which is not split here but may still name more than one container carries),
+  `unmatched_reason` rows are written for a PI line with no shipment-line target so the
+  PI detail page can say where it went, and targets are consumed in order so a second
+  shipment line for the same product takes the NEXT PI line rather than the first one
+  twice. A PI placed through this path is correctly refused by `convert_to_draft_
+  shipment` (ANY existing link row, matched or unmatched, is a permanent outcome) and
+  dropped from its own revision candidates - that is by design, recorded, not changed.
+- **`classify()` gets the header-shape fallback** for a titleless file: an item-code +
+  quantity header with no price header is a packing list, the same shape PLUS a price
+  header is a proforma invoice, both shapes appearing anywhere in the workbook is
+  combined - checked against EVERY sheet (`outstanding_reader.every_sheet_rows`), not
+  only the first 15 rows of sheet 1, since a titleless workbook is exactly the one most
+  likely to bury its real table on a later tab.
+- **`preview`'s `price_matches` is computed off two NEW, kind-tagged lists
+  (`_pi_match`/`_pl_match`, popped before the response goes out), not the flat `blocks`
+  list keyed by the FILE's kind.** The old code included a combined file's own blocks in
+  BOTH `pi_blocks` and `pl_blocks` (kind `"combined"` satisfied both membership tests),
+  so a PI-shaped block could be read back as a packing-list block and matched against
+  itself. Matched/unmatched are now counted by PRODUCT per PI LINE (not by comparing
+  line counts), and `pi_number` is filled from the PI document's own stated number.
+- **A COMBINED file is filed in Drive once, not once per loop.** `apply()`'s two loops
+  (proforma invoices first, then packing lists) both used to call the filing step for
+  a `combined`-kind file; the packing-list loop now reuses the attachment id the
+  proforma-invoice loop already filed (`packing_list_service.apply(attachment_id=...,
+  file_in_drive=False)`), so the same bytes are never uploaded twice.
+- **B1/B2 (`packing_list_reader.py`) fixed as the reviewer specified**, with no
+  deviation: `_MULTI_SEP` now needs whitespace on both sides of an ASCII slash and only
+  splits when what follows carries a label of its own; the note branch inside
+  `_apply_pending` no longer drains `pending` while `pending_is_new_block` is set.
+
+### C3 review round 1 (7 Sep 2026) - the fixes and why one is kept as designed
+
+- **`shipment_line_photos.delete_photo` keeps its own inline, synchronous object
+  delete** (`delete_object_best_effort` called once for `file_path`, once for
+  `thumbnail_path`) **rather than switching to `AttachmentService.delete_attachment`.**
+  That method only enqueues the FILE key onto the `imports` queue's
+  `delete_storage_files` job - it never touches `thumbnail_path` at all, so a photo
+  deleted through it would leave its thumbnail orphaned in storage forever. Calling it
+  here would also mean a photo delete waits on a worker being up to actually free the
+  bytes, for a delete this endpoint can already do inline in the same request. Kept as
+  built; not a regression the review found, a deliberate difference restated once this
+  round asked the question directly.
+- **The delete is now scoped to `shipment_id`/`line_id`, not `photo_id` alone**
+  (blocker item 1): `delete_photo(db, shipment_id, line_id, photo_id)` 404s a
+  shipment/line mismatch before the link is even looked up, and asserts the link's own
+  `entity_id` against the resolved line. The deferred action
+  (`shipment_line_photo.delete`, `record_actions.py`) and the FE's `removal.run` both
+  now carry `shipment_id`/`line_id` in the action's `payload`.
+- **The image guard is now independent of the attachment type row** (`_IMAGE_EXTS`/
+  `_content_type_for`, checked before any storage PUT) - the type's own
+  `allowed_extensions` still gates quota, but this guard holds regardless of what an
+  admin later widens that row to.
+- **The Shipment Line Photo attachment type IS seeded** (migration
+  `485_shipment_line_photo_type`, idempotent update-or-insert by code, mirroring
+  `021_add_attachment_type_code_and_complaint_document.py`) - a captain's ruling this
+  round reverses the slice's original "admin-set, never auto-created" stance for THIS
+  type specifically: unlike `packing_list_service`'s best-effort filing, this endpoint
+  has no fallback, so a fresh deploy needed the row to exist on day one. Applied by
+  hand to the shared dev DB via a guarded `upgrade()` call bound to a live connection
+  (never `alembic upgrade`), same as 483/484.
+- **A multi-file upload batch now purges its own failed file's object (and thumbnail)
+  and reports which files landed** before re-raising, rather than leaving a
+  half-written batch silent about what actually happened.
+- **`EntityAttachmentService.link_existing_attachment`'s `sort_order` is now
+  `MAX(existing) + 1`, not `count()`** - fixed in the shared method (every
+  linked-attachment feature uses it), since `count()` repeats an existing value once a
+  middle link has been deleted and two links end up sharing a position.
+- **The packing-list export's 3cm photo row height is now per-row**
+  (`line.get("photos")`), not sheet-wide (`_max_photo_columns(payload)`) - a line with
+  no photos of its own no longer grows just because some other line on the same
+  container has one.
+- **`GET .../packing-list`'s own JSON now redacts each photo ref to `attachment_id`**
+  (`consolidated_packing_list.redact_photo_refs`) before it reaches the frontend; the
+  export route still calls `build()` fresh for its own copy, which `to_xlsx` reads
+  `file_path`/`storage_provider` from unchanged.
+- **Upload and delete moved into the hook layer** (`useUploadShipmentLinePhotos`,
+  `useFulfilment.ts`) - the cell no longer holds its own upload state, toast or
+  invalidation; `useDeferredRowAction`'s existing plumbing already did the same for
+  delete.
+- **`AttachmentPreviewModal` gained an optional `onDelete`/`deletingItemId` pair** -
+  additive only (every existing caller omits both, unchanged), added so an overflow
+  photo (beyond the visible four-thumbnail strip) is reachable for delete through the
+  same carousel the "+n" badge already opens, rather than a second, duplicate
+  overflow-thumbnail popover.
+
+### Browser-test round (7 Sep 2026) - three findings from the live walk on the dev DB
+
+- **Finding 1 (AC-F7/AC-L5): `create_shipment`'s update-in-place path now REUSES
+  existing `InboundShipmentLine` rows instead of deleting and recreating them, so a
+  photo on a line survives a re-upload.** `_upsert_shipment_lines` (already the
+  reuse-by-`(product, supplier)` matcher `update_shipment`'s edit form used) gained
+  an `existing_lines` parameter scoping which of the shipment's CURRENT lines are
+  candidates for that matching - `create_shipment` passes the same
+  `_is_superseded_line`-filtered subset the old delete loop used to iterate, so a
+  line belonging to ANOTHER factory's own packing list is still left untouched
+  entirely. REUSE was possible (and used) for every upload that names a supplier
+  (R12 always asks for one, so this is the path every real, in-app upload takes);
+  RE-POINTING (renaming an existing link's `entity_id` onto a new line id) was
+  never needed because reuse already keeps the SAME line id. The one path kept as
+  a genuine delete-and-recreate is the supplier-LESS upload (the n8n PDF path,
+  legacy callers): that upload's whole point is restating the container's
+  attribution as none, which `_upsert_shipment_lines`'s "an incoming `None`
+  supplier means unstated, not clear it" convention would otherwise leave alone -
+  two pre-existing tests
+  (`test_an_upload_that_names_no_supplier_still_replaces_everything`,
+  `test_an_n8n_resend_clears_the_header_the_container_used_to_name`) pin that a
+  supplier-less upload clears every line's supplier, which only a fresh row can
+  do. That branch still purges the departing lines' photos before deleting them
+  (`shipment_line_photos.purge_for_lines`), so a photo on an n8n-attributed line
+  is not orphaned even there - it just cannot survive under the SAME line id,
+  because there is no id to reuse the claim onto. `_upsert_shipment_lines` also
+  gained a return value (`list[(provider, key)]`, the storage objects a departing
+  line's photos leave behind) both callers purge, best-effort, after their own
+  commit - the same DB-rows-first ordering `shipment_line_photos.delete_photo`
+  already uses. Also fixed AC-F7's own wording in the UAC, which read as a blanket
+  "second upload refused" when the real rule (already built, C1) is "refused only
+  once received; an unreceived draft updates in place."
+- **Finding 2 (a per-container proforma invoice's `total_amount`): the reader's
+  `_stated_total` never recognised a per-block `SUB TOTAL 1*40HQ` row as a total
+  at all** (`normalize_header("SUB TOTAL 1*40HQ")` folds the container-size suffix
+  onto the label with nothing separating them, so it never equalled the plain
+  `"total"` key `_TOTAL_LABELS` checks for) - so nothing stopped the FILE's own
+  bare `TOTAL` row (printed once, after the last container) from landing on
+  whichever `ProformaDocument` was `current` when that row was read, which is
+  always the LAST block. Renamed to `_row_total`, now returns `(value, kind)`:
+  `kind="sub"` for a `SUB TOTAL`/`小计`-prefixed row (matched by prefix, not
+  equality, so the container-size suffix does not defeat it) reads its number
+  from the header's own AMOUNT column position specifically - a plain
+  nearest-number scan finds the row's QTY column first, since the SUB TOTAL label
+  sits under the ITEM column, far left of both; `kind="doc"` (a bare `合计` /
+  `总金额` / `TOTAL` etc) is held until the whole file is parsed and applied to
+  the SINGLE document's `stated_total` only when the file yielded exactly one -
+  never to any one of several. Deleting one sibling invoice already left the
+  other's header untouched (`delete()` is a plain single-row `db.delete`, no
+  cross-row recompute) - verified, not changed.
+- **Finding 3 (Proforma Invoice attachment type never existed): migration 485
+  (still unreleased) now seeds THREE attachment types, not one** - `_TYPES`
+  generalises the same update-or-insert-by-code pair into a loop:
+  `shipment_line_photo` (unchanged), `proforma_invoice` (code, name, `xlsx,xls,pdf`,
+  10 MB - brand new, nothing filed a proforma invoice in Drive before this),
+  `packing_list` (the row already exists in the shared dev DB as real admin data,
+  R4's own note - this seed only ever sets its `code` column; `triggers_n8n_webhook`
+  and every other column are left exactly as an admin set them). `downgrade()`
+  deletes the two rows this migration mints fresh in any environment reaching
+  head, but only clears `packing_list`'s `code` back to `NULL` rather than
+  deleting a row this migration never created. Applied to the shared dev DB by
+  hand via a guarded `upgrade()` bound to a live connection (never `alembic
+  upgrade`), same as 483/484 - verified idempotent by re-running it a second
+  time and confirming `attachment_types`'s row count did not move.

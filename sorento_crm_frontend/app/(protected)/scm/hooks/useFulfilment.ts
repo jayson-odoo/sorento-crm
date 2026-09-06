@@ -14,6 +14,7 @@ import {
   getContainerSizes,
   getFulfilmentSuppliers,
   getLoadingPlanList,
+  getShipmentLinePhotos,
   getSpoPlannerState,
   getSpoSuggestion,
   getSupplierChatContacts,
@@ -25,6 +26,7 @@ import {
   saveLoadingPlanEdits,
   sendContainerRequest,
   updateLoadingPlanCutOff,
+  uploadShipmentLinePhotos,
   type ContainerRequestLine,
   type ContainerRequestSendOptions,
   type LoadingPlanCreate,
@@ -434,5 +436,42 @@ export function useDownloadSpoWorksheet(shipmentId: string | null) {
     mutationFn: (fallbackName?: string | null) =>
       downloadSpoWorksheet(shipmentId as string, fallbackName),
     onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/** Supplier photos on a shipment line (R25, lane C, slice C3) - every line's photos in
+ *  one read, keyed by line id, so the Lines tab fetches once rather than once per row. */
+export function useShipmentLinePhotos(shipmentId: string | null) {
+  return useQuery({
+    queryKey: [...KEY, 'line-photos', shipmentId],
+    queryFn: () => getShipmentLinePhotos(shipmentId as string),
+    enabled: !!shipmentId,
+  });
+}
+
+/**
+ * Upload photos onto a shipment line (R25, lane C, slice C3, review round 1 item 7) -
+ * moved out of `ShipmentLinePhotosCell` so the cell reads/writes through the same
+ * hook layer every other feature does (`PRINCIPLES.md` layering).
+ *
+ * Invalidates in `onSettled`, not `onSuccess`: a partial batch (review round 1 item
+ * 4 - the backend purges the failed file but keeps whatever landed before it) still
+ * changed the line's photo list even though the call itself rejects, so the strip
+ * has to refetch on the error path too, not only on success.
+ */
+export function useUploadShipmentLinePhotos(shipmentId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ lineId, files }: { lineId: string; files: File[] }) =>
+      uploadShipmentLinePhotos(shipmentId as string, lineId, files),
+    onSuccess: (_photos, variables) => {
+      toast.success(
+        variables.files.length === 1 ? 'Photo added' : `${variables.files.length} photos added`,
+      );
+    },
+    onError: (e: Error) => toast.error(e.message),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: [...KEY, 'line-photos', shipmentId] });
+    },
   });
 }

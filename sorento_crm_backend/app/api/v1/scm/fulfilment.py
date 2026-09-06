@@ -10,6 +10,7 @@ this system.
 """
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import date
 from typing import Annotated, Optional, Union
@@ -41,7 +42,9 @@ from app.services.scm import (
     supplier_code_alias_service,
     loading_plan_service,
     packing_list_service,
+    shipment_line_photos,
     spo_conversion_service,
+    supplier_document_service,
     supplier_inventory_service,
     supplier_notice_service,
 )
@@ -903,6 +906,76 @@ async def apply_packing_list(
     return out
 
 
+@router.post("/supplier-documents/preview")
+async def preview_supplier_documents(
+    files: list[UploadFile] = File(..., description="One or more proforma invoices / packing lists"),
+    supplier_id: Optional[str] = Form(None),
+    currency: Optional[str] = Form(
+        None, description="Only needed when neither the file nor the price list says"
+    ),
+    _user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """One dialog, several supplier documents (R12): each file classified by its title
+    cell, previewed by whichever reader(s) it is - proforma invoice, packing list, or both.
+
+    "Writes nothing" is about the SHIPMENT/INVOICE data - `preview` still writes AI
+    translation fills and bumps `hit_count` on a memory hit (`translation_service`'s own
+    writes), and those are lost without a commit here (B3, review round 1): a second
+    preview of the same file used to ask the model again instead of finding its own answer
+    already in the memory. `run_in_threadpool` (B4) for the same reason the sibling upload
+    route above does - a slow read must not freeze every other request this worker holds.
+    """
+    read = [(f.filename, await read_upload(f)) for f in files]
+    out = await run_in_threadpool(
+        supplier_document_service.preview, db, read, supplier_id=supplier_id, currency=currency,
+    )
+    db.commit()
+    return out
+
+
+@router.post("/supplier-documents/apply")
+async def apply_supplier_documents(
+    files: list[UploadFile] = File(..., description="The same files the preview was taken from"),
+    supplier_id: str = Form(..., description="Whose documents these are"),
+    currency: Optional[str] = Form(
+        None, description="Only needed when neither the file nor the price list says"
+    ),
+    translations: Optional[str] = Form(
+        None,
+        description=(
+            "JSON array of {source_text, target_text} - the preview's edited "
+            "translation cells (R16)"
+        ),
+    ),
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Proforma invoices first, then packing lists, then price links (R12-R14). Each file
+    is filed in Drive under its own type (Proforma Invoice / Packing List)."""
+    read = [(f.filename, await read_upload(f), f.content_type) for f in files]
+    parsed_translations = None
+    if translations:
+        try:
+            parsed_translations = json.loads(translations)
+        except (TypeError, ValueError) as exc:
+            raise AppException(422, "translations must be a JSON array", detail="translations") from exc
+        if not isinstance(parsed_translations, list):
+            raise AppException(422, "translations must be a JSON array", detail="translations")
+    out = await run_in_threadpool(
+        supplier_document_service.apply,
+        db,
+        read,
+        supplier_id=supplier_id,
+        currency=currency,
+        actor_id=current_user.get("id"),
+        actor_name=_actor(current_user),
+        translations=parsed_translations,
+    )
+    db.commit()
+    return out
+
+
 @router.get("/inbound-shipments")
 def list_inbound_shipments(
     supplier_id: Optional[str] = Query(None),
@@ -996,7 +1069,11 @@ def list_inbound_shipments(
                 "shipment_id": str(r.id),
                 "shipment_number": r.shipment_number,
                 "container_no": r.shipping_container_number,
-                "bl_no": r.bill_of_lading_number,
+                # `forwarder_order_ref` (the SO field) is where `提单号` lands on an
+                # upload made through the supplier-documents dialog (Q1 ruling) -
+                # `bill_of_lading_number` stays for the manual form, so a listing that
+                # only read the latter showed a blank B/L for every uploaded container.
+                "bl_no": r.bill_of_lading_number or r.forwarder_order_ref,
                 "status": r.shipment_status,
                 "lines": line_counts.get(str(r.id), 0),
                 "suppliers": suppliers_by_shipment.get(str(r.id), []),
@@ -1025,7 +1102,9 @@ def consolidated_packing_list_for_shipment(
     db: Session = Depends(get_db),
 ):
     """The Sorento packing list: every factory on this container, subtotalled and split."""
-    return consolidated_packing_list.build(db, shipment_id)
+    payload = consolidated_packing_list.build(db, shipment_id)
+    consolidated_packing_list.redact_photo_refs(payload)
+    return payload
 
 
 @router.get("/inbound-shipments/{shipment_id}/packing-list/export")
@@ -1042,6 +1121,53 @@ def export_consolidated_packing_list(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": content_disposition(filename)},
     )
+
+
+@router.get("/inbound-shipments/{shipment_id}/line-photos")
+def get_shipment_line_photos(
+    shipment_id: str,
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """Every line's supplier photos on this container, keyed by line id (R25)."""
+    return shipment_line_photos.list_for_shipment(db, shipment_id)
+
+
+@router.post("/inbound-shipments/{shipment_id}/lines/{line_id}/photos")
+async def upload_shipment_line_photos(
+    shipment_id: str,
+    line_id: str,
+    files: list[UploadFile] = File(..., description="One or more image files"),
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Add photos to a shipment line, in upload order (R25). Returns the line's full
+    photo list, this upload included."""
+    return await shipment_line_photos.upload_photos(
+        db,
+        shipment_id=shipment_id,
+        line_id=line_id,
+        files=files,
+        actor_id=current_user.get("id"),
+    )
+
+
+@router.delete("/inbound-shipments/{shipment_id}/lines/{line_id}/photos/{photo_id}")
+def delete_shipment_line_photo(
+    shipment_id: str,
+    line_id: str,
+    photo_id: str,
+    _user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Immediate delete - same `shipment_line_photos.delete_photo` the deferred
+    `shipment_line_photo.delete` record action calls (`record_actions.py`); the FE's own
+    "x" on a thumbnail goes through that deferred path (D7), never this route directly.
+    Scoped to shipment_id/line_id (review round 1, item 1): a photo id under another
+    shipment 404s rather than deleting.
+    """
+    shipment_line_photos.delete_photo(db, shipment_id, line_id, photo_id)
+    return {"message": "Photo deleted"}
 
 
 @router.post("/inbound-shipments/{shipment_id}/allocations")

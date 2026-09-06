@@ -1,10 +1,11 @@
 # UAC - purchasing consolidation batch (6 Sep 2026)
 
-Plan: `PLAN-scm-purchasing-consolidation-6sep.md`. Status: **Integrated A+B+D, C pending.**
-Markup round 1 applied 6 Sep 2026 (Q1-Q5 ruled, AC-A1 / AC-D3 / AC-D4 / AC-E4 / AC-F4
-revised). Lane A (groups A, B, C, H, AC-J1), lane B (groups D, E) and lane D (groups I, J, K)
-built, review round 1 applied on all three, lane A browser-verified. Groups F, G and L
-(lane C) still open.
+Plan: `PLAN-scm-purchasing-consolidation-6sep.md`. Status: **Integrated A+B+C+D, awaiting the
+captain's test.** Markup round 1 applied 6 Sep 2026 (Q1-Q5 ruled, AC-A1 / AC-D3 / AC-D4 /
+AC-E4 / AC-F4 revised). Lane A (groups A, B, C, H, AC-J1), lane B (groups D, E), lane C
+(groups F, G, L) and lane D (groups I, J, K) built, review round 1 applied on all four. Lane A
+browser-verified; lane C also carries a browser-test round (7 Sep 2026). Lanes B and D have
+not been walked in a browser yet.
 
 ## Journey
 
@@ -126,7 +127,14 @@ Actor: purchasing (Ms Tee), desktop, and the supplier receiving the request.
   row; the shipment's Proforma invoices tab lists the PI.
 - AC-F6. Uploaded separately, PL after PI: same result via `pi_number` or container match.
   PI after PL: preview says which draft shipments will receive prices; confirm links them.
-- AC-F7. A second upload of the same file is refused by the existing duplicate rule.
+- AC-F7. Reworded (browser-test round): the duplicate-refusal rule applies to a
+  RECEIVED shipment only. An unreceived draft updates in place instead - a
+  re-uploaded packing list REUSES its existing line rows keyed by `(product_id,
+  supplier_id)` rather than deleting and recreating them, so a photo already on a
+  line survives; a line whose product the new file no longer carries is deleted
+  outright, and its photos + attachments + storage objects go with it (no orphan
+  link). See `PLAN-scm-purchasing-consolidation-6sep.md`'s `## Deviations (lane C)`,
+  browser-test round.
 - AC-F8. Alias seed migration is idempotent and replayed by `bootstrap_env.py`; a test proves
   `seed()` resolves every header in both fixtures.
 - AC-F9. `_labelled` splits `箱号:X / 封签号:Y` into two fields; `货柜号：X` alone still works.
@@ -186,6 +194,17 @@ Actor: purchasing (Ms Tee), desktop, and the supplier receiving the request.
 
 ## L. Line photos (section 12)
 
+Built (slice C3). Three deviations from this group's literal text - see
+`PLAN-scm-purchasing-consolidation-6sep.md`'s `## Deviations (lane C)` for all three:
+AC-L2's table is `entity_attachment_links` (existing linkage mechanism, reused), not a new
+`inbound_shipment_line_photos`; AC-L1's "delete with confirmation" is the deferred-action
+countdown (D7, `useDeferredRowAction`), not `ConfirmDeleteDialog` (retired codebase-wide);
+AC-L3's photo columns sit after column V (`TOTAL AMOUNT`), not between REMARKS and RMB, so
+RMB/TOTAL RM's own formulas keep their existing column letters. Review round 1 (7 Sep):
+the Shipment Line Photo attachment type IS seeded by migration
+`485_shipment_line_photo_type`, not admin-created on first use - see the plan's C3
+review round 1 notes.
+
 - AC-L1. Lines tab has a `Photos` cell: thumbnails, `+` opens the shared dropzone
   (multi-file, image types), delete with confirmation.
 - AC-L2. `inbound_shipment_line_photos(line_id, attachment_id, sort_order)`; attachment type
@@ -194,6 +213,11 @@ Actor: purchasing (Ms Tee), desktop, and the supplier receiving the request.
   embedded and sized to the row; a line with fewer photos leaves cells empty; a shipment with
   no photos exports with no photo column.
 - AC-L4. Photos are served through `storage_router` (s3 / r2 rows both work).
+- AC-L5 (browser-test round). Photos survive a re-upload of the same packing list:
+  the line row is reused, not recreated, so the photo linked to it is still listed
+  on that product's line afterward. A product dropped from the re-uploaded file has
+  its line deleted, and that line's photos (links + attachments + storage objects)
+  are deleted with it - never left as an orphan link.
 
 ## DoD gate (every lane)
 

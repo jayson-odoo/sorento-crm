@@ -1208,6 +1208,171 @@ export async function applyPackingList(
   return readJson(res, 'Failed to import the packing list');
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Supplier documents: one dialog, a proforma invoice AND/OR a packing list (R12-R14,
+ * purchasing consolidation batch, lane C)
+ *
+ * ── BACKEND CONTRACT (app/api/v1/scm/fulfilment.py) ────────────────────────
+ *  POST /api/v1/scm/supplier-documents/preview  multipart: files[] + supplier_id +
+ *       optional currency -> 200 SupplierDocumentsPreview. Writes nothing.
+ *  POST /api/v1/scm/supplier-documents/apply    same body, supplier_id required, PLUS
+ *       optional `translations` (JSON string, `SupplierDocumentTranslation[]`) ->
+ *       200 SupplierDocumentsApplyResult. Auth: `scm.reorder.run`.
+ *
+ * Each file is classified by its own title cell (`发票`/`PROFORMA INVOICE` vs `装箱单`/
+ * `PACKING LIST`) - proforma invoice, packing list, or combined when a file states both.
+ * `apply` writes proforma invoices first, then packing lists (one draft shipment per
+ * container block, same as `applyPackingList`), then matches PI prices onto the shipment
+ * lines they price by product, for every container this supplier holds - whichever order
+ * the files were uploaded in.
+ *
+ * Translation memory (R15/R16): every block's `lines` (unmatched descriptions, matched
+ * remarks) and `notes`, plus the file's `footer_note`, gain `<field>_en` (the English,
+ * null when untranslated) and `<field>_en_source` (`'manual' | 'ai' | null`) beside the
+ * Chinese. Editing a cell in the preview and sending it back in `apply`'s `translations`
+ * writes a `manual` row that outranks any `ai` guess from then on.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+export type SupplierDocumentKind = 'proforma_invoice' | 'packing_list' | 'combined' | 'unreadable';
+
+/**
+ * A translated phrase, memory-first (R15/R16, purchasing consolidation batch, lane C):
+ * `text_en` is null when nobody has translated `text` yet (no AI key configured, or the
+ * call failed - never an error, just untranslated); `text_en_source` says whether a
+ * person typed it (`manual`, always wins) or the AI Assistant's configured model filled
+ * the gap (`ai`). Shared shape for a note/footer AND (folded into
+ * `SupplierDocumentLinePreview` below) a line's description/remark.
+ */
+export interface SupplierDocumentTextItem {
+  text: string;
+  text_en: string | null;
+  text_en_source: 'manual' | 'ai' | null;
+}
+
+/**
+ * One line worth translating in the preview - NOT every line in the block (Phase 2
+ * backend contract): an UNMATCHED line's own 品名 `description` (a matched line shows
+ * the product master name elsewhere and needs no translation, ruling 5 of the 3 Sep
+ * batch), or a MATCHED line's `remark` (only a matched line becomes a shipment line, so
+ * only its remark round-trips into `remarks` on apply). A line with neither is absent
+ * from this array entirely.
+ */
+export interface SupplierDocumentLinePreview {
+  item_code: string;
+  matched: boolean;
+  description: string | null;
+  description_en: string | null;
+  description_en_source: 'manual' | 'ai' | null;
+  remark: string | null;
+  remark_en: string | null;
+  remark_en_source: 'manual' | 'ai' | null;
+}
+
+export interface SupplierDocumentBlock {
+  container_no: string | null;
+  seal_no: string | null;
+  cartons: number | null;
+  cbm_total: number | null;
+  amount: number | null;
+  line_count: number;
+  note_count: number;
+  /** Only the lines that carry a translatable description or remark (see above). */
+  lines: SupplierDocumentLinePreview[];
+  /** The block's own accessory-line notes (`840 水箱空瓷：1个`), each translated. */
+  notes: SupplierDocumentTextItem[];
+}
+
+export interface SupplierDocumentHeader {
+  pi_number: string | null;
+  invoice_date: string | null;
+  consignee: string | null;
+  shipper: string | null;
+  /** `提单号` - fills `forwarder_order_ref` on apply, never `bill_of_lading_number`. */
+  so_ref: string | null;
+}
+
+export interface SupplierDocumentFilePreview {
+  name: string;
+  kind: SupplierDocumentKind;
+  blocks: SupplierDocumentBlock[];
+  header: SupplierDocumentHeader;
+  unmatched: string[];
+  errors: string[];
+  /** The `备注：` footer (R13), applying to the whole file - shown once here rather
+   *  than repeated inside every block, even though every shipment this file creates
+   *  stores it in its own `notes` column. Null when the file states none. */
+  footer_note: SupplierDocumentTextItem | null;
+}
+
+export interface SupplierDocumentPriceMatch {
+  container_no: string;
+  pi_number: string | null;
+  matched_lines: number;
+  unmatched_lines: number;
+}
+
+export interface SupplierDocumentsPreview {
+  files: SupplierDocumentFilePreview[];
+  price_matches: SupplierDocumentPriceMatch[];
+}
+
+export interface SupplierDocumentsApplyResult {
+  proforma_invoice_ids: string[];
+  shipment_ids: string[];
+  links_written: number;
+  attachment_ids: string[];
+}
+
+/** An edited translation cell, keyed by the ORIGINAL (Chinese) text - `apply` writes
+ *  each as a `manual` row before doing anything else, so a correction made in the
+ *  preview is what a remark or a note is stored with, never the AI's unedited guess. */
+export interface SupplierDocumentTranslation {
+  source_text: string;
+  target_text: string;
+}
+
+function supplierDocumentsForm(
+  files: File[],
+  opts: {
+    supplierId?: string | null;
+    currency?: string | null;
+    translations?: SupplierDocumentTranslation[];
+  },
+): FormData {
+  const body = new FormData();
+  for (const file of files) body.append('files', file);
+  if (opts.supplierId) body.append('supplier_id', opts.supplierId);
+  if (opts.currency) body.append('currency', opts.currency);
+  if (opts.translations?.length) body.append('translations', JSON.stringify(opts.translations));
+  return body;
+}
+
+export async function previewSupplierDocuments(
+  files: File[],
+  opts: { supplierId?: string | null; currency?: string | null } = {},
+): Promise<SupplierDocumentsPreview> {
+  const res = await apiFetch('/api/v1/scm/supplier-documents/preview', {
+    method: 'POST',
+    body: supplierDocumentsForm(files, opts),
+  });
+  return readJson<SupplierDocumentsPreview>(res, 'Failed to read the supplier documents');
+}
+
+export async function applySupplierDocuments(
+  files: File[],
+  opts: {
+    supplierId?: string | null;
+    currency?: string | null;
+    translations?: SupplierDocumentTranslation[];
+  } = {},
+): Promise<SupplierDocumentsApplyResult> {
+  const res = await apiFetch('/api/v1/scm/supplier-documents/apply', {
+    method: 'POST',
+    body: supplierDocumentsForm(files, opts),
+  });
+  return readJson<SupplierDocumentsApplyResult>(res, 'Failed to import the supplier documents');
+}
+
 export async function getAllocationSuggestion(shipmentId: string): Promise<AllocationSuggestion> {
   const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/allocation-suggestion`);
   return readJson<AllocationSuggestion>(res, 'Failed to work out what this container draws down');
@@ -1363,6 +1528,55 @@ export async function downloadPackingListExport(
     filenameFromContentDisposition(res.headers.get('Content-Disposition')) ??
     `${fallbackName || 'container'}-packing-list.xlsx`;
   saveBlobAs(await res.blob(), filename);
+}
+
+/**
+ * Supplier photos on a shipment line (R25/R26, purchasing consolidation batch 6 Sep
+ * 2026, section 12, lane C, slice C3).
+ *
+ * ── BACKEND CONTRACT (app/api/v1/scm/fulfilment.py) ─────────────────────────
+ *  GET    /api/v1/scm/inbound-shipments/{id}/line-photos
+ *         -> 200 { [line_id]: ShipmentLinePhoto[] }
+ *  POST   /api/v1/scm/inbound-shipments/{id}/lines/{lineId}/photos   multipart files[]
+ *         -> 200 ShipmentLinePhoto[] (the line's full list, after the upload)
+ *  DELETE goes through the deferred-action mechanism (D7), never a plain call from
+ *         this file - `shipment_line_photo.delete` (see `ShipmentLinePhotosCell.tsx`'s
+ *         `useDeferredRowAction`), same as every other list delete in this codebase.
+ *  Auth: `scm.dashboard.view` (GET), `scm.reorder.run` (POST) - the same pair every
+ *  other inbound-shipments route in this file already uses.
+ *
+ * No photo cap per line (Q5, ruled 6 Sep 2026).
+ */
+export interface ShipmentLinePhoto {
+  id: string;
+  attachment_id: string;
+  sort_order: number | null;
+  thumbnail_url: string | null;
+  url: string | null;
+  filename: string | null;
+}
+
+export type ShipmentLinePhotosByLine = Record<string, ShipmentLinePhoto[]>;
+
+export async function getShipmentLinePhotos(
+  shipmentId: string,
+): Promise<ShipmentLinePhotosByLine> {
+  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/line-photos`);
+  return readJson<ShipmentLinePhotosByLine>(res, 'Failed to load shipment line photos');
+}
+
+export async function uploadShipmentLinePhotos(
+  shipmentId: string,
+  lineId: string,
+  files: File[],
+): Promise<ShipmentLinePhoto[]> {
+  const form = new FormData();
+  for (const file of files) form.append('files', file);
+  const res = await apiFetch(
+    `/api/v1/scm/inbound-shipments/${shipmentId}/lines/${lineId}/photos`,
+    { method: 'POST', body: form },
+  );
+  return readJson<ShipmentLinePhoto[]>(res, 'Failed to upload photos');
 }
 
 /**

@@ -42,6 +42,7 @@ from app.services.scm.outstanding_import_service import (
     DEFAULT_PO_CURRENCY,
     SPO_UPLOAD_SOURCE,
 )
+from app.services.storage_router import delete_object_best_effort
 from app.schemas.procurement import (
     SupplierCreate, SupplierUpdate, ProductSupplierCreate, ProductSupplierUpdate,
     InboundShipmentCreate, InboundShipmentUpdate,
@@ -923,7 +924,14 @@ class InboundShipmentService:
             self.db,
             shipment_id,
             InboundShipment,
-            code_fields=("shipment_number", "shipping_container_number", "bill_of_lading_number", "invoice_number"),
+            code_fields=(
+                "shipment_number", "shipping_container_number", "bill_of_lading_number",
+                # `提单号` lands here (the SO field), not `bill_of_lading_number`, on
+                # an upload made through the supplier-documents dialog (S3, review
+                # round 1) - a lookup on the B/L alone missed every container
+                # uploaded that way.
+                "forwarder_order_ref", "invoice_number",
+            ),
         )
         if not resolved_ids:
             raise handle_not_found("Inbound Shipment", shipment_id)
@@ -1142,7 +1150,13 @@ class InboundShipmentService:
         else:
             shipment.supplier_id = None
 
-    def _upsert_shipment_lines(self, shipment: InboundShipment, incoming: list[dict]) -> None:
+    def _upsert_shipment_lines(
+        self,
+        shipment: InboundShipment,
+        incoming: list[dict],
+        *,
+        existing_lines: Optional[list[InboundShipmentLine]] = None,
+    ) -> list[tuple[str, str]]:
         """Apply an explicit line set to a container without throwing its attribution away.
 
         An edit form states the whole line set, so a line nobody stated is gone. But it does
@@ -1152,6 +1166,16 @@ class InboundShipmentService:
         which factory packed what, which is exactly the loss the per-supplier line exists to
         stop. So an incoming line is matched to the one already there and UPDATED: what the
         payload states wins, what it leaves out is kept.
+
+        `existing_lines` scopes which of the shipment's CURRENT lines are candidates for
+        that matching (and so for deletion when nothing claims them) - the caller's whole
+        set by default (`update_shipment`'s edit form states the container's whole line
+        set), but `create_shipment`'s update-in-place path passes only the lines THIS
+        upload speaks for (its own supplier's, per `_is_superseded_line`): a line outside
+        that scope belongs to another factory's own packing list and is left alone,
+        touched by neither the matching nor the departing-line delete below (browser-test
+        round, finding 1 - the same reuse this method already gave the edit form is now
+        also what a re-uploaded packing list gets, so a photo on a reused line survives).
 
         Matching:
 
@@ -1171,8 +1195,12 @@ class InboundShipmentService:
 
         Attributed lines are resolved before unattributed ones, so a payload that mixes the
         two claims the named rows first rather than by payload order.
+
+        Returns the storage `(provider, key)` pairs a departing line's photos left behind
+        (see `shipment_line_photos.purge_for_lines`) - the caller purges them, best-effort,
+        AFTER its own commit, same ordering `delete_photo` uses.
         """
-        existing = list(shipment.shipment_lines)
+        existing = list(shipment.shipment_lines) if existing_lines is None else list(existing_lines)
         by_pair: dict[tuple[str, Optional[str]], InboundShipmentLine] = {}
         by_product: dict[str, list[InboundShipmentLine]] = {}
         for line in existing:
@@ -1240,7 +1268,9 @@ class InboundShipmentService:
         # NULL as a value, so an insert that reuses a departing row's key would collide if
         # the unit of work flushed the save first.
         departing = [line for line in existing if str(line.id) not in claimed]
+        photo_objects: list[tuple[str, str]] = []
         if departing:
+            departing_ids = [str(line.id) for line in departing]
             # The proforma-invoice links pointing at these lines go with them, HERE, in the
             # same transaction. The FK is ON DELETE SET NULL, which left a phantom behind:
             # a link naming a shipment but no line on it, so the invoice read as sitting on
@@ -1248,13 +1278,17 @@ class InboundShipmentService:
             # could never be converted again. One writer for the deletion and the trail it
             # invalidates, rather than a sweeper that runs later and sometimes.
             from app.models.scm import ProformaInvoiceShipmentLink
+            from app.services.scm import shipment_line_photos
 
             self.db.query(ProformaInvoiceShipmentLink).filter(
-                ProformaInvoiceShipmentLink.inbound_shipment_line_id.in_(
-                    [str(line.id) for line in departing]
-                )
+                ProformaInvoiceShipmentLink.inbound_shipment_line_id.in_(departing_ids)
             ).delete(synchronize_session=False)
             self.db.flush()
+            # Same reasoning, for the line's own photos (browser-test round, finding 1):
+            # `entity_attachment_links` carries no FK onto `inbound_shipment_lines`, so a
+            # departing line's photo links would otherwise sit there naming an id nothing
+            # resolves any more.
+            photo_objects = shipment_line_photos.purge_for_lines(self.db, departing_ids)
         for line in departing:
             self.db.delete(line)
         self.db.flush()
@@ -1284,6 +1318,7 @@ class InboundShipmentService:
                 )
             )
         self.db.flush()
+        return photo_objects
 
     def create_shipment(self, shipment_data: InboundShipmentCreate, created_by: str | None = None):
         """Create or update-in-place an inbound shipment with lines.
@@ -1374,21 +1409,62 @@ class InboundShipmentService:
             states_supplier = bool(shipment_data.supplier_id) or any(
                 (line.supplier_id or None) for line in (shipment_data.shipment_lines or [])
             )
-            for line in existing.shipment_lines[:]:
-                if states_supplier and not _is_superseded_line(
-                    line, incoming_suppliers, incoming_products
-                ):
-                    continue
-                self.db.delete(line)
-            self.db.flush()
-            for d in merged_lines:
-                line = InboundShipmentLine(
-                    **d, shipment_id=existing.id, **_line_company_kwargs(existing)
+            photo_objects: list[tuple[str, str]]
+            if states_supplier:
+                # REUSE: every real, in-app upload names a supplier (R12 asks for one per
+                # file), so this is the path a re-uploaded packing list actually takes.
+                # `_upsert_shipment_lines` matches an incoming line to the row already
+                # there by `(product, supplier)` and updates it IN PLACE rather than
+                # deleting and recreating: a re-upload used to mint a new line id every
+                # time, which orphaned that line's photos (`entity_attachment_links` has
+                # no real FK onto the line) - browser-test round, finding 1. Scoped to
+                # this upload's own lines, same as the delete used to be: a line outside
+                # `_is_superseded_line` belongs to another factory's own list and is left
+                # alone entirely.
+                scoped_existing = [
+                    line
+                    for line in existing.shipment_lines
+                    if _is_superseded_line(line, incoming_suppliers, incoming_products)
+                ]
+                photo_objects = self._upsert_shipment_lines(
+                    existing, merged_lines, existing_lines=scoped_existing
                 )
-                self.db.add(line)
-            self.db.flush()
+            else:
+                # RE-POINT is not applicable here either: every merged line's
+                # `supplier_id` is explicitly `None` (this upload names no supplier at
+                # all), which never matches an existing line's OWN (possibly attributed)
+                # supplier under the `(product, supplier)` key `_upsert_shipment_lines`
+                # reuses by - reusing here would leave a line's old, real supplier
+                # silently intact although nothing in this upload said so
+                # (`test_an_n8n_resend_clears_the_header_the_container_used_to_name`).
+                # This upload restates the WHOLE container from scratch (the n8n PDF
+                # path, legacy callers) - every existing line is superseded, deleted
+                # outright, and its photos purged with it before the fresh rows land.
+                departing_ids = [str(line.id) for line in existing.shipment_lines]
+                from app.models.scm import ProformaInvoiceShipmentLink
+                from app.services.scm import shipment_line_photos
+
+                if departing_ids:
+                    self.db.query(ProformaInvoiceShipmentLink).filter(
+                        ProformaInvoiceShipmentLink.inbound_shipment_line_id.in_(
+                            departing_ids
+                        )
+                    ).delete(synchronize_session=False)
+                    self.db.flush()
+                photo_objects = shipment_line_photos.purge_for_lines(self.db, departing_ids)
+                for line in existing.shipment_lines[:]:
+                    self.db.delete(line)
+                self.db.flush()
+                for d in merged_lines:
+                    line = InboundShipmentLine(
+                        **d, shipment_id=existing.id, **_line_company_kwargs(existing)
+                    )
+                    self.db.add(line)
+                self.db.flush()
             self._derive_header_supplier(existing, shipment_data.supplier_id)
             self.db.commit()
+            for provider, key in photo_objects:
+                delete_object_best_effort(provider, key)
             self.db.refresh(existing)
             self.refresh_shipment_line_statuses(existing.id)
             # D6 (S3): a container this shipment now names may already sit on
@@ -1467,7 +1543,7 @@ class InboundShipmentService:
     def update_shipment(self, shipment_id: str, shipment_data: InboundShipmentUpdate, updated_by: str):
         """Update an inbound shipment. If shipment_lines provided, replace existing lines."""
         shipment = self.get_shipment(shipment_id)
-        
+
         update_data = shipment_data.model_dump(exclude_unset=True, exclude={"shipment_lines"})
         if "shipment_status" in update_data:
             update_data["shipment_status"] = _normalize_inbound_shipment_status(
@@ -1475,7 +1551,8 @@ class InboundShipmentService:
             )
         for key, value in update_data.items():
             setattr(shipment, key, value)
-        
+
+        photo_objects: list[tuple[str, str]] = []
         if "shipment_lines" in shipment_data.model_dump(exclude_unset=True):
             # The whole line set, upserted onto what is already there (grouped by product
             # AND supplier - the same key `create_shipment` merges on, because the same
@@ -1494,7 +1571,7 @@ class InboundShipmentService:
                     f"Product {code} is on this line set twice for the same supplier; "
                     "combine the two lines or pick a different product on one of them."
                 )
-            self._upsert_shipment_lines(
+            photo_objects = self._upsert_shipment_lines(
                 shipment, _merge_shipment_lines(shipment_data.shipment_lines, header_supplier)
             )
             # The lines just changed, so the header has to be re-derived from them or it
@@ -1503,6 +1580,8 @@ class InboundShipmentService:
 
 
         self.db.commit()
+        for provider, key in photo_objects:
+            delete_object_best_effort(provider, key)
         self.db.refresh(shipment)
         self.refresh_shipment_line_statuses(shipment_id)
         if "shipping_container_number" in update_data:
@@ -1593,7 +1672,14 @@ class SPOAllocationService:
             self.db,
             shipment_id,
             InboundShipment,
-            code_fields=("shipment_number", "shipping_container_number", "bill_of_lading_number", "invoice_number"),
+            code_fields=(
+                "shipment_number", "shipping_container_number", "bill_of_lading_number",
+                # `提单号` lands here (the SO field), not `bill_of_lading_number`, on
+                # an upload made through the supplier-documents dialog (S3, review
+                # round 1) - a lookup on the B/L alone missed every container
+                # uploaded that way.
+                "forwarder_order_ref", "invoice_number",
+            ),
         )
         if shipment_ids is not None:
             if not shipment_ids:

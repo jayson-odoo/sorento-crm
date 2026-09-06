@@ -391,7 +391,7 @@ export default function PackingListsList() {
   const listPrimaryAction = showUploadPackingListCta ? (
     <Button onClick={() => setUploadDialogOpen(true)}>
       <Upload />
-      Upload packing list
+      Upload supplier documents
     </Button>
   ) : (
     <Button onClick={() => router.push('/procurement-management/packing-lists/new')}>

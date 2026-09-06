@@ -231,7 +231,11 @@ def test_the_shipment_carries_the_quantities_the_file_stated():
         assert float(by_product[str(w.product("B").id)].quantity_shipped) == 20
 
 
-def test_the_bill_of_lading_reaches_the_shipment():
+def test_the_stated_bl_no_fills_the_so_field_not_bill_of_lading_number():
+    # Q1 ruling (purchasing consolidation batch, 6 Sep 2026): `提单号` is the forwarder's own
+    # booking reference on both real documents this reader was built against, so it fills
+    # `forwarder_order_ref` (the SO field). `bill_of_lading_number` is left for the manual
+    # form to state instead, and is never derived from this column.
     with pg_session() as db:
         w = World(db)
         rows = [[f"货柜号：{MARKER}U1"], ["提单号：BL-991"], HEADER,
@@ -239,7 +243,9 @@ def test_the_bill_of_lading_reaches_the_shipment():
 
         svc.apply(db, workbook(rows), supplier_id=str(w.supplier.id))
 
-        assert _shipments(db, w)[0].bill_of_lading_number == "BL-991"
+        shipment = _shipments(db, w)[0]
+        assert shipment.forwarder_order_ref == "BL-991"
+        assert shipment.bill_of_lading_number is None
 
 
 def test_a_code_another_company_also_uses_resolves_to_ours():

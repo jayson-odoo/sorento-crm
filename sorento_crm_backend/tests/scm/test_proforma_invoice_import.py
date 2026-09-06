@@ -424,6 +424,68 @@ def test_the_container_bill_of_lading_uom_and_description_reach_the_row():
         assert line.product_id == w.product("A").id
 
 
+# --------------------------------------------------------------------------------- #
+# S4, review round 1 - suffixed only when this parse yields MORE THAN ONE document
+# sharing the stated number (the Jiexia condition); verbatim otherwise.
+# --------------------------------------------------------------------------------- #
+
+
+def test_pi_number_for_suffixes_only_when_a_sibling_shares_the_stated_number():
+    """Pure unit test of `pi_number_for` itself - no DB, no reader, just the two
+    `ProformaDocument`s two containers of one Jiexia-shaped file would produce."""
+    from app.services.scm.proforma_invoice_reader import ProformaDocument
+
+    doc1 = ProformaDocument(index=1, pi_number="2026JXL0726", container_no="WHSU6243088")
+    doc2 = ProformaDocument(index=2, pi_number="2026JXL0726", container_no="WHSU6356079")
+
+    assert svc.pi_number_for(doc1, source_ref="x.xls", siblings=[doc1, doc2]) == (
+        "2026JXL0726-WHSU6243088"
+    )
+    assert svc.pi_number_for(doc2, source_ref="x.xls", siblings=[doc1, doc2]) == (
+        "2026JXL0726-WHSU6356079"
+    )
+
+    # A single document naming a container, with no sibling sharing its number - the
+    # common case, and every fixture before Jiexia - keeps the number verbatim.
+    alone = ProformaDocument(index=1, pi_number="KL20260717", container_no="ABCU1000001")
+    assert svc.pi_number_for(alone, source_ref="x.xls", siblings=[alone]) == "KL20260717"
+    # No `siblings` at all (an existing caller that never learned about the ruling)
+    # behaves the same as "no sibling shares it" - never suffixes on its own say-so.
+    assert svc.pi_number_for(alone, source_ref="x.xls") == "KL20260717"
+
+
+def test_a_single_container_pi_with_a_stated_number_is_stored_verbatim_and_updates_in_place():
+    """AC-P2.5: a document that fills in a container cell alongside its own stated
+    number is NOT the Jiexia condition (nothing else in this parse shares the number) -
+    the row is named after the number alone, and a second upload of the same file
+    updates that SAME row rather than minting a `-CONTAINER` sibling."""
+    with pg_session() as db:
+        w = World(db)
+        data = workbook(
+            [
+                [f"货单号：PI-{MARKER}-1", None, f"货柜号：{MARKER}U9"],
+                ["产品型号", "品名", "数量", "单位", "PRICE"],
+                [w.code("A"), "连体马桶", 12, "PCS", 33.5],
+            ]
+        )
+
+        first = svc.apply(db, data, supplier_id=str(w.supplier.id), currency="CNY")
+        db.commit()
+
+        invoices = _invoices(db, w)
+        assert len(invoices) == 1
+        assert invoices[0].pi_number == f"PI-{MARKER}-1"  # verbatim, no container suffix
+        assert invoices[0].container_ref == f"{MARKER}U9"
+
+        second = svc.apply(db, data, supplier_id=str(w.supplier.id), currency="CNY")
+        db.commit()
+
+        assert first["documents_created"] == 1
+        assert second["documents_created"] == 0
+        assert second["documents_updated"] == 1
+        assert len(_invoices(db, w)) == 1  # still one row, not a second under a new name
+
+
 def test_a_document_that_states_no_container_leaves_both_references_null():
     # AC-P1.1's other half: nullable, never invented.
     with pg_session() as db:

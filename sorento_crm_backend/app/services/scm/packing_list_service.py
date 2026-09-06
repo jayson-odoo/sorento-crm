@@ -34,6 +34,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.schemas.procurement import InboundShipmentCreate, InboundShipmentLineCreate
+from app.services import translation_service
 from app.services.error_handler import AppException
 from app.services.scm.currency_resolution import resolve_currency
 from app.services.scm.packing_list_reader import (
@@ -64,22 +65,30 @@ _PACKING_LIST_TYPE_CODE = "packing_list"
 _PACKING_LIST_TYPE_NAME = "Packing List"
 
 
-def _file_the_upload(
+def file_supplier_document(
     db: Session,
     *,
     data: bytes,
     filename: Optional[str],
     content_type: Optional[str],
     actor_id: Optional[str],
+    type_code: str = _PACKING_LIST_TYPE_CODE,
+    type_name: str = _PACKING_LIST_TYPE_NAME,
 ) -> Optional[str]:
-    """Store the uploaded workbook as an attachment of type Packing List. Never raises.
+    """Store an uploaded workbook as an attachment of the given type. Never raises.
+
+    `type_code`/`type_name` default to Packing List so every existing caller of this
+    function (originally `_file_the_upload`, private to this module) is unaffected;
+    `supplier_document_service` passes the Proforma Invoice type for a PI file (R12/R14,
+    purchasing consolidation batch, lane C) - same lookup, same "never fail an otherwise
+    successful apply" contract, just a different admin-set type.
 
     Returns the new attachment id, or None when there is nothing to file - a missing
-    Packing List type (R4 is admin-set, not guaranteed to exist yet) is a named gap in
-    the response, never a reason to fail an apply that otherwise succeeded.
+    type (R4 is admin-set, not guaranteed to exist yet) is a named gap in the response,
+    never a reason to fail an apply that otherwise succeeded.
 
     Deliberately NOT `attachment_webhook_helper.create_and_send_webhook`: this reader
-    already produced the shipment, so firing the n8n intake webhook would create a
+    already produced the shipment/invoice, so firing the n8n intake webhook would create a
     SECOND one through the external route (R3) - and that is also why this attachment
     carries no `integration_log` row.
     """
@@ -88,14 +97,14 @@ def _file_the_upload(
             "SELECT id, default_directory_id FROM attachment_types "
             "WHERE code = :code OR lower(type_name) = lower(:name) LIMIT 1"
         ),
-        {"code": _PACKING_LIST_TYPE_CODE, "name": _PACKING_LIST_TYPE_NAME},
+        {"code": type_code, "name": type_name},
     ).fetchone()
     if not row:
         logger.warning(
-            "No attachment type named %r (or code %r) - the uploaded packing list will "
+            "No attachment type named %r (or code %r) - the uploaded file will "
             "not be filed in Drive",
-            _PACKING_LIST_TYPE_NAME,
-            _PACKING_LIST_TYPE_CODE,
+            type_name,
+            type_code,
         )
         return None
     type_id, default_directory_id = str(row[0]), (str(row[1]) if row[1] else None)
@@ -111,12 +120,12 @@ def _file_the_upload(
         )
 
         attachment_id = str(uuid.uuid4())
-        original_filename = sanitize_storage_filename(filename or "packing-list.xlsx")
+        original_filename = sanitize_storage_filename(filename or f"{type_code}.xlsx")
         provider = default_provider()
         backend = get_backend(provider)
         s3_key, _ = backend.upload_file(
             file_content=data,
-            file_path=f"packing_list/{attachment_id}/{original_filename}",
+            file_path=f"{type_code}/{attachment_id}/{original_filename}",
             content_type=content_type,
         )
         attachment_data = AttachmentCreate(
@@ -138,7 +147,7 @@ def _file_the_upload(
         AttachmentService(db).create_attachment(attachment_data, actor_id)
         return attachment_id
     except Exception:  # noqa: BLE001 - a filing failure must not fail the apply itself
-        logger.warning("Could not file the uploaded packing list as an attachment", exc_info=True)
+        logger.warning("Could not file the uploaded document as an attachment", exc_info=True)
         # A failed INSERT (or the upload call itself) can leave the session in
         # `PendingRollbackError` for every statement after it, which turned "no filed
         # copy" into a 500 on the apply that was otherwise fine. Roll back so the caller's
@@ -171,6 +180,47 @@ def _line_cbm(ln: PackingLine) -> Optional[Decimal]:
 
 def _parse(db: Session, data: bytes) -> PackingReadResult:
     return read_workbook(data, db=db)
+
+
+def _block_notes(
+    block: PackingBlock,
+    parsed: PackingReadResult,
+    translations: dict[str, "translation_service.TranslationHit"],
+) -> Optional[str]:
+    """The shipment's `notes` field (R13/R14): the block's own accessory-line notes
+    (`840 水箱空瓷：1个`), the file's `备注：` footer, or both - `None` when the file states
+    neither, never an empty string sitting where "nothing was said" belongs.
+
+    Each part carries its English beside the Chinese when the translation memory has
+    one (R16/AC-G3): `English (中文)` when they differ, the Chinese alone otherwise.
+    """
+    parts = list(getattr(block, "notes", None) or [])
+    if parsed.footer_notes:
+        parts.append(parsed.footer_notes)
+    bilingual = [
+        translation_service.compose_bilingual(translations.get(p), p) or p for p in parts
+    ]
+    return "\n".join(bilingual) if bilingual else None
+
+
+def _translate_for_apply(
+    db: Session, parsed: PackingReadResult
+) -> dict[str, "translation_service.TranslationHit"]:
+    """Every Chinese text this apply is about to store - line remarks and block/footer
+    notes - translated in ONE batched call (R16). Called unconditionally: `apply` may
+    run with no preceding preview (Confirm without ever pressing Test), so this is the
+    only place these texts are guaranteed to reach the memory."""
+    texts: list[str] = []
+    for block in parsed.blocks:
+        texts.extend(getattr(block, "notes", None) or [])
+        for ln in block.lines:
+            if ln.remark:
+                texts.append(ln.remark)
+    if parsed.footer_notes:
+        texts.append(parsed.footer_notes)
+    if not texts:
+        return {}
+    return translation_service.translate(db, texts)
 
 
 def _check_supplier(db: Session, supplier_id: Optional[str]) -> None:
@@ -393,6 +443,9 @@ def apply(
     known = _products_by_code(
         db, {ln.item_code for b in parsed.blocks for ln in b.lines}
     )
+    # R16/AC-G3: every remark and note this apply is about to store, translated once
+    # up front (memory-first, AI-fill on a miss) rather than per line.
+    translations = _translate_for_apply(db, parsed)
 
     from app.services.procurement_service import InboundShipmentService
 
@@ -434,7 +487,11 @@ def apply(
                     # per-unit figure times the quantity; never zero for an unmeasured
                     # item, because zero reads as "takes no space".
                     cbm=_line_cbm(ln),
-                    remarks=ln.remark,
+                    remarks=translation_service.compose_bilingual(
+                        translations.get(ln.remark), ln.remark
+                    )
+                    if ln.remark
+                    else None,
                 )
             )
 
@@ -456,7 +513,17 @@ def apply(
             # caller's date is used and today is the honest fallback for "when we were told".
             shipment_date=shipment_date or date.today(),
             shipping_container_number=block.container_no,
-            bill_of_lading_number=block.bl_no,
+            # `提单号` fills the SO field, never `bill_of_lading_number` (Q1 ruling, purchasing
+            # consolidation batch 6 Sep 2026): `bl_no` is the forwarder's own booking
+            # reference on both real documents this reader was built against, and
+            # `bill_of_lading_number` is left for the manual form to state instead (AC-F4).
+            forwarder_order_ref=block.bl_no,
+            # R13/R14 additions - None on a file that states none of them, same as every
+            # other header field here.
+            seal_number=getattr(block, "seal_no", None),
+            consignee=getattr(block, "consignee", None),
+            shipper=parsed.shipper,
+            notes=_block_notes(block, parsed, translations),
             # A caller-supplied `attachment_id` still binds every block to it, same as
             # before; the `file_in_drive` filing (below) only fills in for shipments
             # that come out of this loop still unbound.
@@ -486,7 +553,7 @@ def apply(
         )
 
     if file_in_drive and attachment_id is None and unfiled_shipments:
-        filed_attachment_id = _file_the_upload(
+        filed_attachment_id = file_supplier_document(
             db, data=data, filename=source_ref, content_type=content_type, actor_id=actor_id
         )
         if filed_attachment_id:
