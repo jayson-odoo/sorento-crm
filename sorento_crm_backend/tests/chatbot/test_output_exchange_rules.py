@@ -394,6 +394,61 @@ def test_a_date_filter_reply_on_a_pending_member_offer_is_a_filter_not_junk() ->
     )
 
 
+def test_a_filter_reply_keeps_the_window_and_the_carried_domain_at_the_seam() -> None:
+    """The other half of the same rule, asserted where it is decided rather than by the
+    absence of a reprompt: the turn takes the FILTER MODIFICATION arm, the carried domain
+    is inherited (without it the date gate below drops the window it just kept), and the
+    date window is still there for the answer to use."""
+    out = run(
+        parser_output(
+            message_type="casual",
+            domain_hint=None,
+            date_filter_start="2026-08-01",
+            date_filter_end="2026-08-31",
+            entities=[],
+        ),
+        message="last month",
+        state=_pending_member_offer_state(domain_hint="order", intent_hint="check_order"),
+    )
+    assert out.get("member_offer_filter_modification") is True, (
+        f"the reply must be read as a narrowing of the carried question: {out!r}"
+    )
+    assert out["domain_hint"] == "order"
+    assert out["date_filter_start"] == "2026-08-01"
+    assert out["date_filter_end"] == "2026-08-31"
+
+
+def test_a_product_code_reply_on_a_pending_offer_is_a_filter_not_an_abandon() -> None:
+    """"rpacc" mid-offer, the case the red pass measured as passing for the WRONG reason.
+
+    `is_new_query` is True on this shape (message_type business_query), so the ladder used
+    to take "Tier 3 - NEW QUERY: abandon the offer" and the absence of `member_reprompt`
+    proved nothing. The assertion is therefore on the SEAM: the turn takes the filter arm,
+    the entity the customer typed survives, and the carried domain is kept - the offer is
+    still pending, which the tail's `_offer_carry` then acts on."""
+    out = run(
+        parser_output(
+            message_type="business_query",
+            domain_hint=None,
+            intent_hint=None,
+            entities=[{"raw": "rpacc", "hint": "customer", "current_message": True}],
+        ),
+        message="rpacc",
+        state=_pending_member_offer_state(domain_hint="order", intent_hint="check_order"),
+    )
+    assert out.get("member_offer_filter_modification") is True, (
+        f"an entity-bearing reply narrows the carried question, it does not abandon the "
+        f"offer: {out!r}"
+    )
+    assert out["domain_hint"] == "order"
+    assert [e.get("raw") for e in out.get("entities") or []] == ["rpacc"], (
+        f"the entity the customer typed must survive: {out.get('entities')!r}"
+    )
+    escalation = out.get("escalation") or {}
+    assert escalation.get("member_reprompt") is None
+    assert out.get("correction") is not True
+
+
 # NOTE (seam not reached): a second case for "rpacc" (a product-code entity,
 # `message_type: business_query`) was measured and DROPPED from this file - `is_new_query`
 # is already True on that shape (message_type == "business_query"), so `post_process`'s

@@ -383,3 +383,64 @@ class TestDelegateSeam:
             assert item["carried"] == 1
             for field in contracts.EXIT_CONTRACT_FIELDS:
                 assert field in item and item[field] is None
+
+
+# --------------------------------------------------------------------------- #
+# Owner ruling K, rule 4's OTHER half (2026-09-06): where the inheritance is allowed
+# to be blocked.
+#
+# `output_exchange` no longer blocks a bare entity's domain inheritance on the model's
+# own hint - it types the entity BY the carried domain and lets the resolver decide. That
+# is only safe because the resolver's gate already refuses a token that comes back as an
+# incompatible type, so this class pins the guard the parser-side rule now leans on. It
+# asserts EXISTING behaviour on purpose: the rule moved the decision from parse time to
+# resolve time, and a test that only covered the move would not notice if the thing it
+# moved to stopped working.
+# --------------------------------------------------------------------------- #
+
+
+class TestBareEntityInheritanceIsBlockedAtResolveTime:
+    INVENTORY_PARSER = {
+        "domain_hint": "inventory",
+        # Typed `product` by the carried inventory domain, whatever the model hinted.
+        "entities": [{"hint": "product", "raw": "rpacc", "current_message": True}],
+    }
+
+    def _resolver(self, entity_type: str) -> dict[str, Any]:
+        return {
+            "tokens": ["rpacc"],
+            "resolutions": [
+                {
+                    "token": "rpacc",
+                    "resolved": True,
+                    "matches": [
+                        {
+                            "uuid": "u-rpacc",
+                            "entity_type": entity_type,
+                            "canonical_code": "RPACC",
+                            "match_tier": "exact",
+                            "company_name": "Sorento",
+                        }
+                    ],
+                }
+            ],
+            "unresolved_tokens": [],
+        }
+
+    def test_a_token_that_resolves_only_as_a_customer_fails_the_inventory_gate(self) -> None:
+        """The bare code was typed `product` by the carried domain and came back a
+        CUSTOMER. That is the one signal worth blocking on, and the gate already does it -
+        the turn takes today's clarify path instead of answering stock for a customer."""
+        resolver = self._resolver("customer")
+        out = run_gate(dict(resolver), parser=self.INVENTORY_PARSER, resolver=resolver)
+        assert out["gate_passed"] is False
+        assert out["gate_reason"] == "types [customer] incompatible with 'inventory'", (
+            f"the resolve-time guard is what makes the parse-time one unnecessary: {out!r}"
+        )
+
+    def test_a_token_that_resolves_as_a_product_passes(self) -> None:
+        """The other side of the same guard: the retype was right, so nothing blocks."""
+        resolver = self._resolver("product")
+        out = run_gate(dict(resolver), parser=self.INVENTORY_PARSER, resolver=resolver)
+        assert out["gate_passed"] is True
+        assert out["gate_reason"] == "ok"
