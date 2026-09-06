@@ -49,12 +49,18 @@ API_HOST="${API_HOST:-0.0.0.0}"
 API_PORT="${API_PORT:-8000}"
 
 echo "Starting FastAPI server on ${API_HOST}:${API_PORT}..."
+# --keep-alive must be LONGER than the host nginx's upstream keepalive (its
+# keepalive_timeout, default 60s / 75s). With 5s gunicorn closed idle upstream
+# connections that nginx still considered open, and the next request on that
+# socket died as an intermittent 502 "upstream prematurely closed connection"
+# - about 1 in 25 of the ESB's 14s ingest batches on production, 2026-09-07,
+# which their all-or-nothing push then amplified into a 5x re-offer rate.
 exec python -m gunicorn app.main:app \
   --workers ${WORKERS:-4} \
   --worker-class uvicorn.workers.UvicornWorker \
   --bind "${API_HOST}:${API_PORT}" \
   --timeout 120 \
-  --keep-alive 5 \
+  --keep-alive "${GUNICORN_KEEP_ALIVE:-75}" \
   --access-logfile - \
   --error-logfile - \
   --log-level info
