@@ -10,7 +10,7 @@ No seed here. Which type gets which folder is admin data, set by the captain aft
 (the plan's own ruling), not code.
 
 Revision ID: 482_attachment_type_default_dir
-Revises: 481_chatbot_turns_is_test
+Revises: 477_spo_alloc_container_number
 Create Date: 2026-09-06
 """
 import sqlalchemy as sa
@@ -18,7 +18,7 @@ from alembic import op
 from sqlalchemy.dialects.postgresql import UUID
 
 revision = "482_attachment_type_default_dir"
-down_revision = "481_chatbot_turns_is_test"
+down_revision = "477_spo_alloc_container_number"
 branch_labels = None
 depends_on = None
 
