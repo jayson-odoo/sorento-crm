@@ -32,6 +32,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.models.base import set_company_scope
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import dispatch, jsc, trace as trace_mod
 from app.services.chatbot.contracts import (
@@ -152,6 +153,66 @@ def _session(factory: SessionFactory) -> Iterator[Session]:
         yield db
     finally:
         db.close()
+
+
+# --------------------------------------------------------------------------- #
+# Company scope. The engine calls ROUTE functions in process (the resolver, stock,
+# promotions, product attachments), so the router dependency that stamps the caller's
+# company scope onto the request session - `apply_company_scope` - never runs for them.
+# An unstamped session reads UNSET, `build_company_predicate` compiles UNSET to
+# `false()` for every owned model, and the turn answers "Couldn't find: <code>" for a
+# product that exists in the contact's own company. Measured in prod and locally,
+# 6 Sep 2026 (H56).
+#
+# So the turn resolves the contact's scope ONCE, from the SAME identity rule the
+# X-API-Key path uses (`resolve_contact_company_scope`, shared with that dependency),
+# and every session it opens afterwards carries it.
+# --------------------------------------------------------------------------- #
+
+
+def _contact_company_scope(factory: SessionFactory, contact_respond_id: str) -> frozenset:
+    """The contact's companies, on a session of its own, before the turn starts.
+
+    The lookup itself needs NO scope: `respond_workspaces`, `respond_contacts` and
+    `respond_contact_companies` are plain `Base` models, none of them
+    `CompanyScopedMixin`, so no scope filter applies to reading them (which is what
+    makes resolving the scope from an unscoped session sound rather than circular).
+
+    Fail-closed on every unhappy path: an unknown contact, a contact with no company
+    row, no default workspace, or a lookup that raised all give an EMPTY frozenset
+    (0 owned rows), never `None` (which would mean every company).
+    """
+    from app.services.company_scope_resolver import resolve_contact_company_scope
+
+    db = factory()
+    try:
+        return resolve_contact_company_scope(db, contact_respond_id, default_space_id(db))
+    except Exception:  # noqa: BLE001 - a scope lookup must never fail the turn
+        logger.warning(
+            "chatbot: company scope lookup failed for contact %s, failing closed",
+            contact_respond_id,
+            exc_info=True,
+        )
+        return frozenset()
+    finally:
+        db.close()
+
+
+def _scoped_factory(factory: SessionFactory, scope: frozenset) -> SessionFactory:
+    """`factory`, wrapped so every session it opens is stamped with `scope`.
+
+    The FACTORY is wrapped rather than each of the engine's ~15 `_session` call sites
+    changed, because the factory is also what the lanes get (`answer_services_for`
+    opens its own session from it for the family read) - one seam covers both, and a
+    session opened anywhere in the turn cannot be missed.
+    """
+
+    def open_scoped_session() -> Session:
+        db = factory()
+        set_company_scope(db, scope)
+        return db
+
+    return open_scoped_session
 
 
 # --------------------------------------------------------------------------- #
@@ -638,6 +699,16 @@ def run_turn(
     so the worker actually runs the turn instead of enqueuing it to itself forever. Every
     other caller leaves it None and gets whatever `CHATBOT_TURN_ON_WORKER` says.
     """
+    contact_respond_id = _contact_respond_id(envelope)
+    # H56. BEFORE the offload branch, so the invariant reads the same on every entry:
+    # every session this turn opens - the dedup read, the stages, the lanes' own family
+    # read, and the offload path's row close - carries the contact's company scope.
+    # Resolved once, on a session of its own, from the same rule the X-API-Key
+    # dependency uses. An unknown contact fails closed to zero rows.
+    session_factory = _scoped_factory(
+        session_factory, _contact_company_scope(session_factory, contact_respond_id)
+    )
+
     if offload is None:
         offload = bool(getattr(settings, "chatbot_turn_on_worker", False))
     if offload:
@@ -646,7 +717,6 @@ def run_turn(
     turn_trace = trace_mod.TurnTrace()
     turn_trace.start()
 
-    contact_respond_id = _contact_respond_id(envelope)
     message_id = _message_id(envelope)
     dry_run = envelope.dry_run
 
@@ -2118,7 +2188,14 @@ def _run_escalation_arm(
     """
     stage[0] = "looked_up"
     try:
-        fragment = run_escalation_lane(ctx, item, dry_run=dry_run)
+        # The lane opens its OWN session (its writes are a unit of work of their own), and
+        # it opens it off THIS factory rather than `SessionLocal`, so the contact's company
+        # scope travels into it (H56). Defence in depth: `post_next_assignee` pins its own
+        # scope before it reads `Team` / `AgentTeam`, so the draw was not failing; the
+        # pre-pin reads and the lane's unit of work were the unscoped half.
+        fragment = run_escalation_lane(
+            ctx, item, dry_run=dry_run, session_factory=session_factory
+        )
     except Exception as exc:  # noqa: BLE001 - a failed lane is recorded, never dropped
         message = f"{type(exc).__name__}: {exc}"
         logger.exception("chatbot turn %s: escalation lane failed", turn_id)
@@ -2959,6 +3036,23 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
                 code="CHATBOT_TURN_NOT_DELEGATED",
             )
         contact_respond_id = row.contact_respond_id
+        # H56, the tail's half. `/complete` is n8n's own entry, so this session comes
+        # straight off `SessionLocal` and nothing has stamped a company scope on it -
+        # which would empty the CS roster read below (`fetch_rosters` -> `list_team_roster`
+        # walks `Team` / `AgentTeam`, both owned models) exactly the way it emptied the
+        # resolver. The row's contact is the only identity a `/complete` call carries, and
+        # it is the same one the head scoped by.
+        #
+        # UNCONDITIONAL, and the earlier "only when the session carries no scope yet"
+        # version was wrong twice over: it cost an in-process caller nothing, but it made
+        # the property untestable (`tests/conftest.py` defaults every new session to
+        # Sorento, so the guard never fired under test) and it would silently skip a
+        # session some other listener had stamped with a scope that is not this contact's.
+        # Two indexed reads on a path that already makes an LLM call is not a cost worth
+        # a conditional.
+        set_company_scope(
+            db, _contact_company_scope(session_factory, str(contact_respond_id or ""))
+        )
         dry_run = bool(row.is_test)
         stored_response = row.response if isinstance(row.response, dict) else {}
         ctx = fragments.get("ctx") or stored_response.get("ctx") or {}

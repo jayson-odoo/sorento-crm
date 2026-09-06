@@ -944,3 +944,33 @@ contact inside the synchronous request. Different contacts run in parallel.
   stays a deployment property and is not on the screen. Given ordering on, when saved, then the
   screen shows the S7-mode consequence (every /complete answers 410) as the confirm dialog's
   text, and the setting round-trips through GET /settings/general. (D4, D5)
+
+- AC-811 `[BE][T]` **Every session the turn engine opens carries the contact's company scope,
+  resolved by the same rule as the API-key path.** The engine calls route and service
+  functions in process (the resolver route, and through it stock, promotions and product
+  attachments), so the router dependency that stamps company scope never runs for them.
+  Given a contact who belongs to company A, when a turn asks about a product that exists in
+  company A, then the resolve step names that product and the reply is not "Couldn't find".
+  Given a same-coded product in company B, which the contact does NOT belong to, then it
+  never surfaces (the fix must not widen to all companies). Given a contact with no
+  `respond_contact_companies` row, then the scope is an EMPTY frozenset, the product never
+  resolves, and the turn still completes (fail closed, never `None`). The identity rule is
+  the contact respond id plus the default workspace's `space_id`, resolved through
+  `company_scope_resolver.resolve_contact_company_scope`, the same function
+  `_resolve_api_key_scope` calls, so the engine's scope and the resolver route's scope cannot
+  drift. "Every session" means all three seams the engine has: `engine._session` (every call
+  site, via the wrapped factory), the business lane's own family read
+  (`answer_services_for`, which opens off that same factory), and the escalation lane's
+  `escalation_services.production_session()`, which reached for `SessionLocal` directly and
+  now takes the turn's factory. That last one is defence in depth, not a repair:
+  `post_next_assignee` pins its own scope (`_scope_request_to_company`) before every
+  `Team` / `AgentTeam` read, so the draw worked; the pre-pin reads
+  (`_routing_company_for_body`) and the lane's own unit of work are what ran unscoped, and
+  one mechanism for the turn beats a per-callee pin. The tail (`complete_turn`,
+  n8n's `/complete` entry) stamps the row's contact unconditionally, since a conditional
+  could not be tested: `tests/conftest.py` defaults every new session to Sorento.
+  Evidence: `tests/chatbot/test_engine_company_scope.py` (6 tests: the contact's own company
+  resolves, the other company's same-coded product does not, an orphan contact fails closed,
+  every session `engine._session` opens carries the contact's own company rather than the
+  harness default, the tail's session carries it, and the escalation lane's own session
+  carries it). (H56)

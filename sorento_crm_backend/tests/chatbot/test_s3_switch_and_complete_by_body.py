@@ -766,7 +766,7 @@ class TestSendActionShape:
             {"kind": "send_message", "text": "This inquiry has been routed...", "dry_run": False},
         ]
 
-        def fake_run_escalation_lane(ctx, item, *, dry_run=False):
+        def fake_run_escalation_lane(ctx, item, *, dry_run=False, session_factory=None):
             return {"arm": "human-intervention", "clarify": None, "actions": lane_actions, "pending": None}
 
         monkeypatch.setattr(engine_mod, "run_escalation_lane", fake_run_escalation_lane)

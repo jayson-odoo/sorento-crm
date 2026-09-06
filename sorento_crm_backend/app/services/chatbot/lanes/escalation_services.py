@@ -96,7 +96,7 @@ def _not_live(name: str):
 
 
 @contextmanager
-def production_session() -> Iterator[Any]:
+def production_session(session_factory: Any) -> Iterator[Any]:
     """A session owned for exactly one assignment, closed whatever happens.
 
     The first version called `SessionLocal()` and walked away: nothing closed it, so every
@@ -108,10 +108,25 @@ def production_session() -> Iterator[Any]:
     Rolls back on the way out of an exception: `run()` turns a seam failure into a failed
     turn with NO partial assignment, and a half-written unit of work in the database would
     contradict the trace the operator is reading.
-    """
-    from app.database import SessionLocal
 
-    db = SessionLocal()
+    **The FACTORY is required, and it is the turn's own (H56).** The second version reached
+    for `SessionLocal` directly, which is a session with NO company scope on it. The draw
+    itself did not fail on that: `post_next_assignee` pins its own scope
+    (`_scope_request_to_company`) before every `Team` / `AgentTeam` read. What DID run
+    unscoped is the pre-pin half (`_routing_company_for_body`, which resolves which company
+    is routing this contact) and this lane's own unit of work. Taking the turn's factory is
+    defence in depth and, more usefully, ONE mechanism: the turn scopes every session it
+    opens, instead of each callee remembering to pin its own. There is deliberately no
+    `SessionLocal` fallback: a caller that forgets gets a loud failure rather than a session
+    whose scope depends on which callee happens to pin it.
+    """
+    if session_factory is None:
+        raise ValueError(
+            "the escalation lane needs the turn's session factory (it carries the "
+            "contact's company scope); pass `session_factory` down from `run_turn`"
+        )
+
+    db = session_factory()
     try:
         yield db
     except Exception:

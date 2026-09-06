@@ -417,11 +417,22 @@ def run(
     *,
     services: Any = None,
     dry_run: bool = False,
+    session_factory: Any = None,
 ) -> dict[str, Any]:
     """One escalation turn: `{arm, clarify, actions, pending}`.
 
     `services` defaults to the production bundle so `engine.py` can call this as the lane
     without knowing what it needs; every test passes its own.
+
+    `session_factory` is the TURN's factory, and it is what the production branch opens its
+    own unit of work from (H56): `run_turn` stamps the contact's company scope on every
+    session that factory makes, so the lane's session is scoped like every other one the
+    turn opens. It is defence in depth rather than a repair - `post_next_assignee` pins its
+    own scope (`_scope_request_to_company`) before it reads `Team` / `AgentTeam`, so the
+    draw itself was never failing - but the reads BEFORE that pin
+    (`_routing_company_for_body`) and the lane's own unit of work did run unscoped, and one
+    mechanism for the whole turn beats a per-callee pin. A caller that injects `services`
+    never reaches it, which is why it is optional here and required at `production_session`.
 
     **The dry-run check is the first thing that happens after the arm is chosen**, which is
     live's own `test-guard` ordering and the whole of H37: n8n called `next-assignee` and
@@ -476,11 +487,12 @@ def run(
         actions = _assign(ctx, context_item, team, services)
         return {**result, "actions": actions, "pending": None}
 
-    # No injected seam, so this is production: the session is opened HERE and closed on the
-    # way out, whether the seams answered or raised. See `escalation_services`.
+    # No injected seam, so this is production: the session is opened HERE, off the TURN's
+    # own factory (so it carries the contact's company scope, H56), and closed on the way
+    # out whether the seams answered or raised. See `escalation_services`.
     from app.services.chatbot.lanes import escalation_services
 
-    with escalation_services.production_session() as db:
+    with escalation_services.production_session(session_factory) as db:
         actions = _assign(ctx, context_item, team, production_services(db))
     return {**result, "actions": actions, "pending": None}
 
@@ -730,7 +742,8 @@ def production_services(db: Any) -> Any:
     transaction - a turn that fails later must not roll the assignment back out from under
     the person who was just told about it - but "its own session" is not the same as "a
     session nobody closes", which is what the first version left behind. `run()` opens one
-    with `escalation_services.production_session()` and closes it in the same breath.
+    with `escalation_services.production_session(session_factory)` and closes it in the
+    same breath.
     """
     from app.services.chatbot.lanes import escalation_services
 
