@@ -1,13 +1,13 @@
 """`spo_allocations` gains `container_number` (D6, S3): AutoCount's `PO.Ref`
 cell, cleaned through `shipping_order_rules.extract_container_number`.
 
-Revision ID: 477_spo_allocations_container_number
+Revision ID: 477_spo_alloc_container_number
 Revises: 476_customers_region
 """
 import sqlalchemy as sa
 from alembic import op
 
-revision = "477_spo_allocations_container_number"
+revision = "477_spo_alloc_container_number"
 down_revision = "476_customers_region"
 branch_labels = None
 depends_on = None
