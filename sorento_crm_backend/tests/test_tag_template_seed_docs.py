@@ -491,3 +491,58 @@ def test_a_misspelled_price_badge_field_is_still_rejected():
     # `showBox` would ship as a badge with no box and no error anywhere.
     with pytest.raises(pydantic.ValidationError):
         TagTemplateDocModel.model_validate(_badge_doc(_badge_props(show_box=True)))
+
+
+# ---------------------------------------------------------------------------
+# Padding on text and price badge layers (S3)
+# ---------------------------------------------------------------------------
+
+
+def _text_doc(props: dict) -> dict:
+    doc = _polygon_doc(props)
+    doc["layers"][0]["type"] = "text"
+    return doc
+
+
+def _text_props(**overrides) -> dict:
+    return {
+        "kind": "text",
+        "text": "Sale",
+        "fontFamily": "DM Sans",
+        "fontSize": 12,
+        "fontWeight": 400,
+        "color": "#000000",
+        "align": "left",
+        "lineHeight": 1.2,
+        "letterSpacing": 0,
+        **overrides,
+    }
+
+
+def test_a_text_layer_saved_before_padding_still_validates():
+    """AC-S3-3: absent padding is zero on every side, so no seeded layer needs a change."""
+    TagTemplateDocModel.model_validate(_text_doc(_text_props()))
+
+
+def test_a_text_layer_carries_padding_on_every_side():
+    doc = _text_doc(
+        _text_props(padding={"top": 1, "right": 2, "bottom": 3, "left": 4})
+    )
+    TagTemplateDocModel.model_validate(doc)
+
+
+def test_a_price_badge_carries_padding_too():
+    """AC-S3-2: the same field, mirrored on the badge."""
+    doc = _badge_doc(
+        _badge_props(padding={"top": 0, "right": 1, "bottom": 0, "left": 1})
+    )
+    TagTemplateDocModel.model_validate(doc)
+
+
+def test_an_incomplete_padding_is_rejected():
+    # Every side is required once `padding` is present at all - a partial
+    # object would silently draw the missing sides at 0 rather than failing.
+    with pytest.raises(pydantic.ValidationError):
+        TagTemplateDocModel.model_validate(
+            _text_doc(_text_props(padding={"top": 1, "right": 2}))
+        )

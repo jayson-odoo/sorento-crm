@@ -110,6 +110,18 @@ export function imageSourceOf(props: ImageLayerProps): ImageSource | null {
   return null;
 }
 
+/**
+ * A layer's own internal margin, in millimetres (S3). Absent means zero on
+ * every side, so a document saved before S3 draws exactly as it did -
+ * `paddedBox` in `text-reflow.ts` is the one place that resolves it.
+ */
+export interface LayerPadding {
+  top: number;
+  right: number;
+  bottom: number;
+  left: number;
+}
+
 export interface TextLayerProps {
   kind: 'text';
   text: string;
@@ -128,6 +140,8 @@ export interface TextLayerProps {
   italic?: boolean;
   underline?: boolean;
   strikethrough?: boolean;
+  /** Internal margin (S3). Absent = 0 on every side. */
+  padding?: LayerPadding;
 }
 
 export interface ShapeLayerProps {
@@ -202,6 +216,12 @@ export interface PriceBadgeLayerProps {
   align?: 'left' | 'center' | 'right';
   lineHeight?: number;
   letterSpacing?: number;
+  /**
+   * Internal margin (S3). Absent = 0 on every side; insets the figure AND,
+   * for the boxed variants, the callout itself - the callout is the badge
+   * (r4b, AC-S6-2), so shrinking one shrinks the other.
+   */
+  padding?: LayerPadding;
 }
 
 /**

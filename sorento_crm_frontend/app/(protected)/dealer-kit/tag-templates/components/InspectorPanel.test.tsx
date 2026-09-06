@@ -518,3 +518,76 @@ describe('InspectorPanel - price badge box and typography (r4b, AC-S6-1/4)', () 
     expect(screen.getByLabelText('Font Size')).toHaveValue(null);
   });
 });
+
+describe('InspectorPanel - padding row (S3, AC-S3-1/2)', () => {
+  it('shows the Padding row empty (0) when the text layer names none, and writes a side', () => {
+    const onUpdateProps = vi.fn();
+    render(
+      <InspectorPanel layer={textLayer()} onUpdate={vi.fn()} onUpdateProps={onUpdateProps} />,
+    );
+
+    expect(screen.getByText('Padding (mm)')).toBeInTheDocument();
+    expect(screen.getByLabelText('Top')).toHaveValue(0);
+    expect(screen.getByLabelText('Right')).toHaveValue(0);
+    expect(screen.getByLabelText('Bottom')).toHaveValue(0);
+    expect(screen.getByLabelText('Left')).toHaveValue(0);
+
+    fireEvent.change(screen.getByLabelText('Left'), { target: { value: '3' } });
+
+    expect(onUpdateProps).toHaveBeenCalledWith(
+      't1',
+      expect.objectContaining({ padding: { top: 0, right: 0, bottom: 0, left: 3 } }),
+    );
+  });
+
+  it('shows the layer own padding once it has one', () => {
+    render(
+      <InspectorPanel
+        layer={textLayer({ padding: { top: 1, right: 2, bottom: 3, left: 4 } })}
+        onUpdate={vi.fn()}
+        onUpdateProps={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByLabelText('Top')).toHaveValue(1);
+    expect(screen.getByLabelText('Right')).toHaveValue(2);
+    expect(screen.getByLabelText('Bottom')).toHaveValue(3);
+    expect(screen.getByLabelText('Left')).toHaveValue(4);
+  });
+
+  it('shows the same Padding row on a price badge, and writes a side (AC-S3-2)', () => {
+    const onUpdateProps = vi.fn();
+    const badge: TagLayer = {
+      id: 'pb1',
+      type: 'price_badge',
+      x_mm: 0,
+      y_mm: 0,
+      width_mm: 40,
+      height_mm: 20,
+      rotation_deg: 0,
+      z_index: 1,
+      locked: false,
+      visible: true,
+      slot_binding: null,
+      text_override: null,
+      props: {
+        kind: 'price_badge',
+        variant: 'list_only',
+        fill: '#ffffff',
+        textColor: '#000000',
+        cornerRadius: 2,
+        showNett: true,
+      },
+    } as TagLayer;
+
+    render(<InspectorPanel layer={badge} onUpdate={vi.fn()} onUpdateProps={onUpdateProps} />);
+
+    expect(screen.getByText('Padding (mm)')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Top'), { target: { value: '2' } });
+
+    expect(onUpdateProps).toHaveBeenCalledWith(
+      'pb1',
+      expect.objectContaining({ padding: { top: 2, right: 0, bottom: 0, left: 0 } }),
+    );
+  });
+});

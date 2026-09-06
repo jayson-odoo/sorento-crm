@@ -31,6 +31,7 @@ import {
   roundedPolygonPath,
   scalePolygonPoints,
 } from '@/lib/dealer-kit/polygon-path';
+import { paddedBox } from '@/lib/dealer-kit/text-reflow';
 
 // `TagLayerDisplay` is resolved by whoever owns the data (the editor, the
 // designer) and handed DOWN: the canvas draws layers and knows nothing about
@@ -221,11 +222,17 @@ function LayerContent({
   display?: TagLayerDisplay;
 }) {
   switch (props.kind) {
-    case 'text':
+    case 'text': {
+      // Padding insets the box the text wraps inside (S3): x/y move the Text
+      // node in from the layer's own top-left, width/height shrink to match,
+      // clamped at zero rather than going negative (AC-S3-4).
+      const inset = paddedBox(w, h, props.padding, scale);
       return (
         <Text
-          width={w}
-          height={h}
+          x={inset.x}
+          y={inset.y}
+          width={inset.width}
+          height={inset.height}
           text={display?.text ?? props.text}
           fontFamily={props.fontFamily}
           fontSize={props.fontSize * scale * 0.35}
@@ -246,6 +253,7 @@ function LayerContent({
           wrap="word"
         />
       );
+    }
 
     case 'shape':
       return <ShapeContent shape={props.shape} w={w} h={h} scale={scale} props={props} />;
@@ -310,16 +318,24 @@ function LayerContent({
         </>
       );
 
-    case 'price_badge':
+    case 'price_badge': {
+      // Padding insets the whole badge (S3, AC-S3-2): the figure AND, for a
+      // boxed variant, the callout itself - the callout IS the badge (r4b,
+      // AC-S6-2), so `PriceBadgeContent` never needs to know padding exists,
+      // it just gets a smaller box to draw the same way it always has.
+      const inset = paddedBox(w, h, props.padding, scale);
       return (
-        <PriceBadgeContent
-          w={w}
-          h={h}
-          scale={scale}
-          props={props}
-          input={display?.price ?? { listPrice: null, offerPrice: null }}
-        />
+        <Group x={inset.x} y={inset.y}>
+          <PriceBadgeContent
+            w={inset.width}
+            h={inset.height}
+            scale={scale}
+            props={props}
+            input={display?.price ?? { listPrice: null, offerPrice: null }}
+          />
+        </Group>
       );
+    }
 
     case 'badge':
       if (display?.imageUrl) {

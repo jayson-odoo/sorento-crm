@@ -670,6 +670,35 @@ describe("RequestTagDesigner - a line the request's company cannot resolve", () 
 });
 
 // ---------------------------------------------------------------------------
+// LINES rail - a name that only repeats the code is redundant (S2, AC-S2-1)
+// ---------------------------------------------------------------------------
+
+describe('RequestTagDesigner - LINES rail duplicate name (S2, AC-S2-1)', () => {
+  it('shows the code once for a line whose name equals its code', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([
+      lineTagData({ code: 'SK-1234', name: 'SK-1234' }),
+    ]);
+
+    renderDesigner(request({ lines: [line({ code: 'SK-1234', name: 'SK-1234' })] }));
+
+    expect(await screen.findByText('SK-1234')).toBeInTheDocument();
+    // No second element repeats it as a name line underneath.
+    expect(screen.getAllByText('SK-1234')).toHaveLength(1);
+  });
+
+  it('still shows both the code and the name for a line whose name differs (AC-S2-1)', async () => {
+    mockListTemplates.mockResolvedValue([]);
+    mockResolveRequestLines.mockResolvedValue([lineTagData()]);
+
+    renderDesigner();
+
+    expect(await screen.findByText('SRT-1234')).toBeInTheDocument();
+    expect(screen.getByText('Kitchen Sink')).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Autosave (D22, S8, AC-S8-3)
 //
 // Autosave and manual Save are two different acts on two different routes

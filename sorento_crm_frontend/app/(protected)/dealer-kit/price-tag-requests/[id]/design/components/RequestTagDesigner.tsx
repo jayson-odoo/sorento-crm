@@ -1107,6 +1107,10 @@ function LinesRail({
               const notFound = pricesStatus === 'loaded' && !row;
               const code = row?.code ?? '';
               const name = row?.name ?? '';
+              // Sorento's product name IS its code (S2): a name that only
+              // repeats the code is redundant on the rail as it is on the tag.
+              const showName =
+                name !== '' && name.trim().toLowerCase() !== code.trim().toLowerCase();
               const designed = Boolean(tags[line.id]);
               const family = familyLabel(lineFamily(line, code));
               return (
@@ -1149,9 +1153,11 @@ function LinesRail({
                       </Badge>
                     ) : (
                       <>
-                        <p className="mt-0.5 truncate text-xs" title={name}>
-                          {name}
-                        </p>
+                        {showName && (
+                          <p className="mt-0.5 truncate text-xs" title={name}>
+                            {name}
+                          </p>
+                        )}
                         <p className="mt-0.5 truncate text-2xs text-muted-foreground">
                           Qty {line.quantity} / {family}
                           {row && row.show_promo_price && row.sell_price != null
