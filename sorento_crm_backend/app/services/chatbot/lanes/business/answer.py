@@ -1581,6 +1581,32 @@ _HUMAN_SCOPE = {
     "goods_receive": "goods receipt",
 }
 
+# The human-readable label on a resolver `display`, in priority order. Every key here is one
+# `entity_resolver.py` actually emits: `type_name` stays ahead of `description` so an
+# attachment type shows its name and not its long alias text, and `description` stays ahead of
+# the canonical code so a promotion (whose code IS its uuid) still reads as a name. The
+# shipment keys matter because `canonical_code` for an `inbound_shipment` is its
+# `shipment_number`, and that column is null on most rows - the container number is then the
+# only identifier the customer has.
+_DISPLAY_NAME_KEYS: tuple[str, ...] = (
+    "product_name",
+    "customer_name",
+    "debtor_name",
+    "type_name",
+    "description",
+    "shipment_number",
+    "shipping_container_number",
+    "spo_number",
+    "grn_number",
+    "warehouse_name",
+    "supplier_name",
+    "form_name",
+    "filename",
+    "title",
+    "name",
+)
+
+
 # Which axes are active comes from the GATE (`compatible_entities`), never from the parser's
 # hints: a bare code is often hinted `order` and matched by the resolver as a product.
 _AXES: tuple[dict[str, Any], ...] = (
@@ -1862,7 +1888,7 @@ def not_found_error_message(
                 # `description` stays ahead of `canonical_code` so a promotion (whose code IS
                 # its uuid) still shows its name.
                 name = ""
-                for key in ("product_name", "customer_name", "debtor_name", "type_name", "description"):
+                for key in _DISPLAY_NAME_KEYS:
                     value = jsc.get(display, key)
                     if jsc.truthy(value):
                         name = value
@@ -1918,9 +1944,10 @@ def not_found_error_message(
             base = disp_by_uuid.get(jsc.get(c, "uuid"))
             if not jsc.truthy(base):
                 base = jsc.get(c, "code")
-            if not jsc.truthy(base):
-                base = jsc.get(c, "uuid")
-            if not jsc.truthy(base):
+            # A uuid is not a name. When neither the resolver display nor the code yields a
+            # human-readable identifier the candidate is DROPPED, never printed raw - the
+            # console run rendered "inbound_shipment: ecfdaf8f-... (Mocha)" from this arm.
+            if not jsc.truthy(base) or _ms_is_uuid(base):
                 continue
             company = co_by_uuid.get(jsc.get(c, "uuid"))
             # Qualify ONLY in the multi-company case: one company keeps today's bare label
