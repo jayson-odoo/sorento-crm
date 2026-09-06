@@ -475,6 +475,12 @@ def run(
         # name the live turn would have picked. "Would assign to somebody" answered the
         # question nobody was asking.
         #
+        # The ROUTING decision is previewed too, and that is not a nicety: the owner finds
+        # these defects from the console, and the console runs dry (`is_test`). A dry run
+        # that skipped the person / team gate would show the inherited team a live turn
+        # would never use, which is the very thing the gate exists to stop being shown.
+        # Both reads, no writes.
+        #
         # `assign_conversation` is always present here: whether the live run omits it
         # depends on `is_already_assigned`, which only the seam knows, so a preview cannot
         # honestly leave it out.
@@ -483,10 +489,22 @@ def run(
             "due_at": PREVIEW,
             "due_at_resolution": PREVIEW,
         }
+        routed, preview_assignee = _preview_routing(
+            ctx, context_item, team, services, session_factory
+        )
+        if routed is not None and routed["kind"] == "clarify":
+            clarify = {**context_item, "clarify_team": True, "clarify_text": routed["text"]}
+            return {
+                **escalation_result(clarify_team=clarify),
+                "actions": [],
+                "pending": {"kind": "team_clarify"},
+            }
+        if routed is not None and routed["kind"] == "assign":
+            team = routed["team"]
         actions = _assignment_actions(
             ctx,
             team,
-            assignee=_preview_assignee(ctx, context_item, services, session_factory),
+            assignee=preview_assignee,
             sla=preview_sla,
             include_assign=True,
             dry_run=True,
@@ -631,32 +649,46 @@ def _team_clarify_text(person: Any, hits: list) -> str:
     return f"Which team should I pass this to - {listed}?"
 
 
-def _preview_assignee(
-    ctx: dict[str, Any], context_item: dict[str, Any], services: Any, session_factory: Any
-) -> Any:
-    """The assignee a LIVE turn would draw, read without drawing. `None` when unknowable.
+def _preview_routing(
+    ctx: dict[str, Any],
+    context_item: dict[str, Any],
+    team: Any,
+    services: Any,
+    session_factory: Any,
+) -> tuple[dict[str, Any] | None, Any]:
+    """`(routing decision, assignee)` for a dry run - both READS, in one unit of work.
 
-    Fails soft in both directions on purpose: a bundle with no preview seam (an older
-    injected stub) and a preview that raises both leave the action's `respond_user_id`
-    null, which is the placeholder AC-507 shipped with - a dry run must never fail a turn
-    over the extra detail it is trying to show.
+    Fails soft throughout, on purpose: a bundle with no preview seam (an older injected
+    stub), a lookup that raises, or no session factory at all leave the assignee null,
+    which is the placeholder AC-507 shipped with. A dry run must never fail a turn over the
+    extra detail it is trying to show.
     """
-    body = {**_next_assignee_body(ctx, context_item), "preview": True}
-    seam = getattr(services, "preview_assignee", None) if services is not None else None
+
+    def _both(bundle: Any) -> tuple[dict[str, Any] | None, Any]:
+        routed = _person_routing(ctx, context_item, team, bundle)
+        if routed is not None:
+            # A named person IS the assignee, and a clarify assigns nobody. Either way
+            # there is no rotation to preview.
+            return routed, routed.get("assignee")
+        seam = getattr(bundle, "preview_assignee", None)
+        if seam is None:
+            return None, None
+        return None, seam({**_next_assignee_body(ctx, context_item), "preview": True})
+
     try:
-        if seam is not None:
-            return seam(body)
-        if services is not None or session_factory is None:
-            return None
-        # Production dry run: the same read-only unit of work the live branch uses, so the
-        # preview is scoped to the contact's company exactly as the draw would be (H56).
+        if services is not None:
+            return _both(services)
+        if session_factory is None:
+            return None, None
+        # Production dry run: the same read-only unit of work the live branch uses, so both
+        # reads are scoped to the contact's company exactly as the draw would be (H56).
         from app.services.chatbot.lanes import escalation_services
 
         with escalation_services.production_session(session_factory) as db:
-            return escalation_services.build(db).preview_assignee(body)
+            return _both(escalation_services.build(db))
     except Exception:  # noqa: BLE001 - a preview is never worth failing a test turn for
-        logger.warning("chatbot: dry-run assignee preview did not run", exc_info=True)
-        return None
+        logger.warning("chatbot: dry-run routing preview did not run", exc_info=True)
+        return None, None
 
 
 def _assign(
