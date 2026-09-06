@@ -185,7 +185,7 @@ removed copy, for whoever restores a UI for them:
   ESB sales-order push overrides a warehouse the Order Inquiry sheet had set, and a read route
   exists, but the Order Inquiry worklist has no surface for them. **Trigger:** the planner asks
   why an inquiry location changed. Fix: a Conflicts tab on the order-inquiry worklist listing
-  (so_number, line, previous, new, when). | `plans/autocount/PLAN-ingest-parity-standardisation.md` | Low | Open |
+  (so_number, line, previous, new, when). | `plans/_archive/autocount/PLAN-ingest-parity-standardisation.md` | Low | Open |
 - **BL-061** (2026-09-06, review of #700): `fetch._axis_labelled_subject` picks the LONGEST code
   per uuid to decide which of a customer's two rows is the name and which is its internal account
   code. It is deterministic and it matches every shape measured (a debtor code is shorter than the
@@ -195,3 +195,9 @@ removed copy, for whoever restores a UI for them:
   a customer whose account code is longer than their name, or any second reader that needs the
   match field. Fix: carry `match_field` through the gate and test on it, deleting the length
   tie-break. | `plans/chatbot/PLAN-chatbot-turn-engine.md` | Low | Open |
+- **BL-062** (2026-09-06, ESB production first load): a 1,000-record `POST /api/v1/external/ingest/purchase_orders`
+  with per-record supplier back-create ran past production nginx's proxy_read_timeout and answered 504 while the
+  app kept processing and committed (records land, client sees a failure, re-offer is idempotent by `source_ref`).
+  **Trigger:** any document batch over ~200 records on a live company. Fix: batches above a threshold return 202
+  with a job id and run on the `imports` worker, verdict fetched by job; ESB caps document batches at 200 meanwhile.
+  | `plans/_archive/autocount/PLAN-ingest-parity-standardisation.md` | Medium | Open |
