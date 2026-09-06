@@ -5,8 +5,11 @@ R11 clarified. UAC:
 `scm-purchasing-consolidation-6sep-acceptance-criteria.md`. Lavish page:
 `mockups/purchasing-consolidation-6sep-plan.html`. **Lane A (section 13: 1, 2 (R3 only), 3, 8,
 10 (R22)) built, browser-verified, review round 1 applied.** **Lane C built (C1-C3), review
-rounds applied, awaiting browser test** - sections 6, 7, 12 (supplier documents,
-translation memory, shipment line photos). B/D awaiting GO.
+rounds applied, browser-test round (7 Sep 2026) applied** - sections 6, 7, 12 (supplier
+documents, translation memory, shipment line photos); three findings from the live walk
+fixed (line reuse on re-upload keeps photos, per-container PI totals, Proforma Invoice
+attachment type seeded - see `## Deviations (lane C)`'s "Browser-test round" entry).
+B/D awaiting GO.
 
 Feedback given 6 Sep on production (`fe-sorento.foundryx.my`). Twelve asks, four lanes, four
 PRs. Every "what exists" line below was measured on `origin/main` `cc0789971` (6 Sep), not on
@@ -682,3 +685,68 @@ No open questions remain. Waiting for GO.
   photo (beyond the visible four-thumbnail strip) is reachable for delete through the
   same carousel the "+n" badge already opens, rather than a second, duplicate
   overflow-thumbnail popover.
+
+### Browser-test round (7 Sep 2026) - three findings from the live walk on the dev DB
+
+- **Finding 1 (AC-F7/AC-L5): `create_shipment`'s update-in-place path now REUSES
+  existing `InboundShipmentLine` rows instead of deleting and recreating them, so a
+  photo on a line survives a re-upload.** `_upsert_shipment_lines` (already the
+  reuse-by-`(product, supplier)` matcher `update_shipment`'s edit form used) gained
+  an `existing_lines` parameter scoping which of the shipment's CURRENT lines are
+  candidates for that matching - `create_shipment` passes the same
+  `_is_superseded_line`-filtered subset the old delete loop used to iterate, so a
+  line belonging to ANOTHER factory's own packing list is still left untouched
+  entirely. REUSE was possible (and used) for every upload that names a supplier
+  (R12 always asks for one, so this is the path every real, in-app upload takes);
+  RE-POINTING (renaming an existing link's `entity_id` onto a new line id) was
+  never needed because reuse already keeps the SAME line id. The one path kept as
+  a genuine delete-and-recreate is the supplier-LESS upload (the n8n PDF path,
+  legacy callers): that upload's whole point is restating the container's
+  attribution as none, which `_upsert_shipment_lines`'s "an incoming `None`
+  supplier means unstated, not clear it" convention would otherwise leave alone -
+  two pre-existing tests
+  (`test_an_upload_that_names_no_supplier_still_replaces_everything`,
+  `test_an_n8n_resend_clears_the_header_the_container_used_to_name`) pin that a
+  supplier-less upload clears every line's supplier, which only a fresh row can
+  do. That branch still purges the departing lines' photos before deleting them
+  (`shipment_line_photos.purge_for_lines`), so a photo on an n8n-attributed line
+  is not orphaned even there - it just cannot survive under the SAME line id,
+  because there is no id to reuse the claim onto. `_upsert_shipment_lines` also
+  gained a return value (`list[(provider, key)]`, the storage objects a departing
+  line's photos leave behind) both callers purge, best-effort, after their own
+  commit - the same DB-rows-first ordering `shipment_line_photos.delete_photo`
+  already uses. Also fixed AC-F7's own wording in the UAC, which read as a blanket
+  "second upload refused" when the real rule (already built, C1) is "refused only
+  once received; an unreceived draft updates in place."
+- **Finding 2 (a per-container proforma invoice's `total_amount`): the reader's
+  `_stated_total` never recognised a per-block `SUB TOTAL 1*40HQ` row as a total
+  at all** (`normalize_header("SUB TOTAL 1*40HQ")` folds the container-size suffix
+  onto the label with nothing separating them, so it never equalled the plain
+  `"total"` key `_TOTAL_LABELS` checks for) - so nothing stopped the FILE's own
+  bare `TOTAL` row (printed once, after the last container) from landing on
+  whichever `ProformaDocument` was `current` when that row was read, which is
+  always the LAST block. Renamed to `_row_total`, now returns `(value, kind)`:
+  `kind="sub"` for a `SUB TOTAL`/`小计`-prefixed row (matched by prefix, not
+  equality, so the container-size suffix does not defeat it) reads its number
+  from the header's own AMOUNT column position specifically - a plain
+  nearest-number scan finds the row's QTY column first, since the SUB TOTAL label
+  sits under the ITEM column, far left of both; `kind="doc"` (a bare `合计` /
+  `总金额` / `TOTAL` etc) is held until the whole file is parsed and applied to
+  the SINGLE document's `stated_total` only when the file yielded exactly one -
+  never to any one of several. Deleting one sibling invoice already left the
+  other's header untouched (`delete()` is a plain single-row `db.delete`, no
+  cross-row recompute) - verified, not changed.
+- **Finding 3 (Proforma Invoice attachment type never existed): migration 485
+  (still unreleased) now seeds THREE attachment types, not one** - `_TYPES`
+  generalises the same update-or-insert-by-code pair into a loop:
+  `shipment_line_photo` (unchanged), `proforma_invoice` (code, name, `xlsx,xls,pdf`,
+  10 MB - brand new, nothing filed a proforma invoice in Drive before this),
+  `packing_list` (the row already exists in the shared dev DB as real admin data,
+  R4's own note - this seed only ever sets its `code` column; `triggers_n8n_webhook`
+  and every other column are left exactly as an admin set them). `downgrade()`
+  deletes the two rows this migration mints fresh in any environment reaching
+  head, but only clears `packing_list`'s `code` back to `NULL` rather than
+  deleting a row this migration never created. Applied to the shared dev DB by
+  hand via a guarded `upgrade()` bound to a live connection (never `alembic
+  upgrade`), same as 483/484 - verified idempotent by re-running it a second
+  time and confirming `attachment_types`'s row count did not move.

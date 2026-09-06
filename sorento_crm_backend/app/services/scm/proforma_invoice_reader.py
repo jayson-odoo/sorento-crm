@@ -63,6 +63,11 @@ _TOTAL_LABELS = {
     for x in ("合计", "总金额", "总计", "金额合计", "TOTAL", "Grand Total", "Total Amount")
 }
 
+#: A PER-CONTAINER sub-total (`SUB TOTAL 1*40HQ`, `小计`), matched by prefix rather than
+#: equality: the cell keeps the container-size text after the label ("1*40HQ"), which
+#: `normalize_header` folds onto the label with nothing separating them.
+_SUB_TOTAL_KEYS = {normalize_header(x) for x in ("SUB TOTAL", "小计")}
+
 #: The date spellings seen in these documents. Day-first `31.07.2026` is Kailu's; the
 #: pre-loading list writes a real date cell, which arrives already stringified as ISO.
 #: Anything else is reported against its row rather than guessed at - a date guessed the
@@ -221,27 +226,51 @@ def _parse_date(value: Any) -> Optional[date]:
     return None
 
 
-def _stated_total(raw: list) -> Optional[float]:
-    """The number a totals row states, when the row IS one.
+def _row_total(raw: list, col_field: dict[int, str]) -> tuple[Optional[float], str]:
+    """The number a totals row states, when the row IS one, and which KIND of total it
+    is: ``"sub"`` (a per-container ``SUB TOTAL`` / ``小计`` row) or ``"doc"`` (a bare
+    ``合计`` / ``总金额`` / ``TOTAL`` etc). The two read very differently when a document
+    states more than one invoice: Jiexia's own file prints a ``SUB TOTAL 1*40HQ`` under
+    EACH container block, then one file-wide ``TOTAL`` after the last one - the sub-total
+    belongs to the block it sits under, the bare total belongs to the whole FILE and must
+    never be mistaken for that block's own number (browser-test round, R2). A cell that
+    reads ``SUB TOTAL 1*40HQ`` never equals a plain ``TOTAL`` under normalisation (the
+    container-size suffix survives normalisation), so a prefix test is what finds it.
 
-    Positional reading is not available: on the pre-loading list the totals row is merged and
-    sits one column left of the header it belongs to, so `总金额` lands under `总体积(cbm)`
-    and its value under `RMB`. The label is the anchor, and the number is whichever side of
-    it carries one.
+    Positional reading is not available for a ``"doc"`` row: on the pre-loading list the
+    totals row is merged and sits one column left of the header it belongs to, so `总金额`
+    lands under `总体积(cbm)` and its value under `RMB`. The label is the anchor, and the
+    number is whichever side of it carries one. A ``"sub"`` row is different: its label
+    sits under the ITEM column, far left of the money column it totals, so scanning
+    "nearest number after the label" finds the QTY column's number first (Jiexia's own
+    366 sits four cells before its 87710). The header's own AMOUNT column position is
+    read directly for a sub-total instead, falling back to the nearest-number scan only
+    when the header carries no amount column at all.
     """
     for pos, cell in enumerate(raw):
-        if normalize_header(cell) not in _TOTAL_LABELS:
+        norm = normalize_header(cell)
+        if norm and any(norm.startswith(key) for key in _SUB_TOTAL_KEYS):
+            kind = "sub"
+        elif norm in _TOTAL_LABELS:
+            kind = "doc"
+        else:
             continue
+        if kind == "sub":
+            amount_pos = next((p for p, f in col_field.items() if f == "amount"), None)
+            if amount_pos is not None and amount_pos < len(raw):
+                found = _number(raw[amount_pos])
+                if found is not None:
+                    return found, kind
         for nxt in raw[pos + 1:]:
             found = _number(nxt)
             if found is not None:
-                return found
+                return found, kind
         for prev in reversed(raw[:pos]):
             found = _number(prev)
             if found is not None:
-                return found
-        return None
-    return None
+                return found, kind
+        return None, kind
+    return None, ""
 
 
 #: What a supplier puts between the three figures of a combined carton-size cell. `62*53*40`
@@ -405,6 +434,12 @@ def read_workbook(
     #: immediately following the label is what actually starts the next document, via
     #: `pending`, exactly as before. Set False whenever `pending` is consumed.
     pending_is_new_block = False
+    #: A bare (non-"SUB") total row's own number, held until every block is known - it is
+    #: the FILE's total, and only means "this one invoice's total" when the file turns out
+    #: to hold exactly one (browser-test round, R2). Applied after the loop, never to
+    #: `current` directly, so a second, third... container never inherits the first one's
+    #: file-wide figure just because it happened to be `current` when the row was read.
+    file_total: Optional[float] = None
 
     def _apply_pending() -> None:
         """Resolve whatever `_labelled` has accumulated since the last document, right
@@ -490,10 +525,13 @@ def read_workbook(
 
         line = _pi_line_from(raw, col_field, row_number)
         if line is None:
-            total = _stated_total(raw)
+            total, kind = _row_total(raw, col_field)
             if total is not None:
-                if current is not None and current.stated_total is None:
-                    current.stated_total = total
+                if kind == "sub":
+                    if current is not None and current.stated_total is None:
+                        current.stated_total = total
+                elif file_total is None:
+                    file_total = total
                 continue
             # Not a line and not a total. It may be the label(s) introducing the NEXT
             # container - either a genuinely new invoice (a repeated header row, handled
@@ -537,6 +575,14 @@ def read_workbook(
     result.documents = [d for d in result.documents if d.lines]
     for i, doc in enumerate(result.documents, start=1):
         doc.index = i
+
+    # The file's own bare TOTAL (not a per-block SUB TOTAL, handled above) is that one
+    # document's total ONLY when the file yields exactly one - a document that split into
+    # several containers already carries each container's own SUB TOTAL, or has none and
+    # falls back to its line sum in the service; either way the FILE total is not any one
+    # of them (browser-test round, R2).
+    if file_total is not None and len(result.documents) == 1 and result.documents[0].stated_total is None:
+        result.documents[0].stated_total = file_total
     return result
 
 

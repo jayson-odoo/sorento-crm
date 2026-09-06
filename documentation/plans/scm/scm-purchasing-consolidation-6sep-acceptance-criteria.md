@@ -127,7 +127,14 @@ Actor: purchasing (Ms Tee), desktop, and the supplier receiving the request.
   row; the shipment's Proforma invoices tab lists the PI.
 - AC-F6. Uploaded separately, PL after PI: same result via `pi_number` or container match.
   PI after PL: preview says which draft shipments will receive prices; confirm links them.
-- AC-F7. A second upload of the same file is refused by the existing duplicate rule.
+- AC-F7. Reworded (browser-test round): the duplicate-refusal rule applies to a
+  RECEIVED shipment only. An unreceived draft updates in place instead - a
+  re-uploaded packing list REUSES its existing line rows keyed by `(product_id,
+  supplier_id)` rather than deleting and recreating them, so a photo already on a
+  line survives; a line whose product the new file no longer carries is deleted
+  outright, and its photos + attachments + storage objects go with it (no orphan
+  link). See `PLAN-scm-purchasing-consolidation-6sep.md`'s `## Deviations (lane C)`,
+  browser-test round.
 - AC-F8. Alias seed migration is idempotent and replayed by `bootstrap_env.py`; a test proves
   `seed()` resolves every header in both fixtures.
 - AC-F9. `_labelled` splits `箱号:X / 封签号:Y` into two fields; `货柜号：X` alone still works.
@@ -206,6 +213,11 @@ review round 1 notes.
   embedded and sized to the row; a line with fewer photos leaves cells empty; a shipment with
   no photos exports with no photo column.
 - AC-L4. Photos are served through `storage_router` (s3 / r2 rows both work).
+- AC-L5 (browser-test round). Photos survive a re-upload of the same packing list:
+  the line row is reused, not recreated, so the photo linked to it is still listed
+  on that product's line afterward. A product dropped from the re-uploaded file has
+  its line deleted, and that line's photos (links + attachments + storage objects)
+  are deleted with it - never left as an orphan link.
 
 ## DoD gate (every lane)
 

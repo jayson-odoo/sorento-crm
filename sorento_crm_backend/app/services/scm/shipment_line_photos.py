@@ -285,6 +285,58 @@ async def upload_photos(
     return _line_photos(db, str(line.id))
 
 
+def purge_for_lines(db: Session, line_ids: list[str]) -> list[tuple[str, str]]:
+    """Deletes every photo link + attachment row for the given line ids and returns the
+    storage ``(provider, key)`` pairs still to purge (browser-test round, finding 1).
+
+    Called when a shipment LINE ITSELF is about to be deleted (a re-uploaded packing list
+    drops a product that used to be on the container) - without this the line's photo
+    links become orphans nothing on screen ever points at again
+    (``entity_attachment_links`` carries no real FK onto ``inbound_shipment_lines``, so
+    the row would just sit there naming an id nothing resolves).
+
+    Flushes only, never commits: the caller (`procurement_service._upsert_shipment_lines`)
+    is mid its own unit of work, the same convention that unit of work already follows
+    for the proforma-invoice links a departing line carries. The best-effort storage
+    purge is the CALLER's job, run after ITS OWN commit - same ordering `delete_photo`
+    uses (DB rows first, bytes after), so a purge that fails never leaves a broken link
+    behind.
+    """
+    if not line_ids:
+        return []
+    ids = [str(i) for i in line_ids]
+    links = (
+        db.query(EntityAttachmentLink)
+        .filter(
+            EntityAttachmentLink.entity_type == ENTITY_TYPE,
+            EntityAttachmentLink.entity_id.in_(ids),
+        )
+        .all()
+    )
+    if not links:
+        return []
+    attachments = {
+        str(a.id): a
+        for a in db.query(Attachment)
+        .filter(Attachment.id.in_([link.attachment_id for link in links]))
+        .all()
+    }
+    objects: list[tuple[str, str]] = []
+    for link in links:
+        attachment = attachments.get(str(link.attachment_id))
+        if attachment is not None:
+            provider = normalize_provider(attachment.storage_provider)
+            for path in (attachment.file_path, attachment.thumbnail_path):
+                key = extract_key(path)
+                if key:
+                    objects.append((provider, key))
+            db.delete(attachment)
+        else:
+            db.delete(link)
+    db.flush()
+    return objects
+
+
 def delete_photo(db: Session, shipment_id: str, line_id: str, photo_id: str) -> None:
     """Removes the link row AND the attachment row AND the stored bytes.
 

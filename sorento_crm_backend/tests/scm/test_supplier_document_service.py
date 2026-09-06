@@ -170,6 +170,51 @@ def test_apply_writes_two_invoices_two_shipments_and_links_the_shared_codes():
             assert ln.currency == "CNY"  # RMB normalises to the ISO code
 
 
+def test_apply_gives_each_container_its_own_total_not_the_documents_grand_total():
+    """Browser-test round, finding 2: applying the Jiexia proforma invoice used to
+    leave BOTH containers reading the FILE's own grand TOTAL (209892) - the per-block
+    `SUB TOTAL 1*40HQ` row was never recognised as a total at all (it does not equal
+    the plain `TOTAL` label under normalisation), so nothing stopped the file-wide
+    TOTAL row from landing on whichever document was `current` when it was read.
+    Each invoice's own `total_amount` is its own block's SUB TOTAL now, which happens
+    to equal its own line sum here - never the file's total, and never the OTHER
+    container's total either."""
+    from app.models.scm import ProformaInvoice
+    from app.services.scm import proforma_invoice_service
+
+    with blank_session() as db:
+        _seed_aliases(db)
+        w = _seed_world(db)
+
+        out = svc.apply(
+            db,
+            [("发票 SORENTO-2026.7.26.xls", _pi_bytes(), None)],
+            supplier_id=str(w.supplier.id),
+            currency="RMB",
+        )
+        db.commit()
+
+        invoices = (
+            db.query(ProformaInvoice)
+            .filter(ProformaInvoice.id.in_(out["proforma_invoice_ids"]))
+            .order_by(ProformaInvoice.total_amount)
+            .all()
+        )
+        assert [float(inv.total_amount) for inv in invoices] == pytest.approx(
+            [87710.0, 122182.0]
+        )
+
+        # Deleting one sibling does not touch the other's header (part of finding 2).
+        first, second = invoices
+        second_id, expected_second_total = str(second.id), float(second.total_amount)
+        proforma_invoice_service.delete(db, str(first.id))
+        db.commit()
+
+        assert db.query(ProformaInvoice).filter(ProformaInvoice.id == first.id).first() is None
+        remaining = db.query(ProformaInvoice).filter(ProformaInvoice.id == second_id).one()
+        assert float(remaining.total_amount) == pytest.approx(expected_second_total)
+
+
 def test_apply_refuses_the_whole_batch_when_one_file_is_unclassifiable():
     with blank_session() as db:
         _seed_aliases(db)
