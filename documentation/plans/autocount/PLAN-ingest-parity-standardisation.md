@@ -205,3 +205,11 @@ hierarchy and UOM conversion (absent in AutoCount); importer review aids (D19).
 - Browser verification (tester, 2026-09-06): upload menu shows the four surviving kinds, order
   inquiry dialog previews, SO list/detail render at 1280px and 375px, SPO allocations list renders;
   zero console errors. Screenshots in the session scratchpad `browser-s4/`.
+- B1 ref-less protection is positional: when a ref-less pool holds more rows than the payload
+  names plus its dropped lines, the surviving pool rows are swept as absent (reviewer S-4). Known
+  limitation; a dropped ref-less line is protected only in the balanced case.
+- Lane-DB parity proof 2026-09-06 (company SIM via ESB vs company XLS via the outstanding books
+  generated from the same facts, both on the fix build b1c01aa2f): sales_order_lines 453/453
+  identical (open lines, keyed on outstanding qty, price, dates, warehouse, customer, agent,
+  demand class), spo_allocations 3/3 identical, purchase_order_lines identical bar a supplier
+  name suffix that only reflects the XLS clone predating the ESB's cleaned re-push.
