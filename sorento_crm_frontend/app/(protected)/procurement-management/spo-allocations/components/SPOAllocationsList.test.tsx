@@ -261,7 +261,7 @@ describe('SPOAllocationsList - bulk delete (AC-8, AC-16b, review B4)', () => {
 
     fireEvent.click(screen.getByLabelText('Select all rows on this page'));
 
-    // Two secondaryActions (Import SPO, Delete selected) collapse into the
+    // Two secondaryActions (Create SPO Allocation, Delete selected) collapse into the
     // "Actions" dropdown - Radix opens it on pointerdown, not click.
     fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), { button: 0 });
     fireEvent.click(screen.getByRole('button', { name: /Delete selected/i }));
@@ -276,5 +276,34 @@ describe('SPOAllocationsList - bulk delete (AC-8, AC-16b, review B4)', () => {
     fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), { button: 0 });
     expect(screen.getByRole('button', { name: /Delete selected/i })).toBeDisabled();
     expect(bulkDeletionRun).not.toHaveBeenCalled();
+  });
+});
+
+// ── AC-C1: Upload SPO primary, Create SPO Allocation in the gear (R5) ───────
+
+describe('SPOAllocationsList - Upload SPO is primary, Create SPO Allocation in the gear (AC-C1)', () => {
+  it('shows Upload SPO as the primary button', () => {
+    mockList([row()]);
+    renderList();
+
+    expect(screen.getByRole('button', { name: /Upload SPO/i })).toBeInTheDocument();
+  });
+
+  it('puts Create SPO Allocation inside the Actions (gear) menu', () => {
+    mockList([row()]);
+    renderList();
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), { button: 0 });
+    expect(screen.getByRole('button', { name: /Create SPO Allocation/i })).toBeInTheDocument();
+  });
+
+  it('Create SPO Allocation in the gear routes to the manual form', () => {
+    mockList([row()]);
+    renderList();
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), { button: 0 });
+    fireEvent.click(screen.getByRole('button', { name: /Create SPO Allocation/i }));
+
+    expect(routerPush).toHaveBeenCalledWith('/procurement-management/spo-allocations/new');
   });
 });

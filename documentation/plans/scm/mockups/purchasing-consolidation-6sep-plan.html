@@ -1,0 +1,209 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Purchasing consolidation batch, 6 Sep</title>
+<style>
+*,*::before,*::after{box-sizing:border-box}
+:root{--bg:#fafaf9;--fg:#1c1917;--mut:#6b7280;--line:#e7e5e4;--card:#fff;--rose:#e11d48;--sky:#0284c7;--em:#059669;--amb:#d97706;--vio:#7c3aed;--pri:#2563eb}
+body{font:14px/1.5 -apple-system,Inter,system-ui,sans-serif;background:var(--bg);color:var(--fg);margin:0;padding:32px;max-width:1180px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:16px;margin:34px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}h3{font-size:14px;margin:18px 0 6px}
+.sub{color:var(--mut);margin-bottom:22px}
+table{border-collapse:collapse;width:100%;background:var(--card);font-size:13px}th,td{border:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}th{background:#f5f5f4}
+td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin:10px 0;min-width:0}
+.card b{display:block;margin-bottom:4px}
+.ruled{background:#ecfdf5;border-color:#a7f3d0}.warn{background:#fffbeb;border-color:#fcd34d}.ask{background:#eff6ff;border-color:#bfdbfe}
+.badge{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;border:1px solid var(--line);background:#f5f5f4;color:var(--mut);white-space:nowrap}
+.badge.g{background:#ecfdf5;border-color:#a7f3d0;color:var(--em)}.badge.b{background:#eff6ff;border-color:#bfdbfe;color:var(--pri)}.badge.a{background:#fffbeb;border-color:#fcd34d;color:var(--amb)}.badge.r{background:#fff1f2;border-color:#fecdd3;color:var(--rose)}.badge.v{background:#f5f3ff;border-color:#ddd6fe;color:var(--vio)}
+.mock{border:1px solid var(--line);border-radius:10px;background:#fff;padding:12px 14px;margin:8px 0;font-size:12px;overflow-x:auto;min-width:0}
+.mock table{font-size:12px}.mock th{font-weight:500;color:var(--mut);white-space:nowrap;background:#fafaf9}.mock td{white-space:nowrap}
+.two{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}.two>*{min-width:0}
+@media (max-width:820px){.two{grid-template-columns:minmax(0,1fr)}}
+.lbl{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);margin:0 0 6px}
+.btn{display:inline-block;font-size:12px;padding:5px 11px;border:1px solid #d6d3d1;border-radius:7px;background:#fff;margin-right:6px;white-space:nowrap}
+.btn.p{background:var(--pri);color:#fff;border-color:var(--pri)}.btn.dim{opacity:.5}
+.toolbar{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:8px 0}
+.menu{border:1px solid var(--line);border-radius:8px;background:#fff;box-shadow:0 4px 14px rgba(0,0,0,.08);padding:4px;display:inline-block;font-size:12px;vertical-align:top;margin-left:8px}
+.menu div{padding:4px 10px;border-radius:5px}.menu div.dim{color:var(--mut)}.menu div.red{color:var(--rose)}
+.neg{color:var(--rose);font-weight:600}.pos{color:var(--em);font-weight:600}
+.inp{display:inline-block;border:1px solid #d6d3d1;border-radius:5px;padding:2px 6px;min-width:44px;text-align:right;background:#fff;font-variant-numeric:tabular-nums}
+.inp.bad{border-color:var(--rose);color:var(--rose)}
+.sel{display:inline-block;border:1px solid #d6d3d1;border-radius:5px;padding:2px 8px;background:#fff;min-width:120px}
+.drop{border:1.5px dashed #a8a29e;border-radius:8px;padding:18px;text-align:center;color:var(--mut);margin:8px 0}
+.note{font-size:12px;color:var(--mut)}
+.link{color:var(--pri);text-decoration:underline dotted}
+.dialog{border:1px solid var(--line);border-radius:12px;background:#fff;box-shadow:0 8px 30px rgba(0,0,0,.12);padding:16px;max-width:640px;font-size:12px;margin:8px 0}
+.dialog h4{margin:0 0 10px;font-size:14px}
+.field{margin:8px 0}.field .lbl{margin-bottom:3px}
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:8px}.tabs span{padding:5px 12px;font-size:12px;color:var(--mut)}.tabs span.on{color:var(--pri);border-bottom:2px solid var(--pri);font-weight:600}
+.tree{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;white-space:pre;line-height:1.5;background:#fff;border:1px solid var(--line);border-radius:8px;padding:12px 14px;overflow-x:auto}
+.tree .mv{background:#ecfdf5;color:var(--em);font-weight:600}.tree .gone{color:#9ca3af;text-decoration:line-through}.tree .new{background:#eff6ff;color:var(--pri);font-weight:600}
+.xl{font-family:Calibri,"Songti SC","宋体",serif;font-size:12px}.xl td,.xl th{text-align:center;border:1px solid #9ca3af;padding:3px 6px;white-space:nowrap}
+.xl .y{background:#ffff00}.xl .hl{background:#fff2cc}.xl .red{color:#e00}.xl th{font-weight:700;background:#fff}
+img.shot{max-width:100%;border:1px solid var(--line);border-radius:8px;display:block;margin:6px 0}
+ol,ul{margin:6px 0 6px 20px}li{margin:3px 0}
+code{font-size:12px;background:#f5f5f4;padding:1px 4px;border-radius:4px}
+form.q{border:1px solid #bfdbfe;border-radius:8px;background:#eff6ff;padding:10px 12px;margin:8px 0}
+form.q label{display:block;margin:3px 0}form.q button{font-size:12px;padding:4px 10px;border:1px solid #93c5fd;border-radius:6px;background:#fff;margin-top:6px;cursor:pointer}
+form.q .done{color:var(--em);font-size:12px;margin-left:8px}
+.strip{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:12px}.strip span{border:1px solid var(--line);border-radius:6px;padding:3px 8px;background:#fff}.strip i{color:var(--mut);font-style:normal}
+.thumb{display:inline-block;width:34px;height:34px;border:1px solid var(--line);border-radius:4px;background:#e7e5e4;vertical-align:middle;margin-right:3px}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}
+</style></head><body>
+<h1>Purchasing consolidation batch, 6 Sep</h1>
+<div class="sub">Twelve asks from the 6 Sep production walk. Four lanes, four PRs. Every "today" fact measured on <code>origin/main cc0789971</code>. Green = proposed ruling, amber = what exists, blue = a question for you. Annotate anything; the five questions at the end have Queue buttons.</div>
+
+<div class="card"><b>Lanes at a glance</b>
+<table><tr><th>Lane</th><th>Holds</th><th>Migration</th><th>Size</th></tr>
+<tr><td><span class="badge b">A</span> Navigation + CTAs + hides</td><td>1 nav, 2 upload CTA (dialog reused), 3 SPO CTA, 8 costs hidden, 10 SPO link fix</td><td><code>attachment_types.default_directory_id</code></td><td>small, first</td></tr>
+<tr><td><span class="badge b">B</span> Loading plan + supplier request</td><td>4 formula + columns, 5 preview + highlight + remarks</td><td>none (<code>line_edits</code> JSON)</td><td>medium</td></tr>
+<tr><td><span class="badge b">C</span> Supplier documents</td><td>6 PI + PL upload, 7 translation memory, 12 line photos</td><td>alias seed, <code>translation_memory</code>, <code>inbound_shipment_line_photos</code></td><td>large</td></tr>
+<tr><td><span class="badge b">D</span> SPO planner</td><td>9 SO covered tabs + editable take, 10 linkage columns, 11 edit after create</td><td>none</td><td>large</td></tr></table>
+<p class="note">B, C, D branch off main after A merges. C and D run first on the two slots; B follows. Planning doc: <code>documentation/plans/scm/PLAN-scm-purchasing-consolidation-6sep.md</code> + UAC alongside.</p></div>
+
+<h2>1. Navigation</h2>
+<div class="two">
+<div class="card warn"><b>Today</b>Supply Chain (module <code>scm</code>) owns Planning, Project Demand and an Orders group; Procurement (module <code>procurement</code>) owns Packing Lists and SPO Allocations; Project Sales Admin sits under OPERATIONS with module <code>procurement</code>. Leaves carry no module key: the sidebar hides by the parent's key, but the route guard hides by URL prefix (<code>/scm</code> = scm). Every page hardcodes its breadcrumb.
+<img class="shot" src="p6-nav-today.png" alt="nav today"></div>
+<div class="card ruled"><b>R1. Routes stay, nodes move, moved leaves declare <code>moduleKey: 'scm'</code></b>
+<div class="tree">SUPPLY CHAIN
+  Supply Chain (scm)
+    Dashboard
+    Planning: Simulation, Market Signals, Policies
+    Project Demand: Fulfilment Planning, Stock Debt, Plans,
+                    Planning changes, Forecast &amp; Reports
+  Procurement (procurement)
+    Suppliers, Product-Suppliers, Packing Lists, SPO Allocations,
+    GRN, Picking Lines, Stock Inquiries            (all unchanged, same positions)
+    <span class="new">Supply Chain</span>  (sub-group)
+      <span class="mv">Reorder Planning     /scm/reorder            scm</span>
+      <span class="mv">Loading Plan         /scm/loading-plan      scm</span>
+      <span class="mv">Order Inquiries      /project-sales/order-inquiries</span>
+      <span class="mv">Purchase Orders      /scm/purchase-orders   scm</span>
+      <span class="mv">Proforma Invoices    /scm/proforma-invoices scm</span>
+    <span class="gone">Incoming Containers  /scm/incoming  (R2 ruled: menu entry retired)</span>
+OPERATIONS
+  Project Sales Admin (procurement)
+    <span class="mv">Sales Orders         /scm/sales-orders      scm</span>
+    Purchase Requests, Sponsorship Forms, Sponsorship Report</div>
+<p class="note">Why the leaf key: a tenant with procurement but no scm would see the link and get bounced to <code>/</code>. <code>scm</code> already depends on <code>procurement</code>, so nobody loses a link they can open today. No URL changes: bookmarks, the <code>OLD_PATHS</code> test and the guard all keep working. Seven breadcrumbs rewritten by hand; the search palette follows the tree on its own.</p></div>
+</div>
+<div class="card ruled"><b>R2. Incoming Containers leaves the menu <span class="badge g">ruled 6 Sep</span></b><code>/scm/incoming</code> lists the same <code>inbound_shipments</code> table as Packing Lists; it exists to host the upload dialog plus a consolidated-list panel and an allocation panel that the packing list detail already carries (Download packing list, SPO planner). Section 2 moves the upload, so the page has no job left. Path stays reachable this batch.</div>
+
+<h2>2. "Upload packing list" is the Packing Lists CTA</h2>
+<div class="two">
+<div class="card warn"><b>Today: two doors, neither on this page</b>(a) Drive upload with type Packing List, n8n AI extraction, <code>POST /external/packing-lists/</code>: header + product quantities only. (b) In-app deterministic reader on Incoming Containers (<code>PackingListUploadDialog</code>, Test then Confirm, multi-container blocks, aliases, dimensions, prices), already accepting an <code>attachment_id</code>. The Packing Lists toolbar has Create Packing List (manual form) and Import Container Status. No default folder exists anywhere: the Create Attachment dialog only takes a folder from the screen that opened it.
+<img class="shot" src="p6-attachment-dialog-today.png" alt="attachment dialog today"></div>
+<div class="card ruled"><b>R3 + R4. The CTA is the in-app reader, and it files the document in Drive</b>
+<div class="mock"><div class="toolbar"><div><span class="sel">Search packing lists</span> <span class="btn">Filters</span> <span class="btn">Columns</span></div><div><span class="btn p">⬆ Upload packing list</span><span class="btn">⚙</span><span class="menu"><div>Create packing list</div><div>Import container status</div><div class="dim">Download container status</div></div></div></div></div>
+<ul><li>Confirm creates the shipment(s), stores the file as an attachment of type <b>Packing List</b> in that type's <b>default folder</b>, binds <code>attachment_id</code>, and fires no n8n webhook for it (the reader already made the shipment; the AI path would make a second one).</li>
+<li>Default folder = one nullable column, <code>attachment_types.default_directory_id</code>, a folder select on the attachment type form. The generic Create Attachment dialog pre-selects it when that type is chosen. No seeding: the Packing List type and folder are admin data in production; you set the folder once after deploy.</li>
+<li>Lane C relabels the button <b>Upload supplier documents</b> and teaches it proformas (section 6).</li></ul></div>
+</div>
+
+<h2>3. "Upload SPO" is the SPO Allocations CTA</h2>
+<div class="card ruled"><b>R5. Swap primary and secondary</b>Today <b>Import SPO</b> hides in the secondary menu and <b>Create SPO Allocation</b> is the primary button. After: <span class="btn p">⬆ Upload SPO</span> primary (same <code>SPOImportDialog</code>), Create SPO Allocation in the gear. No backend change. (The Order Inquiries "Upload purchase orders" is the outstanding-book importer, a different pipeline, untouched.)</div>
+
+<h2>4. Loading plan: formula and columns</h2>
+<div class="card warn"><b>Today</b><code>suggested = max(need - on hand - incoming SPO, 0)</code>. Incoming PL and PO are shown beside it, never subtracted (the tooltip says so). Fourteen hardcoded columns, no visibility config. Incoming SPO sums <code>spo_allocations</code> on unreceived shipments; Incoming PL sums <code>inbound_shipment_lines</code> on unreceived shipments, so a packing list that already has its SPO is counted in BOTH.
+<img class="shot" src="p6-loading-plan-today.png" alt="loading plan today"></div>
+<div class="card ruled"><b>R6. Incoming PL enters the formula as the part not yet turned into an SPO</b>
+<code>incoming_pl_unallocated = Σ GREATEST(quantity_shipped - spo_allocated_quantity - quantity_received, 0)</code> over unreceived shipments, then<br>
+<code>suggested = max(need - on hand - incoming SPO - incoming_pl_unallocated, 0)</code>.<br>
+<span class="note">Subtracting the full Incoming PL would take every planned container off twice. Example: need 100, on hand 10, SPO 20 from shipment X, X's line ships 50 of which 20 are on that SPO: suggested 40, not 20.</span></div>
+<div class="card ruled"><b>R7 + R8. On hand, SPO, Incoming PL stay; a Total supply column sums them; Earliest need-by, Project peak, Retail peak go <span class="badge g">revised 6 Sep</span></b>
+<div class="mock"><table><tr><th>Rank</th><th>Product</th><th>Suggested qty</th><th class="n">Need</th><th class="n">Project</th><th class="n">Retail</th><th class="n">On hand</th><th class="n">SPO</th><th class="n">Incoming PL</th><th class="n">Total supply</th><th class="n">PO</th><th class="n">Packed</th></tr>
+<tr><td>1 · 0.99</td><td><b>CGB762</b></td><td><span class="inp">1051</span></td><td class="n"><span class="link">2,426</span></td><td class="n"><span class="link">2,379</span></td><td class="n"><span class="link">47</span></td><td class="n"><span class="link">719</span></td><td class="n"><span class="link">0</span></td><td class="n"><span class="link">656</span></td><td class="n"><b>1,375</b></td><td class="n"><span class="link">1,071</span></td><td class="n">54</td></tr>
+<tr><td>2 · 0.89</td><td><b>SRTWB243</b></td><td><span class="inp">768</span></td><td class="n"><span class="link">1,515</span></td><td class="n"><span class="link">1,515</span></td><td class="n">0</td><td class="n"><span class="link">457</span></td><td class="n"><span class="link">0</span></td><td class="n"><span class="link">290</span></td><td class="n"><b>747</b></td><td class="n"><span class="link">1,327</span></td><td class="n">1,615</td></tr></table>
+<p class="note">The three existing columns and their lightboxes are untouched; Total supply is a plain sum (On hand + SPO + Incoming PL), no lightbox of its own. Peaks stay one click away: the Project and Retail lightboxes already have the 12-month history tab. No column-visibility layer for three deletions; trigger for building one = you ask to hide a fourth column ad hoc.</p></div></div>
+
+<h2>5. Supplier request: preview, our highlight, remarks</h2>
+<div class="card warn"><b>Today</b>Send to supplier opens a dialog (channel, recipients, one note). No preview; the document is only reachable via Download XLSX / PDF in the gear. The sheet model replays the supplier's yellow fills and red zeros on the public page and the PDF, and writes column K into their own workbook. No remarks field exists on the notice, its lines or the sheet.</div>
+<div class="card ruled"><b>R9. Preview is a page state</b>
+<div class="mock"><div class="toolbar"><div><b>Request to CHAOZHOU JINBAICHUAN</b> <span class="note">until 31/12/2026 · 42 products · 8,410 units</span></div><div><span class="btn">← Back to plan</span><span class="btn p">Send to supplier</span></div></div>
+<table class="xl"><tr><th>序号</th><th>型号</th><th>商标</th><th>规格</th><th>品名</th><th>包装好库存</th><th>空瓷</th><th>体积(cbm)</th><th>总体积</th><th>备注</th><th class="hl">需装数量<br>Qty to load</th><th class="hl">备注<br>Remarks</th></tr>
+<tr class="hl"><td class="hl">1</td><td class="hl">CGB762</td><td class="hl">SORENTO</td><td class="hl">-</td><td class="hl">座厕</td><td class="hl">54</td><td class="hl">120</td><td class="hl">0.09</td><td class="hl">4.86</td><td class="hl"></td><td class="hl"><b>1,051</b></td><td class="hl"><span class="inp" style="min-width:150px;text-align:left">Ship packed first, rest next box</span></td></tr>
+<tr><td>2</td><td>SRTWB250</td><td>SORENTO</td><td>-</td><td>面盆</td><td>0</td><td>40</td><td>0.05</td><td>2.00</td><td></td><td>0</td><td><span class="inp" style="min-width:150px;text-align:left"></span></td></tr>
+<tr class="hl"><td class="hl">3</td><td class="hl">SRTWB243</td><td class="hl">SORENTO</td><td class="hl">-</td><td class="hl">水箱</td><td class="hl">1,615</td><td class="hl">0</td><td class="hl">0.035</td><td class="hl">56.5</td><td class="hl"></td><td class="hl"><b>768</b></td><td class="hl"><span class="inp" style="min-width:150px;text-align:left"></span></td></tr></table>
+<p class="note"><b>Editable right here.</b> The Remarks cell (and the Qty to load cell) are inputs on this preview; typing writes the plan line's <code>line_edits</code>, the same field the plan table edits. No need to go back to the plan table. Same renderer as the public page (moved to a shared component), so what you preview is what they open. Send from here runs the existing save-then-send and the same channel dialog.</p></div>
+<b style="margin-top:8px">R10. Our highlight, not theirs</b>Source fills and red fonts are dropped; rows with qty to load &gt; 0 get one fill (<code>FFF2CC</code> in xlsx and PDF, the warning tint on screen). Title and header rows keep their style, merges and widths survive.
+<b style="margin-top:8px">R11. Remarks live on the plan line</b><code>loading_plan.line_edits</code> becomes <code>row_key → {qty, remark}</code> (old bare numbers read as <code>{qty}</code>, no migration). Editable in the plan table (new Remarks column) AND in the preview: same field, same save. Column L <code>备注 / Remarks</code> in xlsx, PDF and public page; frozen into the notice's <code>sheet_json</code>, so a sent document never changes under the supplier. The public page stays read-only: the remark is our instruction to them.</div>
+
+<h2>6. One upload for proforma invoice and packing list</h2>
+<div class="card warn"><b>Today</b>Proforma upload lives on Proforma Invoices (block fields: PI number, date, container, BL, currency). Packing list upload lives on Incoming Containers (container, BL). Both share the labelled-cell scanner and the alias table. PI → draft shipment exists and always makes a NEW draft. Shipment header already has container, seal, shipper, consignee, BL, forwarder ref (migration 436). Measured on your two Jiexia files: same <code>INVOICE NO.: 2026JXL0726</code>, blocks open with ONE cell <code>箱号:WHSU6243088 / 封签号:WHA4528193</code>, consignee is the <code>客户：SORENTO SDN BHD</code> line, no <code>提单号</code> anywhere, a <code>备注：</code> footer with carton sizes, four accessory rows with no product code. Today <code>箱号</code> resolves to nothing (only <code>货柜号</code> is seeded), so both containers would collapse into one block.</div>
+<div class="card ruled"><b>R12. One dialog, "Upload supplier documents", multi-file, classified by title cell</b>
+<div class="dialog"><h4>Upload supplier documents</h4>
+<div class="field"><div class="lbl">Supplier</div><span class="sel" style="min-width:340px">CHAOZHOU CHAOAN JIEXIA CERAMICS INDUSTRY CO.,LTD ▾</span></div>
+<div class="drop">发票 SORENTO-2026.7.26.xls · 装箱单 SORENTO-2026.7.26.xls<br><span class="note">Drop the invoice, the packing list, or both. One factory per upload.</span></div>
+<table><tr><th>File</th><th>Read as</th><th>Blocks</th><th>Lines</th><th>Header</th></tr>
+<tr><td>发票 SORENTO-2026.7.26.xls</td><td><span class="badge v">Proforma invoice</span></td><td>WHSU6243088 · seal WHA4528193 · 366 pcs · RMB 87,710<br>WHSU6356079 · seal WHA4528173 · 510 pcs · RMB 122,182</td><td>5</td><td>PI 2026JXL0726 · 26/07/2026 · consignee SORENTO SDN BHD</td></tr>
+<tr><td>装箱单 SORENTO-2026.7.26.xls</td><td><span class="badge b">Packing list</span></td><td>WHSU6243088 · 792 ctn · 49.41 cbm<br>WHSU6356079 · 1,071 ctn · 68.85 cbm</td><td>7 + 4 notes</td><td>same PI number → prices will be matched</td></tr></table>
+<p class="note">Unmatched codes: none. Footer <code>备注：840座斗 675*375*485mm…</code> kept as shipment notes.</p>
+<div style="text-align:right"><span class="btn">Cancel</span><span class="btn">Test</span><span class="btn p">Confirm: 1 invoice, 2 draft packing lists</span></div></div>
+<b style="margin-top:8px">R13. Header capture</b>New block fields <code>seal_no, consignee, shipper</code> on both readers; the scanner splits a cell on <code>/</code> before the label test so <code>箱号:X / 封签号:Y</code> yields both. Alias seed (migration, replayed by <code>bootstrap_env.py</code> like 357/375): 箱号 → container_no, 封签号 → seal_no, 客户 → consignee, INVOICE NO. → pi_number, 日期 → invoice_date, 客户型号 → item_code, 洁厦型号 / JIEXIA MODEL → supplier_code, 品名 → description, 数量 → qty, 单价 → unit_price, 总金额 → amount, CARTONS → cartons, 商标 → brand, the G.W / N.W / CBM pairs. SUB TOTAL and TOTAL rows skipped by the existing totals rule; a code-less row becomes a block note, not a line.
+<b style="margin-top:8px">R14. A packing list block = a draft shipment with its header pre-filled</b>Container, seal, consignee, shipper (letterhead), <b>提单号 into the SO field</b> (<code>forwarder_order_ref</code>, ruled 6 Sep; <code>bill_of_lading_number</code> untouched) and ETD when stated; one shipment per container block, both bound to the same file. Prices: PL lines matched to the PI's lines by item code inside the same container block copy <code>unit_cost / currency</code> and write the existing <code>proforma_invoice_shipment_link</code>. Together = same apply. PL after PI = match by PI number or container. PI after PL = preview says "Prices for 2 draft shipments" and confirm links them. No new tables.</div>
+
+<h2>7. Translation memory</h2>
+<div class="card warn"><b>Today</b>Two structural alias tables (header → field, supplier code → product). No free-text translation anywhere. What arrives in Chinese and reaches a user or the export: 品名 descriptions (<code>座厕 S-250出水 对冲</code>), remarks (<code>纸箱：2个</code>, <code>空瓷</code>), brand <code>空白</code>, footer notes. Ruling 5 of the 3 Sep batch keeps DESCRIPTION = product master name, so descriptions only need translating where no product matched (preview), plus remarks.</div>
+<div class="card ruled"><b>R15 + R16. One table, memory first, model fills gaps, edits win</b>
+<table><tr><th>translation_memory</th><th>Meaning</th></tr><tr><td><code>source_text, source_lang</code> (unique)</td><td>normalised Chinese phrase</td></tr><tr><td><code>target_text, target_lang</code></td><td>English</td></tr><tr><td><code>source</code> manual | ai</td><td>manual always outranks ai</td></tr><tr><td><code>hit_count, created_by, updated_at</code></td><td>housekeeping</td></tr></table>
+<p><code>translate(texts)</code>: memory hit → return; miss → ONE batched call to the AI Assistant's configured model (prompt in the registry as <code>supplier_translation</code>), written back as <code>ai</code>; no key configured → returned untranslated and flagged. The memory is the deterministic layer of record; the model only fills its gaps. <span class="badge g">AI fill in v1, ruled 6 Sep</span></p>
+<div class="mock"><table><tr><th>Code</th><th>品名</th><th>English</th><th class="n">Qty</th><th>Remark</th></tr><tr><td>SRTWCX8840-S-RL</td><td>座斗 S-250出水 对冲</td><td><span class="inp" style="min-width:220px;text-align:left">Toilet bowl, S-trap 250, washdown</span> <span class="badge a">ai</span></td><td class="n">266</td><td></td></tr><tr><td>8840</td><td>盖板</td><td><span class="inp" style="min-width:220px;text-align:left">Seat cover</span> <span class="badge g">manual</span></td><td class="n">366</td><td>34件*10块/件+26块 → <span class="inp" style="min-width:160px;text-align:left">34 ctn × 10 + 26</span></td></tr></table><p class="note">Editing a cell in the preview writes a manual row; the same phrase in the next upload shows the edit. Shipment line remarks store <code>English (中文)</code>; the export prints the English. System Management → Translations: DataGrid, edit in place, delete with confirmation (same shape as the supplier code aliases page).</p></div></div>
+
+<h2>8. Costs hidden</h2>
+<div class="two"><div class="card warn"><b>Today</b>Container costs card on Details; the export footer apportions clearance, freight and insurance by share.<img class="shot" src="p6-costs-today.png" alt="costs today"></div>
+<div class="card ruled"><b>R17. Card goes, footer rows go, columns stay</b>No migration, data untouched (the AutoCount ingest contract may still read them). <code>RMB</code> and <code>TOTAL RM</code> line columns stay in the export: prices, not costs. <span class="badge g">ruled 6 Sep</span></div></div>
+
+<h2>9. SO covered: Project tab, Retail tab, editable Take, sortable</h2>
+<div class="card warn"><b>Today</b>One table, project rows then retail rows appended below. Checkbox only; Take is computed by a waterfall over ticked rows in server order and cannot be typed. No sorting model. Project takes persist in <code>order_inquiry_links</code>; retail coverage is computed live and never written.<img class="shot" src="p6-so-covered-today.png" alt="SO covered today"></div>
+<div class="card ruled"><b>R18 to R21</b>
+<div class="dialog" style="max-width:900px"><h4>SO covered · CWB242</h4>
+<div class="tabs"><span class="on">Project (9)</span><span>Retail (14)</span></div>
+<table><tr><th></th><th>Sales order ↕</th><th>Customer ↕</th><th>Delivery date ↑</th><th class="n">Outstanding ↕</th><th class="n">Taken ↕</th><th class="n">Take ↕</th><th>Location ↕</th></tr>
+<tr><td>☑</td><td>SO399639</td><td>PEMBINAAN TEGUH MAJU SDN BHD</td><td>26/05/2026</td><td class="n">38</td><td class="n">65 <span class="note">S-SPO-2026/09-0001</span></td><td class="n"><span class="inp">30</span></td><td>BRW-IB</td></tr>
+<tr><td>☑</td><td>SO399639</td><td>PEMBINAAN TEGUH MAJU SDN BHD</td><td>04/06/2026</td><td class="n">58</td><td class="n">-</td><td class="n"><span class="inp">8</span></td><td>BRW-IB</td></tr>
+<tr><td>☐</td><td>SO380072</td><td>SHING SOON HENG HARDWARE SDN BHD</td><td>03/08/2026</td><td class="n">8</td><td class="n">-</td><td class="n"><span class="inp">0</span></td><td>BRW-BB</td></tr></table>
+<div class="toolbar"><span class="note">Taken <b>38 of 38</b> · Unassigned 0 · Retail tab takes 0</span><div><span class="btn">Cancel</span><span class="btn p">Confirm</span></div></div></div>
+<ul><li><b>R18</b> two tabs, one selection: the footer is shared, so a take on Project visibly shrinks what Retail can draw.</li>
+<li><b>R19</b> Take is an input seeded by the waterfall; editing re-flows only the rows after it (your number is never overwritten); over the row's outstanding or over the SPO qty = destructive cell, Confirm disabled. Payload <code>so_takes: [{key, qty}]</code>.</li>
+<li><b>R20</b> retail takes persist in <code>scm.order_link_claim</code> (<code>so_line_id, spo_allocation_id, qty, source='planner'</code>): the table that already pairs an SO line with an SPO allocation, given a new source value rather than a new table. Without this, section 11 could never show what retail took.</li>
+<li><b>R21</b> DataGrid with sorting on every column, default Delivery date ascending per tab.</li></ul></div>
+
+<h2>10. SPO link and linkage</h2>
+<div class="two"><div class="card warn"><b>Today</b>Created SPOs links to <code>/scm/purchase-orders/{id}</code>. The SPO document Lines tab shows Product, Warehouse, Allocated, Received, Balance, ETA, Supplier, Plan, Packing List, Status: nothing PO- or SO-shaped, and the API never joins <code>po_line_id</code> or the link tables.<img class="shot" src="p6-spo-link-today.png" alt="SPO link today"></div>
+<div class="card ruled"><b>R22 + R23</b>Link → <code>/procurement-management/spo-allocations/S-SPO-2026%2F09-0003</code>. Lines tab gains <b>PO</b> (link) and <b>SO covered</b> (<code>3 SOs · 120</code>, opens the read-only lightbox). Header tab gets a linkage strip:
+<div class="strip" style="margin:8px 0"><span>PO <b>202605-S0060</b></span><i>→</i><span>SPO lines <b>2</b></span><i>→</i><span>SO covered <b>4 · 250</b></span><i>→</i><span>Packing list <b>WHSU6243088</b></span><i>→</i><span>GRN <b>none yet</b></span></div>
+<p class="note">Query change in <code>SPOAllocationService.get_document</code> plus schema fields (asserted in a test: <code>response_model</code> drops what it does not declare).</p></div></div>
+
+<h2>11. SPO editable through the planner after creation</h2>
+<div class="card warn"><b>Today</b>Created SPOs offers Delete only. Create always writes a NEW PO header and converts each line's remainder; a converted line reads "Done". Changing anything = delete and recreate, or the plain field editor on the SPO page (no links, no splits).</div>
+<div class="card ruled"><b>R24. "Edit in planner"</b>
+<div class="mock"><table><tr><th>SPO</th><th>Supplier</th><th class="n">Lines</th><th class="n">Qty</th><th>Status</th><th></th></tr><tr><td><span class="link">S-SPO-2026/09-0003</span></td><td>CHAOZHOU JINBAICHUAN</td><td class="n">2</td><td class="n">250</td><td><span class="badge g">Outstanding</span></td><td><span class="btn">✎ Edit in planner</span><span class="btn">🗑</span></td></tr></table>
+<div class="toolbar"><div><b>SPO planner</b> <span class="badge b">Editing S-SPO-2026/09-0003</span></div><div><span class="btn">Cancel</span><span class="btn p">Save changes</span></div></div>
+<p class="note">Planner loads that SPO's lines with qty, PO takes, SO takes and location splits pre-filled from the persisted rows. Save = <code>PUT /inbound-shipments/{id}/spo/{purchase_order_id}</code> → <code>spo_conversion_service.revise</code>: rows keyed by (shipment line, warehouse) updated / inserted / deleted, links re-dealt, shipment-line <code>spo_allocated_quantity</code> and PO totals recomputed, SPO number unchanged. A row with received qty cannot drop below it (refused, row named). Removing a line = the existing unwind for that line only. The SPO page's Lines tab links back to the same screen. Coder on Opus: splits, links and received guards interlock.</p></div></div>
+
+<h2>12. Supplier photos on shipment lines</h2>
+<div class="two"><div class="card warn"><b>Today</b>No image column on the line, no attachment cell on the tab, no images in the export. The project quotation export already embeds product photos with openpyxl (the pattern to copy).<img class="shot" src="p6-shipment-lines-today.png" alt="shipment lines today"></div>
+<div class="card ruled"><b>R25 + R26</b>
+<div class="mock"><table><tr><th>No</th><th>Model</th><th class="n">Qty</th><th>Photos</th><th>Remarks</th></tr><tr><td>1</td><td>CKS1050</td><td class="n">378</td><td><span class="thumb"></span><span class="thumb"></span><span class="btn">+</span></td><td></td></tr><tr><td>2</td><td>CKS4539</td><td class="n">50</td><td><span class="thumb"></span><span class="btn">+</span></td><td></td></tr></table></div>
+<p class="note"><code>inbound_shipment_line_photos(line_id, attachment_id, sort_order)</code>, attachment type Shipment Line Photo, shared dropzone, multi-file, delete with confirmation. Export: <code>PHOTO 1 … PHOTO n</code> after REMARKS, n = most photos on any line (no cap per line, ruled 6 Sep), each image sized to the row (3 cm cap), empty cells where a line has fewer, no photo column when the shipment has none. Bytes fetched through <code>storage_router</code> at export time.</p>
+<div class="mock xl"><table><tr><th>MODEL</th><th>QTY</th><th>REMARKS</th><th>PHOTO 1</th><th>PHOTO 2</th></tr><tr><td>CKS1050</td><td>378</td><td></td><td><span class="thumb" style="width:60px;height:60px"></span></td><td><span class="thumb" style="width:60px;height:60px"></span></td></tr><tr><td>CKS4539</td><td>50</td><td></td><td><span class="thumb" style="width:60px;height:60px"></span></td><td></td></tr></table></div></div></div>
+
+<h2>13. Rejected alternatives</h2>
+<ul><li>URL renames for the moved pages: breaks bookmarks, <code>OLD_PATHS</code>, every hardcoded <code>href="/scm"</code>, for no visible gain.</li>
+<li>Column-visibility config on the loading plan grid for three deletions.</li>
+<li>Netting the FULL incoming PL: double-subtracts every container that already has its SPO.</li>
+<li>A new <code>spo_so_coverage</code> table for retail takes when <code>order_link_claim</code> already pairs the two.</li>
+<li>Remarks editable by the supplier on the public page: read-only by design, the remark is our instruction.</li>
+<li>LLM translation without a memory: non-deterministic on every export.</li>
+<li>Keeping Incoming Containers as a second listing of the same table with its own upload.</li></ul>
+
+<h2>14. Rulings from markup round 1 (6 Sep)</h2>
+<div class="card ruled"><table><tr><th>#</th><th>Ruling</th><th>Applied in</th></tr>
+<tr><td>Q1</td><td>提单号 fills the <b>SO</b> field (<code>forwarder_order_ref</code>); <code>bill_of_lading_number</code> untouched.</td><td>R14, AC-F4</td></tr>
+<tr><td>Q2</td><td>Incoming Containers menu entry retired; <code>/scm/incoming</code> still reachable.</td><td>R2, AC-A6</td></tr>
+<tr><td>Q3</td><td>RMB and TOTAL RM export columns stay.</td><td>R17, AC-H2</td></tr>
+<tr><td>Q4</td><td>Translation memory + AI fill for misses in v1.</td><td>R15</td></tr>
+<tr><td>Q5</td><td>No photo cap per line.</td><td>R26</td></tr>
+<tr><td>Nav</td><td>Packing Lists and SPO Allocations stay in their current positions (direct Procurement leaves), not inside the Supply Chain sub-group.</td><td>R1, AC-A1</td></tr>
+<tr><td>Loading plan</td><td>On hand, SPO, Incoming PL stay as columns; one added <b>Total supply</b> column sums them.</td><td>R7, AC-D3, AC-D4</td></tr>
+<tr><td>Preview</td><td>Remarks (and Qty to load) are edited on the preview itself; no trip back to the plan table.</td><td>R11, AC-E4</td></tr></table></div>
+<p class="note">No open questions remain. Annotate any section for round 2, or say go. Nothing is built until then.</p>
+</body></html>

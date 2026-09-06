@@ -24,6 +24,8 @@ a Test means everywhere else in this system.
 """
 from __future__ import annotations
 
+import logging
+import uuid
 from datetime import date
 from decimal import Decimal
 from typing import Any, Optional
@@ -43,6 +45,8 @@ from app.services.scm.packing_list_reader import (
 from app.services.scm.supplier_scope import assert_supplier
 from app.services.scm.upload_validation import envelope, named
 
+logger = logging.getLogger(__name__)
+
 #: What a block is called when it has no container number of its own. Positional, so the same
 #: file re-uploaded produces the same names and the duplicate resolver recognises them.
 _PRELOAD_PREFIX = "PRELOAD"
@@ -52,6 +56,95 @@ _PRELOAD_PREFIX = "PRELOAD"
 _NO_CURRENCY = (
     "Nothing says which money these prices are in - state the currency this packing list is in."
 )
+
+#: The type this upload files itself under (R3, purchasing consolidation batch 6 Sep 2026).
+#: Admin data, not seeded - the captain sets the code (or just the name) and the default
+#: folder on it after deploy, same convention `container_status_document.py` reads by.
+_PACKING_LIST_TYPE_CODE = "packing_list"
+_PACKING_LIST_TYPE_NAME = "Packing List"
+
+
+def _file_the_upload(
+    db: Session,
+    *,
+    data: bytes,
+    filename: Optional[str],
+    content_type: Optional[str],
+    actor_id: Optional[str],
+) -> Optional[str]:
+    """Store the uploaded workbook as an attachment of type Packing List. Never raises.
+
+    Returns the new attachment id, or None when there is nothing to file - a missing
+    Packing List type (R4 is admin-set, not guaranteed to exist yet) is a named gap in
+    the response, never a reason to fail an apply that otherwise succeeded.
+
+    Deliberately NOT `attachment_webhook_helper.create_and_send_webhook`: this reader
+    already produced the shipment, so firing the n8n intake webhook would create a
+    SECOND one through the external route (R3) - and that is also why this attachment
+    carries no `integration_log` row.
+    """
+    row = db.execute(
+        text(
+            "SELECT id, default_directory_id FROM attachment_types "
+            "WHERE code = :code OR lower(type_name) = lower(:name) LIMIT 1"
+        ),
+        {"code": _PACKING_LIST_TYPE_CODE, "name": _PACKING_LIST_TYPE_NAME},
+    ).fetchone()
+    if not row:
+        logger.warning(
+            "No attachment type named %r (or code %r) - the uploaded packing list will "
+            "not be filed in Drive",
+            _PACKING_LIST_TYPE_NAME,
+            _PACKING_LIST_TYPE_CODE,
+        )
+        return None
+    type_id, default_directory_id = str(row[0]), (str(row[1]) if row[1] else None)
+
+    try:
+        from app.schemas.resources import AttachmentCreate
+        from app.services.resources_service import AttachmentService
+        from app.services.storage_router import (
+            cdn_base_url,
+            default_provider,
+            get_backend,
+            sanitize_storage_filename,
+        )
+
+        attachment_id = str(uuid.uuid4())
+        original_filename = sanitize_storage_filename(filename or "packing-list.xlsx")
+        provider = default_provider()
+        backend = get_backend(provider)
+        s3_key, _ = backend.upload_file(
+            file_content=data,
+            file_path=f"packing_list/{attachment_id}/{original_filename}",
+            content_type=content_type,
+        )
+        attachment_data = AttachmentCreate(
+            id=attachment_id,
+            attachment_type_id=type_id,
+            original_filename=original_filename,
+            stored_filename=filename or original_filename,
+            file_path=cdn_base_url(provider, s3_key),
+            file_size_bytes=len(data),
+            mime_type=content_type or "application/octet-stream",
+            directory_id=default_directory_id,
+            # Without this the row reads `s3` (the schema default) regardless of where the
+            # bytes actually went - `storage_router`'s reads (preview, download, presigned
+            # URL) dispatch on this column, so a wrong value 404s the very file just filed.
+            storage_provider=provider,
+        )
+        # `attachment_id` was already minted above and handed to `AttachmentCreate.id`, so
+        # it IS the new row's PK - no need to read it back off whatever the service returns.
+        AttachmentService(db).create_attachment(attachment_data, actor_id)
+        return attachment_id
+    except Exception:  # noqa: BLE001 - a filing failure must not fail the apply itself
+        logger.warning("Could not file the uploaded packing list as an attachment", exc_info=True)
+        # A failed INSERT (or the upload call itself) can leave the session in
+        # `PendingRollbackError` for every statement after it, which turned "no filed
+        # copy" into a 500 on the apply that was otherwise fine. Roll back so the caller's
+        # session is usable again.
+        db.rollback()
+        return None
 
 
 def _priced(parsed: PackingReadResult) -> int:
@@ -256,6 +349,8 @@ def apply(
     currency: Optional[str] = None,
     source_ref: Optional[str] = None,
     attachment_id: Optional[str] = None,
+    content_type: Optional[str] = None,
+    file_in_drive: bool = False,
     actor_id: Optional[str] = None,
 ) -> dict:
     """Create or update one inbound shipment per block. Idempotent by construction.
@@ -267,6 +362,15 @@ def apply(
     `supplier_id` is REQUIRED. A packing list comes from one factory, and a container is
     routinely filled by two or three of them; an upload that does not say whose it is speaks
     for the whole container and would delete the other factories' lines.
+
+    `file_in_drive` (R3, purchasing consolidation batch 6 Sep 2026): when true and no
+    `attachment_id` was already given, the uploaded bytes are filed as an attachment ONCE
+    the shipment set this call produces or updates is known, and only bound onto the
+    shipments that do not already carry one - a re-upload of the same file resolves to
+    the same shipments (see above) and must not mint a second Drive copy of a file
+    already filed on the first apply. Defaults to false - callers other than the Upload
+    packing list route (batch reprocessing, other tests of this function) do not
+    suddenly start writing to Drive and to storage just by calling `apply`.
     """
     _check_supplier(db, supplier_id)
     parsed = _parse(db, data)
@@ -296,6 +400,10 @@ def apply(
     created = updated = 0
     skipped_lines = 0
     results: list[dict] = []
+    # Filled once, after the loop, only when `file_in_drive` and at least one shipment
+    # this call touched is still missing one - never before, so a re-upload of an
+    # already-filed container costs nothing (see the docstring above).
+    unfiled_shipments: list[Any] = []
 
     for block in parsed.blocks:
         lines: list[InboundShipmentLineCreate] = []
@@ -349,6 +457,9 @@ def apply(
             shipment_date=shipment_date or date.today(),
             shipping_container_number=block.container_no,
             bill_of_lading_number=block.bl_no,
+            # A caller-supplied `attachment_id` still binds every block to it, same as
+            # before; the `file_in_drive` filing (below) only fills in for shipments
+            # that come out of this loop still unbound.
             attachment_id=attachment_id,
             total_items_shipped=int(block.total_qty),
             total_cartons=int(block.total_cartons) if block.total_cartons else None,
@@ -361,6 +472,8 @@ def apply(
         existed = bool(getattr(shipment, "_already_existed", False))
         created += 0 if existed else 1
         updated += 1 if existed else 0
+        if file_in_drive and attachment_id is None and not shipment.attachment_id:
+            unfiled_shipments.append(shipment)
         results.append(
             {
                 "index": block.index,
@@ -371,6 +484,15 @@ def apply(
                 "created": not existed,
             }
         )
+
+    if file_in_drive and attachment_id is None and unfiled_shipments:
+        filed_attachment_id = _file_the_upload(
+            db, data=data, filename=source_ref, content_type=content_type, actor_id=actor_id
+        )
+        if filed_attachment_id:
+            for shipment in unfiled_shipments:
+                shipment.attachment_id = filed_attachment_id
+            db.commit()
 
     summary = _summarise(db, parsed, source_ref=source_ref)
     summary.update(

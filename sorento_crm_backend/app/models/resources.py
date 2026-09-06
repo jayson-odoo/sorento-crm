@@ -82,7 +82,19 @@ class AttachmentType(Base):
     # this later touches no existing row (R1); it only changes what the NEXT
     # upload of this type does.
     is_shared = Column(Boolean, default=False, nullable=False, server_default="false")
+    # The folder an upload of this type files into by default (R4, purchasing
+    # consolidation batch 6 Sep 2026). NULL = no default, same as today; the type form
+    # and the generic Create Attachment dialog both let the user pick another one anyway.
+    # SET NULL on the folder's own delete, never CASCADE - deleting a folder must not
+    # take a type definition down with it.
+    default_directory_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("attachment_directories.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    default_directory = relationship("AttachmentDirectory", foreign_keys=[default_directory_id])
 
     # Two FK paths now link these tables: attachments.attachment_type_id (a file
     # OF this type) and attachment_types.certification_logo_attachment_id (this

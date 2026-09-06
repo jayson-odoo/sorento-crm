@@ -119,17 +119,21 @@ const existingSpos = () => [
 
 /**
  * R1 (`PLAN-scm-spo-planner-feedback-3sep.md`) - a container can carry MANY SPOs. The
- * Created SPOs grid (AC-H6) lists every one, each a link to its own PO detail (which
- * carries the Plan card, AC-H7), Delete per row scoped to that ONE SPO, and the remainder
- * planner renders below it rather than being replaced by it.
+ * Created SPOs grid (AC-H6) lists every one, each a link to its own SPO allocation view
+ * (R22, purchasing consolidation batch 6 Sep 2026 - the SPO document, never the PO), Delete
+ * per row scoped to that ONE SPO, and the remainder planner renders below it rather than
+ * being replaced by it.
  */
 describe('SpoPlannerTable - Created SPOs grid (R1)', () => {
-  it('lists every SPO this shipment has made, each a link to its own PO detail', async () => {
+  it('lists every SPO this shipment has made, each a link to its own SPO allocation view', async () => {
     state.suggestion = suggestion({ existing_spos: existingSpos() });
     renderTable();
 
     const link = await screen.findByRole('link', { name: 'CRM-SPO-0001' });
-    expect(link).toHaveAttribute('href', '/scm/purchase-orders/po-1');
+    expect(link).toHaveAttribute(
+      'href',
+      '/procurement-management/spo-allocations/CRM-SPO-0001',
+    );
     expect(screen.getByText('Kailu')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /download worksheet/i })).toBeInTheDocument();
     // F2 (review round): 17:30 UTC on the 30th is already 31 Aug in Malaysia (UTC+8) -

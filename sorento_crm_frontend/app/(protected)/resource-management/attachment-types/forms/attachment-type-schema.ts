@@ -44,6 +44,9 @@ export const AttachmentTypeSchema = z.object({
   // An upload of this type is written with company_id = NULL (visible to every
   // company). Flipping this later never touches an existing row.
   is_shared: z.boolean().optional(),
+  // Folder an upload of this type files into by default (R4). Null = no default,
+  // same as today; the upload dialogs still let the user pick another one.
+  default_directory_id: z.string().nullable().optional(),
 });
 
 export type AttachmentTypeSchemaType = z.infer<typeof AttachmentTypeSchema>;
