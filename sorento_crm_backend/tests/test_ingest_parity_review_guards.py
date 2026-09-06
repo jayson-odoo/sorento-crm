@@ -41,11 +41,14 @@ MARKER = "ZZTIPG"
 # ============================================================== B1 ==========
 class TestB1DroppedLineLeavesItsPersistedCounterpartAlone:
     """A line dropped for an unresolvable product must not cost the DOCUMENT's
-    other, unrelated, already-persisted line: `_apply` only counts `dropped`,
-    it never excludes that line's own `source_ref` from `_sync_lines`'
-    leftover sweep - so a persisted line whose ONLY fault is "this push
-    dropped a different line" is swept as a leftover (cancelled or deleted)
-    exactly as if it had genuinely vanished from the document."""
+    other, unrelated, already-persisted line: `_apply` used to only count
+    `dropped` and never exclude that line's own `source_ref` from
+    `_sync_lines`' leftover sweep - so a persisted line whose ONLY fault was
+    "this push dropped a different line" got swept as a leftover (cancelled
+    or deleted) exactly as if it had genuinely vanished from the document.
+    Fixed (B1, review re-check 2026-09-06): `_sync_lines`/`_adopt_lines` now
+    track dropped lines and reserve their would-be counterpart from the
+    leftover sweep instead."""
 
     def test_by_ref_repush_with_one_line_now_unresolvable_leaves_both_persisted_lines(
         self, env
@@ -182,7 +185,7 @@ class TestB4OrderInquiryConflictRecordedOnBothPaths:
         assert str(rows[0]["previous_warehouse_id"]) == str(old_wh)
         assert str(rows[0]["new_warehouse_id"]) == str(new_wh)
 
-    def test_refless_adoption_path_does_not_yet_record_the_conflict(self, env):
+    def test_refless_adoption_path_records_the_conflict(self, env):
         from app.models.order import SalesOrder, SalesOrderLine
 
         warehouse_a_id = env.refs.resolve(entity_type="warehouses", source_ref=env.warehouse_ref)

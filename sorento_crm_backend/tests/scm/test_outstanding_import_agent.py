@@ -299,7 +299,11 @@ def test_an_agent_with_no_class_lands_unclassified_and_names_the_document(db, se
     applied = svc.apply(db, _upload(seeded, seeded.project_so, _unknown_debtor(), code), SO)
 
     assert preview["ok"], "an unclassifiable document must not block the confirm screen"
-    assert preview["unclassified_documents"] == [seeded.project_so]
+    # S1 (review re-check, 2026-09-06): preview now reports the same shape apply
+    # does (count + capped numbers), not the raw list - was a silent preview vs
+    # apply contract mismatch the FE had to special-case.
+    assert preview["unclassified_documents"] == 1, preview
+    assert preview["unclassified_documents_numbers"] == [seeded.project_so], preview
     assert applied["ok"], applied
     assert applied["unclassified_documents"] == 1, applied
     assert applied["unclassified_documents_numbers"] == [seeded.project_so], applied

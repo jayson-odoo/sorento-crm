@@ -36,20 +36,19 @@ _DISCONTINUED_TRUE = {"CHECKED", "T", "TRUE", "1", "Y", "YES"}
 
 
 def derivation_text(name: Optional[str], description: Optional[str]) -> str:
-    """D2/D4's shared source text for `is_discontinued`/`parse_dimensions`.
+    """D2/D4's source text for `is_discontinued`/`parse_dimensions` on the
+    MANUAL create/edit path only: `description` wins when non-blank, `name`
+    is the fallback for a user who typed a discontinued/dimensioned name
+    (`"**** Old Model"`) with no description.
 
-    Live finding, 2026-09-06: the ESB maps AutoCount's `Item.Description`
-    onto `name` (`products.product_name`) and sends no `description` at
-    all, while the xlsx import stores the same AutoCount text in
-    `description` (`product_name` is the item code there instead) - two
-    channels deriving `is_discontinued`/dimensions from two different
-    columns for the identical source text. `description` wins when it is
-    non-blank (the xlsx import's shape, and the shape a future ESB mapping
-    fix would produce); `name` is the fallback so the ESB's current
-    mapping still derives correctly. Every caller of `is_discontinued`/
-    `parse_dimensions` - manual create/update, the xlsx import, the ESB
-    insert AND update path - feeds this, never the raw `description`
-    column directly.
+    D24 (captain 2026-09-06) settled the column convention for the other two
+    channels - `product_name` is ALWAYS the AutoCount item code and
+    `description` ALWAYS holds the AutoCount Description text, on both the
+    xlsx import and the ESB push (`master_ingest_service._product_columns`
+    forces this on every push) - so those two read `description` directly
+    and never call this. Kept here, not inlined into `product_service.py`,
+    because a manually typed name is the one legitimate shape left where the
+    text can still land in either column.
     """
     return description if description else (name or "")
 
@@ -211,15 +210,20 @@ def resolve_default_uom(db: Session, company_id: Optional[str], settings: Any = 
         # company (and is not a shared/global row) is treated as no default
         # at all, falling through to the same `ensure_reference`/`EA` path a
         # blank setting already takes.
-        valid = (
-            db.query(UnitOfMeasure.id)
-            .filter(
-                UnitOfMeasure.id == configured,
-                or_(UnitOfMeasure.company_id == company_id, UnitOfMeasure.company_id.is_(None)),
+        # `company_id=None` is the manual-service caller convention (same as
+        # `master_rules.resolve_master_by_code`): no anchor of its own, so no
+        # EXPLICIT company filter - the request's ambient `company_scope`
+        # already narrows the query through `do_orm_execute`. The ESB passes
+        # its anchor explicitly because a batch may run two companies through
+        # one session. Filtering on `company_id == None` here compiled to
+        # `IS NULL` and rejected every company-owned configured unit on the
+        # manual/xlsx path (test_default_uom_setting caught it).
+        query = db.query(UnitOfMeasure.id).filter(UnitOfMeasure.id == configured)
+        if company_id is not None:
+            query = query.filter(
+                or_(UnitOfMeasure.company_id == company_id, UnitOfMeasure.company_id.is_(None))
             )
-            .first()
-        )
-        if valid:
+        if query.first():
             return configured
     uom_id, _created = ensure_reference(db, UnitOfMeasure, DEFAULT_UOM_CODE, company_id)
     return uom_id

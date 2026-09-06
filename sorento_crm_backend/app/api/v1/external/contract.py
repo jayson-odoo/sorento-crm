@@ -61,6 +61,14 @@ FIELDS_ADDED: dict[str, list[str]] = {
     "shipping_orders": ["container_number"],
 }
 
+# D24 (captain 2026-09-06): per-entity notes on a field's meaning that
+# `fields_added`'s bare name list cannot carry - `name` is transitional on
+# `products` specifically, so this stays a one-entry dict rather than a new
+# per-field schema nothing else needs yet.
+FIELD_NOTES: dict[str, str] = {
+    "products": "name is transitional, maps to description when description is absent",
+}
+
 # D15 end state (AC-P0-4): these now FAIL validation (extra=forbid), never
 # accepted-and-warned - see `deprecated_field` in `WARNINGS` below, which
 # stays in the vocabulary as the value a pre-2.1 integration may still be
@@ -120,6 +128,7 @@ def get_contract():
         "version": CONTRACT_VERSION,
         "entities": sorted(SUPPORTED_ENTITIES),
         "fields_added": FIELDS_ADDED,
+        "field_notes": FIELD_NOTES,
         "fields_removed": FIELDS_REMOVED,
         "status_optional": STATUS_OPTIONAL,
         # D14: absent-vs-null holds across every master, not per-entity - one

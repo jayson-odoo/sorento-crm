@@ -266,3 +266,80 @@ def test_the_inquiry_sheet_tests_the_same_way(scm_app):
     assert set(body) >= {"valid", "errors", "warnings", "summary"}
     assert body["valid"] is True
     assert body["summary"]["total_rows"] >= 1
+
+
+# --------------------------------------------------------------------------- #
+# order inquiry / ESB warehouse conflicts (D22, migration 476) - read route
+# --------------------------------------------------------------------------- #
+
+def test_order_inquiry_conflicts_reports_the_so_number_and_warehouse_codes(scm_app):
+    """BL-060: `OrderInquiryConflict` had a writer since D22 landed but no reader - a row
+    nobody could ever see. This is the read route that closes that gap."""
+    from app.models.company import Company
+    from app.models.inventory import Warehouse
+    from app.models.order import OrderInquiryConflict, SalesOrder, SalesOrderLine
+
+    app, db, gcu, gcuk = scm_app
+    scope = as_company_user(app, db, gcu, gcuk)
+    company_id = next(iter(scope))
+
+    old_wh = Warehouse(
+        id=str(uuid.uuid4()), warehouse_code=f"{MARKER}-WOLD-{uuid.uuid4().hex[:6]}".upper(),
+        warehouse_name="Old", is_active=True, company_id=company_id,
+    )
+    new_wh = Warehouse(
+        id=str(uuid.uuid4()), warehouse_code=f"{MARKER}-WNEW-{uuid.uuid4().hex[:6]}".upper(),
+        warehouse_name="New", is_active=True, company_id=company_id,
+    )
+    cat = ProductCategory(
+        id=str(uuid.uuid4()), category_code=f"{MARKER}-C-{uuid.uuid4().hex[:6]}",
+        category_name=f"{MARKER} cat", company_id=company_id,
+    )
+    uom = UnitOfMeasure(
+        id=str(uuid.uuid4()), uom_name=f"{MARKER} unit",
+        uom_code=f"{MARKER[:4]}{uuid.uuid4().hex[:6]}", company_id=company_id,
+    )
+    db.add_all([old_wh, new_wh, cat, uom])
+    db.flush()
+    product = Product(
+        id=str(uuid.uuid4()), product_code=f"{MARKER}-P-{uuid.uuid4().hex[:6]}",
+        product_name=f"{MARKER} product", category_id=cat.id, base_uom_id=uom.id,
+        list_price=0, is_active=True, is_discontinued=False, company_id=company_id,
+    )
+    db.add(product)
+    db.flush()
+
+    so_number = f"{MARKER}-SO-{uuid.uuid4().hex[:8]}"
+    so = SalesOrder(id=str(uuid.uuid4()), so_number=so_number, status="open", company_id=company_id)
+    db.add(so)
+    db.flush()
+    line = SalesOrderLine(
+        id=str(uuid.uuid4()), sales_order_id=so.id, product_id=product.id,
+        warehouse_id=new_wh.id, qty_ordered=1, qty_delivered=0, line_status="open",
+        company_id=company_id,
+    )
+    db.add(line)
+    db.flush()
+    db.add(OrderInquiryConflict(
+        id=str(uuid.uuid4()), sales_order_id=so.id, sales_order_line_id=line.id,
+        previous_warehouse_id=old_wh.id, new_warehouse_id=new_wh.id,
+        source="autocount_esb", company_id=company_id,
+    ))
+    db.flush()
+
+    r = TestClient(app).get("/api/v1/scm/order-inquiry/conflicts")
+
+    assert r.status_code == 200, r.text
+    body = r.json()
+    row = next((x for x in body["items"] if x["so_number"] == so_number), None)
+    assert row is not None, body["items"]
+    assert row["previous_warehouse_code"] == old_wh.warehouse_code
+    assert row["new_warehouse_code"] == new_wh.warehouse_code
+    assert row["source"] == "autocount_esb"
+
+
+def test_order_inquiry_conflicts_requires_the_operator_permission(scm_app):
+    app, db, gcu, gcuk = scm_app
+    as_user(app, gcu, gcuk, seed_user(db, None))  # no role, no grants
+
+    assert TestClient(app).get("/api/v1/scm/order-inquiry/conflicts").status_code == 403

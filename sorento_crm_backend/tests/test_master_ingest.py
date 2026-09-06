@@ -505,7 +505,7 @@ class TestCategoriesAndUnitsOfMeasure:
         assert result.created == 1
         row = db.execute(
             text(
-                "SELECT p.product_name, c.category_code, u.uom_code "
+                "SELECT p.product_name, p.description, c.category_code, u.uom_code "
                 "FROM products p "
                 "JOIN product_categories c ON c.id = p.category_id "
                 "JOIN units_of_measure u ON u.id = p.base_uom_id "
@@ -513,8 +513,9 @@ class TestCategoriesAndUnitsOfMeasure:
             )
         ).first()
         # Resolved to the ids of the records just synced, not to some other
-        # category that happened to share a name.
-        assert row == ("Bolt", "ZZT-CAT-1", "ZZT-UOM-1")
+        # category that happened to share a name. D24: `product_name` is the
+        # item code, the payload's `name` text lands in `description`.
+        assert row == ("ZZT-PRD-1", "Bolt", "ZZT-CAT-1", "ZZT-UOM-1")
 
     def test_the_category_is_matched_by_code_not_by_name(self, db, svc):
         # The bug this pins: the lookup keyed on category_name, so a payload

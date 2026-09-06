@@ -126,31 +126,21 @@ function spoChanges(preview: OutstandingPreview): number {
  * workbook twice to say the same thing.
  *
  * ERRORS are what makes the FILE unusable: a header missing a required column, so nothing in
- * it can import at all. Nothing else qualifies.
+ * it can import at all. Nothing else qualifies - an order nothing can classify used to be an
+ * error too (QP1), but D23 (captain 2026-09-06, AC-P2-8) reversed that: it lands with no
+ * demand class instead, so it is a WARNING now, worded as what will actually happen.
  *
  * WARNINGS are the rows the import merely SKIPS, the file-level notices the backend states
- * outright (`warnings`), plus the things that cost the file nothing.
+ * outright (`warnings`), the orders that will land unclassified, the master rows this upload
+ * would back-create, plus the things that cost the file nothing.
  * A row with no item code, or one naming a warehouse we do not hold, does not stop the other
  * 4,346 rows landing - reporting it in red said "this upload failed" about a file that
  * imports perfectly, and the operator's only honest reaction was to stop reading the panel.
  * The count is still there, and it is the number that decides whether to fix the file first.
  */
 export function verdictFromPreview(preview: OutstandingPreview): UploadTestResult {
-  const unclassified = preview.unclassified_documents ?? [];
   const errors = [
     ...preview.missing_columns.map((column) => `Missing required column: ${column}`),
-    // QP1: an order nothing can classify refuses the FILE, so it is an ERROR and not a
-    // skipped row - the rest of the book does not go in without it. The per-row warnings
-    // below name each order and its debtor; this is the one line that says why the upload
-    // is blocked at all.
-    ...(unclassified.length
-      ? [
-          `${unclassified.length} sales order${unclassified.length === 1 ? '' : 's'} ` +
-            'carry no demand class, so nothing will be imported: ' +
-            `${unclassified.slice(0, 10).join(', ')}` +
-            `${unclassified.length > 10 ? ` and ${unclassified.length - 10} more` : ''}.`,
-        ]
-      : []),
   ];
   const skipped = [
     ...preview.row_problems.map(
@@ -160,6 +150,12 @@ export function verdictFromPreview(preview: OutstandingPreview): UploadTestResul
       (i) => `Row ${i.row_number}: ${i.field}: ${i.reason}${i.value ? ` (${i.value})` : ''}`,
     ),
   ];
+  const unclassifiedCount = preview.unclassified_documents ?? 0;
+  const unclassifiedNumbers = preview.unclassified_documents_numbers ?? [];
+  const suppliersCreated = preview.suppliers_created ?? 0;
+  const suppliersCreatedCodes = preview.suppliers_created_codes ?? [];
+  const customersCreated = preview.customers_created ?? 0;
+  const customersCreatedCodes = preview.customers_created_codes ?? [];
   const warnings = [
     ...skipped,
     ...(preview.unmapped_agents ?? []).map((agent) => `Agent ${agent.code}: ${agent.reason}`),
@@ -168,6 +164,29 @@ export function verdictFromPreview(preview: OutstandingPreview): UploadTestResul
     // read, rows belonging to the other document family. They were computed and never
     // printed, so the operator learnt about them only from the job afterwards.
     ...(preview.warnings ?? []),
+    // D23: these orders land, they just carry no demand class - a warning worded as what
+    // will actually happen, not as a refusal that no longer happens.
+    ...(unclassifiedCount
+      ? [
+          `${unclassifiedCount} sales order${unclassifiedCount === 1 ? '' : 's'} ` +
+            `carry no demand class and will land unclassified: ${unclassifiedNumbers.join(', ')}` +
+            `${unclassifiedCount > unclassifiedNumbers.length ? ` and ${unclassifiedCount - unclassifiedNumbers.length} more` : ''}.`,
+        ]
+      : []),
+    ...(suppliersCreated
+      ? [
+          `${suppliersCreated} new supplier${suppliersCreated === 1 ? '' : 's'} will be created: ` +
+            `${suppliersCreatedCodes.join(', ')}` +
+            `${suppliersCreated > suppliersCreatedCodes.length ? ` and ${suppliersCreated - suppliersCreatedCodes.length} more` : ''}.`,
+        ]
+      : []),
+    ...(customersCreated
+      ? [
+          `${customersCreated} new customer${customersCreated === 1 ? '' : 's'} will be created: ` +
+            `${customersCreatedCodes.join(', ')}` +
+            `${customersCreated > customersCreatedCodes.length ? ` and ${customersCreated - customersCreatedCodes.length} more` : ''}.`,
+        ]
+      : []),
   ];
   const failedRows = preview.row_problems.length + preview.resolution_issues.length;
   // Rows this channel leaves out WHOLESALE - today only the shipping orders in a purchase

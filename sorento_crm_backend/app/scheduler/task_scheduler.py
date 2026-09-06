@@ -463,6 +463,21 @@ def _ai_trace_sweep_tick():
         logger.error("AI trace sweep tick failed: %s", e, exc_info=True)
 
 
+def _spo_container_relink_sweep_tick():
+    """APScheduler tick: relink SPO allocations whose shipment arrived after
+    they did (S5, review re-check, 2026-09-06). Owns its own DB session;
+    best-effort and never raises."""
+    try:
+        from app.services.rules.shipping_order_rules import nightly_relink_all_containers
+
+        with scheduler_session() as db:
+            relinked = nightly_relink_all_containers(db)
+            if relinked:
+                db.commit()
+    except Exception as e:
+        logger.error("SPO container relink sweep tick failed: %s", e, exc_info=True)
+
+
 def _chatbot_delegated_sweep_tick():
     """APScheduler tick: fail turns an n8n lane took over and never finished (AC-260).
     Owns its own DB session; the sweep is best-effort and never raises."""
@@ -599,10 +614,23 @@ def start_scheduler():
         replace_existing=True,
     )
 
+    # SPO container relink sweep (S5, review re-check, 2026-09-06): daily. An
+    # allocation whose shipment shows up AFTER the allocation was pushed
+    # never otherwise gets linked - `relink_allocations_for_container`'s own
+    # docstring already promised this sweep; this is where it runs.
+    scheduler.add_job(
+        _spo_container_relink_sweep_tick,
+        trigger=IntervalTrigger(hours=24),
+        id="spo_container_relink_sweep",
+        name="SPO container relink sweep",
+        replace_existing=True,
+    )
+
     scheduler.start()
     logger.info(
         "Scheduler started: scheduled tasks heartbeat (every 10s), email outbox drainer "
-        "(every %ds), AI trace sweep (daily), chatbot delegated sweep (every minute)",
+        "(every %ds), AI trace sweep (daily), chatbot delegated sweep (every minute), "
+        "SPO container relink sweep (daily)",
         max(1, drain_seconds),
     )
     return scheduler

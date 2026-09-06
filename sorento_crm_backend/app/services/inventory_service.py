@@ -204,15 +204,13 @@ class WarehouseService:
             if not new_code:
                 raise handle_validation_error("Warehouse code cannot be empty.")
             if new_code != (warehouse.warehouse_code or "").strip():
-                taken = (
-                    self.db.query(Warehouse)
-                    .filter(
-                        Warehouse.warehouse_code == new_code,
-                        Warehouse.id != warehouse_id,
-                    )
-                    .first()
-                )
-                if taken:
+                # S3 (review re-check, 2026-09-06): case/whitespace-insensitive
+                # (D17), same as `create_warehouse` - an EXACT-match query let a
+                # rename to a case variant of another warehouse's code through
+                # unrefused, the same conflict-vs-adopt gap security should-fix
+                # 4 closed on create.
+                conflict_id = resolve_master_by_code(self.db, Warehouse, new_code)
+                if conflict_id and conflict_id != warehouse_id:
                     raise handle_conflict("Warehouse code already exists.")
             update_data["warehouse_code"] = new_code
 

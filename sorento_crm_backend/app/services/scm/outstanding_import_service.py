@@ -307,6 +307,12 @@ class PreviewResult:
     # refused on this (`WARN_UNCLASSIFIED_DEMAND`). Named so a re-upload once the customer's
     # market segment or the agent's class is fixed can tell which orders still need it.
     unclassified_documents: list[str] = field(default_factory=list)
+    # AC-P2-1 (guide-writer check, 2026-09-06): the codes `apply`'s back-create block
+    # WOULD create - reported (never created) on preview, same shape as `apply`'s own
+    # `suppliers_created_codes`/`customers_created_codes`. Whichever party this
+    # doc_type does not bind stays empty (an SO upload never back-creates a supplier).
+    suppliers_created: list[str] = field(default_factory=list)
+    customers_created: list[str] = field(default_factory=list)
     samples: dict = field(default_factory=dict)
     # Documents this upload would lift to the live status. Same key as `apply`'s response, so
     # the confirm screen shows the side effect BEFORE it happens and the commit reports the
@@ -361,7 +367,17 @@ class PreviewResult:
             "missing_columns": self.missing_columns,
             "row_problems": [asdict(p) for p in self.row_problems],
             "resolution_issues": [asdict(i) for i in self.resolution_issues],
-            "unclassified_documents": list(self.unclassified_documents),
+            # S1 (review re-check, 2026-09-06): count + capped numbers, same
+            # shape `apply`'s response uses - a preview that returned the
+            # full list while apply returned an int was a silent contract
+            # mismatch the FE had to paper over.
+            "unclassified_documents": len(self.unclassified_documents),
+            "unclassified_documents_numbers": list(self.unclassified_documents)[:CREATED_SUPPLIERS_LISTED],
+            # AC-P2-1: same shape as `apply`'s response - count + capped codes.
+            "suppliers_created": len(self.suppliers_created),
+            "suppliers_created_codes": self.suppliers_created[:CREATED_SUPPLIERS_LISTED],
+            "customers_created": len(self.customers_created),
+            "customers_created_codes": self.customers_created[:CREATED_SUPPLIERS_LISTED],
             "samples": self.samples,
             "activated_documents": list(self.activated_documents),
             "unmapped_agents": [asdict(a) for a in self.unmapped_agents],
@@ -1611,6 +1627,49 @@ def _spo_preview(db: Session, read: ReadResult) -> _SpoWrite:
     return out
 
 
+def _would_create_parties(db: Session, resolved: _Resolved, bind: _Binding) -> tuple[list[str], list[str]]:
+    """AC-P2-1 (guide-writer check, 2026-09-06): which supplier/customer codes
+    `apply`'s back-create block (below) WOULD create, without creating any of
+    them - the same existence checks that block runs (code match, then the
+    PO-book cleaned-name fallback), read-only. Returns
+    `(supplier_would_create_codes, customer_would_create_codes)`; whichever
+    one `bind.party` is not stays empty (an SO upload's party is `Customer`,
+    a PO/GRN upload's is `Supplier` - never both in the same call).
+    """
+    supplier_codes: list[str] = []
+    customer_codes: list[str] = []
+    if not bind.party_back_create:
+        return supplier_codes, customer_codes
+    target = customer_codes if bind.party is Customer else supplier_codes
+    if resolved.party_raw_code_by_code:
+        code_col = getattr(bind.party, bind.party_code_col)
+        for code in sorted(resolved.party_raw_code_by_code):
+            existing = db.query(bind.party).filter(func.upper(code_col) == code).one_or_none()
+            if existing is not None:
+                continue
+            raw_code = resolved.party_raw_code_by_code.get(code, code)
+            if bind.party is Customer and not resolved.party_label_by_code.get(code):
+                # D8: a customer needs code AND name - a code with no name is
+                # left unresolved, never created, on this path either.
+                continue
+            target.append(raw_code)
+    # PO-book NAME fallback: supplier only (D8 requires code AND name for a
+    # customer, so there is no name-alone creation path to preview for one).
+    if bind.party is not Customer and resolved.party_cleaned_name_by_key:
+        name_col = getattr(bind.party, bind.party_name_col)
+        for name_key in sorted(resolved.party_cleaned_name_by_key):
+            existing = (
+                db.query(bind.party)
+                .filter(func.upper(name_col) == name_key)
+                .order_by(bind.party.id)
+                .first()
+            )
+            if existing is not None:
+                continue
+            target.append(resolved.party_cleaned_name_by_key[name_key])
+    return supplier_codes, customer_codes
+
+
 def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
     """What this upload would change. Writes nothing."""
     plan = _build(db, file_data, doc_type)
@@ -1624,6 +1683,10 @@ def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
         )
     row_problems = read.problems + plan.problems
     spo = _spo_preview(db, read) if doc_type == PO else _SpoWrite()
+    bind = _binding(doc_type)
+    supplier_would_create, customer_would_create = (
+        _would_create_parties(db, plan.resolved, bind) if plan.resolved is not None else ([], [])
+    )
     return PreviewResult(
         doc_type=doc_type,
         scope_documents=diff.scope_documents,
@@ -1637,6 +1700,8 @@ def preview(db: Session, file_data: bytes, doc_type: str = SO) -> PreviewResult:
         samples=_samples(diff),
         activated_documents=plan.activate,
         unmapped_agents=plan.agent_notices,
+        suppliers_created=supplier_would_create,
+        customers_created=customer_would_create,
         warnings=_unreadable_date_warning(row_problems)
         + _shipping_order_warning(read, spo),
         shipping_order_rows=len(read.shipping_order_row_numbers),

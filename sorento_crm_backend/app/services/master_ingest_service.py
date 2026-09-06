@@ -455,8 +455,20 @@ def _lookup_id(
 def _product_columns(
     payload: Any, db: Session, company_id: str, warnings: list[str]
 ) -> dict[str, Any]:
-    columns: dict[str, Any] = {"product_code": payload.code, "product_name": payload.name}
-    _present(payload, columns, "description", "is_active", "remark")
+    # D24 (captain 2026-09-06): `product_name` is ALWAYS the AutoCount item
+    # code, matching the xlsx import's own convention (product_name = Item
+    # Code); `description` holds the AutoCount Description text - the
+    # payload's own `description` when it sends one, else `name`
+    # (transitional: the ESB currently maps Item.Description onto `name`).
+    # Both are forced on EVERY push, create and update, so an existing row
+    # loaded under the old wrong mapping (product_name = the text,
+    # description empty) is corrected the very next time it is pushed.
+    columns: dict[str, Any] = {
+        "product_code": payload.code,
+        "product_name": payload.code,
+        "description": payload.description if payload.description else payload.name,
+    }
+    _present(payload, columns, "is_active", "remark")
 
     # D3: an unknown category/uom/brand on a product push is CREATED (code =
     # name = the raw value), never retryable any more - `ensure_reference`
@@ -836,68 +848,53 @@ class MasterIngestService:
     def _finalize_product_derived(
         self, payload: Any, columns: dict[str, Any], existing_row_id: Optional[str]
     ) -> None:
-        """D2/D4: `is_discontinued` and `dimensions_*` are both derived from
-        the same EFFECTIVE text - `product_rules.derivation_text`'s
-        description-if-non-blank-else-name - on every push. "Effective"
-        means the incoming name/description if this push sends one, else
-        whatever the row already holds (D14: an omitted field is untouched,
-        and what it implies must not change underneath it).
-
-        Live finding, 2026-09-06: the ESB maps AutoCount's `Item.Description`
-        onto `name` and sends no `description` at all, so deriving from
-        `description` alone (the xlsx import's shape - AutoCount's text
-        lands in `description` there instead, `product_name` is the item
-        code) silently produced `is_discontinued=False` and no dimensions on
-        all 11,784 ESB products re-offered, though 2,871 names started with
-        `****` and 2,282 carried an NxN pattern.
+        """D2/D4/D24: `is_discontinued` and `dimensions_*` are both derived
+        from `description` ONLY, never `name` - D24 (captain 2026-09-06)
+        makes `_product_columns` force `description` to the AutoCount
+        Description text on every push (the payload's own `description`
+        when it sends one, else `name`, transitionally), so both channels'
+        rules can read the one column the xlsx import always used.
 
         An explicit `is_discontinued` flag still wins over the derived one;
         dimensions have no equivalent explicit-value override, so a parsed
         value is written whenever it differs from what the row already
-        holds - which is also what keeps an unrelated push (price-only, say)
-        from re-deriving a no-op back onto a manually corrected dimension:
-        the "differs" check is against the CURRENT stored value, not against
-        "did this push touch it". True->False resets the notify watermark,
-        same rule `product_service.update_product` applies manually.
+        holds - which keeps an unrelated push (price-only, say) from
+        re-deriving a no-op back onto a manually corrected dimension: the
+        "differs" check is against the CURRENT stored value. True->False
+        resets the notify watermark, same rule `product_service.update_product`
+        applies manually.
         """
-        current_name = None
-        current_description = None
         current_discontinued = None
         current_length = current_width = current_height = None
         if existing_row_id is not None:
             row = self.db.execute(
                 text(
-                    "SELECT product_name, description, is_discontinued, "
-                    "dimensions_length, dimensions_width, dimensions_height "
-                    "FROM products WHERE id = :id"
+                    "SELECT is_discontinued, dimensions_length, dimensions_width, "
+                    "dimensions_height FROM products WHERE id = :id"
                 ),
                 {"id": existing_row_id},
             ).first()
             if row is not None:
                 (
-                    current_name,
-                    current_description,
                     current_discontinued,
                     current_length,
                     current_width,
                     current_height,
                 ) = row
 
-        effective_name = columns.get("product_name", current_name)
-        effective_description = columns.get("description", current_description)
-        text_for_derivation = product_rules.derivation_text(effective_name, effective_description)
+        description = columns.get("description")
 
         if "is_discontinued" in payload.model_fields_set:
             new_flag = bool(payload.is_discontinued)
         else:
-            new_flag = product_rules.is_discontinued(None, text_for_derivation)
+            new_flag = product_rules.is_discontinued(None, description)
         columns["is_discontinued"] = new_flag
 
         if existing_row_id is not None and current_discontinued and not new_flag:
             columns["discontinued_notified_at"] = None
             columns["discontinued_notify_batch_id"] = None
 
-        length_mm, width_mm, height_mm = product_rules.parse_dimensions(text_for_derivation)
+        length_mm, width_mm, height_mm = product_rules.parse_dimensions(description)
         if length_mm is not None and length_mm != current_length:
             columns["dimensions_length"] = length_mm
         if width_mm is not None and width_mm != current_width:

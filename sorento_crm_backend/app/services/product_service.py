@@ -1146,37 +1146,22 @@ class ProductService:
     def _get_default_uom_id(self) -> str:
         """The unit a product takes when nobody states one.
 
-        The ADMIN'S setting first (``system_settings.default_uom_id``), because the
-        hardcoded answer was wrong: an older fallback took ``UnitOfMeasure.first()`` -
-        whatever row Postgres returned first, Liter on the Sorento data - and stamped 11,415
-        products with it. Correcting that by script means guessing what the admin can simply
-        state, so the setting is what it states and this reads it.
-
-        Failing that, EA, created if missing: deterministic, and what the rows actually mean
-        when the operator never asked for a UOM and the schema did. The FK on the setting is
-        ``ondelete="SET NULL"``, so a deleted unit puts the answer back to this fallback
-        rather than leaving it pointing at nothing.
+        S2 (review re-check, 2026-09-06): delegates to
+        `product_rules.resolve_default_uom`, the same body the ESB push
+        uses, instead of its own separate copy - which trusted
+        `system_settings.default_uom_id` cross-company (the setting is a
+        single company-agnostic row, LESSONS-LEARNT "system_settings
+        singleton", so it can name a UOM belonging to a different company
+        than this caller's), matched the EA fallback with a plain
+        `ilike("ea")` scan rather than the shared `ensure_reference`, and
+        committed mid-import instead of flushing - three ways this and the
+        ESB path could reach a different answer for the identical question.
         """
         settings = self._system_settings_row()
-        configured = getattr(settings, "default_uom_id", None) if settings else None
-        if configured:
-            return configured
-        uom = (
-            self.db.query(UnitOfMeasure)
-            .filter(UnitOfMeasure.uom_code.ilike("ea"))
-            .first()
-        )
-        if uom:
-            return uom.id
-        created = UnitOfMeasure(
-            id=str(uuid.uuid4()),
-            uom_code=self.DEFAULT_UOM_CODE,
-            uom_name=self.DEFAULT_UOM_NAME,
-            description=self.AUTO_CREATED_NOTE,
-        )
-        self.db.add(created)
-        self.db.commit()
-        return created.id
+        uom_id = product_rules.resolve_default_uom(self.db, company_id=None, settings=settings)
+        if uom_id is None:
+            raise AppException("No default unit of measure could be resolved.", status_code=500)
+        return uom_id
 
     def _resolve_category_id(self, item_group: Optional[str]) -> Optional[str]:
         """Resolve category by item_group (match category_code or category_name)."""
@@ -1623,13 +1608,12 @@ class ProductService:
                     )
                     continue
 
-                # Same derivation_text as the manual/ESB paths (fed the same
-                # text even though this channel already stores AutoCount's
-                # Description in `description`, not `name` - one shared rule,
-                # not a per-channel assumption about which column holds it).
-                text_for_derivation = product_rules.derivation_text(product_name, description)
-                parsed_l, parsed_w, parsed_h = parse_dimensions_from_description(text_for_derivation)
-                discontinued = is_discontinued_from_row(row, text_for_derivation)
+                # D24 (captain 2026-09-06): the xlsx import already stores the
+                # AutoCount Description text in `description` (`product_name`
+                # is the item code here) - reads `description` directly, same
+                # as `_finalize_product_derived` now does for the ESB.
+                parsed_l, parsed_w, parsed_h = parse_dimensions_from_description(description)
+                discontinued = is_discontinued_from_row(row, description)
 
                 # `None` = blank cell = clear it; a value (including 0) = set it. Only read
                 # when the file carries the column at all - otherwise both stay ABSENT and

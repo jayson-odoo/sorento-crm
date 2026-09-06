@@ -129,6 +129,32 @@ def relink_allocations_for_container(
     return len(rows)
 
 
+def nightly_relink_all_containers(db: Session) -> int:
+    """S5 (review re-check, 2026-09-06): the nightly sweep the docstring above
+    already promised, actually built. Finds every (company, container) pair
+    with at least one allocation still unlinked, and relinks it - a
+    shipment created AFTER its allocations were pushed never otherwise gets
+    picked up again. Per-pair, through the same company-scoped
+    `relink_allocations_for_container` every other caller uses, so a
+    container shared by two companies still cannot cross-link.
+    """
+    from app.models.procurement import SPOAllocation
+
+    pairs = (
+        db.query(SPOAllocation.company_id, SPOAllocation.container_number)
+        .filter(
+            SPOAllocation.inbound_shipment_id.is_(None),
+            SPOAllocation.container_number.isnot(None),
+        )
+        .distinct()
+        .all()
+    )
+    relinked = 0
+    for company_id, container in pairs:
+        relinked += relink_allocations_for_container(db, container, company_id=company_id)
+    return relinked
+
+
 def received_guard(
     allocation, new_allocated: int, new_received: Optional[int] = None
 ) -> str:

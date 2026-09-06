@@ -740,6 +740,11 @@ class TestAcP19BulkImportVsEsbParity:
     design (xlsx concatenates Desc 2 into description, the ESB will store it
     separately - PLAN 2.1); today `Product` has no `remark` column at all, so
     the exclusion is a no-op filter, kept for when S1 adds the column.
+
+    `product_name` is `code` on both channels (D24: the AutoCount item-code
+    convention) - `rows["name"]` is only a human label for the scenario, fed
+    as the ESB's `name` field, which D24 ignores here since `description` is
+    always sent explicitly alongside it.
     """
 
     def test_representative_product_rows_bulk_import_vs_esb_parity(self, db, company_b):
@@ -763,7 +768,7 @@ class TestAcP19BulkImportVsEsbParity:
         xlsx_rows = [
             {
                 "product_code": r["code"],
-                "product_name": r["name"],
+                "product_name": r["code"],  # D24: product_name is the item code, not the label
                 "description": r["description"],
                 "item_group": cat_code,
                 "uom": uom_code,
@@ -800,22 +805,22 @@ class TestAcP19BulkImportVsEsbParity:
             assert diff == {}, (r["code"], diff)
 
 
-class TestAcP20DerivationTextIsColumnAgnostic:
-    """Live finding, 2026-09-06: the ESB re-offered all 11,784 SRT products
-    with `is_discontinued=0` and no dimensions although 2,871 `product_name`
-    values started with `****` and 2,282 carried an NxN pattern. Cause: the
-    ESB maps AutoCount's `Item.Description` onto `name` and sends no
-    `description` at all, while `is_discontinued`/`parse_dimensions` read
-    `description` only - the xlsx import stores the same AutoCount text in
-    `description` instead (`product_name` is the item code there), so the two
-    channels derived from two different columns for identical source text.
+class TestAcP110ProductColumnConventionD24:
+    """AC-P1-10 (D24, captain ruling 2026-09-06, supersedes the earlier
+    derivation_text-in-master_ingest_service approach this class used to
+    test): `product_name` is ALWAYS the AutoCount item code on the ESB path,
+    matching the xlsx import's own convention; `description` holds the
+    AutoCount Description text - the payload's own `description` when it
+    sends one, else `name` (transitional, since the ESB currently maps
+    Item.Description onto `name`). Both are forced on every push, create AND
+    update, so an existing row loaded under the old wrong mapping
+    (`product_name` = the text, `description` empty) is corrected the next
+    time it is pushed. `is_discontinued`/dimensions now read `description`
+    only, on both channels - no more name-vs-description ambiguity.
 
-    `product_rules.derivation_text(name, description)` is now the single
-    source both derivations read - description if non-blank else name - fed
-    on every path. This class proves it on the ESB's actual shape (text in
-    `name`, `description` empty) on both create and a re-push update, and
-    proves the xlsx import (text in `description`) still lands the same
-    derived columns.
+    Live finding this closes: the ESB re-offered all 11,784 SRT products with
+    `is_discontinued=0` and no dimensions although 2,871 `product_name`
+    values started with `****` and 2,282 carried an NxN pattern.
     """
 
     def test_esb_product_with_text_only_in_name_derives_on_create(self, db):
@@ -840,20 +845,28 @@ class TestAcP20DerivationTextIsColumnAgnostic:
         assert result.created == 1, result.records[0].errors
         row = db.execute(
             text(
-                "SELECT is_discontinued, dimensions_length, dimensions_width, dimensions_height "
-                "FROM products WHERE product_code = :c"
+                "SELECT product_name, description, is_discontinued, dimensions_length, "
+                "dimensions_width, dimensions_height FROM products WHERE product_code = :c"
             ),
             {"c": code},
         ).first()
         assert row is not None
-        assert row[0] is True, "a **** prefix in name (no description) must still derive discontinued"
-        assert (row[1], row[2], row[3]) == (
+        assert row[0] == code, "product_name must be the item code, never the free text"
+        assert row[1] == "**** Cabinet 880x450x220MM", "description falls back to name when absent"
+        assert row[2] is True, "a **** prefix carried into description must still derive discontinued"
+        assert (row[3], row[4], row[5]) == (
             Decimal("880.00"),
             Decimal("450.00"),
             Decimal("220.00"),
-        ), "an NxNxN pattern in name (no description) must still parse dimensions"
+        ), "an NxNxN pattern carried into description must still parse dimensions"
 
-    def test_esb_product_with_text_only_in_name_derives_on_repush_update(self, db):
+    def test_esb_repush_corrects_an_existing_row_loaded_under_the_old_wrong_mapping(self, db):
+        """The gap D24 actually closes: a row already sitting in the DB from
+        BEFORE this fix, with the old wrong mapping (`product_name` holding
+        the free text, `description` empty) - the very next push must
+        correct both columns, not just the ones a description-only read
+        would have touched.
+        """
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         cat_code, uom_code = _code("P21CAT"), _code("P21UOM")
         svc = _esb(db, DEFAULT_COMPANY_ID)
@@ -861,17 +874,20 @@ class TestAcP20DerivationTextIsColumnAgnostic:
         svc.ingest("units_of_measure", [{"source_ref": f"DK-{uom_code}", "code": uom_code, "name": "Each"}])
         code = _code("P21PRD")
         ref = f"DK-{code}"
-        # First sync: a normal, non-discontinued name (matches the ESB's actual
-        # bulk re-offer shape - the field the coordinator's finding is about is
-        # always `name`, never `description`, on this channel).
         result = svc.ingest(
             "products",
             [{"source_ref": ref, "code": code, "name": "Cabinet", "category_code": cat_code, "uom_code": uom_code}],
         )
         assert result.created == 1, result.records[0].errors
+        # Simulate the pre-D24 state directly: product_name holding the free
+        # text, description left empty - exactly what the old `_product_columns`
+        # wrote for every one of the 11,784 SRT products.
+        db.execute(
+            text("UPDATE products SET product_name = :n, description = NULL WHERE product_code = :c"),
+            {"n": "Cabinet (old wrong mapping)", "c": code},
+        )
+        db.flush()
 
-        # Re-push (an "ESB re-offer"): the SAME product, now with a ****
-        # prefix and dimensions in `name`, description still never sent.
         result = svc.ingest(
             "products",
             [
@@ -887,24 +903,61 @@ class TestAcP20DerivationTextIsColumnAgnostic:
         assert result.updated == 1, result.records[0].errors
         row = db.execute(
             text(
-                "SELECT is_discontinued, dimensions_length, dimensions_width, dimensions_height "
+                "SELECT product_name, description, is_discontinued, dimensions_length, "
+                "dimensions_width, dimensions_height FROM products WHERE product_code = :c"
+            ),
+            {"c": code},
+        ).first()
+        assert row is not None
+        assert row[0] == code, "a re-push must correct product_name back to the item code"
+        assert row[1] == "**** Cabinet 1.2Mx0.6Mx2M", "a re-push must correct description from name"
+        assert row[2] is True
+        assert (row[3], row[4], row[5]) == (
+            Decimal("1200.00"),
+            Decimal("600.00"),
+            Decimal("2000.00"),
+        )
+
+    def test_esb_description_wins_over_name_when_both_are_sent(self, db):
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        cat_code, uom_code = _code("P23CAT"), _code("P23UOM")
+        svc = _esb(db, DEFAULT_COMPANY_ID)
+        svc.ingest("product_categories", [{"source_ref": f"DK-{cat_code}", "code": cat_code, "name": "Cat"}])
+        svc.ingest("units_of_measure", [{"source_ref": f"DK-{uom_code}", "code": uom_code, "name": "Each"}])
+        code = _code("P23PRD")
+        result = svc.ingest(
+            "products",
+            [
+                {
+                    "source_ref": f"DK-{code}",
+                    "code": code,
+                    "name": "**** Discontinued Name 1x1x1MM",
+                    "description": "Cabinet 880x450x220MM",
+                    "category_code": cat_code,
+                    "uom_code": uom_code,
+                }
+            ],
+        )
+        assert result.created == 1, result.records[0].errors
+        row = db.execute(
+            text(
+                "SELECT product_name, description, is_discontinued, dimensions_length "
                 "FROM products WHERE product_code = :c"
             ),
             {"c": code},
         ).first()
         assert row is not None
-        assert row[0] is True, "a re-push that adds a **** prefix to name must derive discontinued"
-        assert (row[1], row[2], row[3]) == (
-            Decimal("1200.00"),
-            Decimal("600.00"),
-            Decimal("2000.00"),
-        ), "a re-push that adds dimensions to name must parse and write them"
+        assert row[0] == code
+        assert row[1] == "Cabinet 880x450x220MM", "an explicit description ignores name for the text"
+        assert row[2] is False, "name's **** prefix must not leak in when description is sent and clean"
+        assert row[3] == Decimal("880.00"), "name's 1x1x1 pattern must not leak in over description's"
 
     def test_bulk_import_with_the_same_text_in_description_lands_identical_derived_columns(self, db, company_b):
-        """Same product, same source text, ESB shape (text in `name`) vs xlsx
-        shape (text in `description`) - both must derive the same
-        is_discontinued and dimensions_* (D4 parity), across two companies so
-        the two writers never collide on `product_code`.
+        """Same product, same source text, ESB shape (text in `name`, absent
+        `description`) vs xlsx shape (text already in `description`) - both
+        must derive the same is_discontinued and dimensions_* (D4 parity),
+        across two companies so the two writers never collide on
+        `product_code`.
         """
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         cat_code, uom_code = _code("P22CAT"), _code("P22UOM")
@@ -946,7 +999,7 @@ class TestAcP20DerivationTextIsColumnAgnostic:
             ],
         )
 
-        columns = ["is_discontinued", "dimensions_length", "dimensions_width", "dimensions_height"]
+        columns = ["description", "is_discontinued", "dimensions_length", "dimensions_width", "dimensions_height"]
         manual_row = _row_values(db, "products", "product_code", code, DEFAULT_COMPANY_ID, columns)
         esb_row = _row_values(db, "products", "product_code", code, company_b, columns)
         diff = {k: (manual_row.get(k), esb_row.get(k)) for k in columns if manual_row.get(k) != esb_row.get(k)}

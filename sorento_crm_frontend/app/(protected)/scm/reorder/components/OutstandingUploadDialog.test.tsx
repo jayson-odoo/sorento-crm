@@ -609,35 +609,67 @@ describe('verdictFromPreview', () => {
     ).toBe(false);
   });
 
-  it('is invalid, with an ERROR naming the orders, when the class cannot be decided', () => {
-    // QP1: an order nothing can classify refuses the whole FILE, so it is an error and not
-    // a skipped row - the rest of the book does not go in without it, and a yellow warning
-    // beside a blocked upload is the panel lying about what happens next.
+  it('is valid, with a WARNING naming the orders, when the class cannot be decided', () => {
+    // D23 (captain 2026-09-06, AC-P2-8) supersedes QP1: an order nothing can classify
+    // used to refuse the whole FILE (an error); it now lands with no demand class instead,
+    // so this is a warning worded as what will actually happen, and Confirm stays live.
     const result = verdictFromPreview(
       preview({
-        ok: false,
-        unclassified_documents: ['SO394803', 'SO411133'],
+        ok: true,
+        unclassified_documents: 2,
+        unclassified_documents_numbers: ['SO394803', 'SO411133'],
         row_problems: [
           { row_number: 4, reason: 'SO394803 states no order type', value: 'SO394803' },
         ],
       }),
     );
 
-    expect(result.valid).toBe(false);
-    expect(result.errors).toHaveLength(1);
-    expect(result.errors[0]).toContain('2 sales orders carry no demand class');
-    expect(result.errors[0]).toContain('SO394803, SO411133');
-    expect(result.summary?.would_apply).toBe(0);
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.warnings.some((w) => w.includes('2 sales orders carry no demand class'))).toBe(
+      true,
+    );
+    expect(result.warnings.some((w) => w.includes('SO394803, SO411133'))).toBe(true);
   });
 
-  it('names ten refused orders and counts the rest, rather than printing the whole book', () => {
-    const many = Array.from({ length: 13 }, (_, i) => `SO${i + 1}`);
+  it('names ten unclassified orders and counts the rest, rather than printing the whole book', () => {
+    // The backend itself caps `unclassified_documents_numbers` at 10 (`CREATED_SUPPLIERS_
+    // LISTED`) - the FE only ever receives up to 10 regardless of the real count, so the
+    // fixture mirrors that cap rather than sending all 13.
+    const capped = Array.from({ length: 10 }, (_, i) => `SO${i + 1}`);
 
-    const result = verdictFromPreview(preview({ ok: false, unclassified_documents: many }));
+    const result = verdictFromPreview(
+      preview({ ok: true, unclassified_documents: 13, unclassified_documents_numbers: capped }),
+    );
 
-    expect(result.errors[0]).toContain('SO1, SO2');
-    expect(result.errors[0]).toContain('and 3 more');
-    expect(result.errors[0]).not.toContain('SO13');
+    const line = result.warnings.find((w) => w.includes('carry no demand class'));
+    expect(line).toContain('SO1, SO2');
+    // The FE only receives whatever numbers the backend already capped (10 in practice) -
+    // "and N more" reads off the difference between the count and how many numbers arrived.
+    expect(line).toContain('and 3 more');
+    expect(line).not.toContain('SO13');
+  });
+
+  it('reports back-created suppliers and customers as warnings, not errors', () => {
+    const result = verdictFromPreview(
+      preview({
+        suppliers_created: 1,
+        suppliers_created_codes: ['SUP-NEW'],
+        customers_created: 2,
+        customers_created_codes: ['DEB-NEW1', 'DEB-NEW2'],
+      }),
+    );
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.warnings.some((w) => w.includes('1 new supplier will be created: SUP-NEW'))).toBe(
+      true,
+    );
+    expect(
+      result.warnings.some((w) =>
+        w.includes('2 new customers will be created: DEB-NEW1, DEB-NEW2'),
+      ),
+    ).toBe(true);
   });
 
   it('reports a skipped row as a warning, and counts it apart from the file-level notes', () => {

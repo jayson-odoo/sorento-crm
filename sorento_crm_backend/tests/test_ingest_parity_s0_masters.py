@@ -881,6 +881,11 @@ class TestAcP07ManualVsEsbParity:
         assert diff == {}, diff
 
     def test_product_manual_vs_esb_parity(self, db, company_b):
+        # D24 (captain 2026-09-06): `product_name` is the AutoCount item code
+        # and `description` the AutoCount text on BOTH channels. The ESB
+        # writer forces that on every push (`name` maps to `description`
+        # when no `description` is sent); the manual side here types the
+        # same convention, so the two rows can be compared column for column.
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         cat_code = _code("PARPCAT")
         uom_code = _code("PARPUOM")
@@ -894,8 +899,8 @@ class TestAcP07ManualVsEsbParity:
         manual = ProductService(db).create_product(
             ProductCreate(
                 product_code=code,
-                product_name="Parity Product",
-                description="A plain product",
+                product_name=code,
+                description="Parity Product",
                 category_id=category_a.id,
                 base_uom_id=uom_a.id,
                 list_price=Decimal("10.00"),
@@ -918,7 +923,6 @@ class TestAcP07ManualVsEsbParity:
                     "source_ref": f"DK-{code}",
                     "code": code,
                     "name": "Parity Product",
-                    "description": "A plain product",
                     "category_code": cat_code,
                     "uom_code": uom_code,
                     "list_price": "10.00",
@@ -929,7 +933,7 @@ class TestAcP07ManualVsEsbParity:
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         ProductService(db).update_product(
             manual.id,
-            ProductUpdate(product_name="Parity Product Updated", list_price=Decimal("12.50")),
+            ProductUpdate(description="Parity Product Updated", list_price=Decimal("12.50")),
             updated_by=None,
         )
         esb.ingest(
