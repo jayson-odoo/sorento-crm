@@ -35,6 +35,25 @@ _DISCONTINUED_PREFIX = "****"
 _DISCONTINUED_TRUE = {"CHECKED", "T", "TRUE", "1", "Y", "YES"}
 
 
+def derivation_text(name: Optional[str], description: Optional[str]) -> str:
+    """D2/D4's shared source text for `is_discontinued`/`parse_dimensions`.
+
+    Live finding, 2026-09-06: the ESB maps AutoCount's `Item.Description`
+    onto `name` (`products.product_name`) and sends no `description` at
+    all, while the xlsx import stores the same AutoCount text in
+    `description` (`product_name` is the item code there instead) - two
+    channels deriving `is_discontinued`/dimensions from two different
+    columns for the identical source text. `description` wins when it is
+    non-blank (the xlsx import's shape, and the shape a future ESB mapping
+    fix would produce); `name` is the fallback so the ESB's current
+    mapping still derives correctly. Every caller of `is_discontinued`/
+    `parse_dimensions` - manual create/update, the xlsx import, the ESB
+    insert AND update path - feeds this, never the raw `description`
+    column directly.
+    """
+    return description if description else (name or "")
+
+
 def is_discontinued(flag: Any, description: Optional[str]) -> bool:
     """D2: an explicit flag always wins; otherwise a description starting
     with `****` (after stripping leading whitespace) marks the product

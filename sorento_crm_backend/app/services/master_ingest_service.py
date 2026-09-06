@@ -497,17 +497,12 @@ def _product_columns(
     if "cost_price" in payload.model_fields_set:
         columns["cost_price"] = payload.cost_price
 
-    # D4: both channels write length_mm/width_mm/height_mm from the
-    # description - only when a (new) description is actually present on
-    # this push, using the same shared parser the xlsx import now calls.
-    if "description" in columns:
-        length_mm, width_mm, height_mm = product_rules.parse_dimensions(columns["description"])
-        if length_mm is not None:
-            columns["dimensions_length"] = length_mm
-        if width_mm is not None:
-            columns["dimensions_width"] = width_mm
-        if height_mm is not None:
-            columns["dimensions_height"] = height_mm
+    # D4: dimensions_* are derived in `_finalize_product_derived` instead of
+    # here, once the caller knows whether this is a create or an update and
+    # can read the row's stored name/description for the effective-text
+    # merge (live finding, 2026-09-06: gating on "description in columns"
+    # missed the ESB, which sends its Description text as `name` and no
+    # `description` at all).
 
     # D14: `barcode` is CRM-owned. Only written when the incoming value is
     # non-empty - the key is left OUT of the dict otherwise, so an update never
@@ -761,7 +756,7 @@ class MasterIngestService:
         if existing_id is not None:
             self._require_same_company(spec, existing_id, payload.source_ref)
             if entity_type == "products":
-                self._finalize_product_discontinued(payload, columns, existing_id)
+                self._finalize_product_derived(payload, columns, existing_id)
             if entity_type == "customers":
                 self._finalize_customer_segment_fill_only(columns, existing_id)
             diff = self._diff(spec, existing_id, columns)
@@ -794,7 +789,7 @@ class MasterIngestService:
                     f"{spec.code_column}={payload.code!r} is already linked to another source"
                 )
             if entity_type == "products":
-                self._finalize_product_discontinued(payload, columns, adopted)
+                self._finalize_product_derived(payload, columns, adopted)
             if entity_type == "customers":
                 self._finalize_customer_segment_fill_only(columns, adopted)
             # Captured before the UPDATE, and the reason the dry run exists: an
@@ -807,7 +802,7 @@ class MasterIngestService:
             return IngestOutcome.UPDATED, adopted, diff, warnings
 
         if entity_type == "products":
-            self._finalize_product_discontinued(payload, columns, None)
+            self._finalize_product_derived(payload, columns, None)
             self._fill_create_only_product_gaps(columns)
         new_id = self._insert(entity_type, spec, columns)
         self._link(entity_type, new_id, payload)
@@ -838,36 +833,77 @@ class MasterIngestService:
         if "base_uom_id" not in columns:
             columns["base_uom_id"] = product_rules.resolve_default_uom(self.db, self.company_id)
 
-    def _finalize_product_discontinued(
+    def _finalize_product_derived(
         self, payload: Any, columns: dict[str, Any], existing_row_id: Optional[str]
     ) -> None:
-        """D2: an explicit `is_discontinued` flag wins; otherwise it is derived
-        from the EFFECTIVE description - the incoming one if this push sends
-        one, else whatever the row already holds (D14: an omitted description
-        is untouched, and the flag it implies must not change underneath it).
-        True->False resets the notify watermark, same rule
-        `product_service.update_product` applies manually.
+        """D2/D4: `is_discontinued` and `dimensions_*` are both derived from
+        the same EFFECTIVE text - `product_rules.derivation_text`'s
+        description-if-non-blank-else-name - on every push. "Effective"
+        means the incoming name/description if this push sends one, else
+        whatever the row already holds (D14: an omitted field is untouched,
+        and what it implies must not change underneath it).
+
+        Live finding, 2026-09-06: the ESB maps AutoCount's `Item.Description`
+        onto `name` and sends no `description` at all, so deriving from
+        `description` alone (the xlsx import's shape - AutoCount's text
+        lands in `description` there instead, `product_name` is the item
+        code) silently produced `is_discontinued=False` and no dimensions on
+        all 11,784 ESB products re-offered, though 2,871 names started with
+        `****` and 2,282 carried an NxN pattern.
+
+        An explicit `is_discontinued` flag still wins over the derived one;
+        dimensions have no equivalent explicit-value override, so a parsed
+        value is written whenever it differs from what the row already
+        holds - which is also what keeps an unrelated push (price-only, say)
+        from re-deriving a no-op back onto a manually corrected dimension:
+        the "differs" check is against the CURRENT stored value, not against
+        "did this push touch it". True->False resets the notify watermark,
+        same rule `product_service.update_product` applies manually.
         """
+        current_name = None
         current_description = None
         current_discontinued = None
+        current_length = current_width = current_height = None
         if existing_row_id is not None:
             row = self.db.execute(
-                text("SELECT description, is_discontinued FROM products WHERE id = :id"),
+                text(
+                    "SELECT product_name, description, is_discontinued, "
+                    "dimensions_length, dimensions_width, dimensions_height "
+                    "FROM products WHERE id = :id"
+                ),
                 {"id": existing_row_id},
             ).first()
             if row is not None:
-                current_description, current_discontinued = row
+                (
+                    current_name,
+                    current_description,
+                    current_discontinued,
+                    current_length,
+                    current_width,
+                    current_height,
+                ) = row
+
+        effective_name = columns.get("product_name", current_name)
+        effective_description = columns.get("description", current_description)
+        text_for_derivation = product_rules.derivation_text(effective_name, effective_description)
 
         if "is_discontinued" in payload.model_fields_set:
             new_flag = bool(payload.is_discontinued)
         else:
-            effective_description = columns.get("description", current_description)
-            new_flag = product_rules.is_discontinued(None, effective_description)
+            new_flag = product_rules.is_discontinued(None, text_for_derivation)
         columns["is_discontinued"] = new_flag
 
         if existing_row_id is not None and current_discontinued and not new_flag:
             columns["discontinued_notified_at"] = None
             columns["discontinued_notify_batch_id"] = None
+
+        length_mm, width_mm, height_mm = product_rules.parse_dimensions(text_for_derivation)
+        if length_mm is not None and length_mm != current_length:
+            columns["dimensions_length"] = length_mm
+        if width_mm is not None and width_mm != current_width:
+            columns["dimensions_width"] = width_mm
+        if height_mm is not None and height_mm != current_height:
+            columns["dimensions_height"] = height_mm
 
     def _finalize_customer_segment_fill_only(
         self, columns: dict[str, Any], existing_row_id: Optional[str]

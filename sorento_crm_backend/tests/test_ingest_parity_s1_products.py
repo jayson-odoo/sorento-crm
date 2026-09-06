@@ -798,3 +798,158 @@ class TestAcP19BulkImportVsEsbParity:
             esb_row = _row_values(db, "products", "product_code", r["code"], company_b, columns)
             diff = {k: (manual_row.get(k), esb_row.get(k)) for k in columns if manual_row.get(k) != esb_row.get(k)}
             assert diff == {}, (r["code"], diff)
+
+
+class TestAcP20DerivationTextIsColumnAgnostic:
+    """Live finding, 2026-09-06: the ESB re-offered all 11,784 SRT products
+    with `is_discontinued=0` and no dimensions although 2,871 `product_name`
+    values started with `****` and 2,282 carried an NxN pattern. Cause: the
+    ESB maps AutoCount's `Item.Description` onto `name` and sends no
+    `description` at all, while `is_discontinued`/`parse_dimensions` read
+    `description` only - the xlsx import stores the same AutoCount text in
+    `description` instead (`product_name` is the item code there), so the two
+    channels derived from two different columns for identical source text.
+
+    `product_rules.derivation_text(name, description)` is now the single
+    source both derivations read - description if non-blank else name - fed
+    on every path. This class proves it on the ESB's actual shape (text in
+    `name`, `description` empty) on both create and a re-push update, and
+    proves the xlsx import (text in `description`) still lands the same
+    derived columns.
+    """
+
+    def test_esb_product_with_text_only_in_name_derives_on_create(self, db):
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        cat_code, uom_code = _code("P20CAT"), _code("P20UOM")
+        svc = _esb(db, DEFAULT_COMPANY_ID)
+        svc.ingest("product_categories", [{"source_ref": f"DK-{cat_code}", "code": cat_code, "name": "Cat"}])
+        svc.ingest("units_of_measure", [{"source_ref": f"DK-{uom_code}", "code": uom_code, "name": "Each"}])
+        code = _code("P20PRD")
+        result = svc.ingest(
+            "products",
+            [
+                {
+                    "source_ref": f"DK-{code}",
+                    "code": code,
+                    "name": "**** Cabinet 880x450x220MM",
+                    "category_code": cat_code,
+                    "uom_code": uom_code,
+                }
+            ],
+        )
+        assert result.created == 1, result.records[0].errors
+        row = db.execute(
+            text(
+                "SELECT is_discontinued, dimensions_length, dimensions_width, dimensions_height "
+                "FROM products WHERE product_code = :c"
+            ),
+            {"c": code},
+        ).first()
+        assert row is not None
+        assert row[0] is True, "a **** prefix in name (no description) must still derive discontinued"
+        assert (row[1], row[2], row[3]) == (
+            Decimal("880.00"),
+            Decimal("450.00"),
+            Decimal("220.00"),
+        ), "an NxNxN pattern in name (no description) must still parse dimensions"
+
+    def test_esb_product_with_text_only_in_name_derives_on_repush_update(self, db):
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        cat_code, uom_code = _code("P21CAT"), _code("P21UOM")
+        svc = _esb(db, DEFAULT_COMPANY_ID)
+        svc.ingest("product_categories", [{"source_ref": f"DK-{cat_code}", "code": cat_code, "name": "Cat"}])
+        svc.ingest("units_of_measure", [{"source_ref": f"DK-{uom_code}", "code": uom_code, "name": "Each"}])
+        code = _code("P21PRD")
+        ref = f"DK-{code}"
+        # First sync: a normal, non-discontinued name (matches the ESB's actual
+        # bulk re-offer shape - the field the coordinator's finding is about is
+        # always `name`, never `description`, on this channel).
+        result = svc.ingest(
+            "products",
+            [{"source_ref": ref, "code": code, "name": "Cabinet", "category_code": cat_code, "uom_code": uom_code}],
+        )
+        assert result.created == 1, result.records[0].errors
+
+        # Re-push (an "ESB re-offer"): the SAME product, now with a ****
+        # prefix and dimensions in `name`, description still never sent.
+        result = svc.ingest(
+            "products",
+            [
+                {
+                    "source_ref": ref,
+                    "code": code,
+                    "name": "**** Cabinet 1.2Mx0.6Mx2M",
+                    "category_code": cat_code,
+                    "uom_code": uom_code,
+                }
+            ],
+        )
+        assert result.updated == 1, result.records[0].errors
+        row = db.execute(
+            text(
+                "SELECT is_discontinued, dimensions_length, dimensions_width, dimensions_height "
+                "FROM products WHERE product_code = :c"
+            ),
+            {"c": code},
+        ).first()
+        assert row is not None
+        assert row[0] is True, "a re-push that adds a **** prefix to name must derive discontinued"
+        assert (row[1], row[2], row[3]) == (
+            Decimal("1200.00"),
+            Decimal("600.00"),
+            Decimal("2000.00"),
+        ), "a re-push that adds dimensions to name must parse and write them"
+
+    def test_bulk_import_with_the_same_text_in_description_lands_identical_derived_columns(self, db, company_b):
+        """Same product, same source text, ESB shape (text in `name`) vs xlsx
+        shape (text in `description`) - both must derive the same
+        is_discontinued and dimensions_* (D4 parity), across two companies so
+        the two writers never collide on `product_code`.
+        """
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        cat_code, uom_code = _code("P22CAT"), _code("P22UOM")
+        ProductCategoryService(db).create_category(
+            ProductCategoryCreate(category_code=cat_code, category_name="Cat")
+        )
+        UnitOfMeasureService(db).create_uom(UnitOfMeasureCreate(uom_code=uom_code, uom_name="Each"))
+
+        code = _code("P22PRD")
+        source_text = "**** Cabinet 880x450x220MM"
+        ProductService(db).bulk_import_products(
+            [
+                {
+                    "product_code": code,
+                    "product_name": "Item Code Only",
+                    "description": source_text,
+                    "item_group": cat_code,
+                    "uom": uom_code,
+                    "list_price": "10.00",
+                }
+            ],
+            user_id=None,
+        )
+
+        esb = _esb(db, company_b)
+        esb.ingest("product_categories", [{"source_ref": f"DK-{cat_code}", "code": cat_code, "name": "Cat"}])
+        esb.ingest("units_of_measure", [{"source_ref": f"DK-{uom_code}", "code": uom_code, "name": "Each"}])
+        esb.ingest(
+            "products",
+            [
+                {
+                    "source_ref": f"DK-{code}",
+                    "code": code,
+                    "name": source_text,
+                    "category_code": cat_code,
+                    "uom_code": uom_code,
+                    "list_price": "10.00",
+                }
+            ],
+        )
+
+        columns = ["is_discontinued", "dimensions_length", "dimensions_width", "dimensions_height"]
+        manual_row = _row_values(db, "products", "product_code", code, DEFAULT_COMPANY_ID, columns)
+        esb_row = _row_values(db, "products", "product_code", code, company_b, columns)
+        diff = {k: (manual_row.get(k), esb_row.get(k)) for k in columns if manual_row.get(k) != esb_row.get(k)}
+        assert diff == {}, diff
+        assert manual_row["is_discontinued"] is True
+        assert manual_row["dimensions_length"] == Decimal("880.00")

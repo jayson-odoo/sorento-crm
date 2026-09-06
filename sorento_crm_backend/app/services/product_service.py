@@ -954,8 +954,13 @@ class ProductService:
         
         data = product_data.model_dump()
         data["product_code"] = product_code
-        # Auto-populate dimensions from description LxWxH pattern when caller did not supply them.
-        parsed_l, parsed_w, parsed_h = parse_dimensions_from_description(data.get("description"))
+        # Live finding, 2026-09-06: derive from product_rules.derivation_text
+        # (description if non-blank else name), not the raw description column
+        # directly - the ESB maps AutoCount's Description onto name and sends
+        # no description at all, so a description-only read misses it there.
+        text_for_derivation = product_rules.derivation_text(data.get("product_name"), data.get("description"))
+        # Auto-populate dimensions from the derived text's LxWxH pattern when caller did not supply them.
+        parsed_l, parsed_w, parsed_h = parse_dimensions_from_description(text_for_derivation)
         if parsed_l is not None and data.get("dimensions_length") is None:
             data["dimensions_length"] = parsed_l
         if parsed_w is not None and data.get("dimensions_width") is None:
@@ -963,9 +968,9 @@ class ProductService:
         if parsed_h is not None and data.get("dimensions_height") is None:
             data["dimensions_height"] = parsed_h
         # D2: an explicit flag (ProductCreate.is_discontinued) wins over the
-        # description-derived one - flag_wins, same rule product_rules.is_discontinued
+        # derived-text one - flag_wins, same rule product_rules.is_discontinued
         # applies for every other channel.
-        data["is_discontinued"] = _rules_is_discontinued(data.get("is_discontinued"), data.get("description"))
+        data["is_discontinued"] = _rules_is_discontinued(data.get("is_discontinued"), text_for_derivation)
         product = Product(**data, created_by=created_by)
         self.db.add(product)
         self.db.commit()
@@ -994,24 +999,33 @@ class ProductService:
         if update_data:
             update_data["updated_by"] = updated_by
             update_data["updated_at"] = datetime.utcnow()
-            # When description is being updated, re-parse LxWxH and populate dimension columns
-            # that the caller did NOT explicitly set in the same payload (explicit user value wins).
-            if "description" in update_data:
-                parsed_l, parsed_w, parsed_h = parse_dimensions_from_description(update_data.get("description"))
+            # Live finding, 2026-09-06: derived from product_rules.derivation_text's
+            # EFFECTIVE text (the incoming name/description if this update sends
+            # one, else whatever the row already holds - D14's "absent =
+            # untouched" merge), not the raw description column alone - a
+            # name-only edit on a row with no description must still re-derive.
+            name_or_description_sent = "product_name" in update_data or "description" in update_data
+            if name_or_description_sent:
+                effective_name = update_data.get("product_name", product.product_name)
+                effective_description = update_data.get("description", product.description)
+                text_for_derivation = product_rules.derivation_text(effective_name, effective_description)
+                # Re-parse LxWxH and populate dimension columns that the caller did
+                # NOT explicitly set in the same payload (explicit user value wins).
+                parsed_l, parsed_w, parsed_h = parse_dimensions_from_description(text_for_derivation)
                 if parsed_l is not None and "dimensions_length" not in update_data:
                     update_data["dimensions_length"] = parsed_l
                 if parsed_w is not None and "dimensions_width" not in update_data:
                     update_data["dimensions_width"] = parsed_w
                 if parsed_h is not None and "dimensions_height" not in update_data:
                     update_data["dimensions_height"] = parsed_h
-            # D2: an explicit flag wins over the description-derived value; recomputed
-            # only when the flag was NOT sent AND description was (an update that
-            # touches neither leaves is_discontinued untouched, same D14 rule as any
-            # other absent field).
+            # D2: an explicit flag wins over the derived-text value; recomputed
+            # only when the flag was NOT sent AND a name/description was (an
+            # update that touches neither leaves is_discontinued untouched,
+            # same D14 rule as any other absent field).
             if "is_discontinued" in update_data:
                 new_discontinued = bool(update_data["is_discontinued"])
-            elif "description" in update_data:
-                new_discontinued = _rules_is_discontinued(None, update_data.get("description"))
+            elif name_or_description_sent:
+                new_discontinued = _rules_is_discontinued(None, text_for_derivation)
                 update_data["is_discontinued"] = new_discontinued
             else:
                 new_discontinued = None
@@ -1609,8 +1623,13 @@ class ProductService:
                     )
                     continue
 
-                parsed_l, parsed_w, parsed_h = parse_dimensions_from_description(description)
-                discontinued = is_discontinued_from_row(row, description)
+                # Same derivation_text as the manual/ESB paths (fed the same
+                # text even though this channel already stores AutoCount's
+                # Description in `description`, not `name` - one shared rule,
+                # not a per-channel assumption about which column holds it).
+                text_for_derivation = product_rules.derivation_text(product_name, description)
+                parsed_l, parsed_w, parsed_h = parse_dimensions_from_description(text_for_derivation)
+                discontinued = is_discontinued_from_row(row, text_for_derivation)
 
                 # `None` = blank cell = clear it; a value (including 0) = set it. Only read
                 # when the file carries the column at all - otherwise both stay ABSENT and
