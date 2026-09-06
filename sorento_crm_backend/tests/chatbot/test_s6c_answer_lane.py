@@ -1014,6 +1014,125 @@ class TestErrorArmRendersTheMissLane:
         assert "not_found" in fragments, "the error arm must render the miss lane"
         assert "SRTWC8517" in fragments["not_found"]["escalate_message"]
 
+    def test_pre_fetch_not_found_arm_still_offers_the_sibling_family(self, monkeypatch) -> None:
+        """Owner console defect item 3: `_run_miss_half`'s call site for the PRE-FETCH
+        `exit_kind == 'not_found'` arm (`lanes/business/__init__.py` around line 472) does
+        not pass `build_result=`, so it defaults to `None` and `_sibling_gate`
+        (`miss_suggest.py:1130`, `if build_result is None: return False`) short-circuits -
+        even though every OTHER `_sibling_gate` condition is satisfied.
+
+        This is the arm a "check eta <code>" turn for a partially-typed variant code
+        actually takes: the resolver's own fallback tier matches the BASE product
+        (SRTWB1542) and the gate synthesises a compatible `product` entity for it
+        (`gate.py`'s ambiguous/partial-match synthesis, verbatim reproduced from
+        `TestMissLaneProbesAndFamilyFetch.test_not_found_path_probes_and_fetches_the_family_before_offering`'s
+        own `resolved`/`gate` shapes) while marking the token unresolved and the gate
+        failed - which is exactly `if3_miss`'s clause 1 (`gate_passed is False`), landing
+        on `exit_kind == 'not_found'`, NOT the post-fetch `dispatch == 'miss_suggest'` arm
+        (which already passes `build_result` correctly at line 570 and is not the one at
+        fault here).
+        """
+        from app.services.chatbot import engine as engine_mod
+        from app.services.chatbot.lanes.business import complete_answer
+        from app.services.chatbot.lanes.business.services import AnswerServices
+
+        captured: dict[str, Any] = {}
+
+        class _Completed:
+            reply = {"text": "stub", "quick_replies": []}
+            actions: list = []
+            session_patch = None
+            status = "done"
+            stage = "remembered"
+
+        def _complete_turn(turn_id, fragments, *, session_factory, compose_send_action=False):
+            captured["fragments"] = fragments
+            return _Completed()
+
+        monkeypatch.setattr(engine_mod, "complete_turn", _complete_turn)
+
+        ctx = {
+            "contact": {"id": "c1"},
+            "parse": {
+                "output": {
+                    "message_type": "business_query",
+                    "intent_hint": "check_stock",
+                    "domain_hint": "incoming",
+                    "user_goal": "eta for SRTWB1542-MG",
+                    "entities": [{"raw": "SRTWB1542-MG", "hint": "product"}],
+                    "access_levels": [],
+                }
+            },
+            "session": {},
+        }
+        payload = {
+            # The PRE-FETCH miss - `resolve_gate.if3_miss`'s clause 1 (`gate_passed is
+            # False`), never a fetch outcome.
+            "_exit_kind": "not_found",
+            "resolved": {
+                "by_entity_type": {},
+                "unresolved_tokens": ["SRTWB1542-MG"],
+                "resolutions": [
+                    {
+                        "token": "SRTWB1542-MG",
+                        "matches": [
+                            {
+                                "entity_type": "product",
+                                "canonical_code": "SRTWB1542-MG-XL",
+                                "uuid": "22222222-2222-2222-2222-222222222222",
+                                "match_tier": "prefix",
+                            }
+                        ],
+                    }
+                ],
+            },
+            "gate": {
+                "gate_passed": False,
+                "gate_reason": "no exact match",
+                "gate_debug": {"domain": "incoming"},
+                "require_specific": False,
+                "compatible_entities": [
+                    {"entity_type": "product", "code": "SRTWB1542", "uuid": None},
+                ],
+            },
+            "fetch": {},
+        }
+
+        probe_calls: list[tuple[str, dict]] = []
+        fetch_calls: list[str] = []
+
+        def mcp_probe(name: str, args: dict) -> dict:
+            probe_calls.append((name, args))
+            return {"answers": [], "has_result": False}
+
+        def family_fetch(query: str) -> dict:
+            fetch_calls.append(query)
+            return {"data": [{"canonical_code": "SRTWB1542-MG"}]}
+
+        complete_answer(
+            payload,
+            turn_id="t1",
+            ctx=ctx,
+            item={},
+            branch_kind="business_query",
+            services=AnswerServices(mcp_probe=mcp_probe, family_fetch=family_fetch),
+            session_factory=lambda: None,
+        )
+
+        assert fetch_calls, (
+            "family-fetch never ran - `_sibling_gate` short-circuited on `build_result "
+            "is None` even though the gate/product/require_specific conditions all hold"
+        )
+        fragments = captured["fragments"]
+        offer = fragments.get("suggest_offer") or {}
+        assert "SRTWB1542-MG" in (offer.get("suggest_response") or ""), (
+            "the sibling family must be named in the offer text: "
+            f"{offer.get('suggest_response')!r}"
+        )
+        assert offer.get("suggest_quick_reply"), (
+            "the sibling offer must carry a non-empty quick-reply set (Yes/No to escalate)"
+        )
+
 
 # --------------------------------------------------------------------------- #
 # AC-607: crossdomain-probe, the SECOND MCP call the answer lane makes on a turn
@@ -1199,6 +1318,70 @@ class TestCrossdomainRenderRowOrder:
         ]
         block = self._render(rows)
         assert re_mod.findall(r"\*Quantity On Hand:\* (\d+)", block) == ["9", "2"]
+
+
+# --------------------------------------------------------------------------- #
+# Owner console defect H (owner ruling: "name it, no stock and offer escalation").
+# `crossdomain_render`'s "positive facts only" rule (answer.py:711-712, `if not rows:
+# continue`) means a requested code with ZERO rows on EITHER side is simply never
+# mentioned - the reply names only the codes that had SOMETHING to show. The owner wants
+# the code named explicitly ("no stock and no incoming") plus an escalation offer, not
+# silence.
+# --------------------------------------------------------------------------- #
+
+
+class TestThirdCodeWithNoStockAndNoIncomingIsNamedWithEscalation:
+    @staticmethod
+    def _incoming_row(code: str, eta: str) -> dict:
+        return {
+            "fields": [
+                {"key": "product_code", "label": "Product Code", "value": code},
+                {"key": "estimated_arrival_date", "label": "ETA", "value": eta},
+            ]
+        }
+
+    def test_the_zero_stock_zero_incoming_code_is_named_and_escalation_is_offered(
+        self,
+    ) -> None:
+        from app.services.chatbot.lanes.business.answer import crossdomain_render
+
+        # Three requested codes had zero rows in the PRIMARY (stock) query, so all three
+        # are in `zeroset.missing`. The crossdomain (incoming) probe found rows for TWO
+        # of them; the third, MSK11A-QT, has nothing on either side.
+        rows = [
+            self._incoming_row("SRTWC8517", "2026-09-15"),
+            self._incoming_row("SRTWB7096", "2026-10-02"),
+        ]
+        out = crossdomain_render(
+            {"items": rows, "has_result": True},
+            zeroset={
+                "active": True,
+                "origin_domain": "inventory",
+                "team": "warehouse",
+                "missing": [
+                    {"code": "SRTWC8517", "_n": "SRTWC8517", "uuid": "u1"},
+                    {"code": "SRTWB7096", "_n": "SRTWB7096", "uuid": "u2"},
+                    {"code": "MSK11A-QT", "_n": "MSK11A-QT", "uuid": "u3"},
+                ],
+            },
+            validator={},
+        )
+        block = out["_xdBlock"]["block"]
+
+        # Guard: the two positive codes still render exactly as today.
+        assert "SRTWC8517" in block and "2026-09-15" in block
+        assert "SRTWB7096" in block and "2026-10-02" in block
+
+        assert "MSK11A-QT" in block, (
+            f"the third code must be NAMED rather than silently dropped: {block!r}"
+        )
+        assert "no stock" in block.lower() and "no incoming" in block.lower(), (
+            f"MSK11A-QT must be stated as having no stock and no incoming: {block!r}"
+        )
+        assert "escalate" in block.lower(), (
+            "an escalation offer must be present for the code with nothing on either "
+            f"side: {block!r}"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -1759,6 +1942,187 @@ class TestH16ByEntityTypeIterationIsEntityKeysOnly:
 
 
 # --------------------------------------------------------------------------- #
+# Owner console defect A (items 2 + 15): `disp_by_uuid` at answer.py:1846-1875 is built
+# from a FIXED key list (product_name, customer_name, debtor_name, type_name,
+# description). An `inbound_shipment` display (entity_resolver.py:1363-1369) carries
+# `shipment_number` / `shipping_container_number` instead, and 11 of 17 real
+# `inbound_shipments` rows have a null `shipment_number` - so the by_type ladder at
+# answer.py:1914-1932 falls through disp_by_uuid -> compat.code -> compat.uuid and
+# prints the raw uuid: "inbound_shipment: ecfdaf8f-... (Mocha)".
+# --------------------------------------------------------------------------- #
+
+
+class TestUuidNeverPrintedInReplyText:
+    _UUID_RE = re_mod.compile(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re_mod.I)
+
+    def test_inbound_shipment_with_only_a_container_number_names_the_container_not_the_uuid(
+        self,
+    ) -> None:
+        """The entity has NO shipment_number (the null case) but DOES have a
+        shipping_container_number - `disp_by_uuid` must read that field, not fall
+        through to the raw uuid."""
+        from app.services.chatbot.lanes.business.answer import not_found_error_message
+
+        ship_uuid = "ecfdaf8f-1111-4a11-9a11-111111111111"
+        match = {
+            "entity_type": "inbound_shipment",
+            "uuid": ship_uuid,
+            "canonical_code": None,
+            "display": {
+                "shipment_number": None,
+                "shipping_container_number": "TGHU6295708",
+            },
+        }
+        resolved = {
+            "tokens": ["TGHU6295708"],
+            "unresolved_tokens": [],
+            "resolutions": [{"token": "TGHU6295708", "matches": [match]}],
+            "intersection": [match],
+            "by_entity_type": {"inbound_shipment": [match]},
+        }
+        parser = {
+            "domain_hint": "inbound_shipment",
+            "entities": [{"hint": "inbound_shipment", "raw": "TGHU6295708"}],
+            "routing": {"suggested_team": "logistics"},
+            "access_levels": [],
+        }
+        gate = {
+            "gate_passed": True,
+            "compatible_entities": [
+                {"uuid": ship_uuid, "entity_type": "inbound_shipment", "code": None}
+            ],
+        }
+
+        out = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
+        found_summary = out.get("found_summary") or ""
+        escalate_message = out.get("escalate_message") or ""
+        rendered = found_summary + "\n" + escalate_message
+
+        assert not self._UUID_RE.search(rendered), (
+            "the reply must never print the raw entity uuid - it did here: "
+            f"{rendered!r}"
+        )
+        assert "TGHU6295708" in rendered, (
+            "the container number is the only human-readable identifier on this "
+            f"entity and must be what is shown: {rendered!r}"
+        )
+
+    def test_an_entity_with_no_code_and_an_empty_display_is_dropped_not_shown_as_a_uuid(
+        self,
+    ) -> None:
+        """No match resolves this compatible entity at all (empty display, no
+        canonical_code) - the candidate must be DROPPED from the found breakdown,
+        never fall through to its raw uuid."""
+        from app.services.chatbot.lanes.business.answer import not_found_error_message
+
+        blank_uuid = "ecfdaf8f-2222-4a22-9a22-222222222222"
+        resolved = {
+            "tokens": [],
+            "unresolved_tokens": [],
+            "resolutions": [],
+            "intersection": [],
+            "by_entity_type": {},
+        }
+        parser = {
+            "domain_hint": "inbound_shipment",
+            "entities": [],
+            "routing": {"suggested_team": "logistics"},
+            "access_levels": [],
+        }
+        gate = {
+            "gate_passed": True,
+            "compatible_entities": [
+                {"uuid": blank_uuid, "entity_type": "inbound_shipment", "code": None}
+            ],
+        }
+
+        out = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
+        found_summary = out.get("found_summary") or ""
+        escalate_message = out.get("escalate_message") or ""
+        rendered = found_summary + "\n" + escalate_message
+
+        assert not self._UUID_RE.search(rendered), (
+            "an entity with no code and no usable display name must be dropped from "
+            f"the breakdown, never surfaced as its raw uuid: {rendered!r}"
+        )
+
+    def test_real_turn_shape_two_compat_entities_product_and_inbound_shipment_multi_company(
+        self,
+    ) -> None:
+        """Reproduces the exact turn (3551290e) that surfaced the bug: a CARRIED
+        inbound_shipment entity (current_message: false) sits alongside a resolved
+        product in the same multi-company breakdown. Live printed
+        "inbound_shipment: 544400ef-... (Sorento)" next to
+        "product: IBKS7245-NG-BL (Mocha)" - the fix must name the container instead."""
+        from app.services.chatbot.lanes.business.answer import not_found_error_message
+
+        product_uuid = "544400ef-aaaa-4aaa-9aaa-aaaaaaaaaaaa"
+        shipment_uuid = "544400ef-bbbb-4bbb-9bbb-bbbbbbbbbbbb"
+        product_match = {
+            "entity_type": "product",
+            "uuid": product_uuid,
+            "canonical_code": "IBKS7245-NG-BL",
+            "company_name": "Mocha",
+            "display": {},
+        }
+        shipment_match = {
+            "entity_type": "inbound_shipment",
+            "uuid": shipment_uuid,
+            "canonical_code": None,
+            "company_name": "Sorento",
+            "display": {
+                "shipment_number": None,
+                "shipping_container_number": "DFSU6642819",
+            },
+        }
+        resolved = {
+            "tokens": ["IBKS7245-NG-BL", "DFSU6642819"],
+            "unresolved_tokens": [],
+            "resolutions": [
+                {"token": "IBKS7245-NG-BL", "matches": [product_match]},
+                {"token": "DFSU6642819", "matches": [shipment_match]},
+            ],
+            "intersection": [product_match, shipment_match],
+            "by_entity_type": {
+                "product": [product_match],
+                "inbound_shipment": [shipment_match],
+            },
+        }
+        parser = {
+            "domain_hint": "inventory",
+            "entities": [
+                {"hint": "product", "raw": "IBKS7245-NG-BL"},
+                {"hint": "inbound_shipment", "raw": "DFSU6642819"},
+            ],
+            "routing": {"suggested_team": "warehouse"},
+            "access_levels": [],
+        }
+        gate = {
+            "gate_passed": True,
+            "compatible_entities": [
+                {"uuid": product_uuid, "entity_type": "product", "code": "IBKS7245-NG-BL"},
+                {"uuid": shipment_uuid, "entity_type": "inbound_shipment", "code": None},
+            ],
+        }
+
+        out = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
+        found_summary = out.get("found_summary") or ""
+        escalate_message = out.get("escalate_message") or ""
+        rendered = found_summary + "\n" + escalate_message
+
+        assert not self._UUID_RE.search(rendered), (
+            f"no uuid must appear anywhere in the reply: {rendered!r}"
+        )
+        assert "inbound_shipment: DFSU6642819 (Sorento)" in rendered, (
+            "the carried inbound_shipment entity must be named by its container "
+            f"number, qualified by company (multi-company turn): {rendered!r}"
+        )
+        assert "product: IBKS7245-NG-BL (Mocha)" in rendered, (
+            f"the product bullet must be unaffected by the fix: {rendered!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
 # H22 / H23: a did-you-mean offer's carried PICKS only ride into a cross-domain read
 # when the offer's own domain agrees with the turn's current domain. A promotion-thread
 # offer must not pollute an inventory-domain crossdomain probe.
@@ -1961,3 +2325,141 @@ def test_no_raw_text_regex_in_answer_modules() -> None:
         "`# D11-reproduced` (a named parity reproduction of an existing n8n "
         "text-sniffing site):\n" + "\n".join(offenders)
     )
+
+
+# --------------------------------------------------------------------------- #
+# Owner console defect D, REFRAMED (owner rev 3, turn evidence): NOT a same-attachment
+# duplicate. Two DIFFERENT presigned files legitimately share a filename
+# ("TLLU4618098 - WH.xlsx") under two different companies (Sorento pending-allocation vs
+# Mocha allocated). `engine._attachments_src` (engine.py:2710-2718) passes
+# `outcome_fragment['central-exchange']` through untouched, and the two send-attachments
+# wrap sites (engine.py:2342-2346 / :2925-2929) forward it verbatim - there is no dedupe
+# and no disambiguation anywhere on this path today.
+#
+# Contract: `_attachments_src` dedupes a TRUE duplicate (same attachment `id` reachable
+# twice, e.g. via two company scopes) down to one entry, and when two DIFFERENT ids share
+# a `filename`, both are kept and each entry's `filename` is disambiguated with its
+# `company` suffix (owner's own example: "TLLU4618098 - WH.xlsx (Mocha)") so neither is
+# silently dropped and neither reads as the other.
+# --------------------------------------------------------------------------- #
+
+
+class TestAttachmentDedupeAndFilenameDisambiguation:
+    def test_a_true_duplicate_same_id_twice_is_sent_once(self) -> None:
+        from app.services.chatbot.engine import _attachments_src
+
+        answer = {
+            "outcome_fragment": {
+                "central-exchange": [
+                    {"id": "att-1", "filename": "spec-sheet.pdf", "company": "Sorento", "url": "s3://a"},
+                    {"id": "att-1", "filename": "spec-sheet.pdf", "company": "Sorento", "url": "s3://a"},
+                ]
+            }
+        }
+        out = _attachments_src(answer)
+        assert isinstance(out, list) and len(out) == 1, (
+            "the SAME attachment id reachable twice (e.g. under two company scopes) must "
+            f"be sent once, not once per reachable path: {out!r}"
+        )
+
+    def test_two_different_files_sharing_a_filename_are_both_kept_and_labelled_by_company(
+        self,
+    ) -> None:
+        """The exact reported shape: two DIFFERENT presigned files
+        ("TLLU4618098 - WH.xlsx"), different ids, different companies - Sorento's is
+        pending-allocation, Mocha's is allocated. Neither is a duplicate of the other and
+        neither may be dropped; each must read as its own company's file."""
+        from app.services.chatbot.engine import _attachments_src
+
+        answer = {
+            "outcome_fragment": {
+                "central-exchange": [
+                    {
+                        "id": "att-sorento-1",
+                        "filename": "TLLU4618098 - WH.xlsx",
+                        "company": "Sorento",
+                        "url": "s3://sorento/pending",
+                    },
+                    {
+                        "id": "att-mocha-1",
+                        "filename": "TLLU4618098 - WH.xlsx",
+                        "company": "Mocha",
+                        "url": "s3://mocha/allocated",
+                    },
+                ]
+            }
+        }
+        out = _attachments_src(answer)
+        assert isinstance(out, list) and len(out) == 2, (
+            f"both distinct files must be sent, never collapsed by filename alone: {out!r}"
+        )
+        filenames = sorted(a.get("filename") for a in out)
+        assert filenames == [
+            "TLLU4618098 - WH.xlsx (Mocha)",
+            "TLLU4618098 - WH.xlsx (Sorento)",
+        ], (
+            "a filename collision across DIFFERENT ids/companies must be disambiguated "
+            f"with the company suffix on each entry, not collapsed or left identical: {out!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Owner console defect G2: the status-aware not-found miss message IS ported (in
+# `answer.py`'s `not_found_error_message`, lines ~2308-2341 - NOT `miss_suggest.py`, which
+# has no such text at all: grepped, absent). But the port deliberately DROPS the estimated
+# delivery date - `eta_text` is computed then `del eta_text`'d with a comment claiming
+# parity with the old JS - while the owner's own ruling wants the date INCLUDED: "Order
+# <code> (<customer>) hasn't been delivered yet - current status: <status> (estimated
+# delivery <date>)".
+# --------------------------------------------------------------------------- #
+
+
+class TestStatusAwareMissMessageIncludesTheEtaDate:
+    def test_a_delivered_status_filter_miss_names_status_and_estimated_delivery_date(
+        self,
+    ) -> None:
+        from app.services.chatbot.lanes.business.answer import not_found_error_message
+
+        order_uuid = "33333333-3333-4333-9333-333333333333"
+        order_match = {
+            "entity_type": "order",
+            "uuid": order_uuid,
+            "canonical_code": "DO12345",
+            "display": {
+                "customer_name": "ACME Sdn Bhd",
+                "status": "processing",
+                "estimated_delivery_date": "2026-09-10",
+            },
+        }
+        resolved = {
+            "tokens": ["DO12345"],
+            "unresolved_tokens": [],
+            "resolutions": [{"token": "DO12345", "matches": [order_match]}],
+            "intersection": [order_match],
+            "by_entity_type": {"order": [order_match]},
+        }
+        parser = {
+            "domain_hint": "order",
+            "order_status": "delivered",
+            "entities": [{"hint": "order", "raw": "DO12345"}],
+            "routing": {"suggested_team": "customer_service"},
+            "access_levels": [],
+        }
+        gate = {
+            "gate_passed": True,
+            "compatible_entities": [
+                {"uuid": order_uuid, "entity_type": "order", "code": "DO12345"},
+            ],
+        }
+
+        out = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
+        message = out.get("escalate_message") or ""
+
+        assert "hasn't been delivered yet" in message
+        assert "current status: processing" in message, (
+            f"the current status must be named: {message!r}"
+        )
+        assert "2026-09-10" in message, (
+            "the owner's ruling wants the estimated delivery date in the message too, "
+            f"not just the status: {message!r}"
+        )

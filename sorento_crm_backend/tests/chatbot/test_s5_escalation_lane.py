@@ -125,17 +125,25 @@ def _ctx(
     contact_phone: str = "+60123450099",
     contact_id: str = "ZZT-esc-1",
     current_assignee: str | None = None,
+    person_mention: str | None = None,
+    text: str | None = None,
 ) -> dict:
     """The six-key hub shape `build_ctx` produces, filled in with what the escalation lane
-    reads: `ctx.parse.output.{routing,escalation,query_brands,entities}` and
-    `ctx.session.session_vars.variables` (the ladder's `prev`)."""
+    reads: `ctx.parse.output.{routing,escalation,query_brands,entities,person_mention}` and
+    `ctx.session.session_vars.variables` (the ladder's `prev`).
+
+    `person_mention` is the parser's already-emitted key (`head/parser.py:130` - a required
+    output field, not new machinery) - item L's owner ruling reads it here."""
     contact: dict[str, Any] = {"id": contact_id, "phone": contact_phone}
     if current_assignee is not None:
         contact["assignee"] = {"id": current_assignee}
     return {
         "contact": contact,
         "text": {
-            "message": {"messageId": "ZZT-esc-msg-1", "message": {"type": "text", "text": "help"}}
+            "message": {
+                "messageId": "ZZT-esc-msg-1",
+                "message": {"type": "text", "text": text or "help"},
+            }
         },
         "session": {"session_vars": {"variables": prev_variables or {}}},
         "parse": {
@@ -144,6 +152,7 @@ def _ctx(
                 "escalation": escalation or {"is_escalation_confirmation": True, "company_pick": None},
                 "query_brands": query_brands or [],
                 "entities": entities or [],
+                "person_mention": person_mention,
             }
         },
         "access": {"allowed": True, "decision": "allow"},
@@ -1338,3 +1347,195 @@ def test_out_of_scope_delegates_when_completed_lanes_is_default_empty(
     row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
     assert row.status == "delegated"
     assert row.stage == "routed"
+
+
+# --------------------------------------------------------------------------- #
+# Owner console defect L (owner ruling: "LOOKUP"). Evidence: "escalate to Nurain"
+# (customer service staff) and "escalate to marketing" both arrived with
+# `_parser_raw.routing = {suggested_team: null, suggested_agent: null}`, and the engine
+# INHERITED the previous turn's team (marketing_product / purchasing) instead - `add_comment`
+# named the wrong team.
+#
+# D11: the parser already emits `person_mention` (`head/parser.py:130`, a required output
+# key) - the escalation lane reads it here and resolves it against a staff roster seam
+# (pinned below as `services.staff_lookup(name) -> list[dict]`; the coder may rename or
+# fold it into the already-declared-but-unwired `team_members` seam in
+# `escalation_services.py` if that is the better fit - see that module's own "declared and
+# NOT wired" note). This lane test does NOT touch a real staff table; the seam is mocked,
+# same discipline as `next_assignee` / `sla_create` throughout this file.
+#
+# NOTE for the coder: the parser prompt's team vocabulary may need "marketing" mapped to
+# `marketing_product` for part (c)'s bare "escalate to marketing" phrasing to even reach
+# this lane with a recognisable, if unmapped, team WORD - that prompt change is OUTSIDE
+# this lane and outside this test file; this suite only pins what the LANE does once a
+# `person_mention` or an explicit-but-unmapped ask reaches it with `routing` null.
+# --------------------------------------------------------------------------- #
+
+
+class TestPersonMentionEscalationRoutesByStaffLookup:
+    @staticmethod
+    def _services_with_staff(hits: list[dict]):
+        services = _services()
+        services.staff_lookup = Mock(return_value=hits)
+        return services
+
+    def test_a_named_person_routes_to_their_team_as_preferred_assignee(self) -> None:
+        """(a) `person_mention` resolves to exactly one staff member -> route to THEIR
+        team, with them as the preferred/drawn assignee - never the inherited prior team."""
+        from app.services.chatbot.lanes.escalation import run
+
+        ctx = _ctx(
+            routing={"suggested_team": None, "suggested_agent": None},
+            person_mention="Nurain",
+            prev_variables={
+                "routing": {"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"}
+            },
+            text="escalate to Nurain",
+        )
+        item = _item(brand_code=None, company_id=None, company_name=None, routing_source="none")
+        services = self._services_with_staff(
+            [
+                {
+                    "team_code": "customer_service",
+                    "team_name": "Customer Service",
+                    "user_id": "usr-nurain",
+                    "user_name": "Nurain Binti X",
+                    "respond_user_id": "respond-usr-nurain",
+                }
+            ]
+        )
+
+        result = run(ctx, item, services=services)
+
+        assert result["arm"] == "human-intervention"
+        assign = next(a for a in result["actions"] if a["kind"] == "assign_conversation")
+        comment = next(a for a in result["actions"] if a["kind"] == "add_comment")
+        assert assign["respond_user_id"] == "respond-usr-nurain", (
+            f"must route to Nurain's OWN team, never the inherited prior team: {assign!r}"
+        )
+        assert "Team: customer_service" in comment["text"], (
+            f"the comment must name Nurain's team, not the inherited marketing_product: "
+            f"{comment['text']!r}"
+        )
+        services.next_assignee.assert_not_called(), (
+            "a named person is a direct pick, not a round-robin draw"
+        )
+
+    def test_two_staff_with_the_same_name_in_different_teams_clarifies_instead_of_guessing(
+        self,
+    ) -> None:
+        """(b) An ambiguous name (two staff, two teams) must clarify with the team list,
+        never silently pick one or inherit the prior team."""
+        from app.services.chatbot.lanes.escalation import run
+
+        ctx = _ctx(
+            routing={"suggested_team": None, "suggested_agent": None},
+            person_mention="Ali",
+            prev_variables={
+                "routing": {"suggested_team": "purchasing", "suggested_agent": "general_enquiries"}
+            },
+            text="escalate to Ali",
+        )
+        item = _item(brand_code=None, company_id=None, company_name=None, routing_source="none")
+        services = self._services_with_staff(
+            [
+                {
+                    "team_code": "customer_service",
+                    "team_name": "Customer Service",
+                    "user_id": "usr-ali-1",
+                    "user_name": "Ali bin Abu",
+                    "respond_user_id": "respond-ali-1",
+                },
+                {
+                    "team_code": "purchasing",
+                    "team_name": "Purchasing",
+                    "user_id": "usr-ali-2",
+                    "user_name": "Ali Hassan",
+                    "respond_user_id": "respond-ali-2",
+                },
+            ]
+        )
+
+        result = run(ctx, item, services=services)
+
+        assert result["arm"] == "clarify", (
+            f"two staff sharing a name must clarify, not guess: {result!r}"
+        )
+        assert result["clarify"] is not None
+        clarify_text = str(result["clarify"])
+        assert "Customer Service" in clarify_text or "customer_service" in clarify_text
+        assert "Purchasing" in clarify_text or "purchasing" in clarify_text
+        assert not any(a["kind"] == "assign_conversation" for a in result["actions"]), (
+            "an ambiguous name must never assign"
+        )
+        services.next_assignee.assert_not_called()
+
+    def test_an_unmapped_explicit_team_word_clarifies_rather_than_inheriting_the_prior_team(
+        self,
+    ) -> None:
+        """(c) No person_mention, routing null, the customer named a team in words the
+        parser did not map - clarify with the team list, NEVER silently inherit whatever
+        team the PREVIOUS turn happened to be routed to."""
+        from app.services.chatbot.lanes.escalation import run
+
+        ctx = _ctx(
+            routing={"suggested_team": None, "suggested_agent": None},
+            person_mention=None,
+            prev_variables={
+                "routing": {"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"}
+            },
+            text="escalate to marketing",
+        )
+        item = _item(brand_code=None, company_id=None, company_name=None, routing_source="none")
+        services = self._services_with_staff([])
+
+        result = run(ctx, item, services=services)
+
+        assert result["arm"] == "clarify", (
+            "an explicit-but-unmapped team ask with no person_mention must clarify, not "
+            f"silently inherit the previous turn's team: {result!r}"
+        )
+        assert not any(a["kind"] == "assign_conversation" for a in result["actions"])
+        services.next_assignee.assert_not_called(), (
+            "must never silently draw against the inherited prior team"
+        )
+
+    def test_no_team_no_person_but_a_pending_escalation_still_continues_today_unguarded(
+        self,
+    ) -> None:
+        """(d) Guard: an escalation ask with no team, no person, but a carried PENDING
+        escalation context (the `multi_company_unpicked` roster-continuation path this
+        file already covers) must keep working exactly as it does today - the new
+        person/team-word gate must not swallow this legitimate follow-up."""
+        from app.services.chatbot.lanes.escalation import run
+
+        prev = {
+            "routing": {"suggested_team": "customer_service", "suggested_agent": "order_enquiries"},
+            "routing_roster_plan": [
+                {"company_id": "c-a", "company_name": "A"},
+                {"company_id": "c-b", "company_name": "B"},
+            ],
+            "selection_context": "member_offer",
+            "last_result_set": [{"uuid": "member-1"}, {"uuid": "member-2"}],
+        }
+        ctx = _ctx(
+            routing={"suggested_team": "customer_service", "suggested_agent": "order_enquiries"},
+            person_mention=None,
+            prev_variables=prev,
+            text="yes please escalate",
+        )
+        item = _item(
+            brand_code=None,
+            company_id=None,
+            company_name=None,
+            routing_source="multi_company_unpicked",
+        )
+        services = _services()
+
+        result = run(ctx, item, services=services)
+
+        assert result["arm"] == "clarify", (
+            "the EXISTING multi-company-unpicked continuation must still clarify exactly "
+            f"as it does today: {result!r}"
+        )
+        assert result["clarify"] is not None

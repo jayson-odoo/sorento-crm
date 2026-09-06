@@ -202,3 +202,66 @@ def test_rr_per_team_independence(db):
     svc = AccessAgentService(db)
     assert svc.get_next_assignee(agent_id, team_a)["id"] == u  # eligible in A
     assert svc.get_next_assignee(agent_id, team_b) is None  # excluded in B
+
+
+# ---- owner console defect J: dry-run round-robin preview ------------------
+#
+# Contract: on a dry-run escalation the `assign_conversation` preview must carry the
+# assignee the LIVE turn would pick, computed from the cursor and roster WITHOUT
+# advancing the cursor, creating a cursor row, or committing
+# (`app/services/user_service.py`'s `get_next_assignee`, the `setattr(cursor, ...)` at
+# ~line 1729 and `self.db.commit()` at ~line 1737, must not run on the preview path).
+
+
+def test_preview_next_assignee_does_not_advance_the_cursor(db):
+    agent_id = str(uuid.uuid4())
+    db.add(AccessAgent(id=agent_id, code="a", name="A"))
+    db.commit()
+    team_id = _team(db, "CS")
+    _agent_team(db, agent_id, team_id)
+    m1 = _user(db, "member1")
+    m2 = _user(db, "member2")
+    m3 = _user(db, "member3")
+    _member(db, team_id, m1, order=0)
+    _member(db, team_id, m2, order=1)
+    _member(db, team_id, m3, order=2)
+
+    # The cursor sits at member 1, so the next pick (preview or live) is member 2.
+    db.add(
+        AgentTeamRoundRobinCursor(
+            id=str(uuid.uuid4()),
+            agent_id=agent_id,
+            team_id=team_id,
+            segment_key="",
+            last_assigned_user_id=m1,
+        )
+    )
+    db.commit()
+
+    svc = AccessAgentService(db)
+    preview_1 = svc.preview_next_assignee(agent_id, team_id)
+    preview_2 = svc.preview_next_assignee(agent_id, team_id)
+    assert preview_1 is not None and preview_1["id"] == m2, (
+        f"the preview must name the assignee the live turn WOULD pick: {preview_1!r}"
+    )
+    assert preview_2 is not None and preview_2["id"] == m2, (
+        "a SECOND preview call must see the SAME unmoved cursor and pick the same "
+        f"member again: {preview_2!r}"
+    )
+
+    cursor = (
+        db.query(AgentTeamRoundRobinCursor)
+        .filter_by(agent_id=agent_id, team_id=team_id, segment_key="")
+        .one()
+    )
+    assert cursor.last_assigned_user_id == m1, (
+        "preview_next_assignee must never advance the round-robin cursor"
+    )
+
+    # The LIVE call still advances exactly as it always has.
+    live = svc.get_next_assignee(agent_id, team_id)
+    assert live is not None and live["id"] == m2
+    db.refresh(cursor)
+    assert cursor.last_assigned_user_id == m2, (
+        "the live call must still advance the cursor - only the preview is inert"
+    )
