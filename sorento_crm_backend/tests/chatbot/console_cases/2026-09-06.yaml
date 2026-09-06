@@ -61,6 +61,18 @@ cases:
       reply_contains: ["Related products:", "SRTWB1542-MG"]
       no_uuid: true
 
+  # Prod turn 631d4b65: the item A display-key ladder put `product_name` ahead of the code,
+  # so this answered "product: Iborn. Bidet. (+7 more)" - the code the customer typed, and
+  # the only string they can check the answer against, was gone.
+  - name: an eta miss names the product code, never its description
+    text: "check eta for IBKS7245-NG-BL"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["IBKS7245-NG-BL"]
+      reply_not_contains: ["product: Iborn"]
+      no_uuid: true
+
   - name: an idea reaches the ideate lane
     text: "I have an idea for you - please add a dark mode to the dealer portal"
     expect:
