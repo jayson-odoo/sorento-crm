@@ -275,6 +275,81 @@ class TestBornRosterWins:
 
 
 # --------------------------------------------------------------------------- #
+# Owner console defect K, rule 1 (owner ruling, 2026-09-06): "retain until the next
+# picker overwrites it; choosing 1, 2, 3 works sequentially until I change domain or ask
+# for another promotion; this is the old spine behaviour". `_picker_carry`'s own
+# docstring documents the OPPOSITE as a deliberate safety property today: "The member and
+# tier offers are never CARRIED... tier_offer is one round trip by decision D4" - this is
+# the owner explicitly REVERSING that decision for tier_offer (and, per the ruling's
+# text, promo/did-you-mean/member offers too - this class pins the TIER case, the
+# concrete example in the ruling's own scripted sequence: "any promotion for srtwc286" ->
+# tier menu offered -> "1" answers item 1 AND the patch still carries the list ->
+# eventually a domain change or a new offer clears/replaces it).
+#
+# Old-JS check (owner's own instruction): grep of
+# `/Users/tehjayson/Documents/foundryx/sorento_crm_n8n` `compile-current-state.js` for
+# `tier_offer`/`selection_context` shows the SAME `... || null` reset the Python port
+# reproduces here - the old spine did NOT carry `tier_offer` across a turn with no fresh
+# offer either. This is therefore a NEW rule the owner is asking for, not a port bug.
+# --------------------------------------------------------------------------- #
+
+
+class TestTierAndPromoOffersCarryUntilOverwritten:
+    TIER_MENU = [
+        {"idx": 1, "label": "Dealer"},
+        {"idx": 2, "label": "End User"},
+    ]
+
+    def _ctx_with_tier_offer(self, **qf_overrides):
+        ctx = _ctx(**qf_overrides)
+        ctx["session"] = {
+            "session_vars": {
+                "variables": {
+                    "selection_context": "tier_offer",
+                    "last_result_set": self.TIER_MENU,
+                }
+            }
+        }
+        return ctx
+
+    def test_a_bare_pick_with_no_new_offer_carries_the_tier_menu_forward(self) -> None:
+        """The customer's "1" names no domain and this turn builds no offer of its own -
+        the tier roster must still be there to resolve against, and to answer a
+        follow-up "2" against next."""
+        patch = _compile({"outcome": {}}, self._ctx_with_tier_offer(domain_hint=None))
+        variables = patch["variables"]
+        assert variables.get("selection_context") == "tier_offer", (
+            f"the carried tier offer must survive a no-new-offer turn: {variables!r}"
+        )
+        assert variables.get("last_result_set") == self.TIER_MENU
+
+    def test_a_domain_change_clears_the_carried_tier_offer(self) -> None:
+        """"until I change domain" - an explicit DIFFERENT domain ends the thread."""
+        patch = _compile({"outcome": {}}, self._ctx_with_tier_offer(domain_hint="inventory"))
+        variables = patch["variables"]
+        assert variables.get("selection_context") != "tier_offer", (
+            f"a domain change must end the tier thread: {variables!r}"
+        )
+        assert variables.get("last_result_set") != self.TIER_MENU
+
+    def test_a_new_tier_offer_this_turn_replaces_the_carried_one(self) -> None:
+        """"or ask for another promotion" - a FRESH offer this turn wins over the carry,
+        never merges with it."""
+        new_menu = [{"idx": 1, "label": "Wholesale"}]
+        outcome = {
+            "access-level-choice-message": {
+                "tier_offer": True,
+                "tier_last_result_set": new_menu,
+            }
+        }
+        patch = _compile({"outcome": outcome}, self._ctx_with_tier_offer(domain_hint="promotion"))
+        variables = patch["variables"]
+        assert variables.get("last_result_set") == new_menu, (
+            f"a fresh offer must replace the carried one, not merge with it: {variables!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
 # AC-302: the canned copy, including the two arms with no vendored capture
 # --------------------------------------------------------------------------- #
 

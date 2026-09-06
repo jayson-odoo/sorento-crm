@@ -344,3 +344,135 @@ def test_r5_the_compound_is_the_wire_shape_the_brand_is_read_from() -> None:
     assert compound["access_levels"] == bare["access_levels"] == ["dealer"]
     assert compound["query_brands"] == ["cabana"]
     assert bare["query_brands"] == []
+
+
+# --------------------------------------------------------------------------- #
+# Owner console defect K, rule 3 (turns d9f860d4 / dcaa8e37): a PENDING member/escalation
+# offer's own entry-gate (post_process, `sel_ctx == "member_offer"` block) treats a reply
+# that carries a genuine FILTER (a date window or a new entity) as "junk / no signal" -
+# Tier 4 of the ladder - and re-prompts the roster (`escalation.member_reprompt =
+# "out_of_range"`, `correction = True`), when the reply is actually a filter modification
+# on the CARRIED domain (e.g. "delivery to hanlim, product srtwc286" -> escalate offered ->
+# "last month" (a date window) or "rpacc" (a product code) should keep the offer pending,
+# not reprompt it as gibberish.
+# --------------------------------------------------------------------------- #
+
+
+def _pending_member_offer_state(**overrides) -> dict:
+    base = {
+        "selection_context": "member_offer",
+        "last_result_set": [
+            {"idx": i, "label": f"Member {i}", "uuid": f"u{i}"} for i in range(1, 7)
+        ],
+        "routing": {"suggested_team": "customer_service", "suggested_agent": "order_enquiries"},
+    }
+    base.update(overrides)
+    return base
+
+
+def test_a_date_filter_reply_on_a_pending_member_offer_is_a_filter_not_junk() -> None:
+    """"last month" against a 6-member roster: a date window, no pick signal at all -
+    must NOT be read as an out-of-range pick and reprompted."""
+    out = run(
+        parser_output(
+            message_type="casual",
+            domain_hint=None,
+            date_filter_start="2026-08-01",
+            date_filter_end="2026-08-31",
+            entities=[],
+        ),
+        message="last month",
+        state=_pending_member_offer_state(),
+    )
+    escalation = out.get("escalation") or {}
+    assert escalation.get("member_reprompt") != "out_of_range", (
+        "a genuine date-filter reply must not be read as an out-of-range member pick and "
+        f"reprompted: {out!r}"
+    )
+    assert out.get("correction") is not True, (
+        f"a filter modification is not a correction of a bad pick: {out!r}"
+    )
+
+
+# NOTE (seam not reached): a second case for "rpacc" (a product-code entity,
+# `message_type: business_query`) was measured and DROPPED from this file - `is_new_query`
+# is already True on that shape (message_type == "business_query"), so `post_process`'s
+# entry-gate already takes "Tier 3 - NEW QUERY: abandon the offer. Touch nothing" and never
+# reaches the Tier-4 reprompt this test targets; `escalation.member_reprompt` is absent
+# either way, so an assertion at THIS level passes today for the wrong reason. The owner's
+# actual complaint for that shape - "the patch dropped the roster (pending null,
+# last_result_set [])" - happens one layer down, in `tail/compile_state.py`'s own
+# no-fresh-offer reset (the SAME mechanism K rule 1 targets for tier_offer, but
+# `_picker_carry`'s docstring explicitly excludes `member_offer` from any carry as a
+# documented safety property - re-arming it can invisibly assign a human to somebody who
+# already declined). Reconciling "keep the pending escalation across a filter-only reply"
+# with "never silently re-arm a declined/answered member offer" needs a narrower rule than
+# either K1's blanket carry or today's blanket exclusion, and pinning that exact rule in a
+# red test was not reached in this pass - flagged here rather than shipping a test that
+# would pass for the wrong reason.
+
+
+# --------------------------------------------------------------------------- #
+# Owner console defect K, rule 4 (turn a8472efe). A BARE entity turn (one entity, no
+# intent, no domain) with a carried BUSINESS domain must INHERIT that domain and TYPE the
+# entity BY THE DOMAIN (product for inventory/incoming/promotion, customer for order) -
+# inheritance is blocked only when the entity RESOLVES to an incompatible type, never on
+# the LLM's own (frequently wrong) hint.
+#
+# Today's code (`output_exchange.py`'s "domain continuity for entity-bearing
+# continuations" block, ~line 1538-1564) does the OPPOSITE: it trusts the LLM's hint,
+# checks it against `DOMAIN_BLOCKED_HINTS[prev_domain]`, and on a mismatch (a genuine
+# product code the LLM mis-hinted "customer" under a carried "inventory" domain) sets
+# `domain_inherit_blocked` and drops the inheritance - exactly turn a8472efe's shape:
+# domain inventory + srtwc286 carried, "rpacc" hinted customer -> inheritance blocked,
+# both codes surfaced as an ambiguous "ali or B" clarify instead of typing rpacc as the
+# product it is and letting the RESOLVER decide.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_bare_entity_inherits_the_carried_domain_and_is_retyped_by_it() -> None:
+    """(a) prior domain inventory, a bare entity the LLM mis-hinted "customer" - the
+    domain must still be inherited and the entity retyped "product", with no
+    `domain_inherit_blocked` stamped."""
+    out = run(
+        parser_output(
+            message_type="business_query",
+            domain_hint=None,
+            intent_hint=None,
+            entities=[{"raw": "rpacc", "hint": "customer", "current_message": True}],
+        ),
+        message="rpacc",
+        state={"domain_hint": "inventory", "intent_hint": "check_stock", "entities": []},
+    )
+    assert out["domain_hint"] == "inventory", (
+        f"the carried business domain must be inherited on a bare code turn: {out!r}"
+    )
+    assert out.get("domain_inherit_blocked") is None, (
+        f"a mis-hint must never be read as a topic switch: {out!r}"
+    )
+    entity_hints = {e.get("hint") for e in out.get("entities") or [] if e.get("raw") == "rpacc"}
+    assert entity_hints == {"product"}, (
+        f"the bare code must be RETYPED to match the inherited domain, not left as the "
+        f"LLM's own (wrong) hint: {out.get('entities')!r}"
+    )
+
+
+def test_a_bare_entity_under_a_carried_order_domain_is_typed_as_customer() -> None:
+    """(b) prior domain order, a bare entity mis-hinted "product" - typed customer."""
+    out = run(
+        parser_output(
+            message_type="business_query",
+            domain_hint=None,
+            intent_hint=None,
+            entities=[{"raw": "hanlim", "hint": "product", "current_message": True}],
+        ),
+        message="hanlim",
+        state={"domain_hint": "order", "intent_hint": "check_order", "entities": []},
+    )
+    assert out["domain_hint"] == "order"
+    assert out.get("domain_inherit_blocked") is None
+    entity_hints = {e.get("hint") for e in out.get("entities") or [] if e.get("raw") == "hanlim"}
+    assert entity_hints == {"customer"}, (
+        f"the bare entity must be retyped customer under the carried order domain: "
+        f"{out.get('entities')!r}"
+    )
