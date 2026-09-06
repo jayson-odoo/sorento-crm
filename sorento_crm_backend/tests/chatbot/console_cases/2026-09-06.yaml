@@ -203,3 +203,26 @@ cases:
       branch_kind: out_of_scope
       reply_contains: ["human assistance"]
       no_uuid: true
+
+  # Owner console pass 4, item E (prod turn 0d1fc129, exec 15456707). Case 69, three turns:
+  # the roster goes up, then TWO filter replies narrow the question it was made about. Both
+  # must be ANSWERED - the second turn came back "Sure, I can help with that. Please share
+  # the date range you want checked" over a date range the customer had just given, because
+  # the parser called it `casual` and the router's low-signal arm fires on that word above
+  # the business one.
+  - name: a filter reply under an open roster is answered, not re-asked
+    cold: true
+    turns:
+      - text: "delivery to hanlim, product srtwc286"
+        expect:
+          no_uuid: true
+      - text: "last month"
+        expect:
+          branch_kind: business_query
+          reply_not_contains: ["share the date range", "not one of the options"]
+          no_uuid: true
+      - text: "rpacc"
+        expect:
+          branch_kind: business_query
+          reply_not_contains: ["share the date range", "not one of the options"]
+          no_uuid: true

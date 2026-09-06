@@ -1399,3 +1399,24 @@ contact inside the synchronous request. Different contacts run in parallel.
   None of the three rules can be fixture-visible: n8n's own bodies say "delivery", stamp
   `replace_combine` and read `is_affirmative` alone. Full chatbot suite green: 3628 passed,
   129 skipped, 5 xfailed. (H67, H68, H69)
+
+- AC-818 `[BE][T]` **A filter reply under an open roster is ANSWERED, not re-asked.** Live
+  turn 0d1fc129 (exec 15456707), case 69 turn 2. AC-816 rule 3's own half worked: the
+  offer's `ttl` dropped 3 to 2, `member_offer_filter_modification` was set, the session
+  carried the August window and both entities, and the domain stayed `order`. The customer
+  still got "Sure, I can help with that. Please share the date range you want checked" -
+  over a date range they had just given - because the parser emitted `message_type: casual`
+  for "last month" and `route.decide`'s `is_low_signal` arm fires on that word alone, above
+  the business arm, however much state the post-processor restored underneath it. Given a
+  turn the post-processor flagged `member_offer_filter_modification` AND a `domain_hint`,
+  when the router decides, then the turn is not low signal and reaches the business lane;
+  the roster stays pending and spends one turn against its clock, exactly as rule 3 says.
+  Given the flag with NO domain, the turn is still low signal - there is no open question
+  for it to have narrowed, which is `is_low_signal`'s own fourth clause. Ordinary small talk
+  is untouched. A router backstop over the UNDERSTOOD turn, reading only structured state
+  (D11), same class as the broaden-all clarify and `is_offer_hold`'s single-company roster
+  arm. Evidence: `tests/chatbot/test_route_unit.py::TestAFilterModificationIsNeverLowSignal`
+  (four cases, two of them guards) and
+  `tests/chatbot/test_r3_pending_end_to_end.py::TestAPendingOrderRosterDoesNotSwallowABareProductCode::test_both_narrowed_turns_are_ANSWERED_and_the_roster_stays_pending`
+  (the real three-turn chain: the branch and the persisted `ttl`, on both filter turns).
+  Console case: "a filter reply under an open roster is answered, not re-asked". (H70)

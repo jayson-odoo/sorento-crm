@@ -544,6 +544,97 @@ class TestAPendingOrderRosterDoesNotSwallowABareProductCode:
             f"whatever type rule 4 stamped on the bare token: {resolved!r}"
         )
 
+    def test_both_narrowed_turns_are_ANSWERED_and_the_roster_stays_pending(
+        self, seeded, session_factory, monkeypatch
+    ):
+        """Owner console pass 4, item E - the SAME chain, graded on the branch instead of
+        on the understanding (live turn 0d1fc129, exec 15456707).
+
+        #705 got the understanding right and the turn still said "Sure, I can help with
+        that. Please share the date range you want checked": the parser emitted
+        `message_type: casual` for "last month", and `route.decide`'s `is_low_signal` arm
+        fires on that word alone, above the business arm, however much state the
+        post-processor had restored underneath it. So this grades what the customer
+        actually got - the branch - and that the roster is still on screen afterwards with
+        one turn spent against its clock (AC-816 rule 1's TTL, which rule 3 deliberately
+        does NOT reset).
+        """
+        company_id = self._seed_master(session_factory)
+        self._seed_offer(session_factory)
+        self._wire(session_factory, monkeypatch, company_id)
+
+        def _pending() -> dict:
+            return (_session_of(session_factory)["variables"] or {}).get("pending") or {}
+
+        assert _pending().get("ttl") == 3, _pending()
+
+        # -- turn 2: "last month", in the shape the LIVE parser emitted it: casual, no
+        #    domain, no intent, a real date window and nothing else.
+        head2 = self._run(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual",
+                intent_hint=None,
+                domain_hint=None,
+                entities=[],
+                date_mode="range",
+                date_filter_start="2026-08-01",
+                date_filter_end="2026-08-31",
+            ),
+            text_body="last month",
+            msg_id="ZZT-item-e-t2",
+        )
+        qf2 = head2.ctx["parse"]["output"]
+        assert qf2.get("member_offer_filter_modification") is True, qf2
+        assert head2.branch_kind == "business_query", (
+            "a date window that narrows a still-open order question must be ANSWERED; "
+            f"low_signal is what produced 'please share the date range': {head2.branch_kind!r}"
+        )
+        engine_mod.complete_turn(
+            head2.turn_id,
+            _fragments(
+                item={
+                    "allowed": True,
+                    "response": "Here are the orders I found.",
+                    "items": [{"title": "SO-20021", "fields": []}],
+                }
+            ),
+            session_factory=session_factory,
+        )
+        assert _pending().get("kind") == "member_offer", (
+            f"the roster is still on screen, so the offer stays pending: {_pending()!r}"
+        )
+        assert _pending().get("ttl") == 2, (
+            f"a filter modification SPENDS one turn against the offer's clock: {_pending()!r}"
+        )
+
+        # -- turn 3: "rpacc". Same shape, an entity filter instead of a date one.
+        head3 = self._run(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual",
+                intent_hint=None,
+                domain_hint=None,
+                entities=[
+                    {
+                        "raw": "rpacc",
+                        "hint": "product",
+                        "canonical_code": None,
+                        "current_message": True,
+                        "confident": True,
+                    }
+                ],
+            ),
+            text_body="rpacc",
+            msg_id="ZZT-item-e-t3",
+        )
+        assert head3.branch_kind == "business_query", (
+            "the bare product code narrows the same question and must be answered too: "
+            f"{head3.branch_kind!r}"
+        )
+
 
 class TestAnOutOfRangePickKeepsTheProductInScope:
     """"promotion 7445" -> a three-tier picker -> "9" -> "all" (prod execs 15445325 /

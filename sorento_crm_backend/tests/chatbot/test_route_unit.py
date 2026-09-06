@@ -252,3 +252,81 @@ class TestBroadenAllNeverReadAsLowSignal:
             "message_type casual + scope_intent broaden + broaden_axis all must route to "
             f"clarify_menu, not be swallowed by is_low_signal; got {branch!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Owner console pass 4, item E (live turn 0d1fc129, exec 15456707). Case 69 turn 2,
+# "last month" under a pending order roster: #705's half works - the offer's ttl drops
+# 3 -> 2, `member_offer_filter_modification` is true, the session patch carries the
+# August window and both carried entities, and the domain is still `order`. The turn
+# then answered "Sure, I can help with that. Please share the date range you want
+# checked", because the parser emitted `message_type: casual` and this ladder's
+# `is_low_signal` arm fires on that word alone, ahead of the business arm - even though
+# the post-processor had already restored `intent_hint: check_order` and
+# `domain_hint: order` from the offer's own state.
+#
+# A turn the post-processor flagged as a filter modification is by definition NOT
+# content-free: it changed a filter on a business question that is still open. Same
+# class as `TestBroadenAllNeverReadAsLowSignal` above and `is_offer_hold`'s
+# single-company roster arm - a router backstop over the UNDERSTOOD turn, reading only
+# structured state.
+# --------------------------------------------------------------------------- #
+
+
+class TestAFilterModificationIsNeverLowSignal:
+    def _filter_qf(self, **overrides) -> dict:
+        qf = {
+            # The word the parser actually emitted on turn 0d1fc129.
+            "message_type": "casual",
+            # ... and what `output_exchange`'s Tier 3 restored from the open offer.
+            "intent_hint": "check_order",
+            "domain_hint": "order",
+            "member_offer_filter_modification": True,
+            "date_mode": "range",
+            "date_filter_start": "2026-08-01",
+            "date_filter_end": "2026-08-31",
+            "entities": [
+                {"raw": "hanlim", "hint": "customer", "canonical_code": "300-H030"},
+            ],
+        }
+        qf.update(overrides)
+        return qf
+
+    def test_a_casual_date_filter_under_an_open_roster_reaches_the_business_lane(self) -> None:
+        ctx = _ctx(self._filter_qf(), custom_fields=[])
+        branch, _ = decide(ctx)
+        assert branch == "business_query", (
+            "a turn flagged member_offer_filter_modification narrowed a live business "
+            f"question and must be answered, not swallowed by is_low_signal; got {branch!r}"
+        )
+
+    def test_a_bare_entity_filter_under_an_open_roster_reaches_the_business_lane(self) -> None:
+        """Turn 3 of the same chain ("rpacc"): the same shape with an entity instead of a
+        date window."""
+        qf = self._filter_qf(
+            date_mode=None,
+            date_filter_start=None,
+            date_filter_end=None,
+            entities=[
+                {"raw": "hanlim", "hint": "customer", "canonical_code": "300-H030"},
+                {"raw": "rpacc", "hint": "product", "current_message": True},
+            ],
+        )
+        ctx = _ctx(qf, custom_fields=[])
+        branch, _ = decide(ctx)
+        assert branch == "business_query", branch
+
+    def test_the_flag_does_not_rescue_a_turn_with_no_business_domain(self) -> None:
+        """Guard: the flag alone is not a licence. Without a domain there is no question
+        to have narrowed, and `is_low_signal`'s own bare-business-query clause says a
+        domainless business query is low signal - so this must stay low_signal."""
+        qf = self._filter_qf(domain_hint=None, intent_hint=None)
+        ctx = _ctx(qf, custom_fields=[])
+        branch, _ = decide(ctx)
+        assert branch == "low_signal", branch
+
+    def test_an_ordinary_casual_turn_is_still_low_signal(self) -> None:
+        """Guard: nothing about plain small talk moves."""
+        ctx = _ctx({"message_type": "casual", "domain_hint": None}, custom_fields=[])
+        branch, _ = decide(ctx)
+        assert branch == "low_signal", branch
