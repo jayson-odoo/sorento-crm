@@ -1063,18 +1063,28 @@ contact inside the synchronous request. Different contacts run in parallel.
   the pool contained `crm_it_support_ticket_create`, `crm_complaint_close`,
   `crm_order_cancel`, `crm_purchase_request_approve` and `crm_purchase_request_reject`.
   Given the real MCP catalogue, when the Tool-RAG capability documents are built, then every
-  emitted tool has method GET - non-GET tools are excluded from the pool, so they are never
-  candidates. Given a candidate list whose top hit is a non-GET tool (the state a live
+  emitted tool is one the catalogue declares a READ - method GET, or an explicit
+  `read_only=True` on the spec - and everything else is excluded from the pool, so it is
+  never a candidate. The flag is there because METHOD IS TRANSPORT, NOT SEMANTICS:
+  `crm_lookup_resolve`, `crm_portal_link_get` and `user_guides_read` are POST only because
+  their input does not fit in a query string, they write nothing, and excluding them would
+  have taken three useful reads out of the AI assistant's tool search, which shares this
+  pool. The default is False, so a genuinely writing tool is out by construction, and a
+  future edit that flagged one is caught by name.
+  Given a candidate list whose top hit is a writing tool (the state a live
   install is in until the pool is re-seeded), when the fetch lane runs, then the MCP client
   is NOT called, the fetch fragment is an `error` naming the refused tool with outcome
   `tool_not_allowed`, and the turn is recorded failed at `looked_up` with the generic error
   reply rather than told to the customer as "I could not find anything" (a refusal is not an
-  absence). The allowed set is DERIVED from `sorento_crm_mcp/catalog.py`'s own `method` in
-  one place (`mcp_tool_capability_service.read_only_tool_names`), not hand-kept, so a new
-  POST tool is excluded by construction. Both layers are required and neither is redundant:
+  absence). The allowed set is DERIVED from `sorento_crm_mcp/catalog.py`'s own declaration
+  in one place (`mcp_tool_capability_service.read_only_tool_names`), not hand-kept, so a new
+  writing tool is excluded by construction. Both layers are required and neither is redundant:
   the pool is data already written on a live install and only shrinks when
   `app/scripts/seed_mcp_tool_capabilities.py --rebuild` is re-run, while the refusal is code
   that ships with the deploy. The tools stay in the MCP catalogue and remain callable by a
   deliberate n8n or external caller; they are only unreachable by similarity.
-  Evidence: `tests/chatbot/test_tool_pool_is_read_only.py` (8 tests, walking the real
-  catalogue) and `test_dry_run_isolation.py::TestMcpToolPickRefusesWriteTools`. (H58, D10)
+  Evidence: `tests/chatbot/test_tool_pool_is_read_only.py` (13 tests, walking the real
+  catalogue: the five write tools excluded by name and asserted NOT flagged, the three
+  read-only POST tools included by name, the derivation itself, and the field surviving the
+  import path the backend actually resolves) and
+  `test_dry_run_isolation.py::TestMcpToolPickRefusesWriteTools`. (H58, D10)

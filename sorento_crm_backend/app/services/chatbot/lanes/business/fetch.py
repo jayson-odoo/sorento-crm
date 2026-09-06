@@ -18,9 +18,10 @@ Three hazards are fixed here rather than reproduced, and each says so at its own
   item list for parity (D8) and adds `outcome`, which the caller can act on.
 * **H58** - the pick is an argmax over an embedded catalogue that contained WRITE tools
   (`crm_order_cancel`, `crm_complaint_close`, the two purchase-request approvals), and
-  `tool_filter` takes the top hit with no further test. `call_tool` refuses anything that
-  is not a GET tool, against the catalogue's own `method`; `mcp_tool_capability_service`
-  keeps them out of the pool in the first place. Both, because the pool is data already
+  `tool_filter` takes the top hit with no further test. `call_tool` refuses anything the
+  catalogue does not declare a READ (method GET, or an explicit `read_only=True` on a POST
+  whose body is transport rather than a side effect); `mcp_tool_capability_service` keeps
+  the rest out of the pool in the first place. Both, because the pool is data already
   written on live installs and the refusal is code that ships with the deploy.
 
 **H43 is moot, not fixed.** The n8n query's `$4` is `domain`, LIKE-matched against
@@ -535,13 +536,15 @@ def call_tool(name: str, args: dict[str, Any], *, mcp: Any) -> Any:
     half and is the one that stops them being candidates - but that half is DATA, and a
     live install keeps every row it has already embedded until the pool is re-seeded. This
     half is code, ships with the deploy, and covers every call this lane makes including
-    the tier probe. Both halves read the SAME source: the catalogue's own `method`.
+    the tier probe. Both halves read the SAME source: the catalogue's own declaration of
+    what a tool does (method GET, or `read_only=True` on a POST that only reads).
     """
     from app.services.mcp_tool_capability_service import read_only_tool_names
 
     if name not in read_only_tool_names():
         raise ToolNotAllowed(
-            f"MCP tool {name} is not allowed: the chatbot may only call read (GET) tools"
+            f"MCP tool {name} is not allowed: the chatbot may only call tools the "
+            "catalogue declares read-only"
         )
     return mcp.call_tool(name, args)
 
