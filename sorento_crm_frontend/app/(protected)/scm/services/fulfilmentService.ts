@@ -334,6 +334,24 @@ export type LoadingPlanStatus = 'planning' | 'sent' | 'cancelled';
 /** Which document the plan was started from. `none` is a real answer, not a missing one. */
 export type PlanDocumentKind = 'stock_list' | 'proforma' | 'none';
 
+/**
+ * One plan line's edit (R11): the typed quantity, the typed remark, or both. Neither field
+ * is required - a row carrying only a remark has no qty override, and vice versa.
+ */
+export interface LoadingPlanLineEdit {
+  qty?: number;
+  remark?: string;
+}
+
+/** A stored or typed line edit, normalized (AC-E5): a bare number - what every plan saved
+ *  before remarks existed - reads as `{qty: n}`. */
+export function normalizeLineEdit(
+  raw: number | LoadingPlanLineEdit | undefined,
+): LoadingPlanLineEdit {
+  if (raw === undefined) return {};
+  return typeof raw === 'number' ? { qty: raw } : raw;
+}
+
 export interface LoadingPlanRecord {
   id: string;
   supplier_id: string;
@@ -371,8 +389,10 @@ export interface LoadingPlanRecord {
   open_count: number;
   cancelled_at: string | null;
   cancelled_by: string | null;
-  /** The typed quantities, `row_key -> qty`. Applied to `suggested_qty` by the build. */
-  line_edits: Record<string, number>;
+  /** The typed quantities and remarks, `row_key -> qty | {qty?, remark?}` (R11). A bare
+   *  number is what every plan saved before remarks existed - `normalizeLineEdit` reads it
+   *  as `{qty: n}`. Applied to `suggested_qty` (and `remark`) by the build. */
+  line_edits: Record<string, number | LoadingPlanLineEdit>;
   /** What the last build of this plan asked for, so the list does not have to re-run one
    *  build per row to fill a column. Null before the plan has ever been opened. */
   to_request_qty: number | null;
@@ -433,12 +453,14 @@ export async function updateLoadingPlanCutOff(
 }
 
 /**
- * The typed quantities, WHOLE map, one transaction (R6). Not a patch: what is not in the map
- * is not an edit any more, so a cleared cell cannot survive as a stale override.
+ * The typed quantities and remarks, WHOLE map, one transaction (R6, R11). Not a patch: what
+ * is not in the map is not an edit any more, so a cleared cell cannot survive as a stale
+ * override. Always sent in the object form (`{qty?, remark?}`) - AC-E5's bare-number reading
+ * is for what an OLD plan already has stored, not what this writes.
  */
 export async function saveLoadingPlanEdits(
   id: string,
-  edits: Record<string, number>,
+  edits: Record<string, LoadingPlanLineEdit>,
 ): Promise<LoadingPlanRecord> {
   const res = await apiFetch(`/api/v1/scm/loading-plans/${id}/edits`, {
     method: 'PUT',
@@ -581,7 +603,8 @@ export async function getNoticeDocumentUrl(
  * `build` is a pure read: ONE table over every product on the supplier's current stock list.
  * Rows with open sales-order need (`has_demand: true`) are ranked against the ACTIVE
  * Fulfilment Priority policy and carry a NETTED `suggested_qty`
- * (`max(open_so_need - on_hand - incoming_spo, 0)`) - `outstanding_po` is NOT subtracted
+ * (`max(open_so_need - on_hand - incoming_spo - incoming_pl_unallocated, 0)`, R6) -
+ * `outstanding_po` is NOT subtracted
  * (captain, 20 Aug follow-up: a PO placed but not yet allocated is not supply this container
  * can count on, often the very demand this request is asking the supplier to pack; an SPO
  * allocation is real incoming stock on the water). `outstanding_po` still travels on the row
@@ -638,7 +661,8 @@ export interface ContainerRequestRow {
   product_name: string | null;
   /** Gross outstanding SO need, all classes - what the Need column shows. */
   open_so_need: number;
-  /** NETTED against on_hand / incoming_spo only, floored at 0 - the editable ask.
+  /** NETTED against on_hand / incoming_spo / incoming_pl_unallocated only, floored at 0 -
+   *  the editable ask.
    *  `outstanding_po` is shown below but deliberately not part of this subtraction (captain,
    *  20 Aug follow-up - see the module docstring). The plan's saved edit for this row, when
    *  it has one, is ALREADY applied here (R2). */
@@ -660,6 +684,11 @@ export interface ContainerRequestRow {
    *  location-specific, so it cannot be netted against a pool the way an SPO can. */
   incoming_pl: number;
   incoming_pl_shipments: ContainerRequestIncomingShipment[];
+  /** The part of `incoming_pl` not yet turned into an SPO (R6) - what the formula actually
+   *  subtracts, netting the full `incoming_pl` would double-subtract a container that
+   *  already has one. Optional on the FE type only because Phase 1 mocks it as `incoming_pl`
+   *  until the backend sends the real figure; every row the backend returns carries it. */
+  incoming_pl_unallocated?: number;
   /** Placed with a supplier but not yet allocated to a shipment - real context, never
    *  deducted from `suggested_qty`. Company-wide, not pool-only: a PO carries no landing
    *  location until it is allocated. */
@@ -706,6 +735,11 @@ export interface ContainerRequestRow {
   /** False for a stock-list product with no open sales-order need behind it - still shown
    *  (one table), just unranked and muted. */
   has_demand: boolean;
+  /** The plan's own instruction to the supplier for this line (R11), read off
+   *  `plan.line_edits[row_key].remark` the same way `suggested_qty` reads its `qty`. Optional
+   *  on the FE type for the same Phase 1 reason as `incoming_pl_unallocated` - absent until
+   *  the backend build sets it. */
+  remark?: string | null;
 }
 
 /** One site pool (BRW / MWH / WH3 / DC1 / RSW), for the row popover's location table. */

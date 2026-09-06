@@ -25,6 +25,7 @@ import {
   type ContainerRequestLine,
   type ContainerRequestSendOptions,
   type LoadingPlanCreate,
+  type LoadingPlanLineEdit,
   type LoadingPlanListParams,
   type SpoConfirmLine,
 } from '../services/fulfilmentService';
@@ -155,7 +156,7 @@ export function useUpdateLoadingPlanCutOff(planId: string | null) {
 export function useSaveLoadingPlanEdits(planId: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (edits: Record<string, number>) =>
+    mutationFn: (edits: Record<string, LoadingPlanLineEdit>) =>
       saveLoadingPlanEdits(planId as string, edits),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [...KEY, 'container-request', planId] });

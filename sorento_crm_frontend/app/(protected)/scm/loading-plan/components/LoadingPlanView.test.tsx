@@ -292,6 +292,7 @@ describe('LoadingPlanView (the record)', () => {
       'Copy link',
       'Download XLSX',
       'Download PDF',
+      'Preview request',
       'Send to supplier',
       'Change cut-off',
       'Cancel plan',
@@ -350,7 +351,7 @@ describe('LoadingPlanView (the record)', () => {
 
     expect(screen.getByTestId('save-plan-edits').textContent).toContain('Save (1)');
     fireEvent.click(screen.getByTestId('save-plan-edits'));
-    await waitFor(() => expect(saveEdits).toHaveBeenCalledWith({ 'row-a': 4000 }));
+    await waitFor(() => expect(saveEdits).toHaveBeenCalledWith({ 'row-a': { qty: 4000 } }));
   });
 
   it('saves before it sends, so the document cannot disagree with the screen', async () => {
@@ -360,7 +361,7 @@ describe('LoadingPlanView (the record)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send to supplier' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Send' }));
 
-    await waitFor(() => expect(saveEdits).toHaveBeenCalledWith({ 'row-a': 4000 }));
+    await waitFor(() => expect(saveEdits).toHaveBeenCalledWith({ 'row-a': { qty: 4000 } }));
     await waitFor(() =>
       expect(sendRequest).toHaveBeenCalledWith(
         expect.objectContaining({

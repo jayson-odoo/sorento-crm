@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from '@/lib/toast';
-import { ArrowLeft, LoaderCircle, Save } from 'lucide-react';
+import { ArrowLeft, LoaderCircle, Save, Send } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -26,7 +26,7 @@ import AttachmentPreviewModal, {
 } from '@/components/common/AttachmentPreviewModal';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useUrlTab } from '@/hooks/useUrlTab';
-import { EM_DASH, fmtDate } from '../../lib/format';
+import { EM_DASH, fmtDate, fmtInt } from '../../lib/format';
 import {
   loadingPlanPagerQuery,
   useContainerRequestBuild,
@@ -42,19 +42,23 @@ import {
   useUnmatchedSupplierCodes,
 } from '../../hooks/useSupplierCodeAliases';
 import {
+  normalizeLineEdit,
   type CodedError,
   type ContainerRequestRow,
   type ContainerRequestSendOptions,
+  type LoadingPlanLineEdit,
   type LoadingPlanStatus,
 } from '../../services/fulfilmentService';
 import { useLoadingPlanActions } from '../actions';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
+import { SupplierSheet } from '../../components/SupplierSheet';
 import { SupplierCodesTab } from './SupplierCodesTab';
 import { ContainerRequestSection } from './ContainerRequestSection';
 import { SendRequestDialog } from './SendRequestDialog';
 import { SentRequestsPanel } from './SentRequestsPanel';
 import { requestLinesFrom } from './containerRequestSummary';
 import { copyPublicLink } from './copyPublicLink';
+import { mockSupplierSheet } from './mockSupplierSheet';
 import { PageHeader } from '@/components/common/PageHeader';
 
 /** The record's three tabs (S2): Lines (default), Supplier codes, Sent. */
@@ -113,10 +117,11 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   const supplierId = plan?.supplier_id ?? '';
   const supplierName = plan?.supplier_name ?? 'this supplier';
 
-  // Typed since the last Save. Saved edits ride back on `suggested_qty`, so this map holds
-  // ONLY what has not been written yet - which is exactly what the leave-the-page prompt and
-  // the "Send saves first" rule need to know about.
-  const [edits, setEdits] = useState<Record<string, number>>({});
+  // Typed since the last Save. Saved edits ride back on `suggested_qty` / `remark`, so this
+  // map holds ONLY what has not been written yet - which is exactly what the leave-the-page
+  // prompt and the "Send saves first" rule need to know about. Object-valued since R11: a row
+  // can carry a typed qty, a typed remark, or both.
+  const [edits, setEdits] = useState<Record<string, LoadingPlanLineEdit>>({});
   const [sendOpen, setSendOpen] = useState(false);
   const [cutOffOpen, setCutOffOpen] = useState(false);
   const [cutOffDraft, setCutOffDraft] = useState('');
@@ -124,6 +129,9 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   const [refreshOpen, setRefreshOpen] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  // The document view (R9) - a separate flag from `previewOpen` above, which is the uploaded
+  // stock list's own attachment preview modal.
+  const [docPreviewOpen, setDocPreviewOpen] = useState(false);
 
   const save = useSaveLoadingPlanEdits(planId);
   const changeCutOff = useUpdateLoadingPlanCutOff(planId);
@@ -168,19 +176,27 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   const rows = useMemo(() => build.data?.rows ?? [], [build.data]);
   const readOnly = plan?.status === 'cancelled';
 
-  const qtyFor = (row: ContainerRequestRow) => edits[row.row_key] ?? row.suggested_qty;
+  const qtyFor = (row: ContainerRequestRow) => edits[row.row_key]?.qty ?? row.suggested_qty;
+  // R11: the same shape qty already had - a typed remark shadows the persisted one until Save.
+  const remarkFor = (row: ContainerRequestRow) => edits[row.row_key]?.remark ?? row.remark ?? '';
   const lines = requestLinesFrom(rows, qtyFor);
   const totalQty = lines.reduce((sum, l) => sum + l.qty, 0);
 
-  /** The whole map that goes to the server: every row whose figure differs from the engine's,
-   *  typed this session or saved in an earlier one. Not a patch - see the service. */
+  /** The whole map that goes to the server: every row whose qty differs from the engine's, or
+   *  carries a remark, typed this session or saved in an earlier one. Not a patch - see the
+   *  service. */
   const editedMap = useMemo(() => {
-    const out: Record<string, number> = {};
+    const out: Record<string, LoadingPlanLineEdit> = {};
     for (const r of rows) {
-      const qty = edits[r.row_key] ?? r.suggested_qty;
-      if (qty !== r.engine_qty) out[r.row_key] = qty;
+      const qty = qtyFor(r);
+      const remark = remarkFor(r);
+      const edit: LoadingPlanLineEdit = {};
+      if (qty !== r.engine_qty) edit.qty = qty;
+      if (remark) edit.remark = remark;
+      if (edit.qty !== undefined || edit.remark !== undefined) out[r.row_key] = edit;
     }
     return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, edits]);
   /** How many rows carry an edit at all, saved or not. What a Refresh or a new cut-off would
    *  throw away, which is why both of them ask with this number. */
@@ -195,13 +211,14 @@ export function LoadingPlanView({ planId }: { planId: string }) {
    * lost the row (correctly - the PUT must not carry it), the count fell to zero and Save
    * went grey, so the saved override stayed on the plan and there was no way to undo it from
    * this screen. A key that is in the persisted map and not in this one is a cleared edit,
-   * and it counts.
+   * and it counts. `normalizeLineEdit` reads an old bare-number entry as `{qty: n}` (AC-E5).
    */
   const persistedEdits = plan?.line_edits ?? {};
   const unsavedCount = (() => {
     let n = 0;
-    for (const [key, qty] of Object.entries(editedMap)) {
-      if (persistedEdits[key] !== qty) n += 1;
+    for (const [key, edit] of Object.entries(editedMap)) {
+      const saved = normalizeLineEdit(persistedEdits[key]);
+      if (saved.qty !== edit.qty || saved.remark !== edit.remark) n += 1;
     }
     for (const key of Object.keys(persistedEdits)) {
       if (!(key in editedMap)) n += 1;
@@ -209,6 +226,17 @@ export function LoadingPlanView({ planId }: { planId: string }) {
     return n;
   })();
   const unsaved = unsavedCount > 0;
+
+  // R9: the exact document Send would produce. Phase 1 mocks it client-side
+  // (`mockSupplierSheet`); Phase 2 swaps in `POST /container-requests/preview`. A `useMemo`,
+  // not computed after the loading/error guards below: every hook here has to run on every
+  // render, loading and error passes included, or React sees a different hook count once the
+  // build resolves.
+  const previewSheet = useMemo(
+    () => mockSupplierSheet(rows, qtyFor, remarkFor),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, edits],
+  );
 
   // The browser's own guard for a hard navigation (close the tab, hit the address bar). The
   // in-app "Back to loading plans" gets the dialog below, which can say what is at stake.
@@ -261,6 +289,10 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   const { actions: planActions, pending: planPending } = useLoadingPlanActions(plan, {
     onDeleted: goBack,
     onCancelled: () => setEdits({}),
+    previewRequest: {
+      run: () => setDocPreviewOpen(true),
+      disabled: lines.length === 0 || totalQty <= 0,
+    },
     send: {
       run: () => setSendOpen(true),
       disabled: readOnly || lines.length === 0 || totalQty <= 0 || send.isPending,
@@ -377,122 +409,172 @@ export function LoadingPlanView({ planId }: { planId: string }) {
     plan.document_label,
   ].join(' · ');
 
+  // R11: the SAME merge backs the plan table's Remarks column and the preview's own qty /
+  // remark inputs - a remark typed on one shows on the other before either is saved (AC-E4).
+  const handleQtyChange = (rowKey: string, qty: number) =>
+    setEdits((prev) => ({ ...prev, [rowKey]: { ...prev[rowKey], qty } }));
+  const handleRemarkChange = (rowKey: string, remark: string) =>
+    setEdits((prev) => ({ ...prev, [rowKey]: { ...prev[rowKey], remark } }));
+
   return (
     <div className="space-y-4">
-      <PageHeader
-        title={plan.supplier_name ?? EM_DASH}
-        titleClassName="max-w-full truncate"
-        actions={
-          <Button
-            variant="outline"
-            onClick={() => (unsaved ? setLeaveOpen(true) : goBack())}
-            data-testid="back-to-plans"
+      {docPreviewOpen ? (
+        <>
+          <PageHeader
+            title={plan.supplier_name ?? EM_DASH}
+            titleClassName="max-w-full truncate"
+            actions={
+              <>
+                <Button variant="outline" onClick={() => setDocPreviewOpen(false)}>
+                  <ArrowLeft className="size-4" />
+                  Back to plan
+                </Button>
+                <Button
+                  disabled={readOnly || lines.length === 0 || totalQty <= 0 || send.isPending}
+                  title={readOnly ? 'This plan is cancelled.' : undefined}
+                  onClick={() => setSendOpen(true)}
+                >
+                  <Send className="size-4" />
+                  Send to supplier
+                </Button>
+              </>
+            }
           >
-            <ArrowLeft className="size-4" />
-            Back to loading plans
-          </Button>
-        }
-      >
-        {/* `w-full`, not just `min-w-0`: ToolbarHeading is a WRAPPING column flex container,
-            so its lines are sized to their content and a long supplier name would push the
-            header past the viewport at 375px instead of ellipsing. */}
-        <div
-          className="flex w-full min-w-0 flex-wrap items-center gap-2"
-          title={plan.supplier_name ?? ''}
-        >
-            
-          <Badge variant={STATUS_VARIANT[plan.status]} appearance="light" size="sm">
-            {STATUS_LABEL[plan.status]}
-          </Badge>
-        </div>
-        <p className="w-full text-xs text-muted-foreground" data-testid="plan-subtitle">
-          {subtitle}
-        </p>
-      </PageHeader>
-
-      {/* The plan's own actions: pager, gear, primary (D6, S1). They sit under the
-          toolbar rather than on it, and wrap at 375. The gear renders `planActions` - the
-          same array the row menu renders on the list - so Cancel and Delete never drift
-          between the two surfaces (D15). */}
-      <DetailActions
-        className="mb-4"
-        pager={{
-          ...loadingPlanPagerQuery,
-          detailPath: '/scm/loading-plan',
-          currentId: planId,
-          ariaLabel: 'loading plan',
-        }}
-        actions={planActions}
-        gearLabel="Plan actions"
-        pendingAction={planPending}
-        primary={
-          <Button
-            variant="outline"
-            disabled={readOnly || unsavedCount === 0 || save.isPending}
-            title={readOnly ? 'This plan is cancelled.' : undefined}
-            onClick={() => save.mutate(editedMap, { onSuccess: () => setEdits({}) })}
-            data-testid="save-plan-edits"
+            <p className="w-full text-xs text-muted-foreground">
+              {plan.plan_horizon_date ? `Until ${fmtDate(plan.plan_horizon_date)}` : 'No cut-off'}
+              {' · '}
+              {fmtInt(lines.length)} products · {fmtInt(totalQty)} units
+            </p>
+          </PageHeader>
+          <Card className="p-4">
+            <SupplierSheet
+              sheet={previewSheet}
+              editable
+              onQtyChange={handleQtyChange}
+              onRemarkChange={handleRemarkChange}
+            />
+          </Card>
+        </>
+      ) : (
+        <>
+          <PageHeader
+            title={plan.supplier_name ?? EM_DASH}
+            titleClassName="max-w-full truncate"
+            actions={
+              <Button
+                variant="outline"
+                onClick={() => (unsaved ? setLeaveOpen(true) : goBack())}
+                data-testid="back-to-plans"
+              >
+                <ArrowLeft className="size-4" />
+                Back to loading plans
+              </Button>
+            }
           >
-            {save.isPending ? (
-              <LoaderCircle className="size-4 animate-spin" />
-            ) : (
-              <Save className="size-4" />
-            )}
-            Save ({unsavedCount})
-          </Button>
-        }
-      />
+            {/* `w-full`, not just `min-w-0`: ToolbarHeading is a WRAPPING column flex container,
+                so its lines are sized to their content and a long supplier name would push the
+                header past the viewport at 375px instead of ellipsing. */}
+            <div
+              className="flex w-full min-w-0 flex-wrap items-center gap-2"
+              title={plan.supplier_name ?? ''}
+            >
 
-      {/* Three tabs (S2): what to ask (Lines, default), the codes her file named that our
-          catalogue does not (Supplier codes), and what has already gone out (Sent). The
-          toolbar above never moves between them - Save and Send both act on the Lines tab's
-          edits no matter which tab is open. */}
-      <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-        <TabsList variant="line" className="mb-4 w-full justify-start">
-          <TabsTrigger value="lines">Lines</TabsTrigger>
-          <TabsTrigger value="codes">
-            Supplier codes{unmatchedCodes.length ? ` (${unmatchedCodes.length})` : ''}
-          </TabsTrigger>
-          <TabsTrigger value="sent">
-            Sent{requestNotices.length ? ` (${requestNotices.length})` : ''}
-          </TabsTrigger>
-        </TabsList>
+              <Badge variant={STATUS_VARIANT[plan.status]} appearance="light" size="sm">
+                {STATUS_LABEL[plan.status]}
+              </Badge>
+            </div>
+            <p className="w-full text-xs text-muted-foreground" data-testid="plan-subtitle">
+              {subtitle}
+            </p>
+          </PageHeader>
 
-        <TabsContent value="lines">
-          <ContainerRequestSection
-            planId={planId}
-            supplierId={supplierId}
-            supplierName={supplierName}
-            qtyFor={qtyFor}
-            onQtyChange={(rowKey, qty) => setEdits((prev) => ({ ...prev, [rowKey]: qty }))}
-            readOnly={readOnly}
+          {/* The plan's own actions: pager, gear, primary (D6, S1). They sit under the
+              toolbar rather than on it, and wrap at 375. The gear renders `planActions` - the
+              same array the row menu renders on the list - so Cancel and Delete never drift
+              between the two surfaces (D15). */}
+          <DetailActions
+            className="mb-4"
+            pager={{
+              ...loadingPlanPagerQuery,
+              detailPath: '/scm/loading-plan',
+              currentId: planId,
+              ariaLabel: 'loading plan',
+            }}
+            actions={planActions}
+            gearLabel="Plan actions"
+            pendingAction={planPending}
+            primary={
+              <Button
+                variant="outline"
+                disabled={readOnly || unsavedCount === 0 || save.isPending}
+                title={readOnly ? 'This plan is cancelled.' : undefined}
+                onClick={() => save.mutate(editedMap, { onSuccess: () => setEdits({}) })}
+                data-testid="save-plan-edits"
+              >
+                {save.isPending ? (
+                  <LoaderCircle className="size-4 animate-spin" />
+                ) : (
+                  <Save className="size-4" />
+                )}
+                Save ({unsavedCount})
+              </Button>
+            }
           />
-        </TabsContent>
 
-        <TabsContent value="codes">
-          {/* The queue of codes this supplier's file names and our catalogue does not, AND
-              the supplier's memory of every ruling ever made (S3) - both always render, so
-              the Remembered list is reachable even once the queue itself is answered down to
-              nothing; the tab's own empty states cover each half. */}
-          <SupplierCodesTab
-            planId={planId}
-            supplierId={supplierId}
-            documentKind={plan.document_kind}
-            documentLabel={plan.document_label}
-            statementAsOf={plan.statement_as_of}
-          />
-        </TabsContent>
+          {/* Three tabs (S2): what to ask (Lines, default), the codes her file named that our
+              catalogue does not (Supplier codes), and what has already gone out (Sent). The
+              toolbar above never moves between them - Save and Send both act on the Lines tab's
+              edits no matter which tab is open. */}
+          <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+            <TabsList variant="line" className="mb-4 w-full justify-start">
+              <TabsTrigger value="lines">Lines</TabsTrigger>
+              <TabsTrigger value="codes">
+                Supplier codes{unmatchedCodes.length ? ` (${unmatchedCodes.length})` : ''}
+              </TabsTrigger>
+              <TabsTrigger value="sent">
+                Sent{requestNotices.length ? ` (${requestNotices.length})` : ''}
+              </TabsTrigger>
+            </TabsList>
 
-        <TabsContent value="sent">
-          <SentRequestsPanel
-            supplierName={supplierName}
-            notices={requestNotices}
-            onSend={() => setSendOpen(true)}
-            sendDisabled={readOnly || lines.length === 0 || totalQty <= 0 || send.isPending}
-            sendDisabledReason={readOnly ? 'This plan is cancelled.' : undefined}
-          />
-        </TabsContent>
-      </Tabs>
+            <TabsContent value="lines">
+              <ContainerRequestSection
+                planId={planId}
+                supplierId={supplierId}
+                supplierName={supplierName}
+                qtyFor={qtyFor}
+                onQtyChange={handleQtyChange}
+                remarkFor={remarkFor}
+                onRemarkChange={handleRemarkChange}
+                readOnly={readOnly}
+              />
+            </TabsContent>
+
+            <TabsContent value="codes">
+              {/* The queue of codes this supplier's file names and our catalogue does not, AND
+                  the supplier's memory of every ruling ever made (S3) - both always render, so
+                  the Remembered list is reachable even once the queue itself is answered down
+                  to nothing; the tab's own empty states cover each half. */}
+              <SupplierCodesTab
+                planId={planId}
+                supplierId={supplierId}
+                documentKind={plan.document_kind}
+                documentLabel={plan.document_label}
+                statementAsOf={plan.statement_as_of}
+              />
+            </TabsContent>
+
+            <TabsContent value="sent">
+              <SentRequestsPanel
+                supplierName={supplierName}
+                notices={requestNotices}
+                onSend={() => setSendOpen(true)}
+                sendDisabled={readOnly || lines.length === 0 || totalQty <= 0 || send.isPending}
+                sendDisabledReason={readOnly ? 'This plan is cancelled.' : undefined}
+              />
+            </TabsContent>
+          </Tabs>
+        </>
+      )}
 
       <SendRequestDialog
         open={sendOpen}
