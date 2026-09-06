@@ -1504,6 +1504,10 @@ class TestPersonMentionEscalationRoutesByStaffLookup:
         ctx = _ctx(
             routing={"suggested_team": None, "suggested_agent": None},
             person_mention=None,
+            # Not an acceptance - nothing was offered. `_ctx`'s default escalation says
+            # confirmed, which the lane did not read until B1 (review of #706) and now
+            # reads first; an "acceptance" is assigned, so the default would grade nothing.
+            escalation={"is_escalation_confirmation": False, "company_pick": None},
             prev_variables={
                 "routing": {"suggested_team": "marketing_product", "suggested_agent": "general_enquiries"}
             },
@@ -1744,6 +1748,10 @@ class TestOwnerRulingD1LaneTeamMismatch:
         ctx = _ctx(
             routing={"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
             parser_raw={"routing": {"suggested_team": None, "suggested_agent": None}},
+            # What `output_exchange` actually stamps on this turn (rule D1(b)): NOT an
+            # acceptance. `_ctx`'s default escalation says confirmed, which would make the
+            # lane assign - correctly - and grade nothing (review of #706, B1).
+            escalation={"is_escalation_confirmation": False, "team_unresolved": True},
             prev_variables={
                 "routing": {"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
                 "pending": {"kind": "escalation_offer", "team": "warehouse", "domain": "inventory"},
@@ -1850,6 +1858,8 @@ class TestEveryClarifyIsSomethingTheCustomerReceives:
 
         ctx = _ctx(
             routing={"suggested_team": None, "suggested_agent": "general_enquiries"},
+            # Not an acceptance (see the B1 note on the AC-815 unmapped-team test).
+            escalation={"is_escalation_confirmation": False, "company_pick": None},
             prev_variables={"routing": {"suggested_team": "purchasing"}},
         )
         result = run(ctx, _item(team=None), services=_services())
@@ -1861,3 +1871,146 @@ class TestEveryClarifyIsSomethingTheCustomerReceives:
             "the teams must be tappable, or the customer has to spell one correctly: "
             f"{sends[0]!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Review of #706, blocker B1. The D1 clarify arm in `_person_routing` ("no person, no
+# parser team, and a previous turn HAD one: ask") fired on EVERY acceptance from turn 2 on.
+# `output_exchange` hard-defaults `routing.suggested_team` to `customer_service` and
+# `compile_state` persists it every turn, so `prev_team` is always truthy, and the parser's
+# own team is null whenever the customer did not name one - which is every bare "yes".
+# Route sends `is_escalation_confirmation` straight into this lane and `run()` reaches
+# `_person_routing` unconditionally, so AC-817 rule 3's "a bare yes still confirms" was
+# true at the post-processor and false end to end. Measured through `run()` on base
+# 89ab3773c versus #706's HEAD: all three cases below returned `clarify` on HEAD.
+# --------------------------------------------------------------------------- #
+
+
+class TestAnAcceptanceIsNeverAskedWhichTeam:
+    def _run(self, *, text: str, offered: str | None, confirmed: bool, prev_team: str):
+        from app.services.chatbot.lanes.escalation import run
+
+        prev: dict = {
+            "routing": {"suggested_team": prev_team, "suggested_agent": "general_enquiries"},
+        }
+        if offered is not None:
+            prev["pending"] = {"kind": "escalation_offer", "team": offered, "domain": "inventory"}
+            prev["response"] = f"Would you like me to escalate to {offered} team?"
+        ctx = _ctx(
+            # The DERIVED routing has already inherited the previous team (output_exchange's
+            # nullish chain); the parser's OWN snapshot named nothing.
+            routing={"suggested_team": prev_team, "suggested_agent": "general_enquiries"},
+            parser_raw={"routing": {"suggested_team": None, "suggested_agent": None}},
+            escalation={"is_escalation_confirmation": confirmed, "company_pick": None},
+            prev_variables=prev,
+            text=text,
+        )
+        item = _item(brand_code=None, company_id=None, company_name=None, routing_source="none")
+        services = _services()
+        return run(ctx, item, services=services), services
+
+    def test_a_bare_yes_over_a_pending_warehouse_offer_assigns_to_warehouse(self) -> None:
+        """Capture output_exchange/parser-15145532: "yes" over a pending warehouse offer.
+        The post-processor stamps `is_escalation_confirmation: true`; the lane must then
+        ASSIGN to the offered team, never ask which team."""
+        result, services = self._run(
+            text="yes", offered="warehouse", confirmed=True, prev_team="warehouse"
+        )
+        assert result["arm"] == "human-intervention", (
+            f"an accepted offer is assigned, not re-asked: arm={result['arm']!r}"
+        )
+        comment = next(a for a in result["actions"] if a["kind"] == "add_comment")
+        assert comment["text"].startswith("Team: warehouse\n"), comment["text"]
+        services.next_assignee.assert_called_once()
+
+    def test_escalate_over_a_pending_purchasing_offer_assigns_to_purchasing(self) -> None:
+        """Capture exec-13484619: "ESCALATE" over a pending purchasing offer, emitted
+        `request_for_help` with a null routing and the model's own confirmation flag
+        true."""
+        result, services = self._run(
+            text="ESCALATE", offered="purchasing", confirmed=True, prev_team="purchasing"
+        )
+        assert result["arm"] == "human-intervention", result["arm"]
+        comment = next(a for a in result["actions"] if a["kind"] == "add_comment")
+        assert comment["text"].startswith("Team: purchasing\n"), comment["text"]
+
+    def test_a_fresh_ask_with_no_pending_offer_flows_through_unguarded(self) -> None:
+        """"can someone help me" with NO offer open and only the hard-defaulted
+        `customer_service` routing carried from the previous turn. Nothing was offered,
+        so there is no stale team to be wrong about: the lane behaves exactly as it did
+        before D1 and assigns to the derived team."""
+        result, _ = self._run(
+            text="can someone help me",
+            offered=None,
+            confirmed=False,
+            prev_team="customer_service",
+        )
+        assert result["arm"] == "human-intervention", (
+            f"with no open offer the D1 clarify has no premise: arm={result['arm']!r}"
+        )
+
+    def test_a_fresh_ask_over_an_open_offer_still_asks(self) -> None:
+        """The arm's one real case, kept: turn 9a40182a's shape."""
+        result, services = self._run(
+            text="can someone else help me",
+            offered="warehouse",
+            confirmed=False,
+            prev_team="warehouse",
+        )
+        assert result["arm"] == "clarify", result["arm"]
+        services.next_assignee.assert_not_called()
+
+    def test_an_expired_offer_is_not_an_open_one(self) -> None:
+        """A pending marker whose clock ran out (AC-816 rule 1's ttl) is not an open
+        offer: the same premise `output_exchange._offer_is_open` applies, read here
+        through the same function so the two ends of the turn cannot disagree. The
+        previous routing is the carried DEFAULT, so H64's premise is absent too, and the
+        turn assigns."""
+        from app.services.chatbot.lanes.escalation import run
+
+        ctx = _ctx(
+            routing={"suggested_team": "customer_service", "suggested_agent": "general_enquiries"},
+            parser_raw={"routing": {"suggested_team": None, "suggested_agent": None}},
+            escalation={"is_escalation_confirmation": False, "company_pick": None},
+            prev_variables={
+                "routing": {"suggested_team": "customer_service", "suggested_agent": "general_enquiries"},
+                "pending": {"kind": "member_offer", "team": "warehouse", "ttl": 0},
+            },
+            text="can someone help me",
+        )
+        item = _item(brand_code=None, company_id=None, company_name=None, routing_source="none")
+        result = run(ctx, item, services=_services())
+        assert result["arm"] == "human-intervention", result["arm"]
+
+    def test_an_inherited_specialised_team_with_no_offer_still_asks(self) -> None:
+        """H64 / AC-815 kept beside D1: the owner's "escalate to marketing" turn had NO
+        offer open and a `purchasing` routing carried from the previous turn. Scoping the
+        arm to an open offer alone would assign it to purchasing again, which is the
+        complaint AC-815 was written for."""
+        result, services = self._run(
+            text="escalate to marketing", offered=None, confirmed=False, prev_team="purchasing"
+        )
+        assert result["arm"] == "clarify", result["arm"]
+        services.next_assignee.assert_not_called()
+
+    def test_a_domain_that_routes_itself_is_not_inherited(self) -> None:
+        """Guard on the inheritance test: a turn whose DOMAIN derives a team is routed by
+        its domain, not by the previous turn, even when the parser's own routing is null
+        and the previous routing happens to name the same team."""
+        from app.services.chatbot.lanes.escalation import run
+
+        ctx = _ctx(
+            routing={"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
+            parser_raw={"routing": {"suggested_team": None, "suggested_agent": None}},
+            escalation={"is_escalation_confirmation": False, "company_pick": None},
+            prev_variables={
+                "routing": {"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
+            },
+            text="escalate my stock question",
+        )
+        ctx["parse"]["output"]["domain_hint"] = "inventory"
+        item = _item(brand_code=None, company_id=None, company_name=None, routing_source="none")
+        result = run(ctx, item, services=_services())
+        assert result["arm"] == "human-intervention", result["arm"]
+        comment = next(a for a in result["actions"] if a["kind"] == "add_comment")
+        assert comment["text"].startswith("Team: warehouse\n"), comment["text"]

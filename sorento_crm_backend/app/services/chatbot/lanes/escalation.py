@@ -44,7 +44,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
 from app.services.chatbot import jsc
-from app.services.chatbot.contracts import PREVIEW
+from app.services.chatbot.contracts import DEFAULT_SUGGESTED_TEAM, PREVIEW
 
 logger = logging.getLogger(__name__)
 
@@ -656,10 +656,14 @@ def _person_routing(
       `output_exchange`. Gating on the derived team would make this gate inert on exactly
       the turn it was written for, which is what the first console run showed. With no
       `_parser_raw` (a mocked parse, an injected ctx) the derived team stands in.
-    * No person, no team, and a previous turn that HAD one: ask. That is the inheritance
-      the owner rejected, and refusing it here is the whole fix. With no previous routing
-      to inherit there is nothing to be wrong about, so the lane carries on exactly as it
-      does today (`test_no_team_clarify_on_live_team_flows_through_unguarded`).
+    * No person, no parser team, and not an acceptance: ask when an escalation offer is
+      OPEN (D1 - the stale offer the owner saw consumed), or when the team this turn would
+      assign to is INHERITED from a previous turn (H64 / AC-815 - the stale routing the
+      owner saw assigned), where "inherited" means the domain derives none and the previous
+      routing is not the chain's own carried default. An acceptance
+      (`is_escalation_confirmation`) is assigned to the offered team; with neither premise
+      there is nothing to be wrong about, so the lane carries on exactly as it does today
+      (`test_no_team_clarify_on_live_team_flows_through_unguarded`).
 
     Returns `None` for "nothing to do here", which is every turn that names nobody and
     arrives with a team.
@@ -704,13 +708,56 @@ def _person_routing(
     # the previous turn's), so gating on `team` made this clarify inert on exactly the turn
     # it exists for: turn 9a40182a asked "can someone else help me" over a pending
     # warehouse offer and was silently re-assigned to warehouse.
-    prev_team = jsc.get(jsc.get(_prev_variables(ctx), "routing"), "suggested_team")
-    if not jsc.truthy(_parser_team(ctx, team)) and jsc.truthy(prev_team):
-        return {
-            "kind": "clarify",
-            "text": _team_clarify_text(None, []),
-            "options": _team_clarify_options([]),
-        }
+    #
+    # TWO conditions bound it, both from the review of #706 (blocker B1), which measured
+    # the first cut firing on EVERY acceptance from turn 2 on:
+    #
+    # * An ACCEPTANCE is never asked. The post-processor's `is_escalation_confirmation` is
+    #   the one accept signal (D11 - the lane reads no words), and a bare "yes" over an
+    #   offer arrives here with the parser's own team null by construction: the customer
+    #   said yes, not "yes, warehouse".
+    # * The premise is an OPEN escalation offer, not "a previous turn had a routing".
+    #   `output_exchange` hard-defaults `routing.suggested_team` to `customer_service` and
+    #   `compile_state` persists it every turn, so the previous routing is ALWAYS truthy
+    #   and gating on it made the arm fire on every turn with no named team. The ruling is
+    #   about a stale OFFER being consumed; `_offer_is_open` is what says one is open,
+    #   read through the same function the post-processor uses so the two ends of the
+    #   turn cannot disagree about it (an expired member offer is not open, AC-816).
+    #
+    # ... and AC-815 (H64) keeps its own premise beside D1's, because the two rulings are
+    # about two different stale teams. H64's turn had NO offer open: "escalate to
+    # marketing" arrived with a null parser routing while the derived routing had inherited
+    # `purchasing` from the previous turn, and the customer was assigned there. So the
+    # second premise is INHERITANCE - this turn named no team, its domain derives none, and
+    # the team it would assign to is the previous turn's - bounded by one fact the review
+    # measured: the previous routing is never absent, because the chain's own hard default
+    # is persisted too. A carried `DEFAULT_SUGGESTED_TEAM` is not a previous turn's
+    # decision, it is what a cold turn gets anyway, so it is assigned, not asked about.
+    # `derive_routing` is the SAME function the chain uses, imported so the lane's idea of
+    # "this domain routes somewhere" cannot drift from the head's.
+    esc = jsc.get(output, "escalation") or {}
+    if jsc.get(esc, "is_escalation_confirmation") is True:
+        return None
+    if jsc.truthy(_parser_team(ctx, team)):
+        return None
+    from app.services.chatbot.head.output_exchange import _offer_is_open, derive_routing
+
+    prev = _prev_variables(ctx)
+    clarify = {
+        "kind": "clarify",
+        "text": _team_clarify_text(None, []),
+        "options": _team_clarify_options([]),
+    }
+    if _offer_is_open(prev):
+        return clarify
+    derived_team = (
+        jsc.get(derive_routing(output), "suggested_team")
+        if jsc.truthy(jsc.get(output, "domain_hint"))
+        else None
+    )
+    prior_team = jsc.nullish_str(jsc.get(jsc.get(prev, "routing"), "suggested_team")).strip().lower()
+    if derived_team is None and prior_team and prior_team != DEFAULT_SUGGESTED_TEAM:
+        return clarify
     return None
 
 
