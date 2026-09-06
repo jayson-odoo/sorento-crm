@@ -307,6 +307,23 @@ def escalation_context(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str
 # --------------------------------------------------------------------------- #
 
 
+def _company_clarify_options(ctx: dict[str, Any]) -> list[str]:
+    """The company names this clarify offers, in printed order.
+
+    Extracted so the ASK and the quick replies that answer it cannot list different
+    companies: `clarify_company_reply` prints these and `_clarify_actions` taps them.
+    """
+    prev = _prev_variables(ctx)
+    plan = jsc.array(jsc.get(prev, "routing_roster_plan"))
+    pools = plan if len(plan) else jsc.array(jsc.get(prev, "routing_companies"))
+    names: list[str] = []
+    for entry in pools:
+        name = jsc.get(entry, "company_name") if jsc.truthy(entry) else None
+        if jsc.truthy(name) and name not in names:
+            names.append(name)
+    return names
+
+
 def clarify_company_reply(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[str, Any]:
     """The ask that goes out when a multi-company offer was not resolved. Pure.
 
@@ -317,16 +334,7 @@ def clarify_company_reply(item: dict[str, Any], *, ctx: dict[str, Any]) -> dict[
     per name). With no names at all the ask degrades to number-or-name: never invite a
     reply that cannot resolve.
     """
-    prev = _prev_variables(ctx)
-    plan = jsc.array(jsc.get(prev, "routing_roster_plan"))
-    pools = plan if len(plan) else jsc.array(jsc.get(prev, "routing_companies"))
-
-    names: list[str] = []
-    for entry in pools:
-        name = jsc.get(entry, "company_name") if jsc.truthy(entry) else None
-        if jsc.truthy(name) and name not in names:
-            names.append(name)
-
+    names = _company_clarify_options(ctx)
     bold = [f"*{name}*" for name in names]
     listed = " / ".join(bold)
     if len(bold) > 1:
@@ -458,7 +466,15 @@ def run(
         # pair the tail re-persists - `selection_context` plus `last_result_set` - which
         # `test_s5_escalation_seams.py` pins end to end. The marker is here so the trace
         # says WHY this turn asked instead of assigning.
-        return {**result, "actions": [], "pending": {"kind": "company_clarify"}}
+        return {
+            **result,
+            "actions": _clarify_actions(
+                jsc.get(clarify, "clarify_text"),
+                options=_company_clarify_options(ctx),
+                dry_run=dry_run,
+            ),
+            "pending": {"kind": "company_clarify"},
+        }
 
     result = escalation_result()
     team = jsc.get(context_item, "team")
@@ -496,7 +512,9 @@ def run(
             clarify = {**context_item, "clarify_team": True, "clarify_text": routed["text"]}
             return {
                 **escalation_result(clarify_team=clarify),
-                "actions": [],
+                "actions": _clarify_actions(
+                    routed["text"], options=routed.get("options") or [], dry_run=True
+                ),
                 "pending": {"kind": "team_clarify"},
             }
         if routed is not None and routed["kind"] == "assign":
@@ -546,7 +564,11 @@ def _human_intervention(
         clarify = {**context_item, "clarify_team": True, "clarify_text": routed["text"]}
         return {
             **escalation_result(clarify_team=clarify),
-            "actions": [],
+            # `dry_run=False` is a fact here, not a default: `run()` returns from its own
+            # dry-run branch above before this function is reached.
+            "actions": _clarify_actions(
+                routed["text"], options=routed.get("options") or [], dry_run=False
+            ),
             "pending": {"kind": "team_clarify"},
         }
     if routed is not None and routed["kind"] == "assign":
@@ -669,12 +691,36 @@ def _person_routing(
             }
         if jsc.truthy(_parser_team(ctx, team)):
             return None  # the parser itself named a team: the mention was in passing
-        return {"kind": "clarify", "text": _team_clarify_text(person, hits)}
+        return {
+            "kind": "clarify",
+            "text": _team_clarify_text(person, hits),
+            "options": _team_clarify_options(hits),
+        }
 
     prev_team = jsc.get(jsc.get(_prev_variables(ctx), "routing"), "suggested_team")
     if not jsc.truthy(team) and jsc.truthy(prev_team):
-        return {"kind": "clarify", "text": _team_clarify_text(None, [])}
+        return {
+            "kind": "clarify",
+            "text": _team_clarify_text(None, []),
+            "options": _team_clarify_options([]),
+        }
     return None
+
+
+def _team_clarify_options(hits: list) -> list[str]:
+    """The teams this clarify offers, in printed order.
+
+    Extracted for the same reason as the company half: the sentence and the quick replies
+    that answer it are built from ONE list, so a tap can never name a team the ask did not.
+    """
+    from app.services.chatbot.contracts import SUGGESTED_TEAMS
+
+    names: list[str] = []
+    for hit in hits:
+        name = jsc.get(hit, "team_name") or _pretty_team(jsc.get(hit, "team_code"))
+        if jsc.truthy(name) and name not in names:
+            names.append(name)
+    return names or [_pretty_team(t) for t in SUGGESTED_TEAMS]
 
 
 def _team_clarify_text(person: Any, hits: list) -> str:
@@ -684,15 +730,7 @@ def _team_clarify_text(person: Any, hits: list) -> str:
     it is the routing vocabulary, which is the exact set the router can act on - inventing
     a shorter list would invite a reply nothing could resolve.
     """
-    from app.services.chatbot.contracts import SUGGESTED_TEAMS
-
-    names: list[str] = []
-    for hit in hits:
-        name = jsc.get(hit, "team_name") or _pretty_team(jsc.get(hit, "team_code"))
-        if jsc.truthy(name) and name not in names:
-            names.append(name)
-    if not names:
-        names = [_pretty_team(t) for t in SUGGESTED_TEAMS]
+    names = _team_clarify_options(hits)
     listed = f"{', '.join(names[:-1])} or {names[-1]}" if len(names) > 1 else names[0]
     if person and hits:
         people = {jsc.js_string(jsc.get(h, "user_id")) for h in hits}
@@ -832,6 +870,35 @@ def _assignment_actions(
     actions.append(comment)
     actions.append(_send_message(ROUTED_TO_PIC_REPLY.format(team=_pretty_team(team)), dry_run))
     return actions
+
+
+def _clarify_actions(text: Any, *, options: list[str], dry_run: bool) -> list[dict[str, Any]]:
+    """The ONE place a clarify becomes something the customer actually receives.
+
+    Prod turn 9dd4cd0f: "I want to escalate to Nurain" composed
+    "Nurain is on more than one team. Which team do you mean - DO Customer Service or
+    Project Customer Service?", wrote `selection_context: team_clarify`, and returned
+    `actions: []`. The executor executes `actions[]` and NOTHING else (plan section 5b,
+    ruling 5 Sep 2026) - `reply` is the record of what was composed - so the customer got
+    silence and the turn sat waiting for an answer to a question nobody had been asked.
+
+    Every clarify branch of this lane goes through here rather than each appending its own
+    action, because the defect was three branches that each independently forgot: the
+    company clarify, the live team clarify and its dry-run twin. One builder cannot forget
+    on the fourth.
+
+    `quick_replies` is n8n's own shape - a COMMA-JOINED STRING or null, never a list
+    (AC-507) - and the options come from the same helper that printed them in the
+    sentence, so a tap can never name a team the ask did not.
+    """
+    words = jsc.nullish_str(text).strip()
+    if not words:
+        return []
+    action = _send_message(words, dry_run)
+    kept = [jsc.js_string(o).strip() for o in options if jsc.truthy(jsc.js_string(o).strip())]
+    if kept:
+        action["quick_replies"] = ", ".join(kept)
+    return [action]
 
 
 def _send_message(text: str, dry_run: bool) -> dict[str, Any]:

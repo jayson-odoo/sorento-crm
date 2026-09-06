@@ -790,3 +790,152 @@ class TestDryRunEscalationPreviewsTheRealNextAssignee:
             "a dry-run preview must never create or advance a round-robin cursor row"
         )
         assert db.query(ConversationSLATracking).count() == 0
+
+
+# --------------------------------------------------------------------------- #
+# Owner console defect L, the GUARDRAIL (prod turn 9dd4cd0f, 6 Sep 2026).
+# --------------------------------------------------------------------------- #
+
+
+class TestWordsComposedAreWordsSent:
+    """"The executor executes `actions[]` and NOTHING else" (plan section 5b, ruling
+    5 Sep 2026), so a lane whose words are only on `reply.text` is a customer left in
+    silence. Three escalation clarify branches each independently forgot that, and the
+    per-lane tests could not have caught it: each one asserted what ITS branch composes.
+
+    This is the invariant said once, over every branch kind the CRM finishes, so the
+    fourth branch that forgets fails here rather than in production. It is deliberately
+    STRUCTURAL rather than a walk of every possible turn: the coverage set is asserted
+    against `CRM_COMPLETED_BRANCH_KINDS` itself, so a NEW completed kind that nobody
+    wired in fails this test on the day it is added.
+    """
+
+    # Every completed kind, and where its coverage lives. A kind may only appear with a
+    # reason, never as a bare omission.
+    COVERED_ELSEWHERE = {
+        # `test_s3_canned_and_ideate.py::TestCannedBranchesFinishInTurn` asserts the
+        # action list EQUALS one send_message carrying the reply text, for all eight.
+        "access_denied",
+        "escalate_offer",
+        "escalation_declined",
+        "clarify_menu",
+        "not_supported",
+        "demand_qty",
+        "offer_hold",
+        "ideate",
+        # `test_s4_casual_lane.py` - the clarifier stamps its own send_message BEFORE the
+        # tail runs (the one measured shape difference the plan records, D15).
+        "low_signal",
+        # `test_s5_escalation_lane.py` - the assignment arm and, since this lane, all
+        # three clarify arms.
+        "out_of_scope",
+        # The business arms compose through the same tail seal as the canned lanes and
+        # are asserted in `test_s6_s7_integration.py`; their reply is an ANSWER, and an
+        # answer with no action is the same defect, which is why they are named here
+        # rather than left out.
+        "business_query",
+        "check_promotion",
+        "stock_denied",
+    }
+
+    def test_every_completed_branch_kind_has_a_declared_home_for_this_invariant(self) -> None:
+        from app.services.chatbot.contracts import CRM_COMPLETED_BRANCH_KINDS
+
+        missing = CRM_COMPLETED_BRANCH_KINDS - self.COVERED_ELSEWHERE
+        assert not missing, (
+            "these branch kinds finish inside the CRM and nothing says their words reach "
+            f"the customer as an ACTION: {sorted(missing)}. Add the assertion where the "
+            "lane is tested and name it here."
+        )
+        stale = self.COVERED_ELSEWHERE - CRM_COMPLETED_BRANCH_KINDS
+        assert not stale, (
+            f"these are no longer completed by the CRM: {sorted(stale)} - drop them"
+        )
+
+    def test_the_escalation_lane_never_composes_words_it_does_not_send(self) -> None:
+        """The lane this defect was found in, over EVERY arm it can return.
+
+        Driven through `run` rather than by reading the source: an arm that composes
+        `clarify_text` and returns no `send_message` is the defect, whatever branch it
+        came down.
+        """
+        from app.services.chatbot.lanes.escalation import run
+        from tests.chatbot.test_s5_escalation_lane import _ctx, _item, _services
+
+        cases = [
+            (
+                "ambiguous person",
+                _ctx(
+                    routing={"suggested_team": "customer_service", "suggested_agent": "general_enquiries"},
+                    person_mention="Nurain",
+                    text="escalate to Nurain",
+                    parser_raw={"routing": {"suggested_team": None, "suggested_agent": None}},
+                ),
+                _item(team="customer_service"),
+            ),
+            (
+                "no team, one carried",
+                _ctx(
+                    routing={"suggested_team": None, "suggested_agent": "general_enquiries"},
+                    prev_variables={"routing": {"suggested_team": "purchasing"}},
+                ),
+                _item(team=None),
+            ),
+            (
+                "multi company unpicked",
+                _ctx(
+                    routing={"suggested_team": "customer_service"},
+                    prev_variables={
+                        "routing": {"suggested_team": "customer_service"},
+                        "selection_context": "member_offer",
+                        "last_result_set": [{"uuid": "m1"}],
+                        "routing_roster_plan": [
+                            {"company_id": "c-1", "company_name": "Mocha"},
+                            {"company_id": "c-2", "company_name": "Sorento"},
+                        ],
+                    },
+                ),
+                _item(
+                    brand_code=None,
+                    company_id=None,
+                    company_name=None,
+                    routing_source="multi_company_unpicked",
+                    team="customer_service",
+                ),
+            ),
+        ]
+
+        def staff(_person):
+            return [
+                {
+                    "user_id": "u-1",
+                    "user_name": "Nurain A",
+                    "respond_user_id": "r-1",
+                    "team_code": code,
+                    "team_name": name,
+                }
+                for code, name in (
+                    ("do_customer_service", "DO Customer Service"),
+                    ("project_customer_service", "Project Customer Service"),
+                )
+            ]
+
+        for label, ctx, item in cases:
+            for dry_run in (False, True):
+                services = _services()
+                services.staff_lookup = staff
+                result = run(ctx, item, services=services, dry_run=dry_run)
+                clarify = result.get("clarify") or {}
+                words = (clarify.get("clarify_text") or "").strip()
+                if not words:
+                    continue
+                sends = [
+                    a
+                    for a in (result.get("actions") or [])
+                    if a.get("kind") == "send_message" and a.get("text") == words
+                ]
+                assert sends, (
+                    f"{label} (dry_run={dry_run}) composed {words!r} and returned no "
+                    f"send_message carrying it: {result.get('actions')!r}"
+                )
+                assert sends[0]["dry_run"] is dry_run

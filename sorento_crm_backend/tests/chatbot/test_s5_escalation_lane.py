@@ -416,7 +416,12 @@ def test_clarify_company_ask_always_in_reply() -> None:
         "Both *Mocha* and *Sorento* teams are listed - reply a number, a name, or the "
         "company (*Mocha* / *Sorento*) and I'll assign automatically."
     )
-    assert [a["kind"] for a in result["actions"]] == []
+    # The ask has to be an ACTION, not only `clarify_text`: the executor executes
+    # `actions[]` and nothing else (plan section 5b), so a clarify that composed words and
+    # returned an empty list left the customer in silence (prod turn 9dd4cd0f).
+    assert [a["kind"] for a in result["actions"]] == ["send_message"]
+    assert result["actions"][0]["text"] == result["clarify"]["clarify_text"]
+    assert result["actions"][0]["quick_replies"] == "Mocha, Sorento"
     services.next_assignee.assert_not_called()
 
 
@@ -1669,3 +1674,98 @@ class TestPersonMentionEscalationRoutesByStaffLookup:
             f"as it does today: {result!r}"
         )
         assert result["clarify"] is not None
+
+
+# --------------------------------------------------------------------------- #
+# Owner console defect L, the LIVE shape (prod turn 9dd4cd0f, 6 Sep 2026). The executor
+# executes `actions[]` and NOTHING else (plan section 5b, ruling 5 Sep 2026) - `reply` is
+# the record of what was composed. Three clarify branches of this lane composed real words
+# and returned `actions: []`, so the customer was asked nothing and the turn sat waiting
+# for the answer.
+# --------------------------------------------------------------------------- #
+
+
+class TestEveryClarifyIsSomethingTheCustomerReceives:
+    def _ambiguous_person_ctx(self):
+        """"I want to escalate to Nurain" - the parser named a PERSON and no team, which
+        is what `_parser_team` reads off `_parser_raw` to tell a mention that routes from
+        one made in passing."""
+        return _ctx(
+            routing={"suggested_team": "customer_service", "suggested_agent": "general_enquiries"},
+            person_mention="Nurain",
+            text="I want to escalate to Nurain",
+            parser_raw={"routing": {"suggested_team": None, "suggested_agent": None}},
+        )
+
+    def _two_team_services(self):
+        services = _services()
+        services.staff_lookup = lambda person: [
+            {
+                "user_id": "u-1",
+                "user_name": "Nurain A",
+                "respond_user_id": "r-1",
+                "team_code": "do_customer_service",
+                "team_name": "DO Customer Service",
+            },
+            {
+                "user_id": "u-1",
+                "user_name": "Nurain A",
+                "respond_user_id": "r-1",
+                "team_code": "project_customer_service",
+                "team_name": "Project Customer Service",
+            },
+        ]
+        return services
+
+    def test_an_ambiguous_person_asks_the_question_out_loud(self) -> None:
+        from app.services.chatbot.lanes.escalation import run
+
+        result = run(
+            self._ambiguous_person_ctx(),
+            _item(team="customer_service"),
+            services=self._two_team_services(),
+        )
+        assert result["pending"]["kind"] == "team_clarify"
+        sends = [a for a in result["actions"] if a["kind"] == "send_message"]
+        assert len(sends) == 1, (
+            f"the clarify must be sent exactly once: {result['actions']!r}"
+        )
+        assert sends[0]["text"] == result["clarify"]["clarify_text"]
+        assert "DO Customer Service" in sends[0]["quick_replies"]
+        assert "Project Customer Service" in sends[0]["quick_replies"]
+
+    def test_the_dry_run_twin_sends_the_same_ask_flagged(self) -> None:
+        """The owner tests from the console and the console runs `is_test`, so the preview
+        arm is the one they would have seen the silence on."""
+        from app.services.chatbot.lanes.escalation import run
+
+        result = run(
+            self._ambiguous_person_ctx(),
+            _item(team="customer_service"),
+            services=self._two_team_services(),
+            dry_run=True,
+        )
+        assert result["pending"]["kind"] == "team_clarify"
+        sends = [a for a in result["actions"] if a["kind"] == "send_message"]
+        assert len(sends) == 1, result["actions"]
+        assert sends[0]["text"] == result["clarify"]["clarify_text"]
+        assert sends[0]["dry_run"] is True
+
+    def test_the_no_team_clarify_is_sent_too(self) -> None:
+        """The other clarify branch: no team this turn, but one carried, so the lane asks
+        which rather than inheriting the previous subject's team."""
+        from app.services.chatbot.lanes.escalation import run
+
+        ctx = _ctx(
+            routing={"suggested_team": None, "suggested_agent": "general_enquiries"},
+            prev_variables={"routing": {"suggested_team": "purchasing"}},
+        )
+        result = run(ctx, _item(team=None), services=_services())
+        assert result["pending"]["kind"] == "team_clarify"
+        sends = [a for a in result["actions"] if a["kind"] == "send_message"]
+        assert len(sends) == 1, result["actions"]
+        assert sends[0]["text"] == result["clarify"]["clarify_text"]
+        assert sends[0]["quick_replies"], (
+            "the teams must be tappable, or the customer has to spell one correctly: "
+            f"{sends[0]!r}"
+        )

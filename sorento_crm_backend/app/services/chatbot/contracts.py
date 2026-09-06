@@ -592,6 +592,13 @@ SELF_CLOSING_BRANCH_KINDS: frozenset[str] = (
 # "nothing happened" would be matching a typo the day a third lane arrived.
 PREVIEW = "<preview>"
 
+# The same fact said in the CUSTOMER's words. `PREVIEW` is an operator token and belongs on
+# `status` and the trace facts; it must never reach a `send_message`, because the executor
+# executes actions and nothing else, so a dry-run ideate turn sent the literal string
+# "<preview>" to whoever typed the idea. One sentence, in the vocabulary of the person who
+# would read it, and it still says plainly that nothing was generated.
+PREVIEW_IDEATE_REPLY = "[dry-run: ideation reply not generated]"
+
 
 # `DELEGATED_BRANCH_KINDS` used to be the complement of the set above and is GONE: with
 # `system_settings.chatbot_completed_lanes` in the decision, "delegated" is no longer a

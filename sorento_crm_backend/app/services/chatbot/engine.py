@@ -2377,13 +2377,18 @@ def _seal_send(action: dict[str, Any], sealed: dict[str, Any]) -> dict[str, Any]
     """Fill a `send_message`'s sealed halves from the tail's reply. Others pass through."""
     if action.get("kind") != "send_message":
         return action
+    # AC-507/D9: n8n's `quick_reply` is a comma-joined STRING or null, never a list -
+    # `or []` here would hand the sender a type its `quick_reply` input has never taken.
+    # The sealed value wins when the tail composed one, and only then: a lane that built
+    # its OWN quick replies (the escalation clarifies name the teams so the answer is a
+    # tap) must not have them erased by a turn whose tail composed none. Same rule for
+    # `result_set`, for the same reason.
+    sealed_replies = sealed.get("quick_replies")
+    sealed_set = sealed.get("result_set")
     return {
         **action,
-        # AC-507/D9: n8n's `quick_reply` is a comma-joined STRING or null, never a list -
-        # `or []` here would hand the sender a type its `quick_reply` input has never
-        # taken. Pass the sealed value through verbatim, empty or not.
-        "quick_replies": sealed.get("quick_replies"),
-        "result_set": sealed.get("result_set"),
+        "quick_replies": sealed_replies if sealed_replies else action.get("quick_replies"),
+        "result_set": sealed_set if sealed_set else action.get("result_set"),
     }
 
 
