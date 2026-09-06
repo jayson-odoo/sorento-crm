@@ -454,6 +454,11 @@ describe('RequestTagDesigner - full screen (AC-S6-1)', () => {
 // anything added since. Save afterwards would then persist the loss.
 // ---------------------------------------------------------------------------
 
+/** The layers of the doc the canvas was last handed. */
+const drawnLayers = () => canvasDocs[canvasDocs.length - 1].doc.layers;
+const hasAddedLayer = () =>
+  drawnLayers().some((l) => l.id.startsWith('added-'));
+
 describe('RequestTagDesigner - design survives a mode toggle (Fix B)', () => {
   it('keeps a layer added in Design after toggling to Arrange and back', async () => {
     mockListTemplates.mockResolvedValue([]);
@@ -469,10 +474,10 @@ describe('RequestTagDesigner - design survives a mode toggle (Fix B)', () => {
     expect(screen.queryByTestId('canvas-editor')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Design' }));
-    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
-
-    const drawn = canvasDocs[canvasDocs.length - 1].doc;
-    expect(drawn.layers.some((l) => l.id.startsWith('added-'))).toBe(true);
+    // The editor being back on screen is not the claim: its FIRST render after
+    // the remount can still carry the pre-toggle doc, and the mount effect that
+    // reconciles the host lands a tick later. Wait for the doc itself.
+    await waitFor(() => expect(hasAddedLayer()).toBe(true));
   });
 
   it('keeps a design cleared to 0 layers, then switched to another line and back, then rebuilt to 3 layers, across a mode toggle', async () => {
@@ -502,8 +507,7 @@ describe('RequestTagDesigner - design survives a mode toggle (Fix B)', () => {
     fireEvent.click(screen.getByText('SRT-2'));
     await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
     fireEvent.click(screen.getByText('SRT-1'));
-    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
-    expect(canvasDocs[canvasDocs.length - 1].doc.layers).toHaveLength(0);
+    await waitFor(() => expect(drawnLayers()).toHaveLength(0));
 
     // Add 3 layers back.
     fireEvent.click(screen.getByRole('button', { name: 'Add layer' }));
@@ -514,9 +518,7 @@ describe('RequestTagDesigner - design survives a mode toggle (Fix B)', () => {
     // before Fix B.
     fireEvent.click(screen.getByRole('button', { name: 'Arrange' }));
     fireEvent.click(screen.getByRole('button', { name: 'Design' }));
-    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
-
-    expect(canvasDocs[canvasDocs.length - 1].doc.layers).toHaveLength(3);
+    await waitFor(() => expect(drawnLayers()).toHaveLength(3));
   });
 });
 

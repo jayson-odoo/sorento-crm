@@ -313,7 +313,7 @@ describe('FulfilmentBoardPanel: the header', () => {
     renderPanel(['SO403340'], onBack);
     await screen.findByTestId('fulfilment-board-matrix');
 
-    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), {
+    fireEvent.keyDown(await screen.findByRole('button', { name: 'Board actions' }), {
       key: 'Enter',
     });
     fireEvent.click(
@@ -2532,7 +2532,7 @@ describe('FulfilmentBoardPanel: Undo all asks first (D2)', () => {
   it('opens a confirmation naming how many drafts would go, and keeps them on Cancel', async () => {
     await decideOneLineInTheList();
 
-    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), {
+    fireEvent.keyDown(await screen.findByRole('button', { name: 'Board actions' }), {
       key: 'Enter',
     });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Undo all' }));
@@ -2554,7 +2554,7 @@ describe('FulfilmentBoardPanel: Undo all asks first (D2)', () => {
   it('clears every draft decision once the discard is confirmed', async () => {
     await decideOneLineInTheList();
 
-    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), {
+    fireEvent.keyDown(await screen.findByRole('button', { name: 'Board actions' }), {
       key: 'Enter',
     });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Undo all' }));
@@ -2610,7 +2610,7 @@ describe('FulfilmentBoardPanel: Undo all asks first (D2)', () => {
   it('undoes BOTH saved lines together, one line never surviving the other’s write', async () => {
     await decideTwoLinesInTheList();
 
-    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), {
+    fireEvent.keyDown(await screen.findByRole('button', { name: 'Board actions' }), {
       key: 'Enter',
     });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Undo all' }));
@@ -2623,7 +2623,7 @@ describe('FulfilmentBoardPanel: Undo all asks first (D2)', () => {
     expect(pillFor('WESERP20B')).toHaveTextContent('Suggested');
 
     // The count the dialog's own title reads off is back to zero: Undo all disables itself.
-    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), {
+    fireEvent.keyDown(await screen.findByRole('button', { name: 'Board actions' }), {
       key: 'Enter',
     });
     expect(await screen.findByRole('menuitem', { name: 'Undo all' })).toHaveAttribute(
@@ -2644,7 +2644,7 @@ describe('FulfilmentBoardPanel: Undo all asks first (D2)', () => {
       Promise.reject(new Error('Failed to remove the saved decision')),
     );
 
-    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), {
+    fireEvent.keyDown(await screen.findByRole('button', { name: 'Board actions' }), {
       key: 'Enter',
     });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Undo all' }));
@@ -2741,7 +2741,7 @@ describe('FulfilmentBoardPanel: a line mid-Undo is not re-seeded by a sibling sa
           settleDelete = resolve;
         }),
     );
-    fireEvent.keyDown(screen.getByRole('button', { name: 'Board actions' }), {
+    fireEvent.keyDown(await screen.findByRole('button', { name: 'Board actions' }), {
       key: 'Enter',
     });
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Undo all' }));
