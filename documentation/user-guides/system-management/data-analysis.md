@@ -172,7 +172,8 @@ AutoCount pushes).
 * On a shipping order (SPO): the **container number**.
 
 **Absent vs. null, on every field the integration can send:** a field the push simply does not
-mention leaves that column exactly as it was; a field sent as an explicit empty value clears it.
+mention leaves that column exactly as it was; a field sent as an explicit empty value (null, or a
+blank string) clears it, the same thing a blank cell means on the matching upload.
 A push never guesses at a value it was not given.
 
 **Removed in 2.1:** a supplier or customer's payment-terms fields sent by the integration are no

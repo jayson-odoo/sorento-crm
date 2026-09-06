@@ -134,5 +134,9 @@ def get_contract():
         # D14: absent-vs-null holds across every master, not per-entity - one
         # bool, not a dict of trues.
         "absent_vs_null": True,
+        # D14 third state (2026-09-06): a blank string on an optional field is
+        # an explicit clear, the same thing a blank xlsx cell means. Required
+        # identity fields still refuse it.
+        "blank_string_clears": True,
         "warnings": WARNINGS,
     }

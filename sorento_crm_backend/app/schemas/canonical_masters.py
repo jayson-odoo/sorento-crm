@@ -19,12 +19,32 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class _Canonical(BaseModel):
     # extra="forbid" is the point of this layer, not a default worth relaxing.
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _blank_optional_string_is_null(cls, data):
+        """D14's third state (ingest parity, 2026-09-06): a blank string on an
+        OPTIONAL field is an explicit clear, exactly what a blank cell means to
+        the xlsx import. The ESB sends `""` for a mapped AutoCount field that
+        is empty (it omits None and never sends null), and storing that `""`
+        verbatim would be the one column shape the upload can never produce.
+        Required identity fields (`code`, `name`, `source_ref`) are left alone:
+        `""` there still fails `min_length=1` - blank is not a way to omit them.
+        Runs before `str_strip_whitespace`, so whitespace-only counts as blank.
+        """
+        if not isinstance(data, dict):
+            return data
+        for name, field in cls.model_fields.items():
+            value = data.get(name)
+            if isinstance(value, str) and not value.strip() and not field.is_required():
+                data[name] = None
+        return data
 
     # AutoCount's stable DocKey. The idempotency key: without it a re-push
     # cannot be told from a new record and every sync duplicates.

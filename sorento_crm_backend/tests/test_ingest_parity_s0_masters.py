@@ -252,6 +252,35 @@ class TestAcP02AbsentUntouchedNullCleared:
         ).scalar()
         assert location is None, "an explicit null must clear the field"
 
+    def test_blank_string_clears_like_a_blank_cell(self, db):
+        """D14 third state (ESB session, 2026-09-06): the ESB sends `""` for a
+        mapped AutoCount field that is blank (it omits None, never sends null).
+        The xlsx import treats a blank cell as "clear it", so a blank string on
+        the push must land as NULL too - never as a stored empty string, which
+        would be the one column shape the upload can never produce."""
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        code = _code("WHB")
+        db.add(Warehouse(warehouse_code=code, warehouse_name="Main", location="Rack 4"))
+        db.flush()
+
+        svc = _esb(db, DEFAULT_COMPANY_ID)
+        result = svc.ingest(
+            "warehouses",
+            [{"source_ref": f"DK-{code}", "code": code, "name": "Main", "location": "   "}],
+        )
+        assert result.updated == 1, result.records[0].errors
+        location = db.execute(
+            text("SELECT location FROM warehouses WHERE warehouse_code = :c"), {"c": code}
+        ).scalar()
+        assert location is None, "a blank string must clear the field, same as a blank cell"
+
+        # A required identity field stays refused when blank - "" is not a
+        # way to omit `code` or `name`.
+        result = svc.ingest(
+            "warehouses", [{"source_ref": f"DK-{code}", "code": code, "name": ""}]
+        )
+        assert result.failed == 1, result.records[0].errors
+
     def test_customer_email_preserved_when_omitted(self, db):
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         code = _code("CUSTE")
