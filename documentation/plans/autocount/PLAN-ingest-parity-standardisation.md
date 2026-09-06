@@ -193,3 +193,8 @@ hierarchy and UOM conversion (absent in AutoCount); importer review aids (D19).
   the xlsx writer in S3 (default the PO currency rule) so AC-P3-8 can stop excluding it.
 - Parity fixtures in S0-S3 are representative (1-3 documents each); the 20/30-record fixtures
   the UAC names run as the lane-DB proof in S4 (DoD 4), not as unit tests.
+- Found during the lane-DB proof prep: the outstanding SO upload REFUSES the whole file when any
+  document cannot be demand-classified (agent without a class, customer without a segment), while
+  the ESB lands the document with warning `unclassified_demand`. Not in the grill; captain's call
+  (recommend: both channels land the document unclassified with the warning, and the upload
+  preview lists the unclassified documents instead of refusing).

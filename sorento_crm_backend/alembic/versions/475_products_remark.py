@@ -7,13 +7,13 @@ instead, so the two channels diverge on this one column by decision - see
 `ingest-parity-standardisation-acceptance-criteria.md` AC-P1-6/AC-P1-9.
 
 Revision ID: 475_products_remark
-Revises: 474_spo_allocations_source_ref
+Revises: 481_chatbot_turns_is_test
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "475_products_remark"
-down_revision = "474_spo_allocations_source_ref"
+down_revision = "481_chatbot_turns_is_test"
 branch_labels = None
 depends_on = None
 
