@@ -449,6 +449,62 @@ def test_a_product_code_reply_on_a_pending_offer_is_a_filter_not_an_abandon() ->
     assert out.get("correction") is not True
 
 
+# The BOUND on rule 3, and it needs its own cover: the three corpus captures that reach the
+# filter arm are all turns where it and n8n's Tier 3 both touch nothing, so they cannot
+# tell the narrow arm from the wide one and widening it back would be silent. Each case
+# below fails one of the two conditions `MEMBER_OFFER_FILTER_HINTS` guards, and each dies
+# if the arm goes back to "any current-message entity".
+
+
+def test_a_same_domain_new_question_under_a_pending_offer_is_not_a_filter() -> None:
+    """A NEW SUBJECT, not a narrowing. `customer_order` is the order domain's own subject,
+    not a filter axis on it, so naming one mid-offer asks a different question and the
+    offer is abandoned - the arm must not keep it pending. Nothing is reprompted either:
+    a new query is not junk."""
+    out = run(
+        parser_output(
+            message_type="business_query",
+            domain_hint=None,
+            intent_hint=None,
+            entities=[
+                {"raw": "M2609-0086", "hint": "customer_order", "current_message": True}
+            ],
+        ),
+        message="delivery status for M2609-0086",
+        state=_pending_member_offer_state(domain_hint="order", intent_hint="check_order"),
+    )
+    assert out.get("member_offer_filter_modification") is None, (
+        f"an entity that is the domain's SUBJECT starts a new question; keeping the offer "
+        f"pending behind it is what arms a stale roster: {out!r}"
+    )
+    escalation = out.get("escalation") or {}
+    assert escalation.get("member_reprompt") is None
+    assert out.get("correction") is not True
+
+
+def test_a_new_intent_under_a_pending_offer_is_not_a_filter_even_on_a_filter_axis() -> None:
+    """"stock for rpacc" while an ORDER roster is open. `product` IS a filter axis of the
+    carried order domain, so the axis half of the guard passes and only the INTENT half
+    stops it: the customer named `check_stock` where the offer was made about
+    `check_order`, which is a different question however familiar the entity."""
+    out = run(
+        parser_output(
+            message_type="business_query",
+            domain_hint=None,
+            intent_hint="check_stock",
+            entities=[{"raw": "rpacc", "hint": "product", "current_message": True}],
+        ),
+        message="stock for rpacc",
+        state=_pending_member_offer_state(domain_hint="order", intent_hint="check_order"),
+    )
+    assert out.get("member_offer_filter_modification") is None, (
+        f"a new intent is a new question, whatever the entity type: {out!r}"
+    )
+    escalation = out.get("escalation") or {}
+    assert escalation.get("member_reprompt") is None
+    assert out.get("correction") is not True
+
+
 # NOTE (seam not reached): a second case for "rpacc" (a product-code entity,
 # `message_type: business_query`) was measured and DROPPED from this file - `is_new_query`
 # is already True on that shape (message_type == "business_query"), so `post_process`'s

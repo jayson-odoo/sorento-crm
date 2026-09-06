@@ -1178,5 +1178,10 @@ contact inside the synchronous request. Different contacts run in parallel.
   each capture is still graded byte for byte - 13 `compile-current-state` (rule 1), 3
   `output_exchange` (rule 4), 2 `output_exchange` (rule 2) and one blanket entry for the
   three diagnostic keys the port adds - and 16 world replays skip by NAME through
-  `worlds.body_difference` rather than failing. Full chatbot suite green: 3564 passed,
-  128 skipped, 5 xfailed. (H60, H61)
+  `worlds.body_difference` rather than failing. The BOUND on rule 3 carries its own cover,
+  because the captures that reach the filter arm are turns where it and n8n's Tier 3 both
+  touch nothing and so cannot tell the narrow arm from a wide one: a same-domain new
+  question (a `customer_order`, the order domain's own subject) and a new intent on a
+  filter axis ("stock for rpacc" under an order roster) are both asserted NOT to be filter
+  modifications, and both go red when the arm is widened back. Full chatbot suite green:
+  3566 passed, 128 skipped, 5 xfailed. (H60, H61)
