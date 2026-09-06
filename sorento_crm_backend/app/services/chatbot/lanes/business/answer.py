@@ -719,6 +719,14 @@ def crossdomain_render(
     # ASKED about - one with no uuid was never probed, so "no incoming" would be an absence
     # nothing established - so only a PROBED code earns the negative line.
     nothing: list[str] = []
+    # Owner console pass 4, item G (6 Sep 2026): codes the OTHER domain answered, which the
+    # primary one did not. Turn 858c9c54 named MSK11A-QT only inside "But there is INCOMING
+    # stock (ETA) ...", so a stock question came back as two codes' stock and then an
+    # incoming fact about a third, leaving the customer to infer the thing they had asked.
+    # Say it, and say it above the incoming lead. Same evidence and same guard as `nothing`
+    # below it - this is the only place that knows both that the primary render did not echo
+    # the code and that the other domain was actually probed for it.
+    only_other: list[str] = []
     for m in jsc.array(zs.get("missing")):
         rows = list(by_code.get(jsc.get(m, "_n"), []))
         if not rows:
@@ -728,6 +736,11 @@ def crossdomain_render(
                 if label not in nothing:
                     nothing.append(label)
             continue
+        code = jsc.get(m, "code") or jsc.get(m, "_n")
+        if jsc.truthy(code) and not _ms_is_uuid(code):
+            label = jsc.js_string(code)
+            if label not in only_other:
+                only_other.append(label)
 
         def qty(it: Any) -> float:
             """`Number(fieldPref(it, 'quantity_on_hand', 'quantity on hand') ?? NaN)`.
@@ -821,11 +834,21 @@ def crossdomain_render(
     named_codes = [c for c in jsc.array(zs.get("returned_codes")) if jsc.truthy(c)]
     can_state_absence = bool(named_codes) or jsc.get(passthrough, "has_result") is not True
 
+    origin_incoming = zs.get("origin_domain") == "incoming"
+    primary_word = "incoming" if origin_incoming else "stock"
+    other_word = "stock" if origin_incoming else "incoming"
+
+    # The one-sided line: the primary domain has nothing for these codes, and the block
+    # below is about to say what the OTHER one has. No escalation offer - something IS
+    # being shown - and `can_state_absence` gates it exactly as it gates the both-empty
+    # sentence, so a render that answered ABOUT the code without printing it (a warehouse
+    # breakdown, a demand verdict) never gets "no stock" underneath the stock it just showed.
+    only_other_note = ""
+    if only_other and can_state_absence:
+        only_other_note = f"No {primary_word} for {', '.join(only_other)}."
+
     nothing_note = ""
     if nothing and can_state_absence:
-        origin_incoming = zs.get("origin_domain") == "incoming"
-        primary_word = "incoming" if origin_incoming else "stock"
-        other_word = "stock" if origin_incoming else "incoming"
         team = zs.get("team")
         offer = (
             f" Would you like me to escalate to {jsc.js_string(team)} team?"
@@ -837,6 +860,8 @@ def crossdomain_render(
         )
 
     body = (lead + "\n\n" + "\n\n".join(blocks) + silent_note + mention) if blocks else ""
+    if body and only_other_note:
+        body = f"{only_other_note}\n\n{body}"
     if nothing_note:
         body = f"{body}\n\n{nothing_note}" if body else nothing_note
 

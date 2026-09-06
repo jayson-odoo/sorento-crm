@@ -2677,3 +2677,90 @@ class TestAProductIsNamedByItsCode:
         rendered = (out.get("found_summary") or "") + "\n" + (out.get("escalate_message") or "")
         assert "HANLIM TRADING SDN BHD" in rendered, rendered
         assert "300-H070" not in rendered, rendered
+
+
+# --------------------------------------------------------------------------- #
+# Owner console pass 4, item G (prod turn 858c9c54, after #705). The three-code stock
+# turn now names MSK11A-QT - but only INSIDE the cross-domain block, as
+# "But there is INCOMING stock (ETA) for the requested products: MSK11A-QT container
+# TEMU6355180 ...". Read top to bottom that reply answers a stock question with two
+# codes' stock and then, with no seam between them, an incoming fact about a third; the
+# customer is left to infer the thing they actually asked, which is that MSK11A-QT has
+# no stock. The owner's ruling: SAY IT, and say it before the incoming block.
+#
+# The negative belongs where the evidence for it is. `crossdomain_render` is the only
+# place that knows BOTH that the primary render did not echo the code and that the other
+# domain was actually probed for it - the stock composer upstream knows neither - and it
+# already owns the sibling sentence for the both-empty case ("No stock and no incoming
+# for X"). Its block is appended UNDER the primary answer, so a line at the head of that
+# block is exactly the stock section's last word before the incoming lead.
+# --------------------------------------------------------------------------- #
+
+
+class TestAZeroStockCodeIsNamedBeforeTheIncomingBlock:
+    ZEROSET = {
+        "active": True,
+        "origin_domain": "inventory",
+        "team": "warehouse",
+        "returned_codes": ["MWT5727SS-CR", "MHS1028"],
+        "missing": [{"code": "MSK11A-QT", "_n": "MSK11A-QT", "uuid": "u-msk"}],
+    }
+
+    @staticmethod
+    def _incoming_row(code: str) -> dict:
+        return {
+            "fields": [
+                {"key": "product_code", "label": "Product Code", "value": code},
+                {"key": "container_number", "label": "Container", "value": "TEMU6355180"},
+                {"key": "estimated_arrival_date", "label": "ETA", "value": "2026-10-02"},
+            ]
+        }
+
+    def _render(self, rows: list[dict], **zs_overrides) -> str:
+        from app.services.chatbot.lanes.business.answer import crossdomain_render
+
+        zs = {**self.ZEROSET, **zs_overrides}
+        out = crossdomain_render(
+            {"items": rows, "has_result": True}, zeroset=zs, validator={"has_result": True}
+        )
+        return out["_xdBlock"]["block"]
+
+    def test_the_stock_miss_is_stated_above_the_incoming_lead(self) -> None:
+        block = self._render([self._incoming_row("MSK11A-QT")])
+        assert "No stock for MSK11A-QT" in block, (
+            f"the customer asked about stock and was never told there is none: {block!r}"
+        )
+        assert block.index("No stock for MSK11A-QT") < block.index("INCOMING stock"), (
+            f"the stock answer must finish before the incoming block starts: {block!r}"
+        )
+
+    def test_the_incoming_direction_says_no_incoming(self) -> None:
+        """The mirror: an INCOMING question whose code has none, answered with its stock.
+        The word follows the question that was asked, exactly as the both-empty sentence
+        already does."""
+        block = self._render([self._incoming_row("MSK11A-QT")], origin_domain="incoming")
+        assert "No incoming for MSK11A-QT" in block, block
+        assert block.index("No incoming for MSK11A-QT") < block.index("stock details"), block
+
+    def test_a_code_with_nothing_on_either_side_keeps_its_own_sentence(self) -> None:
+        """Guard, #705's H: a code the probe answered with NOTHING still gets the single
+        combined sentence and the escalation offer, not two half-sentences."""
+        block = self._render([])
+        assert "No stock and no incoming for MSK11A-QT" in block, block
+        assert "No stock for MSK11A-QT." not in block, (
+            f"the both-empty case must not also emit the one-sided line: {block!r}"
+        )
+        assert "escalate" in block.lower(), block
+
+    def test_a_code_the_primary_render_did_echo_is_not_called_missing(self) -> None:
+        """Guard: `missing` means "the primary render did not echo this code", which is
+        only the same statement as "there is none" when the render is product-keyed. A
+        warehouse breakdown answers ABOUT the code without printing it, and `can_state_absence`
+        is what stops "No stock" landing under the stock it just printed."""
+        block = self._render(
+            [self._incoming_row("MSK11A-QT")], returned_codes=[]
+        )
+        assert "No stock for MSK11A-QT" not in block, (
+            f"an absence was asserted where the render could not establish one: {block!r}"
+        )
+        assert "INCOMING stock" in block, block

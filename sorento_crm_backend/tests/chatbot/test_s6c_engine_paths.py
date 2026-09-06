@@ -514,6 +514,26 @@ class TestCrossdomainRenderEtaOnlyCaptureReplays:
             assert "quantity_on_hand" not in fields
         _replay(fixture)
 
+        # AC-820 prefixes this block with the primary domain's own miss ("No stock for
+        # MWB7626."), so the capture is registered field-scoped on `_xdBlock.block` - and
+        # `block` is where the ETA sort this fixture EXISTS to grade lives. So it is
+        # compared here exactly, with the one known sentence removed, rather than left to
+        # a strip that would quietly make this test say nothing.
+        from tests.chatbot.test_s6c_answer_lane import _run_crossdomain_render
+
+        actual = _corpus.json_round_trip(_run_crossdomain_render(fixture))
+        expected = _corpus.json_round_trip(fixture.expected)
+        got = ((actual[0].get("json") or {}).get("_xdBlock") or {}).get("block") or ""
+        want = ((expected[0].get("json") or {}).get("_xdBlock") or {}).get("block") or ""
+        head, sep, rest = got.partition("\n\n")
+        assert sep and head.startswith("No stock for ") and head.endswith("."), (
+            f"the AC-820 line is the ONLY expected difference; got {head!r}"
+        )
+        assert rest == want, (
+            "with that one sentence removed the block must still be byte-equal to the "
+            f"capture, ETA order included:\n{rest!r}\n{want!r}"
+        )
+
 
 # --------------------------------------------------------------------------- #
 # S6c review round 3 nit (`lanes/business/__init__.py:433-439`): the `offer` arm

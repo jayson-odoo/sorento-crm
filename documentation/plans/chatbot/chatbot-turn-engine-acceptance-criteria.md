@@ -1463,3 +1463,33 @@ contact inside the synchronous request. Different contacts run in parallel.
   **Outside this lane:** the parser prompt should state the container shape (4 letters + 7
   digits) and that product-family prefixes are products - a D2-style prompt change, noted in
   the PR body, not made here. (H71)
+
+- AC-820 `[BE][T]` **A requested code with nothing in the domain that was ASKED is named
+  there, before the other domain's block.** Prod turn 858c9c54, after #705. The three-code
+  stock turn named MSK11A-QT only INSIDE the cross-domain block ("But there is INCOMING
+  stock (ETA) for the requested products: MSK11A-QT container TEMU6355180 ..."), so read top
+  to bottom the reply answered a stock question with two codes' stock and then, with no seam
+  between them, an incoming fact about a third - leaving the customer to infer the thing
+  they had actually asked. Given a requested code the PRIMARY render did not echo and the
+  OTHER domain answered with rows, when the cross-domain block is built, then the block
+  opens with "No {stock|incoming} for <codes>." and the other domain's lead follows it. The
+  word follows the question that was asked (`origin_domain`), exactly as the both-empty
+  sentence already does, and no escalation is offered - something IS being shown. Guarded by
+  the same `can_state_absence` test as the both-empty sentence, so a render that answered
+  ABOUT the code without printing it (a warehouse breakdown, a demand verdict) never gets
+  "no stock" underneath the stock it just showed; and a code with nothing on EITHER side
+  still gets its single combined sentence plus the offer (AC-814 / H62), never two
+  half-sentences.
+
+  It is built in `answer.crossdomain_render` rather than in the stock composer upstream,
+  because that is the only place that knows BOTH facts the sentence rests on: that the
+  primary render did not echo the code, and that the other domain was actually probed for
+  it. Its block is appended under the primary answer, so a line at the head of the block IS
+  the stock section's last word. Not fixture-visible - n8n has no such line - so six graded
+  `crossdomain-render` captures are registered field-scoped to `_xdBlock.block`, the only
+  key that moves on any of them; `exec-14126915`'s ETA sort is then graded explicitly in
+  `test_s6c_engine_paths.py::TestCrossdomainRenderEtaOnlyCaptureReplays` (the block compared
+  byte for byte with the one known sentence removed) rather than left to that strip.
+  Evidence: `tests/chatbot/test_s6c_answer_lane.py::TestAZeroStockCodeIsNamedBeforeTheIncomingBlock`
+  (four cases, two of them guards). Console case: "a code with no stock is named before the
+  incoming block". (H72)

@@ -183,8 +183,9 @@ DIVERGENCES: list[Divergence] = [
             "ruling: name it ('no stock and no incoming') and offer the escalation. This "
             "capture is that case exactly - one probed missing code, zero probed rows - so "
             "the port emits the negative paragraph where n8n emitted nothing. Field-scoped "
-            "to the two keys that carry it; every other byte is still compared, and the "
-            "other four crossdomain-render captures are byte-equal. Pinned by "
+            "to the two keys that carry it; every other byte is still compared. (The "
+            "sibling one-sided line, AC-820, later moved five more captures on `block` "
+            "alone - registered below.) Pinned by "
             "tests/chatbot/test_s6c_answer_lane.py::"
             "TestThirdCodeWithNoStockAndNoIncomingIsNamedWithEscalation."
         ),
@@ -192,6 +193,42 @@ DIVERGENCES: list[Divergence] = [
             ("_xdBlock", "block"),
             ("_xdBlock", "any"),
         ),
+    ),
+    # OWNER CONSOLE PASS 4, item G (6 Sep 2026): a requested code the PRIMARY domain
+    # answered with nothing, and the OTHER one answered with something, is now named
+    # ("No stock for MSK11A-QT.") above the cross-domain lead instead of appearing only
+    # inside it. Turn 858c9c54: a stock question came back as two codes' stock followed
+    # by an incoming fact about a third, with nothing saying the third had no stock.
+    #
+    # Not fixture-visible by construction - n8n's `crossdomain-render` has no such line,
+    # so every capture of the shape records its absence. Six graded captures carry it
+    # and the ONLY difference on each is the prefixed sentence (measured, one at a
+    # time), so the divergence is `_xdBlock.block` alone: `any`, `attachments`, `team`,
+    # `origin`, `probed_rows`, `rendered_rows` and the whole envelope passthrough are
+    # still compared byte for byte. `exec-14126915`'s ETA sort is graded explicitly in
+    # `test_s6c_engine_paths.py::TestCrossdomainRenderEtaOnlyCaptureReplays` rather than
+    # left to this strip. Pinned by
+    # test_s6c_answer_lane.py::TestAZeroStockCodeIsNamedBeforeTheIncomingBlock.
+    *(
+        Divergence(
+            node="crossdomain-render",
+            fixture=name,
+            hazard="owner console pass 4, item G (6 Sep 2026)",
+            reason=(
+                "the primary domain's own miss is stated above the cross-domain block "
+                "('No stock for <code>.'), where n8n said nothing at all. Field-scoped to "
+                "`_xdBlock.block`; every other key of the render is still compared."
+            ),
+            strip_paths=(("_xdBlock", "block"),),
+        )
+        for name in (
+            "exec-13484326",
+            "exec-13488926",
+            "exec-14119800",
+            "exec-14120400",
+            "exec-14122546",
+            "exec-14126915",
+        )
     ),
     Divergence(
         node="build-suggest-offer",
