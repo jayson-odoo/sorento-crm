@@ -243,6 +243,43 @@ export function RequestTagDesigner({
     loadPrices();
   }, [loadPrices]);
 
+  // Re-resolve line data when the designer regains focus (S2, AC-S2-1/2/3): a
+  // barcode (or any other field) edited on the product in another tab must
+  // reach an open Barcode layer without a reload. Silent on purpose - this
+  // swaps `resolvedRows` on success and does nothing else, so a working canvas
+  // never flashes the loading state and a failed background call never
+  // replaces it with an error; `loadPrices` above already owns both of those
+  // for the real, user-visible load.
+  //
+  // `focus` and `visibilitychange` -> `visible` fire together on most browsers
+  // (switching back to this tab), so a 1s guard collapses the pair into one
+  // resolve call rather than two.
+  const lastRefreshRef = useRef(0);
+  const refreshPricesSilently = useCallback(() => {
+    const now = Date.now();
+    if (now - lastRefreshRef.current < 1000) return;
+    lastRefreshRef.current = now;
+    resolveRequestLines(request.id)
+      .then((rows) => setResolvedRows(rows))
+      .catch(() => {
+        // A background refresh that fails leaves the canvas showing whatever
+        // it already had - the next focus/visibility change tries again.
+      });
+  }, [request.id]);
+
+  useEffect(() => {
+    const onFocus = () => refreshPricesSilently();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') refreshPricesSilently();
+    };
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [refreshPricesSilently]);
+
   const resolved = useMemo(() => {
     const map = new Map<string, LineTagData>();
     for (const row of resolvedRows ?? []) map.set(row.line_id, row);

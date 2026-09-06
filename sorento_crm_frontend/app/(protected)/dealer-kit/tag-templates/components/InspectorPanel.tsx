@@ -7,7 +7,7 @@
  * Type-specific sections render below based on `layer.props.kind`.
  */
 
-import { useCallback, useMemo } from 'react';
+import { useCallback, useId, useMemo } from 'react';
 import {
   Bold,
   Braces,
@@ -38,6 +38,8 @@ import type {
   TagLayerProps,
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
+import { defaultPolygonPoints } from '@/lib/dealer-kit/polygon-path';
+import { priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import { isDynamic } from '@/lib/dealer-kit/product-block';
 import { tagColours } from '@/lib/dealer-kit/colour';
 import { ColorPicker } from './ColorPicker';
@@ -97,6 +99,7 @@ const SHAPE_TYPE_OPTIONS = [
   { value: 'rounded_rect', label: 'Rounded Rect' },
   { value: 'ellipse', label: 'Ellipse' },
   { value: 'line', label: 'Line' },
+  { value: 'polygon', label: 'Polygon' },
 ];
 
 const FIELD_KEY_OPTIONS = [
@@ -135,19 +138,24 @@ function NumberInput({
   max,
 }: {
   label: string;
-  value: number;
+  /** Null draws an EMPTY box: the layer has not named a value for this. */
+  value: number | null;
   onChange: (v: number) => void;
   step?: number;
   min?: number;
   max?: number;
 }) {
+  const id = useId();
   return (
     <div className="flex flex-col gap-1">
-      <Label className="text-xs text-muted-foreground">{label}</Label>
+      <Label htmlFor={id} className="text-xs text-muted-foreground">
+        {label}
+      </Label>
       <Input
+        id={id}
         type="number"
         className="h-7 px-2 text-xs"
-        value={value}
+        value={value ?? ''}
         step={step}
         min={min}
         max={max}
@@ -374,7 +382,13 @@ export function InspectorPanel({
             />
           )}
           {layer.props.kind === 'price_badge' && (
-            <PriceBadgeInspector props={layer.props} onChange={updateProps} usedColours={usedColours} />
+            <PriceBadgeInspector
+              props={layer.props}
+              onChange={updateProps}
+              usedColours={usedColours}
+              fontOptions={fontOptions ?? STATIC_FONT_OPTIONS}
+              onUploadFont={onUploadFont}
+            />
           )}
           {layer.props.kind === 'shape' && (
             <ShapeInspector props={layer.props} onChange={updateProps} usedColours={usedColours} />
@@ -508,136 +522,237 @@ function TextInspector({
             </span>
           )}
         </div>
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center justify-between">
-            <Label className="text-xs text-muted-foreground">Font Family</Label>
-            {onUploadFont && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-6 px-1.5 text-[10px]"
-                onClick={onUploadFont}
-              >
-                Upload font
-              </Button>
-            )}
-          </div>
-          <SearchableSelect
-            value={props.fontFamily}
-            onChange={(v: string) => onChange({ ...props, fontFamily: v })}
-            options={fontOptions}
-          />
-        </div>
-        <div className="flex items-end gap-2">
-          <div className="flex-1">
-            <NumberInput
-              label="Font Size"
-              value={props.fontSize}
-              onChange={(v) => onChange({ ...props, fontSize: v })}
-              step={0.5}
-              min={4}
-            />
-          </div>
-          <ToggleGroup
-            type="multiple"
-            variant="outline"
-            size="sm"
-            value={[
-              props.fontWeight >= 600 && 'bold',
-              props.italic && 'italic',
-              props.underline && 'underline',
-              props.strikethrough && 'strikethrough',
-            ].filter((v): v is string => Boolean(v))}
-            onValueChange={(next: string[]) => {
-              const on = new Set(next);
-              // Only rewrite fontWeight when Bold's OWN pressed state actually
-              // changed - a `type="multiple"` group reports every currently
-              // pressed item on every click, so toggling Italic while a 600+
-              // weight reads Bold as pressed must not collapse that weight to
-              // the canonical 700 as a side effect of a click nowhere near it.
-              const wasBold = props.fontWeight >= 600;
-              const willBeBold = on.has('bold');
-              onChange({
-                ...props,
-                fontWeight:
-                  willBeBold === wasBold ? props.fontWeight : willBeBold ? 700 : 400,
-                italic: on.has('italic'),
-                underline: on.has('underline'),
-                strikethrough: on.has('strikethrough'),
-              });
-            }}
-          >
-            <ToggleGroupItem value="bold" aria-label="Bold" title="Bold">
-              <Bold className="size-3.5" />
-            </ToggleGroupItem>
-            <ToggleGroupItem value="italic" aria-label="Italic" title="Italic">
-              <Italic className="size-3.5" />
-            </ToggleGroupItem>
-            <ToggleGroupItem value="underline" aria-label="Underline" title="Underline">
-              <Underline className="size-3.5" />
-            </ToggleGroupItem>
-            <ToggleGroupItem value="strikethrough" aria-label="Strikethrough" title="Strikethrough">
-              <Strikethrough className="size-3.5" />
-            </ToggleGroupItem>
-          </ToggleGroup>
-        </div>
-        <div className="flex flex-col gap-1">
-          <Label className="text-xs text-muted-foreground">Font Weight</Label>
-          <SearchableSelect
-            value={String(props.fontWeight)}
-            onChange={(v: string) => onChange({ ...props, fontWeight: parseInt(v, 10) })}
-            options={FONT_WEIGHT_OPTIONS}
-          />
-        </div>
-        <ColorPicker
-          label="Colour"
-          value={props.color}
-          onChange={(v) => onChange({ ...props, color: v })}
+        <TypographyControls
+          values={{
+            fontFamily: props.fontFamily,
+            fontSize: props.fontSize,
+            fontWeight: props.fontWeight,
+            italic: props.italic ?? false,
+            underline: props.underline ?? false,
+            strikethrough: props.strikethrough ?? false,
+            align: props.align,
+            lineHeight: props.lineHeight,
+            letterSpacing: props.letterSpacing,
+          }}
+          onChange={(changes) => onChange({ ...props, ...changes })}
+          colour={props.color}
+          onColourChange={(v) => onChange({ ...props, color: v })}
           usedColours={usedColours}
+          fontOptions={fontOptions}
+          onUploadFont={onUploadFont}
         />
-        <div className="flex flex-col gap-1">
-          <Label className="text-xs text-muted-foreground">Align</Label>
-          <div className="flex gap-1">
-            {(['left', 'center', 'right'] as const).map((a) => (
-              <button
-                key={a}
-                type="button"
-                className={`flex-1 rounded border px-2 py-0.5 text-xs ${
-                  props.align === a
-                    ? 'border-primary bg-primary/10 text-primary'
-                    : 'border-input hover:bg-accent'
-                }`}
-                onClick={() => onChange({ ...props, align: a })}
-              >
-                {a.charAt(0).toUpperCase() + a.slice(1)}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <NumberInput
-            label="Line Height"
-            value={props.lineHeight}
-            onChange={(v) => onChange({ ...props, lineHeight: v })}
-            step={0.1}
-            min={0.5}
-          />
-          <NumberInput
-            label="Letter Spacing"
-            value={props.letterSpacing}
-            onChange={(v) => onChange({ ...props, letterSpacing: v })}
-            step={0.1}
-          />
-        </div>
       </div>
     </section>
   );
 }
 
 // ---------------------------------------------------------------------------
+// Typography controls, shared by the text and price badge sections (S6b)
+// ---------------------------------------------------------------------------
+
+/** What the controls SHOW. Null = the layer has not named one. */
+interface TypographyValues {
+  fontFamily: string;
+  fontSize: number | null;
+  fontWeight: number;
+  italic: boolean;
+  underline: boolean;
+  strikethrough: boolean;
+  align: 'left' | 'center' | 'right';
+  lineHeight: number | null;
+  letterSpacing: number;
+}
+
+/**
+ * What a control WRITES. Never null: a box the user typed in has a number in
+ * it, and nothing here can put a field back to "unnamed".
+ */
+type TypographyChanges = Partial<Omit<TypographyValues, 'fontSize' | 'lineHeight'>> & {
+  fontSize?: number;
+  lineHeight?: number;
+};
+
+/**
+ * Font family, size, B/I/U/S, weight, colour, alignment and spacing.
+ *
+ * One component for the text layer and the price badge (S6b, AC-S6-4): the
+ * badge's figure is text a designer wants to set like any other, and a second
+ * copy of these nine controls is where the two would start behaving
+ * differently. The colour field is passed in rather than read off a fixed
+ * key, because a badge keeps its figure's colour in `textColor`.
+ */
+function TypographyControls({
+  values,
+  onChange,
+  colour,
+  colourLabel = 'Colour',
+  onColourChange,
+  usedColours,
+  fontOptions,
+  onUploadFont,
+}: {
+  values: TypographyValues;
+  onChange: (changes: TypographyChanges) => void;
+  colour: string;
+  colourLabel?: string;
+  onColourChange: (value: string) => void;
+  usedColours: string[];
+  fontOptions: SearchableSelectOption[];
+  onUploadFont?: () => void;
+}) {
+  return (
+    <>
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center justify-between">
+          <Label className="text-xs text-muted-foreground">Font Family</Label>
+          {onUploadFont && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 px-1.5 text-[10px]"
+              onClick={onUploadFont}
+            >
+              Upload font
+            </Button>
+          )}
+        </div>
+        <SearchableSelect
+          value={values.fontFamily}
+          onChange={(v: string) => onChange({ fontFamily: v })}
+          options={fontOptions}
+        />
+      </div>
+      <div className="flex items-end gap-2">
+        <div className="flex-1">
+          <NumberInput
+            label="Font Size"
+            value={values.fontSize}
+            onChange={(v) => onChange({ fontSize: v })}
+            step={0.5}
+            min={4}
+          />
+        </div>
+        <ToggleGroup
+          type="multiple"
+          variant="outline"
+          size="sm"
+          value={[
+            values.fontWeight >= 600 && 'bold',
+            values.italic && 'italic',
+            values.underline && 'underline',
+            values.strikethrough && 'strikethrough',
+          ].filter((v): v is string => Boolean(v))}
+          onValueChange={(next: string[]) => {
+            const on = new Set(next);
+            // Only rewrite fontWeight when Bold's OWN pressed state actually
+            // changed - a `type="multiple"` group reports every currently
+            // pressed item on every click, so toggling Italic while a 600+
+            // weight reads Bold as pressed must not collapse that weight to
+            // the canonical 700 as a side effect of a click nowhere near it.
+            const wasBold = values.fontWeight >= 600;
+            const willBeBold = on.has('bold');
+            onChange({
+              fontWeight:
+                willBeBold === wasBold ? values.fontWeight : willBeBold ? 700 : 400,
+              italic: on.has('italic'),
+              underline: on.has('underline'),
+              strikethrough: on.has('strikethrough'),
+            });
+          }}
+        >
+          <ToggleGroupItem value="bold" aria-label="Bold" title="Bold">
+            <Bold className="size-3.5" />
+          </ToggleGroupItem>
+          <ToggleGroupItem value="italic" aria-label="Italic" title="Italic">
+            <Italic className="size-3.5" />
+          </ToggleGroupItem>
+          <ToggleGroupItem value="underline" aria-label="Underline" title="Underline">
+            <Underline className="size-3.5" />
+          </ToggleGroupItem>
+          <ToggleGroupItem value="strikethrough" aria-label="Strikethrough" title="Strikethrough">
+            <Strikethrough className="size-3.5" />
+          </ToggleGroupItem>
+        </ToggleGroup>
+      </div>
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs text-muted-foreground">Font Weight</Label>
+        <SearchableSelect
+          value={String(values.fontWeight)}
+          onChange={(v: string) => onChange({ fontWeight: parseInt(v, 10) })}
+          options={FONT_WEIGHT_OPTIONS}
+        />
+      </div>
+      <ColorPicker
+        label={colourLabel}
+        value={colour}
+        onChange={onColourChange}
+        usedColours={usedColours}
+      />
+      <div className="flex flex-col gap-1">
+        <Label className="text-xs text-muted-foreground">Align</Label>
+        <div className="flex gap-1">
+          {(['left', 'center', 'right'] as const).map((a) => (
+            <button
+              key={a}
+              type="button"
+              className={`flex-1 rounded border px-2 py-0.5 text-xs ${
+                values.align === a
+                  ? 'border-primary bg-primary/10 text-primary'
+                  : 'border-input hover:bg-accent'
+              }`}
+              onClick={() => onChange({ align: a })}
+            >
+              {a.charAt(0).toUpperCase() + a.slice(1)}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <NumberInput
+          label="Line Height"
+          value={values.lineHeight}
+          onChange={(v) => onChange({ lineHeight: v })}
+          step={0.1}
+          min={0.5}
+        />
+        <NumberInput
+          label="Letter Spacing"
+          value={values.letterSpacing}
+          onChange={(v) => onChange({ letterSpacing: v })}
+          step={0.1}
+        />
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Shape inspector
 // ---------------------------------------------------------------------------
+
+/**
+ * The shape select's write, with the polygon's corners seeded and dropped
+ * alongside it (S4, AC-S4-1).
+ *
+ * Turning a rectangle into a polygon seeds the box's own four corners, so it
+ * keeps looking exactly like the rectangle until a corner is moved; turning
+ * it back drops them, so a later switch to polygon starts from the box again
+ * rather than from corners the user cannot see.
+ */
+function withShape(
+  props: Extract<TagLayerProps, { kind: 'shape' }>,
+  shape: ShapeType,
+): Extract<TagLayerProps, { kind: 'shape' }> {
+  return {
+    ...props,
+    shape,
+    // Explicitly undefined, not omitted: the caller MERGES this over the
+    // layer's current props, so an omitted key would leave the old corners
+    // in place.
+    points: shape === 'polygon' ? (props.points ?? defaultPolygonPoints()) : undefined,
+  };
+}
 
 function ShapeInspector({
   props,
@@ -658,7 +773,7 @@ function ShapeInspector({
           <Label className="text-xs text-muted-foreground">Shape Type</Label>
           <SearchableSelect
             value={props.shape}
-            onChange={(v: string) => onChange({ ...props, shape: v as ShapeType })}
+            onChange={(v: string) => onChange(withShape(props, v as ShapeType))}
             options={SHAPE_TYPE_OPTIONS}
           />
         </div>
@@ -769,11 +884,16 @@ function PriceBadgeInspector({
   props,
   onChange,
   usedColours,
+  fontOptions,
+  onUploadFont,
 }: {
   props: Extract<TagLayerProps, { kind: 'price_badge' }>;
   onChange: (changes: Partial<TagLayerProps>) => void;
   usedColours: string[];
+  fontOptions: SearchableSelectOption[];
+  onUploadFont?: () => void;
 }) {
+  const typo = priceBadgeTypography(props);
   return (
     <section>
       <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -790,16 +910,22 @@ function PriceBadgeInspector({
             options={PRICE_BADGE_VARIANT_OPTIONS}
           />
         </div>
+        {/* The promotional block is always boxed - the struck price above a
+            filled box is what it IS (D26) - so the choice only exists for a
+            list-only badge (AC-S6-1/3). */}
+        {props.variant === 'list_only' && (
+          <label className="flex items-center gap-1.5 text-xs">
+            <Checkbox
+              checked={props.showBox === true}
+              onCheckedChange={(v) => onChange({ ...props, showBox: !!v })}
+            />
+            Box
+          </label>
+        )}
         <ColorPicker
           label="Box Fill"
           value={props.fill}
           onChange={(v) => onChange({ ...props, fill: v })}
-          usedColours={usedColours}
-        />
-        <ColorPicker
-          label="Text Colour"
-          value={props.textColor}
-          onChange={(v) => onChange({ ...props, textColor: v })}
           usedColours={usedColours}
         />
         <NumberInput
@@ -816,6 +942,31 @@ function PriceBadgeInspector({
           />
           Show NETT
         </label>
+        {/* The figure is text, and a designer sets text the same way wherever
+            it is (S6b, AC-S6-4). An empty box means the badge has not named
+            that field, so it keeps drawing the way it always did. */}
+        <TypographyControls
+          values={{
+            fontFamily: typo.fontFamily ?? '',
+            fontSize: typo.fontSize,
+            // The figure has always been bold, so that is what an unnamed
+            // weight reads as rather than a blank select.
+            fontWeight: typo.fontWeight ?? 700,
+            italic: typo.italic,
+            underline: typo.underline,
+            strikethrough: typo.strikethrough,
+            align: typo.align,
+            lineHeight: typo.lineHeight,
+            letterSpacing: typo.letterSpacing,
+          }}
+          onChange={(changes) => onChange({ ...props, ...changes })}
+          colour={props.textColor}
+          colourLabel="Text Colour"
+          onColourChange={(v) => onChange({ ...props, textColor: v })}
+          usedColours={usedColours}
+          fontOptions={fontOptions}
+          onUploadFont={onUploadFont}
+        />
       </div>
     </section>
   );
@@ -1047,6 +1198,12 @@ function BarcodeInspector({
   // same way - value in, binding survives, Relink clears it again. The
   // product master stays the source of truth; the override lives in the doc
   // only.
+  //
+  // An EMPTY override is still an override (S5): `''` is not `null`, so
+  // clearing the box does not fall back to the product's barcode the way
+  // `null` does - only Relink does that. Before this an empty string was
+  // coerced to `null` on the way out, so deleting the text and typing
+  // something new snapped straight back to the product value every time.
   const overridden = layer.text_override != null;
   const shown = layer.text_override ?? resolvedText ?? '';
 
@@ -1075,7 +1232,7 @@ function BarcodeInspector({
           <Input
             value={shown}
             placeholder={resolvedText ?? 'No barcode on the product'}
-            onChange={(e) => onUpdate({ text_override: e.target.value || null })}
+            onChange={(e) => onUpdate({ text_override: e.target.value })}
           />
           {overridden && (
             <span className="flex items-center gap-1 text-2xs text-amber-600">

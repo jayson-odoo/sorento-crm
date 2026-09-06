@@ -1,11 +1,18 @@
 /**
- * The barcode inspector's value override + Relink (D23, S9 review S7).
+ * The barcode inspector's value override + Relink (D23, S9 review S7; S5).
  *
  * Mirrors the text layer's `text_override` pattern one-for-one: typing sets
- * the override, Relink is offered only while one exists and clears it back
- * to the bound value, and clearing the field by hand writes `null` (no
- * override, fall back to the bound barcode) rather than an empty string
- * (which would otherwise read as "this product's barcode IS blank").
+ * the override, and Relink - the ONLY way back to the bound value - is
+ * offered only while one exists.
+ *
+ * Clearing the field by hand writes an EMPTY STRING, not `null` (S5,
+ * reversing S9 review S7's original call): `''` is still an override, so the
+ * canvas draws no barcode rather than snapping back to the product's - "I
+ * should be able to delete and write whatever I want; if I want to relink I
+ * should just click the Relink button we already have" (user, 5 Sep). Writing
+ * `null` here used to mean "no override, follow the product", so deleting the
+ * text and typing something new silently reverted to the product's barcode on
+ * every keystroke.
  */
 
 import { fireEvent, render, screen } from '@testing-library/react';
@@ -13,6 +20,29 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { TagLayer } from '@/lib/dealer-kit/tag-template-types';
 import { InspectorPanel } from './InspectorPanel';
+
+// The real select is a Radix popover + cmdk list, which jsdom cannot open.
+// A native <select> carrying the same options is enough to choose one, and
+// every select in this panel is static-option mode (no `fetchOptions`).
+vi.mock('@/components/common/SearchableSelect', () => ({
+  SearchableSelect: ({
+    value,
+    onChange,
+    options,
+  }: {
+    value: string;
+    onChange: (v: string) => void;
+    options: { value: string; label: string }[];
+  }) => (
+    <select value={value} onChange={(e) => onChange(e.target.value)}>
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
 
 function barcodeLayer(overrides: Partial<TagLayer> = {}): TagLayer {
   return {
@@ -254,7 +284,7 @@ describe('InspectorPanel - barcode value override (D23, S9 review S7)', () => {
     expect(screen.getByDisplayValue('4006381333931')).toBeInTheDocument();
   });
 
-  it('clearing the field by hand writes null, not an empty string', () => {
+  it('clearing the field by hand writes an empty string, not null (S5)', () => {
     const onUpdate = vi.fn();
     render(
       <InspectorPanel
@@ -267,6 +297,224 @@ describe('InspectorPanel - barcode value override (D23, S9 review S7)', () => {
 
     fireEvent.change(screen.getByDisplayValue('111222333'), { target: { value: '' } });
 
-    expect(onUpdate).toHaveBeenCalledWith('bc1', { text_override: null });
+    expect(onUpdate).toHaveBeenCalledWith('bc1', { text_override: '' });
+  });
+
+  it('the Relink button and the amber note stay while the override is an empty string (S5, AC-S5-1)', () => {
+    render(
+      <InspectorPanel
+        layer={barcodeLayer({ text_override: '' })}
+        onUpdate={vi.fn()}
+        onUpdateProps={vi.fn()}
+        resolvedText="4006381333931"
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: /relink/i })).toBeInTheDocument();
+    expect(screen.getByText('Unlinked from product data')).toBeInTheDocument();
+    // The box itself stays empty - it must not fall back to the resolved value.
+    expect(screen.getByPlaceholderText('4006381333931')).toHaveValue('');
+  });
+
+  it('typing a new value after clearing writes that value, never reverting to the product barcode (S5, AC-S5-2)', () => {
+    const onUpdate = vi.fn();
+    render(
+      <InspectorPanel
+        layer={barcodeLayer({ text_override: '' })}
+        onUpdate={onUpdate}
+        onUpdateProps={vi.fn()}
+        resolvedText="4006381333931"
+      />,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('4006381333931'), {
+      target: { value: '999888777' },
+    });
+
+    expect(onUpdate).toHaveBeenCalledWith('bc1', { text_override: '999888777' });
+  });
+});
+
+describe('InspectorPanel - polygon shape (S4, AC-S4-1)', () => {
+  function shapeLayer(shape: string, points?: { x: number; y: number }[]): TagLayer {
+    return {
+      id: 'sh1',
+      type: 'shape',
+      x_mm: 0,
+      y_mm: 0,
+      width_mm: 40,
+      height_mm: 20,
+      rotation_deg: 0,
+      z_index: 1,
+      locked: false,
+      visible: true,
+      slot_binding: null,
+      text_override: null,
+      props: {
+        kind: 'shape',
+        shape,
+        fill: '#e0e0e0',
+        stroke: '#999999',
+        strokeWidth: 0.5,
+        cornerRadius: 0,
+        ...(points ? { points } : {}),
+      },
+    } as TagLayer;
+  }
+
+  it('offers Polygon and seeds the four corners, so it still looks like the rectangle', () => {
+    const onUpdateProps = vi.fn();
+    render(
+      <InspectorPanel layer={shapeLayer('rect')} onUpdate={vi.fn()} onUpdateProps={onUpdateProps} />,
+    );
+
+    const select = screen
+      .getByRole('option', { name: 'Polygon' })
+      .closest('select') as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'polygon' } });
+
+    expect(onUpdateProps).toHaveBeenCalledWith('sh1', expect.objectContaining({
+      shape: 'polygon',
+      points: [
+        { x: 0, y: 0 },
+        { x: 1, y: 0 },
+        { x: 1, y: 1 },
+        { x: 0, y: 1 },
+      ],
+    }));
+  });
+
+  it('drops the points again when the shape goes back to a rectangle', () => {
+    const onUpdateProps = vi.fn();
+    render(
+      <InspectorPanel
+        layer={shapeLayer('polygon', [
+          { x: 0.25, y: 0 },
+          { x: 1, y: 0 },
+          { x: 1, y: 1 },
+          { x: 0, y: 1 },
+        ])}
+        onUpdate={vi.fn()}
+        onUpdateProps={onUpdateProps}
+      />,
+    );
+
+    const select = screen
+      .getByRole('option', { name: 'Rectangle' })
+      .closest('select') as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'rect' } });
+
+    const changes = onUpdateProps.mock.calls.at(-1)?.[1] as Record<string, unknown>;
+    expect(changes.shape).toBe('rect');
+    expect(changes.points).toBeUndefined();
+  });
+
+  it('names the shape plainly - "Polygon", not a parenthetical (AC-S4-12)', () => {
+    render(
+      <InspectorPanel layer={shapeLayer('rect')} onUpdate={vi.fn()} onUpdateProps={vi.fn()} />,
+    );
+
+    expect(screen.getByRole('option', { name: 'Polygon' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: /free corners/i })).toBeNull();
+  });
+
+  it('keeps the corner radius available on a polygon (AC-S4-4)', () => {
+    render(
+      <InspectorPanel layer={shapeLayer('polygon')} onUpdate={vi.fn()} onUpdateProps={vi.fn()} />,
+    );
+
+    expect(screen.getByText('Corner Radius')).toBeInTheDocument();
+  });
+});
+
+describe('InspectorPanel - price badge box and typography (r4b, AC-S6-1/4)', () => {
+  function badgeLayer(props: Record<string, unknown> = {}): TagLayer {
+    return {
+      id: 'pb1',
+      type: 'price_badge',
+      x_mm: 0,
+      y_mm: 0,
+      width_mm: 40,
+      height_mm: 20,
+      rotation_deg: 0,
+      z_index: 1,
+      locked: false,
+      visible: true,
+      slot_binding: null,
+      text_override: null,
+      props: {
+        kind: 'price_badge',
+        variant: 'list_only',
+        fill: '#ffffff',
+        textColor: '#000000',
+        cornerRadius: 2,
+        showNett: true,
+        ...props,
+      },
+    } as TagLayer;
+  }
+
+  it('offers a Box checkbox on the list-only variant, and ticking it writes showBox', () => {
+    const onUpdateProps = vi.fn();
+    render(
+      <InspectorPanel layer={badgeLayer()} onUpdate={vi.fn()} onUpdateProps={onUpdateProps} />,
+    );
+
+    const box = screen.getByRole('checkbox', { name: 'Box' });
+    expect(box).not.toBeChecked();
+    fireEvent.click(box);
+
+    expect(onUpdateProps).toHaveBeenCalledWith(
+      'pb1',
+      expect.objectContaining({ showBox: true }),
+    );
+  });
+
+  it('does not offer it on the promo variant, which is always boxed (AC-S6-3)', () => {
+    render(
+      <InspectorPanel
+        layer={badgeLayer({ variant: 'promo' })}
+        onUpdate={vi.fn()}
+        onUpdateProps={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole('checkbox', { name: 'Box' })).toBeNull();
+  });
+
+  it('shows the same typography controls a text layer has, and writes fontSize (AC-S6-4)', () => {
+    const onUpdateProps = vi.fn();
+    render(
+      <InspectorPanel layer={badgeLayer()} onUpdate={vi.fn()} onUpdateProps={onUpdateProps} />,
+    );
+
+    for (const label of [
+      'Font Family',
+      'Font Size',
+      'Font Weight',
+      'Text Colour',
+      'Align',
+      'Line Height',
+      'Letter Spacing',
+    ]) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+    }
+    expect(screen.getByRole('button', { name: 'Bold' })).toBeInTheDocument();
+
+    const size = screen.getByLabelText('Font Size');
+    fireEvent.change(size, { target: { value: '22' } });
+
+    expect(onUpdateProps).toHaveBeenCalledWith(
+      'pb1',
+      expect.objectContaining({ fontSize: 22 }),
+    );
+  });
+
+  it('leaves the size box empty until the badge names one, so nothing is invented', () => {
+    render(
+      <InspectorPanel layer={badgeLayer()} onUpdate={vi.fn()} onUpdateProps={vi.fn()} />,
+    );
+
+    expect(screen.getByLabelText('Font Size')).toHaveValue(null);
   });
 });

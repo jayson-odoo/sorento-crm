@@ -1,0 +1,54 @@
+# Price Tag Designer Round 4 - acceptance criteria
+
+Plan: `PLAN-price-tag-r4.md`
+
+## S1 fonts
+- AC-S1-1 An uploaded `.ttf` brand font, picked in the font dropdown, renders on the canvas in that face (the glyphs visibly differ from Arial; screenshot evidence).
+- AC-S1-2 The same tag exported to PDF is set in that face.
+- AC-S1-3 `GET /api/v1/public/dealer-kit/fonts/{id}` returns 200 + font content type for a font asset, 404 for a non-font asset and for an unknown id, with no authentication.
+- AC-S1-4 A font whose face fails to load produces one toast naming the family; the editor keeps rendering in the fallback.
+- AC-S1-5 Existing `.woff2` / `.otf` uploads keep working (content type per extension).
+
+## S2 stale line data
+- AC-S2-1 Open a request design, set a barcode on the line's product in another tab, return to the designer tab: a Barcode layer resolves the new value without a reload, and the inspector "Barcode value" placeholder shows it.
+- AC-S2-2 The refresh never flashes the loading state or replaces the canvas with an error when the background call fails.
+- AC-S2-3 Focus and visibility firing together produce one resolve call.
+
+## S3 inline edit copy
+- AC-S3-1 Double-click on a text layer whose whole content is `{{product.code}}` opens the inline editor showing the resolved code (e.g. `SRTWT8267-GM`), fully selected, so Cmd/Ctrl+C copies it.
+- AC-S3-2 Typing in that editor changes nothing; Enter, Escape and click-away close it and the layer text is still `{{product.code}}`.
+- AC-S3-3 A layer with mixed text (`Code {{product.code}}`) or a plain text layer opens editable on the raw content, exactly as before.
+- AC-S3-4 In the template editor with no preview product, a sole-token layer opens on the raw token (nothing to resolve).
+
+## S4 polygon shape
+- AC-S4-1 Inspector shape select offers Polygon; choosing it on a rectangle keeps the rectangle's look until a corner is moved.
+- AC-S4-2 Selecting a polygon (sole selection) shows a handle on every corner and every edge midpoint at once; dragging a corner moves only that corner, dragging an edge midpoint moves that edge (both endpoints) parallel to itself. (Superseded the double-click design in round 4b.)
+- AC-S4-3 Corners may leave the layer box: on release the box grows or shrinks to fit the shape and the Inspector W/H update. The Transformer shows only the rotation anchor for a polygon; changing W/H in the Inspector scales the polygon with the box.
+- AC-S4-4 Corner radius rounds every vertex and a large radius never draws artefacts (clamped).
+- AC-S4-5 Fill, stroke, stroke width, rotation, opacity and z-index work as for a rectangle.
+- AC-S4-6 The PDF prints the same polygon (SVG path), matching the canvas.
+- AC-S4-7 Deselecting (Escape, click on empty canvas, selecting another layer) hides the handles; a drag interrupted that way leaves the canvas showing the committed shape, never a half-dragged preview; one undo reverts one drag including the box change.
+- AC-S4-8 A saved document from before this change opens unchanged (no `points` field is required).
+- AC-S4-9 Works at 1280px; the handles are usable with a mouse.
+
+## S5 barcode override
+- AC-S5-1 With a Barcode layer bound to a product that has a barcode, select all in "Barcode value" and press Delete: the box stays empty, the canvas draws no bars, the amber "Unlinked from product data" note and the Relink button show.
+- AC-S5-2 Type any value into the empty box: the canvas draws that value.
+- AC-S5-3 Click Relink: the box shows the product barcode again and the canvas draws it.
+- AC-S5-4 The PDF matches the canvas in all three states.
+
+## Round 4b
+- AC-S3-5 The seeded product block's code layer (bound, override holds `{{product.code}}`) opens the inline editor on the resolved code, read-only, trimmed.
+- AC-S4-10 Selecting a polygon shows corner and edge handles at once; no double-click needed; the Transformer shows only the rotation anchor for it.
+- AC-S4-11 Dragging a corner past the layer box grows the box; the Inspector W/H update; the shape is where the cursor left it.
+- AC-S4-12 Shape select label reads "Polygon".
+- AC-S6-1 Price badge, variant "List price only": a "Box" checkbox appears; ticking it draws the box in Box Fill with Corner Radius, text in Text Colour; untick draws no box. Saved documents without the flag print as before (no box).
+- AC-S6-2 A boxed badge shows the same corner and edge handles as a polygon when selected; dragging makes the box a slanted callout on canvas and in the PDF; the price text stays centred.
+- AC-S6-3 Promo variant is unchanged (always boxed).
+- AC-S6-4 Price badge inspector shows the same typography controls as a text layer; changing font family, size, bold/italic/underline/strike, weight, align, line height and letter spacing changes the figure on canvas and in the PDF identically.
+- AC-S6-5 A saved badge without these fields renders exactly as before.
+
+## S7 rail split (#676)
+- AC-S7-1 Drag the TAG SIZE / LAYERS divider, click another line: the split stays where it was put.
+- AC-S7-2 Reload the designer: the split is restored.
+- AC-S7-3 Collapsing/expanding the left panel still works as before.

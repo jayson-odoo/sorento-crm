@@ -113,6 +113,25 @@ describe('price_badge on the print page', () => {
     expect(screen.getByText('NETT')).toBeInTheDocument();
   });
 
+  it('keeps the pre-r4b promo sizes when the layer names no typography (r4c, AC-S6-5)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({ type: 'price_badge', props: defaultPriceBadgeProps('promo') }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    // figureSize falls back to 16pt when the layer names no fontSize; the
+    // struck list price and the SP/NETT labels keep their proportion to it
+    // (0.5625 and 0.5), unchanged since before typography existed.
+    expect(screen.getByText('RM 599')).toHaveStyle({ fontSize: '16pt' });
+    expect(screen.getByText('LP: RM 1,599')).toHaveStyle({ fontSize: '9pt' });
+    expect(screen.getByText('SP')).toHaveStyle({ fontSize: '8pt' });
+    expect(screen.getByText('NETT')).toHaveStyle({ fontSize: '8pt' });
+  });
+
   it('falls back to the list price when the line turns the promo price off', () => {
     render(
       <TagSheetRenderer
@@ -125,6 +144,165 @@ describe('price_badge on the print page', () => {
 
     expect(screen.getByText('RM 1,599')).toBeInTheDocument();
     expect(screen.queryByText('LP: RM 1,599')).not.toBeInTheDocument();
+  });
+});
+
+describe('the price badge box on the print page (r4b, AC-S6-1/2/5)', () => {
+  it('prints no box for a list-only badge saved before the flag (AC-S6-5)', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({ type: 'price_badge', props: defaultPriceBadgeProps('list_only') }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    expect(container.querySelector('svg')).toBeNull();
+    expect(screen.getByText('RM 1,599')).toBeInTheDocument();
+  });
+
+  it('prints the callout as an SVG path once the layer asks for a box (AC-S6-1)', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            width_mm: 40,
+            height_mm: 20,
+            props: {
+              ...defaultPriceBadgeProps('list_only'),
+              showBox: true,
+              fill: '#ffffff',
+              textColor: '#111111',
+              cornerRadius: 0,
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    const svg = container.querySelector('svg');
+    expect(svg?.getAttribute('viewBox')).toBe('0 0 40 20');
+    const path = svg?.querySelector('path');
+    expect(path?.getAttribute('d')).toBe('M 0 0 L 40 0 L 40 20 L 0 20 Z');
+    expect(path?.getAttribute('fill')).toBe('#ffffff');
+    expect(screen.getByText('RM 1,599')).toHaveStyle({ color: '#111111' });
+  });
+
+  it('follows the layer own corners, so the callout slants in the PDF too (AC-S6-2)', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            width_mm: 40,
+            height_mm: 20,
+            props: {
+              ...defaultPriceBadgeProps('list_only'),
+              showBox: true,
+              cornerRadius: 0,
+              points: [
+                { x: 0.25, y: 0 },
+                { x: 1, y: 0 },
+                { x: 1, y: 1 },
+                { x: 0, y: 1 },
+              ],
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    expect(container.querySelector('svg path')?.getAttribute('d')).toBe(
+      'M 10 0 L 40 0 L 40 20 L 0 20 Z',
+    );
+  });
+
+  it('leaves the promotional block on its rounded rectangle (AC-S6-3)', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({ type: 'price_badge', props: defaultPriceBadgeProps('promo') }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    expect(container.querySelector('svg')).toBeNull();
+    expect(screen.getByText('SP')).toBeInTheDocument();
+  });
+});
+
+describe('the price badge figure typography on the print page (r4b, AC-S6-4/5)', () => {
+  it('sets the figure in the layer own face, size and style', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            props: {
+              ...defaultPriceBadgeProps('list_only'),
+              fontFamily: 'Bebas Neue',
+              fontSize: 22,
+              fontWeight: 900,
+              italic: true,
+              strikethrough: true,
+              align: 'left',
+              letterSpacing: 0.5,
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    const figure = screen.getByText('RM 1,599');
+    expect(figure).toHaveStyle({
+      fontSize: '22pt',
+      fontWeight: '900',
+      fontStyle: 'italic',
+      textDecoration: 'line-through',
+      textAlign: 'left',
+      letterSpacing: '0.5px',
+    });
+    // The face is set on the frame, so every part of the badge shares it.
+    expect(figure.parentElement).toHaveStyle({ fontFamily: 'Bebas Neue' });
+  });
+
+  it('keeps 13pt / 700 / DM Sans for a badge that names none (AC-S6-5)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({ type: 'price_badge', props: defaultPriceBadgeProps('list_only') }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    const figure = screen.getByText('RM 1,599');
+    expect(figure).toHaveStyle({ fontSize: '13pt', fontWeight: '700', textAlign: 'center' });
+    expect(figure.parentElement).toHaveStyle({ fontFamily: 'DM Sans, sans-serif' });
+  });
+
+  it('scales the promotional block struck price, SP and NETT with the figure', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            props: { ...defaultPriceBadgeProps('promo'), fontSize: 32 },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    expect(screen.getByText('RM 599')).toHaveStyle({ fontSize: '32pt' });
+    expect(screen.getByText('LP: RM 1,599')).toHaveStyle({ fontSize: '18pt' });
+    expect(screen.getByText('NETT')).toHaveStyle({ fontSize: '16pt' });
   });
 });
 
@@ -246,6 +424,66 @@ describe('bound text and pictures on the print page', () => {
     const el = screen.getByText('Plain');
     expect(el).toHaveStyle({ fontStyle: 'normal' });
     expect(el).toHaveStyle({ textDecoration: 'none' });
+  });
+
+  it('rotates a layer about its own top-left corner, not the CSS box centre (r4c)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'text-rotated',
+            type: 'text',
+            rotation_deg: 30,
+            props: {
+              kind: 'text',
+              text: 'Rotated',
+              fontFamily: 'DM Sans',
+              fontSize: 10,
+              fontWeight: 400,
+              color: '#000',
+              align: 'left',
+              lineHeight: 1.2,
+              letterSpacing: 0,
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    const el = screen.getByText('Rotated');
+    expect(el).toHaveStyle({ transform: 'rotate(30deg)' });
+    expect(el.style.transformOrigin).toBe('0 0');
+  });
+
+  it('leaves an unrotated layer with no transform-origin', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'text-flat',
+            type: 'text',
+            rotation_deg: 0,
+            props: {
+              kind: 'text',
+              text: 'Flat',
+              fontFamily: 'DM Sans',
+              fontSize: 10,
+              fontWeight: 400,
+              color: '#000',
+              align: 'left',
+              lineHeight: 1.2,
+              letterSpacing: 0,
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    const el = screen.getByText('Flat');
+    expect(el.style.transform).toBe('');
+    expect(el.style.transformOrigin).toBe('');
   });
 
   it('draws an asset image from the payload map', () => {
@@ -525,6 +763,20 @@ describe('barcode on the print page', () => {
     expect(screen.getByText('4 006381 333931')).toBeInTheDocument();
   });
 
+  it('an empty override draws nothing, never falling back to a real product barcode (S5)', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([{ ...barcodeLayer(), text_override: '' }])}
+        resolvedData={{ [LINE_ID]: resolved({ barcode: VALID_EAN13 }) }}
+        assets={{}}
+        images={{}}
+      />,
+    );
+
+    expect(container.querySelector('[style*="border-radius"]')).toBeNull();
+    expect(screen.queryByText('4 006381 333931')).not.toBeInTheDocument();
+  });
+
   it('sizes the code-strip and human-readable text in pt, proportional to the plate (AC-S7-4/6)', () => {
     // A 40x22mm plate - the toolbar's default insert size. Against the BUG
     // (`Math.max(6, strip * 0.6)}mm`) this reads as a 6mm floor (~17pt): a
@@ -573,6 +825,81 @@ describe('barcode on the print page', () => {
     const tallerStrip = tallerContainer.querySelectorAll('[style*="font-weight: 700"]')[0] as HTMLElement;
     expect(parseFloat(tallerStrip.style.fontSize)).toBeGreaterThan(
       parseFloat(stripFontSize),
+    );
+  });
+});
+
+describe('polygon shape on the print page (S4, AC-S4-6)', () => {
+  it('prints an SVG path built by the same helper the canvas draws with', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'poly-1',
+            type: 'shape',
+            width_mm: 40,
+            height_mm: 20,
+            props: {
+              kind: 'shape',
+              shape: 'polygon',
+              fill: '#ff0000',
+              stroke: '#000000',
+              strokeWidth: 0.5,
+              cornerRadius: 0,
+              points: [
+                { x: 0.25, y: 0 },
+                { x: 1, y: 0 },
+                { x: 1, y: 1 },
+                { x: 0, y: 1 },
+              ],
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+        assets={{}}
+        images={{}}
+      />,
+    );
+
+    const svg = container.querySelector('svg');
+    expect(svg).toBeTruthy();
+    // The viewBox is the layer's own mm box, so the path data is in mm and
+    // `strokeWidth` means the same thing here as on every other shape.
+    expect(svg?.getAttribute('viewBox')).toBe('0 0 40 20');
+    const path = svg?.querySelector('path');
+    expect(path?.getAttribute('d')).toBe('M 10 0 L 40 0 L 40 20 L 0 20 Z');
+    expect(path?.getAttribute('fill')).toBe('#ff0000');
+    expect(path?.getAttribute('stroke')).toBe('#000000');
+    expect(path?.getAttribute('stroke-width')).toBe('0.5');
+  });
+
+  it('draws the four corners for a polygon saved without points (AC-S4-8)', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'poly-2',
+            type: 'shape',
+            width_mm: 40,
+            height_mm: 20,
+            props: {
+              kind: 'shape',
+              shape: 'polygon',
+              fill: '#ff0000',
+              stroke: 'transparent',
+              strokeWidth: 0,
+              cornerRadius: 0,
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+        assets={{}}
+        images={{}}
+      />,
+    );
+
+    expect(container.querySelector('path')?.getAttribute('d')).toBe(
+      'M 0 0 L 40 0 L 40 20 L 0 20 Z',
     );
   });
 });

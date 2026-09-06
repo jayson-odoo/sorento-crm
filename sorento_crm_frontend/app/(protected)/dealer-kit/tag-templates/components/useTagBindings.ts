@@ -29,7 +29,12 @@ import {
   getProductSetTagData,
   getProductTagData,
 } from '../../services/tagDataService';
-import { listAssets, listFontAssets, type KitAsset } from '../../services/assetService';
+import {
+  fontAssetUrl,
+  listAssets,
+  listFontAssets,
+  type KitAsset,
+} from '../../services/assetService';
 import { listSpecKeys } from '../../services/tagDataService';
 import type { SpecKeyOption } from '@/lib/dealer-kit/merge-fields';
 import { STATIC_FONT_OPTIONS } from './InspectorPanel';
@@ -65,9 +70,25 @@ function toastResolutionFailureOnce(key: string, message: string): void {
   toast.error(message);
 }
 
-/** Tests only - the module-level dedupe set is per tab, and a test is one tab. */
+/**
+ * One toast per family whose face rejected, for the same reason
+ * `_toastedResolutionFailures` is per-key rather than per-call: `useKitLibrary`
+ * remounts on a line switch, and `ensureFontsLoaded` re-tries a failed face on
+ * every call (S1), so without a dedupe a font that never loads would toast on
+ * every reload.
+ */
+const _toastedFontFailures = new Set<string>();
+
+function toastFontFailureOnce(family: string): void {
+  if (_toastedFontFailures.has(family)) return;
+  _toastedFontFailures.add(family);
+  toast.error(`Font ${family} could not be loaded`);
+}
+
+/** Tests only - the module-level dedupe sets are per tab, and a test is one tab. */
 export function resetTagBindingsToastDedupeForTests(): void {
   _toastedResolutionFailures.clear();
+  _toastedFontFailures.clear();
 }
 
 export function useTagBindings(promotionId?: string | null): TagBindings {
@@ -191,14 +212,26 @@ export function useKitLibrary(): KitLibrary {
   }, []);
 
   // Konva measures text against the fonts loaded AT THAT MOMENT, so the faces
-  // have to reach the document before a layer using one is drawn.
+  // have to reach the document before a layer using one is drawn. The URL is
+  // built from the asset id, not read off `font.url` (a signed CDN link with
+  // no CORS header on some hosts, which `FontFace.load()` rejects outright -
+  // see `fontAssetUrl`'s docstring).
   useEffect(() => {
     if (fonts.length === 0) return;
+    let cancelled = false;
     void ensureFontsLoaded(
-      fonts
-        .filter((font) => font.url)
-        .map((font) => ({ name: font.name, family: font.name, url: font.url as string })),
-    );
+      fonts.map((font) => ({
+        name: font.name,
+        family: font.name,
+        url: fontAssetUrl(font.id),
+      })),
+    ).then(({ failed }) => {
+      if (cancelled) return;
+      for (const family of failed) toastFontFailureOnce(family);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [fonts]);
 
   const remember = useCallback((asset: KitAsset) => {

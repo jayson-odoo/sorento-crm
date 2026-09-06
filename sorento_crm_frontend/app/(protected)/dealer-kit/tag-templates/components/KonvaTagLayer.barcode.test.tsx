@@ -15,7 +15,7 @@
  * real Stage/container to mount, which jsdom has no layout engine for).
  */
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('konva/lib/Global', () => ({ Konva: { dragButtons: [0, 1] } }));
 
@@ -96,5 +96,51 @@ describe('KonvaTagLayer barcode: pending vs failed', () => {
 
     expect(screen.getByText('cannot encode')).toBeInTheDocument();
     expect(screen.queryByText('Loading')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// An empty override draws NOTHING - the "no barcode" placeholder, never the
+// product value (S5, AC-S5-1). `display.text` is what `layerDisplay` would
+// hand this component for an empty `text_override` (`'' ?? x` is `''`, not
+// `x` - nullish coalescing never falls back to the product for an empty
+// string), so passing it directly here is the same input the real host
+// produces once `InspectorPanel`'s clear no longer coerces `''` to `null`.
+// ---------------------------------------------------------------------------
+
+describe('KonvaTagLayer barcode: an empty override draws no bars (S5)', () => {
+  beforeEach(() => {
+    jsBarcodeMock.mockClear();
+  });
+
+  it('draws the "no barcode" placeholder, not the bars, for an empty override', () => {
+    jsBarcodeMock.mockImplementation(() => {});
+
+    render(
+      <KonvaTagLayer
+        layer={barcodeLayer()}
+        scale={3}
+        display={{ text: '', code: 'SK-1' }}
+      />,
+    );
+
+    expect(jsBarcodeMock).not.toHaveBeenCalled();
+    expect(screen.getByText('barcode')).toBeInTheDocument();
+  });
+
+  it('never falls back to a product value that IS present in `code`', () => {
+    jsBarcodeMock.mockImplementation(() => {});
+
+    render(
+      <KonvaTagLayer
+        layer={barcodeLayer()}
+        scale={3}
+        display={{ text: '', code: 'SK-1' }}
+      />,
+    );
+
+    // The code strip only ever appears alongside real bars (same branch) -
+    // an empty override must not print the product's code strip either.
+    expect(screen.queryByText('SK-1')).toBeNull();
   });
 });

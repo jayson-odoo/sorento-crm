@@ -19,6 +19,7 @@ import {
   hasMergeField,
   mergeFieldCatalog,
   renderMergeFields,
+  soleMergeField,
 } from './merge-fields';
 import { layerText } from './product-block';
 import type {
@@ -262,6 +263,23 @@ describe('renderMergeFields - what is left when nothing resolves', () => {
     expect(renderMergeFields('{{spec.material}}', product(), 'editor')).toBe(
       'stainless steel',
     );
+  });
+});
+
+describe('soleMergeField', () => {
+  it('answers the token when the whole (trimmed) text is exactly one token', () => {
+    expect(soleMergeField('{{product.code}}')).toBe('{{product.code}}');
+    expect(soleMergeField('  {{product.code}}  ')).toBe('{{product.code}}');
+    expect(soleMergeField('{{ product.code }}')).toBe('{{ product.code }}');
+  });
+
+  it('is null for mixed text, plain text, and no text', () => {
+    expect(soleMergeField('Code {{product.code}}')).toBeNull();
+    expect(soleMergeField('{{product.code}} - {{spec.material}}')).toBeNull();
+    expect(soleMergeField('Plain words')).toBeNull();
+    expect(soleMergeField('')).toBeNull();
+    expect(soleMergeField(null)).toBeNull();
+    expect(soleMergeField(undefined)).toBeNull();
   });
 });
 

@@ -319,31 +319,36 @@ def list_assets(
     return statement.order_by(Asset.name).limit(limit).all()
 
 
-def font_assets(db: Session, *, expires_in: int = 3600) -> list[dict]:
-    """Every brand font this company can print with, signed.
+def font_assets(db: Session) -> list[dict]:
+    """Every brand font this company can print with, as a same-origin path.
 
     ALL of them, not just the ones a document names: a text layer carries a font
     FAMILY, never an asset id, so nothing can tell which fonts a page needs until
     the browser lays the text out. The list is small (a brand has a handful of
     faces), and a missing one is a tag printed in the wrong typeface.
+
+    ``url`` is the PATH of the public font route
+    (``/api/v1/public/dealer-kit/fonts/{id}``), not a signed CDN link. A signed
+    R2/CloudFront URL answers with no ``Access-Control-Allow-Origin``, so
+    `FontFace.load()` rejects it in the browser and both consumers (the editor
+    and this print payload) silently fall back to the system sans - measured on
+    a live upload, see PLAN-price-tag-r4.md S1. The route it points at reads the
+    bytes itself, so there is nothing left here to sign or fail to sign; every
+    font asset is included unconditionally.
     """
     rows = list_assets(db, kind=FONT, limit=100)
 
-    fonts: list[dict] = []
-    for asset, attachment in rows:
-        signed = resolve_signed_url(
-            attachment.file_path,
-            provider=attachment.storage_provider,
-            expires_in=expires_in,
-            strict=True,
-        )
-        if not signed:
-            continue
-        # The family IS the asset name. The inspector lists names, a text layer
-        # stores the one that was picked, and `@font-face` declares the same
-        # string - so the three cannot disagree about what "ZZT Brand" means.
-        fonts.append({"name": asset.name, "family": asset.name, "url": signed})
-    return fonts
+    # The family IS the asset name. The inspector lists names, a text layer
+    # stores the one that was picked, and `@font-face` declares the same
+    # string - so the three cannot disagree about what "ZZT Brand" means.
+    return [
+        {
+            "name": asset.name,
+            "family": asset.name,
+            "url": f"/api/v1/public/dealer-kit/fonts/{asset.id}",
+        }
+        for asset, _attachment in rows
+    ]
 
 
 def tag_sheet_asset_ids(doc: Optional[dict]) -> set[str]:

@@ -81,3 +81,25 @@ export async function uploadAsset(input: {
 export async function listFontAssets(): Promise<KitAsset[]> {
   return listAssets({ kind: 'font', limit: 100 });
 }
+
+/**
+ * The same-origin URL `FontFace.load()` fetches an asset's bytes from.
+ *
+ * Built from the asset id rather than read off `KitAsset.url`: that field is a
+ * signed CDN link with no CORS header on some hosts, which `FontFace.load()`
+ * rejects outright (price-tag-r4 S1). `/api/v1/public/dealer-kit/fonts/{id}`
+ * is unauthenticated and same-origin, so there is nothing to sign and nothing
+ * for CORS to block.
+ *
+ * BARE, with no `NEXT_PUBLIC_API_URL` prefix. That value is inlined into the
+ * browser bundle at build time, so it names a host as the BROWSER's machine
+ * sees it, which is why `apiFetch` (`lib/api.ts`) strips it for every
+ * browser-side call. The page's own origin already proxies `/api/v1` to the
+ * backend - Next's rewrite in dev, nginx in production - so the relative path
+ * is both correct and the only one that cannot point at the wrong machine.
+ * The print page is the one caller that must prefix it, because the PDF
+ * worker drives that page directly rather than through the proxy.
+ */
+export function fontAssetUrl(assetId: string): string {
+  return `/api/v1/public/dealer-kit/fonts/${assetId}`;
+}

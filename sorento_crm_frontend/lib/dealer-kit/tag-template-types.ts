@@ -38,7 +38,19 @@ export type SlotBinding =
   | 'barcode'
   | null;
 
-export type ShapeType = 'rect' | 'rounded_rect' | 'ellipse' | 'line';
+export type ShapeType = 'rect' | 'rounded_rect' | 'ellipse' | 'line' | 'polygon';
+
+/**
+ * A polygon corner, normalized to [0, 1] against the layer's own box (S4).
+ *
+ * Normalized so the Transformer keeps resizing a polygon exactly as it
+ * resizes a rectangle, and so a document saved before S4 needs no migration:
+ * a shape with no `points` is the box's four corners.
+ */
+export interface PolygonPoint {
+  x: number;
+  y: number;
+}
 
 export type ImageFit = 'cover' | 'contain';
 
@@ -125,6 +137,12 @@ export interface ShapeLayerProps {
   stroke: string;
   strokeWidth: number;
   cornerRadius: number;
+  /**
+   * The polygon's own corners (S4), absent for every other shape and for a
+   * polygon nobody has moved a corner on yet. `polygonPoints()` in
+   * `polygon-path.ts` is the one place that resolves absent to the box.
+   */
+  points?: PolygonPoint[];
 }
 
 export interface ProductSlotLayerProps {
@@ -153,6 +171,37 @@ export interface PriceBadgeLayerProps {
   textColor: string;
   cornerRadius: number;
   showNett: boolean;
+  /**
+   * Draw the box behind a LIST-ONLY badge (r4b, AC-S6-1).
+   *
+   * Absent means no box, so every badge saved before this prints exactly as
+   * it did. Promo is always boxed and ignores this - the struck price above a
+   * filled block is what a promotional badge IS (D26).
+   */
+  showBox?: boolean;
+  /**
+   * The box's own corners, same normalization as a polygon shape's (r4b,
+   * AC-S6-2): the flyer's price callout has a slanted left edge, and the
+   * badge itself is that callout rather than a shape parked behind it.
+   * Absent = the four corners.
+   */
+  points?: PolygonPoint[];
+  /**
+   * The figure's typography (r4b, AC-S6-4). Every field is optional and every
+   * absent one means "what this badge already looked like" - the canvas sizes
+   * the figure from the box, the print page uses a fixed point size - so a
+   * saved badge renders unchanged (AC-S6-5). `priceBadgeTypography` in
+   * `price-badge.ts` is the one place that resolves them.
+   */
+  fontFamily?: string;
+  fontSize?: number;
+  fontWeight?: number;
+  italic?: boolean;
+  underline?: boolean;
+  strikethrough?: boolean;
+  align?: 'left' | 'center' | 'right';
+  lineHeight?: number;
+  letterSpacing?: number;
 }
 
 /**

@@ -187,3 +187,112 @@ describe('InlineTextEditor', () => {
     expect(onCommit).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// readOnly (S3, AC-S3-1/S3-2): a sole-token layer previews its resolved
+// value. Nothing typed sticks, and every exit is a cancel.
+// ---------------------------------------------------------------------------
+
+describe('InlineTextEditor - readOnly (S3)', () => {
+  it('is a readOnly textarea, opened with the value fully selected', () => {
+    render(
+      <InlineTextEditor
+        layer={textLayer()}
+        value="SRTWT8267-GM"
+        scale={4}
+        originX={0}
+        originY={0}
+        onCommit={vi.fn()}
+        readOnly
+      />,
+    );
+    const el = screen.getByTestId('inline-text-editor') as HTMLTextAreaElement;
+    expect(el).toHaveAttribute('readonly');
+    expect(el).toHaveFocus();
+    expect(el.selectionStart).toBe(0);
+    expect(el.selectionEnd).toBe('SRTWT8267-GM'.length);
+  });
+
+  it('never calls onCommit, only onCancel, on Enter/Escape/blur', () => {
+    const onCommit = vi.fn();
+    const onCancel = vi.fn();
+    render(
+      <InlineTextEditor
+        layer={textLayer()}
+        value="SRTWT8267-GM"
+        scale={4}
+        originX={0}
+        originY={0}
+        onCommit={onCommit}
+        onCancel={onCancel}
+        readOnly
+      />,
+    );
+    const el = screen.getByTestId('inline-text-editor');
+    fireEvent.keyDown(el, { key: 'Enter' });
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes on Escape without committing', () => {
+    const onCommit = vi.fn();
+    const onCancel = vi.fn();
+    render(
+      <InlineTextEditor
+        layer={textLayer()}
+        value="SRTWT8267-GM"
+        scale={4}
+        originX={0}
+        originY={0}
+        onCommit={onCommit}
+        onCancel={onCancel}
+        readOnly
+      />,
+    );
+    const el = screen.getByTestId('inline-text-editor');
+    fireEvent.keyDown(el, { key: 'Escape' });
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes on blur without committing', () => {
+    const onCommit = vi.fn();
+    const onCancel = vi.fn();
+    render(
+      <InlineTextEditor
+        layer={textLayer()}
+        value="SRTWT8267-GM"
+        scale={4}
+        originX={0}
+        originY={0}
+        onCommit={onCommit}
+        onCancel={onCancel}
+        readOnly
+      />,
+    );
+    const el = screen.getByTestId('inline-text-editor');
+    fireEvent.blur(el);
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores an attempted change - the value stays exactly what was passed in', () => {
+    const onCommit = vi.fn();
+    render(
+      <InlineTextEditor
+        layer={textLayer()}
+        value="SRTWT8267-GM"
+        scale={4}
+        originX={0}
+        originY={0}
+        onCommit={onCommit}
+        readOnly
+      />,
+    );
+    const el = screen.getByTestId('inline-text-editor') as HTMLTextAreaElement;
+    fireEvent.change(el, { target: { value: 'typed over it' } });
+    expect(el.value).toBe('SRTWT8267-GM');
+    fireEvent.blur(el);
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+});
