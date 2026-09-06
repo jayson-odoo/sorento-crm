@@ -1,6 +1,6 @@
 # PLAN: ingest parity standardisation (xlsx / manual vs ESB)
 
-Status: IN PROGRESS 2026-09-06. S0 green (1f38359d2 + 2fa492be3), S1 green (7b3f19e68), S2 green (e8659ee54, migration 476), S3 green (e479242a4, migration 477), S4 in progress; red tests for S0-S4 on the branch. Lane branch `feat/ingest-parity` on top of
+Status: IN PROGRESS 2026-09-06. S0 green (1f38359d2 + 2fa492be3), S1 green (7b3f19e68), S2 green (e8659ee54, migration 476), S3 green (e479242a4, migration 477), S4 green (history importers retired, D15 end state, contract v2.1); lane awaiting reviewer + security-reviewer + browser verification. Lane branch `feat/ingest-parity` on top of
 `feat/autocount-document-ingest-v2` (PR #670) until #670 merges, then rebased onto main.
 UAC: `ingest-parity-standardisation-acceptance-criteria.md` (same folder). Grill record:
 `.lavish/ingest-parity-standardisation.html` (worktree-local).
@@ -158,15 +158,9 @@ slice. Reviewer + security-reviewer + browser verification once at the end of th
 
 ## 4. Contract v2.1 (for the ESB)
 
-Additions: products `is_discontinued`, `remark`, `brand_code`; customers `market_segment_code`,
-`region`; sales_orders `customer_segment`, `customer_region`; shipping_orders `container_number`,
-`is_shipping_order`; `status` optional on all three documents.
-Removals: customers `credit_limit`, `payment_terms_days`, `payment_terms_code`; suppliers
-`payment_terms_code`. Suppliers' contact/address block now written.
-Semantics: on masters, absent = untouched, null = cleared.
-Warnings added: `category_created`, `uom_created`, `brand_created`, `segment_unknown`,
-`lines.dropped`, `received_locked`, `container_unresolved`. `retryable` no longer answers a
-missing product ref (line dropped instead).
+Moved to `PLAN-autocount-cross-repo-contract.md` section 10 (6 Sep 2026, S4): that file is the
+ESB-facing contract of record, so the version-bump content lives there rather than in two
+places. This section stays as a pointer.
 
 ## 5. Risks
 

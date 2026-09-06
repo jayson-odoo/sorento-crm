@@ -184,8 +184,10 @@ SUPPORTED_ENTITIES = set(ENTITY_SPECS) | set(DOCUMENT_ENTITIES) | set(SHIPPING_O
 # Bumped whenever the wire shape of an entity changes in a way the ESB must gate
 # on (a new required field, a changed enum). Read by `GET /external/contract`
 # (D8) so the ESB can check compatibility without trial-and-error against this
-# router.
-CONTRACT_VERSION = 2
+# router. A STRING (S4, ingest-parity-standardisation D-final): "2.1" is a
+# point release of the same major contract, and a bare int can never express
+# that - the ESB's own gate compares it as an opaque value, never arithmetic.
+CONTRACT_VERSION = "2.1"
 
 
 def _run_document_hooks(

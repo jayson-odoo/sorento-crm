@@ -3717,65 +3717,6 @@ def process_outstanding_import(db_job_id: str, file_data: bytes, filename: str,
     )
 
 
-def process_po_history_import(db_job_id: str, file_data: bytes, filename: str, user_id: str):
-    """Import a purchase book as HISTORY, then resolve the SO<->PO claims.
-
-    Either export shape (the banded listing, or the flat PO + SPO extract) and both document
-    families; the service decides from the file itself. History is written closed and fully
-    received, so it can never read as incoming supply, whichever family it belongs to.
-
-    The link resolve runs inside the job because these files name sales orders - per document
-    in the banded report, per LINE in the structured one - so an upload can complete a pairing
-    the other side claimed months ago.
-    """
-    from app.services.scm import order_link_service, po_history_service
-
-    def _apply(db, outcome, on_total):
-        result = po_history_service.apply(db, file_data, actor=user_id, outcome=outcome,
-                                          on_total_rows=on_total)
-        if result.get("ok"):
-            result["links"] = order_link_service.resolve(db)
-        return result
-
-    _run_scm_upload_job(
-        db_job_id, filename, user_id,
-        job_label="Purchase history import",
-        entity_type="purchase_order",
-        apply_fn=_apply,
-        unreadable_message=_problems_message,
-        written_rows=lambda r: int(r.get("lines_created", 0)),
-        # The rows of the file, not its purchase lines: this is a banded report and most of
-        # it - headers, SO notes, spacers - was never a line. Each of those carries its own
-        # `not_a_line` outcome, so the total is the source rows and processed reaches it.
-        total_rows_of=lambda r: r.get("total_rows", 0),
-    )
-
-
-def process_sales_history_import(db_job_id: str, file_data: bytes, filename: str,
-                                 user_id: str):
-    """Absorb the sales-order listing as HISTORY for the job's company.
-
-    The channel that timed out: 11,275 documents and 81,361 lines in the client's own export.
-    Every line lands closed and fully delivered, so absorbed history contributes nothing to
-    committed demand.
-    """
-    from app.services.scm import so_history_service
-
-    _run_scm_upload_job(
-        db_job_id, filename, user_id,
-        job_label="Sales history import",
-        entity_type="sales_order",
-        apply_fn=lambda db, outcome, on_total: so_history_service.apply(
-            db, file_data, actor=user_id, outcome=outcome, on_total_rows=on_total,
-        ),
-        unreadable_message=_problems_message,
-        written_rows=lambda r: int(r.get("lines_created", 0)) + int(r.get("lines_updated", 0)),
-        # Every non-blank row, the 9,144 package captions included: each carries its own
-        # `not_a_line` outcome, so a total that counts them is still reachable.
-        total_rows_of=lambda r: r.get("total_rows", 0),
-    )
-
-
 def process_order_inquiry_import(db_job_id: str, file_data: bytes, filename: str,
                                  user_id: str):
     """Import the Order Inquiry sheet: project demand, stock locations, and PO claims.

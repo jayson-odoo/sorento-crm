@@ -341,9 +341,14 @@ class TestAcP03NumericAndLabelPreservedOnOmit:
 
 
 class TestAcP04SupplierAddressBlockAndDeprecatedFields:
-    """D15: the supplier contact/address block must land; customer
-    credit_limit/payment_terms_days and supplier payment_terms_code keep being
-    accepted-and-ignored with warning `deprecated_field`, never retryable."""
+    """D15: the supplier contact/address block must land. The
+    accepted-and-ignored-with-warning `deprecated_field` behaviour for
+    customer credit_limit/payment_terms_days and supplier payment_terms_code
+    (this class's own docstring said so through S0-S3) is superseded
+    2026-09-06 by S4's contract 2.1 end state (AC-P0-4/D15): the three
+    fields are REMOVED from the canonical schemas entirely, so a payload
+    naming one now fails validation with a field-named error, never
+    accepted, never retryable."""
 
     def test_supplier_contact_and_address_fields_land(self, db):
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
@@ -384,7 +389,9 @@ class TestAcP04SupplierAddressBlockAndDeprecatedFields:
             "Malaysia",
         )
 
-    def test_customer_deprecated_fields_are_ignored_with_warning_never_retryable(self, db):
+    def test_customer_deprecated_fields_fail_validation_never_retryable(self, db):
+        # Superseded 2026-09-06 (S4, AC-P0-4/D15 end state) - see the class
+        # docstring.
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         code = _code("CUSTD")
         svc = _esb(db, DEFAULT_COMPANY_ID)
@@ -401,10 +408,14 @@ class TestAcP04SupplierAddressBlockAndDeprecatedFields:
             ],
         )
         record = result.records[0]
-        assert record.outcome in (IngestOutcome.CREATED, IngestOutcome.UPDATED), record.errors
-        assert "deprecated_field" in record.warnings
+        assert record.outcome is IngestOutcome.FAILED, record.errors
+        assert "credit_limit" in record.errors
+        assert "payment_terms_days" in record.errors
+        assert result.retryable == 0
 
-    def test_supplier_payment_terms_code_is_ignored_with_warning_never_retryable(self, db):
+    def test_supplier_payment_terms_code_fails_validation_never_retryable(self, db):
+        # Superseded 2026-09-06 (S4, AC-P0-4/D15 end state) - see the class
+        # docstring.
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         code = _code("SUPD")
         svc = _esb(db, DEFAULT_COMPANY_ID)
@@ -420,8 +431,9 @@ class TestAcP04SupplierAddressBlockAndDeprecatedFields:
             ],
         )
         record = result.records[0]
-        assert record.outcome in (IngestOutcome.CREATED, IngestOutcome.UPDATED), record.errors
-        assert "deprecated_field" in record.warnings
+        assert record.outcome is IngestOutcome.FAILED, record.errors
+        assert "payment_terms_code" in record.errors
+        assert result.retryable == 0
 
 
 class TestAcP05SupplierPaymentTermsDefault:

@@ -262,24 +262,6 @@ def _is_company_scoped(table: str) -> bool:
     return table not in SHARED_TABLES
 
 
-#: D15: fields that stay on the canonical schemas so an old payload still
-#: validates, but are never written to any column - flagged with the
-#: `deprecated_field` warning instead. Removed at S4's contract 2.1 cutover.
-_DEPRECATED_FIELDS: dict[str, set[str]] = {
-    "customers": {"credit_limit", "payment_terms_days", "payment_terms_code"},
-    "suppliers": {"payment_terms_code"},
-}
-
-
-def _deprecated_warnings(entity_type: str, payload: Any) -> list[str]:
-    deprecated = _DEPRECATED_FIELDS.get(entity_type)
-    if deprecated and deprecated & payload.model_fields_set:
-        return ["deprecated_field"]
-    return []
-
-
-
-
 def _present(payload: Any, columns: dict[str, Any], *names: str) -> None:
     """D14: absent vs null. Copies ``payload.<name>`` into ``columns`` only for
     fields the caller actually SET - an omitted field must never overwrite a
@@ -321,10 +303,10 @@ def _supplier_columns(payload: Any, db: Session, company_id: str, warnings: list
     # D15: the contact/address block AutoCount carries and this module used to
     # drop on the floor. D14: absent vs null on every one of them, plus
     # `payment_terms_days` (model default 30 fills an absent value on create -
-    # see `_insert`). `payment_terms_code` is deprecated (see
-    # `_DEPRECATED_FIELDS`): accepted, warned, never written and never a
-    # MissingReference - the payment-terms master this used to wait for still
-    # does not exist, but a supplier no longer has to stay unsynced for it.
+    # see `_insert`). `payment_terms_code` is REMOVED (D15 end state, S4) -
+    # `extra="forbid"` now rejects it outright rather than accepting and
+    # warning; the payment-terms master it once waited for still does not
+    # exist, and a supplier no longer needs a placeholder for it at all.
     _present(
         payload,
         columns,
@@ -344,10 +326,10 @@ def _supplier_columns(payload: Any, db: Session, company_id: str, warnings: list
 
 
 def _customer_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:
-    # `credit_limit` / `payment_terms_days` / `payment_terms_code` are
-    # deprecated (D15, see `_DEPRECATED_FIELDS`): `customers` has no matching
-    # column, so they are accepted-and-warned, never written - same as before
-    # fix-round-2 BUG B, now with a warning instead of silence.
+    # `credit_limit` / `payment_terms_days` / `payment_terms_code` are REMOVED
+    # (D15 end state, S4) - `customers` never had a matching column for any
+    # of the three, and `extra="forbid"` now rejects a payload naming one
+    # outright rather than accepting and warning.
     columns: dict[str, Any] = {"customer_code": payload.code, "customer_name": payload.name}
     _present(
         payload,
@@ -708,7 +690,7 @@ class MasterIngestService:
     def _apply_scoped(
         self, entity_type: str, spec: EntitySpec, payload: Any
     ) -> tuple[IngestOutcome, str, Optional[dict[str, dict[str, Any]]], list[str]]:
-        warnings = _deprecated_warnings(entity_type, payload)
+        warnings: list[str] = []
         columns = spec.to_columns(payload, self.db, self.company_id, warnings)
 
         existing_id = self.refs.resolve(entity_type=entity_type, source_ref=payload.source_ref)

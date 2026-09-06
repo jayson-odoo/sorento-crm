@@ -151,27 +151,31 @@ def _customer(code="ZZT-CUST-01", name="Test Sdn Bhd", ref=None, **extra):
 class TestCustomerColumnsFixRound2BugB:
     """Fix round 2, BUG B: `_customer_columns` wrote `credit_limit` and
     `payment_terms_days`, neither of which is a column on `customers` - every
-    customers push failed with the raw psycopg2 message. This is the one
-    place in this file that inserts a customer through the real column map
-    on Postgres; every other coverage of `CanonicalCustomer` was schema-only.
+    customers push failed with the raw psycopg2 message. Accepted-and-dropped
+    (never written) was the fix through S0-S3; superseded 2026-09-06 by S4's
+    contract 2.1 end state (AC-P0-4/D15), which REMOVES both fields from
+    `CanonicalCustomer` entirely - the raw-SQL bug this class guards against
+    is now structurally impossible, since `extra="forbid"` rejects the
+    payload before any column-building code runs at all.
     """
 
-    def test_credit_limit_and_payment_terms_days_are_accepted_but_not_written(
-        self, db, svc
-    ):
+    def test_credit_limit_and_payment_terms_days_fail_validation(self, db, svc):
         result = svc.ingest(
             "customers",
             [_customer(credit_limit="15000.50", payment_terms_days=30)],
         )
 
-        assert result.created == 1, result.records[0].errors
+        record = result.records[0]
+        assert record.outcome is IngestOutcome.FAILED, record.errors
+        assert "credit_limit" in record.errors
+        assert "payment_terms_days" in record.errors
         row = db.execute(
             text(
                 "SELECT customer_code, customer_name FROM customers "
                 "WHERE customer_code = 'ZZT-CUST-01'"
             )
         ).first()
-        assert row == ("ZZT-CUST-01", "Test Sdn Bhd")
+        assert row is None, "a failed record must write nothing"
 
 
 class TestSEC3IntegrityConflictNamesTheConstraint:
@@ -288,14 +292,14 @@ class TestQuarantineNotBlock:
 
 
 class TestRetryableVsFatal:
-    def test_payment_terms_code_is_accepted_with_a_deprecated_field_warning_not_retryable(
-        self, db, svc
-    ):
-        # Ingest-parity-standardisation UAC AC-P0-4/D15 retired the old
-        # "wait for the payment-terms master" behaviour: `payment_terms_code`
-        # is now accepted-and-ignored with warning `deprecated_field`, never
-        # a `MissingReference` - a supplier no longer stays unsynced for a
-        # master (payment terms) that still does not exist.
+    def test_payment_terms_code_fails_validation_not_retryable(self, db, svc):
+        # Superseded 2026-09-06 (ingest-parity-standardisation S4, AC-P0-4/D15
+        # end state): `payment_terms_code` was accepted-and-warned
+        # `deprecated_field` through S0-S3 (the docstring this test used to
+        # carry said so explicitly); S4's contract 2.1 cutover REMOVES the
+        # field from `CanonicalSupplier` entirely, so `extra="forbid"` now
+        # rejects it with a field-named error - `FAILED`, never retryable,
+        # never a silent accept.
         result = svc.ingest(
             "suppliers",
             [
@@ -308,12 +312,14 @@ class TestRetryableVsFatal:
             ],
         )
         assert result.retryable == 0
-        assert result.failed == 0
         record = result.records[0]
-        assert record.outcome is IngestOutcome.CREATED, record.errors
-        assert "deprecated_field" in record.warnings
+        assert record.outcome is IngestOutcome.FAILED, record.errors
+        assert "payment_terms_code" in record.errors
 
-    def test_payment_terms_code_is_accepted_on_an_update_too_not_retryable(self, db, svc):
+    def test_payment_terms_code_fails_validation_on_an_update_too(self, db, svc):
+        # Superseded 2026-09-06, same reason as the test above - an update
+        # payload naming the removed field is rejected exactly like a create
+        # one, and the already-existing row is left untouched.
         svc.ingest(
             "suppliers",
             [{"source_ref": "DK-S1", "code": "ZZT-SUP-1", "name": "Acme"}],
@@ -330,8 +336,8 @@ class TestRetryableVsFatal:
             ],
         )
         record = result.records[0]
-        assert record.outcome is IngestOutcome.UPDATED, record.errors
-        assert "deprecated_field" in record.warnings
+        assert record.outcome is IngestOutcome.FAILED, record.errors
+        assert "payment_terms_code" in record.errors
         assert db.execute(
             text("SELECT count(*) FROM suppliers WHERE supplier_code LIKE 'ZZT-%'")
         ).scalar() == 1

@@ -79,10 +79,11 @@ class CanonicalSupplier(_Canonical):
     postal_code: Optional[str] = Field(None, max_length=40)
     country: Optional[str] = Field(None, max_length=100)
     payment_terms_days: Optional[int] = Field(None, ge=0, le=3650)
-    # Deprecated (D15, kept through S0-S3): still accepted so an old payload
-    # validates, but ignored - not written to any column - and flagged with the
-    # `deprecated_field` warning. Removed only at S4's contract 2.1 cutover.
-    payment_terms_code: Optional[str] = Field(None, max_length=100)
+    # `payment_terms_code` REMOVED (D15 end state, S4's contract 2.1 cutover):
+    # accepted-and-warned `deprecated_field` through S0-S3, now rejected by
+    # `extra="forbid"` with a field-named validation error like any other
+    # unknown key - see `documentation/plans/autocount/PLAN
+    # -autocount-cross-repo-contract.md` section 10.
     is_active: Optional[bool] = None
 
 
@@ -93,11 +94,10 @@ class CanonicalCustomer(_Canonical):
     phone_number: Optional[str] = Field(None, max_length=100)
     registration_number: Optional[str] = Field(None, max_length=100)
     tax_id: Optional[str] = Field(None, max_length=100)
-    # Deprecated (D15, kept through S0-S3): accepted-and-ignored, warned
-    # `deprecated_field`. `customers` has no matching columns.
-    credit_limit: Optional[Decimal] = Field(None, ge=0)
-    payment_terms_days: Optional[int] = Field(None, ge=0, le=3650)
-    payment_terms_code: Optional[str] = Field(None, max_length=100)
+    # `credit_limit` / `payment_terms_days` / `payment_terms_code` REMOVED
+    # (D15 end state, S4's contract 2.1 cutover) - see the note on
+    # `CanonicalSupplier.payment_terms_days` above; `customers` never had
+    # matching columns for any of the three.
     country: Optional[str] = Field(None, max_length=100)
     is_active: Optional[bool] = None
     # D16 (S2): AutoCount `Debtor.DebtorType` / `Debtor.AreaCode`. `market_segment_code`

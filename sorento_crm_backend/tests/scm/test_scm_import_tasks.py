@@ -46,18 +46,14 @@ from tests.scm._outstanding_workbooks import (
 from tests.scm._queued_import import queued_job_id, run_enqueued, stub_queue
 from tests.scm.conftest import requires_pg
 from tests.scm.test_outstanding_import_routes import as_company_user
-from tests.scm.test_purchase_history_routes import (
+from tests.scm.test_order_inquiry_routes import (
     INQUIRY_ITEMS,
     ORDER_INQUIRY,
-    PO_ITEMS,
-    PO_LISTING,
-    SO_LISTING,
     _seed_products,
 )
 
 pytestmark = requires_pg
 
-_XLS = "application/vnd.ms-excel"
 _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 #: The captain's shape, minus the columns these tests do not exercise. `AGENT` is here because
@@ -449,82 +445,6 @@ def test_the_worker_writes_under_the_company_the_job_snapshotted(scm_app, monkey
     company_id = db.execute(text("SELECT company_id FROM sales_orders WHERE so_number = :n"),
                             {"n": codes.project_so}).scalar()
     assert str(company_id) == next(iter(scope))
-
-
-# --------------------------------------------------------------------------- #
-# purchase history - a banded report, most of whose rows were never lines
-# --------------------------------------------------------------------------- #
-
-def test_the_purchase_book_records_an_outcome_for_every_row_it_read(scm_app, monkeypatch):
-    """The customer's own export, which is four purchase lines inside twelve rows.
-
-    The other eight are the report preamble, the two band label rows, the order headers and
-    the `**SO:174830**` notes. Counting only the lines set a total of 4 for a file somebody
-    can see has twelve rows in it; counting the rows without recording them left eight rows
-    with no outcome at all. Both halves are asserted here, on one upload.
-    """
-    app, db, gcu, gcuk = scm_app
-    as_company_user(app, db, gcu, gcuk)
-    # ONE of the two stock codes, so the other lands as an unmatched item on its own row.
-    _seed_products(db, PO_ITEMS[:1])
-
-    _c, job_id = _queue_and_run(
-        app, db, monkeypatch, "/api/v1/scm/purchase-history/apply",
-        {"file": ("po_listing.xls", PO_LISTING.read_bytes(), _XLS)},
-    )
-
-    job = _job(db, job_id)
-    assert job.status == "finished"
-    rows = _rows(db, job_id)
-    by_code: dict = {}
-    for row in rows:
-        by_code.setdefault(row.code, []).append(row)
-
-    assert job.total_rows == 12, "every non-blank row above the Doc Count marker"
-    assert job.processed_rows == job.total_rows, "a row with no outcome is unaccounted for"
-    assert len(by_code[oc.NOT_A_LINE]) == 8, {k: len(v) for k, v in by_code.items()}
-    # Real money on the order with no product behind it. Its own code, or the codes sit in
-    # the unmatched list for ever telling somebody to create a product that must never exist.
-    assert len(by_code[oc.CHARGE_LINE]) == 2
-    assert by_code[oc.PRODUCT_NOT_FOUND][0].identity["item_code"] == PO_ITEMS[1]
-    assert by_code[oc.CREATED][0].identity["item_code"] == PO_ITEMS[0]
-
-
-# --------------------------------------------------------------------------- #
-# sales history - the channel that timed the gateway out
-# --------------------------------------------------------------------------- #
-
-SO_STOCK_ITEM = "SRTWB243"
-
-
-def test_the_sales_book_records_an_outcome_for_every_row_it_read(scm_app, monkeypatch):
-    """The client's own excerpt: seven lines, one package caption, two unreadable rows.
-
-    The caption is the case the shared `not_a_line` code was written for - there are 9,144 of
-    them in the full export - and until now this channel counted them out of the total and
-    never recorded them, so the same file reconciled on one channel and not on another.
-    """
-    app, db, gcu, gcuk = scm_app
-    as_company_user(app, db, gcu, gcuk)
-    _seed_products(db, (SO_STOCK_ITEM,))
-
-    _c, job_id = _queue_and_run(
-        app, db, monkeypatch, "/api/v1/scm/sales-history/apply",
-        {"file": ("so_detail.xlsx", SO_LISTING.read_bytes(), _XLSX)},
-    )
-
-    job = _job(db, job_id)
-    assert job.status == "finished"
-    codes_seen = [r.code for r in _rows(db, job_id)]
-
-    assert job.total_rows == 10, "every non-blank row, the package caption included"
-    assert job.processed_rows == job.total_rows
-    assert codes_seen.count(oc.NOT_A_LINE) == 1
-    # `MISC` and `IP`: the order's cost, not any item's demand.
-    assert codes_seen.count(oc.CHARGE_LINE) == 2
-    assert oc.PRODUCT_NOT_FOUND in codes_seen, "an item we do not hold is named, never created"
-    assert oc.CREATED in codes_seen, "the one item we DO hold is written"
-    assert codes_seen.count(oc.MISSING_REQUIRED_FIELD) == 2, "the rows that are not lines"
 
 
 # --------------------------------------------------------------------------- #

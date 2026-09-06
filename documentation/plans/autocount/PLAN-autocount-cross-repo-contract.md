@@ -382,3 +382,40 @@ payload still validates. Deviations from the v1 behaviour above, all deliberate:
     column exists on `customers` for either (found on the first live customers push, a v1 defect);
     they are dropped until Sorento carries AR terms. Every master-ingest error body is sanitized
     like the documents' (`internal error; see server logs`).
+
+## 10. Contract v2.1 (ingest parity) (6 Sep 2026, `PLAN-ingest-parity-standardisation.md` S4)
+
+Moved here verbatim from that plan's own section 4, which now points back to this section:
+the version bump is a contract-surface change and this file is the ESB-facing contract of
+record, not the internal ingest-parity plan.
+
+`GET /api/v1/external/contract` -> `"version": "2.1"` (a STRING; a bare int can never express a
+point release of the same major contract). New top-level keys `fields_added`, `fields_removed`,
+`status_optional`, `absent_vs_null`, `warnings` (`app/api/v1/external/contract.py`).
+
+Additions: products `is_discontinued`, `remark`, `brand_code`; customers `market_segment_code`,
+`region`; sales_orders `customer_segment`, `customer_region`; shipping_orders `container_number`,
+`is_shipping_order`; `status` optional on all three documents.
+
+Removals (D15 end state): `CanonicalCustomer.credit_limit`, `.payment_terms_days`,
+`.payment_terms_code`; `CanonicalSupplier.payment_terms_code`. These moved from
+"accepted-and-warned `deprecated_field`" (the v2/S0-S3 contract) to fully REMOVED:
+`extra="forbid"` now rejects a payload naming any of them with a field-named validation error
+and `IngestOutcome.FAILED`, never retryable. Suppliers' contact/address block stays written (S0).
+
+Semantics: on masters, absent = untouched, null = cleared (`absent_vs_null: true`).
+
+Warnings vocabulary added: `category_created`, `uom_created`, `brand_created`,
+`segment_unknown`, `lines.dropped`, `received_locked`, `container_unresolved`,
+`supplier_ambiguous`. `retryable` no longer answers a missing product ref (the line is dropped
+instead, counted under `lines.dropped`).
+
+Retirement (AC-P4-1), same slice: the SO/PO history importers (`so_history_service.py`,
+`po_history_service.py`, the `/purchase-history/*` and `/sales-history/*` routes, the RQ tasks
+`process_sales_history_import` / `process_po_history_import`) were deleted outright. Closed
+history now arrives through this same document-ingest contract instead of a separate
+banded-report upload. `app/services/scm/history_sources.py`'s `source_system` stamp constants
+(`scm_po_history`, `scm_spo_history`, `scm_so_history`) are NOT retired - rows already written
+under them stay in the database and `outstanding_import_service` must keep recognising the
+stamps forever, regardless of whether the writer that produced them still exists. The Order
+Inquiry sheet (Project Sales, ADR 0010) is unaffected and keeps its `/order-inquiry/*` routes.
