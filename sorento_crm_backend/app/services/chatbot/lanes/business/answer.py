@@ -812,8 +812,17 @@ def crossdomain_render(
 
     # Same shape as `silent_note` above: a trailing paragraph on the same block, so one
     # message carries both what WAS found and what was not.
+    # `missing` means "the PRIMARY render did not echo this code", and that is only the same
+    # statement as "this code has nothing" when the render is product-keyed (some row named
+    # a product code) or when it came back empty altogether. A warehouse breakdown and a
+    # demand-quantity verdict both answer ABOUT the code without ever printing it, and
+    # "no stock" underneath the stock just printed is a worse defect than the silence this
+    # note exists to fix.
+    named_codes = [c for c in jsc.array(zs.get("returned_codes")) if jsc.truthy(c)]
+    can_state_absence = bool(named_codes) or jsc.get(passthrough, "has_result") is not True
+
     nothing_note = ""
-    if nothing:
+    if nothing and can_state_absence:
         origin_incoming = zs.get("origin_domain") == "incoming"
         primary_word = "incoming" if origin_incoming else "stock"
         other_word = "stock" if origin_incoming else "incoming"
