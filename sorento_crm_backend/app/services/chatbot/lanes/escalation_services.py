@@ -157,6 +157,8 @@ def _staff_lookup(db: Any):
                     func.lower(func.split_part(User.name, " ", 1)) == wanted,
                 ),
             )
+            # Stable, so the clarify list reads the same way twice: team name, then person.
+            .order_by(Team.name.asc(), User.name.asc(), AgentTeam.code.asc())
             .all()
         )
         # One hit per PERSON per TEAM. A team commonly carries more than one agent-team

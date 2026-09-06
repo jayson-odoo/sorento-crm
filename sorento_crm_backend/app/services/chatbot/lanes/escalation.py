@@ -562,6 +562,44 @@ def _human_intervention(
     return {**result, "actions": actions, "pending": None}
 
 
+def _parser_team(ctx: dict[str, Any], team: Any) -> Any:
+    """The team the PARSER itself resolved, not the one the turn inherited.
+
+    `ctx.parse.output.routing` is post-processed, and `output_exchange` carries the previous
+    turn's routing into it - so by the time this lane sees it, a turn the parser routed
+    nowhere looks routed. `_parser_raw` is the pre-derivation snapshot the same block keeps
+    (`output_exchange` sets it, `engine` puts it on `ctx.parse`), and it is what says whether
+    THIS message named a team. Falls back to the derived value when there is no snapshot, so
+    an injected ctx behaves as it reads.
+    """
+    raw = jsc.get(jsc.get(ctx, "parse"), "_parser_raw")
+    if not isinstance(raw, dict):
+        return team
+    return jsc.get(jsc.get(raw, "routing"), "suggested_team")
+
+
+def _pick_staff(hits: list, team: Any) -> Any:
+    """The ONE staff member this ask names, or `None` when the roster cannot say.
+
+    One hit is the answer. Several hits for the SAME person are several team memberships,
+    not several people (5 of 22 staff on this install are on more than one team), so the
+    team the parser already resolved breaks that tie - and only that tie. Two DIFFERENT
+    people sharing a name is a real ambiguity and the lane asks, whatever team came in:
+    picking by the parser's team there would answer a question about WHO with a fact about
+    WHERE.
+    """
+    if len(hits) == 1:
+        return hits[0]
+    people = {jsc.js_string(jsc.get(h, "user_id")) for h in hits}
+    if len(people) != 1:
+        return None
+    wanted = jsc.nullish_str(team).strip().lower()
+    if not wanted:
+        return None
+    matched = [h for h in hits if jsc.nullish_str(jsc.get(h, "team_code")).strip().lower() == wanted]
+    return matched[0] if len(matched) == 1 else None
+
+
 def _person_routing(
     ctx: dict[str, Any], context_item: dict[str, Any], team: Any, services: Any
 ) -> dict[str, Any] | None:
@@ -572,12 +610,26 @@ def _person_routing(
     team the PREVIOUS turn happened to be routed to - the comment named marketing_product
     for a customer-service person and purchasing for a marketing ask.
 
-    Two arms, both deterministic and both off structured state (D11 - the name is the
-    parser's own `person_mention`, never a regex over the customer's words):
+    Deterministic throughout, and off structured state only (D11 - the name is the parser's
+    own `person_mention`, never a regex over the customer's words):
 
-    * A named person is resolved against the staff roster. Exactly one match routes to
-      THEIR team with them as the assignee - a person the customer named is a direct pick,
-      not a round-robin draw. No match, or more than one, ASKS.
+    * A named person is resolved against the staff roster. One match routes to THEIR team
+      with them as the assignee - a person the customer named is a direct pick, not a
+      round-robin draw. Two different people sharing the name ASKS.
+    * **A miss only asks when the PARSER itself resolved no team.** Review of #700: 70 parse
+      outputs in the corpus carry a `person_mention` ALONGSIDE a resolved `suggested_team`
+      - a greeting, a signature, a name in passing - and every one of those five names
+      returns zero roster hits. Asking there would replace correct routing with a question,
+      so a miss falls through to that team.
+
+      The team that decides this is `ctx.parse._parser_raw.routing.suggested_team`, the
+      parser's OWN answer, never the derived one - and that distinction is the owner's whole
+      case, measured on their turn: "escalate to Nurain" arrived with
+      `_parser_raw.routing = {suggested_team: null, suggested_agent: null}` while the
+      DERIVED routing had already inherited `purchasing` from the previous turn upstream in
+      `output_exchange`. Gating on the derived team would make this gate inert on exactly
+      the turn it was written for, which is what the first console run showed. With no
+      `_parser_raw` (a mocked parse, an injected ctx) the derived team stands in.
     * No person, no team, and a previous turn that HAD one: ask. That is the inheritance
       the owner rejected, and refusing it here is the whole fix. With no previous routing
       to inherit there is nothing to be wrong about, so the lane carries on exactly as it
@@ -595,22 +647,24 @@ def _person_routing(
             return None  # a bundle without the seam behaves exactly as it did before
         try:
             hits = [h for h in jsc.array(lookup(person)) if jsc.truthy(h)]
-        except Exception:  # noqa: BLE001 - a failed lookup asks, it never guesses
+        except Exception:  # noqa: BLE001 - a failed lookup never guesses
             logger.warning("chatbot: staff lookup did not run", exc_info=True)
             hits = []
-        if len(hits) == 1:
-            hit = hits[0]
+        picked = _pick_staff(hits, team)
+        if picked is not None:
             return {
                 "kind": "assign",
-                "team": jsc.get(hit, "team_code"),
+                "team": jsc.get(picked, "team_code"),
                 "assignee": {
-                    "assignee_id": jsc.get(hit, "user_id"),
-                    "assignee_name": jsc.get(hit, "user_name"),
-                    "assignee_respond_user_id": jsc.get(hit, "respond_user_id"),
-                    "team_set_code": jsc.get(hit, "team_code"),
+                    "assignee_id": jsc.get(picked, "user_id"),
+                    "assignee_name": jsc.get(picked, "user_name"),
+                    "assignee_respond_user_id": jsc.get(picked, "respond_user_id"),
+                    "team_set_code": jsc.get(picked, "team_code"),
                     "is_already_assigned": False,
                 },
             }
+        if jsc.truthy(_parser_team(ctx, team)):
+            return None  # the parser itself named a team: the mention was in passing
         return {"kind": "clarify", "text": _team_clarify_text(person, hits)}
 
     prev_team = jsc.get(jsc.get(_prev_variables(ctx), "routing"), "suggested_team")
@@ -637,10 +691,13 @@ def _team_clarify_text(person: Any, hits: list) -> str:
         names = [_pretty_team(t) for t in SUGGESTED_TEAMS]
     listed = f"{', '.join(names[:-1])} or {names[-1]}" if len(names) > 1 else names[0]
     if person and hits:
-        return (
-            f"More than one person here goes by {jsc.js_string(person)}. "
-            f"Which team do you mean - {listed}?"
+        people = {jsc.js_string(jsc.get(h, "user_id")) for h in hits}
+        lead = (
+            f"{jsc.js_string(person)} is on more than one team"
+            if len(people) == 1
+            else f"More than one person here goes by {jsc.js_string(person)}"
         )
+        return f"{lead}. Which team do you mean - {listed}?"
     if person:
         return (
             f"I could not find anyone called {jsc.js_string(person)}. "

@@ -127,6 +127,7 @@ def _ctx(
     current_assignee: str | None = None,
     person_mention: str | None = None,
     text: str | None = None,
+    parser_raw: dict | None = None,
 ) -> dict:
     """The six-key hub shape `build_ctx` produces, filled in with what the escalation lane
     reads: `ctx.parse.output.{routing,escalation,query_brands,entities,person_mention}` and
@@ -147,6 +148,10 @@ def _ctx(
         },
         "session": {"session_vars": {"variables": prev_variables or {}}},
         "parse": {
+            # `_parser_raw` is the pre-derivation snapshot `output_exchange` keeps and
+            # `engine` puts on `ctx.parse`; the lane reads the team off it because the
+            # DERIVED routing has already inherited the previous turn's (AC-815).
+            **({"_parser_raw": parser_raw} if parser_raw is not None else {}),
             "output": {
                 "routing": routing or {"suggested_team": None, "suggested_agent": None},
                 "escalation": escalation or {"is_escalation_confirmation": True, "company_pick": None},
@@ -1512,6 +1517,118 @@ class TestPersonMentionEscalationRoutesByStaffLookup:
         services.next_assignee.assert_not_called(), (
             "must never silently draw against the inherited prior team"
         )
+
+    def test_the_owners_turn_asks_even_though_the_derived_routing_inherited_a_team(
+        self,
+    ) -> None:
+        """The owner's turn, measured on the console run of 6 Sep 2026: "escalate to Nurain"
+        arrived with `_parser_raw.routing = {suggested_team: null, suggested_agent: null}`
+        while the DERIVED routing had already inherited `purchasing` from the previous turn.
+        Gating the ask on the derived team would make this gate inert on exactly the turn it
+        was written for - which is what the first console run showed."""
+        from app.services.chatbot.lanes.escalation import run
+
+        ctx = _ctx(
+            routing={"suggested_team": "purchasing", "suggested_agent": "incoming_stock_enquiries"},
+            person_mention="Nurain",
+            parser_raw={"routing": {"suggested_team": None, "suggested_agent": None}},
+            prev_variables={
+                "routing": {"suggested_team": "purchasing", "suggested_agent": "incoming_stock_enquiries"}
+            },
+            text="escalate to Nurain",
+        )
+        item = _item(
+            brand_code=None, company_id=None, company_name=None, routing_source="none",
+            team="purchasing",
+        )
+        services = self._services_with_staff([])  # nobody by that name on this install
+
+        result = run(ctx, item, services=services)
+
+        assert result["arm"] == "clarify", (
+            "the parser routed this turn nowhere, so the inherited team must not be used: "
+            f"{result!r}"
+        )
+        assert not any(a["kind"] == "assign_conversation" for a in result["actions"])
+        services.next_assignee.assert_not_called()
+
+    def test_a_person_mention_with_a_resolved_team_still_escalates_when_the_roster_misses(
+        self,
+    ) -> None:
+        """Review of #700. 70 parse outputs in the corpus carry a `person_mention` NEXT TO a
+        resolved `suggested_team` - a greeting, a signature, a name in passing - and all five
+        of those names return zero roster hits. Clarifying there would replace correct
+        routing with a question. The ask belongs to the NULL-routing turn (the owner's own
+        case); a miss with a team routes to that team."""
+        from app.services.chatbot.lanes.escalation import run
+
+        ctx = _ctx(
+            routing={"suggested_team": "purchasing", "suggested_agent": "general_enquiries"},
+            person_mention="Johnson",
+            # The PARSER resolved the team from this message, so nothing was inherited.
+            parser_raw={"routing": {"suggested_team": "purchasing", "suggested_agent": "general_enquiries"}},
+            text="hi Johnson, please escalate this",
+        )
+        item = _item(
+            brand_code=None, company_id=None, company_name=None, routing_source="none",
+            team="purchasing",
+        )
+        services = self._services_with_staff([])  # nobody by that name
+
+        result = run(ctx, item, services=services)
+
+        assert result["arm"] == "human-intervention", (
+            f"a roster miss must not swallow a turn that already knows its team: {result!r}"
+        )
+        comment = next(a for a in result["actions"] if a["kind"] == "add_comment")
+        assert "Team: purchasing" in comment["text"]
+        services.next_assignee.assert_called_once()
+
+    def test_one_person_on_two_teams_is_not_two_people(self) -> None:
+        """5 of the 22 staff on this install are on more than one team, so a name can come
+        back twice for ONE person. That is a membership question, not an identity one: the
+        team the parser already resolved settles it, and the turn escalates to that person
+        rather than asking."""
+        from app.services.chatbot.lanes.escalation import run
+
+        ctx = _ctx(
+            routing={"suggested_team": "customer_service", "suggested_agent": "order_enquiries"},
+            person_mention="Ali",
+            text="escalate to Ali",
+        )
+        item = _item(
+            brand_code=None, company_id=None, company_name=None, routing_source="none",
+            team="customer_service",
+        )
+        services = self._services_with_staff(
+            [
+                {
+                    "team_code": "customer_service",
+                    "team_name": "Customer Service",
+                    "user_id": "usr-ali",
+                    "user_name": "Ali bin Abu",
+                    "respond_user_id": "respond-ali",
+                },
+                {
+                    "team_code": "purchasing",
+                    "team_name": "Purchasing",
+                    "user_id": "usr-ali",
+                    "user_name": "Ali bin Abu",
+                    "respond_user_id": "respond-ali",
+                },
+            ]
+        )
+
+        result = run(ctx, item, services=services)
+
+        assert result["arm"] == "human-intervention", (
+            f"one person on two teams must not read as two people: {result!r}"
+        )
+        assign = next(a for a in result["actions"] if a["kind"] == "assign_conversation")
+        assert assign["respond_user_id"] == "respond-ali"
+        comment = next(a for a in result["actions"] if a["kind"] == "add_comment")
+        assert "Team: customer_service" in comment["text"]
+        services.next_assignee.assert_not_called()
 
     def test_no_team_no_person_but_a_pending_escalation_still_continues_today_unguarded(
         self,
