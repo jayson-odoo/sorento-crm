@@ -483,6 +483,12 @@ def complete_answer(
             miss_mod=miss_mod,
             answer_mod=answer_mod,
             dry_run=dry_run,
+            # No fetch ran on this arm (the gate failed BEFORE it), so nothing came back -
+            # which is exactly what `_sibling_gate`'s fourth condition asks
+            # (`has_result is False`). Omitting it left `build_result` at `None` and the
+            # gate short-circuited, so a partially-typed variant code never got its
+            # sibling-family offer even though every other condition held.
+            build_result={"has_result": False},
         )
 
     else:
