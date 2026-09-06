@@ -174,6 +174,20 @@ Derived, never asked: nothing to configure. The trace is written by the engine o
 - D13 **A turn trace screen is in scope.** Every turn writes a human-readable stage trace; the
   Chat History thread drawer shows it (journey D). FE mock first (Phase 1), then backend.
 
+## Ruling R7 (owner, 5 Sep 2026): big-bang cutover
+
+The live spine becomes the S7 shape in ONE dispatcher repoint (head, POST /chat/turn, action
+executor; no delegate path, no /complete tail), deployed as a new n8n workflow. Rollback is the
+repoint back to the previous spine, which never calls the CRM. This replaces the strangler
+ladder's gate 2 (shadow compare on live traffic) and gate 3 (per-lane flips): every lane goes
+live for customers at once. Prerequisites on the CRM side, all before the repoint and all safe
+because nothing live calls /turn until then: S8a deployed (switches on the settings screen);
+on prod every branch kind in chatbot_completed_lanes, chatbot_business_lane_enabled on,
+chatbot_ordering_enabled on. Safety nets that remain: the 1,694-capture replay corpus, the
+S6c/S7 end-to-end matrices, the AC-711 load gate, and the clone drives graded from
+chatbot.turns. S2's /complete and the sub-output promote are never used on live; S8b deletes
+them after the repoint.
+
 ## Rulings (plan review, 4 Sep 2026)
 
 - R1 **RESOLVED**: port with the correct vocabulary (`check_stock`) and gate the
