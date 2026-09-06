@@ -1021,3 +1021,60 @@ contact inside the synchronous request. Different contacts run in parallel.
   every session `engine._session` opens carries the contact's own company rather than the
   harness default, the tail's session carries it, and the escalation lane's own session
   carries it). (H56)
+
+- AC-812 `[BE][T]` **A dry run is isolated from live traffic on every surface, not only on
+  the engine's own writes.** D14 said "a test envelope does ZERO writes outside
+  `chatbot.turns`"; the engine honoured it and four surfaces around the engine did not.
+  Given a dry-run turn (`is_test`, `test_run_id`, or a non-live `mode`) for a REAL contact:
+  when `POST /chat/turn` answers, then no `integration_log` row is written for it, and the
+  same holds for `POST /chat/turn/{id}/complete` and for the id-less form's refusals (the
+  `chatbot.turns` row already carries envelope, response and trace under `is_test`, which is
+  strictly more than the log line held); when ordering is on
+  (`system_settings.chatbot_ordering_enabled`), then the turn takes NO ticket and touches
+  none of `chatbot:seq:{contact}` / `chatbot:done:{contact}` / `chatbot:running:{contact}`,
+  because those keys are shared with that contact's live traffic and a test turn must never
+  delay a real customer; when a LIVE delivery of the same `messageId` arrives afterwards,
+  then it runs as its OWN turn (`duplicate: false`, a new row, `is_test = false`) instead of
+  being answered from the test row's canned reply with `duplicate: true`, which sends the
+  customer nothing at all - and, in the mirror, a test envelope for a message that already
+  ran live also runs its own turn, so replaying a real message from the Prompts screen's
+  Test button works on exactly the messages worth testing. D15 is scoped, not weakened: a
+  second delivery WITHIN one world is still a duplicate. The unique key becomes
+  `(contact_respond_id, message_id, attempt, is_test)` (migration
+  `481_chatbot_turns_is_test`) so the two worlds can coexist. On the operator surfaces:
+  `GET /turns` and `GET /turns/failed-contacts` exclude `is_test` rows unless
+  `include_test=true` is passed, and `POST /turns/{id}/retry` on an `is_test` row answers
+  409 `test_turn_not_retryable`, posts nothing at the ingress and leaves
+  `retry_requested_at` NULL - retry re-posts the original message at the LIVE n8n ingress,
+  so retrying a dry run is the one action on that screen that turns a test into a real
+  message to a customer. Also here: a sealed reply carrying NO `session_patch` key leaves
+  `respond_contacts.session_vars` untouched on a live turn, while an EXPLICIT `{}` is a
+  reset and still writes - `sealed.get("session_patch") or {}` collapsed the two and wiped a
+  customer's memory on a turn that never asked for it. No new UI: the operator surfaces keep
+  the query parameter, and no toggle is built until a product ask exists for one.
+  Evidence: `tests/chatbot/test_dry_run_isolation.py` (12 tests, one per finding plus the
+  guards each fix must not regress), and `test_chat_turn_endpoint.py::TestDryRunEndpointZero
+  Writes` / `test_s8a_hardening.py::TestATestEnvelopeIsNeverADuplicateOfALiveTurn`, both
+  amended in the same change because they asserted the behaviour this AC replaces. (H57, D14, D15)
+
+- AC-813 `[BE][T]` **The chatbot's MCP tool pool is read-only, and a write tool is refused at
+  the call site as well.** The business lane picks ONE tool per turn as the argmax of
+  cosine similarity over the embedded catalogue and calls it with no allow-list check, and
+  the pool contained `crm_it_support_ticket_create`, `crm_complaint_close`,
+  `crm_order_cancel`, `crm_purchase_request_approve` and `crm_purchase_request_reject`.
+  Given the real MCP catalogue, when the Tool-RAG capability documents are built, then every
+  emitted tool has method GET - non-GET tools are excluded from the pool, so they are never
+  candidates. Given a candidate list whose top hit is a non-GET tool (the state a live
+  install is in until the pool is re-seeded), when the fetch lane runs, then the MCP client
+  is NOT called, the fetch fragment is an `error` naming the refused tool with outcome
+  `tool_not_allowed`, and the turn is recorded failed at `looked_up` with the generic error
+  reply rather than told to the customer as "I could not find anything" (a refusal is not an
+  absence). The allowed set is DERIVED from `sorento_crm_mcp/catalog.py`'s own `method` in
+  one place (`mcp_tool_capability_service.read_only_tool_names`), not hand-kept, so a new
+  POST tool is excluded by construction. Both layers are required and neither is redundant:
+  the pool is data already written on a live install and only shrinks when
+  `app/scripts/seed_mcp_tool_capabilities.py --rebuild` is re-run, while the refusal is code
+  that ships with the deploy. The tools stay in the MCP catalogue and remain callable by a
+  deliberate n8n or external caller; they are only unreachable by similarity.
+  Evidence: `tests/chatbot/test_tool_pool_is_read_only.py` (8 tests, walking the real
+  catalogue) and `test_dry_run_isolation.py::TestMcpToolPickRefusesWriteTools`. (H58, D10)

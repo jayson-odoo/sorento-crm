@@ -9,6 +9,10 @@ the bot answered wrongly, what did it actually do?":
 * `POST /turns/{id}/retry` - re-post the original message at the ingress (R4: the only
   retry there is, and only a person can ask for it).
 
+All three are LIVE-turn surfaces (H57, D14). The two reads exclude `is_test` rows unless
+`include_test=true` is asked for, and the retry refuses one outright: what an operator is
+looking at here is a real customer's conversation, and a dry run never happened to them.
+
 Two slugs, deliberately. `system.chat_history.view` reads the trace - the same grant that
 already reads the transcript it hangs under. `system.chat_history.manage` re-injects a
 WhatsApp turn at a real customer, which is a different thing to hand out.
@@ -129,10 +133,19 @@ def list_turns(
     turn_status: str | None = Query(None, alias="status"),
     limit: int = Query(DEFAULT_LIMIT, ge=1, le=MAX_LIMIT),
     cursor: str | None = Query(None),
+    include_test: bool = Query(False),
     current_user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
-    """One contact's turns with their full trace, newest first."""
+    """One contact's turns with their full trace, newest first.
+
+    `include_test` is off by default (H57, D14). Chat History is read about a REAL
+    customer - "the bot answered them wrongly, what did it do?" - and a dry run from the
+    Prompts screen's Test button or the chat console never happened to that customer, so
+    listing it beside their real turns invites an operator to explain a conversation from
+    a turn that was never part of it. The rows are not hidden, only defaulted away: the
+    param surfaces them for whoever needs to audit a test run.
+    """
     _ = current_user
 
     if turn_status is not None and turn_status not in TURN_STATUSES:
@@ -150,6 +163,8 @@ def list_turns(
         query = query.filter(ChatbotTurn.created_at <= to)
     if turn_status is not None:
         query = query.filter(ChatbotTurn.status == turn_status)
+    if not include_test:
+        query = query.filter(ChatbotTurn.is_test.is_(False))
     if cursor:
         cursor_created_at, cursor_id = _decode_cursor(cursor)
         # Strictly AFTER the last row in newest-first order: older, or same instant with
@@ -187,6 +202,7 @@ def failed_contacts(
     from_: datetime | None = Query(None, alias="from"),
     to: datetime | None = Query(None),
     limit: int = Query(FAILED_CONTACTS_LIMIT, ge=1, le=FAILED_CONTACTS_LIMIT),
+    include_test: bool = Query(False),
     current_user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -207,6 +223,11 @@ def failed_contacts(
         from_ = datetime.now(timezone.utc) - timedelta(days=FAILED_CONTACTS_DEFAULT_DAYS)
 
     window = [ChatbotTurn.status == "failed"]
+    if not include_test:
+        # H57: a contact whose only failed turn is a DRY RUN has nothing wrong with it. The
+        # list this feeds is the operator's "who needs attention" filter, and a test turn
+        # that failed needs the person who ran it, not a customer follow-up.
+        window.append(ChatbotTurn.is_test.is_(False))
     if from_ is not None:
         window.append(ChatbotTurn.created_at >= from_)
     if to is not None:
@@ -277,6 +298,24 @@ def retry_turn(
     row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Turn not found.")
+
+    if row.is_test:
+        # H57 / D14. Retry re-posts the ORIGINAL message at the live n8n ingress, which
+        # sends the answer to the real contact the test envelope named - so retrying a dry
+        # run is the one action on this screen that converts a test into a real message to
+        # a customer. Refused BEFORE the claim below, so the row is not left marked either.
+        # A test turn is re-run from where it was run, with a new envelope.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "test_turn_not_retryable",
+                "message": (
+                    "This is a test turn. Retry re-posts the original message at the live "
+                    "ingress, so it would answer a real contact; run the test again from "
+                    "where it was started instead."
+                ),
+            },
+        )
 
     if row.status != "failed":
         raise HTTPException(

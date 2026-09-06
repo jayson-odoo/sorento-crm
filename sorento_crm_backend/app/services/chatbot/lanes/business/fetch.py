@@ -16,6 +16,12 @@ Three hazards are fixed here rather than reproduced, and each says so at its own
 * **H11** - `tool-filter.js` returns `[]` on zero tools and that empty array is
   indistinguishable from "ran and found nothing to say". `tool_filter` keeps the empty
   item list for parity (D8) and adds `outcome`, which the caller can act on.
+* **H58** - the pick is an argmax over an embedded catalogue that contained WRITE tools
+  (`crm_order_cancel`, `crm_complaint_close`, the two purchase-request approvals), and
+  `tool_filter` takes the top hit with no further test. `call_tool` refuses anything that
+  is not a GET tool, against the catalogue's own `method`; `mcp_tool_capability_service`
+  keeps them out of the pool in the first place. Both, because the pool is data already
+  written on live installs and the refusal is code that ships with the deploy.
 
 **H43 is moot, not fixed.** The n8n query's `$4` is `domain`, LIKE-matched against
 `source_id`, and some live call sites never bind it. In process `domain` is a parameter of
@@ -502,15 +508,41 @@ def parse_mcp_content(raw: Any) -> Any:
     return raw
 
 
+class ToolNotAllowed(RuntimeError):
+    """H58: the picked tool is not a READ tool, so it is not called at all.
+
+    Its own type rather than a bare `RuntimeError` because the caller answers it
+    differently from an MCP failure: a refusal is not "the read did not work", it is "the
+    read was never allowed", and `run_fetch` records it as the `tool_not_allowed` outcome
+    so the reason is on the trace an operator reads.
+    """
+
+
 def call_tool(name: str, args: dict[str, Any], *, mcp: Any) -> Any:
-    """One MCP tool call, passed straight through (D10).
+    """One MCP tool call, passed straight through (D10) - if the tool only READS.
 
     No re-shaping in either direction: the arguments are what `entity_ids_transformer`
     built and the result is what the tool returned, so `output_structurer` still sees the
     presenter shape it was written against. The endpoint is whatever `mcp` was constructed
     with, and `services.py` builds it from `settings.ai_assistant_mcp_url` - this module
     names no host, no scheme and no port.
+
+    **The allow-list check is HERE, at the egress, and it is not defensive coding (H58).**
+    The tool is chosen by cosine similarity and `tool_filter` takes the single top hit with
+    no further test, so until now the only thing standing between a customer's phrasing and
+    `crm_order_cancel` was that no phrasing had scored it first. Excluding write tools from
+    the embedding pool (`mcp_tool_capability_service.read_only_tool_names`) is the other
+    half and is the one that stops them being candidates - but that half is DATA, and a
+    live install keeps every row it has already embedded until the pool is re-seeded. This
+    half is code, ships with the deploy, and covers every call this lane makes including
+    the tier probe. Both halves read the SAME source: the catalogue's own `method`.
     """
+    from app.services.mcp_tool_capability_service import read_only_tool_names
+
+    if name not in read_only_tool_names():
+        raise ToolNotAllowed(
+            f"MCP tool {name} is not allowed: the chatbot may only call read (GET) tools"
+        )
     return mcp.call_tool(name, args)
 
 

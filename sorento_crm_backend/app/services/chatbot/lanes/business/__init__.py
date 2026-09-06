@@ -303,6 +303,14 @@ def run_fetch(
     args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
     try:
         raw = fetch_mod.call_tool(tool_name, args, mcp=_McpSeam(services.mcp_call))
+    except fetch_mod.ToolNotAllowed as refused:
+        # H58: the top hit was a WRITE tool and nothing was called. Recorded with its own
+        # outcome rather than as a tool failure, because the two need different reading:
+        # a failure means the read did not work and may work next time, this means the
+        # question routed somewhere the read-only chatbot must never go, and the tool's
+        # name on the trace is what tells whoever tunes the pool which one to look at.
+        logger.warning("chatbot: refused MCP tool %s", tool_name)
+        return _error_fragment(str(refused), outcome="tool_not_allowed")
     except Exception as exc:  # noqa: BLE001 - `onError: continueErrorOutput`, verbatim
         logger.warning("chatbot: MCP tool %s failed", tool_name, exc_info=True)
         return _error_fragment(f"MCP tool {tool_name} failed: {exc}")
