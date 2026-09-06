@@ -313,6 +313,36 @@ _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z", re.IGNORECASE
 )
 
+
+# Tools that answer a DOCUMENT request and must be given something to narrow by.
+# `crm_resource_attachments_list`'s own contract says it: "They named NO document at all ->
+# this tool returns NOTHING, by design. `contact_id` alone is NOT a narrowing filter". The
+# transformer is uuid-only, so an entity it could not resolve contributes no `*_ids` key at
+# all, and the call went out carrying `view` / `contact_id` / `space_id` only - a listing of
+# every attachment the contact is entitled to, which is a directory dump, not an answer.
+ENTITY_FILTER_REQUIRED_TOOLS: frozenset[str] = frozenset({"crm_resource_attachments_list"})
+
+# What counts as narrowing on those tools: every entity-id param the transformer can emit,
+# plus the document-type filters the tool takes by name.
+NARROWING_PARAMS: frozenset[str] = frozenset(TYPE_TO_PARAM.values()) | frozenset(
+    {
+        "attachment_type_code",
+        "attachment_type_codes",
+        "attachment_type_id",
+        "directory_id",
+        "uploaded_by",
+    }
+)
+
+
+def has_narrowing_filter(args: Any) -> bool:
+    """True when the built args carry at least one non-empty narrowing key."""
+    if not isinstance(args, dict):
+        return False
+    return any(jsc.truthy(args.get(key)) for key in NARROWING_PARAMS)
+
+
+
 # Params the tool takes as a SCALAR string rather than a list. Empty today: the
 # `attachment_type_id` singular was removed when the plural landed. Kept because the shape
 # matters as much as the spelling - sending an array where a scalar is expected is the same

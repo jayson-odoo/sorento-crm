@@ -301,6 +301,17 @@ def run_fetch(
         "contact_id": contact_id,
     }
     args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
+    if tool_name in fetch_mod.ENTITY_FILTER_REQUIRED_TOOLS and not fetch_mod.has_narrowing_filter(
+        args
+    ):
+        # Nothing the customer named resolved, so no filter could be built, and the document
+        # tools answer an unfiltered call with the whole library. Refused as an ABSENCE (the
+        # question was understood and nothing narrows it), which is the miss lane's own
+        # not-found arm - never as a listing of every file the contact may see.
+        return _error_fragment(
+            f"{tool_name} needs a document or entity filter and none could be built",
+            outcome="not_found",
+        )
     try:
         raw = fetch_mod.call_tool(tool_name, args, mcp=_McpSeam(services.mcp_call))
     except fetch_mod.ToolNotAllowed as refused:
