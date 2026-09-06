@@ -99,6 +99,22 @@ cases:
       reply_not_contains: ["300-H070", "[A/C I]", "[A/C II]"]
       no_uuid: true
 
+  # Prod turn 1c175a0a: the picker resolved and the answer arrived with no header at all.
+  # A `turns:` case, because the defect only exists on the SECOND turn - the first one is
+  # the picker, and a single-turn case cannot reach the arm.
+  - name: a pick-resolved order list still states its search scope
+    cold: true
+    turns:
+      - text: "customer a craft delivery order"
+        expect:
+          branch_kind: business_query
+          no_uuid: true
+      - text: "1"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["Customer: ", "Dates: "]
+          no_uuid: true
+
   - name: a delivered-status miss names the status and the eta date
     text: "has DO12345 been delivered"
     expect:

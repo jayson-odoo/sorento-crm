@@ -909,6 +909,7 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     _search_scope_header(
         output,
         qf=qf,
+        prev=prev,
         gate_ran=gate_ran,
         gate_json=gate_json,
         resolver_json=resolver_json,
@@ -2184,6 +2185,7 @@ def _search_scope_header(
     output: dict[str, Any],
     *,
     qf: Mapping[str, Any],
+    prev: Mapping[str, Any],
     gate_ran: bool,
     gate_json: Mapping[str, Any],
     resolver_json: Any,
@@ -2204,6 +2206,18 @@ def _search_scope_header(
     hinted as an order resolved to 10 products, which the header still called "all
     products" - a straight lie about what the customer just got.
 
+    **The domain is the EFFECTIVE one, not only this turn's** (prod turn 1c175a0a). A
+    positional pick names a ROW, so the parser emits `domain_hint: null` on it - AC-816
+    rule 4 says so, which is why the bare-entity inheritance excludes a pick - and the
+    guard below then dropped the header off every pick-resolved order list: "customer a
+    craft delivery order" then "1" answered with `1. *Company:* Sorento *Order Number:*
+    ...` and nothing above it, while the direct form of the same question stamped the
+    three lines. A turn that names NO domain is a continuation of the carried one, which
+    is `topic.changed`'s own rule and the same one the offer carry uses; the old spine
+    never showed the defect because its own parser body wrote the domain onto the pick
+    turn (capture `compile-current-state/b56-pick-turn`, `domain_hint: order`, header
+    `Customer: CHIN CHUN HARDWARE SDN BHD / Product: srtwc286 / Dates: all dates`).
+
     A disclosure bug must never block the answer, so the whole block is best-effort.
     """
     try:
@@ -2213,7 +2227,12 @@ def _search_scope_header(
             return
         if not isinstance(output.get("user_response"), str) or not output["user_response"].strip():
             return
-        if jsc.js_string(jsc.get(qf, "domain_hint") or "").lower() not in _DATE_SCOPE_DOMAINS:
+        this_domain = jsc.js_string(jsc.get(qf, "domain_hint") or "").lower()
+        # Named nothing = a continuation, so the carried domain is the one that was
+        # searched. Named something = that is the domain, carried or not; a real change
+        # must never be papered over by the previous turn's subject.
+        domain = this_domain or jsc.js_string(jsc.get(prev, "domain_hint") or "").lower()
+        if domain not in _DATE_SCOPE_DOMAINS:
             return
         start = jsc.get(qf, "date_filter_start") or None
         end = jsc.get(qf, "date_filter_end") or None

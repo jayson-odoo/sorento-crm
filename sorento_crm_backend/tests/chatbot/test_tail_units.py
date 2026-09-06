@@ -797,3 +797,149 @@ class TestAnsweredDomainEquivalence:
             "block would land in the wrong half of the reply on each:\n"
             + "\n".join(mismatches[:10])
         )
+
+
+# --------------------------------------------------------------------------- #
+# The filter header on a PICK-RESOLVED order list (prod turn 1c175a0a, 6 Sep 2026).
+# --------------------------------------------------------------------------- #
+
+
+class TestThePickResolvedOrderListStatesItsScope:
+    """"customer a craft delivery order" -> "1" answered with no header at all.
+
+    The reply opened straight at `1. *Company:* Sorento *Order Number:* REP202608-0514`,
+    while the DIRECT form of the same question stamps
+    `Customer: ... / Product: ... / Order: ... / Dates: ...` above the list. The customer
+    is then reading a scoped answer with nothing saying what it was scoped to - the exact
+    ambiguity `_search_scope_header` exists to remove ("1 order" reads equally as "1 order
+    ever" and "1 order this month").
+
+    The composer is not missing and is not duplicated: it is
+    `compile_state._search_scope_header`, and the pick turn falls out of it on ONE guard.
+    A positional pick names a ROW, so the parser emits `domain_hint: null` (AC-816 rule 4
+    says so explicitly, which is why the bare-entity inheritance excludes a pick), and the
+    guard tests THIS turn's domain against `_DATE_SCOPE_DOMAINS`. The old spine never hit
+    it because its own parser body inherited the domain onto the pick turn - capture
+    `compile-current-state/b56-pick-turn`, whose expected reply opens
+    `Customer: CHIN CHUN HARDWARE SDN BHD\nProduct: srtwc286\nDates: all dates\n\nHere
+    are the orders I found.`, is the same turn shape with `domain_hint: order` on it.
+
+    The fix is at the arm: a turn that names NO domain is a continuation of the carried
+    one, which is `topic.changed`'s own rule and the same one the offer carry uses.
+    """
+
+    ROSTER = [
+        {"idx": 1, "label": "A CRAFT IDEA SDN BHD [A/C I]", "uuid": "cust-1", "entity_type": "customer"},
+        {"idx": 2, "label": "A CRAFT IDEA SDN BHD (SRT)", "uuid": "cust-2", "entity_type": "customer"},
+    ]
+
+    ORDER_ROWS = [
+        {
+            "title": "REP202608-0514",
+            "fields": [
+                {"key": "company_name", "label": "Company", "value": "Sorento"},
+                {"key": "order_number", "label": "Order Number", "value": "REP202608-0514"},
+                {"key": "customer", "label": "Customer", "value": "A CRAFT IDEA SDN BHD [A/C I]"},
+            ],
+        }
+    ]
+
+    GATE = {
+        "gate_passed": True,
+        "gate_reason": "ok",
+        "compatible_entities": [
+            {
+                "uuid": "cust-1",
+                "entity_type": "customer",
+                "code": "300-A011",
+                "display_name": "A CRAFT IDEA SDN BHD [A/C I]",
+            }
+        ],
+    }
+
+    RESOLVED = {
+        "resolutions": [
+            {
+                # The PICKER RESOLUTION rewrites the entity to the row the customer
+                # picked, so this is the token the resolver saw - exactly the shape
+                # `compile-current-state/b56-pick-turn` carries (`customer` /
+                # `CHIN CHUN HARDWARE SDN BHD` / `ordinal: 1`). The ONE difference from
+                # that capture, and the whole defect, is `domain_hint`.
+                "token": "A CRAFT IDEA SDN BHD [A/C I]",
+                "matches": [
+                    {
+                        "entity_type": "customer",
+                        "canonical_code": "300-A011",
+                        "uuid": "cust-1",
+                        "match_field": "customer_name",
+                        "display": {"customer_name": "A CRAFT IDEA SDN BHD [A/C I]"},
+                    }
+                ],
+            }
+        ]
+    }
+
+    def _pick_ctx(self):
+        """The turn the customer sent: the bare digit "1", so NO domain and NO intent."""
+        ctx = _ctx(
+            message_type="business_query",
+            intent_hint=None,
+            domain_hint=None,
+            entities=[
+                {"hint": "customer", "raw": "A CRAFT IDEA SDN BHD [A/C I]", "ordinal": 1}
+            ],
+            reference_positions=[1],
+            positions_resolved=1,
+        )
+        ctx["text"] = {"message": {"message": {"text": "1"}}}
+        ctx["session"] = {
+            "session_vars": {
+                "variables": {
+                    "domain_hint": "order",
+                    "selection_context": "disambiguation",
+                    "last_result_set": self.ROSTER,
+                }
+            }
+        }
+        return ctx
+
+    def _answered(self):
+        return {
+            "outcome": {
+                "central-exchange": {
+                    "response": (
+                        "1. *Company:* Sorento\n*Order Number:* REP202608-0514\n"
+                        "*Customer:* A CRAFT IDEA SDN BHD [A/C I]"
+                    ),
+                    "items": self.ORDER_ROWS,
+                }
+            }
+        }
+
+    def _reply(self):
+        return compile_current_state(
+            self._answered(), self._pick_ctx(), resolved=self.RESOLVED, gate=self.GATE
+        ).item["reply"]["text"]
+
+    def test_the_header_is_stamped_above_the_list(self) -> None:
+        text = self._reply()
+        first = text.split("\n")[0]
+        assert first.startswith("Customer: "), (
+            "a pick-resolved order list must state its scope like the direct path does, "
+            f"and this reply opens at {first!r}"
+        )
+        assert "\nDates: all dates\n" in text, (
+            f"the date line is what makes '1 order' unambiguous: {text!r}"
+        )
+        assert text.index("Customer: ") < text.index("1. *Company:*"), (
+            "the header goes ABOVE the list, not after it"
+        )
+
+    def test_the_header_names_the_customer_the_pick_resolved(self) -> None:
+        text = self._reply()
+        assert "A CRAFT IDEA SDN BHD" in text.split("Here")[0].split("1. *Company:*")[0], (
+            f"the header must name the customer the pick resolved to: {text!r}"
+        )
+        assert "300-A011" not in text, (
+            f"an internal debtor code must never reach the header: {text!r}"
+        )
