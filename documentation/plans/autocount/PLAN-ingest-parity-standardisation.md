@@ -1,6 +1,6 @@
 # PLAN: ingest parity standardisation (xlsx / manual vs ESB)
 
-Status: APPROVED 2026-09-06, not started. Lane branch `feat/ingest-parity` on top of
+Status: IN PROGRESS 2026-09-06. S0 green (1f38359d2 + 2fa492be3), S1 green (7b3f19e68), S2 in progress; red tests for S0-S4 on the branch. Lane branch `feat/ingest-parity` on top of
 `feat/autocount-document-ingest-v2` (PR #670) until #670 merges, then rebased onto main.
 UAC: `ingest-parity-standardisation-acceptance-criteria.md` (same folder). Grill record:
 `.lavish/ingest-parity-standardisation.html` (worktree-local).
@@ -38,7 +38,7 @@ and stock stay upload-only and are untouched here.
 | D14 | Absent = untouched, null = cleared, on every master (pydantic `model_fields_set`); insert defaults follow manual create |
 | D15 | Supplier contact/address block written (S0); `credit_limit`, `payment_terms_days` (customer) and `payment_terms_code` accepted-and-ignored with warning `deprecated_field` until S4 flips the contract endpoint to 2.1, then removed from the schemas (ESB sequencing ask 2026-09-06) |
 | D16 | Payload gains AutoCount-owned fields only: customer `market_segment_code`, `region`; product `is_discontinued`, `remark`, `brand_code`; SPO `container_number`, `is_shipping_order`. CRM-owned judgement (warehouse planning config, category searchable/order, agent annotations) never touched by any ingest |
-| D17 | One `upper(btrim())` code match for every master on every path; supplier suffix cleaning + ambiguity refusal shared |
+| D17 | One `upper(btrim())` code match for every master on every path; supplier suffix cleaning + ambiguity refusal shared. As built (S1): the ESB and the warehouse xlsx/manual paths ADOPT a case variant; a manual Create of a supplier / category / UOM that only differs by case or whitespace from an existing row is REFUSED as a conflict (surfacing beats silently editing another admin's row from a Create click) |
 | D18 | Masters writer moves to the ORM upsert path (audit, embedding, company stamp, `updated_at`); agents `source='autocount'` |
 | D19 | Importer-only review aids (trigram, width pre-check) stay importer-only; dry run stays a rolled-back real run; book-wide close-by-absence stays the deletion endpoint's job |
 | D20 | `status` optional on every document payload; absent = shared `derive_document_status` (upload rules) |
