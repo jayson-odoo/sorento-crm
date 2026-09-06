@@ -26,11 +26,10 @@ from sqlalchemy.orm import Session
 
 from app.models.ai_assistant import AIAssistantConfig
 from app.models.scm import MarketSignal, ReorderRecommendation, ReorderRun
-from app.config import settings
 from app.services.ai_prompt_registry import render
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
-from app.services.llm_provider import get_provider
+from app.services.llm_provider import get_provider, resolve_api_key
 from app.services.scm import cash_ranking, reorder_engine
 
 # The exact refusal contract - mirrored by the FE (`explainerMockStore.REFUSAL`)
@@ -162,12 +161,12 @@ def _provider_and_model(db: Session):
         .order_by(AIAssistantConfig.created_at.asc())
         .first()
     )
-    api_key = (config.api_key_ciphertext if config else None) or getattr(
-        settings, "openai_api_key", None
-    )
     # config is None (empty config table) still degrades gracefully even when a
     # global env key is set - never raise (the docstring contract).
-    if not api_key or config is None:
+    if config is None:
+        return None, None
+    api_key = resolve_api_key(config, config.provider)
+    if not api_key:
         return None, None
     provider = get_provider(config.provider, api_key, config.model)
     return provider, config.model

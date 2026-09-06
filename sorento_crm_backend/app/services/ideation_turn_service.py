@@ -334,7 +334,7 @@ def handle_turn(
     #   attachments   → durably-captured picked media to send to create_idea
     #   menu_text      → a media menu to append to this reply (a new lookback)
     #   pending_media/seen_media_ids → the carried state written back below.
-    clients = media_clients or default_clients()
+    clients = media_clients or default_clients(db)
     attachments: list[dict[str, Any]] = []
     menu_text: str | None = None
 

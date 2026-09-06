@@ -21,10 +21,16 @@ from app.services.embedding_service import EmbeddingReadService
 router = APIRouter()
 
 
-def _embed_query(query: str) -> list[float]:
-    if not settings.openai_api_key:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Embedding provider not configured")
-    headers = {"Authorization": f"Bearer {settings.openai_api_key}", "Content-Type": "application/json"}
+def _embed_query(db: Session, query: str) -> list[float]:
+    from app.services.llm_provider import resolve_openai_api_key
+
+    api_key = resolve_openai_api_key(db)
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="No OpenAI key is configured (System Management > AI Assistant or the environment)",
+        )
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {"model": settings.embedding_model_name, "input": query}
     with httpx.Client(timeout=20) as client:
         response = client.post(settings.openai_embeddings_url, headers=headers, json=payload)
@@ -46,7 +52,7 @@ def semantic_search(
     if not query:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="query is required")
 
-    query_embedding = _embed_query(query)
+    query_embedding = _embed_query(db, query)
     rows = EmbeddingReadService(db).search_current(
         query_embedding,
         top_k=body.top_k,
@@ -87,7 +93,7 @@ def tool_search(
     query = (body.query or "").strip()
     if not query:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="query is required")
-    query_embedding = _embed_query(query)
+    query_embedding = _embed_query(db, query)
     rows = EmbeddingReadService(db).search_tool_candidates(
         query_embedding,
         query=query,

@@ -2631,7 +2631,7 @@ def _tier3_embedding_lookup(
         return []
 
     try:
-        query_vec = _embed_text_chunks([token])[0]
+        query_vec = _embed_text_chunks(db, [token])[0]
     except Exception:
         logger.exception("Tier-3 query embedding failed for token=%s", token)
         return []
@@ -5031,7 +5031,7 @@ def _rag_resolve_phrase(
         return []
 
     try:
-        query_vec = _embed_text_chunks([phrase])[0]
+        query_vec = _embed_text_chunks(db, [phrase])[0]
     except Exception:
         logger.exception("RAG embed failed for phrase=%s", phrase)
         return []

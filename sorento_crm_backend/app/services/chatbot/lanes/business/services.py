@@ -211,14 +211,15 @@ def _embed(db: Session) -> EmbedFn:
         uses, so the vector is identical; only the failure semantics change, to a lane
         error the engine already knows how to record.
         """
-        from app.config import settings
-        from app.services.llm_provider import get_provider
+        from app.services.llm_provider import get_provider, resolve_openai_api_key
 
-        if not settings.openai_api_key:
+        api_key = resolve_openai_api_key(db)
+        if not api_key:
             raise EmbeddingUnavailable(
-                "no embedding provider is configured, so no MCP tool can be selected"
+                "no OpenAI key is configured (System Management > AI Assistant or "
+                "the environment), so no MCP tool can be selected"
             )
-        provider = get_provider("openai", settings.openai_api_key)
+        provider = get_provider("openai", api_key)
         vector = provider.embed(query)
         if not vector:
             raise EmbeddingUnavailable("the embedding provider returned an empty vector")

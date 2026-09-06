@@ -40,11 +40,17 @@ CLUSTER_SIM_THRESHOLD = 0.85
 WINDOW_DAYS = 30
 
 
-def _get_embedder() -> Optional[OpenAIProvider]:
-    if not settings.openai_api_key:
-        logger.warning("ai_wishlist_clustering: OPENAI_API_KEY not set; cannot embed unanswered queries")
+def _get_embedder(db: Session) -> Optional[OpenAIProvider]:
+    from app.services.llm_provider import resolve_openai_api_key
+
+    api_key = resolve_openai_api_key(db)
+    if not api_key:
+        logger.warning(
+            "ai_wishlist_clustering: no OpenAI key configured (System Management > "
+            "AI Assistant or the environment); cannot embed unanswered queries"
+        )
         return None
-    return OpenAIProvider(settings.openai_api_key, settings.embedding_model_name)
+    return OpenAIProvider(api_key, settings.embedding_model_name)
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -97,7 +103,7 @@ def run_clustering_job(*, db: Optional[Session] = None) -> dict[str, int]:
     own_session = db is None
     session = db or SessionLocal()
     try:
-        embedder = _get_embedder()
+        embedder = _get_embedder(session)
         if embedder is None:
             return {"processed": 0, "skipped": 0, "new_clusters": 0, "matched": 0}
 

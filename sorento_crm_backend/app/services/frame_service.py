@@ -197,7 +197,7 @@ class FrameService:
         from app.services.embedding_worker import _embed_text_chunks  # local import to avoid cycle
 
         try:
-            vectors = _embed_text_chunks([query_text.strip()])
+            vectors = _embed_text_chunks(self.db, [query_text.strip()])
         except Exception:
             return []
         if not vectors:
