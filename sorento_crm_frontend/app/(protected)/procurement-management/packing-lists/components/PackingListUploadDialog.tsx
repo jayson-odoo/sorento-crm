@@ -14,17 +14,22 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { FileDropzone } from '@/components/common/FileDropzone';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { MAX_SIZE_MB, useTwoStepUpload } from '../../reorder/hooks/useTwoStepUpload';
-import { CountTile } from '../../reorder/components/UploadCountTile';
-import { UploadTestVerdict } from '../../reorder/components/UploadTestVerdict';
-import { EM_DASH, fmtInt } from '../../lib/format';
+import {
+  MAX_SIZE_MB,
+  useTwoStepUpload,
+} from '@/app/(protected)/scm/reorder/hooks/useTwoStepUpload';
+import { CountTile } from '@/app/(protected)/scm/reorder/components/UploadCountTile';
+import { UploadTestVerdict } from '@/app/(protected)/scm/reorder/components/UploadTestVerdict';
+import { EM_DASH, fmtInt } from '@/app/(protected)/scm/lib/format';
+import { useFulfilmentSuppliers } from '@/app/(protected)/scm/hooks/useFulfilment';
 import {
   applyPackingList,
   previewPackingList,
   type PackingListPreview,
-} from '../../services/fulfilmentService';
+} from '@/app/(protected)/scm/services/fulfilmentService';
 
 /**
  * The pre-load list or packing list.
@@ -76,17 +81,31 @@ interface ApplyResult {
 export function PackingListUploadDialog({
   open,
   onOpenChange,
-  supplierId,
-  supplierName,
+  supplierId: supplierIdProp,
+  supplierName: supplierNameProp,
   onImported,
 }: {
   open: boolean;
   onOpenChange: (next: boolean) => void;
-  supplierId: string | null;
+  /**
+   * Omit both `supplierId` and `supplierName` to let the dialog ask for the supplier itself
+   * (the Packing Lists page has no persistent supplier context to hand it one, unlike the
+   * container list this dialog was born on). Passing `supplierId` (even `null`) keeps that
+   * caller in control, unchanged.
+   */
+  supplierId?: string | null;
   /** Shown in the header so the factory the lines will be filed under is never a guess. */
   supplierName?: string | null;
   onImported?: (shipments: ImportedShipment[]) => void;
 }) {
+  const selfServe = supplierIdProp === undefined;
+  const suppliers = useFulfilmentSuppliers();
+  const [internalSupplierId, setInternalSupplierId] = useState<string | null>(null);
+  const supplierId = selfServe ? internalSupplierId : (supplierIdProp ?? null);
+  const supplierName = selfServe
+    ? ((suppliers.data ?? []).find((o) => o.value === internalSupplierId)?.label ?? null)
+    : (supplierNameProp ?? null);
+
   const [currency, setCurrency] = useState('');
   const trimmedCurrency = currency.trim() || null;
 
@@ -94,7 +113,8 @@ export function PackingListUploadDialog({
   // upload would silently override what the NEXT file states.
   useEffect(() => {
     if (open) setCurrency('');
-  }, [open]);
+    if (open && selfServe) setInternalSupplierId(null);
+  }, [open, selfServe]);
 
   const upload = useTwoStepUpload<PackingListPreview, ApplyResult>({
     open,
@@ -137,6 +157,24 @@ export function PackingListUploadDialog({
         </DialogHeader>
 
         <DialogBody className="space-y-4">
+          {selfServe ? (
+            <div>
+              <Label htmlFor="packing-list-supplier" className="mb-1 block text-xs">
+                Supplier
+              </Label>
+              <SearchableSelect
+                id="packing-list-supplier"
+                className="w-full"
+                value={internalSupplierId ?? ''}
+                onChange={(v: string) => setInternalSupplierId(v || null)}
+                options={suppliers.data ?? []}
+                placeholder="Choose a supplier"
+                clearable
+                disabled={upload.previewing || upload.applying}
+              />
+            </div>
+          ) : null}
+
           <FileDropzone
             files={upload.file ? [upload.file] : []}
             onFilesChange={(next) => void upload.choose(next[0] ?? null)}

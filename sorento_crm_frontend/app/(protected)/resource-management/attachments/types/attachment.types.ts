@@ -81,6 +81,10 @@ export interface AttachmentType {
   triggers_n8n_webhook?: boolean;
   /** An upload of this type is written with company_id = NULL (visible to every company). */
   is_shared?: boolean;
+  /** Folder an upload of this type files into by default (R4, purchasing consolidation
+   *  batch 6 Sep 2026); null = no default, same as today. Editable on the type form and
+   *  pre-selected in the generic Create Attachment dialog when this type is picked. */
+  default_directory_id?: string | null;
   created_at: Date;
 }
 

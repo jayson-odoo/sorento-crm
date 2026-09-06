@@ -66,6 +66,7 @@ import {
 } from '@/app/(protected)/scm/hooks/useFulfilment';
 import { purchaseOrderStatusPill } from '@/app/(protected)/scm/lib/purchaseOrderStatus';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { spoDetailHref } from '@/lib/spo-detail';
 import type {
   SpoConfirmLine,
   SpoCoverageLine,
@@ -619,21 +620,26 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   };
 
   /** The Created SPOs grid (R1, AC-H6) - every SPO this shipment has ever produced, each a
-   *  link to its own PO detail (which carries the Plan card, AC-H7) and its own Delete. */
+   *  link to its own SPO allocation view (R22, purchasing consolidation batch 6 Sep 2026:
+   *  the SPO document, never the PO) and its own Delete. A row with no `po_number` yet has
+   *  nothing to link to, so it prints plain text instead. */
   const createdSpoColumns = useMemo<ColumnDef<SpoRef>[]>(
     () => [
       {
         id: 'po_number',
         header: 'SPO',
-        cell: ({ row }) => (
-          <Link
-            href={`/scm/purchase-orders/${row.original.purchase_order_id}`}
-            className="font-medium text-primary hover:underline"
-            title={`Open ${row.original.po_number ?? EM_DASH}`}
-          >
-            {row.original.po_number ?? EM_DASH}
-          </Link>
-        ),
+        cell: ({ row }) =>
+          row.original.po_number ? (
+            <Link
+              href={spoDetailHref(row.original.po_number)}
+              className="font-medium text-primary hover:underline"
+              title={`Open ${row.original.po_number}`}
+            >
+              {row.original.po_number}
+            </Link>
+          ) : (
+            <span className="text-muted-foreground">{EM_DASH}</span>
+          ),
         size: 160,
         enableSorting: false,
       },

@@ -12,7 +12,7 @@ import { formatStatusLabel } from '@/lib/status-badge';
 import { fmtInt } from '../../lib/format';
 import { useFulfilmentSuppliers } from '../../hooks/useFulfilment';
 import { getIncomingShipments, type IncomingShipment } from '../../services/fulfilmentService';
-import { PackingListUploadDialog } from './PackingListUploadDialog';
+import { PackingListUploadDialog } from '@/app/(protected)/procurement-management/packing-lists/components/PackingListUploadDialog';
 import { ConsolidatedPackingListPanel } from './ConsolidatedPackingListPanel';
 import { AllocationPanel } from './AllocationPanel';
 

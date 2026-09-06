@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import {
@@ -37,6 +38,7 @@ import { formatStatusLabel } from '@/lib/status-badge';
 import PackingListDeleteDialog from './packing-list-delete-dialog';
 import PackingListBulkDeleteDialog from './PackingListBulkDeleteDialog';
 import ContainerStatusImportDialog from './ContainerStatusImportDialog';
+import { PackingListUploadDialog } from './PackingListUploadDialog';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
@@ -46,7 +48,9 @@ import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 export default function PackingListsList() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const qc = useQueryClient();
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
 
   // The "no container status imported yet" empty state on a packing list detail page
   // links back here with ?import=container-status so the CTA lands on the upload
@@ -362,14 +366,15 @@ export default function PackingListsList() {
 
   // The one offer this listing makes, in both places it belongs: the
   // toolbar, and the empty state's next step (S5-06).
+  //
+  // Upload is primary (R3): reading a supplier's file straight into a shipment is how a
+  // packing list is filed today, and the manual form is the fallback for the container it
+  // never covers. Create Packing List moves into the gear menu beside Import Container
+  // Status.
   const listPrimaryAction = (
-    <Button
-      onClick={() =>
-        router.push('/procurement-management/packing-lists/new')
-      }
-    >
-      <Plus />
-      Create Packing List
+    <Button onClick={() => setUploadDialogOpen(true)}>
+      <Upload />
+      Upload packing list
     </Button>
   );
 
@@ -409,6 +414,12 @@ export default function PackingListsList() {
                 label: 'Refresh',
                 icon: RefreshCw,
                 onClick: () => void refetch(),
+              },
+              {
+                key: 'create-packing-list',
+                label: 'Create Packing List',
+                icon: Plus,
+                onClick: () => router.push('/procurement-management/packing-lists/new'),
               },
               {
                 key: 'preview-container-status',
@@ -458,6 +469,13 @@ export default function PackingListsList() {
       <ContainerStatusImportDialog
         open={importDialogOpen}
         onOpenChange={setImportDialogOpen}
+      />
+      <PackingListUploadDialog
+        open={uploadDialogOpen}
+        onOpenChange={setUploadDialogOpen}
+        onImported={() => {
+          void qc.invalidateQueries({ queryKey: ['packing-lists'] });
+        }}
       />
       <AttachmentPreviewModal
         open={previewOpen}

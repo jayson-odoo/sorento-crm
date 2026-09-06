@@ -48,8 +48,14 @@ function findLeaf(items: MenuConfig, title: string): MenuItem | undefined {
  * intentional removal is `/system-management/outgoing-mails`, which was
  * converted from a leaf into a sub-group container (Outgoing Mails) with
  * Email Outbox and Respond Outbox as children.
+ *
+ * `/scm/incoming` (Incoming Containers) is ALSO intentionally removed here (R2 /
+ * AC-A6, purchasing consolidation batch 6 Sep 2026): the menu entry is retired, but
+ * the page itself keeps rendering at that URL - `collectPaths` only walks the menu
+ * tree, so it cannot tell "route still works" from "menu still links to it" and this
+ * test only asserts the latter.
  */
-const INTENTIONALLY_REMOVED_PATHS = new Set<string>([]);
+const INTENTIONALLY_REMOVED_PATHS = new Set<string>(['/scm/incoming']);
 
 /** Snapshot of every leaf path from the pre-reorganisation MENU_SIDEBAR. */
 const OLD_PATHS: string[] = [
@@ -216,13 +222,14 @@ describe('menu.config - Planning changes entry', () => {
     });
   });
 
-  it('sits right after Order Inquiries in Project Demand', () => {
+  it('sits right after Plans in Project Demand (Order Inquiries moved to Procurement > Supply Chain)', () => {
     const scm = findGroup(MENU_SIDEBAR, 'Supply Chain');
     const projectDemand = findSubGroup(scm!, 'Project Demand');
     const titles = projectDemand!.children!.map((item) => item.title);
-    const orderInquiriesAt = titles.indexOf('Order Inquiries');
-    expect(orderInquiriesAt).toBeGreaterThanOrEqual(0);
-    expect(titles[orderInquiriesAt + 1]).toBe('Planning changes');
+    expect(titles).not.toContain('Order Inquiries');
+    const plansAt = titles.indexOf('Plans');
+    expect(plansAt).toBeGreaterThanOrEqual(0);
+    expect(titles[plansAt + 1]).toBe('Planning changes');
   });
 
   it('is still present under Project Sales in MENU_SIDEBAR_COMPACT', () => {
@@ -380,5 +387,115 @@ describe('menu.config - Project Sales Admin', () => {
     const psa = findGroup(MENU_SIDEBAR, 'Project Sales Admin');
     expect(psa).toBeDefined();
     expect(psa!.moduleKey).toBe('procurement');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Purchasing consolidation batch (PLAN-scm-purchasing-consolidation-6sep.md,
+// lane A): navigation section 1, AC-A1 / AC-A2 / AC-A6.
+// ---------------------------------------------------------------------------
+
+describe('menu.config - Procurement > Supply Chain sub-group (AC-A1)', () => {
+  it('keeps Suppliers, Product-Suppliers, Packing Lists, SPO Allocations, GRN, Picking Lines, Stock Inquiries in position, then adds Supply Chain', () => {
+    const procurement = findGroup(MENU_SIDEBAR, 'Procurement');
+    expect(procurement).toBeDefined();
+    const titles = procurement!.children!.map((item) => item.title);
+    expect(titles).toEqual([
+      'Suppliers',
+      'Product-Suppliers',
+      'Packing Lists',
+      'SPO Allocations',
+      'GRN',
+      'Picking Lines',
+      'Stock Inquiries',
+      'Supply Chain',
+    ]);
+  });
+
+  it('Supply Chain sub-group holds Reorder Planning, Loading Plan, Order Inquiries, Purchase Orders, Proforma Invoices in order, each gated correctly', () => {
+    const procurement = findGroup(MENU_SIDEBAR, 'Procurement');
+    const supplyChain = findSubGroup(procurement!, 'Supply Chain');
+    expect(supplyChain).toBeDefined();
+    expect(supplyChain!.children!.map((item) => item.title)).toEqual([
+      'Reorder Planning',
+      'Loading Plan',
+      'Order Inquiries',
+      'Purchase Orders',
+      'Proforma Invoices',
+    ]);
+    expect(findLeaf(supplyChain!.children!, 'Reorder Planning')).toMatchObject({
+      path: '/scm/reorder',
+      permission: 'scm.reorder.run',
+      moduleKey: 'scm',
+    });
+    expect(findLeaf(supplyChain!.children!, 'Loading Plan')).toMatchObject({
+      path: '/scm/loading-plan',
+      permission: 'scm.reorder.run',
+      moduleKey: 'scm',
+    });
+    expect(findLeaf(supplyChain!.children!, 'Order Inquiries')).toMatchObject({
+      path: '/project-sales/order-inquiries',
+      permission: 'projects.projects.view',
+    });
+    expect(findLeaf(supplyChain!.children!, 'Order Inquiries')!.moduleKey).toBeUndefined();
+    expect(findLeaf(supplyChain!.children!, 'Purchase Orders')).toMatchObject({
+      path: '/scm/purchase-orders',
+      permission: 'scm.dashboard.view',
+      moduleKey: 'scm',
+    });
+    expect(findLeaf(supplyChain!.children!, 'Proforma Invoices')).toMatchObject({
+      path: '/scm/proforma-invoices',
+      permission: 'scm.dashboard.view',
+      moduleKey: 'scm',
+    });
+  });
+
+  it('top-level Supply Chain group no longer carries Order Inquiries, Reorder Planning, Loading Plan, Purchase Orders, Proforma Invoices or an Orders sub-group', () => {
+    const scm = findGroup(MENU_SIDEBAR, 'Supply Chain');
+    expect(scm).toBeDefined();
+    expect(findSubGroup(scm!, 'Orders')).toBeUndefined();
+    const planning = findSubGroup(scm!, 'Planning');
+    expect(planning!.children!.map((item) => item.title)).toEqual([
+      'Simulation',
+      'Market Signals',
+      'Policies',
+    ]);
+    const projectDemand = findSubGroup(scm!, 'Project Demand');
+    expect(projectDemand!.children!.map((item) => item.title)).not.toContain('Order Inquiries');
+  });
+});
+
+describe('menu.config - Sales Orders under Project Sales Admin (AC-A1)', () => {
+  it('is the first child, gated by scm.dashboard.view and moduleKey scm', () => {
+    const psa = findGroup(MENU_SIDEBAR, 'Project Sales Admin');
+    expect(psa).toBeDefined();
+    expect(psa!.children![0]).toMatchObject({
+      title: 'Sales Orders',
+      path: '/scm/sales-orders',
+      permission: 'scm.dashboard.view',
+      moduleKey: 'scm',
+    });
+  });
+});
+
+describe('menu.config - Incoming Containers retired from menu (AC-A6)', () => {
+  it('/scm/incoming is absent from MENU_SIDEBAR', () => {
+    expect(collectPaths(MENU_SIDEBAR).has('/scm/incoming')).toBe(false);
+  });
+});
+
+describe('menu.config - old paths still resolvable (AC-A2)', () => {
+  it('MENU_SIDEBAR carries every /scm/* leaf moved in this batch under its new parent', () => {
+    const paths = collectPaths(MENU_SIDEBAR);
+    for (const p of [
+      '/scm/reorder',
+      '/scm/loading-plan',
+      '/scm/purchase-orders',
+      '/scm/proforma-invoices',
+      '/scm/sales-orders',
+      '/project-sales/order-inquiries',
+    ]) {
+      expect(paths.has(p)).toBe(true);
+    }
   });
 });

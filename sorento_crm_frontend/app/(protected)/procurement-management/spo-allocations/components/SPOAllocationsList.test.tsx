@@ -261,7 +261,7 @@ describe('SPOAllocationsList - bulk delete (AC-8, AC-16b, review B4)', () => {
 
     fireEvent.click(screen.getByLabelText('Select all rows on this page'));
 
-    // Two secondaryActions (Import SPO, Delete selected) collapse into the
+    // Two secondaryActions (Create SPO Allocation, Delete selected) collapse into the
     // "Actions" dropdown - Radix opens it on pointerdown, not click.
     fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), { button: 0 });
     fireEvent.click(screen.getByRole('button', { name: /Delete selected/i }));

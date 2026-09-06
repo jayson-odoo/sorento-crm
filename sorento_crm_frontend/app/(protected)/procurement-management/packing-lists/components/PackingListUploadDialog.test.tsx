@@ -40,13 +40,17 @@ vi.mock('@/lib/toast', () => ({
 const previewPackingList = vi.fn();
 const applyPackingList = vi.fn();
 
-vi.mock('../../services/fulfilmentService', () => ({
+vi.mock('@/app/(protected)/scm/services/fulfilmentService', () => ({
   previewPackingList: (...a: unknown[]) => previewPackingList(...a),
   applyPackingList: (...a: unknown[]) => applyPackingList(...a),
 }));
 
-vi.mock('../../reorder/services/outstandingImportService', () => ({
+vi.mock('@/app/(protected)/scm/reorder/services/outstandingImportService', () => ({
   getOutstandingUploadConfig: async () => ({ allowed_extensions: ['.xlsx', '.xls'] }),
+}));
+
+vi.mock('@/app/(protected)/scm/hooks/useFulfilment', () => ({
+  useFulfilmentSuppliers: () => ({ data: [], isLoading: false }),
 }));
 
 import { PackingListUploadDialog } from './PackingListUploadDialog';

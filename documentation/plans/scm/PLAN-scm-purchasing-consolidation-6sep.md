@@ -438,3 +438,17 @@ received guards). Reviewer on Opus at the end of each lane.
 | Preview | Remarks are edited on the preview itself, no trip back to the plan table (R11 clarified). |
 
 No open questions remain. Waiting for GO.
+
+## Deviations (lane A)
+
+- **Section 1 breadcrumbs are NOT hardcoded per page.** The plan's "What exists" measurement
+  (`href="/scm">Supply Chain`) predates a wayfinding standardisation
+  (`components/common/PageHeader.tsx` + `hooks/use-menu.ts`'s `getBreadcrumb`, enforced by
+  `PageHeader.inventory.test.ts` S5-02: "no page builds its own breadcrumb"). Every page in this
+  batch (`scm/reorder`, `scm/loading-plan`, `scm/purchase-orders`, `scm/proforma-invoices`,
+  `project-sales/order-inquiries`, `scm/sales-orders`, and their `[id]` children) renders
+  `<PageHeader title=... />` with no `crumbs` override, so the trail is derived live from
+  `MENU_SIDEBAR`. Moving the menu leaves (this lane's `config/menu.config.tsx` edit) is the whole
+  fix; no page file needed touching. Verified: `PageHeader.inventory.test.ts` and
+  `PageHeader.test.tsx` both green after the menu move, and `grep -rn "crumbs="` across the six
+  route trees returns nothing.

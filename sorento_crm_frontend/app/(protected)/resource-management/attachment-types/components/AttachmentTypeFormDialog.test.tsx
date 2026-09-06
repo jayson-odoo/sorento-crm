@@ -30,6 +30,13 @@ vi.mock('../hooks/useAttachmentTypes', () => ({
   useAttachmentType: (...a: unknown[]) => hooks.useAttachmentType(...a),
 }));
 
+vi.mock('../../attachments/hooks/useAttachments', () => ({
+  useDirectoryTree: () => ({
+    data: [{ id: 'dir-1', name: 'Packing Lists', parent_id: null, sort_order: null, created_at: '', children: [] }],
+    isLoading: false,
+  }),
+}));
+
 import AttachmentTypeFormDialog from './AttachmentTypeFormDialog';
 
 beforeEach(() => {
@@ -114,5 +121,71 @@ describe('AttachmentTypeFormDialog - certificate switch', () => {
     expect((screen.getByLabelText(/Maximum validity \(months\)/i) as HTMLInputElement).value).toBe(
       '60',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Default folder (R4 / AC-B3, purchasing consolidation batch 6 Sep 2026)
+// ---------------------------------------------------------------------------
+
+describe('AttachmentTypeFormDialog - Default folder', () => {
+  it('offers a clearable folder select, empty by default', () => {
+    renderCreate();
+    const select = screen
+      .getAllByRole('combobox')
+      .find((el) => el.textContent?.includes('No default folder'));
+    expect(select).toBeTruthy();
+  });
+
+  it('sends the chosen folder on create', async () => {
+    renderCreate();
+    fillRequired();
+
+    const select = screen
+      .getAllByRole('combobox')
+      .find((el) => el.textContent?.includes('No default folder'))!;
+    fireEvent.click(select);
+    fireEvent.click(await screen.findByRole('option', { name: 'Packing Lists' }));
+
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/ }));
+
+    await waitFor(() => expect(hooks.createAsync).toHaveBeenCalledTimes(1));
+    expect(hooks.createAsync.mock.calls[0][0]).toMatchObject({
+      default_directory_id: 'dir-1',
+    });
+  });
+
+  it('sends null when nothing is picked', async () => {
+    renderCreate();
+    fillRequired();
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/ }));
+
+    await waitFor(() => expect(hooks.createAsync).toHaveBeenCalledTimes(1));
+    expect(hooks.createAsync.mock.calls[0][0]).toMatchObject({
+      default_directory_id: null,
+    });
+  });
+
+  it('loads the saved folder when editing', () => {
+    hooks.useAttachmentType.mockReturnValue({
+      data: {
+        id: 'type-1',
+        type_name: 'Packing List',
+        allowed_extensions: 'xlsx,xls',
+        max_file_size_mb: 10,
+        max_count_per_entity: null,
+        supports_field_linkage: false,
+        is_certificate: false,
+        max_validity_months: null,
+        default_directory_id: 'dir-1',
+        created_at: new Date('2026-01-01'),
+      },
+      isLoading: false,
+    });
+    render(<AttachmentTypeFormDialog open onOpenChange={vi.fn()} attachmentTypeId="type-1" />);
+    const select = screen
+      .getAllByRole('combobox')
+      .find((el) => el.textContent?.includes('Packing Lists'));
+    expect(select).toBeTruthy();
   });
 });

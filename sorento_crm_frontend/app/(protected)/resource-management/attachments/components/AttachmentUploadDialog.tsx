@@ -15,10 +15,11 @@ import { FileDropzone } from '@/components/common/FileDropzone';
 import { Label } from '@/components/ui/label';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription, AlertIcon } from '@/components/ui/alert';
-import { useUploadAttachment, useAttachmentTypesList } from '../hooks/useAttachments';
+import { useUploadAttachment, useAttachmentTypesList, useDirectoryTree } from '../hooks/useAttachments';
 import { useUploadConflict } from '@/hooks/use-upload-conflict';
 import { checkAttachmentCollision, type AttachmentConflictResolution } from '../services/attachmentService';
 import type { AttachmentType } from '../../attachment-types/types/attachmentType.types';
+import { flattenDirectoryOptions } from '../../attachment-directories/components/drivePath';
 import { toast } from '@/lib/toast';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import {
@@ -52,6 +53,11 @@ export default function AttachmentUploadDialog({
   const [entityType, setEntityType] = useState<string>(propEntityType || '');
   const [entityId, setEntityId] = useState<string>(propEntityId || '');
   const [accessLevels, setAccessLevels] = useState<string[]>([]);
+  // Only relevant when the caller left `defaultDirectoryId` unset (opened from a screen
+  // with no folder context of its own, e.g. Packing Lists' Upload supplier documents) - a
+  // caller that DID pass one (opened from inside a specific Drive folder) keeps deciding
+  // it, unchanged. Seeded from the picked type's own default (R4) and always overridable.
+  const [selectedDirectoryId, setSelectedDirectoryId] = useState<string>('');
   const [validationError, setValidationError] = useState<string>('');
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
   const [isUploading, setIsUploading] = useState(false);
@@ -63,6 +69,9 @@ export default function AttachmentUploadDialog({
   const [targetFieldKeys, setTargetFieldKeys] = useState<string[]>([]);
 
   const { data: attachmentTypes = [], isLoading: isLoadingTypes } = useAttachmentTypesList();
+  const showFolderPicker = defaultDirectoryId === undefined;
+  const { data: directoryTree = [] } = useDirectoryTree();
+  const directoryOptions = showFolderPicker ? flattenDirectoryOptions(directoryTree) : [];
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
   const defaultAccessLevels = accessTypeOptions.length > 0 ? accessTypeOptions.map((o) => o.code) : ['dealer', 'end_user'];
   // Phase 2: real uploader wired into the Upload Activity drawer. The
@@ -98,6 +107,7 @@ export default function AttachmentUploadDialog({
       setIsUploading(false);
       setTargetEntityType('');
       setTargetFieldKeys([]);
+      setSelectedDirectoryId('');
     }
   }, [open, propEntityType, propEntityId, defaultAccessLevels.join(',')]);
 
@@ -224,7 +234,7 @@ export default function AttachmentUploadDialog({
       entityType: entityType || propEntityType || undefined,
       entityId: entityId || propEntityId || undefined,
       accessLevels: [...accessLevels],
-      directoryId: defaultDirectoryId ?? undefined,
+      directoryId: showFolderPicker ? selectedDirectoryId || undefined : (defaultDirectoryId ?? undefined),
       targetEntityType:
         showFieldLinkageSection && targetEntityType ? targetEntityType : null,
       targetFieldKeys:
@@ -310,6 +320,13 @@ export default function AttachmentUploadDialog({
                 // whenever the type changes so a stale selection can't leak.
                 setTargetEntityType('');
                 setTargetFieldKeys([]);
+                // Pre-select the type's own default folder (R4) - only when the caller
+                // left the folder decision to this dialog (no `defaultDirectoryId`
+                // prop); the user can still change or clear it afterwards.
+                if (showFolderPicker) {
+                  const picked = attachmentTypes.find((type: AttachmentType) => type.id === value);
+                  setSelectedDirectoryId(picked?.default_directory_id ?? '');
+                }
               }}
               options={attachmentTypes.map((type: AttachmentType) => ({
                 value: type.id,
@@ -325,6 +342,22 @@ export default function AttachmentUploadDialog({
               </p>
             )}
           </div>
+
+          {/* Folder - only when the caller did not already decide it (opened from
+              inside a specific Drive folder passes `defaultDirectoryId` and skips this). */}
+          {showFolderPicker && (
+            <div className="space-y-2">
+              <Label htmlFor="attachment-folder">Folder</Label>
+              <SearchableSelect
+                id="attachment-folder"
+                value={selectedDirectoryId}
+                onChange={setSelectedDirectoryId}
+                options={directoryOptions}
+                placeholder="No folder (All files)"
+                clearable
+              />
+            </div>
+          )}
 
           {/* File Upload */}
           <div className="space-y-2">
