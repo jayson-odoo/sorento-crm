@@ -2327,7 +2327,22 @@ def _run_escalation_arm(
 
     completed = complete_turn(
         turn_id,
-        {"item": {"branch_kind": "out_of_scope"}, "ctx": ctx, "clarify": clarify},
+        {
+            "item": {"branch_kind": "out_of_scope"},
+            "ctx": ctx,
+            "clarify": clarify,
+            # What the LANE already decided the customer can tap. The tail composes no
+            # quick reply on this arm, so without this the reply it persists disagrees
+            # with the action it hands the executor.
+            "lane_quick_replies": next(
+                (
+                    a["quick_replies"]
+                    for a in all_actions
+                    if a.get("kind") == "send_message" and jsc.truthy(a.get("quick_replies"))
+                ),
+                None,
+            ),
+        },
         session_factory=session_factory,
     )
 
@@ -2858,6 +2873,7 @@ def run_tail(
     contact_respond_id: str,
     turn_trace: trace_mod.TurnTrace,
     write_session: bool = True,
+    lane_quick_replies: Any = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """outcome -> CS member offer -> compile-state -> compose -> validate -> persist.
 
@@ -2933,6 +2949,14 @@ def run_tail(
         answered=compiled.answered_domain is not None,
     )
     sealed = composed.get("reply") or {}
+    # A lane may have composed quick replies of its own before the tail ran: the
+    # escalation clarifies name the teams so the answer is a tap, and the tail composes no
+    # `quick_reply` on that arm. Seeded HERE rather than at the send seal so the persisted
+    # reply, the `replied` trace fact and the action all say the same thing - Chat History
+    # and the trace screen read the REPLY, and they were showing `null` / `False` about a
+    # turn that had sent two buttons. The tail's own value always wins.
+    if jsc.truthy(lane_quick_replies) and not jsc.truthy(sealed.get("quick_replies")):
+        sealed = {**sealed, "quick_replies": lane_quick_replies}
     # H57: an ABSENT `session_patch` and an EXPLICIT `{}` are two different instructions,
     # and `or {}` collapsed them. `{}` is a RESET the compiler asked for and is written;
     # absent means the sealed reply carried no memory to save, and the only correct answer
@@ -3275,6 +3299,10 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
                 dry_run=dry_run,
                 contact_respond_id=contact_respond_id,
                 turn_trace=turn_trace,
+                # NOT a `FRAGMENT_FIELD`: those are the lane CARRIERS the tail composes
+                # from, and this is one value the tail could not have composed for itself
+                # - what the lane already decided the customer can tap.
+                lane_quick_replies=fragments.get("lane_quick_replies"),
             )
             # D9: the caller SENDS; the engine hands it the action to send. Only a lane
             # that ASKED for it gets one: the `/complete` path is n8n's, and n8n composes

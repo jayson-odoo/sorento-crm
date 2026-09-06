@@ -1950,7 +1950,7 @@ def not_found_error_message(
                 #
                 # The name is deliberately NOT appended in parentheses today: on the turn
                 # this rule comes from it is junk, and "IBKS7245-NG-BL (Iborn. Bidet.)"
-                # publishes the junk next to the answer instead of instead of it. The
+                # publishes the junk next to the answer instead of in place of it. The
                 # trigger for adding it is a measured turn where the code alone is
                 # genuinely ambiguous to the reader.
                 code = jsc.get(match, "canonical_code")

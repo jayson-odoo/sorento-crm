@@ -1656,7 +1656,12 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             and not jsc.js_number(o.get("positions_resolved")) > 0
         ):
             o["message_type"] = "business_query"
-            o["bare_entity_under_offer"] = True  # diagnostic
+            # Diagnostic, and safe to add: MEASURED over the whole corpus on 6 Sep 2026,
+            # `bare_entity_under_offer` appears in 0 of the 3258 full-corpus fixture
+            # files and 0 of the 240 vendored ones, so no capture is graded differently
+            # for carrying it - the same check `gate._display_name` earned before its key
+            # was added.
+            o["bare_entity_under_offer"] = True
 
     # -- domain continuity for entity-bearing continuations (bare "Y" code) -------------- #
     # Key on the EFFECTIVE domain signal, NOT domain_hint===null. Must run BEFORE

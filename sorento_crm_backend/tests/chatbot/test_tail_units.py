@@ -518,6 +518,65 @@ class TestTheMemberOfferHasTheSameTtlAsTheDymOffer:
         assert variables["last_result_set"] == self.ROSTER
         assert (variables.get("pending") or {}).get("ttl") == 2
 
+    def test_the_clock_runs_for_exactly_member_offer_ttl_turns(self) -> None:
+        """The offer's LIFETIME equals the number that declares it, end to end.
+
+        Every other case here injects a `ttl` by hand and looks at one hop, so between
+        them they never say how many turns an offer actually lives: the code could
+        decrement by two, or die a turn early, and each of them would still pass on its
+        own hop (reviewer, #705). This one starts from a REAL offer turn - the ladder
+        writes the clock, the test does not seed it - and chains the real compiler, each
+        turn's patch becoming the next turn's session, until the offer is gone. Verified
+        to go red on `carried_ttl = ttl - 2`.
+
+        The vehicle is UNANSWERED turns, deliberately: an answered turn with no pick ends
+        the offer at once (its own test above), so a chain of those would measure that rule
+        and never reach the clock.
+        """
+        ttl = pending_mod.MEMBER_OFFER_TTL
+        assert ttl >= 2, "a one-turn offer would make the 'one turn before' assertion vacuous"
+
+        # Turn 0 is the OFFER, composed by the real ladder, so the clock this chain then
+        # counts down is the one `pending.derive` wrote - not one the test seeded. Seeding
+        # it from the constant would have made the whole chain self-consistent at any
+        # value, which is the trap the reviewer named.
+        offer_turn = _compile(
+            {
+                "outcome": {
+                    "build-cs-member-offer": {
+                        "member_offer": True,
+                        "selection_context": "member_offer",
+                        "cs_last_result_set": self.ROSTER,
+                        "response": "Who should I pass this to?",
+                        "manualResponse": True,
+                    }
+                }
+            },
+            _ctx(domain_hint="order"),
+        )
+        variables = offer_turn["variables"]
+        assert variables["pending"]["ttl"] == ttl, (
+            "the offer turn must start the clock at MEMBER_OFFER_TTL, or the count below "
+            f"measures a number nobody declared: {variables['pending']!r}"
+        )
+
+        for turn in range(1, ttl + 1):
+            ctx = _ctx(domain_hint="order")
+            ctx["session"] = {"session_vars": {"variables": variables}}
+            variables = _compile({"outcome": {}}, ctx)["variables"]
+            if turn < ttl:
+                assert variables["selection_context"] == "member_offer", (
+                    f"the offer died on carried turn {turn} of {ttl}: {variables!r}"
+                )
+                assert (variables.get("pending") or {}).get("ttl") == ttl - turn, (
+                    f"turn {turn} of {ttl} did not spend exactly one: {variables!r}"
+                )
+            else:
+                assert variables.get("selection_context") != "member_offer", (
+                    f"the offer outlived its {ttl} turns: {variables!r}"
+                )
+                assert (variables.get("pending") or {}).get("kind") != "member_offer"
+
     def test_an_expired_offer_is_not_open_to_the_parser(self) -> None:
         """The seam the whole rule exists for: `output_exchange._offer_is_open` is what
         turns a bare "yes" into `is_escalation_confirmation`, and it must read the offer's

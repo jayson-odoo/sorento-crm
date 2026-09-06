@@ -288,9 +288,10 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
 # and because the alternative, a blanket `Divergence`, would stop grading these 243 gate
 # captures entirely instead of grading everything except this key.
 #
-# MEASURED over the whole corpus on 6 Sep 2026: `display_name` appears in 0 of the 934
-# fixture files, vendored and full, so nothing anywhere is masked by this entry today and
-# the strip is a pure no-op on every node that does not emit it. 12 gate captures replay
+# MEASURED over the whole corpus on 6 Sep 2026: `display_name` appears in 0 of the 3258
+# full-corpus fixture files and 0 of the 240 vendored ones, so nothing anywhere is masked
+# by this entry today and the strip is a pure no-op on every node that does not emit it.
+# (An earlier revision of this comment said 934, which was a subset count.) 12 gate captures replay
 # differently without it (the 9 `live-spine-sorento-consume-main` and 3 `clone-spine-RS` /
 # `sub-resolve-and-gate-rs` turns that name a customer); the trigger to revisit is n8n
 # emitting a key by this name of its own.
