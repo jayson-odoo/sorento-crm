@@ -58,9 +58,13 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
 from typing import Any, Optional
 
 from pydantic import BaseModel, ValidationError
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
@@ -69,21 +73,40 @@ from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Product
 from app.models.sales_agent import SalesAgent
 from app.schemas.canonical_documents import CanonicalPurchaseOrder, CanonicalSalesOrder
-from app.services.dependent_probe import is_referenced
+from app.services.dependent_probe import is_referenced, referrers_of
 from app.services.integration_reference_service import (
     IntegrationReferenceService,
     ReferenceConflict,
 )
+# `MasterRefResolver` is the ref/code/name/back-create ladder (D1/D2/D10),
+# shared with `ShippingOrderIngestService` (S3) - lifted out in S3 rather than
+# duplicated, see that module's docstring.
+from app.services.master_ref_resolver import (
+    WARN_UNCLASSIFIED_DEMAND,
+    MasterRefResolver,
+    dedupe_warnings,
+)
 from app.services.master_ingest_service import (
+    INTERNAL_ERROR_MESSAGE,
     IngestOutcome,
     IngestResult,
     MissingReference,
     RecordResult,
     UnsupportedIngestEntity,
     _field_errors,
-    _is_company_scoped,
     _value_changed,
+    integrity_conflict_errors,
 )
+from app.services.scm import order_link_service, plan_exception_service
+from app.services.scm.customer_label import normalize_debtor_code
+from app.services.scm.demand_class import classify_document
+# `DEFAULT_PO_CURRENCY` is the upload's own rule (D1's CNY fill) - imported
+# rather than restated so the two channels that read a purchase book from
+# AutoCount cannot drift.
+from app.services.scm.outstanding_import_service import DEFAULT_PO_CURRENCY
+# D5: an `SPO-` numbered document belongs under `shipping_orders`, never
+# `purchase_orders` - the same family test the PO listing importer uses.
+from app.services.scm.po_listing_reader import FAMILY_SPO, doc_family
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +122,15 @@ SOURCE_SYSTEM = "autocount"
 # words, and section 7.2 of the plan records them.
 SALES_ORDER_STATUS_MAP = {
     "open": "open",
-    "partial": "partially_delivered",
+    # D6a (S5): a `partial` sales order is stored `open`, not `partially_delivered`.
+    # `qty_delivered` already carries the partial fact per line, and `open` is the
+    # one word `scm.committed_v` and every other SCM reader already admits as
+    # committed demand - mapping `partial` onto it needs zero view changes, where
+    # widening every one of those readers to also admit `partially_delivered`
+    # would (plan D6, option (a) over (b)). This makes the map NOT injective:
+    # `partial` and `open` both stored as `open`. `_canonical_status` below
+    # therefore reads back `open` for either - see its own docstring.
+    "partial": "open",
     "fulfilled": "fulfilled",
     "closed": "closed",
     "cancelled": "cancelled",
@@ -113,6 +144,12 @@ PURCHASE_ORDER_STATUS_MAP = {
 }
 
 CANCELLED = "cancelled"
+
+# The rest of the verdict-warning vocabulary (D9) - `customer_created`,
+# `supplier_created`, `agent_created`, `warehouse_unresolved`,
+# `customer_unresolved` - lives on `master_ref_resolver` next to the ladder
+# that emits them (S3). `WARN_UNCLASSIFIED_DEMAND` is imported above since
+# `_classify_sales_order` below is the only thing that raises it.
 
 
 @dataclass(frozen=True)
@@ -131,12 +168,16 @@ class DocumentSpec:
     # Only sales_orders carries `source_doc_no`; purchase_orders has no such
     # column, and writing one would be an AttributeError per record.
     doc_no_column: Optional[str]
-    # (column, payload field, master MODEL) for the header's FKs and the line's.
-    # The model is what the ref resolves through - its `__tablename__` is the
-    # entity type - and it is also how the resolved row's company is read, which
-    # is a table the ORM names rather than one `search_path` chooses.
-    header_refs: tuple[tuple[str, str, type], ...]
-    line_refs: tuple[tuple[str, str, type], ...]
+    # (column, ref field, master MODEL, code field or None, name field or None)
+    # for the header's FKs and the line's. The model is what the ref resolves
+    # through - its `__tablename__` is the entity type - and it is also how the
+    # resolved row's company is read, which is a table the ORM names rather
+    # than one `search_path` chooses. `code field`/`name field` name the v2
+    # fallback siblings on the SAME payload object (D1) - `None` where a model
+    # has no such field (`sales_agent_ref` has no name step; `product`/
+    # `warehouse` have no name step either).
+    header_refs: tuple[tuple[str, str, type, Optional[str], Optional[str]], ...]
+    line_refs: tuple[tuple[str, str, type, Optional[str], Optional[str]], ...]
     # (column, payload field) for the plain values.
     header_fields: tuple[tuple[str, str], ...]
     line_fields: tuple[tuple[str, str], ...]
@@ -166,19 +207,23 @@ DOCUMENT_SPECS: dict[str, DocumentSpec] = {
         status_map=SALES_ORDER_STATUS_MAP,
         doc_no_column="source_doc_no",
         header_refs=(
-            ("customer_id", "customer_ref", Customer),
-            ("sales_agent_id", "sales_agent_ref", SalesAgent),
+            ("customer_id", "customer_ref", Customer, "customer_code", "customer_name"),
+            ("sales_agent_id", "sales_agent_ref", SalesAgent, "agent_code", None),
         ),
         line_refs=(
-            ("product_id", "product_ref", Product),
-            ("warehouse_id", "warehouse_ref", Warehouse),
+            ("product_id", "product_ref", Product, "product_code", None),
+            ("warehouse_id", "warehouse_ref", Warehouse, "warehouse_code", None),
         ),
-        # `debtor_code`, `demand_class`, `demand_origin`, `priority` and
+        # `demand_class`, `demand_origin`, `priority` and
         # `order_type` are absent on purpose, the same way the agent master's
         # annotations are: they are set by the importers and by CS, AutoCount
         # holds no opinion about any of them, and a weekly re-sync that restated
         # them from a payload which never carried them would blank the captain's
         # classification. Absent from the written set, they cannot be touched.
+        # `debtor_code` is the one exception (v2, D9): it is written from
+        # `customer_code` in `_header_values`, not through this generic list,
+        # because it fires on the payload field being SENT rather than on a
+        # fixed column mapping.
         header_fields=(
             ("so_number", "so_number"),
             ("order_date", "doc_date"),
@@ -204,10 +249,12 @@ DOCUMENT_SPECS: dict[str, DocumentSpec] = {
         number_field="po_number",
         status_map=PURCHASE_ORDER_STATUS_MAP,
         doc_no_column=None,
-        header_refs=(("supplier_id", "supplier_ref", Supplier),),
+        header_refs=(
+            ("supplier_id", "supplier_ref", Supplier, "supplier_code", "supplier_name"),
+        ),
         line_refs=(
-            ("product_id", "product_ref", Product),
-            ("warehouse_id", "warehouse_ref", Warehouse),
+            ("product_id", "product_ref", Product, "product_code", None),
+            ("warehouse_id", "warehouse_ref", Warehouse, "warehouse_code", None),
         ),
         header_fields=(
             ("po_number", "po_number"),
@@ -244,6 +291,13 @@ def _canonical_status(spec: DocumentSpec, stored: Optional[str]) -> Optional[str
     the contract vocabulary. Inventing a canonical word for it would tell the ESB
     the document is in a state it is not; handing back what is actually stored
     lets it see a value it does not own and leave the row alone.
+
+    D6a (S5) makes `SALES_ORDER_STATUS_MAP` NOT injective: `open` and `partial`
+    both store `open`. The FIRST canonical word whose mapping matches wins - dict
+    order is declaration order, and `open` is declared before `partial` - so a
+    stored `open` row always reads back `open` (AC-V5-3), never `partial`, which
+    is correct: once written, nothing on the row still says which canonical word
+    produced it, and `open` is the more general of the two.
     """
     if stored is None:
         return None
@@ -257,25 +311,57 @@ class _UnknownStatus(ValueError):
     """A status word outside the canonical vocabulary. Failed, never stored."""
 
 
-class DocumentIngestService:
+class DocumentIngestService(MasterRefResolver):
     """Same constructor and same ``ingest()`` contract as ``MasterIngestService``.
 
     Deliberately interchangeable: the route picks one or the other on the entity
     name and calls the same method, so there is one ingest endpoint rather than
     two that can drift on batch caps, verdicts or the dry-run rollback.
+
+    Subclasses `MasterRefResolver` for the ref/code/name/back-create ladder
+    (`_resolve_master` and its helpers) - shared with `ShippingOrderIngestService`
+    rather than duplicated (S3).
     """
 
     def __init__(
         self, db: Session, integration_id: Optional[str] = None, *, company_id: str
     ):
-        self.db = db
-        self.integration_id = integration_id
         # Required, for the reason the master ingest states: a default would be
         # the incumbent company, and a push meant for the other one would land
         # there silently.
-        self.company_id = company_id
-        self.refs = IntegrationReferenceService(db)
+        super().__init__(db, integration_id, company_id=company_id)
         self._dry_run = False
+        # D7/S5 (plan section 2.6): what the ROUTE's post-write hooks need, read
+        # off this instance after `ingest()` returns rather than threaded through
+        # `IngestResult` - plain attributes, no new classes, and `MasterIngestService`
+        # (which the route also constructs for masters) needs none of them.
+        # Populated only by a record that actually WROTE (the last lines of `_apply`,
+        # after everything else in it has already succeeded) - a savepoint rollback
+        # is a Python-level no-op here since execution never reaches that point.
+        self.touched_product_ids: set[str] = set()
+        self.so_numbers: set[str] = set()
+        self.written_header_ids: set[str] = set()
+        # (product_id, supplier_id, po_number) triples, purchase_orders only -
+        # what `supersede_crm_raised_pos` (the extracted shared function) wants.
+        self.po_supersede_triples: set[tuple[str, str, str]] = set()
+        # sales_orders only: the BEFORE half of the route's plan-exception hook
+        # (AC-V5-1), keyed by product id. Captured ONCE for the whole batch,
+        # before the record loop runs (`ingest()` calls
+        # `_capture_plan_exception_before`, S6 review fix) - the same "read
+        # the old position while it is still the one in the database" rule
+        # `outstanding_import_service.apply` follows for its own
+        # `before_positions`.
+        self.plan_exception_before: dict[str, Any] = {}
+        # Perf round 5: per-batch memos for `_classify_sales_order` - a busy
+        # batch reuses the same agent/customer across hundreds of documents,
+        # and neither read changes mid-batch (nothing here writes to
+        # `sales_agents` or `customers`). `_segment_cache` is handed to
+        # `classify_document` (an otherwise pure, session-free function) as
+        # its own optional keyword so `outstanding_import_service`'s call
+        # site - which passes none - is unaffected.
+        self._agent_class_cache: dict[str, Optional[str]] = {}
+        self._customer_code_cache: dict[str, Optional[str]] = {}
+        self._segment_cache: dict[Any, Optional[str]] = {}
 
     # --------------------------------------------------------------- the batch
     def ingest(
@@ -290,6 +376,14 @@ class DocumentIngestService:
 
         result = IngestResult(dry_run=dry_run)
         self._dry_run = dry_run
+        # S6 review fix: ONE plan-exception BEFORE snapshot for the whole
+        # batch, taken before any record writes anything - not one per
+        # record, which cost `plan_exception_service.snapshot` a query per
+        # sales order in a busy batch for no reason (every snapshot in one
+        # batch is read before ANY of them has written anything, so there is
+        # nothing for a second one to see that the first one did not).
+        if spec.entity_type == "sales_orders":
+            self._capture_plan_exception_before(records)
         try:
             for raw in records:
                 result.records.append(self._ingest_one(spec, raw))
@@ -315,19 +409,43 @@ class DocumentIngestService:
                 outcome=IngestOutcome.FAILED,
                 errors=_field_errors(exc),
             )
-        except TypeError as exc:
+        except TypeError:
+            logger.warning(
+                "ingest.document_malformed entity=%s source_ref=%s",
+                spec.entity_type,
+                source_ref,
+                exc_info=True,
+            )
             return RecordResult(
-                source_ref=source_ref, outcome=IngestOutcome.FAILED, errors={"_": str(exc)}
+                source_ref=source_ref,
+                outcome=IngestOutcome.FAILED,
+                errors={"_": INTERNAL_ERROR_MESSAGE},
+            )
+
+        # D5: an `SPO-` numbered document pushed as a purchase order is refused
+        # outright, before any savepoint work - it is a shipping order wearing
+        # the wrong entity name, and adopting it here would create a phantom
+        # purchase order `spo_allocations` can never link back to.
+        if spec.entity_type == "purchase_orders" and doc_family(payload.po_number) == FAMILY_SPO:
+            return RecordResult(
+                source_ref=payload.source_ref,
+                outcome=IngestOutcome.FAILED,
+                errors={"po_number": "shipping order; push under shipping_orders"},
             )
 
         # One document per savepoint. Without it a failed flush poisons the
         # session and every later record in the file fails too.
         savepoint = self.db.begin_nested()
         try:
-            outcome, entity_id, diff = self._apply(spec, payload)
+            outcome, entity_id, diff, warnings, line_counts = self._apply(spec, payload)
             savepoint.commit()
             return RecordResult(
-                source_ref=payload.source_ref, outcome=outcome, entity_id=entity_id, diff=diff
+                source_ref=payload.source_ref,
+                outcome=outcome,
+                entity_id=entity_id,
+                diff=diff,
+                warnings=warnings,
+                lines=line_counts,
             )
         except MissingReference as exc:
             savepoint.rollback()
@@ -341,7 +459,7 @@ class DocumentIngestService:
             return RecordResult(
                 source_ref=payload.source_ref,
                 outcome=IngestOutcome.FAILED,
-                errors={"source_ref": str(exc)},
+                errors={exc.field_name: str(exc)},
             )
         except _UnknownStatus as exc:
             savepoint.rollback()
@@ -350,48 +468,84 @@ class DocumentIngestService:
                 outcome=IngestOutcome.FAILED,
                 errors={"status": str(exc)},
             )
-        except Exception as exc:  # noqa: BLE001 - one document's failure, not the file's
+        except IntegrityError as exc:
+            # Fix round 4, BUG B: a unique-constraint race (two companies, or a
+            # concurrent push of the same number/code) - named by constraint,
+            # never by `str(exc)`'s full SQL statement.
             savepoint.rollback()
             logger.warning(
-                "ingest.document_failed entity=%s source_ref=%s error=%s",
+                "ingest.integrity_conflict entity=%s source_ref=%s",
                 spec.entity_type,
                 payload.source_ref,
-                exc,
+                exc_info=True,
             )
             return RecordResult(
                 source_ref=payload.source_ref,
                 outcome=IngestOutcome.FAILED,
-                errors={"_": str(exc)},
+                errors=integrity_conflict_errors(exc),
+            )
+        except Exception:  # noqa: BLE001 - one document's failure, not the file's
+            savepoint.rollback()
+            # SEC3: never echo a non-domain exception's own message - it
+            # routinely quotes SQL, a table/column name or a raw UUID.
+            logger.warning(
+                "ingest.document_failed entity=%s source_ref=%s",
+                spec.entity_type,
+                payload.source_ref,
+                exc_info=True,
+            )
+            return RecordResult(
+                source_ref=payload.source_ref,
+                outcome=IngestOutcome.FAILED,
+                errors={"_": INTERNAL_ERROR_MESSAGE},
             )
 
     # ------------------------------------------------------------ one document
     def _apply(
         self, spec: DocumentSpec, payload: Any
-    ) -> tuple[IngestOutcome, str, Optional[dict[str, dict[str, Any]]]]:
+    ) -> tuple[
+        IngestOutcome, str, Optional[dict[str, dict[str, Any]]], list[str], dict[str, int]
+    ]:
         # EVERYTHING is resolved before ANYTHING is written. An unresolved
         # reference has to leave the database exactly as it found it, and a
         # header inserted before the line that fails would only be taken back by
         # the savepoint - which is a guarantee about this transaction, not about
         # the order the work happens in.
+        #
+        # Shared across the header and every line: a back-create triggered by
+        # line 3 belongs on the SAME record verdict as one triggered by the
+        # header, not a per-line list nothing reads (D9).
+        warnings: list[str] = []
         status = self._status(spec, payload.status)
-        header_values = self._header_values(spec, payload, status)
+        # The header is resolved (not yet written into) BEFORE `_header_values`, unlike
+        # every other value here: D4's fill-only `order_type` and never-downgraded
+        # `demand_class` both have to read what the row ALREADY holds, which does not
+        # exist to read until `_header` has found-or-created it. For a CREATE, `header`
+        # is deliberately not in the session yet (see `_header`'s comment) - added just
+        # below, once `header_values` is complete and about to be written, so no query
+        # the ref/demand ladders run in between can autoflush a half-built row and fail
+        # on its own not-null constraints.
+        header, outcome = self._header(spec, payload)
+        header_values = self._header_values(spec, payload, status, warnings, header)
         line_values = [
-            self._line_values(spec, line, index, status)
+            self._line_values(spec, line, index, status, warnings)
             for index, line in enumerate(payload.lines)
         ]
 
-        header, outcome = self._header(spec, payload)
         # Only an update overwrites anything, and only a dry run needs to say so.
         diff = (
             self._diff(header, header_values)
             if outcome is IngestOutcome.UPDATED
             else None
         )
+        self.db.add(header)
         for column, value in header_values.items():
             setattr(header, column, value)
         self.db.flush()
 
-        self._sync_lines(spec, header, line_values)
+        line_counts = self._sync_lines(spec, header, line_values)
+        if spec.entity_type == "purchase_orders":
+            self._write_order_link_claims(header, payload)
         self.refs.link(
             entity_type=spec.entity_type,
             entity_id=str(header.id),
@@ -399,7 +553,159 @@ class DocumentIngestService:
             source_doc_no=payload.source_doc_no,
             integration_id=self.integration_id,
         )
-        return outcome, str(header.id), diff
+        # D7/S5: recorded LAST - everything above has already succeeded by here,
+        # so a record whose ladder or status word failed earlier never reaches
+        # this line and never pollutes the batch-level state the route's hooks
+        # read after `ingest()` returns.
+        self._record_hook_state(spec, header, payload, header_values, line_values)
+        return outcome, str(header.id), diff, dedupe_warnings(warnings), line_counts
+
+    def _capture_plan_exception_before(self, records: list[dict]) -> None:
+        """The BEFORE half of AC-V5-1 - ONE snapshot for the WHOLE batch (S6
+        review fix), taken before the record loop runs (so genuinely before
+        anything in the batch has written) rather than once per record.
+
+        Product ids are pre-resolved CHEAPLY rather than by running the real
+        ladder a second time: a `product_ref` resolves through the same
+        `IntegrationReferenceService.resolve` the ladder itself calls first
+        (a plain read, no back-create - products are never back-created
+        anyway), and every `product_code` in the batch resolves through ONE
+        query rather than one per line. Best-effort like the upload's own
+        equivalent: a defect here must cost the route's plan-exception hook
+        (which simply has less to compare against), never any record in the
+        batch - a document ingest is not the operation this diff is FOR.
+
+        Perf round 5 (B): resolved through `self._resolve_ref` - the SAME
+        ladder rung a line's own `product_ref` resolution calls, and the
+        thing that populates `self._memo` - rather than a bare
+        `self.refs.resolve()`, for two reasons at once: it shares the memo
+        (this runs FIRST, so a ref resolved here is a ref the record loop
+        never re-queries, and vice versa for anything this loop misses), and
+        it applies the SAME cross-company check the ladder's own resolution
+        would, so a memo entry is never trusted without it. `MissingReference`/
+        `ReferenceConflict` are swallowed here exactly as a bare miss was
+        silently dropped before - this is an input to a best-effort snapshot,
+        never the reason a record fails.
+        """
+        product_ids: set[str] = set()
+        codes: set[str] = set()
+        for raw in records:
+            if not isinstance(raw, dict):
+                continue
+            for line in raw.get("lines") or []:
+                if not isinstance(line, dict):
+                    continue
+                ref = line.get("product_ref")
+                if ref:
+                    try:
+                        resolved = self._resolve_ref("product_ref", ref, Product)
+                    except (MissingReference, ReferenceConflict):
+                        resolved = None
+                    if resolved:
+                        product_ids.add(resolved)
+                    continue
+                code = (line.get("product_code") or "").strip()
+                if code:
+                    codes.add(code)
+
+        if codes:
+            rows = (
+                self.db.query(Product.id, func.upper(func.btrim(Product.product_code)))
+                .filter(
+                    func.upper(func.btrim(Product.product_code)).in_(
+                        [c.upper() for c in codes]
+                    ),
+                    Product.company_id == self.company_id,
+                )
+                .all()
+            )
+            by_normalized = {normalized: str(pid) for pid, normalized in rows}
+            for code in codes:
+                pid = by_normalized.get(code.upper())
+                if pid:
+                    product_ids.add(pid)
+                    # Populates the SAME memo `_resolve_by_code` reads, so the
+                    # record loop's own code rung for this product skips its
+                    # query too.
+                    self._memo[(Product.__tablename__, "code", code.upper())] = pid
+
+        if not product_ids:
+            return
+        try:
+            self.plan_exception_before.update(
+                plan_exception_service.snapshot(self.db, list(product_ids))
+            )
+        except Exception:  # noqa: BLE001 - best-effort, see docstring
+            logger.warning(
+                "ingest.plan_exception_before_snapshot_failed product_ids=%s",
+                sorted(product_ids),
+                exc_info=True,
+            )
+
+    def _record_hook_state(
+        self,
+        spec: DocumentSpec,
+        header: Any,
+        payload: Any,
+        header_values: dict[str, Any],
+        line_values: list[dict[str, Any]],
+    ) -> None:
+        """What the route's post-write hooks (D7) need, gathered per record."""
+        self.written_header_ids.add(str(header.id))
+        for values in line_values:
+            product_id = values.get("product_id")
+            if product_id:
+                self.touched_product_ids.add(str(product_id))
+
+        if spec.entity_type == "sales_orders":
+            self.so_numbers.add(payload.so_number)
+        elif spec.entity_type == "purchase_orders":
+            supplier_id = header_values.get("supplier_id")
+            if supplier_id:
+                for values in line_values:
+                    product_id = values.get("product_id")
+                    if product_id:
+                        self.po_supersede_triples.add(
+                            (str(product_id), str(supplier_id), payload.po_number)
+                        )
+
+    def _write_order_link_claims(self, header: Any, payload: Any) -> None:
+        """V4 (plan section 2.5): a PO line dedicating its purchase against
+        sales orders the ESB already knows the numbers of.
+
+        Runs AFTER the lines are flushed, so every line named has a real id
+        to claim against. Inside the SAME record savepoint as everything
+        else in `_apply` - a dry run rolls this back with the rest of the
+        record, never a special case of its own (AC-V4-4). The actual
+        claim-writing loop is `order_link_service.write_claims_for_lines`
+        (S7 dedup), shared with `ShippingOrderIngestService`'s own line
+        claims - only the row fetch differs between the two.
+        """
+        wanted = [
+            (line.source_ref, [n for n in (line.from_so_numbers or []) if n])
+            for line in payload.lines
+            if getattr(line, "from_so_numbers", None)
+        ]
+        if not wanted:
+            return
+
+        refs = [source_ref for source_ref, _ in wanted]
+        rows = (
+            self.db.query(PurchaseOrderLine)
+            .filter(
+                PurchaseOrderLine.purchase_order_id == str(header.id),
+                PurchaseOrderLine.source_ref.in_(refs),
+            )
+            .all()
+        )
+        order_link_service.write_claims_for_lines(
+            self.db,
+            company_id=self.company_id,
+            document_number=payload.po_number,
+            rows=rows,
+            wanted=wanted,
+            id_attr="po_line_id",
+        )
 
     def _status(self, spec: DocumentSpec, canonical: str) -> str:
         """The stored status for a canonical word.
@@ -458,7 +764,15 @@ class DocumentIngestService:
             return self._load(spec, adopted), IngestOutcome.UPDATED
 
         header = spec.header_model(id=str(uuid.uuid4()), company_id=self.company_id)
-        self.db.add(header)
+        # NOT `db.add()`-ed here on purpose. `_header_values` (D4) reads this
+        # object's stored columns before the caller ever writes into it -
+        # harmless for an UPDATE (`_load` returns an already-persisted row),
+        # but a CREATE's row would otherwise sit in the session as a pending
+        # INSERT with every NOT NULL column still empty. Any query anywhere
+        # between here and the setattr loop - the ref/code ladder's lookups, a
+        # back-create's own explicit flush - would autoflush that half-built
+        # row and fail on its own constraints. `_apply` adds it once
+        # `header_values` is complete and about to be written.
         return header, IngestOutcome.CREATED
 
     def _load(self, spec: DocumentSpec, entity_id: str):
@@ -472,13 +786,46 @@ class DocumentIngestService:
             )
         return header
 
-    def _header_values(self, spec: DocumentSpec, payload: Any, status: str) -> dict[str, Any]:
+    def _header_values(
+        self,
+        spec: DocumentSpec,
+        payload: Any,
+        status: str,
+        warnings: list[str],
+        header: Any,
+    ) -> dict[str, Any]:
         values: dict[str, Any] = {
             column: getattr(payload, field) for column, field in spec.header_fields
         }
         values["status"] = status
-        for column, field, model in spec.header_refs:
-            values[column] = self._resolve_ref(field, getattr(payload, field), model)
+        for column, ref_field, model, code_field, name_field in spec.header_refs:
+            values[column] = self._resolve_master(
+                model=model,
+                ref_field=ref_field,
+                ref=getattr(payload, ref_field),
+                code_field=code_field,
+                code=getattr(payload, code_field) if code_field else None,
+                name=getattr(payload, name_field) if name_field else None,
+                warnings=warnings,
+            )
+        # `debtor_code` (v2, D9): written from `customer_code` whenever it is
+        # SENT, independent of whether the customer itself resolved - an
+        # order whose debtor Sorento does not (yet) hold still carries the
+        # code it was pushed with. Absent on `CanonicalPurchaseOrder`, so the
+        # attribute simply is not there and this is a no-op for a PO.
+        customer_code = getattr(payload, "customer_code", None)
+        if customer_code:
+            values["debtor_code"] = normalize_debtor_code(customer_code)
+        # PO currency default (D1): only a spec that carries a `currency`
+        # header column reaches this, which today is `purchase_orders` alone -
+        # so the fill is shape-driven rather than a hardcoded entity check.
+        if "currency" in values and not values["currency"]:
+            values["currency"] = DEFAULT_PO_CURRENCY
+        # v2 demand classification (D4, sales_orders only). `order_type` only
+        # exists on `CanonicalSalesOrder`, so this is a no-op for a PO - the
+        # same shape-driven guard the currency fill above uses.
+        if hasattr(payload, "order_type"):
+            self._classify_sales_order(payload, values, warnings, header, customer_code)
         # Adoption takes ownership: from here on the row is AutoCount's, and the
         # next push has to find it by reference rather than by number again.
         values["source_system"] = SOURCE_SYSTEM
@@ -487,16 +834,98 @@ class DocumentIngestService:
             values[spec.doc_no_column] = getattr(payload, spec.number_field)
         return values
 
+    def _classify_sales_order(
+        self,
+        payload: Any,
+        values: dict[str, Any],
+        warnings: list[str],
+        header: Any,
+        customer_code: Optional[str],
+    ) -> None:
+        """D4 (plan section 1/2.3): fill-only `order_type`, never-downgraded `demand_class`.
+
+        A stored `demand_class` is a settled fact - possibly set by CS by hand,
+        possibly by an order_type this same ladder decided on an earlier push -
+        and this ingest never overwrites or blanks it, whatever a fresh run of
+        the ladder would say today (AC-V2-6). Only when NOTHING is stored yet
+        does `classify_document` run at all.
+        """
+        stored_order_type = getattr(header, "order_type", None)
+        stated_order_type = payload.order_type
+        if not stored_order_type and stated_order_type:
+            values["order_type"] = stated_order_type
+
+        if getattr(header, "demand_class", None):
+            return
+
+        agent_id = values.get("sales_agent_id")
+        agent_demand_class = self._agent_demand_class(agent_id)
+        debtor_code = customer_code or getattr(header, "debtor_code", None)
+        customer_id = values.get("customer_id")
+        if not debtor_code and customer_id:
+            # No code was SENT and none is stored yet, but the ref resolved to a
+            # real customer - its own code is the debtor code this document
+            # names, just not spelled out in this particular payload.
+            debtor_code = self._customer_code_of(customer_id)
+
+        cls = classify_document(
+            self.db,
+            stored_order_type=stored_order_type,
+            stated_order_type=stated_order_type,
+            agent_demand_class=agent_demand_class,
+            debtor_code=debtor_code,
+            company_id=self.company_id,
+            segment_cache=self._segment_cache,
+        )
+        if cls is not None:
+            values["demand_class"] = cls
+        else:
+            warnings.append(WARN_UNCLASSIFIED_DEMAND)
+
+    def _agent_demand_class(self, agent_id: Optional[str]) -> Optional[str]:
+        """Perf round 5: memoised per batch - a busy batch names the same
+        handful of agents on hundreds of documents, and nothing in this
+        ingest writes `sales_agents.demand_class`."""
+        if not agent_id:
+            return None
+        if agent_id not in self._agent_class_cache:
+            self._agent_class_cache[agent_id] = (
+                self.db.query(SalesAgent.demand_class)
+                .filter(SalesAgent.id == agent_id)
+                .scalar()
+            )
+        return self._agent_class_cache[agent_id]
+
+    def _customer_code_of(self, customer_id: str) -> Optional[str]:
+        """Perf round 5: memoised per batch, same reason as `_agent_demand_class`."""
+        if customer_id not in self._customer_code_cache:
+            self._customer_code_cache[customer_id] = (
+                self.db.query(Customer.customer_code)
+                .filter(Customer.id == customer_id)
+                .scalar()
+            )
+        return self._customer_code_cache[customer_id]
+
     def _line_values(
-        self, spec: DocumentSpec, line: Any, index: int, status: str
+        self, spec: DocumentSpec, line: Any, index: int, status: str, warnings: list[str]
     ) -> dict[str, Any]:
         values: dict[str, Any] = {
             column: getattr(line, field) for column, field in spec.line_fields
         }
-        for column, field, model in spec.line_refs:
-            values[column] = self._resolve_ref(
-                f"lines.{index}.{field}", getattr(line, field), model
+        for column, ref_field, model, code_field, name_field in spec.line_refs:
+            values[column] = self._resolve_master(
+                model=model,
+                ref_field=f"lines.{index}.{ref_field}",
+                ref=getattr(line, ref_field),
+                code_field=f"lines.{index}.{code_field}" if code_field else None,
+                code=getattr(line, code_field) if code_field else None,
+                name=getattr(line, name_field) if name_field else None,
+                warnings=warnings,
             )
+        # Same shape-driven PO currency fill as the header, for the per-line
+        # `currency` column purchase-order lines alone carry.
+        if "currency" in values and not values["currency"]:
+            values["currency"] = DEFAULT_PO_CURRENCY
         # NOT NULL on both line tables, and an absent figure means none delivered.
         for column in ("qty_ordered", spec.line_delivered_field):
             if values.get(column) is None:
@@ -506,62 +935,33 @@ class DocumentIngestService:
         )
         values["source_system"] = SOURCE_SYSTEM
         values["source_ref"] = line.source_ref
+        # AutoCount's Seq (D11), position only - popped before persistence by
+        # every setattr site in `_sync_lines`/`_adopt_lines`. No column exists
+        # for it on either line table.
+        values["line_number"] = getattr(line, "line_number", None)
         return values
-
-    def _resolve_ref(
-        self, field: str, source_ref: Optional[str], model: type
-    ) -> Optional[str]:
-        """The local id an integration reference names, inside the anchor company.
-
-        Absent is not the same as unknown. An optional ref nobody sent leaves the
-        FK NULL - an order whose debtor Sorento does not hold is still an order.
-        A ref that WAS sent and does not resolve is a sequencing artefact: the
-        master push has not drained yet, so the whole document is retryable
-        rather than written with the attribution silently dropped.
-        """
-        if source_ref is None or source_ref == "":
-            return None
-        entity_id = self.refs.resolve(
-            entity_type=model.__tablename__, source_ref=source_ref
-        )
-        if entity_id is None:
-            raise MissingReference(field, source_ref)
-        self._require_same_company(model, entity_id, f"{field} {source_ref!r}")
-        return entity_id
-
-    def _require_same_company(self, model: type, entity_id: str, subject: str) -> None:
-        """Refuse a reference that resolves into another company.
-
-        `integration_references` is global, so a ref finds its row whatever
-        company the request anchored to. Binding this document to it - or
-        updating it - would be a cross-company write wearing the clothes of an
-        ordinary re-sync. Shared masters (`sales_agents`) carry no company at all
-        and are visible from either anchor, so they are exempt.
-        """
-        if not _is_company_scoped(model.__tablename__):
-            return
-        mine = (
-            self.db.query(model.id)
-            .filter(model.id == str(entity_id), model.company_id == self.company_id)
-            .first()
-        )
-        if mine is None:
-            raise ReferenceConflict(f"{subject} is linked to a record in another company")
 
     def _sync_lines(
         self, spec: DocumentSpec, header: Any, line_values: list[dict[str, Any]]
-    ) -> None:
+    ) -> dict[str, int]:
         """Make the header's lines equal to the payload's, by the line's own ref.
 
-        Four outcomes per existing row: matched (updated in place, same id),
-        absent from the database (inserted), unmatched and unreferenced
-        (deleted), unmatched but referenced (cancelled in place). The last two
-        are the ones that need saying out loud. A line whose `source_ref` is NULL
-        was written by the extract importer before AutoCount owned this document,
-        and leaving it counted would count the same physical line twice - but
-        deleting one a loading plan or a stock transfer points at either destroys
-        that row (CASCADE) or orphans it (SET NULL). Cancelled satisfies both:
-        the demand is gone, the row a dependent needs is still there.
+        Five outcomes per line, counted for the verdict (D11, AC-V7-5):
+        `updated` (matched by its own existing `source_ref`), `adopted` (an
+        xlsx-era ref-less row claimed by `_adopt_lines`'s three-step match),
+        `created` (neither matched, so a fresh row), `deleted` (an unmatched
+        leftover row nothing points at) and `cancelled` (an unmatched leftover
+        row something still points at).
+
+        A line whose `source_ref` is NULL was written by the extract importer
+        before AutoCount owned this document, and leaving it counted would
+        count the same physical line twice - but deleting one a loading plan or
+        a stock transfer points at either destroys that row (CASCADE) or
+        orphans it (SET NULL). Cancelled satisfies both: the demand is gone,
+        the row a dependent needs is still there. Adoption (D11) exists so
+        that row is not manufactured fresh in the first place: the SAME
+        physical line, matched by what it actually is rather than replaced,
+        keeps every allocation, claim and GRN link that already hangs off it.
         """
         existing = (
             self.db.query(spec.line_model)
@@ -569,35 +969,201 @@ class DocumentIngestService:
             .all()
         )
         by_ref: dict[str, Any] = {}
-        stale = []
+        pool: list[Any] = []
+        # A second row sharing a ref another row already claims (should never
+        # happen, but the original code guarded it) - a leftover like any
+        # other, never a D11 adoption candidate since it already has A ref.
+        dup_ref: list[Any] = []
+        # S4 review fix: a ref-less row this system already cancelled - by an
+        # earlier absence, or the deletion endpoint - is not a live xlsx-era
+        # adoption candidate any more; matching a NEW DtlKey onto it would
+        # resurrect demand that was correctly retired. It still falls through
+        # to the leftover sweep below unchanged.
+        already_cancelled: list[Any] = []
         for row in existing:
             if row.source_ref and row.source_ref not in by_ref:
                 by_ref[row.source_ref] = row
+            elif row.source_ref:
+                dup_ref.append(row)
+            elif row.line_status == CANCELLED:
+                already_cancelled.append(row)
             else:
-                stale.append(row)
+                pool.append(row)
 
+        counts = {"adopted": 0, "created": 0, "updated": 0, "deleted": 0, "cancelled": 0}
+
+        unmatched: list[dict[str, Any]] = []
         for values in line_values:
             row = by_ref.pop(values["source_ref"], None)
-            if row is None:
-                row = spec.line_model(
-                    id=str(uuid.uuid4()),
-                    company_id=self.company_id,
-                    **{spec.line_fk: str(header.id)},
-                )
-                self.db.add(row)
+            if row is not None:
+                values.pop("line_number", None)
+                for column, value in values.items():
+                    setattr(row, column, value)
+                counts["updated"] += 1
+            else:
+                unmatched.append(values)
+
+        if unmatched and pool:
+            self._adopt_lines(spec, unmatched, pool, counts)
+
+        for values in unmatched:
+            row = spec.line_model(
+                id=str(uuid.uuid4()),
+                company_id=self.company_id,
+                **{spec.line_fk: str(header.id)},
+            )
+            self.db.add(row)
+            values.pop("line_number", None)
             for column, value in values.items():
                 setattr(row, column, value)
+            counts["created"] += 1
 
         line_table = spec.line_model.__tablename__
-        for row in [*by_ref.values(), *stale]:
-            if is_referenced(self.db, line_table, row.id):
+        # Perf round 5: the catalogue query behind `referrers_of` answers the
+        # same thing for every row of THIS line table in THIS sweep - fetched
+        # once here rather than once per row inside `is_referenced`.
+        line_referrers = referrers_of(self.db, line_table)
+        for row in [*by_ref.values(), *pool, *dup_ref, *already_cancelled]:
+            if is_referenced(self.db, line_table, row.id, referrers=line_referrers):
                 # Quantities and prices are left exactly as they were: this row
                 # is now evidence of what a transfer moved or a plan was built
                 # from, and rewriting it would falsify that record.
                 row.line_status = CANCELLED
+                counts["cancelled"] += 1
             else:
                 self.db.delete(row)
+                counts["deleted"] += 1
         self.db.flush()
+        return counts
+
+    def _adopt_lines(
+        self,
+        spec: DocumentSpec,
+        unmatched: list[dict[str, Any]],
+        pool: list[Any],
+        counts: dict[str, int],
+    ) -> None:
+        """D11: claim ref-less POOL rows for ref-less UNMATCHED incoming lines.
+
+        Three ordered passes over what the PREVIOUS pass left unclaimed:
+
+        1. exact `(product_id, warehouse_id-or-None, outstanding)` key, ties
+           among rows/lines sharing one key broken by position;
+        2. `(product_id, warehouse_id-or-None)` alone, only where exactly one
+           pool row remains for it;
+        3. position alone (incoming `line_number` order against the rows' own
+           `created_at, id` order), only where the remaining counts agree.
+
+        `outstanding` is `qty_ordered - qty_delivered|qty_received`, never
+        `qty_ordered` alone - the upload writes `qty_ordered = outstanding` on
+        an open xlsx-era line and `fulfilled + outstanding` on update, so
+        `qty_ordered` on such a row is not AutoCount's Qty; outstanding is the
+        one figure both sides agree on. Mutates `unmatched` and `pool` in
+        place, removing whatever it claims - what is left in `unmatched` is a
+        genuinely new line, what is left in `pool` is a genuinely stale row
+        for the caller's existing delete-or-cancel step.
+        """
+        delivered_field = spec.line_delivered_field
+        all_have_line_number = all(v.get("line_number") is not None for v in unmatched)
+
+        def _position(idx: int, values: dict[str, Any]):
+            return values["line_number"] if all_have_line_number else idx
+
+        def _row_created(row: Any):
+            return row.created_at or datetime.min
+
+        def _row_key(row: Any):
+            ordered = getattr(row, "qty_ordered", None) or Decimal("0")
+            delivered = getattr(row, delivered_field, None) or Decimal("0")
+            outstanding = (ordered - delivered).quantize(Decimal("0.0001"))
+            return (
+                str(row.product_id) if row.product_id else None,
+                str(row.warehouse_id) if row.warehouse_id else None,
+                outstanding,
+            )
+
+        def _line_key(values: dict[str, Any]):
+            ordered = values.get("qty_ordered") or Decimal("0")
+            delivered = values.get(delivered_field) or Decimal("0")
+            outstanding = (ordered - delivered).quantize(Decimal("0.0001"))
+            product_id = values.get("product_id")
+            warehouse_id = values.get("warehouse_id")
+            return (
+                str(product_id) if product_id else None,
+                str(warehouse_id) if warehouse_id else None,
+                outstanding,
+            )
+
+        claimed_lines: set[int] = set()
+        claimed_rows: set[int] = set()
+
+        def _claim(idx: int, values: dict[str, Any], row: Any) -> None:
+            values.pop("line_number", None)
+            for column, value in values.items():
+                setattr(row, column, value)
+            counts["adopted"] += 1
+            claimed_lines.add(idx)
+            claimed_rows.add(id(row))
+
+        # ---- pass 1: exact (product, warehouse, outstanding) key ----
+        pool_by_key: dict[tuple, list] = {}
+        for row in pool:
+            pool_by_key.setdefault(_row_key(row), []).append(row)
+        for rows in pool_by_key.values():
+            rows.sort(key=lambda r: (_row_created(r), str(r.id)))
+
+        lines_by_key: dict[tuple, list] = {}
+        for idx, values in enumerate(unmatched):
+            lines_by_key.setdefault(_line_key(values), []).append(idx)
+        for indices in lines_by_key.values():
+            indices.sort(key=lambda i: _position(i, unmatched[i]))
+
+        for key, indices in lines_by_key.items():
+            rows = pool_by_key.get(key, [])
+            for idx, row in zip(indices, rows):
+                _claim(idx, unmatched[idx], row)
+
+        # ---- pass 2: (product, warehouse) alone, exactly one row remaining ----
+        remaining_indices = sorted(
+            (i for i in range(len(unmatched)) if i not in claimed_lines),
+            key=lambda i: _position(i, unmatched[i]),
+        )
+        pw_pool: dict[tuple, list] = {}
+        for row in pool:
+            if id(row) in claimed_rows:
+                continue
+            pw_pool.setdefault(
+                (
+                    str(row.product_id) if row.product_id else None,
+                    str(row.warehouse_id) if row.warehouse_id else None,
+                ),
+                [],
+            ).append(row)
+
+        for idx in remaining_indices:
+            values = unmatched[idx]
+            pw_key = (
+                str(values.get("product_id")) if values.get("product_id") else None,
+                str(values.get("warehouse_id")) if values.get("warehouse_id") else None,
+            )
+            rows = pw_pool.get(pw_key)
+            if rows and len(rows) == 1:
+                row = rows[0]
+                _claim(idx, values, row)
+                pw_pool[pw_key] = []
+
+        # ---- pass 3: position alone, only when the remaining counts agree ----
+        remaining_indices = [i for i in range(len(unmatched)) if i not in claimed_lines]
+        remaining_pool = [r for r in pool if id(r) not in claimed_rows]
+        if remaining_indices and len(remaining_indices) == len(remaining_pool):
+            remaining_indices.sort(key=lambda i: _position(i, unmatched[i]))
+            remaining_pool.sort(key=lambda r: (_row_created(r), str(r.id)))
+            for idx, row in zip(remaining_indices, remaining_pool):
+                _claim(idx, unmatched[idx], row)
+
+        for idx in sorted(claimed_lines, reverse=True):
+            del unmatched[idx]
+        pool[:] = [r for r in pool if id(r) not in claimed_rows]
 
     def _diff(self, header: Any, values: dict[str, Any]) -> Optional[dict[str, dict[str, Any]]]:
         """Header values this document would replace, dry run only.
@@ -618,18 +1184,28 @@ class DocumentIngestService:
 
 
 def _line_status(header_status: str, qty_ordered: Any, qty_delivered: Any) -> str:
-    """`cancelled`, `fulfilled` or `open`, in that order of precedence.
+    """`cancelled`, `closed` or `open`, in that order of precedence.
 
     Cancellation wins over completeness: a cancelled order's fully delivered line
-    is still cancelled, and reading it as `fulfilled` would leave it counted as
+    is still cancelled, and reading it as settled would leave it counted as
     supply that arrived.
+
+    `closed`, not `fulfilled` (fix round 3, parity review): every OTHER writer
+    of `sales_order_lines`/`purchase_order_lines.line_status` already uses
+    `closed` for a settled line - `outstanding_import_service`'s own upload
+    (`_preload_closed_lines`/`_match_closed_line`), `project_so_ingest_service
+    .RETIRED_LINE_STATUS`, `project_so_reconciliation_service.CORE_LINE_CLOSED`
+    - and the shipping-order side of THIS SAME ingest surface
+    (`shipping_order_ingest_service.LINE_CLOSED`) already writes `closed` too.
+    A push settling a line was the one writer still spelling it `fulfilled`,
+    which is not a word any of those readers looked for.
     """
     if header_status == CANCELLED:
         return CANCELLED
     ordered = qty_ordered or 0
     delivered = qty_delivered or 0
     if ordered > 0 and delivered >= ordered:
-        return "fulfilled"
+        return "closed"
     return "open"
 
 
@@ -690,8 +1266,15 @@ class DocumentReadService:
         for column, field in spec.header_fields:
             record[field] = getattr(header, column)
         record["status"] = _canonical_status(spec, header.status)
-        for column, field, model in spec.header_refs:
+        for column, field, model, _code_field, _name_field in spec.header_refs:
             record[field] = self._ref_of(model, getattr(header, column))
+        # `order_type` (D4) is read-only here on purpose - NOT added to
+        # `header_fields`, which `_header_values` also uses to build the write
+        # side, where it would restate the payload's value unconditionally and
+        # break the fill-only rule (AC-V2-1). `PurchaseOrder` has no such
+        # column, hence the guard rather than a per-entity literal.
+        if hasattr(header, "order_type"):
+            record["order_type"] = header.order_type
         record["lines"] = [
             self._line(spec, line) for line in self._lines(spec, header)
         ]
@@ -713,7 +1296,7 @@ class DocumentReadService:
             "source_ref": line.source_ref,
             "entity_id": str(line.id),
         }
-        for column, field, model in spec.line_refs:
+        for column, field, model, _code_field, _name_field in spec.line_refs:
             record[field] = self._ref_of(model, getattr(line, column))
         for column, field in spec.line_fields:
             record[field] = getattr(line, column)

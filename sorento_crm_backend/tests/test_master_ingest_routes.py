@@ -29,6 +29,7 @@ that matters there is the *absence* of writes, not the presence of the flag.
 """
 from __future__ import annotations
 
+import inspect
 import uuid
 from decimal import Decimal
 
@@ -301,6 +302,63 @@ class TestHappyPath:
         body = res.json()
         assert body["records"][0]["name"] == "Depot"
         assert body["not_found"] == []
+
+
+def _called_from(func_name: str, filename_suffix: str) -> bool:
+    """True when the immediate caller is `func_name` in a file ending
+    `filename_suffix` - lets a monkeypatched `db.flush()` fail only for the
+    ONE explicit call a fix targets, not an unrelated autoflush or the
+    route's own final `db.commit()`. Mirrors the identical helper in
+    `tests/test_ingest_review_fixes.py`."""
+    frame = inspect.currentframe()
+    caller = frame.f_back.f_back if frame and frame.f_back else None
+    if caller is None:
+        return False
+    code = caller.f_code
+    return code.co_name == func_name and code.co_filename.endswith(filename_suffix)
+
+
+class TestSEC3GenericMasterExceptionsAreSanitized:
+    """Fix round 2: `master_ingest_service`'s generic exception path never
+    echoed `str(exc)` to the caller, unlike the documents/shipping-order
+    services SEC3 already sanitized in review round 1 - grepped for
+    `str(exc)` and found this one still leaking."""
+
+    def test_a_forced_insert_failure_never_leaks_sql_or_uuids_into_the_verdict(
+        self, client, db, company_code, monkeypatch
+    ):
+        # `_apply`'s CREATE path is a raw `db.execute(INSERT ...)`, not a
+        # `db.flush()` - the surgical target here is `execute`, scoped to the
+        # one call `_apply` itself makes so the route's own reads/writes
+        # elsewhere in the request are unaffected.
+        leaking = (
+            "INSERT INTO customers (id, customer_code) VALUES ('x') duplicate "
+            "key value violates unique constraint; Key "
+            "(id)=(5b8b9c10-3333-4222-8333-4444555566d1) already exists."
+        )
+        real_execute = db.execute
+
+        def _boom(*args, **kwargs):
+            if _called_from("_apply", "master_ingest_service.py"):
+                raise RuntimeError(leaking)
+            return real_execute(*args, **kwargs)
+
+        monkeypatch.setattr(db, "execute", _boom)
+
+        res = client.post(
+            "/ingest/customers",
+            json={
+                "companyCode": company_code,
+                "records": [_wh(code="ZZT-CUST-BOOM", name="Boom Sdn Bhd")],
+            },
+        )
+
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "failed", res.text
+        assert "INSERT" not in res.text
+        assert "5b8b9c10-3333-4222-8333-4444555566d1" not in res.text
+        assert entry["errors"]["_"] == "internal error; see server logs"
 
 
 class TestDryRun:

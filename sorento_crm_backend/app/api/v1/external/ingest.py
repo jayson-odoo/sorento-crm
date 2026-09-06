@@ -30,7 +30,9 @@ would cost it a second round trip. See ``company_anchor.py``.
 """
 from __future__ import annotations
 
+import json
 import logging
+from typing import Optional
 
 from fastapi import APIRouter, Body, Depends, Path, Query, status
 from sqlalchemy.orm import Session
@@ -53,6 +55,14 @@ from app.services.master_ingest_service import (
     UnsupportedIngestEntity,
 )
 from app.services.master_read_service import MasterReadService
+from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+from app.services.scm import plan_exception_service, reorder_run_service
+from app.services.scm.outstanding_import_service import supersede_crm_raised_pos
+from app.services.shipping_order_ingest_service import (
+    SHIPPING_ORDER_ENTITIES,
+    ShippingOrderIngestService,
+    ShippingOrderReadService,
+)
 
 ingest_router = APIRouter()
 read_router = APIRouter()
@@ -72,6 +82,8 @@ INGEST_PERMISSIONS = {
     # editing one on the SCM screen, so it is the same slug.
     "sales_orders": "scm.sales_orders.edit",
     "purchase_orders": "scm.purchase_orders.edit",
+    # Shipping orders (S3) - no header table, but the same slug shape.
+    "shipping_orders": "scm.shipping_orders.edit",
 }
 READ_PERMISSIONS = {
     "product_categories": "master_data.product_categories.view",
@@ -83,6 +95,7 @@ READ_PERMISSIONS = {
     "sales_agents": "master_data.sales_agents.view",
     "sales_orders": "scm.sales_orders.view",
     "purchase_orders": "scm.purchase_orders.view",
+    "shipping_orders": "scm.shipping_orders.view",
 }
 # Deleting through the ESB is its own act, so it takes its own slug on top of the
 # ingest guard the router already carries (group A4 mounts the route). Declared
@@ -99,6 +112,7 @@ DELETE_PERMISSIONS = {
     "sales_agents": "master_data.sales_agents.delete",
     "sales_orders": "scm.sales_orders.delete",
     "purchase_orders": "scm.purchase_orders.delete",
+    "shipping_orders": "scm.shipping_orders.delete",
 }
 
 # A batch cap the ESB can design against. Exceeding it errors rather than
@@ -106,11 +120,168 @@ DELETE_PERMISSIONS = {
 # complete is worse than a refusal.
 MAX_BATCH = 1000
 
+# Fix round 6 (live need): the batch summary line names how many records
+# failed or stayed retryable, but not WHICH ones - so a record retryable
+# across several pushes had no server-side trail at all beyond that count.
+# Capped so one pathological batch (every record failing the same way)
+# cannot turn this into its own flood.
+MAX_RECORD_LOG_LINES = 50
+# Error VALUES are free text (a resolver's own message, or a raw exception
+# string on the sanitized paths) - capped so one long one cannot blow out a
+# log line; the KEYS (field names) are never truncated, they are the whole
+# point of a machine-readable error.
+_ERROR_VALUE_LOG_LIMIT = 200
 
-# Masters and documents on one surface. The set is built from both registries
-# rather than written out, so an entity that exists in only one of them cannot
-# become reachable here by being spelled correctly in this file.
-SUPPORTED_ENTITIES = set(ENTITY_SPECS) | set(DOCUMENT_ENTITIES)
+
+def _log_record_outcomes(
+    entity: str, integration_name, company_id: str, result
+) -> None:
+    """One INFO line per FAILED/RETRYABLE record, capped at `MAX_RECORD_LOG_LINES`.
+
+    Never logs a payload field beyond `source_ref` and the record's own
+    `errors` dict - no line bodies, no customer/agent/product names, nothing
+    that was actually sent. Skipped entirely for a dry run: a preview never
+    happened as far as the operational log is concerned, the same reason the
+    batch summary line's own counts are for the real run only in spirit
+    (dry-run callers read the response body, not the server log).
+    """
+    logged = 0
+    suppressed = 0
+    for record in result.records:
+        if record.outcome.value not in ("failed", "retryable"):
+            continue
+        if logged >= MAX_RECORD_LOG_LINES:
+            suppressed += 1
+            continue
+        errors = {
+            field: (reason[:_ERROR_VALUE_LOG_LIMIT] if isinstance(reason, str) else reason)
+            for field, reason in record.errors.items()
+        }
+        logger.info(
+            "ingest.record entity=%s integration=%s company=%s source_ref=%s "
+            "outcome=%s errors=%s",
+            entity,
+            integration_name,
+            company_id,
+            record.source_ref,
+            record.outcome.value,
+            json.dumps(errors),
+        )
+        logged += 1
+    if suppressed:
+        logger.info(
+            "ingest.record_overflow entity=%s suppressed=%d", entity, suppressed
+        )
+
+
+# Masters, documents and shipping orders on one surface. The set is built from
+# every registry rather than written out, so an entity that exists in none of
+# them cannot become reachable here by being spelled correctly in this file.
+SUPPORTED_ENTITIES = set(ENTITY_SPECS) | set(DOCUMENT_ENTITIES) | set(SHIPPING_ORDER_ENTITIES)
+
+# Bumped whenever the wire shape of an entity changes in a way the ESB must gate
+# on (a new required field, a changed enum). Read by `GET /external/contract`
+# (D8) so the ESB can check compatibility without trial-and-error against this
+# router.
+CONTRACT_VERSION = 2
+
+
+def _run_document_hooks(
+    db: Session, entity: str, service, *, actor: Optional[str]
+) -> None:
+    """D7/S5 (plan section 2.6): post-write reactions, non-dry only.
+
+    Runs AFTER the batch's own `db.commit()` - every hook here reacts to a
+    write that has already landed, never to one this call itself decides.
+    Each reaction is its OWN try/except -> `logger.warning` and its OWN
+    commit: a failed reaction must cost the operator only that reaction (the
+    next push produces it again), never the ingest that already succeeded,
+    and one reaction's failure must not roll back a sibling reaction that
+    already committed.
+
+    `actor` (N1 review fix) is the calling principal's own user id - the
+    integration's `act_as_user_id`, resolved once by `get_external_api_user`
+    - threaded through to whichever hook records who/what caused the
+    reaction, the same attribution an interactive user's action gets.
+
+    Only `sales_orders` and `purchase_orders` react here - a shipping order's
+    lines are closed-by-absence WITHIN the pushed document only (D7); the
+    book-wide reconciliation the upload does is the ESB's own deletion call,
+    not a hook on this route.
+    """
+    if entity == "sales_orders":
+        _run_plan_exception_hook(db, service, actor=actor)
+    elif entity == "purchase_orders":
+        _run_supersede_and_relink_hooks(db, service, actor=actor)
+
+
+def _run_plan_exception_hook(db: Session, service, *, actor: Optional[str]) -> None:
+    """AC-V5-1: a before/after plan-exception batch over this push's products.
+
+    `before` is `service.plan_exception_before` - captured INSIDE the service,
+    per product, the first time this batch touched it and before anything was
+    written for it (mirrors `outstanding_import_service.apply`'s own
+    `before_positions`, taken while the old position is still the one in the
+    database). `after` is read here, post-commit, over every product the
+    batch actually touched. Called through the MODULE attribute
+    (`plan_exception_service.generate_batch`, not a bound import) so a caller
+    that monkeypatches the module - the ESB's own smoke tests, this slice's
+    own failure-is-logged test - sees the same function this route runs.
+    """
+    if not service.touched_product_ids or not service.so_numbers:
+        return
+    try:
+        after = plan_exception_service.snapshot(db, list(service.touched_product_ids))
+        current = reorder_run_service.today_or_latest_run(db)
+        # A run still being built contradicts nothing yet (mirrors the upload's
+        # own guard) - only a completed plan can be contradicted.
+        if current and current["row"].get("status") != "completed":
+            current = None
+        plan_exception_service.generate_batch(
+            db,
+            run_id=str(current["row"]["id"]) if current else None,
+            before=service.plan_exception_before,
+            after=after,
+            # The ingest's own count of changed documents, the same role
+            # `diff.counts` plays for the upload (AC-D2b's rule, carried
+            # through unchanged rather than recounted from the exceptions).
+            delta_count=len(service.written_header_ids),
+            source_documents=sorted(service.so_numbers),
+            actor=actor,
+        )
+        db.commit()
+    except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
+        db.rollback()
+        logger.warning("ingest.plan_exception_hook_failed", exc_info=True)
+
+
+def _run_supersede_and_relink_hooks(db: Session, service, *, actor: Optional[str]) -> None:
+    """AC-V5-2: retire CRM-raised POs this push confirms, then relink placements.
+
+    Two hooks, two try/except blocks, two commits - not one wrapping both -
+    so a relink failure can never undo a supersession that already landed,
+    and vice versa.
+    """
+    if service.po_supersede_triples:
+        try:
+            supersede_crm_raised_pos(db, service.po_supersede_triples)
+            db.commit()
+        except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
+            db.rollback()
+            logger.warning("ingest.supersede_crm_raised_pos_failed", exc_info=True)
+
+    if service.written_header_ids:
+        try:
+            with db.begin_nested():
+                ProjectOrderInquiryService(db).relink_to_matching_lines(
+                    list(service.written_header_ids),
+                    actor_user_id=actor,
+                    trigger="autocount_ingest",
+                )
+            db.commit()
+        except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
+            db.rollback()
+            logger.warning("ingest.relink_to_matching_lines_failed", exc_info=True)
 
 
 def _entity(entity: str) -> str:
@@ -174,11 +345,17 @@ async def ingest_masters(
 
     company_id = resolve_company_anchor(db, payload, current_user)
 
-    # One endpoint, two services. A document owns its lines and points at five
-    # masters, which is a different write shape from a master row - but the
-    # envelope, the batch cap, the verdicts and the dry-run rollback are the
-    # caller's contract and must not fork, so the branch is here and nowhere else.
-    ingester = DocumentIngestService if entity in DOCUMENT_ENTITIES else MasterIngestService
+    # One endpoint, three services. A document owns its lines and points at
+    # five masters, and a shipping order owns lines with no header at all -
+    # both different write shapes from a master row - but the envelope, the
+    # batch cap, the verdicts and the dry-run rollback are the caller's
+    # contract and must not fork, so the branch is here and nowhere else.
+    if entity in SHIPPING_ORDER_ENTITIES:
+        ingester = ShippingOrderIngestService
+    elif entity in DOCUMENT_ENTITIES:
+        ingester = DocumentIngestService
+    else:
+        ingester = MasterIngestService
     service = ingester(
         db,
         integration_id=current_user.get("integration_id"),
@@ -198,6 +375,13 @@ async def ingest_masters(
         # Committed once for the batch. Each record already succeeded or rolled
         # back inside its own savepoint, so this persists exactly the good ones.
         db.commit()
+        # D7/S5: post-write hooks, non-dry only (AC-V5-4) - `MasterIngestService`
+        # and `ShippingOrderIngestService` carry none of the attributes these
+        # read, so only a `DocumentIngestService` batch reaches this.
+        if isinstance(service, DocumentIngestService):
+            _run_document_hooks(
+                db, entity, service, actor=current_user.get("id")
+            )
 
     logger.info(
         "ingest.batch entity=%s integration=%s company=%s dry_run=%s "
@@ -211,6 +395,10 @@ async def ingest_masters(
         result.failed,
         result.retryable,
     )
+    if not dry_run:
+        _log_record_outcomes(
+            entity, current_user.get("integration_name"), company_id, result
+        )
     return result.as_dict()
 
 
@@ -333,5 +521,10 @@ async def read_current_state(
 
     company_id = resolve_company_anchor(db, payload, current_user)
 
-    reader = DocumentReadService if entity in DOCUMENT_ENTITIES else MasterReadService
+    if entity in SHIPPING_ORDER_ENTITIES:
+        reader = ShippingOrderReadService
+    elif entity in DOCUMENT_ENTITIES:
+        reader = DocumentReadService
+    else:
+        reader = MasterReadService
     return reader(db, company_id=company_id).current_state(entity, source_refs)

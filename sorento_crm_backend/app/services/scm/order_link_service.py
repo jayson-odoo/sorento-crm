@@ -215,6 +215,10 @@ SOURCE_PO_UPLOAD = "po_upload"
 #: The audit row `ProjectOrderInquiryService._write_link` writes beside every placement.
 SOURCE_ORDER_INQUIRY = "order_inquiry"
 
+#: The ESB naming an SO/PO pairing via `from_so_numbers` on a pushed document
+#: (V4, migration 473_scm_claim_autocount_source).
+SOURCE_AUTOCOUNT = "autocount"
+
 
 def find_claim(
     db: Session,
@@ -295,6 +299,72 @@ def claim_book_pairing(
     )
     db.add(claim)
     return claim
+
+
+def write_claims_for_lines(
+    db: Session,
+    *,
+    company_id: Optional[str],
+    document_number: str,
+    rows: Sequence,
+    wanted: list[tuple[str, list[str]]],
+    id_attr: str,
+) -> None:
+    """The shared body of a document's or a shipping order's `from_so_numbers`
+    claim writing (V4, S7 dedup - previously duplicated between
+    `DocumentIngestService._write_order_link_claims` and
+    `ShippingOrderIngestService._write_order_link_claims`).
+
+    `rows` are the line/allocation rows the caller already fetched (already
+    flushed, so each carries a real id), keyed here by THEIR OWN `source_ref`
+    (the DtlKey) - never by position, since `wanted` and `rows` are not
+    guaranteed the same order. `wanted` is `(line_source_ref, so_numbers)`
+    pairs read off the payload. `id_attr` names which column on the claim
+    this row's id lands in - `"po_line_id"` for a purchase-order line,
+    `"spo_allocation_id"` for a shipping-order line - so ONE loop serves
+    both callers without either knowing about the other's table.
+    """
+    if not wanted:
+        return
+
+    rows_by_ref = {row.source_ref: row for row in rows}
+    product_ids = {row.product_id for row in rows if row.product_id}
+    codes = (
+        dict(
+            db.query(Product.id, Product.product_code)
+            .filter(Product.id.in_(product_ids))
+            .all()
+        )
+        if product_ids
+        else {}
+    )
+
+    seen: set[tuple[str, str, Optional[str]]] = set()
+    so_numbers: set[str] = set()
+    for source_ref, numbers in wanted:
+        row = rows_by_ref.get(source_ref)
+        if row is None:
+            continue
+        item_code = codes.get(row.product_id)
+        for number in numbers:
+            key = (number, document_number, item_code)
+            if key in seen:
+                continue
+            seen.add(key)
+            claim_book_pairing(
+                db,
+                company_id=company_id,
+                so_number=number,
+                po_number=document_number,
+                item_code=item_code,
+                source=SOURCE_AUTOCOUNT,
+                **{id_attr: str(row.id)},
+            )
+            so_numbers.add(number)
+
+    if so_numbers:
+        db.flush()
+        resolve(db, so_numbers=so_numbers)
 
 
 def _linked_by_target(db: Session, target_ids: set[str]) -> dict[str, Decimal]:

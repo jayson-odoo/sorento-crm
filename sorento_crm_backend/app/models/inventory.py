@@ -27,7 +27,11 @@ class Warehouse(Base, CompanyScopedMixin):
     __tablename__ = "warehouses"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    warehouse_code = Column(String(50), unique=True, nullable=False)
+    # Unique PER COMPANY, not globally (migration 305): composite unique index in
+    # __table_args__ below. A bare unique=True here would make create_all build
+    # the old global warehouses_warehouse_code_key and reject the same code in a
+    # second company (fix round 4).
+    warehouse_code = Column(String(50), nullable=False)
     warehouse_name = Column(String(150), nullable=True)
     location = Column(String(255), nullable=True)
     manager_id = Column(UUID(as_uuid=False), nullable=True)
@@ -77,6 +81,11 @@ class Warehouse(Base, CompanyScopedMixin):
     destination_picking_lines = relationship("PickingLine", back_populates="destination_warehouse", foreign_keys="[PickingLine.destination_warehouse_id]")
     
     __table_args__ = (
+        Index(
+            "uq_warehouses_company_warehouse_code",
+            "company_id", "warehouse_code",
+            unique=True,
+        ),
         Index("ix_warehouses_is_active", "is_active"),
         Index("ix_warehouses_manager_id", "manager_id"),
     )

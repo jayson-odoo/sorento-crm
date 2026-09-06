@@ -51,6 +51,7 @@ from app.api.v1.external import (
     ingest,
     media,
     chat,
+    contract,
 )
 
 router = APIRouter()
@@ -260,4 +261,10 @@ router.include_router(
         # 403 "Module not enabled: chatbot" (AC-006).
         Depends(require_module_enabled_with_api_key("chatbot")),
     ],
+)
+router.include_router(
+    contract.router,
+    prefix="/contract",
+    tags=["external"],
+    dependencies=[Depends(require_external_permission(EXTERNAL_ENDPOINT_PERMISSIONS["contract"]))],
 )

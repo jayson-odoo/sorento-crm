@@ -54,6 +54,7 @@ from typing import Any, Callable, Optional
 
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.schemas.canonical_masters import (
@@ -75,6 +76,48 @@ from app.services.integration_reference_service import (
 from app.services.scm.sales_agent_service import normalize_code as _normalize_agent_code
 
 logger = logging.getLogger(__name__)
+
+#: SEC3 (review round 1). The verdict body is read by the ESB and logged
+#: wherever it forwards; a non-domain exception's own `str(exc)` routinely
+#: quotes the failed SQL statement, a table/column name, or a raw UUID -
+#: an internal detail an external caller has no business seeing. Every
+#: generic `except Exception` across the three ingest surfaces and the
+#: deletion service returns this fixed string instead and logs the real one
+#: with `exc_info=True`. A DOMAIN exception (`MissingReference`,
+#: `ReferenceConflict`, `_UnknownStatus`, a pydantic `ValidationError`) is
+#: authored FOR the caller and keeps its own message - only the catch-all
+#: is sanitised.
+INTERNAL_ERROR_MESSAGE = "internal error; see server logs"
+
+
+def integrity_conflict_errors(exc: IntegrityError) -> dict[str, str]:
+    """A per-record verdict body for a unique-constraint violation (fix round 4,
+    BUG B), shared by all three ingest surfaces (masters/documents/shipping
+    orders) so a two-company push that races a code/number can name what
+    collided instead of falling through to `INTERNAL_ERROR_MESSAGE`.
+
+    Reads psycopg2's own diagnostics off ``exc.orig`` rather than ``str(exc)``,
+    which quotes the failed statement in full - `constraint_name` says WHICH
+    unique index collided (e.g. `uq_warehouses_company_warehouse_code`) and
+    `message_detail` is the bare DETAIL line ("Key (company_id,
+    warehouse_code)=(..., BRW) already exists."), never the SQL itself.
+
+    `errors["code"]` when the constraint parsed (the expected shape for a
+    natural-key collision on any of these surfaces - `code` is the wire field
+    every `CanonicalXxx.code` masters payload and the v2 ladder's code rungs
+    are spelled under); `errors["_"]` for the "unknown constraint" case where
+    the DBAPI driver exposed no diagnostics at all to name one by.
+    """
+    orig = getattr(exc, "orig", None)
+    diag = getattr(orig, "diag", None)
+    constraint = getattr(diag, "constraint_name", None) if diag else None
+    detail = getattr(diag, "message_detail", None) if diag else None
+    if constraint:
+        message = f"conflict: {constraint}"
+        if detail:
+            message = f"{message} ({detail})"
+        return {"code": message}
+    return {"_": "conflict: unique constraint"}
 
 
 class UnsupportedIngestEntity(ValueError):
@@ -110,6 +153,27 @@ class RecordResult:
     # overwritten (a create), which is a different statement from an empty dict
     # (an existing row matched, but no value actually changes).
     diff: Optional[dict[str, dict[str, Any]]] = None
+    # Fixed-vocabulary notices that do not fail the record - e.g. a back-created
+    # customer or an unresolved warehouse NULLed onto the line (D9/D10). Same
+    # rule as `errors`: omitted from `as_dict()` when empty.
+    warnings: list[str] = field(default_factory=list)
+    # Documents only (D11): per-line outcome counts for this record - adopted
+    # (an xlsx-era ref-less row claimed by the three-step match), created,
+    # updated (matched by its own existing source_ref), deleted, cancelled.
+    # None for a master record (there are no lines) and omitted from
+    # `as_dict()` in that case, same rule as `diff`.
+    lines: Optional[dict[str, int]] = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "source_ref": self.source_ref,
+            "outcome": self.outcome.value,
+            "entity_id": self.entity_id,
+            **({"errors": self.errors} if self.errors else {}),
+            **({"diff": self.diff} if self.diff is not None else {}),
+            **({"warnings": self.warnings} if self.warnings else {}),
+            **({"lines": self.lines} if self.lines is not None else {}),
+        }
 
 
 @dataclass
@@ -146,16 +210,7 @@ class IngestResult:
                 "failed": self.failed,
                 "retryable": self.retryable,
             },
-            "records": [
-                {
-                    "source_ref": r.source_ref,
-                    "outcome": r.outcome.value,
-                    "entity_id": r.entity_id,
-                    **({"errors": r.errors} if r.errors else {}),
-                    **({"diff": r.diff} if r.diff is not None else {}),
-                }
-                for r in self.records
-            ],
+            "records": [r.as_dict() for r in self.records],
         }
 
 
@@ -243,8 +298,10 @@ def _customer_columns(payload: Any, db: Session, company_id: str) -> dict[str, A
         "phone_number": payload.phone_number,
         "registration_number": payload.registration_number,
         "tax_id": payload.tax_id,
-        "credit_limit": payload.credit_limit,
-        "payment_terms_days": payload.payment_terms_days,
+        # `credit_limit` / `payment_terms_days` (fix-round-2 BUG B): no column
+        # on `customers` yet - accepted on `CanonicalCustomer` so a v1 payload
+        # still validates, but not written; every customers push was failing
+        # with the raw psycopg2 UndefinedColumn message before this.
         "country": payload.country,
         "is_active": payload.is_active,
     }
@@ -438,9 +495,19 @@ class MasterIngestService:
                 outcome=IngestOutcome.FAILED,
                 errors=_field_errors(exc),
             )
-        except TypeError as exc:
+        except TypeError:
+            # SEC3-style (fix-round-2): a malformed body, never the caller's
+            # business - logged with exc_info, never echoed.
+            logger.warning(
+                "ingest.record_malformed entity=%s source_ref=%s",
+                entity_type,
+                source_ref,
+                exc_info=True,
+            )
             return RecordResult(
-                source_ref=source_ref, outcome=IngestOutcome.FAILED, errors={"_": str(exc)}
+                source_ref=source_ref,
+                outcome=IngestOutcome.FAILED,
+                errors={"_": INTERNAL_ERROR_MESSAGE},
             )
 
         # Each record commits or rolls back alone. Without this savepoint a
@@ -470,18 +537,37 @@ class MasterIngestService:
                 outcome=IngestOutcome.FAILED,
                 errors={"source_ref": str(exc)},
             )
-        except Exception as exc:  # noqa: BLE001 - one record's failure, not the batch's
+        except IntegrityError as exc:
+            # Fix round 4, BUG B: a unique-constraint race (two companies, or a
+            # concurrent push of the same code) - named by constraint, never by
+            # `str(exc)`'s full SQL statement.
             savepoint.rollback()
             logger.warning(
-                "ingest.record_failed entity=%s source_ref=%s error=%s",
+                "ingest.integrity_conflict entity=%s source_ref=%s",
                 entity_type,
                 payload.source_ref,
-                exc,
+                exc_info=True,
             )
             return RecordResult(
                 source_ref=payload.source_ref,
                 outcome=IngestOutcome.FAILED,
-                errors={"_": str(exc)},
+                errors=integrity_conflict_errors(exc),
+            )
+        except Exception:  # noqa: BLE001 - one record's failure, not the batch's
+            savepoint.rollback()
+            # SEC3 (fix-round-2): never echo a non-domain exception's own
+            # message - it routinely quotes SQL, a table/column name or a raw
+            # UUID. Logged with exc_info=True instead.
+            logger.warning(
+                "ingest.record_failed entity=%s source_ref=%s",
+                entity_type,
+                payload.source_ref,
+                exc_info=True,
+            )
+            return RecordResult(
+                source_ref=payload.source_ref,
+                outcome=IngestOutcome.FAILED,
+                errors={"_": INTERNAL_ERROR_MESSAGE},
             )
 
     def _apply(

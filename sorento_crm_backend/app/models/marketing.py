@@ -235,20 +235,36 @@ class CampaignType(Base, CompanyScopedMixin):
     __tablename__ = "campaign_types"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    type_code = Column(String(50), unique=True, nullable=False)
+    # Unique PER COMPANY, not globally (migration 305): composite unique index in
+    # __table_args__ below. A bare unique=True here would make create_all build
+    # the old global campaign_types_type_code_key/uq_campaign_types_type_code and
+    # reject the same code in a second company (fix round 4).
+    type_code = Column(String(50), nullable=False)
     type_name = Column(String(150), nullable=False)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
-    
+
     campaigns = relationship("MarketingCampaign", back_populates="campaign_type")
+
+    __table_args__ = (
+        Index(
+            "uq_campaign_types_company_type_code",
+            "company_id", "type_code",
+            unique=True,
+        ),
+    )
 
 
 class MarketingCampaign(Base, CompanyScopedMixin):
     __tablename__ = "marketing_campaigns"
     
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
-    campaign_code = Column(String(50), unique=True, nullable=False)
+    # Unique PER COMPANY, not globally (migration 305): composite unique index in
+    # __table_args__ below. A bare unique=True here would make create_all build
+    # the old global marketing_campaigns_campaign_code_key and reject the same
+    # code in a second company (fix round 4).
+    campaign_code = Column(String(50), nullable=False)
     campaign_name = Column(String(255), nullable=False)
     campaign_type_id = Column(UUID(as_uuid=False), ForeignKey("campaign_types.id"), nullable=False)
     description = Column(Text, nullable=True)
@@ -264,6 +280,11 @@ class MarketingCampaign(Base, CompanyScopedMixin):
     campaign_type = relationship("CampaignType", back_populates="campaigns")
     
     __table_args__ = (
+        Index(
+            "uq_marketing_campaigns_company_campaign_code",
+            "company_id", "campaign_code",
+            unique=True,
+        ),
         Index("ix_marketing_campaigns_campaign_type_id", "campaign_type_id"),
         Index("ix_marketing_campaigns_status", "status"),
         Index("ix_marketing_campaigns_start_date", "start_date"),

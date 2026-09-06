@@ -38,7 +38,18 @@ class ReferenceConflict(ValueError):
     Surfaced rather than silently ignored: the caller believes it linked its
     record, and returning the pre-existing mapping would leave it pointing
     somewhere else entirely while reporting success.
+
+    `field_name` names the verdict-error key a catching `_ingest_one` should
+    file this under - defaults to `"source_ref"`, the document/master's own
+    identity field, which is what every pre-v2 raise site means. A caller
+    naming a SPECIFIC field instead (v2's per-master ladder, e.g.
+    `"customer_ref"`) passes it explicitly so the verdict names which
+    reference conflicted, not just that the record failed.
     """
+
+    def __init__(self, message: str, *, field_name: str = "source_ref"):
+        super().__init__(message)
+        self.field_name = field_name
 
 
 # The tables the ESB writes. Values are real table names and are only ever
@@ -124,6 +135,28 @@ class IntegrationReferenceService:
             existing.last_synced_at = datetime.utcnow()
             self.db.flush()
             return existing
+
+        # Fix-round-2 BUG A, layer 1: `entity_id` may already be registered
+        # under a DIFFERENT source_ref - the masters push linked this product
+        # as "ac_sim:57", and a document's own code rung then resolves the
+        # SAME product and tries to link it again as "ac_sim:174". The unique
+        # index is on `(entity_type, entity_id)` alone (one entity, one
+        # reference, ever), so the INSERT below would hit it and surface as a
+        # raw `IntegrityError` to whichever caller forgot to check first.
+        # Checked here too, not only in `MasterRefResolver` (layer 2), so ANY
+        # caller of `link()` gets a domain exception instead of a DB one.
+        by_entity = (
+            self.db.query(IntegrationReference)
+            .filter(
+                IntegrationReference.entity_type == entity_type,
+                IntegrationReference.entity_id == str(entity_id),
+            )
+            .first()
+        )
+        if by_entity is not None and by_entity.source_ref != source_ref:
+            raise ReferenceConflict(
+                f"{entity_type} {entity_id} is already registered under another reference"
+            )
 
         row = IntegrationReference(
             entity_type=entity_type,

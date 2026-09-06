@@ -606,7 +606,10 @@ class TestBatchSafety:
         assert verdicts[first_ref]["outcome"] == "deleted"
         assert verdicts[last_ref]["outcome"] == "deleted"
         assert verdicts[boom_ref]["outcome"] == "failed"
-        assert MARKER in verdicts[boom_ref]["errors"]["_"]
+        # SEC3 (review round 1): a non-domain exception's own message is
+        # never echoed to the caller - it is logged server-side instead.
+        assert verdicts[boom_ref]["errors"]["_"] == "internal error; see server logs"
+        assert MARKER not in verdicts[boom_ref]["errors"]["_"]
         assert res.json()["summary"] == {
             "total": 3,
             "deleted": 2,

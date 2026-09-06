@@ -84,15 +84,28 @@ def row_exists_referencing(db: Session, referrer: str, column: str, row_id) -> b
 
 
 def is_referenced(
-    db: Session, table: str, row_id, *, skip_relation: Optional[str] = None
+    db: Session,
+    table: str,
+    row_id,
+    *,
+    skip_relation: Optional[str] = None,
+    referrers: Optional[list[tuple[str, str]]] = None,
 ) -> bool:
     """Whether anything at all points at one row of ``table``.
 
     ``skip_relation`` names a referrer that is part of the row rather than a
     dependent on it - a document's own line table, which cascades with its
     header. Give it a value from `relation_name`, not a bare table name.
+
+    ``referrers`` (perf round 5, optional): the caller's own
+    ``referrers_of(db, table)`` result, when it already has one for THIS
+    ``table`` and is calling this once per ROW of a batch (`_sync_lines`'s
+    delete/cancel sweep) - the catalogue query behind `referrers_of` answers
+    the same thing every time within one call, and is not memoised globally
+    on purpose (a test's scratch schema changes what it answers). ``None``
+    (the default) runs the catalogue query itself, unchanged from before.
     """
-    for referrer, column in referrers_of(db, table):
+    for referrer, column in referrers if referrers is not None else referrers_of(db, table):
         if skip_relation is not None and referrer == skip_relation:
             continue
         if row_exists_referencing(db, referrer, column, row_id):
