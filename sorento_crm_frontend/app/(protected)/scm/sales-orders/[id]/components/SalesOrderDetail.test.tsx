@@ -41,10 +41,32 @@ Element.prototype.scrollIntoView = vi.fn();
 let searchParams = new URLSearchParams();
 vi.mock('@/components/common/ListPager', () => ({ __esModule: true, default: () => null }));
 
+// The tab lives in the URL, not component state (see `handleTabChange`), so `openTab`
+// below has to reach a REAL `router.replace` - one that feeds back into `searchParams`
+// and wakes up every subscriber - or the controlled `<Tabs>` never sees the new value
+// and stays on whichever tab it opened on.
+const searchParamsListeners = new Set<() => void>();
+function replaceSearchParams(next: URLSearchParams) {
+  searchParams = next;
+  searchParamsListeners.forEach((listener) => listener());
+}
 vi.mock('next/navigation', () => ({
   usePathname: () => '/scm/sales-orders/so-1',
-  useRouter: () => ({ push: vi.fn() }),
-  useSearchParams: () => searchParams,
+  useRouter: () => ({
+    push: vi.fn(),
+    replace: (url: string) => {
+      const qIndex = url.indexOf('?');
+      replaceSearchParams(new URLSearchParams(qIndex >= 0 ? url.slice(qIndex + 1) : ''));
+    },
+  }),
+  useSearchParams: () =>
+    React.useSyncExternalStore(
+      (listener) => {
+        searchParamsListeners.add(listener);
+        return () => searchParamsListeners.delete(listener);
+      },
+      () => searchParams,
+    ),
 }));
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -308,6 +330,18 @@ describe('SalesOrderDetail - states', () => {
       'data-state',
       'active',
     );
+  });
+
+  it('opens on the tab named by `?tab=`, so the pager can carry it across a Next/Prev step', () => {
+    // `SalesOrderNavigation` pushes `${pathname}?${searchParams}` on Next/Prev - the tab has
+    // to live in the URL, not component state, or stepping to a different order always lands
+    // on General regardless of which tab the reader was on.
+    searchParams = new URLSearchParams('tab=lines');
+    useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
+    renderDetail();
+
+    expect(screen.getByRole('tab', { name: 'Lines' })).toHaveAttribute('data-state', 'active');
+    expect(screen.getByText('Order lines')).toBeInTheDocument();
   });
 
   it('does not restate the order LOCATIONS on the header - a location belongs to a line', () => {
