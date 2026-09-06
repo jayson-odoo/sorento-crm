@@ -42,6 +42,17 @@ export interface SPODocumentRow {
 }
 
 /** One allocation line, with the computed fields the Lines tab renders (UAC AC-6, AC-13). */
+/** One sales order an SPO line covers (R23, AC-J2). `document` is nullable because the
+ *  backend's own `SPODocumentLineSOCovered.document` is: a project row with neither an
+ *  AutoCount number nor a provisional ref, or a retail line whose sales order has been
+ *  deleted since, states none. Rendered as a dash. */
+export interface SPODocumentLineSOCovered {
+  document: string | null;
+  customer: string | null;
+  demand_class: 'project' | 'retail';
+  qty: number;
+}
+
 export interface SPODocumentLine {
   id: string;
   spo_number: string | null;
@@ -88,15 +99,11 @@ export interface SPODocumentLine {
   po?: { po_number: string; purchase_order_id: string; line_no: number | null } | null;
   /**
    * Every sales order this line's allocation covers - `order_inquiry_links` (project) +
-   * `scm.order_link_claim` where `source='planner'` (retail), joined on this allocation
-   * (R23, AC-J2). Optional/absent in Phase 1 for the same reason `po` is.
+   * the SPO line's own `source_ref.so_coverage` (retail, the record of a retail take),
+   * joined on this allocation (R23, AC-J2). Optional/absent in Phase 1 for the same reason
+   * `po` is.
    */
-  so_covered?: {
-    document: string;
-    customer: string | null;
-    demand_class: 'project' | 'retail';
-    qty: number;
-  }[];
+  so_covered?: SPODocumentLineSOCovered[];
 }
 
 /** The document form view's payload: header rollup + every line (UAC AC-6). */

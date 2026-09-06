@@ -1401,4 +1401,102 @@ describe('SoCoveragePicker', () => {
 
     expect(onChange).not.toHaveBeenCalled();
   });
+
+  // ------------------------------------------------------------------ //
+  // AC-I4 / S1 / S7 (review round 1) - sorting, live footers, the order
+  // the cascade is told to walk.
+  // ------------------------------------------------------------------ //
+
+  const threeRetail = [
+    coverage[0],
+    coverage[1], // SO404352, 2026-09-20
+    {
+      key: 'retail:3',
+      kind: 'retail' as const,
+      demand_class: 'retail' as const,
+      document: 'SO404400',
+      customer_name: 'ANOTHER DEALER',
+      required_date: '2026-08-05',
+      qty: 10,
+      warehouse_code: 'MWH',
+      taken_qty: 0,
+      taken_by: [],
+    },
+  ];
+
+  function documentsOnScreen(): string[] {
+    return screen
+      .getAllByRole('row')
+      .slice(1)
+      .map((row) => row.textContent ?? '')
+      .filter((text) => text.includes('SO') || text.includes('OI-'));
+  }
+
+  it('AC-I4: each tab opens sorted by Delivery date ascending, and a header click re-sorts', () => {
+    renderWithClient(
+      <SoCoveragePicker coverage={threeRetail} tickedKeys={[]} onChange={() => {}} unassigned={0} />,
+    );
+    switchTab(/retail/i);
+
+    // 2026-08-05 before 2026-09-20, whatever order the server sent them in.
+    const ascending = documentsOnScreen();
+    expect(ascending[0]).toContain('SO404400');
+    expect(ascending[1]).toContain('SO404352');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delivery date' }));
+
+    const descending = documentsOnScreen();
+    expect(descending[0]).toContain('SO404352');
+    expect(descending[1]).toContain('SO404400');
+  });
+
+  it('S1: the footer totals follow the live takes, not the ones at mount', () => {
+    // The columns memo is frozen at mount (the Take input would lose its caret otherwise),
+    // so the footer has to read the totals through a ref - rendered here across a props
+    // change to prove it does.
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = (takes: Record<string, number>) => (
+      <QueryClientProvider client={client}>
+        <SoCoveragePicker
+          coverage={coverage}
+          tickedKeys={['project:1']}
+          onChange={() => {}}
+          unassigned={0}
+          takes={takes}
+          onTakeChange={() => {}}
+          spoQty={60}
+        />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(view({ 'project:1': 40 }));
+
+    let footer = screen.getByText('Total').closest('tr') as HTMLElement;
+    expect(within(footer).getByText('40')).toBeTruthy();
+
+    rerender(view({ 'project:1': 25 }));
+
+    footer = screen.getByText('Total').closest('tr') as HTMLElement;
+    expect(within(footer).getByText('25')).toBeTruthy();
+  });
+
+  it('S7: reports the order it is SHOWING, and reports it again after a re-sort', () => {
+    const onOrderChange = vi.fn();
+    renderWithClient(
+      <SoCoveragePicker
+        coverage={threeRetail}
+        tickedKeys={[]}
+        onChange={() => {}}
+        unassigned={0}
+        onOrderChange={onOrderChange}
+      />,
+    );
+
+    // Project rows first, then retail, each by delivery date ascending.
+    expect(onOrderChange).toHaveBeenLastCalledWith(['project:1', 'retail:3', 'retail:2']);
+
+    switchTab(/retail/i);
+    fireEvent.click(screen.getByRole('button', { name: 'Delivery date' }));
+
+    expect(onOrderChange).toHaveBeenLastCalledWith(['project:1', 'retail:2', 'retail:3']);
+  });
 });

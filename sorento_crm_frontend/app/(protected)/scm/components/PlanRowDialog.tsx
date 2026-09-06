@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   type ColumnDef,
   type ExpandedState,
@@ -1593,6 +1593,7 @@ export function SoCoveragePicker({
   spoQty,
   bucketHits,
   readOnly,
+  onOrderChange,
 }: {
   coverage: SoCoverageRow[];
   tickedKeys: string[];
@@ -1616,6 +1617,11 @@ export function SoCoveragePicker({
    *  footer states a count instead of "Unassigned" (there is nothing left to assign, it is
    *  already committed). */
   readOnly?: boolean;
+  /** The order the rows are CURRENTLY shown in, project tab then retail tab, each in its
+   *  own active sort (S7, review round 1). The caller's cascade walks this, so "the rows
+   *  after the one I edited" means the rows after it ON SCREEN - which is the only order
+   *  the operator can see. Reported on mount and on every re-sort. */
+  onOrderChange?: (keys: string[]) => void;
 }) {
   const editable = !readOnly && Boolean(onTakeChange) && Boolean(takes);
 
@@ -1635,6 +1641,13 @@ export function SoCoveragePicker({
   // focus and caret after every keystroke.
   const tickedKeysRef = useRef(tickedKeys);
   tickedKeysRef.current = tickedKeys;
+  // S1 (review round 1): the footer sums are read through refs too. Frozen inside the
+  // columns memo they stated whatever the totals were AT MOUNT, so the Take footer sat at
+  // its seeded figure while every cell above it moved.
+  const totalQtyRef = useRef(totalQty);
+  totalQtyRef.current = totalQty;
+  const totalTakenRef = useRef(totalTaken);
+  totalTakenRef.current = totalTaken;
   const takesRef = useRef(takes);
   takesRef.current = takes;
   const onChangeRef = useRef(onChange);
@@ -1796,7 +1809,7 @@ export function SoCoveragePicker({
         accessorFn: (c) => c.qty,
         header: ({ column }) => <DataGridColumnHeader title="Outstanding" column={column} />,
         cell: ({ row }) => fmtInt(row.original.qty),
-        footer: () => fmtInt(totalQty),
+        footer: () => fmtInt(totalQtyRef.current),
         size: 110,
         meta: RIGHT,
       },
@@ -1854,7 +1867,7 @@ export function SoCoveragePicker({
             />
           );
         },
-        footer: () => fmtInt(totalTaken ?? 0),
+        footer: () => fmtInt(totalTakenRef.current ?? 0),
         size: 100,
         meta: RIGHT,
       });
@@ -1900,6 +1913,22 @@ export function SoCoveragePicker({
     getSortedRowModel: getSortedRowModel(),
   });
   const activeTable = tab === 'project' ? projectTable : retailTable;
+
+  // S7 (review round 1): the order the operator is LOOKING at - project tab first, then
+  // retail, each in its own active sort - handed back to the caller so its Take cascade
+  // re-flows the rows after the edited one on screen rather than the rows after it in the
+  // server's own walk. Reported through a signature so a re-render that changed nothing
+  // does not re-notify.
+  const orderedKeys = [
+    ...projectTable.getSortedRowModel().rows.map((r) => r.original.key),
+    ...retailTable.getSortedRowModel().rows.map((r) => r.original.key),
+  ];
+  const orderSignature = orderedKeys.join('|');
+  const onOrderChangeRef = useRef(onOrderChange);
+  onOrderChangeRef.current = onOrderChange;
+  useEffect(() => {
+    onOrderChangeRef.current?.(orderSignature ? orderSignature.split('|') : []);
+  }, [orderSignature]);
 
   // AC-I2: a take above its own row's outstanding, or the total above the SPO qty, marks
   // the offending cell(s) destructive (the Take cell above) and states which, ONE sentence,

@@ -153,6 +153,11 @@ type LineState = {
    *  every override AFTER it in the coverage list's own order ("re-runs the remainder"),
    *  never the ones before it - see `setSoTake`. */
   soTakeOverrides: Record<string, number>;
+  /** The order the SO-covered picker is currently SHOWING this line's rows in (S7, review
+   *  round 1) - project tab then retail tab, each in its own active sort. The Take cascade
+   *  walks this, so "the rows after the one she edited" means the rows after it on screen.
+   *  Empty until the picker has been opened, and the server's own walk stands until then. */
+  soOrder: string[];
 };
 type ScheduleView = 'po' | 'so';
 
@@ -234,15 +239,33 @@ function coverageTakes(
  * itself, only the rows still following the cascade) - a stale override further down the
  * list would otherwise disagree with a total that just changed above it.
  */
+function orderedCoverage(ln: SpoSuggestionLine, order?: string[]): SpoCoverageLine[] {
+  const rows = ln.so_coverage ?? [];
+  if (!order?.length) return rows;
+  const rank = new Map(order.map((key, i) => [key, i] as const));
+  return rows
+    .map((entry, i) => ({ entry, i }))
+    .sort((x, y) => {
+      // A row the picker is not currently showing (filtered out of both tabs) keeps the
+      // server's own place, at the end - it is still ticked, and dropping it from the walk
+      // would change what a search box is allowed to do.
+      const rx = rank.get(x.entry.key) ?? Number.MAX_SAFE_INTEGER;
+      const ry = rank.get(y.entry.key) ?? Number.MAX_SAFE_INTEGER;
+      return rx - ry || x.i - y.i;
+    })
+    .map((x) => x.entry);
+}
+
 function resolvedSoTakes(
   ln: SpoSuggestionLine,
   soKeys: string[],
   overrides: Record<string, number>,
   qty: number,
+  order?: string[],
 ): { entry: SpoCoverageLine; take: number }[] {
   const out: { entry: SpoCoverageLine; take: number }[] = [];
   let left = Math.max(qty, 0);
-  for (const entry of ln.so_coverage ?? []) {
+  for (const entry of orderedCoverage(ln, order)) {
     if (!soKeys.includes(entry.key)) continue;
     const override = overrides[entry.key];
     const take = override !== undefined ? override : Math.max(Math.min(entry.qty, left), 0);
@@ -258,8 +281,9 @@ function tickedQty(
   soKeys: string[],
   overrides: Record<string, number>,
   qty: number,
+  order?: string[],
 ): number {
-  return resolvedSoTakes(ln, soKeys, overrides, qty).reduce((sum, t) => sum + t.take, 0);
+  return resolvedSoTakes(ln, soKeys, overrides, qty, order).reduce((sum, t) => sum + t.take, 0);
 }
 
 /**
@@ -289,11 +313,12 @@ function splitsFromTicks(
   soKeys: string[],
   overrides: Record<string, number>,
   qty: number,
+  order?: string[],
 ): SplitState[] {
   if (ln.cannot_convert || qty <= 0) return [];
   const byWarehouse = new Map<string, number>();
   let claimed = 0;
-  for (const { entry, take } of resolvedSoTakes(ln, soKeys, overrides, qty)) {
+  for (const { entry, take } of resolvedSoTakes(ln, soKeys, overrides, qty, order)) {
     if (take <= 0) continue;
     const warehouse = entry.warehouse_id ?? ln.suggested_warehouse_id;
     if (!warehouse) continue;
@@ -388,6 +413,7 @@ export function SpoPlannerTable({
         poTakeIds: ln.po_take_ids,
         soKeys: ln.so_takes.map((t) => t.key),
         soTakeOverrides: Object.fromEntries(ln.so_takes.map((t) => [t.key, t.qty])),
+        soOrder: [],
         splits: ln.location_splits
           .filter((s) => s.warehouse_id)
           .map((s) => ({ warehouseId: s.warehouse_id, qty: s.qty })),
@@ -414,6 +440,7 @@ export function SpoPlannerTable({
         poTakeIds,
         soKeys,
         soTakeOverrides: {},
+        soOrder: [],
         splits: splitsFromTicks(ln, soKeys, {}, ln.suggested_qty),
       };
     }
@@ -455,6 +482,7 @@ export function SpoPlannerTable({
       poTakeIds: tickablePoTakeIds(ln),
       soKeys,
       soTakeOverrides: {},
+      soOrder: [],
       splits: splitsFromTicks(ln, soKeys, {}, ln.suggested_qty),
     };
   };
@@ -463,6 +491,8 @@ export function SpoPlannerTable({
   const takeIdsFor = (ln: SpoSuggestionLine) => stateFor(ln).poTakeIds;
   const soKeysFor = (ln: SpoSuggestionLine) => stateFor(ln).soKeys;
   const soTakeOverridesFor = (ln: SpoSuggestionLine) => stateFor(ln).soTakeOverrides;
+  /** The order the picker is showing this line in (S7) - the cascade's walk order. */
+  const soOrderFor = (ln: SpoSuggestionLine) => stateFor(ln).soOrder;
 
   const patch = (ln: SpoSuggestionLine, next: Partial<LineState>) =>
     setState((prev) => ({
@@ -481,7 +511,7 @@ export function SpoPlannerTable({
       qty,
       typedQty: qty,
       soTakeOverrides: {},
-      splits: splitsFromTicks(ln, current.soKeys, {}, qty),
+      splits: splitsFromTicks(ln, current.soKeys, {}, qty, current.soOrder),
     });
   };
 
@@ -519,20 +549,22 @@ export function SpoPlannerTable({
       qty,
       soKeys: current.soKeys,
       soTakeOverrides: {},
-      splits: splitsFromTicks(ln, current.soKeys, {}, qty),
+      splits: splitsFromTicks(ln, current.soKeys, {}, qty, current.soOrder),
     });
   };
 
-  /** Every override at or after this key's position in the coverage list's own order -
-   *  cleared by `setSoKeys`/`setSoTake`, both of which are "a change AT this row", per
-   *  R19's "re-runs the remainder for rows after it" (the row itself never keeps a STALE
-   *  override once it has just been ticked, unticked or retyped). */
+  /** Every override at or after this key's position in the order the picker is SHOWING
+   *  (S7, review round 1) - cleared by `setSoKeys`/`setSoTake`, both of which are "a
+   *  change AT this row", per R19's "re-runs the remainder for rows after it" (the row
+   *  itself never keeps a STALE override once it has just been ticked, unticked or
+   *  retyped). Walks the same order the cascade does, or the two disagree about which
+   *  rows come "after" the edited one. */
   function clearOverridesFrom(
     ln: SpoSuggestionLine,
     key: string,
     overrides: Record<string, number>,
   ): Record<string, number> {
-    const coverage = ln.so_coverage ?? [];
+    const coverage = orderedCoverage(ln, soOrderFor(ln));
     const idx = coverage.findIndex((c) => c.key === key);
     if (idx < 0) return overrides;
     const next = { ...overrides };
@@ -561,7 +593,7 @@ export function SpoPlannerTable({
     patch(ln, {
       soKeys: nextKeys,
       soTakeOverrides: nextOverrides,
-      splits: splitsFromTicks(ln, nextKeys, nextOverrides, current.qty),
+      splits: splitsFromTicks(ln, nextKeys, nextOverrides, current.qty, current.soOrder),
     });
   };
 
@@ -577,8 +609,14 @@ export function SpoPlannerTable({
     nextOverrides[key] = Math.max(qty, 0);
     patch(ln, {
       soTakeOverrides: nextOverrides,
-      splits: splitsFromTicks(ln, current.soKeys, nextOverrides, current.qty),
+      splits: splitsFromTicks(ln, current.soKeys, nextOverrides, current.qty, current.soOrder),
     });
+  };
+
+  /** The picker reports what it is SHOWING (S7): the cascade follows the screen. */
+  const setSoOrder = (ln: SpoSuggestionLine, soOrder: string[]) => {
+    if (soOrder.join('|') === stateFor(ln).soOrder.join('|')) return;
+    patch(ln, { soOrder });
   };
 
   const confirmLines: SpoConfirmLine[] = useMemo(
@@ -593,7 +631,9 @@ export function SpoPlannerTable({
         }));
         // R19: every TICKED key, at the take `resolvedSoTakes` gives it - the operator's
         // own override where she typed one, the cascade default everywhere else.
-        const so_takes = resolvedSoTakes(ln, soKeysFor(ln), soTakeOverridesFor(ln), qty).map(
+        const so_takes = resolvedSoTakes(
+          ln, soKeysFor(ln), soTakeOverridesFor(ln), qty, soOrderFor(ln),
+        ).map(
           (t) => ({ key: t.entry.key, qty: t.take }),
         );
         return {
@@ -637,7 +677,9 @@ export function SpoPlannerTable({
     const bad = new Set<string>();
     for (const ln of lines) {
       if (!(ln.so_coverage ?? []).length) continue;
-      const takes = resolvedSoTakes(ln, soKeysFor(ln), soTakeOverridesFor(ln), qtyFor(ln));
+      const takes = resolvedSoTakes(
+        ln, soKeysFor(ln), soTakeOverridesFor(ln), qtyFor(ln), soOrderFor(ln),
+      );
       const total = takes.reduce((sum, t) => sum + t.take, 0);
       const overRow = takes.some((t) => t.take > t.entry.qty);
       if (overRow || total > qtyFor(ln)) bad.add(ln.shipment_line_id);
@@ -645,6 +687,22 @@ export function SpoPlannerTable({
     return bad;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lines, state]);
+
+  /**
+   * B4 (review round 1): a line ticked against sales orders with no location chosen. Every
+   * link the confirm writes hangs off an allocation, and a line with no split writes none -
+   * so the server refuses it (422), and the screen says so first, in the same words.
+   */
+  const takesWithoutLocation = useMemo(() => {
+    const bad = new Set<string>();
+    for (const item of confirmLines) {
+      if (!item.include) continue;
+      if (!(item.so_takes ?? []).some((t) => t.qty > 0)) continue;
+      if ((item.location_splits ?? []).some((s) => s.qty > 0)) continue;
+      bad.add(item.shipment_line_id);
+    }
+    return bad;
+  }, [confirmLines]);
 
   /**
    * A line of the SPO being edited whose new quantity is below what its allocations have
@@ -716,7 +774,11 @@ export function SpoPlannerTable({
    * stated, because it is the difference between goods promised to an order and free stock.
    */
   const unassignedFor = (ln: SpoSuggestionLine) =>
-    Math.max(qtyFor(ln) - tickedQty(ln, soKeysFor(ln), soTakeOverridesFor(ln), qtyFor(ln)), 0);
+    Math.max(
+      qtyFor(ln) -
+        tickedQty(ln, soKeysFor(ln), soTakeOverridesFor(ln), qtyFor(ln), soOrderFor(ln)),
+      0,
+    );
 
   /**
    * What goes INSIDE the one lightbox, by which figure was clicked (R21).
@@ -767,12 +829,15 @@ export function SpoPlannerTable({
             // Take per row off the SAME walk the cell, the split and the banner read, so
             // the dialog cannot say one thing while the row says another (R19).
             takes={Object.fromEntries(
-              resolvedSoTakes(ln, soKeysFor(ln), soTakeOverridesFor(ln), qtyFor(ln)).map((t) => [
+              resolvedSoTakes(
+                ln, soKeysFor(ln), soTakeOverridesFor(ln), qtyFor(ln), soOrderFor(ln),
+              ).map((t) => [
                 t.entry.key,
                 t.take,
               ]),
             )}
             onTakeChange={(key, qty) => setSoTake(ln, key, qty)}
+            onOrderChange={(keys) => setSoOrder(ln, keys)}
             spoQty={qtyFor(ln)}
             bucketHits={bucketHits}
           />
@@ -1077,7 +1142,7 @@ export function SpoPlannerTable({
           const keys = soKeysFor(ln);
           return (
             <PlanNumberButton
-              value={fmtInt(tickedQty(ln, keys, soTakeOverridesFor(ln), qtyFor(ln)))}
+              value={fmtInt(tickedQty(ln, keys, soTakeOverridesFor(ln), qtyFor(ln), soOrderFor(ln)))}
               label="Which demand this SPO is for - project by need-by date, then retail"
               onClick={() => setDialog({ kind: 'so_coverage', line: ln })}
             />
@@ -1191,7 +1256,9 @@ export function SpoPlannerTable({
       const keys = soKeysFor(ln);
       // R19: the SAME resolved walk the cell, the dialog and the confirm payload read - a
       // row the operator retyped shows up here at HER number, not the raw cascade.
-      for (const { entry, take } of resolvedSoTakes(ln, keys, soTakeOverridesFor(ln), qtyFor(ln))) {
+      for (const { entry, take } of resolvedSoTakes(
+        ln, keys, soTakeOverridesFor(ln), qtyFor(ln), soOrderFor(ln),
+      )) {
         if (take <= 0) continue;
         entries.push({
           row_key: rowKey,
@@ -1299,6 +1366,11 @@ export function SpoPlannerTable({
     .filter((ln) => receivedMismatch.has(ln.shipment_line_id))
     .map((ln) => ln.item_code ?? ln.product_name ?? 'One line')
     .join(', ');
+  // B4: the server's own sentence, said before the round trip.
+  const noLocationRowNames = lines
+    .filter((ln) => takesWithoutLocation.has(ln.shipment_line_id))
+    .map((ln) => ln.item_code ?? ln.product_name ?? 'One line')
+    .join(', ');
 
   return (
     <div className="flex flex-col gap-4">
@@ -1364,8 +1436,12 @@ export function SpoPlannerTable({
                 revise.mutate(confirmLines, { onSuccess: () => setEditPoId(null) })
               }
               disabled={
+                // S5: an SPO cannot be emptied by a revision - Delete is the action for
+                // that, and the server refuses it (422) for the same reason.
+                !includedCount ||
                 splitMismatch.size > 0 ||
                 soTakeMismatch.size > 0 ||
+                takesWithoutLocation.size > 0 ||
                 receivedMismatch.size > 0 ||
                 revise.isPending
               }
@@ -1389,6 +1465,7 @@ export function SpoPlannerTable({
               !includedCount ||
               splitMismatch.size > 0 ||
               soTakeMismatch.size > 0 ||
+              takesWithoutLocation.size > 0 ||
               create.isPending
             }
           >
@@ -1481,6 +1558,19 @@ export function SpoPlannerTable({
             <span className="text-2xs text-end font-medium text-destructive">
               {soTakeMismatch.size} line{soTakeMismatch.size === 1 ? '' : 's'} - a Take exceeds
               what is left, or the total exceeds the SPO qty
+            </span>
+          ) : null}
+          {/* B4: the same sentence the server refuses with, naming the row. */}
+          {takesWithoutLocation.size > 0 ? (
+            <span className="text-2xs text-end font-medium text-destructive">
+              {noLocationRowNames} needs a location before it can cover sales orders
+            </span>
+          ) : null}
+          {/* S5: an SPO with no line left is a document that says nothing - the planner
+              says which action that is instead of refusing after the round trip. */}
+          {editPoId && !includedCount ? (
+            <span className="text-2xs text-end font-medium text-destructive">
+              An SPO has to keep at least one line - delete it instead
             </span>
           ) : null}
           {/* AC-K3: names the ROW, because "some line is short" is not something the

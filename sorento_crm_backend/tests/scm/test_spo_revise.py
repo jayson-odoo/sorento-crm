@@ -856,3 +856,110 @@ def test_the_planner_state_route_is_404_for_an_spo_this_shipment_never_made(scm_
         f"/api/v1/scm/inbound-shipments/{shipment.id}/spo/{other.id}/planner-state"
     )
     assert out.status_code == 404, out.text
+
+
+# --------------------------------------------------------------------------- #
+# Review round 1 - B4 (a take with no location), S2 (siblings sharing one row),
+# S3 (the allocation writes are ONE batch)
+# --------------------------------------------------------------------------- #
+
+
+def test_b4_a_revision_that_leaves_a_ticked_line_with_no_location_is_refused():
+    """B4: the same refusal `create` makes. A save that dropped the split while keeping the
+    takes would delete the allocations the links hang off and then write no link at all."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        w.po("A", supplier, [("A", 100, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+        retail, _so = _retail_demand(db, w, "A", wh, qty=30, required=date(2026, 9, 20))
+
+        created = svc.create(
+            db, str(shipment.id),
+            [_confirm(
+                lines[0], 70,
+                location_splits=[{"warehouse_id": str(wh.id), "qty": 70}],
+                so_takes=[{"key": f"retail:{retail.id}", "qty": 30}],
+            )],
+        )
+        po_id = created["created_spos"][0]["purchase_order_id"]
+
+        with pytest.raises(AppException) as exc:
+            svc.revise(
+                db, str(shipment.id), po_id,
+                [_confirm(
+                    lines[0], 70,
+                    location_splits=[],
+                    so_takes=[{"key": f"retail:{retail.id}", "qty": 30}],
+                )],
+            )
+        assert exc.value.status_code == 422
+        assert "needs a location" in str(exc.value.detail)
+        db.expire_all()
+        # Refused before any write: the SPO still holds its own allocation.
+        assert len(_allocations(db, po_id)) == 1
+
+
+def test_s3_the_allocation_batch_commits_nothing_until_it_is_complete(monkeypatch):
+    """S3 (captain's ruling): the new allocation rows go in ONE batch - no commit per row,
+    one commit at the end - so a failure the validation pass could not foresee (a
+    unique-index collision, a database error) leaves NONE of them written rather than the
+    ones that came before it.
+
+    Asserted at the COMMIT boundary, which is where the guarantee lives: the caller's
+    transaction is what carries the batch, and nothing inside the loop may end it. (The
+    test session runs inside one rolled-back transaction of its own, so a partial commit
+    cannot be observed by re-reading rows - it can only be observed by counting commits.)
+    """
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh_a, wh_b, wh_c = w.warehouse("A"), w.warehouse("B"), w.warehouse("C")
+        w.po("A", supplier, [("A", 100, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+
+        created = svc.create(
+            db, str(shipment.id),
+            [_confirm(lines[0], 60, location_splits=[{"warehouse_id": str(wh_a.id), "qty": 60}])],
+        )
+        po_id = created["created_spos"][0]["purchase_order_id"]
+
+        from app.services.procurement_service import SPOAllocationService
+
+        real = SPOAllocationService.create_allocation
+        calls = {"n": 0}
+
+        def _explode(self, allocation_data, created_by, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise RuntimeError("ZZT injected failure on the second allocation")
+            return real(self, allocation_data, created_by, **kwargs)
+
+        monkeypatch.setattr(SPOAllocationService, "create_allocation", _explode)
+        commits = {"n": 0}
+        real_commit = db.commit
+
+        def _counting_commit():
+            commits["n"] += 1
+            return real_commit()
+
+        monkeypatch.setattr(db, "commit", _counting_commit)
+
+        with pytest.raises(RuntimeError):
+            svc.revise(
+                db, str(shipment.id), po_id,
+                [_confirm(
+                    lines[0], 60,
+                    # Two NEW destinations, so two inserts: the first lands, the second
+                    # raises.
+                    location_splits=[
+                        {"warehouse_id": str(wh_b.id), "qty": 30},
+                        {"warehouse_id": str(wh_c.id), "qty": 30},
+                    ],
+                )],
+            )
+        assert calls["n"] == 2
+        # The first row was written and NOT committed, so the caller's rollback takes it
+        # with the rest of the revision.
+        assert commits["n"] == 0

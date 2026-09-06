@@ -181,3 +181,13 @@ removed copy, for whoever restores a UI for them:
   value naming the ESB; the xlsx path stamps `'import'`. Cosmetic today, misleading on the agent
   master screen. Fix: the sales_agents EntitySpec sets `source = 'autocount'` on create, never on
   update. | `plans/autocount/PLAN-autocount-document-ingest-v2.md` | Low | Open |
+- **BL-060** (2026-09-06, lane D review round 1, S4): `InboundShipmentService.refresh_shipment_
+  line_statuses` sums `spo_allocated_quantity` per PRODUCT, so a container carrying the same
+  product on two lines (two factories) gives BOTH lines the whole product's allocated figure -
+  each line then reads over-allocated and the container's own line statuses follow the wrong
+  number. Pre-existing, and unchanged by lane D. **Trigger:** a packing list with one product
+  from two suppliers is converted, and the line statuses disagree with the SPO. Fix: key the
+  rollup on the shipment LINE (through `spo_allocations.po_line_id` ->
+  `shipment_line_spo_link.inbound_shipment_line_id`, the chain `_own_state` already walks)
+  rather than on the product, and check every reader of the column. |
+  `plans/scm/PLAN-scm-purchasing-consolidation-6sep.md` | Medium | Open |

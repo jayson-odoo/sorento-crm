@@ -371,7 +371,7 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
     if (shipmentIds.size !== 1 || poIds.size !== 1) return null;
     const [shipmentId] = [...shipmentIds];
     const [poId] = [...poIds];
-    return `/procurement-management/packing-lists/${shipmentId}?tab=spo&edit=${encodeURIComponent(poId)}`;
+    return `/procurement-management/packing-lists/${shipmentId}/spo?edit=${encodeURIComponent(poId)}`;
   }, [visibleLines]);
 
   const columns = useMemo<ColumnDef<SPODocumentLine>[]>(

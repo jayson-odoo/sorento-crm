@@ -2031,15 +2031,44 @@ describe('SpoPlannerTable - Edit in planner (R24)', () => {
   });
 
   it('AC-K4: a line typed to 0 goes out on the payload as include:false', async () => {
+    // TWO lines: zeroing one of them removes that line. Zeroing the ONLY line would empty
+    // the SPO, which Save refuses outright (S5, review round 1) - the test below.
+    state.plannerState = plannerStateResponse({
+      lines: [
+        plannerStateLine(),
+        plannerStateLine({
+          ...plannerLine({ shipment_line_id: 'sl-2', item_code: 'SRTWT9999' }),
+          spo_qty: 20,
+          location_splits: [{ warehouse_id: 'wh-1', warehouse_code: 'BRW', qty: 20 }],
+          po_take_ids: [],
+          so_takes: [],
+          received_qty: 0,
+        }),
+      ],
+    });
     renderTable('po-1');
     await screen.findByText('Editing CRM-SPO-0001');
 
-    fireEvent.change(screen.getByTestId('spo-qty-input'), { target: { value: '0' } });
+    fireEvent.change(screen.getAllByTestId('spo-qty-input')[0], { target: { value: '0' } });
     fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
 
     await waitFor(() => expect(state.revise).toHaveBeenCalledTimes(1));
     const [, , lines] = state.revise.mock.calls[0];
     expect(lines[0]).toMatchObject({ shipment_line_id: 'sl-1', qty: 0, include: false });
+    expect(lines[1]).toMatchObject({ shipment_line_id: 'sl-2', include: true });
+  });
+
+  it('S5: emptying the SPO disables Save and says to delete it instead', async () => {
+    renderTable('po-1');
+    await screen.findByText('Editing CRM-SPO-0001');
+
+    fireEvent.change(screen.getByTestId('spo-qty-input'), { target: { value: '0' } });
+
+    expect(screen.getByRole('button', { name: /save changes/i })).toBeDisabled();
+    expect(
+      screen.getByText(/An SPO has to keep at least one line - delete it instead/),
+    ).toBeInTheDocument();
+    expect(state.revise).not.toHaveBeenCalled();
   });
 
   it('AC-K3: a qty below what was received disables Save and names the row', async () => {
@@ -2083,5 +2112,130 @@ describe('SpoPlannerTable - Edit in planner (R24)', () => {
     expect(await screen.findByText('This shipment has no SPO with that id.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /back to the planner/i }));
     await screen.findByRole('link', { name: 'CRM-SPO-0001' });
+  });
+});
+
+/**
+ * Review round 1 - B4 (a take with no location) and S7 (the cascade follows the screen).
+ */
+describe('SpoPlannerTable - review round 1', () => {
+  function noLocationLine() {
+    return plannerLine({
+      packed_qty: 38,
+      remaining_qty: 38,
+      po_covered_qty: 38,
+      suggested_qty: 38,
+      // Nowhere for the quantity to go: no ranked destination and no warehouse on the row
+      // it is ticked against, so the walk produces no split at all.
+      suggested_warehouse_id: null,
+      location_options: [],
+      po_takes: [],
+      so_coverage: [
+        {
+          key: 'retail:sol-first',
+          kind: 'retail' as const,
+          demand_class: 'retail' as const,
+          document: 'SO-3001',
+          customer_name: 'Dealer A',
+          required_date: '2026-09-10',
+          qty: 38,
+          warehouse_id: null,
+          warehouse_code: null,
+          default_ticked: true,
+        },
+      ],
+    });
+  }
+
+  it('B4: a line ticked against a sales order with no location disables Create SPO and says why', async () => {
+    state.suggestion = suggestion({ lines: [noLocationLine()] });
+    renderTable();
+    await screen.findByRole('button', { name: /^create spo$/i });
+
+    expect(
+      screen.getByText(/SRTWT7443 needs a location before it can cover sales orders/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^create spo$/i })).toBeDisabled();
+  });
+
+  it('B4: the same line with nothing ticked converts, and the message is gone', async () => {
+    state.suggestion = suggestion({ lines: [noLocationLine()] });
+    renderTable();
+    const drill = await screen.findByTitle(/which demand this spo is for/i);
+    fireEvent.click(drill);
+    const dialog = screen.getByRole('dialog');
+    fireEvent.mouseDown(within(dialog).getByRole('tab', { name: /retail/i }), { button: 0 });
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Cover SO-3001' }));
+    fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    expect(
+      screen.queryByText(/needs a location before it can cover sales orders/),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^create spo$/i })).toBeEnabled();
+  });
+
+  it('S7: a re-sort re-flows the cascade, so the rows after the top one on screen change', async () => {
+    state.suggestion = suggestion({
+      lines: [
+        plannerLine({
+          packed_qty: 38,
+          remaining_qty: 38,
+          po_covered_qty: 38,
+          suggested_qty: 38,
+          po_takes: [],
+          so_coverage: [
+            {
+              key: 'retail:sol-first',
+              kind: 'retail' as const,
+              demand_class: 'retail' as const,
+              document: 'SO-3001',
+              customer_name: 'Dealer A',
+              required_date: '2026-09-10',
+              qty: 38,
+              warehouse_id: 'wh-1',
+              warehouse_code: 'BRW',
+              default_ticked: true,
+            },
+            {
+              key: 'retail:sol-second',
+              kind: 'retail' as const,
+              demand_class: 'retail' as const,
+              document: 'SO-3002',
+              customer_name: 'Dealer B',
+              required_date: '2026-09-20',
+              qty: 58,
+              warehouse_id: 'wh-2',
+              warehouse_code: 'MWH',
+              default_ticked: false,
+            },
+          ],
+        }),
+      ],
+    });
+    renderTable();
+    const drill = await screen.findByTitle(/which demand this spo is for/i);
+    fireEvent.click(drill);
+    const dialog = screen.getByRole('dialog');
+    fireEvent.mouseDown(within(dialog).getByRole('tab', { name: /retail/i }), { button: 0 });
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Cover SO-3002' }));
+
+    const take = (document_: string) =>
+      within(dialog)
+        .getByText(document_)
+        .closest('tr')!
+        .querySelectorAll('td')[7]
+        .querySelector('input') as HTMLInputElement;
+
+    // Delivery date ascending: SO-3001 is first on screen and takes the whole 38.
+    expect(take('SO-3001')).toHaveValue(38);
+    expect(take('SO-3002')).toHaveValue(0);
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delivery date' }));
+
+    // Sorted the other way, SO-3002 is the first row on screen - so it is the one the
+    // cascade serves first.
+    await waitFor(() => expect(take('SO-3002')).toHaveValue(38));
+    expect(take('SO-3001')).toHaveValue(0);
   });
 });

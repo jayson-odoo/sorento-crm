@@ -532,7 +532,7 @@ describe('SPODocumentDetail - Edit in planner (R24, AC-K5)', () => {
 
     expect(screen.getByRole('link', { name: /edit in planner/i })).toHaveAttribute(
       'href',
-      '/procurement-management/packing-lists/sh-1?tab=spo&edit=po-1',
+      '/procurement-management/packing-lists/sh-1/spo?edit=po-1',
     );
   });
 

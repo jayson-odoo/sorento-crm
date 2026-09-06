@@ -1311,3 +1311,160 @@ def test_the_take_total_above_the_lines_own_spo_qty_is_422():
                 )],
             )
         assert exc.value.status_code == 422
+
+
+# --------------------------------------------------------------------------- #
+# Review round 1 - B4 (a take with no location), S2 (two lines, one row),
+# B3 (unwind clears the planner claims it wrote)
+# --------------------------------------------------------------------------- #
+
+
+def test_b4_a_line_ticked_against_sales_orders_with_no_location_is_refused():
+    """B4: every link a confirm writes hangs off an allocation, and a line with no location
+    split writes none - so a take with nowhere to land was dropped in silence. Refused
+    (422), naming the product."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        w.po("A", supplier, [("A", 100, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+        row, _pso = _project_chain(db, w, "A", qty=40, delivery=date(2026, 9, 10))
+
+        with pytest.raises(AppException) as exc:
+            svc.create(
+                db, str(shipment.id),
+                [_confirm(lines[0], 100, so_takes=[{"key": f"project:{row.id}", "qty": 40}])],
+            )
+        assert exc.value.status_code == 422
+        assert "needs a location" in str(exc.value.detail)
+        assert w.product("A").product_code in str(exc.value.detail)
+        # Nothing was written: no SPO, no link.
+        assert (
+            db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row.id).count() == 0
+        )
+
+
+def test_b4_a_line_with_no_take_at_all_still_converts_without_a_location():
+    """The refusal is about a take with nowhere to land, not about locations in general -
+    a line with no ticks converts unallocated exactly as it always has."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        w.po("A", supplier, [("A", 100, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+
+        created = svc.create(
+            db, str(shipment.id), [_confirm(lines[0], 100, so_takes=[])],
+        )
+        assert len(created["created_spos"]) == 1
+        assert created["allocations"] == []
+
+
+def test_s2_two_lines_of_one_product_cannot_each_take_the_same_rows_outstanding():
+    """S2: the coverage rows are re-read per line and know nothing of a take a SIBLING line
+    of the same request already made, so two lines each asking for a row's full outstanding
+    promised it twice. The second line is refused (422)."""
+    with pg_session() as db:
+        w = World(db)
+        # Two suppliers, because one container cannot carry the same product from the same
+        # factory twice (`uk_inbound_shipment_lines_ship_prod_sup`) - and two lines of one
+        # product is exactly the shape this guard is about.
+        first_supplier, second_supplier = w.supplier("S1"), w.supplier("S2")
+        wh = w.warehouse()
+        w.po("A", first_supplier, [("A", 200, 0)])
+        shipment, lines = w.shipment([("A", 50, first_supplier), ("A", 50, second_supplier)])
+        retail, _so = _retail_demand(db, w, "A", wh, qty=50, required=date(2026, 9, 1))
+
+        with pytest.raises(AppException) as exc:
+            svc.create(
+                db, str(shipment.id),
+                [
+                    _confirm(
+                        lines[0], 50,
+                        location_splits=[{"warehouse_id": str(wh.id), "qty": 50}],
+                        so_takes=[{"key": f"retail:{retail.id}", "qty": 50}],
+                    ),
+                    _confirm(
+                        lines[1], 50,
+                        location_splits=[{"warehouse_id": str(wh.id), "qty": 50}],
+                        so_takes=[{"key": f"retail:{retail.id}", "qty": 50}],
+                    ),
+                ],
+            )
+        assert exc.value.status_code == 422
+        assert "still needs" in str(exc.value)
+
+
+def test_s2_two_lines_may_split_one_rows_outstanding_between_them():
+    """The other half of S2: the accumulator subtracts, it does not forbid - two lines
+    sharing one row's outstanding between them is a legitimate confirm."""
+    with pg_session() as db:
+        w = World(db)
+        first_supplier, second_supplier = w.supplier("S1"), w.supplier("S2")
+        wh = w.warehouse()
+        w.po("A", first_supplier, [("A", 200, 0)])
+        shipment, lines = w.shipment([("A", 50, first_supplier), ("A", 50, second_supplier)])
+        retail, _so = _retail_demand(db, w, "A", wh, qty=50, required=date(2026, 9, 1))
+
+        svc.create(
+            db, str(shipment.id),
+            [
+                _confirm(
+                    lines[0], 50,
+                    location_splits=[{"warehouse_id": str(wh.id), "qty": 50}],
+                    so_takes=[{"key": f"retail:{retail.id}", "qty": 30}],
+                ),
+                _confirm(
+                    lines[1], 50,
+                    location_splits=[{"warehouse_id": str(wh.id), "qty": 50}],
+                    so_takes=[{"key": f"retail:{retail.id}", "qty": 20}],
+                ),
+            ],
+        )
+        covered = [
+            qty
+            for pl in db.query(PurchaseOrderLine)
+            .filter(PurchaseOrderLine.source_system == svc.SOURCE_SYSTEM)
+            .all()
+            for so_line_id, qty in svc.parse_source_ref(pl.source_ref)["so_coverage"]
+            if so_line_id == str(retail.id)
+        ]
+        assert sorted(covered) == [20, 30]
+
+
+def test_b3_unwind_leaves_no_planner_claim_behind():
+    """B3: `unwind` deletes this SPO's planner claims beside its order-inquiry links, before
+    the allocations they name are deleted - `spo_allocation_id` is ON DELETE SET NULL, so a
+    claim left behind records a promise the delete has just undone."""
+    with pg_session() as db:
+        w = World(db)
+        supplier = w.supplier()
+        wh = w.warehouse()
+        w.po("A", supplier, [("A", 100, 0)])
+        shipment, lines = w.shipment([("A", 100, supplier)])
+        retail, _so = _retail_demand(db, w, "A", wh, qty=30, required=date(2026, 9, 1))
+
+        created = svc.create(
+            db, str(shipment.id),
+            [_confirm(
+                lines[0], 100,
+                location_splits=[{"warehouse_id": str(wh.id), "qty": 100}],
+                so_takes=[{"key": f"retail:{retail.id}", "qty": 30}],
+            )],
+        )
+        assert (
+            db.query(OrderLinkClaim)
+            .filter(OrderLinkClaim.so_line_id == str(retail.id), OrderLinkClaim.source == "planner")
+            .count()
+            == 1
+        )
+
+        svc.unwind(db, str(shipment.id), created["created_spos"][0]["purchase_order_id"])
+
+        assert (
+            db.query(OrderLinkClaim)
+            .filter(OrderLinkClaim.so_line_id == str(retail.id), OrderLinkClaim.source == "planner")
+            .count()
+            == 0
+        )
