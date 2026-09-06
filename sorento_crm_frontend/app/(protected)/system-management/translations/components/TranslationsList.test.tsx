@@ -117,6 +117,18 @@ describe('TranslationsList', () => {
     expect(screen.getByText('ai')).toBeInTheDocument();
   });
 
+  it('renders who wrote a manual correction, and a dash for an AI-only row', async () => {
+    mockList([
+      translation({ id: 't1', source: 'ai', created_by_name: null }),
+      translation({ id: 't2', source: 'manual', created_by_name: 'Ada Actor', source_text: '纸箱' }),
+    ]);
+    renderList();
+
+    await screen.findByText('纸箱');
+    expect(screen.getByText('Ada Actor')).toBeInTheDocument();
+    expect(screen.getByText('-')).toBeInTheDocument();
+  });
+
   it('renders a loading state', () => {
     mockList([], { isLoading: true });
     renderList();
@@ -124,12 +136,12 @@ describe('TranslationsList', () => {
     expect(screen.queryByText('座厕 S-250出水 对冲')).not.toBeInTheDocument();
   });
 
-  it('renders an empty state that says how a row gets here', async () => {
+  it('renders an empty state with a next step, not an explanation', async () => {
     mockList([]);
     renderList();
 
     expect(
-      await screen.findByText(/No translations yet\. One is written the first time/),
+      await screen.findByText('No translations yet. Upload a supplier document to add one.'),
     ).toBeInTheDocument();
   });
 

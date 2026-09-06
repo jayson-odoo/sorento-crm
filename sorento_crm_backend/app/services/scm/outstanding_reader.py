@@ -188,6 +188,26 @@ _ZIP_MAGIC = b"PK\x03\x04"
 _OLE2_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 
+def _xls_cell_rows(book, sheet):
+    """One xlrd sheet's rows, shaped like openpyxl's `values_only=True` - the conversion
+    `_xls_rows` used to do inline for sheet 0 alone, factored out so `every_sheet_rows`
+    (below) can run it over every sheet without copying it."""
+    import xlrd
+
+    for r in range(sheet.nrows):
+        out = []
+        for c in range(sheet.ncols):
+            cell = sheet.cell(r, c)
+            if cell.ctype == xlrd.XL_CELL_DATE:
+                y, mo, d, hh, mm, ss = xlrd.xldate_as_tuple(cell.value, book.datemode)
+                out.append(date(y, mo, d) if not (hh or mm or ss) else datetime(y, mo, d, hh, mm, ss))
+            elif cell.ctype == xlrd.XL_CELL_EMPTY:
+                out.append(None)
+            else:
+                out.append(cell.value)
+        yield tuple(out)
+
+
 def _xls_rows(file_data: bytes):
     """Rows of a legacy BIFF `.xls`, shaped like openpyxl's `values_only=True`.
 
@@ -201,19 +221,7 @@ def _xls_rows(file_data: bytes):
     import xlrd
 
     book = xlrd.open_workbook(file_contents=file_data)
-    sheet = book.sheet_by_index(0)
-    for r in range(sheet.nrows):
-        out = []
-        for c in range(sheet.ncols):
-            cell = sheet.cell(r, c)
-            if cell.ctype == xlrd.XL_CELL_DATE:
-                y, mo, d, hh, mm, ss = xlrd.xldate_as_tuple(cell.value, book.datemode)
-                out.append(date(y, mo, d) if not (hh or mm or ss) else datetime(y, mo, d, hh, mm, ss))
-            elif cell.ctype == xlrd.XL_CELL_EMPTY:
-                out.append(None)
-            else:
-                out.append(cell.value)
-        yield tuple(out)
+    return _xls_cell_rows(book, book.sheet_by_index(0))
 
 
 def sheet_rows(file_data: bytes):
@@ -254,6 +262,32 @@ def all_sheet_rows(file_data: bytes) -> list[tuple]:
         if sheet is None:
             raise ValueError("the workbook has no sheet")
         return [tuple(row) for row in sheet.iter_rows(values_only=True)]
+    finally:
+        wb.close()
+
+
+def every_sheet_rows(file_data: bytes) -> list[list[tuple]]:
+    """Every sheet's rows, materialised, workbook closed - for a reader that does not yet
+    know which sheet carries what it is looking for (`supplier_document_service.classify()`'s
+    header-shape fallback, review round 1), unlike `sheet_rows`'s "first/active sheet only"
+    contract that every other reader here relies on."""
+    if file_data[:8] == _OLE2_MAGIC:
+        import xlrd
+
+        book = xlrd.open_workbook(file_contents=file_data)
+        return [
+            list(_xls_cell_rows(book, book.sheet_by_index(i)))
+            for i in range(book.nsheets)
+        ]
+
+    import openpyxl
+
+    wb = openpyxl.load_workbook(BytesIO(file_data), data_only=True, read_only=True)
+    try:
+        return [
+            [tuple(row) for row in ws.iter_rows(values_only=True)]
+            for ws in wb.worksheets
+        ]
     finally:
         wb.close()
 

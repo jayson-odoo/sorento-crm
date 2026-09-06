@@ -285,6 +285,21 @@ def _line(factory: dict, code_suffix: str) -> dict:
 # --------------------------------------------------------------------------- #
 
 
+def test_bl_no_falls_back_to_the_so_field_when_the_bl_is_unstated(db):
+    # S3, review round 1: `提单号` lands in `forwarder_order_ref` (the SO field) on an
+    # upload made through the supplier-documents dialog (Q1 ruling), never
+    # `bill_of_lading_number` - the export used to print a blank B/L for every container
+    # uploaded that way even though the shipment itself carries the number.
+    w = World(db)
+    w.costed()  # sets `forwarder_order_ref`; leaves `bill_of_lading_number` from __init__
+    w.shipment.bill_of_lading_number = None
+    db.flush()
+
+    out = svc.build(db, str(w.shipment.id))
+
+    assert out["bl_no"] == w.shipment.forwarder_order_ref == "CNH1098313"
+
+
 def test_the_container_is_grouped_by_factory_with_the_unknown_one_last(db):
     # The header of a mixed container names nobody, so the factory has to come off the line.
     w = World(db)

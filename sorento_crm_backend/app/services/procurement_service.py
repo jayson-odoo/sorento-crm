@@ -907,7 +907,14 @@ class InboundShipmentService:
             self.db,
             shipment_id,
             InboundShipment,
-            code_fields=("shipment_number", "shipping_container_number", "bill_of_lading_number", "invoice_number"),
+            code_fields=(
+                "shipment_number", "shipping_container_number", "bill_of_lading_number",
+                # `提单号` lands here (the SO field), not `bill_of_lading_number`, on
+                # an upload made through the supplier-documents dialog (S3, review
+                # round 1) - a lookup on the B/L alone missed every container
+                # uploaded that way.
+                "forwarder_order_ref", "invoice_number",
+            ),
         )
         if not resolved_ids:
             raise handle_not_found("Inbound Shipment", shipment_id)
@@ -1533,7 +1540,14 @@ class SPOAllocationService:
             self.db,
             shipment_id,
             InboundShipment,
-            code_fields=("shipment_number", "shipping_container_number", "bill_of_lading_number", "invoice_number"),
+            code_fields=(
+                "shipment_number", "shipping_container_number", "bill_of_lading_number",
+                # `提单号` lands here (the SO field), not `bill_of_lading_number`, on
+                # an upload made through the supplier-documents dialog (S3, review
+                # round 1) - a lookup on the B/L alone missed every container
+                # uploaded that way.
+                "forwarder_order_ref", "invoice_number",
+            ),
         )
         if shipment_ids is not None:
             if not shipment_ids:

@@ -158,6 +158,18 @@ export default function TranslationsList() {
         meta: { headerTitle: 'Source kind' },
       },
       {
+        accessorKey: 'created_by_name',
+        header: ({ column }) => <DataGridColumnHeader title="By" column={column} />,
+        cell: ({ row }) => (
+          <span className="truncate text-muted-foreground" title={row.original.created_by_name ?? undefined}>
+            {row.original.created_by_name || '-'}
+          </span>
+        ),
+        enableSorting: false,
+        size: 140,
+        meta: { headerTitle: 'By' },
+      },
+      {
         accessorKey: 'hit_count',
         header: ({ column }) => <DataGridColumnHeader title="Hits" column={column} />,
         cell: ({ row }) => <span className="tabular-nums">{row.original.hit_count}</span>,
@@ -237,7 +249,7 @@ export default function TranslationsList() {
         isPlaceholderData={isPlaceholderData}
         tableLayout={{ width: 'fixed', columnsResizable: true }}
         rowPending={rowPending}
-        emptyMessage="No translations yet. One is written the first time a supplier document's Chinese text is read or corrected."
+        emptyMessage="No translations yet. Upload a supplier document to add one."
       >
         <Card>
           <CardHeader className="flex items-center justify-between gap-3">

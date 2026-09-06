@@ -888,9 +888,20 @@ async def preview_supplier_documents(
 ):
     """One dialog, several supplier documents (R12): each file classified by its title
     cell, previewed by whichever reader(s) it is - proforma invoice, packing list, or both.
-    Writes nothing."""
+
+    "Writes nothing" is about the SHIPMENT/INVOICE data - `preview` still writes AI
+    translation fills and bumps `hit_count` on a memory hit (`translation_service`'s own
+    writes), and those are lost without a commit here (B3, review round 1): a second
+    preview of the same file used to ask the model again instead of finding its own answer
+    already in the memory. `run_in_threadpool` (B4) for the same reason the sibling upload
+    route above does - a slow read must not freeze every other request this worker holds.
+    """
     read = [(f.filename, await read_upload(f)) for f in files]
-    return supplier_document_service.preview(db, read, supplier_id=supplier_id, currency=currency)
+    out = await run_in_threadpool(
+        supplier_document_service.preview, db, read, supplier_id=supplier_id, currency=currency,
+    )
+    db.commit()
+    return out
 
 
 @router.post("/supplier-documents/apply")
@@ -1028,7 +1039,11 @@ def list_inbound_shipments(
                 "shipment_id": str(r.id),
                 "shipment_number": r.shipment_number,
                 "container_no": r.shipping_container_number,
-                "bl_no": r.bill_of_lading_number,
+                # `forwarder_order_ref` (the SO field) is where `提单号` lands on an
+                # upload made through the supplier-documents dialog (Q1 ruling) -
+                # `bill_of_lading_number` stays for the manual form, so a listing that
+                # only read the latter showed a blank B/L for every uploaded container.
+                "bl_no": r.bill_of_lading_number or r.forwarder_order_ref,
                 "status": r.shipment_status,
                 "lines": line_counts.get(str(r.id), 0),
                 "suppliers": suppliers_by_shipment.get(str(r.id), []),

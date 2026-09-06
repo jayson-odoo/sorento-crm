@@ -118,16 +118,22 @@ def _parse(db: Session, data: bytes) -> ProformaReadResult:
     return read_workbook(data, db=db)
 
 
-def pi_number_for(doc: ProformaDocument, *, source_ref: Optional[str]) -> str:
+def pi_number_for(
+    doc: ProformaDocument, *, source_ref: Optional[str],
+    siblings: Optional[list[ProformaDocument]] = None,
+) -> str:
     """What this invoice is called, so two blocks in one file are two invoices.
 
-    The document's own number when it states one, verbatim - UNLESS it also names a
-    container: the Jiexia sample (lane C, purchasing consolidation batch) states ONE
-    invoice number for several containers, and `scm.proforma_invoice`'s identity is
-    `(company, supplier, pi_number)` - one row per number, not per container. Suffixing
-    with the container is what keeps each one its own row and its own priced lines rather
-    than the second container's apply silently overwriting the first's (a bare stated
-    number with no container, every fixture before this one, is unaffected).
+    The document's own number when it states one, verbatim - UNLESS this same parse yields
+    MORE THAN ONE document sharing that number (`siblings`, the Jiexia condition, RULED 6
+    Sep review round 1): the Jiexia sample states ONE invoice number for two containers,
+    and `scm.proforma_invoice`'s identity is `(company, supplier, pi_number)` - one row per
+    number, not per container. Suffixing with the container is what keeps each one its own
+    row and its own priced lines rather than the second container's apply silently
+    overwriting the first's. A single-container document with a stated number - every
+    fixture before Jiexia, and the common case even when the document happens to fill in a
+    container cell - keeps its number VERBATIM, so a re-upload updates the same row in
+    place rather than minting a second one under a container-suffixed name (AC-P2.5).
 
     With no stated number at all: the file's own name plus the block's position - the
     pre-loading list numbers none of its five invoices, and deriving rather than
@@ -135,8 +141,13 @@ def pi_number_for(doc: ProformaDocument, *, source_ref: Optional[str]) -> str:
     """
     if doc.pi_number:
         base = doc.pi_number.strip()
-        if doc.container_no:
-            return f"{base}-{doc.container_no}"[:100]
+        if doc.container_no and siblings is not None:
+            shared = sum(
+                1 for d in siblings
+                if d.pi_number and d.pi_number.strip().lower() == base.lower()
+            )
+            if shared > 1:
+                return f"{base}-{doc.container_no}"[:100]
         return base[:100]
     # The STEM is truncated, not the composed name: a long filename would otherwise push the
     # block index off the end of a `String(100)` column and turn five distinct invoices into
@@ -286,7 +297,7 @@ def _summarise(
         documents.append(
             {
                 "index": doc.index,
-                "pi_number": pi_number_for(doc, source_ref=source_ref),
+                "pi_number": pi_number_for(doc, source_ref=source_ref, siblings=parsed.documents),
                 "pi_number_stated": bool(doc.pi_number),
                 "invoice_date": doc.invoice_date.isoformat() if doc.invoice_date else None,
                 "container_no": doc.container_no,
@@ -886,7 +897,7 @@ def apply(
     results: list[dict] = []
 
     for doc in parsed.documents:
-        number = pi_number_for(doc, source_ref=source_ref)
+        number = pi_number_for(doc, source_ref=source_ref, siblings=parsed.documents)
         code, source = resolved.get(doc.index, (None, "none"))
         prior = targets.get(str((revision_of or {}).get(str(doc.index)) or ""))
 

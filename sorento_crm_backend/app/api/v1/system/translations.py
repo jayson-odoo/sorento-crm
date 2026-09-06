@@ -27,10 +27,14 @@ def list_translations(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
+    sort: Optional[str] = Query(None),
+    dir: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     _user: dict = Depends(_VIEW),
 ):
-    rows, total = translation_service.list_memory(db, page=page, limit=limit, query=query)
+    rows, total = translation_service.list_memory(
+        db, page=page, limit=limit, query=query, sort=sort, dir=dir,
+    )
     return {
         "data": rows,
         "pagination": {"total": total, "page": page, "limit": limit},

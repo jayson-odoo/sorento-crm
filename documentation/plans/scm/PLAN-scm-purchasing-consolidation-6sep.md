@@ -4,9 +4,9 @@
 R11 clarified. UAC:
 `scm-purchasing-consolidation-6sep-acceptance-criteria.md`. Lavish page:
 `mockups/purchasing-consolidation-6sep-plan.html`. **Lane A (section 13: 1, 2 (R3 only), 3, 8,
-10 (R22)) built, browser-verified, review round 1 applied.** **Lane C built (C1-C3), awaiting
-review** - sections 6, 7, 12 (supplier documents, translation memory, shipment line photos).
-B/D awaiting GO.
+10 (R22)) built, browser-verified, review round 1 applied.** **Lane C built (C1-C3), review
+round 1 applied, awaiting C3 review + browser test** - sections 6, 7, 12 (supplier documents,
+translation memory, shipment line photos). B/D awaiting GO.
 
 Feedback given 6 Sep on production (`fe-sorento.foundryx.my`). Twelve asks, four lanes, four
 PRs. Every "what exists" line below was measured on `origin/main` `cc0789971` (6 Sep), not on
@@ -579,3 +579,51 @@ No open questions remain. Waiting for GO.
   after V is the smaller diff and leaves every existing letter (and therefore every
   existing formula) unchanged. RMB stays `T`, TOTAL RM stays `U`, exactly as before this
   slice.
+
+### Lane C review round 1 (6 Sep 2026) - captain's rulings and the fixes they decided
+
+- **Q1 stands.** `提单号` -> `forwarder_order_ref` is unchanged; the readers that search
+  by `bill_of_lading_number` (`incoming_stock_service.py`, `entity_resolver.py`'s exact
+  and prefix inbound-shipment probes, `procurement_service.py`'s `code_fields`) are
+  extended to match `forwarder_order_ref` too, and the listing/export `bl_no` fields
+  (`fulfilment.py`'s `/inbound-shipments`, `consolidated_packing_list.build()`) coalesce
+  to it when `bill_of_lading_number` is unstated. The n8n external route still writes
+  `bill_of_lading_number` from its own payload - untouched.
+- **A stated PI number is suffixed with the container ONLY when this parse yields more
+  than one document sharing that number** (the Jiexia condition) - `pi_number_for` now
+  takes the parse's `siblings` and counts how many share the base number before
+  deciding to suffix. A single-container PI with a stated number and a filled container
+  cell keeps the number verbatim, so a re-upload updates the same row in place
+  (AC-P2.5) rather than minting a container-suffixed name nobody asked for.
+- **Price links written by `supplier_document_service._match_prices` mirror
+  `convert_to_draft_shipment`'s own semantics**, not a shape of their own: `qty` is what
+  landed on THIS shipment line (the line's own `quantity_shipped`, never the PI line's,
+  which is not split here but may still name more than one container carries),
+  `unmatched_reason` rows are written for a PI line with no shipment-line target so the
+  PI detail page can say where it went, and targets are consumed in order so a second
+  shipment line for the same product takes the NEXT PI line rather than the first one
+  twice. A PI placed through this path is correctly refused by `convert_to_draft_
+  shipment` (ANY existing link row, matched or unmatched, is a permanent outcome) and
+  dropped from its own revision candidates - that is by design, recorded, not changed.
+- **`classify()` gets the header-shape fallback** for a titleless file: an item-code +
+  quantity header with no price header is a packing list, the same shape PLUS a price
+  header is a proforma invoice, both shapes appearing anywhere in the workbook is
+  combined - checked against EVERY sheet (`outstanding_reader.every_sheet_rows`), not
+  only the first 15 rows of sheet 1, since a titleless workbook is exactly the one most
+  likely to bury its real table on a later tab.
+- **`preview`'s `price_matches` is computed off two NEW, kind-tagged lists
+  (`_pi_match`/`_pl_match`, popped before the response goes out), not the flat `blocks`
+  list keyed by the FILE's kind.** The old code included a combined file's own blocks in
+  BOTH `pi_blocks` and `pl_blocks` (kind `"combined"` satisfied both membership tests),
+  so a PI-shaped block could be read back as a packing-list block and matched against
+  itself. Matched/unmatched are now counted by PRODUCT per PI LINE (not by comparing
+  line counts), and `pi_number` is filled from the PI document's own stated number.
+- **A COMBINED file is filed in Drive once, not once per loop.** `apply()`'s two loops
+  (proforma invoices first, then packing lists) both used to call the filing step for
+  a `combined`-kind file; the packing-list loop now reuses the attachment id the
+  proforma-invoice loop already filed (`packing_list_service.apply(attachment_id=...,
+  file_in_drive=False)`), so the same bytes are never uploaded twice.
+- **B1/B2 (`packing_list_reader.py`) fixed as the reviewer specified**, with no
+  deviation: `_MULTI_SEP` now needs whitespace on both sides of an ASCII slash and only
+  splits when what follows carries a label of its own; the note branch inside
+  `_apply_pending` no longer drains `pending` while `pending_is_new_block` is set.

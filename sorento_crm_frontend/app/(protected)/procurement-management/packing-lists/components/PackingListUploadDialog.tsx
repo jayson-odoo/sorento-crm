@@ -92,30 +92,39 @@ function headerSummary(f: SupplierDocumentFilePreview): string {
 
 /** One phrase in a file's preview worth translating (R16): a line's description, a
  *  line's remark, a block note, or the file's footer - flattened to one shape so the
- *  dialog renders one list rather than four. Keyed by the SOURCE (Chinese) text, which
- *  is also the translation memory's own key. */
-function translationItems(f: SupplierDocumentFilePreview): { key: string; item: SupplierDocumentTextItem }[] {
-  const out: { key: string; item: SupplierDocumentTextItem }[] = [];
-  for (const b of f.blocks) {
+ *  dialog renders one list rather than four. `key` is the SOURCE (Chinese) text, also
+ *  the translation memory's own key - kept SHARED across blocks on purpose (the same
+ *  phrase in two blocks is the same memory row, and editing one edits both). `reactKey`
+ *  is separate and prefixed with the block index: two blocks stating the identical
+ *  Chinese phrase (a real Jiexia shape - "座厕 S-250出水 对冲" repeats) would otherwise
+ *  hand React two list items with the SAME key, which is a silent "same identity"
+ *  promise React does not keep (review round 1, nit). */
+function translationItems(
+  f: SupplierDocumentFilePreview,
+): { key: string; reactKey: string; item: SupplierDocumentTextItem }[] {
+  const out: { key: string; reactKey: string; item: SupplierDocumentTextItem }[] = [];
+  f.blocks.forEach((b, bi) => {
     // Optional-chained: a preview read before Phase 2 backend wiring (or a stale test
     // fixture) may not carry `lines`/`notes` at all.
-    for (const ln of b.lines ?? []) {
+    (b.lines ?? []).forEach((ln, li) => {
       if (ln.description) {
         out.push({
           key: ln.description,
+          reactKey: `${bi}-${li}-description`,
           item: { text: ln.description, text_en: ln.description_en, text_en_source: ln.description_en_source },
         });
       }
       if (ln.remark) {
         out.push({
           key: ln.remark,
+          reactKey: `${bi}-${li}-remark`,
           item: { text: ln.remark, text_en: ln.remark_en, text_en_source: ln.remark_en_source },
         });
       }
-    }
-    for (const note of b.notes ?? []) out.push({ key: note.text, item: note });
-  }
-  if (f.footer_note) out.push({ key: f.footer_note.text, item: f.footer_note });
+    });
+    (b.notes ?? []).forEach((note, ni) => out.push({ key: note.text, reactKey: `${bi}-note-${ni}`, item: note }));
+  });
+  if (f.footer_note) out.push({ key: f.footer_note.text, reactKey: 'footer', item: f.footer_note });
   return out;
 }
 
@@ -409,9 +418,9 @@ export function PackingListUploadDialog({
                       <p className="text-2xs font-medium text-foreground">
                         Translations - English beside the Chinese
                       </p>
-                      {translationItems(f).map(({ key, item }) => (
+                      {translationItems(f).map(({ key, reactKey, item }) => (
                         <TranslationRow
-                          key={key}
+                          key={reactKey}
                           item={item}
                           value={translationEdits[key] ?? item.text_en ?? ''}
                           onChange={(next) =>

@@ -493,6 +493,11 @@ class IncomingStockService:
                     InboundShipment.shipment_number.ilike(term),
                     InboundShipment.shipping_container_number.ilike(term),
                     InboundShipment.bill_of_lading_number.ilike(term),
+                    # `提单号` lands in `forwarder_order_ref` (the SO field) on an upload
+                    # made through the supplier-documents dialog (Q1 ruling); a search on
+                    # the B/L alone missed every container uploaded that way (S3, review
+                    # round 1).
+                    InboundShipment.forwarder_order_ref.ilike(term),
                     InboundShipment.invoice_number.ilike(term),
                 )
             )
@@ -601,6 +606,11 @@ class IncomingStockService:
                     InboundShipment.shipment_number.ilike(term),
                     InboundShipment.shipping_container_number.ilike(term),
                     InboundShipment.bill_of_lading_number.ilike(term),
+                    # `提单号` lands in `forwarder_order_ref` (the SO field) on an upload
+                    # made through the supplier-documents dialog (Q1 ruling); a search on
+                    # the B/L alone missed every container uploaded that way (S3, review
+                    # round 1).
+                    InboundShipment.forwarder_order_ref.ilike(term),
                     InboundShipment.invoice_number.ilike(term),
                 )
             )

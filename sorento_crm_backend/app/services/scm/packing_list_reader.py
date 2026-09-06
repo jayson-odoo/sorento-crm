@@ -45,12 +45,35 @@ _BLOCK_FIELDS = ("container_no", "bl_no", "seal_no", "consignee")
 
 #: A cell may state TWO block fields side by side (`箱号:WHSU6243088 / 封签号:WHA4528193`,
 #: the Jiexia sample). Split on the supplier's own separator BEFORE the label test, so both
-#: are read rather than only the first (AC-F9).
-_MULTI_SEP = re.compile(r"\s*/\s*|／")
+#: are read rather than only the first (AC-F9). The ASCII slash needs whitespace on BOTH
+#: sides to count - `SZX/2026/001` (a bill of lading) and `31/07/2026` (a date) are one
+#: value each, and matching a bare `/` inside them split a B/L number into three pieces and
+#: a date into a day, a month and a year, none of which resolve to anything (review round 1,
+#: purchasing consolidation batch lane C). The fullwidth `／` still splits regardless of
+#: spacing - nothing in these documents ever uses it AS a value, only as a separator.
+_MULTI_SEP = re.compile(r"\s+/\s+|／")
 
 #: The label that means "everything from here to the end of the sheet is a footer note",
 #: not a block field or a line - `备注：` on the Jiexia packing list, captured verbatim.
 _FOOTER_FIELD = "remark"
+
+#: Title-cell markers (R12): what marks a cell as the DOCUMENT'S OWN TITLE rather than a
+#: real answer to anything it might otherwise resolve as. Defined here, not in
+#: `supplier_document_service.classify()` (which imports these), because that module
+#: already imports FROM this one and the reverse would cycle - and `_shipper_of` below
+#: needs the exact same list `classify()` decides PI-vs-PL with, so a title row is never
+#: read as the letterhead either (S1, review round 1). Bare "INVOICE" is deliberately NOT
+#: a marker: the packing list's own labelled cell states "INVOICE NO.: ..." (the PI number
+#: both documents share), which would otherwise misclassify every packing list.
+_PI_TITLE_MARKERS = ("发票", "PROFORMA INVOICE")
+_PL_TITLE_MARKERS = ("装箱单", "PACKING LIST")
+
+#: A totals row states a description but no item code - the same shape `_note_from` keeps
+#: as an accessory note, but it is arithmetic about the block, not something inside it
+#: (`SUB TOTAL 1*40HQ` in the Jiexia packing list's own description column). Matched loosely
+#: rather than by a header label, because this text sits where a description would, not in
+#: a labelled cell.
+_TOTALS_ROW_RE = re.compile(r"^(SUB[\s-]*)?TOTAL\b", re.IGNORECASE)
 
 
 @dataclass
@@ -220,13 +243,23 @@ def _labelled(
     A cell may ALSO state two of these fields side by side (`箱号:WHSU6243088 /
     封签号:WHA4528193`, the Jiexia sample) - split on the supplier's own separator before the
     inline colon test, so both land rather than only the first half of the cell (AC-F9).
+
+    The split is refused unless what follows the separator carries a label of its own
+    (a colon): `_MULTI_SEP` only fires on a slash with whitespace either side now, but a
+    cell like `货柜号：ABCU1 / loaded first` would still match that shape without ALSO
+    checking for a second label, and "loaded first" is a note, not a second answer
+    (review round 1, purchasing consolidation batch lane C).
     """
     out: dict[str, str] = {}
     for pos, cell in enumerate(raw):
         label = _text(cell)
         if not label:
             continue
-        parts = [p for p in _MULTI_SEP.split(label) if p.strip()] or [label]
+        split = [p for p in _MULTI_SEP.split(label) if p.strip()]
+        if len(split) > 1 and any((":" in p or "：" in p) for p in split[1:]):
+            parts = split
+        else:
+            parts = [label]
         matched_inline = False
         for part in parts:
             # `货柜号：XXXU123` in ONE cell is as common as two cells, so split on either colon.
@@ -326,7 +359,10 @@ def _note_from(raw: list, col_field: dict[int, str]) -> Optional[str]:
     for pos, f in col_field.items():
         if pos < len(raw):
             vals[f] = raw[pos]
-    return _text(vals.get("product_name")) or _text(vals.get("description"))
+    note = _text(vals.get("product_name")) or _text(vals.get("description"))
+    if note and _TOTALS_ROW_RE.match(note.strip()):
+        return None
+    return note
 
 
 def _shipper_of(raw: list, resolver: AliasResolver) -> Optional[str]:
@@ -335,12 +371,20 @@ def _shipper_of(raw: list, resolver: AliasResolver) -> Optional[str]:
     Only when that cell resolves to no known field and is not itself a label - a file whose
     row 0 is already the address block's first line, or the header row itself, states no
     shipper this way and gets none, rather than a guess (R13/R14).
+
+    Nor when it IS the document's own title (`马来西亚 PACKING LIST`, the Kailu fixture): a
+    title carries no company name at all, and the same title-cell markers
+    `supplier_document_service.classify()` decides PI-vs-PL with are the ones that say so
+    here too (S1, review round 1).
     """
     first = next((c for c in raw if _text(c)), None)
     text = _text(first)
     if not text:
         return None
     if resolver.field_for_header(text) is not None or _is_label(text, resolver):
+        return None
+    upper = text.upper()
+    if any(marker in upper for marker in (*_PI_TITLE_MARKERS, *_PL_TITLE_MARKERS)):
         return None
     return text
 
@@ -487,7 +531,15 @@ def read_workbook(
                 continue
             note = _note_from(raw, col_field)
             if note is not None:
-                _apply_pending()
+                # A note row does NOT decide whether `pending` starts a new block - only a
+                # real header or line does (the checks above/below). Draining it here, while
+                # `pending_is_new_block` is still open, minted a block with the note and no
+                # lines that the final `b.lines` filter then throws away, taking the
+                # container number that belonged to the NEXT header with it (B2, review
+                # round 1). Held instead: the note lands on the CURRENT block, same as any
+                # other accessory line found before its container is confirmed.
+                if not pending_is_new_block:
+                    _apply_pending()
                 if current is not None:
                     current.notes.append(note)
             continue
@@ -538,6 +590,12 @@ def _split_by_container_column(
                     index=0,
                     container_no=key or block.container_no,
                     bl_no=block.bl_no,
+                    # The table carries ONE seal/consignee/note set, stated once above the
+                    # whole table rather than per container column value - carried onto
+                    # EVERY split-off block rather than only the first (S2, review round 1).
+                    seal_no=block.seal_no,
+                    consignee=block.consignee,
+                    notes=list(block.notes),
                     header_row=block.header_row,
                 )
                 order.append(key)

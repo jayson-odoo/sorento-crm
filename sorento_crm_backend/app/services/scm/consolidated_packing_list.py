@@ -218,7 +218,11 @@ def build(db: Session, shipment_id: str) -> dict:
         "shipment_id": str(shipment.id),
         "shipment_number": shipment.shipment_number,
         "container_no": shipment.shipping_container_number,
-        "bl_no": shipment.bill_of_lading_number,
+        # `forwarder_order_ref` (the SO field) is where `提单号` lands on an upload made
+        # through the supplier-documents dialog (Q1 ruling); `bill_of_lading_number` stays
+        # for the manual form. The header below already carries `forwarder_order_ref` on
+        # its own, but THIS field is what the export's own "bl_no" reads.
+        "bl_no": shipment.bill_of_lading_number or shipment.forwarder_order_ref,
         "status": shipment.shipment_status,
         # The twelve lines the workbook prints above the goods. Every one of them is a
         # column on the container already - nothing here is worked out, and the factory

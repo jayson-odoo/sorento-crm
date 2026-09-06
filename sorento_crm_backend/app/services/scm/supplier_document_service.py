@@ -37,9 +37,11 @@ from app.services import translation_service
 from app.services.error_handler import AppException
 from app.services.import_alias_service import AliasResolver
 from app.services.scm import packing_list_service, proforma_invoice_service
-from app.services.scm.outstanding_reader import sheet_rows
+from app.services.scm.outstanding_reader import every_sheet_rows, sheet_rows
 from app.services.scm.packing_list_reader import DOC_TYPE as PL_DOC_TYPE
 from app.services.scm.packing_list_reader import PackingReadResult
+from app.services.scm.packing_list_reader import _PI_TITLE_MARKERS, _PL_TITLE_MARKERS
+from app.services.scm.packing_list_reader import _header_map, _is_header
 from app.services.scm.packing_list_reader import read_workbook as read_packing_list
 from app.services.scm.proforma_invoice_reader import DOC_TYPE as PI_DOC_TYPE
 from app.services.scm.proforma_invoice_reader import ProformaReadResult
@@ -52,9 +54,9 @@ logger = logging.getLogger(__name__)
 #: first few rows, upper-cased - both real files write the title on its own row, well above
 #: any labelled cell or table header. Bare "INVOICE" is deliberately NOT a marker: the
 #: packing list's own labelled cell states "INVOICE NO.: ..." (the PI number both documents
-#: share), which would otherwise misclassify every packing list as combined.
-_PI_TITLE_MARKERS = ("发票", "PROFORMA INVOICE")
-_PL_TITLE_MARKERS = ("装箱单", "PACKING LIST")
+#: share), which would otherwise misclassify every packing list as combined. Defined in
+#: `packing_list_reader` (imported here, not duplicated) - `_shipper_of` there needs the
+#: SAME list so a title row is never read as the letterhead either.
 #: How many rows to scan for a title cell - both fixtures state it inside the first 10.
 _TITLE_SCAN_ROWS = 15
 
@@ -65,10 +67,18 @@ _PROFORMA_TYPE_CODE = "proforma_invoice"
 _PROFORMA_TYPE_NAME = "Proforma Invoice"
 
 
-def classify(data: bytes) -> Optional[str]:
+def classify(data: bytes, db: Optional[Session] = None) -> Optional[str]:
     """`'proforma_invoice' | 'packing_list' | 'combined' | None` (unreadable/unclassifiable),
     by the file's own title cell. `None` never blocks the OTHER files in a batch - only
-    itself, named, in the preview and in `apply`'s refusal."""
+    itself, named, in the preview and in `apply`'s refusal.
+
+    A titleless file falls back to what its HEADER promises, when `db` is given (review
+    round 1): a header naming an item code and a quantity but no price is a packing list; a
+    header that ALSO names a price is a proforma invoice; both shapes appearing somewhere in
+    the workbook (on different sheets, or a sheet nobody titled at all) is combined. Every
+    sheet is read for this, not only the first 15 rows of sheet 1 - a titleless workbook is
+    exactly the one most likely to bury its real table on a later tab.
+    """
     try:
         rows = list(sheet_rows(data))
     except Exception:  # noqa: BLE001 - an unreadable file classifies as None, not a 500
@@ -83,6 +93,40 @@ def classify(data: bytes) -> Optional[str]:
     if is_pi:
         return "proforma_invoice"
     if is_pl:
+        return "packing_list"
+    if db is None:
+        return None
+    return _classify_by_header_shape(db, data)
+
+
+def _classify_by_header_shape(db: Session, data: bytes) -> Optional[str]:
+    """No title cell named either document - decide from the header row(s) instead. A PI's
+    OWN required columns (item code, quantity, unit price - `proforma_invoice_reader`'s
+    `_REQUIRED_COLUMNS`) are the stricter test, checked first: a header that satisfies them
+    is proforma-invoice-shaped even though it would ALSO satisfy the packing list's own
+    looser item-code-and-quantity test. Only a header that fails the stricter test but
+    passes the looser one is packing-list-shaped."""
+    try:
+        sheets = every_sheet_rows(data)
+    except Exception:  # noqa: BLE001
+        return None
+    pi_resolver = AliasResolver.for_doc_type(db, PI_DOC_TYPE)
+    pl_resolver = AliasResolver.for_doc_type(db, PL_DOC_TYPE)
+    saw_pi = saw_pl = False
+    for rows in sheets:
+        for raw in rows:
+            if not raw:
+                continue
+            if _is_header(_header_map(raw, pi_resolver), required=("item_code", "qty", "unit_price")):
+                saw_pi = True
+                continue
+            if _is_header(_header_map(raw, pl_resolver)):
+                saw_pl = True
+    if saw_pi and saw_pl:
+        return "combined"
+    if saw_pi:
+        return "proforma_invoice"
+    if saw_pl:
         return "packing_list"
     return None
 
@@ -218,6 +262,49 @@ def _translate_preview_texts(
     return translation_service.translate(db, texts)
 
 
+def _pi_match_blocks(parsed: ProformaReadResult, known: dict[str, Any]) -> list[dict[str, Any]]:
+    """Per-container what a PI document would match against on the packing-list side:
+    its OWN stated number and, for every LINE (not de-duplicated - two lines naming the
+    same product are two separate things to match), which product it resolved to
+    (`None` for a line the catalogue does not know). What `preview`'s `price_matches`
+    counts against, by product rather than by how many lines happen to be on each side
+    (S8, review round 1)."""
+    out = []
+    for d in parsed.documents:
+        if not d.container_no:
+            continue
+        out.append(
+            {
+                "container_no": d.container_no,
+                "pi_number": d.pi_number,
+                "line_products": [
+                    (known.get(ln.item_code.upper()) or {}).get("id") for ln in d.lines
+                ],
+            }
+        )
+    return out
+
+
+def _pl_match_blocks(parsed: PackingReadResult, known: dict[str, Any]) -> list[dict[str, Any]]:
+    """Per-container which products a packing-list block's lines resolved to - the set a
+    PI document's own lines are matched against (S8, review round 1)."""
+    out = []
+    for b in parsed.blocks:
+        if not b.container_no:
+            continue
+        out.append(
+            {
+                "container_no": b.container_no,
+                "products": {
+                    pid
+                    for ln in b.lines
+                    if (pid := (known.get(ln.item_code.upper()) or {}).get("id"))
+                },
+            }
+        )
+    return out
+
+
 def _header_of(
     pi: Optional[ProformaReadResult], pl: Optional[PackingReadResult]
 ) -> dict[str, Any]:
@@ -240,7 +327,7 @@ def _header_of(
 
 
 def _file_preview(db: Session, name: str, data: bytes) -> dict[str, Any]:
-    kind = classify(data)
+    kind = classify(data, db)
     if kind is None:
         return {
             "name": name,
@@ -332,6 +419,13 @@ def _file_preview(db: Session, name: str, data: bytes) -> dict[str, Any]:
         "unmatched": sorted(set(unmatched))[:200],
         "errors": errors,
         "footer_note": footer_note,
+        # Popped by `preview()` before the response goes out - kept OFF the block dicts
+        # above so a PI-shaped block can never also be read as a PL-shaped one (S8): the
+        # two used to share one flat `blocks` list, keyed only by the FILE's kind, so a
+        # combined file's own PI block landed in `pl_blocks` too (and vice versa) and
+        # matched against itself.
+        "_pi_match": _pi_match_blocks(pi_result, known_pi) if pi_result and pi_result.ok else [],
+        "_pl_match": _pl_match_blocks(pl_result, known_pl) if pl_result and pl_result.ok else [],
     }
 
 
@@ -348,30 +442,29 @@ def preview(
 
     out_files = [_file_preview(db, name, data) for name, data in files]
 
-    # Price matches: a PI block and a PL block sharing a container in THIS batch. Uploaded
-    # separately (PL after PI, PI after PL) is answered by `apply`'s own DB-wide match, not
-    # here - the preview only describes what THIS upload states about itself.
+    # Price matches: a PI document and a PL block sharing a container in THIS batch.
+    # Uploaded separately (PL after PI, PI after PL) is answered by `apply`'s own DB-wide
+    # match, not here - the preview only describes what THIS upload states about itself.
+    # Drawn from `_pi_match`/`_pl_match` (popped off each file below), never from the
+    # display `blocks` list - a combined file's PI part and PL part are TAGGED by which
+    # helper built them, so one can never be read back as the other and matched against
+    # itself (S8, review round 1).
+    pi_entries = [e for f in out_files for e in f.pop("_pi_match")]
+    pl_entries = [e for f in out_files for e in f.pop("_pl_match")]
+
     price_matches: list[dict[str, Any]] = []
-    pi_blocks = [
-        (f["name"], b) for f in out_files if f["kind"] in ("proforma_invoice", "combined")
-        for b in f["blocks"]
-    ]
-    pl_blocks = [
-        (f["name"], b) for f in out_files if f["kind"] in ("packing_list", "combined")
-        for b in f["blocks"]
-    ]
-    for _pi_name, pi_block in pi_blocks:
-        if not pi_block.get("container_no"):
-            continue
-        for _pl_name, pl_block in pl_blocks:
-            if pl_block.get("container_no") != pi_block.get("container_no"):
+    for pi in pi_entries:
+        for pl in pl_entries:
+            if pl["container_no"] != pi["container_no"]:
                 continue
+            products = pl["products"]
+            matched = sum(1 for pid in pi["line_products"] if pid and pid in products)
             price_matches.append(
                 {
-                    "container_no": pi_block["container_no"],
-                    "pi_number": None,
-                    "matched_lines": min(pi_block["line_count"], pl_block["line_count"]),
-                    "unmatched_lines": abs(pi_block["line_count"] - pl_block["line_count"]),
+                    "container_no": pi["container_no"],
+                    "pi_number": pi["pi_number"],
+                    "matched_lines": matched,
+                    "unmatched_lines": len(pi["line_products"]) - matched,
                 }
             )
 
@@ -380,8 +473,18 @@ def preview(
 
 def _match_prices(db: Session, *, supplier_id: str) -> int:
     """Copy proforma-invoice prices onto the packing-list lines they match, by PRODUCT, for
-    every container this supplier holds on both sides (R14). Idempotent: a PI line already
-    linked to a shipment line is never re-linked, same rule `convert_to_draft_shipment` uses.
+    every container this supplier holds on both sides (R14). Mirrors
+    `convert_to_draft_shipment`'s own semantics rather than a shape of its own (review
+    round 1, captain's ruling): `qty` on the link is how much is on THIS shipment line,
+    never the PI line's own quantity (which may span more than one container); a PI line
+    with no shipment line to bind to still gets a row, `unmatched_reason` set, so the PI
+    detail page can say where it went; a container carrying TWO shipment lines for the same
+    product (rare - two blocks of one container each writing it) consumes them in order,
+    so a second PI line naming that product takes the SECOND line rather than the same one
+    every time. Idempotent: ANY existing row for a PI line - matched or unmatched - is a
+    recorded outcome and is never written again, same rule `convert_to_draft_shipment` uses
+    (and the reason a PI placed through this path is correctly refused by that function and
+    dropped from its own revision candidates - the outcome here is exactly as permanent).
     """
     from app.models.procurement import InboundShipment, InboundShipmentLine
     from app.models.scm import ProformaInvoice, ProformaInvoiceLine, ProformaInvoiceShipmentLink
@@ -404,11 +507,11 @@ def _match_prices(db: Session, *, supplier_id: str) -> int:
         if key:
             by_container.setdefault(key, []).append(s)
 
+    # ANY existing row - matched (a real link) or skipped (`unmatched_reason` set) - is a
+    # recorded outcome, not only a matched one; re-checking every apply would otherwise
+    # write a second `unmatched_reason` row for the same line on every subsequent upload.
     already_linked = {
-        str(r[0])
-        for r in db.query(ProformaInvoiceShipmentLink.proforma_invoice_line_id)
-        .filter(ProformaInvoiceShipmentLink.inbound_shipment_line_id.isnot(None))
-        .all()
+        str(r[0]) for r in db.query(ProformaInvoiceShipmentLink.proforma_invoice_line_id).all()
     }
 
     links_written = 0
@@ -422,15 +525,19 @@ def _match_prices(db: Session, *, supplier_id: str) -> int:
         pi_lines = (
             db.query(ProformaInvoiceLine)
             .filter(ProformaInvoiceLine.invoice_id == inv.id, ProformaInvoiceLine.product_id.isnot(None))
+            .order_by(ProformaInvoiceLine.line_no)
             .all()
         )
         if not pi_lines:
             continue
         for shipment in candidates:
+            # Consumed in order (`list.pop(0)`, below) - a second shipment line for the
+            # same product takes the NEXT PI line naming it, not the first one twice.
             lines_by_product: dict[str, list[InboundShipmentLine]] = {}
             for ln in (
                 db.query(InboundShipmentLine)
                 .filter(InboundShipmentLine.shipment_id == shipment.id)
+                .order_by(InboundShipmentLine.created_at, InboundShipmentLine.id)
                 .all()
             ):
                 if ln.product_id:
@@ -441,8 +548,21 @@ def _match_prices(db: Session, *, supplier_id: str) -> int:
                     continue
                 targets = lines_by_product.get(str(pi_line.product_id))
                 if not targets:
+                    db.add(
+                        ProformaInvoiceShipmentLink(
+                            id=str(uuid.uuid4()),
+                            proforma_invoice_id=inv.id,
+                            proforma_invoice_line_id=pi_line.id,
+                            inbound_shipment_id=shipment.id,
+                            inbound_shipment_line_id=None,
+                            unmatched_reason=(
+                                "No shipment line for this product on this container."
+                            ),
+                        )
+                    )
+                    already_linked.add(str(pi_line.id))
                     continue
-                target = targets[0]
+                target = targets.pop(0)
                 if pi_line.unit_price is not None:
                     target.unit_cost = pi_line.unit_price
                     target.currency = inv.currency
@@ -453,7 +573,10 @@ def _match_prices(db: Session, *, supplier_id: str) -> int:
                         proforma_invoice_line_id=pi_line.id,
                         inbound_shipment_id=shipment.id,
                         inbound_shipment_line_id=target.id,
-                        qty=pi_line.qty,
+                        # How much is on THIS shipment - the target line's OWN quantity,
+                        # not the PI line's (which is not split here, but may still name
+                        # more than what a single container actually carries).
+                        qty=target.quantity_shipped,
                     )
                 )
                 already_linked.add(str(pi_line.id))
@@ -488,7 +611,7 @@ def apply(
     if translations:
         translation_service.remember(db, translations, user_id=actor_id)
 
-    kinds = [(name, data, ctype, classify(data)) for name, data, ctype in files]
+    kinds = [(name, data, ctype, classify(data, db)) for name, data, ctype in files]
     unreadable = [name for name, _d, _c, kind in kinds if kind is None]
     if unreadable:
         raise AppException(
@@ -503,6 +626,10 @@ def apply(
     proforma_invoice_ids: list[str] = []
     shipment_ids: list[str] = []
     attachment_ids: list[str] = []
+    # A COMBINED file is one upload, so it is filed in Drive ONCE - by name, so the packing
+    # list loop below can bind the shipment it creates to the SAME attachment rather than
+    # filing the same bytes a second time under a second type (S7, review round 1).
+    filed_attachment_by_name: dict[str, str] = {}
 
     for name, data, ctype, kind in kinds:
         if kind not in ("proforma_invoice", "combined"):
@@ -518,13 +645,16 @@ def apply(
         )
         if attachment_id:
             attachment_ids.append(attachment_id)
+            filed_attachment_by_name[name] = attachment_id
 
     for name, data, ctype, kind in kinds:
         if kind not in ("packing_list", "combined"):
             continue
+        already_filed = filed_attachment_by_name.get(name)
         result = packing_list_service.apply(
             db, data, supplier_id=supplier_id, currency=currency, source_ref=name,
-            content_type=ctype, file_in_drive=True, actor_id=actor_id,
+            content_type=ctype, attachment_id=already_filed,
+            file_in_drive=already_filed is None, actor_id=actor_id,
         )
         for r in result.get("results", []):
             if r.get("shipment_id"):

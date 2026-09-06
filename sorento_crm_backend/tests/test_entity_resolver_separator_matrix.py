@@ -125,6 +125,18 @@ def _shipment_by_container(db, container: str) -> str:
     return _shipment(db, f"ZZT-SHP-{_uid()[:6]}", container=container)
 
 
+def _shipment_by_forwarder_order_ref(db, so_ref: str) -> str:
+    # `提单号` lands here (the SO field), not `bill_of_lading_number`, on an upload made
+    # through the supplier-documents dialog (S3, review round 1).
+    row = InboundShipment(
+        id=_uid(), shipment_number=f"ZZT-SHP-{_uid()[:6]}", forwarder_order_ref=so_ref,
+        shipment_date=date(2026, 1, 1),
+    )
+    db.add(row)
+    db.flush()
+    return row.id
+
+
 def _warehouse(db, code: str) -> str:
     row = Warehouse(id=_uid(), warehouse_code=code, warehouse_name="ZZT warehouse")
     db.add(row)
@@ -214,6 +226,7 @@ CASES = [
     Case("customer_code", "ZZT-C043", _customer, er._probe_customer, er._prefix_probe_customer),
     Case("shipment_number", "ZZT-SHP-9001", _shipment, er._probe_inbound_shipment, er._prefix_probe_inbound_shipment),
     Case("container_number", "ZZT-CONT-4455", _shipment_by_container, er._probe_inbound_shipment, er._prefix_probe_inbound_shipment),
+    Case("forwarder_order_ref", "ZZT-SO-6601", _shipment_by_forwarder_order_ref, er._probe_inbound_shipment, er._prefix_probe_inbound_shipment),
     Case("warehouse_code", "ZZT-WH-01", _warehouse, er._probe_warehouse, er._prefix_probe_warehouse),
     Case("supplier_code", "ZZT-SUP-77", _supplier, er._probe_supplier, er._prefix_probe_supplier),
     Case("spo_number", "ZZT-SPO-3321", _spo, er._probe_spo, er._prefix_probe_spo),

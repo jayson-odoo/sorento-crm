@@ -209,6 +209,35 @@ def test_ai_never_overwrites_a_manual_row(db, monkeypatch):
     assert fake.calls == []  # already in memory as manual - never asked
 
 
+def test_ai_fill_chunk_reads_back_the_winner_on_a_unique_race(db, monkeypatch):
+    """Two requests can both miss the same phrase at once - `translate()`'s own
+    `_lookup` ran before either committed, so both call `_ai_fill_chunk` believing it
+    is new. The loser's insert hits `uq_translation_memory_phrase`; the fix reads back
+    the WINNER's row instead of raising (nit, review round 1)."""
+    _configure_ai(db)
+    fake = _stub_provider(monkeypatch, {"座厕": "Toilet bowl (mine)"})
+
+    # The "winner" - another transaction already committed the same phrase.
+    db.add(
+        TranslationMemory(
+            id=str(uuid.uuid4()), source_text="座厕", source_lang="zh", target_lang="en",
+            target_text="Toilet bowl (theirs)", source="ai",
+        )
+    )
+    db.commit()
+
+    out = svc._ai_fill_chunk(
+        db, ["座厕"], provider_name="openai", model_name="gpt-4o-mini", api_key="fake-key",
+        system="", source_lang="zh", target_lang="en",
+    )
+
+    assert out == {"座厕": "Toilet bowl (theirs)"}  # the WINNER's answer, not the fake's
+    assert fake.calls  # the model was still asked - the memory lookup happens in translate(), not here
+    assert (
+        db.query(TranslationMemory).filter(TranslationMemory.source_text == "座厕").count() == 1
+    )
+
+
 def test_compose_bilingual_prints_english_and_chinese_only_when_they_differ():
     hit = svc.TranslationHit(text="Toilet bowl", source="manual")
     assert svc.compose_bilingual(hit, "座厕") == "Toilet bowl (座厕)"

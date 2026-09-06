@@ -25,9 +25,10 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.translation_memory import SOURCE_AI, SOURCE_MANUAL, TranslationMemory
@@ -269,20 +270,45 @@ def _ai_fill_chunk(
         # that re-punctuates or re-cases the source back would otherwise mint a second,
         # near-duplicate row for the same phrase.
         norm = chunk[i]
-        if norm not in out:
-            out[norm] = target
-            db.add(
-                TranslationMemory(
-                    id=str(uuid.uuid4()),
-                    source_text=norm,
-                    source_lang=source_lang,
-                    target_lang=target_lang,
-                    target_text=target,
-                    source=SOURCE_AI,
+        if norm in out:
+            continue
+        # Each insert in its OWN savepoint, flushed immediately: `misses` only ever holds
+        # a phrase with NO row yet, but two requests can both miss the same phrase at
+        # once, and the unique constraint (`uq_translation_memory_phrase`) is the thing
+        # that catches it. A bare `db.add` + one flush at the end of the loop let that
+        # `IntegrityError` escape uncaught, breaking this function's own "never raises"
+        # contract; a savepoint means the LOSER rolls back only its own insert, not
+        # every row this chunk already wrote, and reads back the WINNER's answer instead
+        # of a duplicate.
+        try:
+            with db.begin_nested():
+                db.add(
+                    TranslationMemory(
+                        id=str(uuid.uuid4()),
+                        source_text=norm,
+                        source_lang=source_lang,
+                        target_lang=target_lang,
+                        target_text=target,
+                        source=SOURCE_AI,
+                    )
                 )
+                db.flush()
+        except IntegrityError:
+            existing = (
+                db.query(TranslationMemory)
+                .filter(
+                    TranslationMemory.source_text == norm,
+                    TranslationMemory.source_lang == source_lang,
+                    TranslationMemory.target_lang == target_lang,
+                )
+                .first()
             )
-    if out:
-        db.flush()
+            if existing is None:
+                # Not a race after all - some OTHER constraint failed. Leave this phrase
+                # untranslated rather than raise; the docstring's "never raises" holds.
+                continue
+            target = existing.target_text
+        out[norm] = target
     return out
 
 
@@ -343,12 +369,27 @@ def remember(
 # Admin list (AC-G4) - System Management > Translations
 # --------------------------------------------------------------------------------------
 
+#: Whitelisted `sort` columns (S6, review round 1) - the FE's own service contract
+#: (`translationService.ts`) already documents `?sort&dir` and builds them on every
+#: sortable column, so the route accepting them is the smaller diff over stripping that
+#: back out. `target_text` is not sortable (`enableSorting: false` on the FE column,
+#: it is an inline-editable input, not prose worth ordering by) and is deliberately
+#: absent here too, even though the FE could never send it.
+_SORT_COLUMNS: dict[str, Any] = {
+    "source_text": TranslationMemory.source_text,
+    "source": TranslationMemory.source,
+    "hit_count": TranslationMemory.hit_count,
+    "updated_at": TranslationMemory.updated_at,
+}
+
 
 def list_memory(
-    db: Session, *, page: int = 1, limit: int = 50, query: Optional[str] = None
+    db: Session, *, page: int = 1, limit: int = 50, query: Optional[str] = None,
+    sort: Optional[str] = None, dir: Optional[str] = None,
 ) -> tuple[list[dict], int]:
-    """Rows plus total, newest-touched first, joined onto the writing user's name (never
-    a bare id in the UI)."""
+    """Rows plus total, joined onto the writing user's name (never a bare id in the UI).
+    Sorted by `sort`/`dir` when `sort` names a whitelisted column, else newest-touched
+    first - the same default this list always had."""
     q = db.query(TranslationMemory)
     if query:
         like = f"%{query.strip()}%"
@@ -359,8 +400,14 @@ def list_memory(
             )
         )
     total = q.count()
+    column = _SORT_COLUMNS.get(sort or "")
+    if column is None:
+        column, sort_dir = TranslationMemory.updated_at, "desc"
+    else:
+        sort_dir = "asc" if (dir or "").lower() == "asc" else "desc"
+    ordered = column.asc() if sort_dir == "asc" else column.desc()
     rows = (
-        q.order_by(TranslationMemory.updated_at.desc())
+        q.order_by(ordered)
         .offset((page - 1) * limit)
         .limit(limit)
         .all()

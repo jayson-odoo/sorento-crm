@@ -379,6 +379,52 @@ describe('PackingListUploadDialog - translations, English beside the Chinese (R1
       }),
     );
   });
+
+  it('renders both rows when two blocks state the identical Chinese phrase (key collision, review round 1)', async () => {
+    // Two containers, the SAME line description on each - a real Jiexia shape. Without
+    // a block-index-prefixed React key, both rows shared one identity and only one
+    // English input rendered.
+    const line = (descriptionEn: string | null) => ({
+      item_code: 'NOPE-1',
+      matched: false,
+      description: '座厕 S-250出水 对冲',
+      description_en: descriptionEn,
+      description_en_source: descriptionEn ? 'ai' : null,
+      remark: null,
+      remark_en: null,
+      remark_en_source: null,
+    });
+    const twoBlocksSamePhrase = {
+      name: 'packing-list.xls',
+      kind: 'packing_list',
+      blocks: [
+        {
+          container_no: 'WHSU6243088', seal_no: null, cartons: null, cbm_total: null,
+          amount: null, line_count: 1, note_count: 0,
+          lines: [line('Toilet bowl S-250 (block 1)')], notes: [],
+        },
+        {
+          container_no: 'WHSU6356079', seal_no: null, cartons: null, cbm_total: null,
+          amount: null, line_count: 1, note_count: 0,
+          lines: [line('Toilet bowl S-250 (block 2)')], notes: [],
+        },
+      ],
+      header: { pi_number: null, invoice_date: null, consignee: null, shipper: null, so_ref: null },
+      unmatched: ['NOPE-1'],
+      errors: [],
+      footer_note: null,
+    };
+    previewSupplierDocuments.mockResolvedValue({ files: [twoBlocksSamePhrase], price_matches: [] });
+    openDialog();
+    pickFiles([xlsx('packing-list.xls')]);
+    fireEvent.click(testButton());
+
+    await screen.findAllByText('座厕 S-250出水 对冲');
+
+    expect(screen.getAllByText('座厕 S-250出水 对冲')).toHaveLength(2);
+    expect(screen.getByDisplayValue('Toilet bowl S-250 (block 1)')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Toilet bowl S-250 (block 2)')).toBeInTheDocument();
+  });
 });
 
 describe('PackingListUploadDialog - self-serve supplier picker (no supplierId prop)', () => {

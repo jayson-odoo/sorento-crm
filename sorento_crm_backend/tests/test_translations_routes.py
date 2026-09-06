@@ -115,6 +115,71 @@ def test_list_search_matches_source_or_target(client):
     assert body["data"][0]["source_text"] == "座厕"
 
 
+def test_list_sorts_by_source_text(client):
+    c, db, _actor = client
+    _row(db, source_text="纸箱")
+    _row(db, source_text="座厕")
+    db.commit()
+
+    resp = c.get(BASE, params={"sort": "source_text", "dir": "asc"})
+    assert resp.status_code == 200, resp.text
+    assert [r["source_text"] for r in resp.json()["data"]] == ["座厕", "纸箱"]
+
+    resp = c.get(BASE, params={"sort": "source_text", "dir": "desc"})
+    assert [r["source_text"] for r in resp.json()["data"]] == ["纸箱", "座厕"]
+
+
+def test_list_sorts_by_source_kind(client):
+    c, db, _actor = client
+    _row(db, source_text="A", source="manual")
+    _row(db, source_text="B", source="ai")
+    db.commit()
+
+    resp = c.get(BASE, params={"sort": "source", "dir": "asc"})
+    assert [r["source"] for r in resp.json()["data"]] == ["ai", "manual"]
+
+
+def test_list_sorts_by_hit_count(client):
+    c, db, _actor = client
+    _row(db, source_text="A", hit_count=5)
+    _row(db, source_text="B", hit_count=1)
+    db.commit()
+
+    resp = c.get(BASE, params={"sort": "hit_count", "dir": "asc"})
+    assert [r["hit_count"] for r in resp.json()["data"]] == [1, 5]
+
+    resp = c.get(BASE, params={"sort": "hit_count", "dir": "desc"})
+    assert [r["hit_count"] for r in resp.json()["data"]] == [5, 1]
+
+
+def test_list_sorts_by_updated_at_default_newest_first(client):
+    c, db, _actor = client
+    older = _row(db, source_text="older")
+    newer = _row(db, source_text="newer")
+    db.commit()
+    # `updated_at` is server-defaulted `now()`, which ties within one transaction - set
+    # explicitly so the default ordering this test pins is deterministic.
+    from datetime import datetime, timedelta
+
+    older.updated_at = datetime.utcnow() - timedelta(minutes=5)
+    newer.updated_at = datetime.utcnow()
+    db.commit()
+
+    resp = c.get(BASE)
+    assert [r["source_text"] for r in resp.json()["data"]] == ["newer", "older"]
+
+
+def test_list_ignores_an_unwhitelisted_sort_field(client):
+    # `target_text` is not sortable (it is an inline-editable input on the FE, never
+    # sent as `sort` there, but the route must not 500 if it somehow is).
+    c, db, _actor = client
+    _row(db, source_text="A")
+    db.commit()
+
+    resp = c.get(BASE, params={"sort": "target_text"})
+    assert resp.status_code == 200, resp.text
+
+
 def test_update_writes_manual_and_the_actor(client):
     c, db, actor = client
     row = _row(db, source_text="座厕", target_text="Toilet bowl", source="ai")
