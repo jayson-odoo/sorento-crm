@@ -488,12 +488,25 @@ async def post_next_assignee(
             phone=contact_phone,
         )
         contact_segments: Optional[set[str]] = resolved or None
-        result = service.get_next_assignee(
-            agent_id,
-            team_id,
-            contact_segments,
-            brand_code=resolved_team.brand_code,
-        )
+        # `preview: true` asks WHO the next call would draw without drawing: same pool,
+        # same cursor, no advance and no commit. The chatbot's dry run needs it to name the
+        # real assignee on a test turn while the live rotation it shares belongs to real
+        # customers. The preferred-assignee branch above never advances the cursor either,
+        # so it is already inert and needs no flag.
+        if body.get("preview") is True:
+            result = service.preview_next_assignee(
+                agent_id,
+                team_id,
+                contact_segments,
+                brand_code=resolved_team.brand_code,
+            )
+        else:
+            result = service.get_next_assignee(
+                agent_id,
+                team_id,
+                contact_segments,
+                brand_code=resolved_team.brand_code,
+            )
     if result is None:
         raise HTTPException(
             status_code=404,

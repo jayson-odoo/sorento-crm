@@ -70,6 +70,21 @@ def _rr_user_id_key(value: Optional[object]) -> str:
     return str(value).strip()
 
 
+def _rr_next_index(user_ids: list, last_assigned_user_id: Optional[object]) -> int:
+    """Which member the cursor points at NEXT: after `last_assigned_user_id`, wrapping.
+
+    Pure arithmetic over the two values, extracted so the LIVE draw and the DRY-RUN preview
+    run the same rotation and cannot answer differently. An unknown or absent last id starts
+    the pool from the top, which is what a fresh cursor means.
+    """
+    last_key = _rr_user_id_key(last_assigned_user_id) if last_assigned_user_id is not None else ""
+    try:
+        idx = user_ids.index(last_key) if last_key else -1
+    except ValueError:
+        idx = -1
+    return (idx + 1) % len(user_ids)
+
+
 # --------------------------------------------------------------- brand routing
 #
 # Brand is the second routing axis, orthogonal to company: Cabana and Mocha are
@@ -1583,37 +1598,22 @@ class AccessAgentService:
                 out.setdefault(str(member_id), set()).add(normalised)
         return out
 
-    def get_next_assignee(
+    def _rr_pool(
         self,
         agent_id: str,
         team_id: str,
         contact_segments: Optional[set[str]] = None,
         *,
         brand_code: Optional[str] = None,
-    ) -> Optional[dict]:
-        """
-        Return the next assignee for (agent_id, team_id) using round-robin.
-        Uses SELECT ... FOR UPDATE on the cursor for concurrency safety.
-        Returns dict with id, email, name or None if no eligible members.
+    ) -> Optional[tuple]:
+        """The eligible pool and the cursor key for one (agent, team) draw. PURE READ.
 
-        ``contact_segments`` (opt-in): when a non-empty set is passed, the round-robin
-        pool is restricted to members whose served segments intersect it, plus untagged
-        members (serve all). The rotation then uses a segment-scoped cursor
-        (``segment_key`` = sorted '|'-joined codes) so each segment rotates independently.
-        When ``None`` / empty (the normal path, incl. every non-CS agent), the pool and
-        the ``segment_key=''`` cursor are exactly as before - no behaviour change.
-        An empty filtered pool falls back to the full team on the '' cursor.
+        Returns ``(members, user_ids, segment_key, brands_by_member, wanted_brand)``, or
+        ``None`` when the agent is not linked to the team or nobody is eligible.
 
-        ``brand_code`` (opt-in): the SECOND axis, same rule and ANDed with the first -
-        members tagged with that brand plus members tagged with none of them. The
-        returned dict carries ``brand_matched``, true only when the member DRAWN is
-        tagged with that brand, so n8n can tell the specialist taking it from an
-        untagged serve-all member taking it.
-
-        The two filters fall back ONE AXIS AT A TIME: a brand nobody serves drops the
-        brand and keeps whatever the segment left, and only a segment nobody serves
-        goes back to the whole team. Dropping straight to the team would hand a retail
-        conversation to a project-only member because of an unrelated brand.
+        Extracted so the LIVE draw and the DRY-RUN preview select from the SAME pool with
+        the SAME cursor key: a preview that filtered differently would name an assignee the
+        live turn was never going to pick, which is worse than naming none.
         """
         from sqlalchemy import and_
         from sqlalchemy.orm import selectinload
@@ -1695,6 +1695,49 @@ class AccessAgentService:
                 pool = brand_pool
         members = pool
         user_ids = [_rr_user_id_key(m.user_id) for m in members]
+        return members, user_ids, segment_key, brands_by_member, wanted_brand
+
+    def get_next_assignee(
+        self,
+        agent_id: str,
+        team_id: str,
+        contact_segments: Optional[set[str]] = None,
+        *,
+        brand_code: Optional[str] = None,
+    ) -> Optional[dict]:
+        """
+        Return the next assignee for (agent_id, team_id) using round-robin.
+        Uses SELECT ... FOR UPDATE on the cursor for concurrency safety.
+        Returns dict with id, email, name or None if no eligible members.
+
+        ``contact_segments`` (opt-in): when a non-empty set is passed, the round-robin
+        pool is restricted to members whose served segments intersect it, plus untagged
+        members (serve all). The rotation then uses a segment-scoped cursor
+        (``segment_key`` = sorted '|'-joined codes) so each segment rotates independently.
+        When ``None`` / empty (the normal path, incl. every non-CS agent), the pool and
+        the ``segment_key=''`` cursor are exactly as before - no behaviour change.
+        An empty filtered pool falls back to the full team on the '' cursor.
+
+        ``brand_code`` (opt-in): the SECOND axis, same rule and ANDed with the first -
+        members tagged with that brand plus members tagged with none of them. The
+        returned dict carries ``brand_matched``, true only when the member DRAWN is
+        tagged with that brand, so n8n can tell the specialist taking it from an
+        untagged serve-all member taking it.
+
+        The two filters fall back ONE AXIS AT A TIME: a brand nobody serves drops the
+        brand and keeps whatever the segment left, and only a segment nobody serves
+        goes back to the whole team. Dropping straight to the team would hand a retail
+        conversation to a project-only member because of an unrelated brand.
+        """
+        from sqlalchemy import and_
+
+        pooled = self._rr_pool(
+            agent_id, team_id, contact_segments, brand_code=brand_code
+        )
+        if pooled is None:
+            return None
+        members, user_ids, segment_key, brands_by_member, wanted_brand = pooled
+        brand_matched = False
         # Get or create cursor and lock it (scoped by segment_key)
         cursor = (
             self.db.query(AgentTeamRoundRobinCursor)
@@ -1718,13 +1761,7 @@ class AccessAgentService:
             self.db.add(cursor)
             self.db.flush()
         # Find next index: after last_assigned_user_id, wrap around
-        last_assigned_user_id = getattr(cursor, "last_assigned_user_id", None)
-        last_key = _rr_user_id_key(last_assigned_user_id) if last_assigned_user_id is not None else ""
-        try:
-            idx = user_ids.index(last_key) if last_key else -1
-        except ValueError:
-            idx = -1
-        next_idx = (idx + 1) % len(user_ids)
+        next_idx = _rr_next_index(user_ids, getattr(cursor, "last_assigned_user_id", None))
         next_user_id = user_ids[next_idx]
         setattr(cursor, "last_assigned_user_id", next_user_id)
         # Per assignee, not per pool: the drawn member carrying the tag is what makes
@@ -1735,11 +1772,15 @@ class AccessAgentService:
             drawn = members[next_idx]
             brand_matched = wanted_brand in (brands_by_member.get(str(drawn.id)) or set())
         self.db.commit()
-        # Load user for response
-        user = self.db.query(User).filter(User.id == next_user_id).first()
+        return self._rr_assignee_payload(next_user_id, brand_matched)
+
+    def _rr_assignee_payload(self, user_id: object, brand_matched: bool) -> dict:
+        """The drawn member as the caller's dict. Shared by the live draw and the preview,
+        so a preview cannot answer in a different shape from the turn it previews."""
+        user = self.db.query(User).filter(User.id == user_id).first()
         if not user:
             return {
-                "id": next_user_id,
+                "id": user_id,
                 "email": None,
                 "name": None,
                 "brand_matched": brand_matched,
@@ -1751,6 +1792,52 @@ class AccessAgentService:
             "respond_user_id": user.respond_user_id,
             "brand_matched": brand_matched,
         }
+
+    def preview_next_assignee(
+        self,
+        agent_id: str,
+        team_id: str,
+        contact_segments: Optional[set[str]] = None,
+        *,
+        brand_code: Optional[str] = None,
+    ) -> Optional[dict]:
+        """Who ``get_next_assignee`` WOULD draw, without drawing.
+
+        Same pool, same cursor key, same arithmetic - and no write of any kind: no row lock,
+        no cursor row created, nothing advanced, nothing committed. A dry-run escalation has
+        to name the real next assignee (a preview that says "someone" tells the owner
+        nothing), and it shares the cursor with live traffic, so moving it would hand the
+        next real customer to the member after the one a test just consumed (H37 / H57).
+
+        Returns ``None`` when there is no eligible member, exactly as the live draw does.
+        """
+        from sqlalchemy import and_
+
+        pooled = self._rr_pool(
+            agent_id, team_id, contact_segments, brand_code=brand_code
+        )
+        if pooled is None:
+            return None
+        members, user_ids, segment_key, brands_by_member, wanted_brand = pooled
+        cursor = (
+            self.db.query(AgentTeamRoundRobinCursor)
+            .filter(
+                and_(
+                    AgentTeamRoundRobinCursor.agent_id == agent_id,
+                    AgentTeamRoundRobinCursor.team_id == team_id,
+                    AgentTeamRoundRobinCursor.segment_key == segment_key,
+                )
+            )
+            .first()
+        )
+        next_idx = _rr_next_index(
+            user_ids, getattr(cursor, "last_assigned_user_id", None) if cursor else None
+        )
+        brand_matched = False
+        if wanted_brand:
+            drawn = members[next_idx]
+            brand_matched = wanted_brand in (brands_by_member.get(str(drawn.id)) or set())
+        return self._rr_assignee_payload(user_ids[next_idx], brand_matched)
 
     def list_active_team_members_detail(
         self,

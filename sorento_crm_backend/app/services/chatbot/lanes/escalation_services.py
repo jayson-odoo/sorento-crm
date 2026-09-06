@@ -8,9 +8,11 @@ is what lets the 66-fixture replay run as JSON in, JSON out.
 | n8n node | this seam | CRM service |
 | --- | --- | --- |
 | `get-round-robin-assignee` (httpRequest) | `next_assignee` | `POST /api/v1/external/next-assignee`'s own handler |
+| (the same node, previewed) | `preview_assignee` | the same handler with `preview: true` |
 | `conversation-sla-tracking-create` (httpRequest) | `sla_create` | `ConversationSLATrackingService.create_tracking` |
 | (B-HB-1, not live) | `resolve_and_gate` | S6a's `business.run_until_exit` |
 | (the member roster) | `team_members` | `app.api.v1.external.team_members` |
+| (new, 6 Sep 2026) | `staff_lookup` | `users` x `team_members` x `agent_teams`, read here |
 
 Every test in `test_s5_escalation_lane.py` injects its own `services`, which is the point
 of the seam; `test_s5_escalation_seams.py` covers THIS module - the wiring that runs once
@@ -40,8 +42,10 @@ class EscalationServices:
 
     resolve_and_gate: Any
     next_assignee: Any
+    preview_assignee: Any
     sla_create: Any
     team_members: Any
+    staff_lookup: Any
 
 
 def _next_assignee(db: Any):
@@ -64,6 +68,28 @@ def _next_assignee(db: Any):
     return call
 
 
+def _preview_assignee(db: Any):
+    def call(body: dict[str, Any]) -> dict[str, Any]:
+        """The SAME handler, asked who it WOULD draw (`preview: true`).
+
+        A dry run has to name the real next assignee, and it shares the round-robin cursor
+        with live traffic, so it must not advance it. Going through the handler rather than
+        reaching for the service keeps ONE implementation of team resolution, the company
+        pin, segments and brands - the same reason `next_assignee` calls it.
+        """
+        from app.api.v1.external.next_assignee import post_next_assignee
+
+        return asyncio.run(
+            post_next_assignee(
+                body={**body, "preview": True},
+                current_user={"id": None, "email": "chatbot"},
+                db=db,
+            )
+        )
+
+    return call
+
+
 def _sla_create(db: Any):
     def call(body: dict[str, Any]) -> dict[str, Any]:
         from app.schemas.sla import ConversationSLATrackingCreate
@@ -80,6 +106,82 @@ def _sla_create(db: Any):
             "due_at": getattr(created, "due_at", None),
             "due_at_resolution": getattr(created, "due_at_resolution", None),
         }
+
+    return call
+
+
+def _staff_lookup(db: Any):
+    def call(name: str) -> list[dict[str, Any]]:
+        """Active staff whose FIRST NAME is `name`, with the team each is on.
+
+        The name comes from the parser's `person_mention` (D11 - the lane never reads the
+        customer's words), and the match is deliberately narrow: the first word of the
+        user's name, case-insensitively, or the whole name. Anything looser turns "escalate
+        to Ali" into a guess, and the lane's answer to more than one hit is to ASK.
+
+        The routing slug is `agent_teams.code` - the code the rest of the escalation path
+        speaks - so a team with no agent-team row cannot be routed to and does not appear.
+        The session carries the contact's company scope, so a person in another company's
+        team is not a candidate.
+        """
+        from sqlalchemy import func, or_
+
+        from app.models.access import AgentTeam, Team, TeamMember
+        from app.models.user import User, UserStatus
+
+        wanted = str(name or "").strip().lower()
+        if not wanted:
+            return []
+        rows = (
+            db.query(
+                User.id,
+                User.name,
+                User.respond_user_id,
+                Team.id,
+                Team.name,
+                AgentTeam.code,
+            )
+            .join(TeamMember, TeamMember.user_id == User.id)
+            .join(Team, Team.id == TeamMember.team_id)
+            .join(AgentTeam, AgentTeam.team_id == Team.id)
+            .filter(
+                # `status` is a String on the model and a NATIVE ENUM in production, so it
+                # is compared as a literal and never wrapped in `lower()` - the function
+                # does not exist for the enum type and the query 500s there while passing
+                # every test on the String column.
+                User.status == UserStatus.ACTIVE.value,
+                User.is_trashed.is_(False),
+                User.name.isnot(None),
+                or_(
+                    func.lower(User.name) == wanted,
+                    func.lower(func.split_part(User.name, " ", 1)) == wanted,
+                ),
+            )
+            # Stable, so the clarify list reads the same way twice: team name, then person.
+            .order_by(Team.name.asc(), User.name.asc(), AgentTeam.code.asc())
+            .all()
+        )
+        # One hit per PERSON per TEAM. A team commonly carries more than one agent-team
+        # code (a tier or a legacy brand-suffixed variant - "customer_service" and
+        # "customer_service_c" both point at Customer Service), and returning both would
+        # read as two candidates and make the lane ask about an ambiguity that is not one.
+        # The shortest code wins, then alphabetical: the base code is the short one, and
+        # the tie-break is there so the answer cannot depend on row order.
+        best: dict[tuple, dict[str, Any]] = {}
+        for user_id, user_name, respond_user_id, team_id, team_name, team_code in rows:
+            key = (str(user_id), str(team_id))
+            held = best.get(key)
+            code = str(team_code)
+            if held is not None and (len(held["team_code"]), held["team_code"]) <= (len(code), code):
+                continue
+            best[key] = {
+                "user_id": str(user_id),
+                "user_name": user_name,
+                "respond_user_id": respond_user_id,
+                "team_name": team_name,
+                "team_code": code,
+            }
+        return list(best.values())
 
     return call
 
@@ -145,6 +247,8 @@ def build(db: Any) -> EscalationServices:
     return EscalationServices(
         resolve_and_gate=_not_live("resolve_and_gate"),
         next_assignee=_next_assignee(db),
+        preview_assignee=_preview_assignee(db),
         sla_create=_sla_create(db),
         team_members=_not_live("team_members"),
+        staff_lookup=_staff_lookup(db),
     )

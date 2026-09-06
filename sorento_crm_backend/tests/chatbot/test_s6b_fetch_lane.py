@@ -528,6 +528,69 @@ class TestOutputStructurer:
 
 
 # --------------------------------------------------------------------------- #
+# Owner console defect I (owner ruling: "label it"). `output_structurer`'s
+# multi-company "which company came back empty" block (fetch.py:1043-1087) builds its
+# "no <noun> records for ..." sentence by flattening EVERY `ctx.entities[].code` into one
+# comma list - including a customer's internal debtor code (e.g. "300-H070") and every
+# alias-row name variant for the SAME customer, un-labelled and un-deduped. The owner
+# wants an axis-labelled sentence ("customer X, product Y" - the `_AXES` vocabulary
+# `answer.py:1586-1592` already uses elsewhere) with the internal debtor code never
+# printed and the alias rows collapsed to one customer name.
+# --------------------------------------------------------------------------- #
+
+
+class TestLabelledNotFoundLineNeverLeaksInternalDebtorCode:
+    def test_customer_alias_rows_collapse_and_the_debtor_code_never_prints(self) -> None:
+        fetch = _import_fetch()
+
+        result = {
+            "result_type": "order",
+            "intro": "Here are the results.",
+            "items": [],
+            "has_result": False,
+            "lookup_companies": [{"name": "Sorento"}, {"name": "Mocha"}],
+        }
+        ctx = {
+            "semantic_input": {"requested_attributes": []},
+            "entities": [
+                # The SAME customer, three rows: the internal debtor code plus two
+                # alias/name variants - exactly the shape a multi-alias customer
+                # match carries.
+                {"code": "300-H070", "uuid": "cust-1", "entity_type": "customer"},
+                {
+                    "code": "HANLIM TRADING SDN BHD [A/C I]",
+                    "uuid": "cust-1",
+                    "entity_type": "customer",
+                },
+                {
+                    "code": "HANLIM TRADING SDN BHD",
+                    "uuid": "cust-2",
+                    "entity_type": "customer",
+                },
+                {"code": "RPACC", "uuid": "prod-1", "entity_type": "product"},
+            ],
+        }
+
+        out = fetch.output_structurer(result, ctx)
+        response = out.get("response") or ""
+
+        assert "300-H070" not in response, (
+            f"the internal debtor code must never reach the customer: {response!r}"
+        )
+        assert "[A/C I]" not in response, (
+            f"the alias-row name variant must not appear alongside the plain name: {response!r}"
+        )
+        assert response.count("HANLIM TRADING SDN BHD") == 1, (
+            "the alias rows for the SAME customer must collapse to ONE printed name, "
+            f"not one bullet per alias: {response!r}"
+        )
+        assert "no order records found for customer HANLIM TRADING SDN BHD, product RPACC" in response, (
+            f"the sentence must be axis-labelled (customer / product), not a bare comma "
+            f"list of raw entity codes: {response!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
 # H49 - verify the live tool-selection distribution before porting a per-tool branch
 # --------------------------------------------------------------------------- #
 
@@ -751,4 +814,67 @@ class TestEngineDispatch:
         delegate_payload = fragment.get("delegate_payload") or fragment.get("payload")
         assert delegate_payload is not None, (
             "the 'result' arm must attach the fetch's own output to delegate_payload for S6c"
+        )
+
+    def test_a_resource_attachment_fetch_with_no_resolved_entity_never_ships_unfiltered(
+        self,
+    ) -> None:
+        """Owner console defect item 4b: `TYPE_TO_PARAM` (fetch.py:292-310) and
+        `entity_ids_transformer` (fetch.py:365-482) are uuid-only - an entity with no
+        resolvable uuid is recorded in `_diagnostics.skipped` and contributes NO
+        `*_ids` param at all. When `gate.compatible_entities` is empty (nothing
+        resolved), the built args carry only `view` / `contact_id` / `space_id`, and
+        `run_fetch` calls `crm_resource_attachments_list` with THAT - an unscoped
+        listing of every attachment.
+
+        `mcp_call` must never be reached with `crm_resource_attachments_list` and no
+        entity-id filter key present in the args.
+        """
+        from app.services.chatbot.lanes import business
+
+        FetchServices = _import_fetch_services()
+        calls: list[tuple[str, dict]] = []
+
+        def recording_mcp_call(name: str, args: dict) -> str:
+            calls.append((name, dict(args)))
+            return '{"answers": [{"title": "unrelated file"}], "has_result": true}'
+
+        services = FetchServices(
+            embed=lambda query: [0.1],
+            tool_search=lambda embedding, *, query, domain: [
+                {"name": "crm_resource_attachments_list", "similarity": 0.9}
+            ],
+            mcp_call=recording_mcp_call,
+        )
+
+        payload = {
+            "_exit_kind": "continue",
+            # Nothing resolved - the exact shape a "attachment for <unknown thing>"
+            # miss carries into the fetch step.
+            "gate": {"compatible_entities": []},
+            "ctx": {"parse": {"output": {"domain_hint": "resource_attachment"}}},
+        }
+
+        business.run_fetch(payload, services=services, dry_run=False)
+
+        entity_id_keys = {
+            "product_ids",
+            "promotion_ids",
+            "order_ids",
+            "customer_ids",
+            "transporter_ids",
+            "form_ids",
+            "shipment_ids",
+            "attachment_type_ids",
+            "attachment_ids",
+            "certificate_ids",
+        }
+        unfiltered = [
+            (name, args)
+            for name, args in calls
+            if name == "crm_resource_attachments_list" and not (entity_id_keys & set(args))
+        ]
+        assert not unfiltered, (
+            "crm_resource_attachments_list must never be called with no entity-id filter "
+            f"key present - an unresolved entity fetch must refuse instead: {unfiltered!r}"
         )
