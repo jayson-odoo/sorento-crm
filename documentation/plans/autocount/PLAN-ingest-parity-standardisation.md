@@ -194,3 +194,8 @@ hierarchy and UOM conversion (absent in AutoCount); importer review aids (D19).
   migration per slice, chained on main's head via `./scripts/alembic-reparent.sh` at PR time.
 - `tests/test_ingest_documents_v2_hooks.py::TestPlanningChangeIsNotRunByIngest` guards the old
   D7 deferral and must be inverted when AC-P2-4 goes green.
+- S3 finding (tester): `SPOAllocationCreate` (the SPO xlsx / n8n path) does not expose `currency`,
+  so an upload-written allocation has NULL currency while the ESB writes one. Add `currency` to
+  the xlsx writer in S3 (default the PO currency rule) so AC-P3-8 can stop excluding it.
+- Parity fixtures in S0-S3 are representative (1-3 documents each); the 20/30-record fixtures
+  the UAC names run as the lane-DB proof in S4 (DoD 4), not as unit tests.
