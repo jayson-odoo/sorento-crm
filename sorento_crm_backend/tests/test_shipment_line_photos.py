@@ -163,27 +163,44 @@ def _stub_backend(monkeypatch, *, provider: str = "r2") -> None:
     """Same shape `test_packing_list_apply_files_attachment.py`'s own `_stub_backend`
     uses, extended with `download_file` (the export and `_photo_bytes` read bytes
     back) and `get_signed_url` (every photo's `url`/`thumbnail_url` goes through it).
+
+    `shipment_line_photos.upload_photos` calls `default_provider()`/`get_backend()`
+    directly rather than through `storage_router.<name>` - `from ... import
+    default_provider, get_backend` at module load time binds a SEPARATE name in
+    `shipment_line_photos`'s own namespace, which patching only
+    `app.services.storage_router.<name>` never reaches (every other name this
+    module imports from `storage_router` - `resolve_signed_url`,
+    `delete_object_best_effort`, `cdn_base_url` - calls `get_backend` from
+    INSIDE `storage_router`'s own module scope, so those keep working off the
+    same patch). Both bindings are patched here so `upload_photos` never falls
+    through to a real `S3Service()` construction, which is what raised "S3
+    configuration incomplete" in CI (no AWS env there) and made a live PUT
+    locally (the dev `.env` has real creds).
     """
     from app.services.storage_router import clear_signed_url_cache
 
     clear_signed_url_cache()
+    stub_backend = type(
+        "StubBackend",
+        (),
+        {
+            "upload_file": staticmethod(lambda **kw: (f"stub/{provider}/key.png", "")),
+            "download_file": staticmethod(lambda key: _TINY_PNG),
+            "get_signed_url": staticmethod(
+                lambda key, expires_in=3600: f"https://signed.test/{provider}/{key}"
+            ),
+            "get_cloudfront_base_url": staticmethod(lambda key: f"https://cdn.test/{key}"),
+            "get_cdn_base_url": staticmethod(lambda key: f"https://cdn.test/{key}"),
+        },
+    )()
+
+    def _get_backend(p):
+        return stub_backend
+
     monkeypatch.setattr("app.services.storage_router.default_provider", lambda: provider)
-    monkeypatch.setattr(
-        "app.services.storage_router.get_backend",
-        lambda p: type(
-            "StubBackend",
-            (),
-            {
-                "upload_file": staticmethod(lambda **kw: (f"stub/{p}/key.png", "")),
-                "download_file": staticmethod(lambda key: _TINY_PNG),
-                "get_signed_url": staticmethod(
-                    lambda key, expires_in=3600: f"https://signed.test/{p}/{key}"
-                ),
-                "get_cloudfront_base_url": staticmethod(lambda key: f"https://cdn.test/{key}"),
-                "get_cdn_base_url": staticmethod(lambda key: f"https://cdn.test/{key}"),
-            },
-        )(),
-    )
+    monkeypatch.setattr("app.services.storage_router.get_backend", _get_backend)
+    monkeypatch.setattr(shipment_line_photos, "default_provider", lambda: provider)
+    monkeypatch.setattr(shipment_line_photos, "get_backend", _get_backend)
 
 
 def _seed_line(db, *, code: str = "TAP", qty: int = 10):

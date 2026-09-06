@@ -26,6 +26,8 @@ from app.services.error_handler import AppException
 from app.services.scm import supplier_document_service as svc
 from tests._pg_fixture import blank_session
 
+pytestmark = pytest.mark.usefixtures("no_live_llm")
+
 MARKER = "ZZSD"
 _VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"

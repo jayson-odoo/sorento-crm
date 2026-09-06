@@ -23,6 +23,8 @@ from app.services import translation_service as tsvc
 from app.services.scm import consolidated_packing_list, packing_list_service
 from tests._pg_fixture import blank_session
 
+pytestmark = pytest.mark.usefixtures("no_live_llm")
+
 MARKER = "ZZPLT"
 
 # The headers migration 311 seeds for doc type `packing_list` - retyped here (same

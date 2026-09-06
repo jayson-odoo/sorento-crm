@@ -42,6 +42,8 @@ from app.services.scm.proforma_invoice_reader import read_workbook as read_pi
 from tests._pg_fixture import blank_session
 from tests.scm.conftest import requires_pg
 
+pytestmark = pytest.mark.usefixtures("no_live_llm")
+
 _VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"
 _PI_FIXTURE = _FIXTURES / "jiexia_proforma_invoice_sample.xls"

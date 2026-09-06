@@ -31,6 +31,8 @@ from tests._pg_fixture import blank_session
 # seeds its OWN, smaller world instead.
 import importlib.util
 
+pytestmark = pytest.mark.usefixtures("no_live_llm")
+
 MARKER = "ZZSDT"
 _VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
 _FIXTURES = Path(__file__).resolve().parent / "fixtures"

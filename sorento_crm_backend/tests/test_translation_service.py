@@ -21,6 +21,8 @@ from app.models.translation_memory import TranslationMemory
 from app.services import translation_service as svc
 from tests._pg_fixture import blank_session
 
+pytestmark = pytest.mark.usefixtures("no_live_llm")
+
 MARKER = "ZZTR"
 
 

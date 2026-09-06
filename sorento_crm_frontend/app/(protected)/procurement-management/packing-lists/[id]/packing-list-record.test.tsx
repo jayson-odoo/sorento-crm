@@ -143,6 +143,20 @@ vi.mock('@/app/(protected)/scm/hooks/useFulfilment', () => ({
     data: [{ id: 'size-40hq', code: '40HQ', label: '40ft high cube', cbm: 65, is_default: true }],
     isLoading: false,
   }),
+  // R25 (lane C, slice C3): the Lines tab reads every line's photos in one call, and
+  // `ShipmentLinePhotosCell` uploads through its own mutation - neither is this
+  // suite's concern, so both settle on an empty/no-op default.
+  useShipmentLinePhotos: () => ({
+    data: {},
+    isLoading: false,
+    isError: false,
+    error: null,
+  }),
+  useUploadShipmentLinePhotos: () => ({
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
 }));
 
 // The Lines grid carries a real `listingKey` (S7); a live column-preferences query has

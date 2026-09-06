@@ -388,24 +388,32 @@ def _reset_global_state():
 # test runs on Postgres via tests/_pg_fixture.py.
 
 # ---------------------------------------------------------------------------
-# No live LLM calls from any test (review round 1, purchasing consolidation
-# batch lane C) - `.env` carries a real `OPENAI_API_KEY` for the app itself,
-# and a test that forgets its own `get_provider` stub reaches the real network
-# the moment its scenario hits a translation/AI-fill miss, exactly the
-# incident `test_translation_service.py`'s own module docstring names.
+# No live LLM calls guard (review round 1, purchasing consolidation batch lane
+# C) - `.env` carries a real `OPENAI_API_KEY` for the app itself, and a test
+# that forgets its own `get_provider` stub reaches the real network the
+# moment its scenario hits a translation/AI-fill miss, exactly the incident
+# `test_translation_service.py`'s own module docstring names.
+#
+# NOT autouse: an autouse fixture here breaks every pre-existing test that
+# calls `get_provider`/`resolve_provider` with its own stub at another seam
+# (`test_ai_extract_service.py`, `test_llm_provider*.py`,
+# `test_media_extract_service.py`, `test_product_spec_understanding.py`), so
+# it is opt-in per module instead: `pytestmark = pytest.mark.usefixtures(
+# "no_live_llm")` (or an autouse fixture requesting it) in the lane C modules
+# that actually need it.
 # ---------------------------------------------------------------------------
 
 
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
-        "allow_live_llm: opt this test out of the autouse get_provider() guard "
+        "allow_live_llm: opt this test out of the no_live_llm get_provider() guard "
         "(a test that genuinely means to exercise a real provider call).",
     )
 
 
-@pytest.fixture(autouse=True)
-def _no_live_llm_calls(monkeypatch, request):
+@pytest.fixture
+def no_live_llm(monkeypatch, request):
     """Raise on any call to `get_provider()` unless the test stubs it back out.
 
     `from app.services.llm_provider import get_provider` is a SEPARATE name

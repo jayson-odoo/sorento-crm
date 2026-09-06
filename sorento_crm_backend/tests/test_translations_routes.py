@@ -20,6 +20,8 @@ from app.models.translation_memory import TranslationMemory
 from app.models.user import User, UserRole, UserRoleAssignment
 from tests._pg_fixture import blank_session
 
+pytestmark = pytest.mark.usefixtures("no_live_llm")
+
 BASE = "/api/v1/system/translations"
 
 
