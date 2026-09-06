@@ -605,11 +605,23 @@ def _line_row_key(ln: dict) -> Optional[str]:
 
 def _line_remarks(db: Session, loading_plan_id: Optional[str]) -> dict[str, str]:
     """`row_key -> remark`, off the plan's own `line_edits` (R11). Empty when this call names
-    no plan (the download route's callers that predate a plan, service-level tests)."""
+    no plan (the download route's callers that predate a plan, service-level tests) or a
+    plan another company's caller could not otherwise open.
+
+    Goes through `container_request_service._plan_or_404` (review round 1, S4) rather than a
+    second inline `LoadingPlan` lookup, so there is ONE company-scoped plan lookup in this
+    module family, not two that could drift; a plan `_plan_or_404` cannot find (missing,
+    malformed id, or out of the caller's company scope) reads the same as "no plan" here.
+    """
     if not loading_plan_id:
         return {}
-    plan = db.query(LoadingPlan).filter(LoadingPlan.id == str(loading_plan_id)).first()
-    if not plan or not plan.line_edits:
+    from app.services.scm import container_request_service
+
+    try:
+        plan = container_request_service._plan_or_404(db, str(loading_plan_id))
+    except ValueError:
+        return {}
+    if not plan.line_edits:
         return {}
     out: dict[str, str] = {}
     for key, raw in plan.line_edits.items():

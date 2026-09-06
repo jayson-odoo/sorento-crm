@@ -1064,7 +1064,7 @@ def _normalized_edit(value):
     else:
         qty = value
         remark = None
-    remark = str(remark) if remark else None
+    remark = str(remark).strip() if remark else None
     if not remark:
         return None if qty is None else float(qty)
     out: dict = {"remark": remark}

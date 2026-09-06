@@ -473,6 +473,47 @@ def test_a_remark_with_no_qty_override_leaves_the_engine_figure_alone(scm_app):
     assert row["remark"] == "check the glaze colour"
 
 
+def test_a_whitespace_only_remark_does_not_persist(scm_app):
+    # Nit, review round 1: `"   "` is truthy in Python, so an un-stripped remark survived as
+    # whitespace rather than reading as "no remark" the way an empty string already did.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = _world(db)
+    client = TestClient(app)
+    plan = _create(client, str(w.supplier.id)).json()
+    product_a = str(w.product("A").id)
+
+    r = client.put(
+        f"{PLANS_URL}/{plan['id']}/edits",
+        json={"line_edits": {product_a: {"qty": 9, "remark": "   "}}},
+    )
+
+    assert r.status_code == 200, r.text
+    # A qty-only edit with no surviving remark stores as the bare number (AC-E5).
+    assert r.json()["line_edits"] == {product_a: 9}
+
+
+def test_a_negative_qty_is_refused_in_both_shapes(scm_app):
+    # S3, review round 1: a negative ask is a typo, not a smaller request. Both the bare
+    # number and the object form reject it (`LoadingPlanLineEditIn.qty` and the bare branch
+    # of the union both carry `ge=0`).
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = _world(db)
+    client = TestClient(app)
+    plan = _create(client, str(w.supplier.id)).json()
+    product_a = str(w.product("A").id)
+
+    bare = client.put(f"{PLANS_URL}/{plan['id']}/edits", json={"line_edits": {product_a: -5}})
+    assert bare.status_code == 422, bare.text
+
+    boxed = client.put(
+        f"{PLANS_URL}/{plan['id']}/edits",
+        json={"line_edits": {product_a: {"qty": -5, "remark": "typo"}}},
+    )
+    assert boxed.status_code == 422, boxed.text
+
+
 def test_a_cancelled_plan_takes_no_more_edits(scm_app):
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)

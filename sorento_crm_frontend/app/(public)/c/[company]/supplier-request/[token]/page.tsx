@@ -13,11 +13,13 @@
  * thirty days.
  *
  * The table is THEIR sheet, not a listing of ours (R12): their ten columns in
- * their own spellings, their row order, their merged families as `rowSpan`,
- * their yellow fields and their red figures, and their `合计` row - the same
- * `SheetModel` the xlsx and the PDF are drawn from, so the three tally. Drawn by
- * the shared `SupplierSheet` (`scm/components/SupplierSheet.tsx`, R9) - the same
- * renderer the loading plan's own preview uses - rather than a copy of one table.
+ * their own spellings, their row order, their merged families as `rowSpan`, OUR
+ * highlight on any row with a quantity to load (R10 - not their own yellow
+ * fields or red figures, which the renderer no longer replays), and their
+ * `合计` row - the same `SheetModel` the xlsx and the PDF are drawn from, so
+ * the three tally. Drawn by the shared `SupplierSheet`
+ * (`scm/components/SupplierSheet.tsx`, R9) - the same renderer the loading
+ * plan's own preview uses - rather than a copy of one table.
  *
  * The company segment is cosmetic here, unlike the catalogue's: the token is
  * globally unique and is the whole credential. It is in the address so every

@@ -119,14 +119,21 @@ def test_our_highlight_replaces_their_fills_and_red_figures(monkeypatch):
     # the supplier's own yellow fields or red figures - a row with nothing asked of it is
     # plain, whatever their file marked, and a row WITH an ask is highlighted uniformly
     # (every cell, not just the ones they coloured).
+    #
+    # `SRTWC286-SH-150NEW` (fixture row 3) is the meaningful check for "not theirs any more":
+    # their own file paints it yellow across the row AND marks its packed figure red. Asking
+    # for it would only prove our highlight beats theirs, which is unsurprising; leaving it
+    # UNASKED and still finding no fill and no red is what proves the source marks do not
+    # survive at all (review round 1, S7). `SRTWC8355-RL-250` (row 27) carries none of their
+    # own marks, so it is the row asked for here instead.
     with pg_session() as db:
         _world(db)
-        sheet = _built(db, [_line("SRTWC286-SH-150NEW", 40)], monkeypatch=monkeypatch)
+        sheet = _built(db, [_line("SRTWC8355-RL-250", 40)], monkeypatch=monkeypatch)
 
-        asked = _row_for(sheet, "SRTWC286-SH-150NEW")
+        asked = _row_for(sheet, "SRTWC8355-RL-250")
         assert all(c.fill == "highlight" and c.red is False for c in asked.cells)
 
-        untouched = _row_for(sheet, "SRTWC8355-RL-250")
+        untouched = _row_for(sheet, "SRTWC286-SH-150NEW")
         assert all(c.fill is None and c.red is False for c in untouched.cells)
 
 
@@ -331,10 +338,12 @@ def test_the_model_serialises_for_the_public_page(monkeypatch):
         assert payload["columns"][-2] == {
             "label": model.QTY_TO_LOAD_LABEL_ZH,
             "label_en": model.QTY_TO_LOAD_LABEL_EN,
+            "field": "qty_to_load",
         }
         assert payload["columns"][-1] == {
             "label": model.LINE_REMARK_LABEL_ZH,
             "label_en": model.LINE_REMARK_LABEL_EN,
+            "field": "line_remark",
         }
         first = payload["rows"][0]
         assert first["cells"][0]["rowspan"] == 9

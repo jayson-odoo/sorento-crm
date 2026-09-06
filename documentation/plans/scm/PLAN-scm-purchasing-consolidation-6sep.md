@@ -1,7 +1,6 @@
 # PLAN - purchasing consolidation batch (6 Sep 2026)
 
-**Status:** Markup round 1 applied (captain, 6 Sep 2026): Q1-Q5 ruled, R1 and R7 revised,
-R11 clarified. Awaiting GO. Nothing built. UAC:
+**Status:** Lane B built, review round 1 applied, awaiting browser test. UAC:
 `scm-purchasing-consolidation-6sep-acceptance-criteria.md`. Lavish page:
 `mockups/purchasing-consolidation-6sep-plan.html`.
 

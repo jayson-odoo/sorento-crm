@@ -7,12 +7,20 @@
  * caller draw the same `SheetModel` the same way rather than three copies of one table.
  *
  * `editable` (R11) turns the qty-to-load and remark cells into inputs, writing back through
- * `onQtyChange` / `onRemarkChange`. Those two are always the LAST two columns of a sheet this
- * batch builds (`需装数量 / Qty to load` then `备注 / Remarks`) - safe positionally rather than
- * by field name because the wire shape (`SupplierSheetColumn`) carries only the printed
- * labels, the same as the public page always read it. A row with no `row_key` (an unmatched
- * line on the supplier's own sheet, or a document frozen before remarks existed) has nothing
- * to write an edit against, so it renders those two cells as plain text even in edit mode.
+ * `onQtyChange` / `onRemarkChange`. Which columns those are is read off `column.field`
+ * (`'qty_to_load'` / `'line_remark'`, review round 1) rather than assumed positionally - a
+ * document frozen before `field` existed on the wire falls back to the last two columns, the
+ * position they have always been in. A row with no `row_key` (an unmatched line on the
+ * supplier's own sheet, or a document frozen before remarks existed) has nothing to write an
+ * edit against, so it renders those two cells as plain text even in edit mode.
+ *
+ * `qtyFor` / `remarkFor` (review round 1, S2) make the two editable cells CONTROLLED: their
+ * value comes from the SAME map the plan table's own Remarks/Qty cells read
+ * (`LoadingPlanView`'s `edits`), keyed by `row.row_key`, rather than from this render's own
+ * `sheet` prop. Without them the cell was `defaultValue` off whatever the last debounced
+ * preview fetch echoed back - so a remark typed in the plan table never appeared here until
+ * the next refetch landed, and a row a caller passes no accessor for (read-only viewers,
+ * where `editable` is never true anyway) simply falls back to the sheet's own cell value.
  *
  * R10: a cell's `fill` is either `'highlight'` (our own mark, painted on rows whose qty to
  * load is > 0 - AC-E3) or the legacy `'yellow'` a notice sent before this batch still carries
@@ -28,6 +36,11 @@ export interface SupplierSheetColumn {
   label: string;
   /** Ours, as a second line under it. Null for a column we cannot name. */
   label_en: string | null;
+  /** The canonical field this column resolves to (`'qty_to_load'`, `'line_remark'`, ...),
+   *  null for a column of theirs we cannot name. Absent on a sheet frozen before this field
+   *  existed on the wire (review round 1) - `qtyAt`/`remarkAt` below fall back to position
+   *  for exactly that case. */
+  field?: string | null;
 }
 
 export interface SupplierSheetCell {
@@ -71,20 +84,36 @@ function fillClass(fill: SupplierSheetCell['fill']): string | undefined {
   return undefined;
 }
 
+/** `column.field` when the sheet carries one, else the position this column has always sat
+ *  at - so a sheet frozen before `field` existed on the wire still finds its qty/remark
+ *  columns. */
+function columnAt(columns: SupplierSheetColumn[], field: string, fallback: number): number {
+  const byField = columns.findIndex((c) => c.field === field);
+  return byField >= 0 ? byField : fallback;
+}
+
 export function SupplierSheet({
   sheet,
   editable = false,
+  qtyFor,
   onQtyChange,
+  remarkFor,
   onRemarkChange,
 }: {
   sheet: SupplierSheetModel;
-  /** R11: the last two columns (qty to load, remark) become inputs. */
+  /** R11: the qty-to-load and remark columns become inputs. */
   editable?: boolean;
+  /** Controlled value for the qty input, keyed by `row_key` (review round 1, S2). Falls back
+   *  to the sheet's own cell value when not supplied - the public page's read-only render,
+   *  where `editable` is never true, never passes it. */
+  qtyFor?: (rowKey: string) => number;
   onQtyChange?: (rowKey: string, qty: number) => void;
+  /** Controlled value for the remark input, keyed by `row_key`. Same fallback as `qtyFor`. */
+  remarkFor?: (rowKey: string) => string;
   onRemarkChange?: (rowKey: string, remark: string) => void;
 }) {
-  const qtyAt = sheet.columns.length - 2;
-  const remarkAt = sheet.columns.length - 1;
+  const qtyAt = columnAt(sheet.columns, 'qty_to_load', sheet.columns.length - 2);
+  const remarkAt = columnAt(sheet.columns, 'line_remark', sheet.columns.length - 1);
 
   function cell(rowCell: SupplierSheetCell, colIndex: number, row: SupplierSheetRow) {
     if (rowCell.covered) return null;
@@ -106,7 +135,11 @@ export function SupplierSheet({
             min={0}
             aria-label="Qty to load"
             className="h-8 w-20 rounded-sm border border-input bg-background px-1.5 text-center tabular-nums"
-            defaultValue={typeof rowCell.value === 'number' ? rowCell.value : ''}
+            value={
+              qtyFor
+                ? qtyFor(row.row_key as string)
+                : (typeof rowCell.value === 'number' ? rowCell.value : 0)
+            }
             onChange={(e) => onQtyChange?.(row.row_key as string, Math.max(0, Number(e.target.value) || 0))}
           />
         ) : isEditableCell && colIndex === remarkAt ? (
@@ -114,7 +147,11 @@ export function SupplierSheet({
             type="text"
             aria-label="Remarks"
             className="h-8 w-full rounded-sm border border-input bg-background px-1.5"
-            defaultValue={typeof rowCell.value === 'string' ? rowCell.value : ''}
+            value={
+              remarkFor
+                ? remarkFor(row.row_key as string)
+                : (typeof rowCell.value === 'string' ? rowCell.value : '')
+            }
             onChange={(e) => onRemarkChange?.(row.row_key as string, e.target.value)}
           />
         ) : (
@@ -163,7 +200,7 @@ export function SupplierSheet({
         </tbody>
         {sheet.totals ? (
           <tfoot>
-            <tr className="text-red-600">
+            <tr className="font-semibold text-red-600">
               {sheet.totals.cells.map((rowCell, colIndex) => cell(rowCell, colIndex, sheet.totals as SupplierSheetRow))}
             </tr>
           </tfoot>

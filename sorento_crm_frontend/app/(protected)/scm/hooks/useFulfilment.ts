@@ -204,7 +204,12 @@ export function useContainerRequestPreview(
   enabled: boolean,
 ) {
   return useQuery({
-    queryKey: [...KEY, 'container-request', 'preview', planId, JSON.stringify(lines)],
+    // `planId` sits where every other container-request key puts it (right after
+    // `'container-request'`), NOT after `'preview'` (review round 1, S5): save and send both
+    // invalidate `[...KEY, 'container-request', planId]`, which is a PREFIX match, so a
+    // `'preview'` segment ahead of `planId` put this query outside that prefix and a save
+    // never invalidated the previously-fetched preview.
+    queryKey: [...KEY, 'container-request', planId, 'preview', JSON.stringify(lines)],
     queryFn: () => previewContainerRequest(planId as string, lines),
     enabled: enabled && !!planId,
     placeholderData: (prev) => prev,

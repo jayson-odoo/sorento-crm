@@ -93,10 +93,12 @@ vi.mock('./ContainerRequestSection', () => ({
     supplierName,
     readOnly,
     onQtyChange,
+    remarkFor,
   }: {
     supplierName: string;
     readOnly?: boolean;
     onQtyChange: (rowKey: string, qty: number) => void;
+    remarkFor: (row: { row_key: string }) => string;
   }) => (
     <div data-testid="container-request-section" data-readonly={String(!!readOnly)}>
       Request section for {supplierName}
@@ -110,6 +112,10 @@ vi.mock('./ContainerRequestSection', () => ({
       >
         type the engine figure
       </button>
+      {/* S2, review round 1: the SAME `remarkFor` the preview's own input writes through -
+          reading it here off the row this suite's fixture always keys `row-a` is what proves
+          a remark typed in the preview shows in the plan table without a save. */}
+      <span data-testid="plan-table-remark">{remarkFor({ row_key: 'row-a' } as never)}</span>
     </div>
   ),
 }));
@@ -164,6 +170,9 @@ const state = {
   /** Which supplier the legacy stock-list lookup was asked about, or null when the record
    *  read the plan's own stamped file instead (BL-3). */
   stockListFileAskedAbout: null as string | null,
+  /** R9 preview page state: the sheet `useContainerRequestPreview` answers with, null when a
+   *  test does not open the preview. */
+  previewSheet: null as unknown,
 };
 
 const saveEdits = vi.fn();
@@ -185,9 +194,10 @@ vi.mock('../../hooks/useFulfilment', () => ({
     error: null,
     refetch: refetchBuild,
   }),
-  // R9: the preview page state is not exercised by this suite (no test opens it), so a
-  // steady "nothing yet" answer is enough to keep the hook count and the component happy.
-  useContainerRequestPreview: () => ({ data: null, isError: false, error: null }),
+  // R9: `state.previewSheet` stays null (the steady "nothing yet" answer) except in the one
+  // test that opens the preview and sets it - both keep the hook count and the component
+  // happy without every other test's build needing a sheet fixture of its own.
+  useContainerRequestPreview: () => ({ data: state.previewSheet, isError: false, error: null }),
   useSaveLoadingPlanEdits: () => ({
     mutate: (v: unknown, o?: { onSuccess?: () => void }) => {
       saveEdits(v);
@@ -257,6 +267,7 @@ describe('LoadingPlanView (the record)', () => {
     state.unmatchedCodes = [];
     state.notices = [];
     state.stockListFileAskedAbout = null;
+    state.previewSheet = null;
     currentSearchParams = new URLSearchParams();
   });
 
@@ -466,6 +477,45 @@ describe('LoadingPlanView (the record)', () => {
     await waitFor(() =>
       expect(changeCutOff).toHaveBeenCalledWith('2026-10-31', expect.anything()),
     );
+  });
+
+  // S2, review round 1: a remark typed on the PREVIEW's own input shows in the plan table -
+  // the same `edits` map backs both (`LoadingPlanView.tsx:423-424`), so this never waits on a
+  // save or a refetch.
+  it('a remark typed on the preview shows in the plan table after Back to plan (AC-E4)', async () => {
+    state.previewSheet = {
+      title: null,
+      columns: [
+        { label: '型号', label_en: 'Model', field: 'item_code' },
+        { label: '需装数量', label_en: 'Qty to load', field: 'qty_to_load' },
+        { label: '备注', label_en: 'Remarks', field: 'line_remark' },
+      ],
+      rows: [
+        {
+          cells: [
+            { value: 'A100', rowspan: 1, colspan: 1, covered: false, fill: 'highlight', red: false },
+            { value: 4242, rowspan: 1, colspan: 1, covered: false, fill: 'highlight', red: false },
+            { value: null, rowspan: 1, colspan: 1, covered: false, fill: 'highlight', red: false },
+          ],
+          family_span: 1,
+          appended: false,
+          row_key: 'row-a',
+        },
+      ],
+      totals: null,
+    };
+    renderView();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Plan actions' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Preview request' }));
+
+    const remark = await screen.findByLabelText('Remarks');
+    fireEvent.change(remark, { target: { value: 'pack in 2 cartons' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to plan' }));
+
+    expect(await screen.findByTestId('container-request-section')).toBeInTheDocument();
+    expect(screen.getByTestId('plan-table-remark').textContent).toBe('pack in 2 cartons');
   });
 });
 

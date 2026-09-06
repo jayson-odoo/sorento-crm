@@ -91,6 +91,87 @@ def test_the_preview_writes_nothing(scm_app):
     assert (
         db.query(SupplierNotice).filter(SupplierNotice.loading_plan_id == plan_id).count() == 0
     )
+    # S6, review round 1: a preview is a read, and the plan it read from must show it - not
+    # just "no notice row", but the plan itself still `planning` and never `sent_at`.
+    plan = db.query(LoadingPlan).filter(LoadingPlan.id == plan_id).one()
+    assert plan.status == "planning"
+    assert plan.sent_at is None
+
+
+def test_the_preview_keeps_a_zeroed_row_with_its_row_key_and_no_highlight(scm_app):
+    # B1, review round 1: `requestLinesFrom` (FE) drops a row edited down to 0 before it
+    # reaches Send/the document, but the PREVIEW must not - a debounced refetch that dropped
+    # the line lost the row's `row_key` too, so the input stopped being editable (or, on the
+    # no-file document, the row vanished outright). `ContainerRequestPreviewLine` relaxes qty
+    # to `ge=0` for exactly this call; `ContainerRequestLine` (Send) stays `gt=0`.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    plan_id = _plan(db, w)
+    product_a = str(w.product("A").id)
+
+    r = TestClient(app).post(
+        PREVIEW_URL,
+        json={"plan_id": plan_id, "lines": [{"product_id": product_a, "qty": 0}]},
+    )
+
+    assert r.status_code == 200, r.text
+    sheet = r.json()
+    assert len(sheet["rows"]) == 1
+    row = sheet["rows"][0]
+    assert row["row_key"] == product_a
+    assert all(cell["fill"] is None for cell in row["cells"])
+
+
+def test_sending_still_refuses_a_zero_qty_line(scm_app):
+    # Send keeps `gt=0` (`ContainerRequestLine`): the preview's relaxed bound is scoped to
+    # the preview endpoint only, per the plan.
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    plan_id = _plan(db, w)
+
+    r = TestClient(app).post(
+        SEND_URL,
+        json={"plan_id": plan_id, "lines": [{"product_id": str(w.product("A").id), "qty": 0}]},
+    )
+
+    assert r.status_code == 422, r.text
+
+
+def test_the_preview_404s_on_another_companys_plan(scm_app):
+    # S4, review round 1: `container_request_service._plan_or_404`'s plain ORM lookup is
+    # already company-scoped by the global `do_orm_execute` listener
+    # (`app.services.company_scope`) - this pins that, rather than adding a second, redundant
+    # predicate with no evidence of a gap.
+    from app.models.company import Company
+
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    plan_id = _plan(db, w)
+
+    other = str(uuid.uuid4())
+    db.add(
+        Company(
+            id=other,
+            name=f"ZZCRP other company {other[:8]}",
+            code=f"ZZCRP-{uuid.uuid4().hex[:6]}".upper()[:50],
+            is_active=True,
+        )
+    )
+    db.flush()
+    plan = db.query(LoadingPlan).filter(LoadingPlan.id == plan_id).one()
+    plan.company_id = other
+    db.add(plan)
+    db.flush()
+
+    r = TestClient(app).post(
+        PREVIEW_URL,
+        json={"plan_id": plan_id, "lines": [{"product_id": str(w.product("A").id), "qty": 40}]},
+    )
+
+    assert r.status_code == 404, r.text
 
 
 def test_the_preview_highlights_the_row_it_asked_for(scm_app):
@@ -136,7 +217,7 @@ def test_the_preview_carries_the_remark_and_a_later_edit_leaves_a_sent_notice_al
     preview = client.post(PREVIEW_URL, json=body)
     assert preview.status_code == 200, preview.text
     sheet = preview.json()
-    assert sheet["columns"][-1] == {"label": "备注", "label_en": "Remarks"}
+    assert sheet["columns"][-1] == {"label": "备注", "label_en": "Remarks", "field": "line_remark"}
     assert sheet["rows"][0]["cells"][-1]["value"] == "pack in 2 cartons"
 
     sent = client.post(SEND_URL, json=body)

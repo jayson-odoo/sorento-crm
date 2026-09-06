@@ -57,7 +57,7 @@ import { SupplierCodesTab } from './SupplierCodesTab';
 import { ContainerRequestSection } from './ContainerRequestSection';
 import { SendRequestDialog } from './SendRequestDialog';
 import { SentRequestsPanel } from './SentRequestsPanel';
-import { requestLinesFrom } from './containerRequestSummary';
+import { previewLinesFrom, requestLinesFrom } from './containerRequestSummary';
 import { copyPublicLink } from './copyPublicLink';
 import { PageHeader } from '@/components/common/PageHeader';
 
@@ -187,6 +187,18 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   const remarkFor = (row: ContainerRequestRow) => edits[row.row_key]?.remark ?? row.remark ?? '';
   const lines = requestLinesFrom(rows, qtyFor);
   const totalQty = lines.reduce((sum, l) => sum + l.qty, 0);
+  // S2 (review round 1): looked up by `row_key` so the preview's own SupplierSheet cells can
+  // read the SAME `qtyFor`/`remarkFor` the plan table's grid cells do, rather than whatever
+  // the last debounced preview fetch echoed back.
+  const rowsByKey = useMemo(() => new Map(rows.map((r) => [r.row_key, r])), [rows]);
+  const qtyForKey = (rowKey: string) => {
+    const row = rowsByKey.get(rowKey);
+    return row ? qtyFor(row) : 0;
+  };
+  const remarkForKey = (rowKey: string) => {
+    const row = rowsByKey.get(rowKey);
+    return row ? remarkFor(row) : '';
+  };
 
   /** The whole map that goes to the server: every row whose qty differs from the engine's, or
    *  carries a remark, typed this session or saved in an earlier one. Not a patch - see the
@@ -240,12 +252,17 @@ export function LoadingPlanView({ planId }: { planId: string }) {
   // the preview is the page state open (`docPreviewOpen`). Declared here, above the
   // loading/error guards below: every hook here has to run on every render, loading and error
   // passes included, or React sees a different hook count once the build resolves.
-  const [debouncedLines, setDebouncedLines] = useState(lines);
+  // B1 (review round 1): the preview body keeps EVERY row, zero included
+  // (`previewLinesFrom`, not `requestLinesFrom`) - the qty>0 filter Send and the document
+  // download use dropped a row typed down to 0 out of the debounced refetch entirely, so its
+  // `row_key` never came back and the cell stopped being an input under the cursor.
+  const previewLines = previewLinesFrom(rows, qtyFor);
+  const [debouncedLines, setDebouncedLines] = useState(previewLines);
   useEffect(() => {
-    const timer = window.setTimeout(() => setDebouncedLines(lines), PREVIEW_DEBOUNCE_MS);
+    const timer = window.setTimeout(() => setDebouncedLines(previewLines), PREVIEW_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(lines)]);
+  }, [JSON.stringify(previewLines)]);
   const preview = useContainerRequestPreview(planId, debouncedLines, docPreviewOpen);
   const previewSheet = preview.data ?? null;
 
@@ -302,7 +319,10 @@ export function LoadingPlanView({ planId }: { planId: string }) {
     onCancelled: () => setEdits({}),
     previewRequest: {
       run: () => setDocPreviewOpen(true),
-      disabled: lines.length === 0 || totalQty <= 0,
+      // S1, review round 1: disabled on a cancelled plan, the same as Send - a cancelled
+      // plan's document is not something a stale tab should still be able to open.
+      disabled: readOnly || lines.length === 0 || totalQty <= 0,
+      disabledReason: readOnly ? 'This plan is cancelled.' : undefined,
     },
     send: {
       run: () => setSendOpen(true),
@@ -462,7 +482,9 @@ export function LoadingPlanView({ planId }: { planId: string }) {
               <SupplierSheet
                 sheet={previewSheet}
                 editable
+                qtyFor={qtyForKey}
                 onQtyChange={handleQtyChange}
+                remarkFor={remarkForKey}
                 onRemarkChange={handleRemarkChange}
               />
             ) : preview.isError ? (

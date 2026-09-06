@@ -24,7 +24,7 @@ columns (`A40:A43` sits inside `H40:H50`). So every cell carries its own `rowspa
 the row carrying one family number, and `family_span` is simply the 序号 column's span - the
 alternative invents families the supplier did not write.
 
-**Without a retained file we build the same eleven columns from what we know** (AC-D6): no
+**Without a retained file we build the same twelve columns from what we know** (AC-D6): no
 merges, because we hold no family information and inventing one would be wrong on the first
 product with two sizes; 商标 = the company letter the product belongs to; their holdings off
 the stock snapshot, which is their own latest statement about their own warehouse.
@@ -209,7 +209,9 @@ class SheetModel:
     def to_dict(self) -> dict:
         return {
             "title": self.title,
-            "columns": [{"label": c.label, "label_en": c.label_en} for c in self.columns],
+            "columns": [
+                {"label": c.label, "label_en": c.label_en, "field": c.field} for c in self.columns
+            ],
             "rows": [r.to_dict() for r in self.rows],
             "totals": self.totals.to_dict() if self.totals else None,
         }
@@ -670,7 +672,7 @@ def _from_our_data(
     lines: list[dict],
     loading_plan_id: Optional[str] = None,
 ) -> SheetModel:
-    """The same eleven columns, built from what we hold (AC-D6).
+    """The same twelve columns, built from what we hold (AC-D6).
 
     Their holdings come off the snapshot rather than off a file, because on this branch there
     is no file - and a row with no snapshot behind it (a product they have never listed) still

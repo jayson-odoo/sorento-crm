@@ -84,6 +84,37 @@ class ContainerRequestBody(BaseModel):
     )
 
 
+class ContainerRequestPreviewLine(BaseModel):
+    """The same shape as `ContainerRequestLine`, `qty` relaxed to `ge=0` (review round 1, B1).
+
+    The preview keeps every row on screen, including one typed down to zero: a zero line
+    still names its product (or set), so its `row_key` survives the debounced refetch and the
+    cell stays an input instead of the row vanishing under the cursor on the next keystroke.
+    Send and the document download keep `gt=0` (`ContainerRequestLine`) - a supplier is never
+    actually asked about a product she zeroed out, that filtering already happens client-side
+    (`requestLinesFrom`).
+    """
+
+    product_id: Optional[str] = None
+    product_set_id: Optional[str] = None
+    qty: float = Field(..., ge=0)
+
+    @model_validator(mode="after")
+    def _one_target(self) -> "ContainerRequestPreviewLine":
+        if bool(self.product_id) == bool(self.product_set_id):
+            raise ValueError("name either a product or a product set on each line")
+        return self
+
+
+class ContainerRequestPreviewBody(BaseModel):
+    plan_id: str
+    lines: list[ContainerRequestPreviewLine] = Field(
+        ...,
+        min_length=1,
+        description="Every row on screen, edited quantities included, zero kept.",
+    )
+
+
 class ContainerRequestSendBody(ContainerRequestBody):
     """The reviewed lines, plus who this send goes to and how (R9, AC-C1/C2/C3).
 
@@ -151,7 +182,7 @@ def container_request_history(
 
 @router.post("/container-requests/preview")
 def preview_container_request(
-    body: ContainerRequestBody,
+    body: ContainerRequestPreviewBody,
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
@@ -160,6 +191,10 @@ def preview_container_request(
     Same permission as `build` - a pure read of what a send would freeze. Ahead of
     `POST /container-requests` in this file for readability only, and there is no
     `/container-requests/{id}` here to shadow (the SLA lesson).
+
+    Its own body (`ContainerRequestPreviewBody`), NOT `ContainerRequestBody`: a row typed
+    down to zero has to stay on the document, plain rather than highlighted, so the qty
+    bound here is `ge=0` where Send and the download stay `gt=0` (B1, review round 1).
 
     A cancelled plan is refused (409 `plan_cancelled`, AC-A8), same as the download route:
     the record page is read-only once it is called off.

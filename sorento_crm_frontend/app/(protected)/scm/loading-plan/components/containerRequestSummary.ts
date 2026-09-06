@@ -29,6 +29,27 @@ export function requestLinesFrom(
 }
 
 /**
+ * The zero-keeping variant of `requestLinesFrom`, for the request PREVIEW only (B1, review
+ * round 1). `requestLinesFrom`'s `qty > 0` filter is right for Send and the document
+ * download - a supplier is never actually asked about a product typed down to zero - but it
+ * is wrong for the preview: a row edited to 0 dropped out of the body the debounced refetch
+ * sent, so the row lost its `row_key` and the cell stopped being an input (or, on a no-file
+ * document, the row vanished outright). Every row stays here, at whatever qty it holds; the
+ * backend prints it plain rather than highlighted (`ContainerRequestPreviewLine`, `ge=0`).
+ */
+export function previewLinesFrom(
+  rows: ContainerRequestRow[],
+  qtyFor: (row: ContainerRequestRow) => number,
+): ContainerRequestLine[] {
+  return rows.map((r): ContainerRequestLine => {
+    const qty = qtyFor(r);
+    return r.row_kind === 'set' && r.product_set_id
+      ? { product_set_id: r.product_set_id, qty }
+      : { product_id: r.product_id, qty };
+  });
+}
+
+/**
  * The five figures above the loading-plan grid (PLAN section 2b, AC-A2.1).
  *
  * They DECOMPOSE the need rather than restate the columns: need is covered first by what the

@@ -226,8 +226,6 @@ function BlocksTable({ row }: { row: ContainerRequestRow }) {
 interface OpenPlanRowDialog {
   kind: PlanRowDialogKind;
   row: ContainerRequestRow;
-  /** Set by the two peak cells, which open the channel dialog on its 12-month tab (AC-B6). */
-  onHistory?: boolean;
 }
 
 /** The build's SO lines in the shape the shared lightbox lists them (AC-B2). Every line
@@ -1025,9 +1023,8 @@ export function ContainerRequestSection({
                     ),
               )}
               history={toHistoryPoints(historyRef.current.get(dialog.row.product_id))}
-              initialTab={dialog.onHistory ? 'history' : 'open'}
               horizon={build.data?.plan_horizon_date ?? null}
-              loading={build.isFetching || (dialog.onHistory && history.isFetching)}
+              loading={build.isFetching || history.isFetching}
             />
           ) : dialog.kind === 'on_hand' ? (
             <OnHandTable productId={dialog.row.product_id} />

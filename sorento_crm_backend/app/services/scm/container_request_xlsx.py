@@ -11,7 +11,7 @@ That is the change from the first version, which replayed their VALUES into a wo
 and lost every merge and every fill on the way (a family's volume printed nine times reads as
 nine times the volume), and which fell back to five columns of our own naming when there was no
 file to answer in - so a supplier's document changed shape because of a file WE failed to keep.
-The five-column sheet is gone (AC-D6): with no retained file the SAME eleven columns are drawn
+The five-column sheet is gone (AC-D6): with no retained file the SAME twelve columns are drawn
 fresh, in their styling, with no merges (we hold no family information and inventing one would
 be wrong on the first product with two sizes).
 
@@ -102,7 +102,7 @@ def render(model: SheetModel) -> bytes:
 
     Never raises. `supplier_notice_service.request_document` calls this bare, so a shape of
     theirs this module has not met yet (a merge that reaches into column K, a merge that runs
-    down into 合计) must degrade to our own eleven columns rather than 500 the download and
+    down into 合计) must degrade to our own twelve columns rather than 500 the download and
     stop the ask going out. The model is the same either way, so the supplier still receives
     every line that was asked for; what is lost is their styling, not their document.
     """
@@ -322,7 +322,7 @@ def _widen(formula: str, old_last: int, new_last: int) -> str:
 
 
 def _fresh(model: SheetModel) -> bytes:
-    """The same eleven columns, drawn in their styling, when there is no file to answer in."""
+    """The same twelve columns, drawn in their styling, when there is no file to answer in."""
     import openpyxl
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter

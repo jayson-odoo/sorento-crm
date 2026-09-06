@@ -554,6 +554,21 @@ describe('ContainerRequestSection - the grid', () => {
     await waitFor(() => expect(screen.getByDisplayValue('25')).toBeInTheDocument());
   });
 
+  // B2, review round 1: the Remarks column's own input (R11) - same field, same save as the
+  // preview's own Remarks cell (`SupplierSheet.test.tsx` covers that half).
+  it('the Remarks cell is editable, and the typed remark reaches the record', async () => {
+    renderSection();
+
+    fireEvent.change(screen.getByPlaceholderText('Instruction to the supplier'), {
+      target: { value: 'pack in 2 cartons' },
+    });
+
+    expect(onRemarkChange).toHaveBeenCalledWith('p1', 'pack in 2 cartons');
+    await waitFor(() =>
+      expect(screen.getByDisplayValue('pack in 2 cartons')).toBeInTheDocument(),
+    );
+  });
+
   it('a cancelled plan shows the same grid, with nothing typeable (AC-A8)', () => {
     renderSection(true);
 

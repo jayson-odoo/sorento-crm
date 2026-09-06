@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date
-from typing import Optional, Union
+from typing import Annotated, Optional, Union
 
 from fastapi import (
     APIRouter,
@@ -605,7 +605,7 @@ def cancel_loading_plan(
 class LoadingPlanLineEditIn(BaseModel):
     """One row's typed edit (R11): a qty override, a remark, or both."""
 
-    qty: Optional[float] = None
+    qty: Optional[float] = Field(None, ge=0)
     remark: Optional[str] = Field(None, max_length=2000)
 
 
@@ -617,9 +617,14 @@ class LoadingPlanEdits(BaseModel):
     survive as a stale override, and one Save is one transaction. A bare number is still
     accepted - it is what a qty-only edit is still STORED as (AC-E5); the object form only
     carries something once a remark rides along with it (`loading_plan_service.save_edits`).
+    Both branches of the bare-number union reject a negative qty (review round 1, S3): a
+    negative ask is not a smaller request, it is a typo, and it used to reach the sheet model
+    as a genuine negative number rather than a 422.
     """
 
-    line_edits: dict[str, Union[float, LoadingPlanLineEditIn]] = Field(default_factory=dict)
+    line_edits: dict[str, Union[Annotated[float, Field(ge=0)], LoadingPlanLineEditIn]] = Field(
+        default_factory=dict
+    )
 
 
 @router.put("/loading-plans/{plan_id}/edits")
