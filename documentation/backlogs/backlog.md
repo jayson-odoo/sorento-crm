@@ -185,7 +185,7 @@ removed copy, for whoever restores a UI for them:
   ESB sales-order push overrides a warehouse the Order Inquiry sheet had set, and a read route
   exists, but the Order Inquiry worklist has no surface for them. **Trigger:** the planner asks
   why an inquiry location changed. Fix: a Conflicts tab on the order-inquiry worklist listing
-  (so_number, line, previous, new, when). | `plans/autocount/PLAN-ingest-parity-standardisation.md` | Low | Open |
+  (so_number, line, previous, new, when). | `plans/_archive/autocount/PLAN-ingest-parity-standardisation.md` | Low | Open |
 - **BL-061** (2026-09-06, review of #700): `fetch._axis_labelled_subject` picks the LONGEST code
   per uuid to decide which of a customer's two rows is the name and which is its internal account
   code. It is deterministic and it matches every shape measured (a debtor code is shorter than the

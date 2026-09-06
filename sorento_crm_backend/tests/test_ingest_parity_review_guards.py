@@ -1,8 +1,8 @@
 """Review-guard tests from the lane's reviewer + security-reviewer pass on
 `ingest-parity-standardisation` (behaviours found with NO test covering them).
 
-UAC/PLAN: documentation/plans/autocount/ingest-parity-standardisation-acceptance-criteria.md,
-documentation/plans/autocount/PLAN-ingest-parity-standardisation.md.
+UAC/PLAN: documentation/plans/_archive/autocount/ingest-parity-standardisation-acceptance-criteria.md,
+documentation/plans/_archive/autocount/PLAN-ingest-parity-standardisation.md.
 
 The coder is fixing these in parallel, so a test here may already be green when it runs -
 each class/test says so explicitly rather than mixing a guard in with a red assertion
