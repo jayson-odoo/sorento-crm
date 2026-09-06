@@ -211,9 +211,16 @@ describe('SubmissionForm - retry after create-succeeded/flush-failed does not du
       fireEvent.click(
         screen.getByRole('button', { name: 'Submit stock inquiry' }),
       );
-      const dialog = await screen.findByRole('alertdialog');
+      await screen.findByRole('alertdialog');
+      // Re-queried at the click, never the handle `findByRole` returned: the
+      // dialog is mounted through Radix's Presence, so the node that handle
+      // points at can already have been replaced, and a click on a node that
+      // is no longer in the tree does nothing at all - which is how this
+      // landed on CI three times, as `saveDraft` called 0 times.
       fireEvent.click(
-        within(dialog).getByRole('button', { name: 'Submit stock inquiry' }),
+        within(screen.getByRole('alertdialog')).getByRole('button', {
+          name: 'Submit stock inquiry',
+        }),
       );
     };
 

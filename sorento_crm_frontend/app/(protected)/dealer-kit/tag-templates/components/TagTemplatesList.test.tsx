@@ -88,6 +88,7 @@ vi.mock('@/services/pendingActionService', () => ({
 }));
 
 import { TagTemplatesList } from './TagTemplatesList';
+import { tickCheckbox } from '@/test-utils';
 import { pendingEntityStore, pendingEntityKey } from '@/lib/pending-entity-store';
 import type { TagTemplate } from '@/lib/dealer-kit/tag-template-types';
 
@@ -110,17 +111,6 @@ function template(over: Partial<TagTemplate> = {}): TagTemplate {
 function serverTime(offsetMs: number): string {
   return new Date(Date.now() + offsetMs).toISOString().replace(/\.\d+Z$/, '');
 }
-
-/**
- * Every test below clicks a checkbox on a freshly-mounted grid and then waits
- * for the bulk strip's Delete button, which only exists once react-table's
- * `rowSelection` state has flowed through a re-render. `findByRole` already
- * retries against the global 5s budget (`vitest.setup.ts`), but a CI run
- * failed at 5362ms - just past it, on this test's COLD first interaction with
- * the grid. Give this one specific wait more room rather than raising the
- * suite-wide default (which the setup file deliberately keeps at 5s).
- */
-const DELETE_BUTTON_WAIT = { timeout: 8000 };
 
 async function renderList() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -203,16 +193,16 @@ describe('TagTemplatesList - bulk delete (AC-S11-1, D26)', () => {
   it('shows Delete once a row is selected', async () => {
     await renderList();
 
-    fireEvent.click((await rows().findAllByRole('checkbox'))[0]);
+    await tickCheckbox('Select Toilet tag');
 
-    expect(await screen.findByRole('button', { name: /^Delete$/i }, DELETE_BUTTON_WAIT)).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /^Delete$/i })).toBeInTheDocument();
   });
 
   it('parks ONE bulk action carrying every selected id, and clears the selection', async () => {
     await renderList();
 
-    fireEvent.click(await screen.findByLabelText('Select all rows on this page'));
-    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }, DELETE_BUTTON_WAIT));
+    await tickCheckbox('Select all rows on this page');
+    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }));
 
     await waitFor(() => expect(createPendingAction).toHaveBeenCalledTimes(1));
     const body = parkedBody();
@@ -232,8 +222,8 @@ describe('TagTemplatesList - bulk delete (AC-S11-1, D26)', () => {
   it('asks NOTHING: no dialog is opened by Delete, only a countdown (D26)', async () => {
     await renderList();
 
-    fireEvent.click(await screen.findByLabelText('Select all rows on this page'));
-    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }, DELETE_BUTTON_WAIT));
+    await tickCheckbox('Select all rows on this page');
+    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }));
 
     await waitFor(() => expect(createPendingAction).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole('dialog')).toBeNull();
@@ -243,8 +233,8 @@ describe('TagTemplatesList - bulk delete (AC-S11-1, D26)', () => {
   it("the countdown names the COUNT, because a selection has no single record's name", async () => {
     await renderList();
 
-    fireEvent.click(await screen.findByLabelText('Select all rows on this page'));
-    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }, DELETE_BUTTON_WAIT));
+    await tickCheckbox('Select all rows on this page');
+    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }));
 
     await waitFor(() => expect(raisedToasts).toHaveLength(1));
     expect(raisedToasts[0]).toEqual({ verb: 'Deleting', subject: '2 templates' });
@@ -253,8 +243,8 @@ describe('TagTemplatesList - bulk delete (AC-S11-1, D26)', () => {
   it('dims EVERY selected row for the length of the window (D26)', async () => {
     await renderList();
 
-    fireEvent.click(await screen.findByLabelText('Select all rows on this page'));
-    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }, DELETE_BUTTON_WAIT));
+    await tickCheckbox('Select all rows on this page');
+    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }));
 
     await waitFor(() =>
       expect(pendingEntityStore.getKeys().has(pendingEntityKey('tag_template', 'tmpl-1'))).toBe(
@@ -273,8 +263,8 @@ describe('TagTemplatesList - bulk delete (AC-S11-1, D26)', () => {
   it('Cancel takes the dimming off every row it put it on', async () => {
     await renderList();
 
-    fireEvent.click(await screen.findByLabelText('Select all rows on this page'));
-    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }, DELETE_BUTTON_WAIT));
+    await tickCheckbox('Select all rows on this page');
+    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }));
     await waitFor(() =>
       expect(pendingEntityStore.getKeys().has(pendingEntityKey('tag_template', 'tmpl-1'))).toBe(
         true,
@@ -293,8 +283,8 @@ describe('TagTemplatesList - bulk delete (AC-S11-1, D26)', () => {
   it('a one-row selection says "1 template", not "1 templates"', async () => {
     await renderList();
 
-    fireEvent.click((await rows().findAllByRole('checkbox'))[0]);
-    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }, DELETE_BUTTON_WAIT));
+    await tickCheckbox('Select Toilet tag');
+    fireEvent.click(await screen.findByRole('button', { name: /^Delete$/i }));
 
     await waitFor(() => expect(raisedToasts).toHaveLength(1));
     expect(raisedToasts[0].subject).toBe('1 template');

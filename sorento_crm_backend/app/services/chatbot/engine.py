@@ -414,7 +414,13 @@ def _read_session_vars(db: Session, *, respond_io_id: str, reply_to_id: str | No
     return {"respond_io_id": respond_io_id, "session_vars": state}
 
 
-def _select_turn(db: Session, *, contact_respond_id: str, message_id: str | None):
+def _select_turn(
+    db: Session,
+    *,
+    contact_respond_id: str,
+    message_id: str | None,
+    is_test: bool | None = None,
+):
     """The raw lookup. Kept separate from `_existing_turn` so the post-collision retry
     below can re-read WITHOUT going through whatever a test has wrapped around the public
     helper - the forced-TOCTOU test synchronises on `_existing_turn`, and a second trip
@@ -425,17 +431,29 @@ def _select_turn(db: Session, *, contact_respond_id: str, message_id: str | None
     wins, agreed with the n8n side: when S2b's retry puts a second row on a message, the
     retry is the row being watched, and completing (or replaying) the older one would fold
     a lane's result into a row nobody is looking at and leave the live one delegated
-    forever. `(contact_respond_id, message_id)` is UNIQUE today, so there is exactly one
-    row to order and this is the shape of the answer rather than a change to it;
-    `created_at` breaks a tie for a row written before `attempt` was populated."""
+    forever; `created_at` breaks a tie for a row written before `attempt` was populated.
+
+    **`is_test` narrows the pair to one WORLD (H57), and `None` means "either".** D15's
+    dedup question is "has this respond message already been turned into a turn", and a
+    TEST turn is not an answer to it: without the flag a dry run from the Prompts screen
+    against a real contact shadowed the live delivery of that same `messageId`, which came
+    back `duplicate: true` carrying the test row's canned reply, so the customer was sent
+    nothing at all. The head therefore always passes its envelope's own `dry_run`; the
+    id-less complete route passes nothing, because the body it holds does not say which
+    world it is in and it must be able to complete either (a clone turn completes by body
+    too). With both a test and a live row on one pair, that route gets the NEWEST, which
+    is the turn whose lane result is arriving."""
     if message_id is None:
         return None
+    filters = [
+        ChatbotTurn.contact_respond_id == contact_respond_id,
+        ChatbotTurn.message_id == message_id,
+    ]
+    if is_test is not None:
+        filters.append(ChatbotTurn.is_test.is_(is_test))
     return (
         db.query(ChatbotTurn)
-        .filter(
-            ChatbotTurn.contact_respond_id == contact_respond_id,
-            ChatbotTurn.message_id == message_id,
-        )
+        .filter(*filters)
         # NEWEST first: with a retry there can be several rows for one message, and the
         # one that matters is the last one - the earlier attempts are settled history.
         # `attempt` leads because it is the retry's own counter (S2b writes old + 1), so
@@ -472,15 +490,26 @@ def find_turn_for_message(db: Session, *, contact_respond_id: str, message_id: s
     return _select_turn(db, contact_respond_id=contact_respond_id, message_id=message_id)
 
 
-def _existing_turn(db: Session, *, contact_respond_id: str, message_id: str | None):
-    """D15: has this respond message already been turned into a turn?
+def _existing_turn(
+    db: Session, *, contact_respond_id: str, message_id: str | None, is_test: bool = False
+):
+    """D15: has this respond message already been turned into a turn IN THIS WORLD?
 
     Checked with a SELECT rather than left to the unique index so a legitimate double
     delivery (webhook plus failover poller) costs a lookup, not an exception and an LLM
     call. The index is the real guarantee under concurrency, and the collision it raises
     is caught in `run_turn` - the SELECT alone is a TOCTOU window, not a lock.
+
+    `is_test` is the envelope's own `dry_run` (H57): a test row must never make a live
+    delivery a duplicate, nor the other way round. The unique index carries `is_test` for
+    the same reason (migration 481).
     """
-    return _select_turn(db, contact_respond_id=contact_respond_id, message_id=message_id)
+    return _select_turn(
+        db,
+        contact_respond_id=contact_respond_id,
+        message_id=message_id,
+        is_test=is_test,
+    )
 
 
 def _insert_turn(
@@ -644,12 +673,14 @@ def _duplicate_result(row: ChatbotTurn) -> TurnResult:
     this path the whole answer describes the first turn, so its flag has to come from the
     same place its `reply` and `actions` do. Stamping the caller's flag on somebody else's
     answer would produce a result whose top-level field and whose per-action `dry_run`
-    disagreed. The consequence, stated rather than left implicit: a TEST envelope
-    duplicating a LIVE message reads back `is_test: false` with live-flagged actions.
-    Containment does not rest on it - `duplicate: true` is set here and the caller's
-    Switch on `duplicate` sits ahead of every send (AC-110), so nothing is sent either
-    way - and the trigger to revisit is a caller that executes `actions` WITHOUT reading
-    `duplicate` first.
+    disagreed.
+
+    Since H57 the two can no longer disagree anyway: the dedup lookup is narrowed to the
+    envelope's OWN `is_test` (`_existing_turn`), so a duplicate is always a duplicate of a
+    row from the same world and this flag always equals the caller's. The cross-world case
+    the previous paragraph used to describe - a test envelope reading back `is_test: false`
+    off a live row - is gone, because a test envelope for a message that already ran live
+    now runs as its own turn instead of being answered from the customer's.
     """
     response = row.response if isinstance(row.response, dict) else {}
     return TurnResult(
@@ -733,9 +764,19 @@ def run_turn(
     try:
         with _session(session_factory) as db:
             switches = _read_switches(db)
-            ordered = _s7_mode(db, switches)
+            # H57: a DRY RUN takes no ticket, waits on nothing and marks nothing. The
+            # ordering keys (`chatbot:seq|done|running:{contact}`, dispatch.py) are keyed
+            # on the contact id and are SHARED with that contact's live traffic, so a test
+            # turn run from the Prompts screen against a real contact would otherwise take
+            # a real place in the queue the customer's next WhatsApp message waits on - and
+            # a test turn must never delay a real customer. Nothing is lost: ordering
+            # decides the order of REPLIES to one contact, and a dry run sends none.
+            ordered = _s7_mode(db, switches) and not dry_run
             existing = _existing_turn(
-                db, contact_respond_id=contact_respond_id, message_id=message_id
+                db,
+                contact_respond_id=contact_respond_id,
+                message_id=message_id,
+                is_test=dry_run,
             )
             retrying = existing if _awaiting_retry(existing) else None
             if existing is not None and retrying is None:
@@ -786,7 +827,10 @@ def run_turn(
                 # than 500ing. The ticket it took is released by the `finally` below.
                 db.rollback()
                 winner = _select_turn(
-                    db, contact_respond_id=contact_respond_id, message_id=message_id
+                    db,
+                    contact_respond_id=contact_respond_id,
+                    message_id=message_id,
+                    is_test=dry_run,
                 )
                 if winner is None or _awaiting_retry(winner):
                     # Either some OTHER constraint failed, or two retries of one message
@@ -1007,6 +1051,9 @@ def _worker_failed(
                 db,
                 contact_respond_id=_contact_respond_id(envelope),
                 message_id=_message_id(envelope),
+                # The row THIS envelope wrote, not the other world's row for the same
+                # message (H57).
+                is_test=envelope.dry_run,
             )
             if row is not None:
                 turn_id = str(row.id)
@@ -2684,7 +2731,7 @@ def run_tail(
     contact_respond_id: str,
     turn_trace: trace_mod.TurnTrace,
     write_session: bool = True,
-) -> tuple[dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """outcome -> CS member offer -> compile-state -> compose -> validate -> persist.
 
     ONE tail, TWO callers. `complete_turn` runs it for a lane that ran in n8n, and
@@ -2699,8 +2746,12 @@ def run_tail(
     agent must not have the turn written into their memory. `dry_run` suppresses the write
     for a different reason (D14) and both suppress it independently.
 
-    Returns `(reply, session_patch)`. Raises before writing anything when the compiled
-    variables carry a key outside the allowlist (AC-203).
+    Returns `(reply, session_patch)`, where `session_patch` is `None` when the sealed
+    reply carried no patch AT ALL - which is not the same as an explicit `{}` (a reset the
+    compiler asked for, and still written). See the note at the read site: collapsing the
+    two wiped a live customer's memory on a turn that never asked for it (H57). Raises
+    before writing anything when the compiled variables carry a key outside the allowlist
+    (AC-203).
     """
     from app.services.chatbot.contracts import SessionVars
     from app.services.chatbot.tail import compose as compose_mod
@@ -2755,8 +2806,16 @@ def run_tail(
         answered=compiled.answered_domain is not None,
     )
     sealed = composed.get("reply") or {}
-    session_patch = sealed.get("session_patch") or {}
-    variables = session_patch.get("variables") or {}
+    # H57: an ABSENT `session_patch` and an EXPLICIT `{}` are two different instructions,
+    # and `or {}` collapsed them. `{}` is a RESET the compiler asked for and is written;
+    # absent means the sealed reply carried no memory to save, and the only correct answer
+    # to that is to leave the customer's remembered state exactly as it was. Under the old
+    # default a lane that produced no state wiped it, which reads to the customer as the
+    # bot forgetting the conversation mid-thread. `None` is what "no instruction" is called
+    # from here down; every read of the patch below tolerates it.
+    raw_patch = sealed.get("session_patch")
+    session_patch = raw_patch if isinstance(raw_patch, dict) else None
+    variables = (session_patch or {}).get("variables") or {}
 
     turn_trace.record(
         "replied",
@@ -2779,11 +2838,18 @@ def run_tail(
     # `ctx.session` is `get-session-vars`'s own body, so the previous variables sit
     # one level in. Same accessor the compiler uses, so "kept" on the trace screen and
     # "carried" in the compiler can never disagree about what was there before.
-    remembered = trace_mod.memory_delta(
-        before=jsc.get(jsc.get(jsc.get(ctx, "session"), "session_vars"), "variables") or {},
-        after=variables,
+    before_variables = (
+        jsc.get(jsc.get(jsc.get(ctx, "session"), "session_vars"), "variables") or {}
     )
-    if not dry_run and write_session:
+    remembered = trace_mod.memory_delta(
+        before=before_variables,
+        # With no patch there is no write, so the memory is KEPT exactly as it was.
+        # Reporting the empty `variables` above as the "after" would file every remembered
+        # value under `cleared` on the trace screen and describe a wipe that never happens.
+        after=variables if session_patch is not None else before_variables,
+    )
+    written = (not dry_run) and write_session and session_patch is not None
+    if written:
         from app.services.conversation_variables_service import overwrite_for_contact
 
         overwrite_for_contact(db, respond_io_id=contact_respond_id, state=session_patch)
@@ -2796,6 +2862,9 @@ def run_tail(
             if dry_run
             else "Nothing was written: a refused turn is not remembered."
             if not write_session
+            else "Nothing was written: this reply carried no state to save, so what was "
+            "remembered before is kept."
+            if session_patch is None
             else "The CRM is the only writer of the conversation state on the turn path (D2)."
         ),
         facts={
@@ -2803,7 +2872,7 @@ def run_tail(
             "new": len(remembered["new"]),
             "cleared": len(remembered["cleared"]),
             "dry_run": dry_run,
-            "written": (not dry_run) and write_session,
+            "written": written,
         },
         raw={"session_patch": session_patch},
     )
@@ -2877,7 +2946,7 @@ def _complete_canned_lane(
     dry_run: bool,
     contact_respond_id: str,
     turn_trace: trace_mod.TurnTrace,
-) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]]]:
+) -> tuple[dict[str, Any], dict[str, Any] | None, list[dict[str, Any]]]:
     """One of S3's eight lanes, answered inside the turn. `(reply, patch, actions)`.
 
     Two shapes, and the split is n8n's own graph rather than a convenience:
@@ -2909,7 +2978,7 @@ def _complete_canned_lane(
     if branch_kind in canned_lanes.NO_SESSION_WRITE_BRANCH_KINDS:
         text = canned_lanes.access_denied_text(ctx, canned)
         reply = {"text": text, "quick_replies": None, "result_set": [], "attachments_src": None}
-        session_patch: dict[str, Any] = {}
+        session_patch: dict[str, Any] | None = {}
         turn_trace.record(
             "replied",
             summary=f"Refused: {trace_mod.lane_words(branch_kind).lower()}.",

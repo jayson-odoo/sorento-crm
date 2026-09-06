@@ -101,6 +101,7 @@ import {
   lookupTagItems,
 } from '../lib/price-tag-request-service';
 import { PriceTagRequestForm } from './PriceTagRequestForm';
+import { selectOption } from '@/test-utils';
 
 const DEBTORS = [{ code: 'ZZTD01', name: 'ZZT Dealer Sdn Bhd' }];
 
@@ -152,20 +153,14 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
 
   it('a picked product posts line_type product with the product id', async () => {
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
-    fireEvent.change(screen.getByLabelText('Debtor'), {
-      target: { value: 'ZZTD01' },
-    });
+    await selectOption('Debtor', 'ZZTD01');
     // The deadline starts empty since D48a, and Submit asks for it by name.
     fireEvent.change(screen.getByLabelText(/Needed by/), {
       target: { value: '2026-09-30' },
     });
 
     await addLine();
-    await screen.findByText('ZZT Kitchen Sink');
-    fireEvent.change(screen.getByLabelText('Search a set or product...'), {
-      target: { value: 'product:prod-uuid-1' },
-    });
+    await selectOption('Search a set or product...', 'product:prod-uuid-1');
     fireEvent.change(screen.getByLabelText('Quantity for line 1'), {
       target: { value: '2' },
     });
@@ -185,20 +180,14 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
 
   it('a picked set posts line_type product_set and disables that row Alternatives', async () => {
     render(<PriceTagRequestForm />);
-    await screen.findByLabelText('Debtor');
-    fireEvent.change(screen.getByLabelText('Debtor'), {
-      target: { value: 'ZZTD01' },
-    });
+    await selectOption('Debtor', 'ZZTD01');
     // The deadline starts empty since D48a, and Submit asks for it by name.
     fireEvent.change(screen.getByLabelText(/Needed by/), {
       target: { value: '2026-09-30' },
     });
 
     await addLine();
-    await screen.findByText('ZZT Bathroom Furniture Set');
-    fireEvent.change(screen.getByLabelText('Search a set or product...'), {
-      target: { value: 'product_set:set-uuid-1' },
-    });
+    await selectOption('Search a set or product...', 'product_set:set-uuid-1');
 
     expect(screen.getByLabelText('Alternatives')).toBeDisabled();
 
@@ -218,10 +207,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
     await screen.findByLabelText('Debtor');
 
     await addLine();
-    await screen.findByText('ZZT Kitchen Sink');
-    fireEvent.change(screen.getByLabelText('Search a set or product...'), {
-      target: { value: 'product:prod-uuid-1' },
-    });
+    await selectOption('Search a set or product...', 'product:prod-uuid-1');
 
     expect(screen.getByLabelText('Alternatives')).not.toBeDisabled();
   });
