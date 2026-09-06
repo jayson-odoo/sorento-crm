@@ -14,11 +14,13 @@ import {
   getContainerSizes,
   getFulfilmentSuppliers,
   getLoadingPlanList,
+  getSpoPlannerState,
   getSpoSuggestion,
   getSupplierChatContacts,
   getSupplierNotices,
   getSupplierStock,
   getSupplierStockListFile,
+  reviseSpo,
   saveLoadingPlanEdits,
   sendContainerRequest,
   updateLoadingPlanCutOff,
@@ -355,6 +357,40 @@ export function useDeleteSpo(shipmentId: string | null) {
           ? `Deleted SPO ${names}.`
           : `Deleted ${out.deleted_spo_count} SPOs: ${names}.`,
       );
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/** The planner in EDIT mode (R24, AC-K1): one SPO's own lines, each carrying both the
+ *  suggestion shape and the state it was persisted with. `purchaseOrderId` null means the
+ *  planner is in create mode and nothing is fetched. */
+export function useSpoPlannerState(shipmentId: string | null, purchaseOrderId: string | null) {
+  return useQuery({
+    queryKey: [...KEY, 'spo-planner-state', shipmentId, purchaseOrderId],
+    queryFn: () => getSpoPlannerState(shipmentId as string, purchaseOrderId as string),
+    enabled: !!shipmentId && !!purchaseOrderId,
+  });
+}
+
+/** Save changes on an SPO already created (R24, AC-K2). Invalidates the same queries
+ *  `useCreateSpo` does - the remainder planner and the PO book both moved - plus the
+ *  planner state itself, so a second edit of the same SPO re-reads what was just written
+ *  rather than the pre-save snapshot. */
+export function useReviseSpo(shipmentId: string | null, purchaseOrderId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (lines: SpoConfirmLine[]) =>
+      reviseSpo(shipmentId as string, purchaseOrderId as string, lines),
+    onSuccess: (out) => {
+      void qc.invalidateQueries({ queryKey: [...KEY, 'spo-suggestion', shipmentId] });
+      void qc.invalidateQueries({ queryKey: [...KEY, 'spo-planner-state', shipmentId] });
+      void qc.invalidateQueries({ queryKey: ['scm', 'purchase-orders'] });
+      void qc.invalidateQueries({ queryKey: ['spo-allocations'] });
+      const removed = out.removed_line_count
+        ? ` ${out.removed_line_count} line${out.removed_line_count === 1 ? '' : 's'} removed.`
+        : '';
+      toast.success(`Saved ${out.po_number ?? 'the SPO'}.${removed}`);
     },
     onError: (e: Error) => toast.error(e.message),
   });

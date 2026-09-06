@@ -509,3 +509,85 @@ describe('SPODocumentDetail - gear Delete document (UAT AC-26)', () => {
     expect(screen.queryByRole('button', { name: /^Edit$/i })).toBeNull();
   });
 });
+
+/**
+ * R24, AC-K5 - the SPO document's own way into the planner that made it.
+ *
+ * Shown only when every line agrees on ONE packing list and ONE purchase order, which is
+ * what a CRM SPO always is; an imported document, or one split across containers, has no
+ * single SPO for the planner to load and gets no action rather than a link pointing at
+ * whichever half came back first.
+ */
+describe('SPODocumentDetail - Edit in planner (R24, AC-K5)', () => {
+  const shipment = { id: 'sh-1', shipment_number: 'ABCU1000001' };
+  const po = { po_number: 'CRM-SPO-0001', purchase_order_id: 'po-1', line_no: null };
+
+  it('links to the planner in edit mode for this SPO', () => {
+    useSPODocument.mockReturnValue({
+      data: doc({ lines: [line({ inbound_shipment: shipment, po })] }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    expect(screen.getByRole('link', { name: /edit in planner/i })).toHaveAttribute(
+      'href',
+      '/procurement-management/packing-lists/sh-1?tab=spo&edit=po-1',
+    );
+  });
+
+  it('stays on the Lines tab too - one action for both tabs', () => {
+    useSPODocument.mockReturnValue({
+      data: doc({ lines: [line({ inbound_shipment: shipment, po })] }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    expect(screen.getByRole('link', { name: /edit in planner/i })).toBeInTheDocument();
+  });
+
+  it('is hidden on a document with no packing list behind it', () => {
+    useSPODocument.mockReturnValue({
+      data: doc({ lines: [line({ inbound_shipment: null, po })] }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    expect(screen.queryByRole('link', { name: /edit in planner/i })).toBeNull();
+  });
+
+  it('is hidden on a document split across two packing lists', () => {
+    useSPODocument.mockReturnValue({
+      data: doc({
+        line_count: 2,
+        lines: [
+          line({ id: 'l-1', inbound_shipment: shipment, po }),
+          line({
+            id: 'l-2',
+            inbound_shipment: { id: 'sh-2', shipment_number: 'ABCU2000002' },
+            po,
+          }),
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    expect(screen.queryByRole('link', { name: /edit in planner/i })).toBeNull();
+  });
+
+  it('is hidden on an imported document, which names no purchase-order line', () => {
+    useSPODocument.mockReturnValue({
+      data: doc({ lines: [line({ inbound_shipment: shipment, po: null })] }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+
+    expect(screen.queryByRole('link', { name: /edit in planner/i })).toBeNull();
+  });
+});

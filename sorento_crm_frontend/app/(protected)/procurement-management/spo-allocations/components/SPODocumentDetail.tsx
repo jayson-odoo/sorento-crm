@@ -18,6 +18,7 @@ import {
   Link as LinkIcon,
   ListOrdered,
   LoaderCircleIcon,
+  Pencil,
   RotateCcw,
   SquarePen,
   Trash2,
@@ -348,6 +349,29 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
     const names = new Set<string>();
     for (const l of visibleLines) if (l.supplier_name) names.add(l.supplier_name);
     return [...names];
+  }, [visibleLines]);
+
+  /**
+   * "Edit in planner" (R24, AC-K5): the same screen the Created SPOs grid opens, reached
+   * from the document itself so both entry points meet at one editor.
+   *
+   * Rendered ONLY when this document's lines agree on one packing list AND one purchase
+   * order - which is what a CRM SPO always is (one `create` run, one header per supplier,
+   * one container). Anything else is an imported document, or a document split across
+   * containers, and the planner has no single SPO to load for it; the action is hidden
+   * rather than shown pointing at whichever half the query met first.
+   */
+  const editInPlannerHref = useMemo(() => {
+    const shipmentIds = new Set(
+      visibleLines.map((l) => l.inbound_shipment?.id).filter(Boolean) as string[],
+    );
+    const poIds = new Set(
+      visibleLines.map((l) => l.po?.purchase_order_id).filter(Boolean) as string[],
+    );
+    if (shipmentIds.size !== 1 || poIds.size !== 1) return null;
+    const [shipmentId] = [...shipmentIds];
+    const [poId] = [...poIds];
+    return `/procurement-management/packing-lists/${shipmentId}?tab=spo&edit=${encodeURIComponent(poId)}`;
   }, [visibleLines]);
 
   const columns = useMemo<ColumnDef<SPODocumentLine>[]>(
@@ -874,10 +898,22 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
                 ]}
                 pendingAction={deletion.countdown}
                 primary={
-                  <Button variant="primary" size="sm" className="gap-1.5" onClick={() => beginEdit(doc)}>
-                    <SquarePen className="size-4" />
-                    Edit
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {/* R24, AC-K5 - beside Edit, because both are "change this document",
+                        one field by field and one through the planner that made it. */}
+                    {editInPlannerHref ? (
+                      <Button variant="outline" size="sm" className="gap-1.5" asChild>
+                        <Link href={editInPlannerHref}>
+                          <Pencil className="size-4" />
+                          Edit in planner
+                        </Link>
+                      </Button>
+                    ) : null}
+                    <Button variant="primary" size="sm" className="gap-1.5" onClick={() => beginEdit(doc)}>
+                      <SquarePen className="size-4" />
+                      Edit
+                    </Button>
+                  </div>
                 }
               />
             )}

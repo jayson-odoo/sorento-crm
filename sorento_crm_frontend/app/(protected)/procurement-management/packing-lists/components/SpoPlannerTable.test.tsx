@@ -28,12 +28,18 @@ vi.mock('@/lib/toast', () => ({
 
 const suggestionFn: (...args: unknown[]) => Promise<unknown> = () => Promise.resolve(state.suggestion);
 
+const plannerStateFn: (...args: unknown[]) => Promise<unknown> = () =>
+  Promise.resolve(state.plannerState);
+
 const state = {
   suggestion: null as unknown,
   suggestionFn,
   create: vi.fn(),
   deleteSpo: vi.fn(),
   worksheet: vi.fn(),
+  plannerState: null as unknown,
+  plannerStateFn,
+  revise: vi.fn(),
 };
 
 /** The two lightbox bodies that FETCH (On hand, Incoming SPO) - mocked at the hook, so these
@@ -53,6 +59,8 @@ vi.mock('@/app/(protected)/scm/services/fulfilmentService', () => ({
   createSpo: (...args: unknown[]) => state.create(...args),
   deleteSpo: (...args: unknown[]) => state.deleteSpo(...args),
   downloadSpoWorksheet: (...args: unknown[]) => state.worksheet(...args),
+  getSpoPlannerState: (...args: unknown[]) => state.plannerStateFn(...args),
+  reviseSpo: (...args: unknown[]) => state.revise(...args),
 }));
 
 import { toast } from '@/lib/toast';
@@ -72,11 +80,11 @@ function suggestion(over: Record<string, unknown> = {}) {
   };
 }
 
-function renderTable() {
+function renderTable(editPoId: string | null = null) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <SpoPlannerTable shipmentId="sh-1" />
+      <SpoPlannerTable shipmentId="sh-1" initialEditPurchaseOrderId={editPoId} />
     </QueryClientProvider>,
   );
 }
@@ -93,6 +101,20 @@ beforeEach(() => {
     deleted_allocation_count: 0,
   });
   state.worksheet = vi.fn().mockResolvedValue(undefined);
+  state.plannerState = null;
+  state.plannerStateFn = () => Promise.resolve(state.plannerState);
+  state.revise = vi.fn().mockResolvedValue({
+    shipment_id: 'sh-1',
+    shipment_number: 'ABCU1000001',
+    purchase_order_id: 'po-1',
+    po_number: 'CRM-SPO-0001',
+    updated_line_count: 1,
+    removed_line_count: 0,
+    allocations: [],
+    removed_allocation_count: 0,
+    restored_po_line_count: 1,
+    demand_links: [],
+  });
   useLocationStock.mockReturnValue({ data: undefined, isLoading: false });
   useContainerRequestDrill.mockReturnValue({
     data: { kind: 'spo', rows: [], total: 0, history: [] },
@@ -1902,5 +1924,164 @@ describe('editable cells keep focus while typing (live bug, 4 Sep)', () => {
     fireEvent.change(input, { target: { value: '70' } });
     expect(document.activeElement).toBe(input);
     expect(input).toHaveValue(70);
+  });
+});
+
+/**
+ * R24 (AC-K1..AC-K4) - editing an SPO that already exists, in the SAME planner.
+ *
+ * The state on screen is what was PERSISTED (`planner-state`), never the suggestion walk
+ * re-run over it: the operator is looking at a decision somebody already made, and a
+ * recomputed default would silently propose a different SPO the moment she opened it.
+ */
+function plannerStateLine(over: Record<string, unknown> = {}) {
+  return {
+    ...plannerLine(),
+    // The state the SPO was persisted with: 70 of the 100 packed, split across two
+    // warehouses, drawing from ONE of the two PO takes, pointed at ONE piece of demand.
+    spo_qty: 70,
+    location_splits: [
+      { warehouse_id: 'wh-1', warehouse_code: 'BRW', qty: 40 },
+      { warehouse_id: 'wh-2', warehouse_code: 'MWH', qty: 30 },
+    ],
+    po_take_ids: ['pol-1'],
+    so_takes: [{ key: 'project:row-1', qty: 40 }],
+    received_qty: 0,
+    ...over,
+  };
+}
+
+function plannerStateResponse(over: Record<string, unknown> = {}) {
+  return {
+    shipment_id: 'sh-1',
+    shipment_number: 'ABCU1000001',
+    purchase_order_id: 'po-1',
+    po_number: 'CRM-SPO-0001',
+    supplier_name: 'Kailu',
+    lines: [plannerStateLine()],
+    ...over,
+  };
+}
+
+describe('SpoPlannerTable - Edit in planner (R24)', () => {
+  beforeEach(() => {
+    state.suggestion = suggestion({ existing_spos: existingSpos(), lines: [plannerLine()] });
+    state.plannerState = plannerStateResponse();
+  });
+
+  it('AC-K1: the Created SPOs row action opens edit mode for that SPO, pre-filled', async () => {
+    renderTable();
+
+    await screen.findByRole('link', { name: 'CRM-SPO-0001' });
+    fireEvent.click(screen.getByRole('button', { name: /edit crm-spo-0001 in planner/i }));
+
+    expect(await screen.findByText('Editing CRM-SPO-0001')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^cancel$/i })).toBeInTheDocument();
+    // The persisted quantity, not the suggestion's own 100.
+    expect(screen.getByTestId('spo-qty-input')).toHaveValue(70);
+    // The Created SPOs grid steps aside while one of its own rows is being edited.
+    expect(screen.queryByRole('link', { name: 'CRM-SPO-0001' })).toBeNull();
+  });
+
+  it('AC-K5: `?edit=` opens edit mode straight away, without a click', async () => {
+    renderTable('po-1');
+
+    expect(await screen.findByText('Editing CRM-SPO-0001')).toBeInTheDocument();
+    expect(screen.getByTestId('spo-qty-input')).toHaveValue(70);
+  });
+
+  it('AC-K1: PO covers and SO covered read the persisted takes, never Done', async () => {
+    // A line the suggestion would lock (`remaining_qty` 0, everything already converted) -
+    // in EDIT mode it is this SPO's own take, so the cells stay live.
+    state.plannerState = plannerStateResponse({
+      lines: [plannerStateLine({ remaining_qty: 70 })],
+    });
+    renderTable('po-1');
+
+    await screen.findByText('Editing CRM-SPO-0001');
+    expect(screen.queryByText('Done')).toBeNull();
+    // pol-1 alone is ticked, and it has 60 open - capped at the line's own remainder.
+    expect(
+      screen.getByRole('button', { name: /which po covers this/i }),
+    ).toHaveTextContent('60');
+    // One project take of 40 (the persisted `so_takes`), not the cascade's own 70.
+    expect(
+      screen.getByRole('button', { name: /which demand this spo is for/i }),
+    ).toHaveTextContent('40');
+  });
+
+  it('AC-K2: Save sends the same confirm shape, PUT-side, and leaves edit mode', async () => {
+    renderTable('po-1');
+    await screen.findByText('Editing CRM-SPO-0001');
+
+    fireEvent.change(screen.getByTestId('spo-qty-input'), { target: { value: '80' } });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(state.revise).toHaveBeenCalledTimes(1));
+    const [, , lines] = state.revise.mock.calls[0];
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      shipment_line_id: 'sl-1',
+      qty: 80,
+      include: true,
+      po_take_ids: ['pol-1'],
+    });
+    await waitFor(() => expect(screen.queryByText('Editing CRM-SPO-0001')).toBeNull());
+  });
+
+  it('AC-K4: a line typed to 0 goes out on the payload as include:false', async () => {
+    renderTable('po-1');
+    await screen.findByText('Editing CRM-SPO-0001');
+
+    fireEvent.change(screen.getByTestId('spo-qty-input'), { target: { value: '0' } });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(state.revise).toHaveBeenCalledTimes(1));
+    const [, , lines] = state.revise.mock.calls[0];
+    expect(lines[0]).toMatchObject({ shipment_line_id: 'sl-1', qty: 0, include: false });
+  });
+
+  it('AC-K3: a qty below what was received disables Save and names the row', async () => {
+    state.plannerState = plannerStateResponse({
+      lines: [plannerStateLine({ received_qty: 50 })],
+    });
+    renderTable('po-1');
+    await screen.findByText('Editing CRM-SPO-0001');
+
+    // The received figure reads under the input from the start.
+    expect(screen.getByText('50 received')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /save changes/i })).toBeEnabled();
+
+    fireEvent.change(screen.getByTestId('spo-qty-input'), { target: { value: '20' } });
+
+    expect(screen.getByRole('button', { name: /save changes/i })).toBeDisabled();
+    expect(
+      screen.getByText(/SRTWT7443 - the qty is below what has already been received/),
+    ).toBeInTheDocument();
+    expect(state.revise).not.toHaveBeenCalled();
+  });
+
+  it('Cancel discards the edits and puts the Created SPOs grid back', async () => {
+    renderTable('po-1');
+    await screen.findByText('Editing CRM-SPO-0001');
+
+    fireEvent.change(screen.getByTestId('spo-qty-input'), { target: { value: '11' } });
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    await screen.findByRole('link', { name: 'CRM-SPO-0001' });
+    expect(screen.queryByText('Editing CRM-SPO-0001')).toBeNull();
+    expect(state.revise).not.toHaveBeenCalled();
+    // Back on the remainder planner's own default, not the 11 just typed.
+    expect(screen.getByTestId('spo-qty-input')).toHaveValue(100);
+  });
+
+  it('an SPO that cannot be opened says so and offers the way back', async () => {
+    state.plannerStateFn = () => Promise.reject(new Error('This shipment has no SPO with that id.'));
+    renderTable('po-1');
+
+    expect(await screen.findByText('This shipment has no SPO with that id.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /back to the planner/i }));
+    await screen.findByRole('link', { name: 'CRM-SPO-0001' });
   });
 });

@@ -1365,6 +1365,22 @@ export async function downloadPackingListExport(
  *  GET  /api/v1/scm/inbound-shipments/{id}/spo-worksheet/export -> 200 .xlsx bytes. The
  *       AutoCount handoff - what to key, per supplier, across every SPO ever created off
  *       this shipment. 404 until "Create SPO" has run at all.
+ *  GET  /api/v1/scm/inbound-shipments/{id}/spo/{purchase_order_id}/planner-state -> 200
+ *       SpoPlannerState (R24, AC-K1). What the planner has to show to EDIT an SPO that
+ *       already exists: this SPO's own lines only, each carrying both the suggestion shape
+ *       above (so the PO-takes and SO-covered lightboxes work unchanged) and the persisted
+ *       state to seed the row with (`spo_qty`, `location_splits`, `po_take_ids`,
+ *       `so_takes`, `received_qty`). Auth: `scm.dashboard.view`. 404 when the id does not
+ *       name one of THIS shipment's own SPOs; 409 when it names a purchase order Create
+ *       SPO did not mint.
+ *  PUT  /api/v1/scm/inbound-shipments/{id}/spo/{purchase_order_id} -> 200 SpoReviseResult.
+ *       Body: `{ lines: SpoConfirmLine[] }` - the SAME shape Create SPO posts, so one
+ *       screen builds one payload for both actions. Only lines currently ON this SPO may
+ *       appear; a line left out, or sent `include: false`, is unwound for that line alone
+ *       (AC-K4). Every guard `create` applies is re-applied here, plus one of its own: a
+ *       quantity below what an allocation has already RECEIVED is refused (422) naming the
+ *       product and warehouse, and nothing is written (AC-K3). The SPO number and its
+ *       header row are never touched. Auth: `scm.reorder.run`.
  *
  * One SPO per SUPPLIER represented on the shipment - a container is routinely several
  * factories, and AutoCount POs are per supplier too. A line with no supplier recorded (the
@@ -1700,6 +1716,95 @@ export async function deleteSpo(
     method: 'DELETE',
   });
   return readJson<SpoDeleteResult>(res, 'Failed to delete the SPO');
+}
+
+/** One destination an EXISTING SPO already writes for a line, read back off its own
+ *  `spo_allocations` row. `warehouse_code` travels with it so the split editor can name the
+ *  warehouse even on the rare row whose location is no longer a ranked candidate. */
+export interface SpoPlannerStateSplit {
+  warehouse_id: string;
+  warehouse_code: string | null;
+  qty: number;
+}
+
+/**
+ * One line of an existing SPO, as the planner re-opens it (R24, AC-K1).
+ *
+ * It IS a `SpoSuggestionLine` - same `po_takes`, same `so_coverage`, same
+ * `location_options` - so every cell, every lightbox and every walk in `SpoPlannerTable`
+ * reads it exactly as it reads a create-mode line, with no second rendering path. What the
+ * extra fields add is the STATE to seed the row with, read off what was persisted:
+ *
+ *   * `spo_qty` - this SPO line's own `purchase_order_lines.qty_ordered`.
+ *   * `location_splits` - its `spo_allocations` rows, one per warehouse.
+ *   * `po_take_ids` - the open PO line(s) it pulled from.
+ *   * `so_takes` - the demand it was pointed at, keyed exactly as `so_coverage` keys it.
+ *   * `received_qty` - what those allocations have already RECEIVED. The one figure the
+ *     screen cannot let the operator type below (AC-K3); the server refuses it too.
+ *
+ * The candidate lists come back with THIS SPO's own claims taken back out of them - its PO
+ * pulls are open again, its ticked demand outstanding again - because otherwise the state
+ * being edited would read as taken by somebody else and could not be re-ticked.
+ */
+export interface SpoPlannerStateLine extends SpoSuggestionLine {
+  spo_qty: number;
+  location_splits: SpoPlannerStateSplit[];
+  po_take_ids: string[];
+  so_takes: SpoTakeItem[];
+  received_qty: number;
+}
+
+export interface SpoPlannerState {
+  shipment_id: string;
+  shipment_number: string | null;
+  purchase_order_id: string;
+  po_number: string | null;
+  supplier_name: string | null;
+  lines: SpoPlannerStateLine[];
+}
+
+/** What `PUT .../spo/{purchase_order_id}` answers with - the same vocabulary the create and
+ *  delete results use, so one toast helper can read any of the three. */
+export interface SpoReviseResult {
+  shipment_id: string;
+  shipment_number: string | null;
+  purchase_order_id: string;
+  po_number: string | null;
+  /** Lines still on the SPO after the save, and what they now carry. */
+  updated_line_count: number;
+  /** Lines unwound because they were dropped or sent at 0 (AC-K4). */
+  removed_line_count: number;
+  allocations: SpoAllocationWritten[];
+  removed_allocation_count: number;
+  /** Source PO lines whose `qty_received` advance was re-dealt to the new take set. */
+  restored_po_line_count: number;
+  demand_links: SpoDemandLink[];
+}
+
+export async function getSpoPlannerState(
+  shipmentId: string,
+  purchaseOrderId: string,
+): Promise<SpoPlannerState> {
+  const res = await apiFetch(
+    `/api/v1/scm/inbound-shipments/${shipmentId}/spo/${encodeURIComponent(purchaseOrderId)}/planner-state`,
+  );
+  return readJson<SpoPlannerState>(res, 'Failed to open this SPO in the planner');
+}
+
+export async function reviseSpo(
+  shipmentId: string,
+  purchaseOrderId: string,
+  lines: SpoConfirmLine[],
+): Promise<SpoReviseResult> {
+  const res = await apiFetch(
+    `/api/v1/scm/inbound-shipments/${shipmentId}/spo/${encodeURIComponent(purchaseOrderId)}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lines }),
+    },
+  );
+  return readJson<SpoReviseResult>(res, 'Failed to save the changes to this SPO');
 }
 
 export async function downloadSpoWorksheet(
