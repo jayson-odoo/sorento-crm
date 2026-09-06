@@ -169,6 +169,10 @@ class Product(Base, CompanyScopedMixin):
     product_code = Column(String(100), nullable=False)
     product_name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
+    # AutoCount `Item.Desc2` (migration 475, D4). Stored separately, never
+    # concatenated into `description` - the xlsx import keeps doing that on
+    # its own `desc2` column handling; the ESB masters push writes here.
+    remark = Column(Text, nullable=True)
     category_id = Column(UUID(as_uuid=False), ForeignKey("product_categories.id"), nullable=False)
     brand_id = Column(UUID(as_uuid=False), ForeignKey("brands.id", ondelete="SET NULL"), nullable=True)
     # Self-referential variant graph. A variant points at its (longest existing

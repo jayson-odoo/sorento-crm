@@ -56,67 +56,29 @@ def _populate_field_attachments(db: Session, products: Iterable[Product]) -> Non
             pass
 
 
-# Match three numbers separated by 'x' / 'X' / '×' (with optional spaces) and optional unit (mm/cm/m).
-# Examples matched: '650x450x210MM', '650 x 450 x 210mm', '(650X450X210)', '12.5x10x5 cm'.
-# The negative-lookahead (?<!\d) avoids stitching onto a longer numeric run from a product code.
-_DIMENSION_LXWXH_PATTERN = re.compile(
-    r"(?<!\d)(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)"
-    r"(?:\s*(mm|cm|m|MM|CM|M)\b|(?![0-9]))",
+# S1 (ingest-parity-standardisation): the dimension-parsing and discontinued-
+# derivation bodies MOVED to app/services/rules/product_rules.py, shared by
+# the xlsx import, the manual create/edit and the ESB push (D2, D4). These
+# three names stay importable from here - unchanged callers elsewhere in this
+# module and `tests/test_product_is_discontinued.py` - as thin delegates; the
+# one real body lives in product_rules.
+from app.services.rules import product_rules
+from app.services.rules.master_rules import resolve_master_by_code
+from app.services.rules.product_rules import (
+    is_discontinued as _rules_is_discontinued,
+    parse_dimensions as parse_dimensions_from_description,
 )
-_UNIT_TO_MM: dict[str, Decimal] = {
-    "": Decimal("1"),
-    "mm": Decimal("1"),
-    "cm": Decimal("10"),
-    "m": Decimal("1000"),
-}
-
-
-def parse_dimensions_from_description(
-    description: Optional[str],
-) -> Tuple[Optional[Decimal], Optional[Decimal], Optional[Decimal]]:
-    """Extract LxWxH (in mm) from a product description.
-
-    Returns (length_mm, width_mm, height_mm). All None if no LxWxH triplet is found.
-    Unit is normalized to mm: 'cm' -> x10, 'm' -> x1000, otherwise mm assumed.
-    Convention: dimensions are written length × width × height in the source description.
-    """
-    if not description:
-        return (None, None, None)
-    m = _DIMENSION_LXWXH_PATTERN.search(description)
-    if not m:
-        return (None, None, None)
-    raw_l, raw_w, raw_h, unit = m.groups()
-    factor = _UNIT_TO_MM.get((unit or "").lower(), Decimal("1"))
-    try:
-        q = Decimal("0.01")
-        return (
-            (Decimal(raw_l) * factor).quantize(q),
-            (Decimal(raw_w) * factor).quantize(q),
-            (Decimal(raw_h) * factor).quantize(q),
-        )
-    except Exception:
-        return (None, None, None)
 
 
 def is_discontinued_from_description(description: Optional[str]) -> bool:
-    """True when description starts with `****` (after lstrip).
-
-    Auto-derived flag: a product whose description begins with four asterisks
-    is considered discontinued. Recomputed on every save (single create/edit
-    and bulk import) - never edited manually.
-    """
-    if not description:
-        return False
-    return description.lstrip().startswith("****")
-
-
-#: Values an explicit Discontinued column may carry for "yes". AutoCount
-#: exports checkbox columns as "Checked"/"Unchecked".
-_DISCONTINUED_TRUE = {"CHECKED", "T", "TRUE", "1", "Y", "YES"}
+    """True when description starts with `****` (after lstrip). See
+    `product_rules.is_discontinued`."""
+    return _rules_is_discontinued(None, description)
 
 
 def is_discontinued_from_row(row: dict, description: Optional[str]) -> bool:
-    """Discontinued for one import row: explicit column wins, `****` is the fallback.
+    """Discontinued for one import row: explicit column wins, `****` is the
+    fallback. See `product_rules.is_discontinued`.
 
     Some source files (e.g. the Mocha AutoCount item list) carry a real
     `Discontinued` checkbox column, where leading asterisks in the description
@@ -126,8 +88,8 @@ def is_discontinued_from_row(row: dict, description: Optional[str]) -> bool:
     """
     for key in ("is_discontinued", "Discontinued", "discontinued"):
         if key in row and row[key] is not None and str(row[key]).strip() != "":
-            return str(row[key]).strip().upper() in _DISCONTINUED_TRUE
-    return is_discontinued_from_description(description)
+            return _rules_is_discontinued(row[key], description)
+    return _rules_is_discontinued(None, description)
 
 
 #: Header spellings for the AutoCount reorder columns. Kept identical to the aliases
@@ -932,42 +894,34 @@ class ProductService:
         return self.db.query(SystemSetting).first()
 
     def _default_standard_lead_time_days(self) -> int:
-        row = self._system_settings_row()
-        if row is not None:
-            try:
-                n = int(row.default_product_standard_lead_time_days)
-            except (TypeError, ValueError):
-                n = 90
-        else:
-            n = 90
-        return max(0, n)
+        return product_rules.resolve_standard_lead_time_days(self._system_settings_row())
 
     def _resolve_default_supplier_for_new_product(self) -> Optional[Supplier]:
         """
         Supplier for auto-created product_suppliers rows.
         Uses system_settings.default_product_supplier_id when set and valid; else oldest supplier by created_at.
         """
-        row = self._system_settings_row()
-        sid = (row.default_product_supplier_id or "").strip() if row else ""
-        if sid:
-            s = self.db.query(Supplier).filter(Supplier.id == sid).first()
-            if s:
-                return s
-        return (
-            self.db.query(Supplier)
-            .order_by(Supplier.created_at.asc(), Supplier.id.asc())
-            .first()
-        )
+        supplier_id = product_rules.resolve_default_supplier_id(self.db, self._system_settings_row())
+        if not supplier_id:
+            return None
+        return self.db.query(Supplier).filter(Supplier.id == supplier_id).first()
 
     def _ensure_default_supplier_lead_time(self, product_id: str, lead_time_days: Optional[int] = None) -> None:
-        """Link product to the configured default supplier with standard lead time (see app config)."""
+        """Link product to the configured default supplier with standard lead time (D5).
+
+        S1 (ingest-parity-standardisation): delegates to `product_rules.link_default_supplier`,
+        the same body the ESB push calls, so manual create/edit and the ESB never drift.
+        `lead_time_days` is an explicit override for a caller that already knows the
+        number (nothing left in this module passes one; kept so a future caller can
+        without a second body materialising for it).
+        """
         if lead_time_days is None:
+            product_rules.link_default_supplier(self.db, product_id, self._system_settings_row())
+            return
+        try:
+            days = max(0, int(lead_time_days))
+        except (TypeError, ValueError):
             days = self._default_standard_lead_time_days()
-        else:
-            try:
-                days = max(0, int(lead_time_days))
-            except (TypeError, ValueError):
-                days = self._default_standard_lead_time_days()
         supplier = self._resolve_default_supplier_for_new_product()
         if not supplier:
             return
@@ -1008,7 +962,10 @@ class ProductService:
             data["dimensions_width"] = parsed_w
         if parsed_h is not None and data.get("dimensions_height") is None:
             data["dimensions_height"] = parsed_h
-        data["is_discontinued"] = is_discontinued_from_description(data.get("description"))
+        # D2: an explicit flag (ProductCreate.is_discontinued) wins over the
+        # description-derived one - flag_wins, same rule product_rules.is_discontinued
+        # applies for every other channel.
+        data["is_discontinued"] = _rules_is_discontinued(data.get("is_discontinued"), data.get("description"))
         product = Product(**data, created_by=created_by)
         self.db.add(product)
         self.db.commit()
@@ -1047,8 +1004,18 @@ class ProductService:
                     update_data["dimensions_width"] = parsed_w
                 if parsed_h is not None and "dimensions_height" not in update_data:
                     update_data["dimensions_height"] = parsed_h
-                new_discontinued = is_discontinued_from_description(update_data.get("description"))
+            # D2: an explicit flag wins over the description-derived value; recomputed
+            # only when the flag was NOT sent AND description was (an update that
+            # touches neither leaves is_discontinued untouched, same D14 rule as any
+            # other absent field).
+            if "is_discontinued" in update_data:
+                new_discontinued = bool(update_data["is_discontinued"])
+            elif "description" in update_data:
+                new_discontinued = _rules_is_discontinued(None, update_data.get("description"))
                 update_data["is_discontinued"] = new_discontinued
+            else:
+                new_discontinued = None
+            if new_discontinued is not None:
                 # is_discontinued True->False: reset the notify watermark so a later
                 # re-discontinuation is reported again by the batch cron. product.* is
                 # still the OLD value here (setattr loop runs below).
@@ -2251,10 +2218,8 @@ class ProductCategoryService:
     
     def create_category(self, category_data: ProductCategoryCreate):
         """Create a new category."""
-        existing = self.db.query(ProductCategory).filter(
-            ProductCategory.category_code == category_data.category_code
-        ).first()
-        if existing:
+        # D17: case/whitespace-insensitive, same as every other channel.
+        if resolve_master_by_code(self.db, ProductCategory, category_data.category_code):
             raise handle_conflict("Category code already exists.")
         
         category = ProductCategory(**category_data.model_dump())
@@ -2517,8 +2482,8 @@ class UnitOfMeasureService:
     
     def create_uom(self, uom_data: UnitOfMeasureCreate):
         """Create a new UOM."""
-        existing = self.db.query(UnitOfMeasure).filter(UnitOfMeasure.uom_code == uom_data.uom_code).first()
-        if existing:
+        # D17: case/whitespace-insensitive, same as every other channel.
+        if resolve_master_by_code(self.db, UnitOfMeasure, uom_data.uom_code):
             raise handle_conflict("UOM code already exists.")
         
         uom = UnitOfMeasure(**uom_data.model_dump())

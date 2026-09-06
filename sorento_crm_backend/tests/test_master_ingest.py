@@ -200,7 +200,12 @@ class TestSEC3IntegrityConflictNamesTheConstraint:
             {"i": str(uuid.uuid4()), "c": code, "cid": DEFAULT_COMPANY_ID},
         )
         db.commit()
-        monkeypatch.setattr(m, "_lookup_id", lambda *a, **kw: None)
+        # S1 (ingest-parity-standardisation): the adopt lookup for a
+        # non-agent master moved from `_lookup_id` to
+        # `master_rules.resolve_master_by_code` (D17, case/whitespace-
+        # insensitive matching) - forcing the same "not found" race now goes
+        # through that function instead.
+        monkeypatch.setattr(m, "resolve_master_by_code", lambda *a, **kw: None)
 
         result = svc.ingest("warehouses", [_wh(code=code, ref="DK-DUP")])
 
@@ -420,9 +425,13 @@ class TestCategoriesAndUnitsOfMeasure:
             == 1
         )
 
-    def test_a_product_is_retryable_until_its_category_exists(self, db, svc):
-        # AC-AC-16, and the reason these two entities were added: the ESB
-        # re-drains rather than reporting bad data.
+    def test_an_unknown_category_is_created_not_retryable(self, db, svc):
+        # Superseded by ingest-parity-standardisation S1 (D3, AC-P1-4): an
+        # unknown category/uom/brand is CREATED (code = name = the raw value),
+        # never retryable any more - `product_rules.ensure_reference`. This
+        # test used to assert the retired AC-AC-16 behaviour (retryable until
+        # the parent exists); see tests/test_ingest_parity_s1_products.py
+        # ::TestAcP14UnknownReferencesCreatedWithWarnings for the full contract.
         svc.ingest("units_of_measure", [{"source_ref": "DK-U1", "code": "ZZT-UOM-1", "name": "Each"}])
         result = svc.ingest(
             "products",
@@ -436,10 +445,14 @@ class TestCategoriesAndUnitsOfMeasure:
                 }
             ],
         )
-        assert result.retryable == 1
+        assert result.created == 1
+        assert result.retryable == 0
         assert result.failed == 0
+        assert "category_created" in result.records[0].warnings
 
-    def test_a_product_is_retryable_until_its_uom_exists(self, db, svc):
+    def test_an_unknown_uom_is_created_not_retryable(self, db, svc):
+        # Superseded by ingest-parity-standardisation S1 (D3, AC-P1-4) - see
+        # the sibling test above.
         svc.ingest(
             "product_categories",
             [{"source_ref": "DK-C1", "code": "ZZT-CAT-1", "name": "Fasteners"}],
@@ -456,8 +469,10 @@ class TestCategoriesAndUnitsOfMeasure:
                 }
             ],
         )
-        assert result.retryable == 1
+        assert result.created == 1
+        assert result.retryable == 0
         assert result.failed == 0
+        assert "uom_created" in result.records[0].warnings
 
     def test_the_product_lands_once_both_parents_have_synced(self, db, svc):
         # The sequencing end to end: category, then UoM, then the product that

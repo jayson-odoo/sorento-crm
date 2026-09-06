@@ -55,7 +55,7 @@ from sqlalchemy import text
 from app.models.base import set_company_scope
 from app.models.company import Company
 from app.models.inventory import Warehouse
-from app.models.procurement import ProductSupplier, Supplier
+from app.models.procurement import Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.models.user import SystemSetting
 from app.schemas.inventory import WarehouseCreate
@@ -647,12 +647,10 @@ class TestAcP17DefaultSupplierLeadTimeOnEsbProduct:
             [{"source_ref": ref, "code": code, "name": "Item", "category_code": cat_code, "uom_code": uom_code}],
         )
         product_id = result.records[0].entity_id
-        # Pre-seed the row the way it would exist had the create-time link worked -
-        # the create-time test above already proves it does not, this one is only
-        # about the REFRESH-on-update half.
-        db.add(ProductSupplier(product_id=product_id, supplier_id=supplier.id, standard_lead_time_days=30))
-        db.flush()
-
+        # The create call above already links the default supplier at the
+        # then-configured lead time (30) - AC-P1-7's create half, proven by
+        # the sibling test above. This test is only about the REFRESH-on-update
+        # half: bump the configured lead time and re-push the same product.
         settings.default_product_standard_lead_time_days = 45
         db.flush()
         svc.ingest(

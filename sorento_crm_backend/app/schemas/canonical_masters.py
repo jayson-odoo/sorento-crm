@@ -144,3 +144,9 @@ class CanonicalProduct(_Canonical):
     list_price: Optional[Decimal] = Field(None, ge=0)
     cost_price: Optional[Decimal] = Field(None, ge=0)
     is_active: Optional[bool] = None
+    # D2 (S1): explicit flag wins over the description-derived **** convention.
+    is_discontinued: Optional[bool] = None
+    # D4 (S1): AutoCount `Item.Desc2`, stored on its own column - never
+    # concatenated into `description` the way the xlsx import's Desc 2
+    # handling does. See migration 475_products_remark.
+    remark: Optional[str] = Field(None, max_length=500)

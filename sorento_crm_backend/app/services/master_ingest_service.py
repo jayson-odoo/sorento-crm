@@ -62,8 +62,9 @@ from app.models.base import company_scope
 from app.models.inventory import Warehouse
 from app.models.order import Customer
 from app.models.procurement import Supplier
-from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.sales_agent import SalesAgent
+from app.models.user import SystemSetting
 from app.schemas.canonical_masters import (
     CanonicalCustomer,
     CanonicalProductCategory,
@@ -77,7 +78,9 @@ from app.services.integration_reference_service import (
     IntegrationReferenceService,
     ReferenceConflict,
 )
+from app.services.rules import product_rules
 from app.services.rules.customer_rules import customer_identity
+from app.services.rules.master_rules import clean_supplier_name, resolve_master_by_code
 # The agent code's one normalisation, imported rather than restated: the master
 # screen, the outstanding-SO import and this ingest all have to agree on what
 # `sean i` is, or the captain's demand class lands on one of three rows.
@@ -230,8 +233,10 @@ class EntitySpec:
     schema: type[BaseModel]
     code_column: str
     # canonical payload -> column values (present fields only, D14). May raise
-    # MissingReference.
-    to_columns: Callable[[BaseModel, Session, str], dict[str, Any]]
+    # MissingReference. The fourth argument is a mutable warnings list the
+    # builder may append fixed-vocabulary notices to (`category_created`, ...) -
+    # only `_product_columns` uses it today.
+    to_columns: Callable[[BaseModel, Session, str, list[str]], dict[str, Any]]
     # The ORM model class the D18 writer upserts through, so audit, embedding
     # and CompanyScopedMixin listeners fire on flush.
     model: type
@@ -283,13 +288,13 @@ def _present(payload: Any, columns: dict[str, Any], *names: str) -> None:
             columns[name] = getattr(payload, name)
 
 
-def _category_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
+def _category_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:
     columns: dict[str, Any] = {"category_code": payload.code, "category_name": payload.name}
     _present(payload, columns, "description", "is_active")
     return columns
 
 
-def _uom_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
+def _uom_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:
     columns: dict[str, Any] = {"uom_code": payload.code, "uom_name": payload.name}
     # Canonical divisibility (plan 6.4). Absent (D14) leaves the row untouched on
     # update, or the model's own 0 default on create - never a value this
@@ -298,14 +303,20 @@ def _uom_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
     return columns
 
 
-def _warehouse_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
+def _warehouse_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:
     columns: dict[str, Any] = {"warehouse_code": payload.code, "warehouse_name": payload.name}
     _present(payload, columns, "location", "is_active")
     return columns
 
 
-def _supplier_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
-    columns: dict[str, Any] = {"supplier_code": payload.code, "supplier_name": payload.name}
+def _supplier_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:
+    # D2: AutoCount's trailing currency note (`"ACME (RMB)"`) is not part of
+    # the legal name - same rule the manual create and the outstanding-PO
+    # upload apply, via `master_rules.clean_supplier_name`.
+    columns: dict[str, Any] = {
+        "supplier_code": payload.code,
+        "supplier_name": clean_supplier_name(payload.name),
+    }
     # D15: the contact/address block AutoCount carries and this module used to
     # drop on the floor. D14: absent vs null on every one of them, plus
     # `payment_terms_days` (model default 30 fills an absent value on create -
@@ -331,7 +342,7 @@ def _supplier_columns(payload: Any, db: Session, company_id: str) -> dict[str, A
     return columns
 
 
-def _customer_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
+def _customer_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:
     # `credit_limit` / `payment_terms_days` / `payment_terms_code` are
     # deprecated (D15, see `_DEPRECATED_FIELDS`): `customers` has no matching
     # column, so they are accepted-and-warned, never written - same as before
@@ -390,36 +401,62 @@ def _lookup_id(
     return str(row[0]) if row else None
 
 
-def _product_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
+def _product_columns(
+    payload: Any, db: Session, company_id: str, warnings: list[str]
+) -> dict[str, Any]:
     columns: dict[str, Any] = {"product_code": payload.code, "product_name": payload.name}
-    _present(payload, columns, "description", "is_active")
+    _present(payload, columns, "description", "is_active", "remark")
 
-    # products.category_id and base_uom_id are NOT NULL, so an unresolved code
-    # makes the row uncreatable - a sequencing problem, not bad data. D14: only
-    # resolved (and only required) when the payload actually sends the field;
-    # an update that omits it leaves the existing link untouched.
+    # D3: an unknown category/uom/brand on a product push is CREATED (code =
+    # name = the raw value), never retryable any more - `ensure_reference`
+    # also gives this the case/whitespace-insensitive match D17 wants (D3
+    # subsumes D17 here: a match is a match, whichever rule found it).
     if "category_code" in payload.model_fields_set:
         if not payload.category_code:
             raise MissingReference("category_code", "")
-        category_id = _lookup_id(
-            db, "product_categories", "category_code", payload.category_code, company_id
+        category_id, created = product_rules.ensure_reference(
+            db, ProductCategory, payload.category_code, company_id
         )
-        if category_id is None:
-            raise MissingReference("category_code", payload.category_code)
+        if created:
+            warnings.append("category_created")
         columns["category_id"] = category_id
 
     if "uom_code" in payload.model_fields_set:
-        if not payload.uom_code:
-            raise MissingReference("uom_code", "")
-        uom_id = _lookup_id(db, "units_of_measure", "uom_code", payload.uom_code, company_id)
-        if uom_id is None:
-            raise MissingReference("uom_code", payload.uom_code)
-        columns["base_uom_id"] = uom_id
+        if payload.uom_code:
+            uom_id, created = product_rules.ensure_reference(
+                db, UnitOfMeasure, payload.uom_code, company_id
+            )
+            if created:
+                warnings.append("uom_created")
+        else:
+            # A blank uom_code resolves to the configured default, exactly as
+            # `bulk_import_products` does for a row with no uom column value.
+            uom_id = product_rules.resolve_default_uom(db, company_id)
+        if uom_id:
+            columns["base_uom_id"] = uom_id
+
+    if "brand_code" in payload.model_fields_set and payload.brand_code:
+        brand_id, created = product_rules.ensure_reference(db, Brand, payload.brand_code, company_id)
+        if created:
+            warnings.append("brand_created")
+        columns["brand_id"] = brand_id
 
     if "list_price" in payload.model_fields_set:
         columns["list_price"] = payload.list_price
     if "cost_price" in payload.model_fields_set:
         columns["cost_price"] = payload.cost_price
+
+    # D4: both channels write length_mm/width_mm/height_mm from the
+    # description - only when a (new) description is actually present on
+    # this push, using the same shared parser the xlsx import now calls.
+    if "description" in columns:
+        length_mm, width_mm, height_mm = product_rules.parse_dimensions(columns["description"])
+        if length_mm is not None:
+            columns["dimensions_length"] = length_mm
+        if width_mm is not None:
+            columns["dimensions_width"] = width_mm
+        if height_mm is not None:
+            columns["dimensions_height"] = height_mm
 
     # D14: `barcode` is CRM-owned. Only written when the incoming value is
     # non-empty - the key is left OUT of the dict otherwise, so an update never
@@ -431,7 +468,7 @@ def _product_columns(payload: Any, db: Session, company_id: str) -> dict[str, An
     return columns
 
 
-def _sales_agent_columns(payload: Any, db: Session, company_id: str) -> dict[str, Any]:
+def _sales_agent_columns(payload: Any, db: Session, company_id: str, warnings: list[str]) -> dict[str, Any]:
     """The four columns AutoCount owns on an agent, and no others.
 
     ``internal_note``, ``follow_up``, ``demand_class``, ``location_group`` and
@@ -643,32 +680,51 @@ class MasterIngestService:
     def _apply(
         self, entity_type: str, spec: EntitySpec, payload: Any
     ) -> tuple[IngestOutcome, str, Optional[dict[str, dict[str, Any]]], list[str]]:
+        """Pins `company_scope` for the WHOLE record, not just `_insert`/`_update`'s
+        own writes: `_product_columns` (`ensure_reference`/`resolve_master_by_code`)
+        and the generic adopt-fallback below both run ordinary ORM queries against
+        company-scoped tables, and without this those queries are filtered by
+        whatever the ambient session scope happens to be - which a caller running
+        two companies through one session (this module's own parity tests) never
+        resets between calls. See `_insert`'s own docstring for the fuller version
+        of this note.
+        """
+        with company_scope(self.db, frozenset({self.company_id})):
+            return self._apply_scoped(entity_type, spec, payload)
+
+    def _apply_scoped(
+        self, entity_type: str, spec: EntitySpec, payload: Any
+    ) -> tuple[IngestOutcome, str, Optional[dict[str, dict[str, Any]]], list[str]]:
         warnings = _deprecated_warnings(entity_type, payload)
-        columns = spec.to_columns(payload, self.db, self.company_id)
+        columns = spec.to_columns(payload, self.db, self.company_id, warnings)
 
         existing_id = self.refs.resolve(entity_type=entity_type, source_ref=payload.source_ref)
         if existing_id is not None:
             self._require_same_company(spec, existing_id, payload.source_ref)
+            if entity_type == "products":
+                self._finalize_product_discontinued(payload, columns, existing_id)
             diff = self._diff(spec, existing_id, columns)
             self._update(spec, existing_id, columns)
             self._link(entity_type, existing_id, payload)
+            self._post_write_product_hooks(entity_type, existing_id)
             return IngestOutcome.UPDATED, existing_id, diff, warnings
 
         # First sync: adopt a local record with the same business identity
         # rather than creating a duplicate under a new id. Customers override
         # this with the (code, name) pair (D13); everything else matches on
-        # the bare business code.
+        # the bare business code. Sales agents keep their own normalised-code
+        # match (`_lookup_id`) - shared table, not company-scoped the way
+        # `resolve_master_by_code` assumes. Every other master matches
+        # case/whitespace-insensitively (D17), through the same function the
+        # manual create services now use too.
         if spec.adopt_lookup is not None:
             adopted = spec.adopt_lookup(self.db, payload, self.company_id)
-        else:
+        elif spec.normalized_code:
             adopted = _lookup_id(
-                self.db,
-                spec.table,
-                spec.code_column,
-                payload.code,
-                self.company_id,
-                normalized=spec.normalized_code,
+                self.db, spec.table, spec.code_column, payload.code, self.company_id, normalized=True
             )
+        else:
+            adopted = resolve_master_by_code(self.db, spec.model, payload.code, self.company_id)
         if adopted is not None:
             if self.refs.origin_of(entity_type=entity_type, entity_id=adopted) is not None:
                 # Already claimed by a different source document -- surfacing
@@ -676,19 +732,67 @@ class MasterIngestService:
                 raise ReferenceConflict(
                     f"{spec.code_column}={payload.code!r} is already linked to another source"
                 )
+            if entity_type == "products":
+                self._finalize_product_discontinued(payload, columns, adopted)
             # Captured before the UPDATE, and the reason the dry run exists: an
             # adoption overwrites a row somebody typed in by hand, and the
             # operator gets no other chance to see what it replaces.
             diff = self._diff(spec, adopted, columns)
             self._update(spec, adopted, columns)
             self._link(entity_type, adopted, payload)
+            self._post_write_product_hooks(entity_type, adopted)
             return IngestOutcome.UPDATED, adopted, diff, warnings
 
+        if entity_type == "products":
+            self._finalize_product_discontinued(payload, columns, None)
         new_id = self._insert(entity_type, spec, columns)
         self._link(entity_type, new_id, payload)
+        self._post_write_product_hooks(entity_type, new_id)
         # Nothing existed to overwrite, so there is no diff to report. Distinct
         # from {} -- see RecordResult.diff.
         return IngestOutcome.CREATED, new_id, None, warnings
+
+    def _finalize_product_discontinued(
+        self, payload: Any, columns: dict[str, Any], existing_row_id: Optional[str]
+    ) -> None:
+        """D2: an explicit `is_discontinued` flag wins; otherwise it is derived
+        from the EFFECTIVE description - the incoming one if this push sends
+        one, else whatever the row already holds (D14: an omitted description
+        is untouched, and the flag it implies must not change underneath it).
+        True->False resets the notify watermark, same rule
+        `product_service.update_product` applies manually.
+        """
+        current_description = None
+        current_discontinued = None
+        if existing_row_id is not None:
+            row = self.db.execute(
+                text("SELECT description, is_discontinued FROM products WHERE id = :id"),
+                {"id": existing_row_id},
+            ).first()
+            if row is not None:
+                current_description, current_discontinued = row
+
+        if "is_discontinued" in payload.model_fields_set:
+            new_flag = bool(payload.is_discontinued)
+        else:
+            effective_description = columns.get("description", current_description)
+            new_flag = product_rules.is_discontinued(None, effective_description)
+        columns["is_discontinued"] = new_flag
+
+        if existing_row_id is not None and current_discontinued and not new_flag:
+            columns["discontinued_notified_at"] = None
+            columns["discontinued_notify_batch_id"] = None
+
+    def _post_write_product_hooks(self, entity_type: str, product_id: str) -> None:
+        """D5: the default-supplier `product_suppliers` link, on create AND
+        update - exactly as the Excel import applies it, moved to
+        `product_rules.link_default_supplier` so this and the manual
+        create/edit path (`ProductService._ensure_default_supplier_lead_time`)
+        share the one body."""
+        if entity_type != "products":
+            return
+        settings = self.db.query(SystemSetting).first()
+        product_rules.link_default_supplier(self.db, product_id, settings)
 
     def _insert(self, entity_type: str, spec: EntitySpec, columns: dict[str, Any]) -> str:
         """D18: the ORM insert, so `before_insert` company-stamping, the audit

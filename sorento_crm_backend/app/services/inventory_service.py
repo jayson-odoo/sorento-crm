@@ -15,6 +15,7 @@ from app.services.error_handler import handle_not_found, handle_conflict, handle
 from app.services.company_scope import get_company_scope, stamp_lookup_companies
 from app.services.import_log_service import ImportLogService
 from app.services.identifier_resolver import resolve_identifier
+from app.services.rules.master_rules import resolve_master_by_code
 
 
 def _resolve_stock_product_id(db: Session, product_id: Optional[str]) -> Optional[str]:
@@ -169,13 +170,18 @@ class WarehouseService:
         return warehouse
     
     def create_warehouse(self, warehouse_data: WarehouseCreate):
-        """Create a new warehouse."""
-        existing = self.db.query(Warehouse).filter(
-            Warehouse.warehouse_code == warehouse_data.warehouse_code
-        ).first()
-        if existing:
-            raise handle_conflict("Warehouse code already exists.")
-        
+        """Create a new warehouse - adopts a case/whitespace variant of an
+        existing code instead of duplicating it (D17), the same rule the xlsx
+        import and the ESB masters push both apply."""
+        existing_id = resolve_master_by_code(self.db, Warehouse, warehouse_data.warehouse_code)
+        if existing_id:
+            warehouse = self.db.query(Warehouse).filter(Warehouse.id == existing_id).first()
+            for key, value in warehouse_data.model_dump(exclude={"warehouse_code"}).items():
+                setattr(warehouse, key, value)
+            self.db.commit()
+            self.db.refresh(warehouse)
+            return warehouse
+
         warehouse = Warehouse(**warehouse_data.model_dump())
         self.db.add(warehouse)
         self.db.commit()

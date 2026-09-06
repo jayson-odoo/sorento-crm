@@ -11,7 +11,6 @@ would otherwise silently become a SKU that gets planned and purchased.
 from __future__ import annotations
 
 import logging
-import re
 import uuid
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
@@ -82,25 +81,11 @@ logger = logging.getLogger(__name__)
 # the diff uses, for the same reason.
 _QTY_EPSILON = 0.0005
 
-# A trailing "(RMB)" / "（RMB)" style currency note AutoCount appends to a creditor NAME,
-# never part of the legal name. Anchored to the END of the string so a genuine parenthesised
-# token earlier in the name ("XYZ TRADING (M) SDN BHD") is never touched, and written to
-# accept EITHER paren style on EITHER side ("（RMB)" - the captain's real file mismatches
-# them) because NFKC header folding does not touch cell VALUES, only header text.
-_CURRENCY_SUFFIX_RE = re.compile(r"[\(（]\s*[A-Za-z]{2,4}\s*[\)）]\s*$")
-
-
-def _clean_supplier_name(raw: Optional[str]) -> str:
-    """The legal supplier name, with AutoCount's trailing currency note stripped.
-
-    The supplier master holds `XIAMEN TAIYANG TECHNOLOGY CO.,LTD`, never `... (RMB)` - the
-    suffix is the export's own currency notation, not part of the name - so matching or
-    back-creating on the raw cell would either miss an existing supplier or create a
-    duplicate per currency the client happens to buy that item in.
-    """
-    if not raw:
-        return ""
-    return _CURRENCY_SUFFIX_RE.sub("", str(raw).strip()).strip()
+# S1 (ingest-parity-standardisation): the body MOVED to
+# app.services.rules.master_rules.clean_supplier_name (D2), shared with the
+# manual supplier create and the ESB masters push - this import keeps the
+# name every call site in this module already uses.
+from app.services.rules.master_rules import clean_supplier_name as _clean_supplier_name
 
 
 @dataclass(frozen=True)

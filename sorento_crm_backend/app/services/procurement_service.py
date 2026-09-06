@@ -35,6 +35,7 @@ from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
 from app.services.scm.container_capacity import container_sizes as _container_sizes
 from app.services.scm.container_capacity import fit as _fit_capacity
 from app.services.scm.container_capacity import line_cbm as _line_cbm
+from app.services.rules.master_rules import clean_supplier_name, resolve_master_by_code
 from app.schemas.procurement import (
     SupplierCreate, SupplierUpdate, ProductSupplierCreate, ProductSupplierUpdate,
     InboundShipmentCreate, InboundShipmentUpdate,
@@ -684,13 +685,16 @@ class SupplierService:
     
     def create_supplier(self, supplier_data: SupplierCreate):
         """Create a new supplier."""
-        existing = self.db.query(Supplier).filter(
-            Supplier.supplier_code == supplier_data.supplier_code
-        ).first()
-        if existing:
+        # D17: case/whitespace-insensitive, same as every other channel.
+        if resolve_master_by_code(self.db, Supplier, supplier_data.supplier_code):
             raise handle_conflict("Supplier code already exists.")
-        
-        supplier = Supplier(**supplier_data.model_dump())
+
+        data = supplier_data.model_dump()
+        # D2: AutoCount's trailing currency note (`"ACME (RMB)"`) is not part
+        # of the legal name - see `master_rules.clean_supplier_name`. A name
+        # with no such suffix passes through unchanged.
+        data["supplier_name"] = clean_supplier_name(data.get("supplier_name"))
+        supplier = Supplier(**data)
         self.db.add(supplier)
         self.db.commit()
         self.db.refresh(supplier)
