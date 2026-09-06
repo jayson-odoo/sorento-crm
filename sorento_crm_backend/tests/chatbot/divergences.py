@@ -275,6 +275,31 @@ IDEATE_NOT_SHADOWED_BY_REQUEST_FOR_HELP = Divergence(
 )
 
 
+# Owner console pass, 6 Sep 2026. A cold "all of them" - the customer answering a
+# clarification menu with the broadest option - comes back `message_type: 'casual'` with a
+# null `domain_hint`, alongside the `scope_intent: 'broaden'` / `broaden_axis: 'all'` the
+# parser reads correctly. `is_low_signal` fires on `casual` ALONE and sits above
+# `is_clarification`, so the turn was answered "Hi!". The port reads the two scope keys in
+# `is_clarification` and moves that arm above `is_low_signal`; the two message_type sets are
+# disjoint, so nothing the live ladder ever saw changes branch.
+#
+# A ROUTER backstop rather than a parser change on purpose: the scope keys are already
+# right, and re-teaching the prompt to stop stamping `casual` on a two-word reply is a
+# retune with no upper bound. Not fixture-visible: no captured `route-turn` turn carries
+# `broaden_axis: 'all'` with a null domain. Pinned by
+# tests/chatbot/test_route_unit.py::TestBroadenAllNeverReadAsLowSignal.
+BROADEN_ALL_IS_A_CLARIFICATION = Divergence(
+    node="route-turn",
+    fixture=None,
+    hazard="H60 (owner console pass, 6 Sep 2026)",
+    reason=(
+        "scope_intent 'broaden' + broaden_axis 'all' + null domain routes clarify_menu "
+        "instead of low_signal, and the clarification arm moves above the low-signal one. "
+        "Not fixture-visible: no capture carries that shape."
+    ),
+)
+
+
 def find(node: str, fixture: str) -> Divergence | None:
     """The registered divergence covering this replay, or None."""
     for d in DIVERGENCES:
