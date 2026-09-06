@@ -206,6 +206,14 @@ def _read_switches() -> tuple[bool, Any]:
 
 
 def _write_switches(enabled: bool, lanes: Any) -> None:
+    """The two lane switches, written to the ONE `system_settings` row.
+
+    No WHERE, and that is correct rather than an oversight: `system_settings` is a singleton
+    - one row per install, read everywhere as `query(SystemSetting).first()` - so there is no
+    key to filter on and an UPDATE touches exactly that row. Adding a `WHERE id = ...` here
+    would need an id this script has no business knowing, and the restore in `_lanes_on`
+    depends on this statement reaching the same row the read came from.
+    """
     from sqlalchemy import text
 
     db = _script_session()

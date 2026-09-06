@@ -584,9 +584,13 @@ def _pick_staff(hits: list, team: Any) -> Any:
     One hit is the answer. Several hits for the SAME person are several team memberships,
     not several people (5 of 22 staff on this install are on more than one team), so the
     team the parser already resolved breaks that tie - and only that tie. Two DIFFERENT
-    people sharing a name is a real ambiguity and the lane asks, whatever team came in:
-    picking by the parser's team there would answer a question about WHO with a fact about
-    WHERE.
+    people sharing a name is a real ambiguity and this function refuses to pick one:
+    choosing by the parser's team would answer a question about WHO with a fact about WHERE.
+
+    Refusing is NOT the same as asking, and the caller decides which it is (`_person_routing`,
+    the `_parser_team` check): a turn the parser routed nowhere asks, and a turn that already
+    carries the parser's own team escalates to that team. So an ambiguous name derails
+    nothing that knew where it was going - it only ever costs the direct pick.
     """
     if len(hits) == 1:
         return hits[0]
