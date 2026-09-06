@@ -1,6 +1,6 @@
 # PLAN: ingest parity standardisation (xlsx / manual vs ESB)
 
-Status: IN PROGRESS 2026-09-06. S0 green (1f38359d2 + 2fa492be3), S1 green (7b3f19e68), S2 in progress; red tests for S0-S4 on the branch. Lane branch `feat/ingest-parity` on top of
+Status: IN PROGRESS 2026-09-06. S0 green (1f38359d2 + 2fa492be3), S1 green (7b3f19e68), S2 green (e8659ee54, migration 476), S3 in progress; red tests for S0-S4 on the branch. Lane branch `feat/ingest-parity` on top of
 `feat/autocount-document-ingest-v2` (PR #670) until #670 merges, then rebased onto main.
 UAC: `ingest-parity-standardisation-acceptance-criteria.md` (same folder). Grill record:
 `.lavish/ingest-parity-standardisation.html` (worktree-local).
