@@ -526,3 +526,27 @@ No open questions remain. Waiting for GO.
   plan) still imports `verdictFromPreview` from it - a named function, not the component -
   so the file stays; only `ProformaInvoicesView.tsx`'s own usage of the DIALOG COMPONENT
   moved to the shared `PackingListUploadDialog`.
+- **AC-G4's Translations page uses the deferred-action delete pattern
+  (`useDeferredRowAction`/`translation_memory.delete`, D7), not `ConfirmDeleteDialog`.**
+  The UAC's own words ("hard delete with confirmation") predate this codebase's own
+  retirement of that dialog: this worktree's current `CLAUDE.md` says "Delete = hard
+  delete, no confirmation dialog ... `ConfirmDeleteDialog` is retired - a new importer of
+  it ... is a defect", and every other admin list built since (message snippets,
+  supplier code aliases) already uses the countdown-toast delete instead. Followed the
+  code over the plan text; the row itself is still a genuine hard delete, only the
+  confirmation UX changed to match the rest of the app.
+- **`_pl_blocks`/`_pi_blocks`'s new `lines` array is NOT every line in the block.** Only
+  a line that carries something translatable: an UNMATCHED line's own 品名 description
+  (ruling 5, 3 Sep batch: a matched line shows the product master name, needs no
+  translation) or a MATCHED line's remark (only a matched line becomes a shipment line,
+  so only its remark ever round-trips into `remarks`). A block with a hundred plain
+  matched lines and no remarks shows an empty `lines` array, which is correct, not a bug.
+- **Text with no CJK character is never sent to the AI, even on a genuine miss.** A
+  supplier's own English remark ("loaded first", "as packed") is not Chinese and has
+  nothing to translate; asking anyway would be a network round trip on every apply,
+  memory or not, and would have made every existing packing-list test whose fixtures use
+  a plain-English remark column (`test_packing_list_multi_supplier.py`,
+  `test_packing_list_apply_files_attachment.py`) issue a live call to the real
+  `OPENAI_API_KEY` `.env` carries for the app itself. Not asked for by R15/R16 in so many
+  words, but a direct consequence of "the model only fills gaps" - an English remark has
+  no gap.
