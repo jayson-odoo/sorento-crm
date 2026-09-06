@@ -713,6 +713,23 @@ endpoint over `chatbot.turns.trace`. Lands after S2 so the head and tail both wr
   `assign_conversation`, `add_comment`, `send_message`), each `send_message.quick_replies`
   a non-empty comma-joined string or `null` (never a list, never `""`), and no real
   assignment happens. (A4)
+  - **Amended 6 Sep 2026 (owner console pass).** "No real assignment happens" is now stated
+    as what it always meant, and the placeholder it used to be measured by is gone. The
+    dry run PREVIEWS the assignee the live turn would draw - `assign_conversation.
+    respond_user_id` and the comment's mention carry the real member, with `preview: true` -
+    because "somebody would be assigned" answered a question nobody was asking. What must
+    hold instead, and what the test now asserts, is that nothing was WRITTEN: the round-robin
+    cursor did not move (no row created, none advanced) and no `conversation_sla_tracking`
+    row exists. The preview reads the same pool, the same cursor and the same arithmetic as
+    the draw (`AccessAgentService.preview_next_assignee`, reached through
+    `/external/next-assignee` with `preview: true`), so it cannot rotate differently from the
+    turn it previews. The ROUTING decision is previewed on the same terms (AC-815): a dry run
+    that skipped the person / team gate would show the owner an inherited team a live turn
+    would never use, and the console is where the owner looks. A missing or failing preview
+    seam falls back to the old null placeholder - a preview never fails a turn.
+    Evidence: `test_s5_escalation_lane.py::test_dry_run_never_reaches_next_assignee`,
+    `test_dry_run_isolation.py::TestDryRunEscalationPreviewsTheRealNextAssignee`,
+    `test_team_hierarchy_and_round_robin.py::test_preview_next_assignee_does_not_advance_the_cursor`.
 
 ### S6 - Business lane (journey A2, A3)
 
@@ -1098,3 +1115,43 @@ contact inside the synchronous request. Different contacts run in parallel.
   six asserted STILL IN the pool so a well-meaning re-filter fails here, the three read-only
   POSTs allowed by name, and a source scan proving no turn-path file imports
   `sorento_crm_mcp`) and `test_dry_run_isolation.py::TestMcpToolPickRefusesWriteTools`. (H58, D10)
+
+- AC-814 `[BE][T]` **A "no records" line names the axes it searched, and never an internal
+  code.** The multi-company "which company came back empty" sentence flattened every resolved
+  entity code into one comma list, so a customer with several alias accounts arrived as an
+  internal debtor code plus one bullet per alias, next to the product, un-labelled: "no order
+  records for 300-H070, HANLIM TRADING SDN BHD [A/C I], HANLIM TRADING SDN BHD, RPACC" (owner
+  console run, 6 Sep 2026). Given a fetch that returns nothing for a turn naming a customer
+  and a product, when the line is composed, then it reads "no order records found for customer
+  <name>, product <code>" through the miss lane's own axis vocabulary (`answer._AXES`, one
+  vocabulary for both lanes), states the date window when the turn carried one, prints ONE
+  name per customer record (a customer reached by both its account code and its name is one
+  customer, and an alias row collapses into its base - never for products, where a code that
+  extends another is a different product), and never prints the debtor code. All the silent
+  companies share one sentence rather than repeating the subject once each. A type no axis
+  claims keeps its bare code, so a promotion or an attachment type is still named.
+  Evidence: `tests/chatbot/test_s6b_fetch_lane.py::TestLabelledNotFoundLineNeverLeaksInternalDebtorCode`;
+  registered divergence on the one capture that reaches the block (`output-structurer/gr-15145805`).
+  (H63, owner ruling)
+
+- AC-815 `[BE][T]` **An escalation routes to who the customer named, or asks - it never
+  inherits the previous turn's team.** Two console turns, "escalate to Nurain" (a customer
+  service person) and "escalate to marketing", both arrived with `routing = {suggested_team:
+  null, suggested_agent: null}` and were assigned to the team the PREVIOUS turn had been
+  routed to; the comment named `marketing_product` for the person and `purchasing` for the
+  marketing ask. Given an escalation ask carrying the parser's own `person_mention` (D11 - the
+  lane never reads the customer's words), when exactly one ACTIVE staff member's first name
+  matches, case-insensitively, then the turn routes to THAT member's team with that member as
+  the assignee and no round-robin draw happens (a named person is a direct pick; the SLA clock
+  still starts). Given no match or more than one, then the lane CLARIFIES, naming the teams,
+  and assigns nobody. Given no person, no team, and a previous turn that HAD one, then the
+  lane clarifies rather than inheriting it; given nothing to inherit, the lane behaves exactly
+  as it does today, so live's own unguarded null-team path and the B-TEAM-1' xfail both stand.
+  The roster read is `users` x `team_members` x `agent_teams` on the turn's own
+  company-scoped session, one hit per person per team, and it compares `users.status` as a
+  literal (the column is a native enum in production, where `lower()` does not exist for it).
+  The decision is previewed on a dry run too (AC-507), because the console is where the owner
+  looks. Evidence:
+  `tests/chatbot/test_s5_escalation_lane.py::TestPersonMentionEscalationRoutesByStaffLookup`
+  (four cases, including the guard that the existing multi-company continuation still
+  clarifies). (H64, owner ruling)

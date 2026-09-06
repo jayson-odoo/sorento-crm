@@ -2715,7 +2715,129 @@ def _attachments_src(answer: Any) -> Any:
     same value back on `reply.attachments_src` so the node reads one field instead.
     """
     fragment = jsc.get(answer, "outcome_fragment")
-    return jsc.get(fragment, "central-exchange") if isinstance(fragment, dict) else None
+    source = jsc.get(fragment, "central-exchange") if isinstance(fragment, dict) else None
+    return _clean_attachments(source)
+
+
+def _clean_attachments(source: Any) -> Any:
+    """One send per FILE, and a filename that says WHICH file it is.
+
+    `source` is `central-exchange`'s own item - the ANSWER ENVELOPE - and the list the
+    executor sends from is `envelope.attachments`, which is what `sub-send-attachments`'
+    own `central-exchange` stub reads (`const a = n.first().json.attachments; return
+    Array.isArray(a) ? a : []`). Every other shape passes through untouched, including the
+    casual lane's `{response}` and a bare list.
+
+    An attachment entry is `{url, filename, mimeType, attachmentType[, uploadedAt]}` and
+    NOTHING else - measured over 7402 entries in the capture corpus, zero of which carry an
+    id or a company. So:
+
+    * **Identity is the `url`**, which is also the key the executor's own `Remove
+      Duplicates` node uses, so the two halves cannot disagree about what a duplicate is.
+    * **The company comes from the ROW that produced the file**, because the entry does not
+      carry one. The envelope's rows do: each carries `company_name` and the values that
+      name the thing the file belongs to. A row CLAIMS a file when one of its values is the
+      filename, or is contained in it (a packing list is named after its container). When
+      the claims line up one-for-one with the colliding files, they pair off in row order -
+      the presenter appends attachments as it walks rows - and each file is qualified with
+      its own company.
+
+    When the claims do NOT line up, the files are left exactly as they arrived: an absence
+    of evidence is not a licence to label one of them "Mocha". Measured on the corpus: of 91
+    filename collisions between different urls, 56 attribute cleanly to two different
+    companies and 35 carry no rows to attribute from.
+    """
+    if isinstance(source, dict):
+        files = source.get("attachments")
+        if not isinstance(files, list) or not files:
+            return source
+        return {**source, "attachments": _label_attachments(files, _company_rows(source))}
+    if isinstance(source, list):
+        return _label_attachments(source, [])
+    return source
+
+
+def _company_rows(envelope: Any) -> list[tuple[Any, list[str]]]:
+    """`[(company_name, [values that identify this row])]`, in the envelope's own order."""
+    items = envelope.get("items") if isinstance(envelope, dict) else None
+    if not isinstance(items, list):
+        items = envelope.get("answers") if isinstance(envelope, dict) else None
+    rows: list[tuple[Any, list[str]]] = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        company: Any = None
+        values: list[str] = []
+        for field in item.get("fields") or []:
+            if not isinstance(field, dict):
+                continue
+            key = jsc.nullish_str(field.get("key")).lower()
+            value = field.get("value")
+            if key == "company_name" or field.get("label") == "Company":
+                company = value
+            elif isinstance(value, str) and value.strip():
+                values.append(value.strip())
+        rows.append((company, values))
+    return rows
+
+
+def _claims(name: str, values: list[str]) -> bool:
+    """Does a row carrying these values own the file called `name`?
+
+    Equality first (a promotion row's value IS the flyer's filename), then containment for
+    values long enough to be an identifier (a packing list is "<container> - WH.xlsx"). Six
+    characters is the floor so a short code or a status word cannot claim a file by
+    accident; nothing shorter appears as a container, shipment or product code.
+    """
+    return any(v == name for v in values) or any(len(v) >= 6 and v in name for v in values)
+
+
+def _with_company(filename: str, company: Any) -> str:
+    """"x.xlsx" + "Mocha" -> "x (Mocha).xlsx". BEFORE the suffix, never after it.
+
+    WhatsApp picks the viewer off the extension, so a name ending in "(Mocha)" arrives as a
+    file the phone does not know how to open.
+    """
+    stem, dot, suffix = filename.rpartition(".")
+    label = f" ({jsc.js_string(company)})"
+    if dot and stem and 1 <= len(suffix) <= 8 and " " not in suffix:
+        return f"{stem}{label}.{suffix}"
+    return f"{filename}{label}"
+
+
+def _label_attachments(files: list, rows: list[tuple[Any, list[str]]]) -> list:
+    """Dedupe on `url`, then qualify a surviving filename collision with its company."""
+    kept: list[Any] = []
+    seen_urls: set[Any] = set()
+    for entry in files:
+        if not isinstance(entry, dict):
+            kept.append(entry)
+            continue
+        url = entry.get("url")
+        if jsc.truthy(url):
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+        kept.append(entry)
+
+    groups: dict[str, list[int]] = {}
+    for index, entry in enumerate(kept):
+        if isinstance(entry, dict) and jsc.truthy(entry.get("filename")):
+            groups.setdefault(jsc.js_string(entry.get("filename")), []).append(index)
+
+    labelled = list(kept)
+    for name, indexes in groups.items():
+        if len(indexes) < 2:
+            continue
+        claims = [company for company, values in rows if _claims(name, values)]
+        if len(claims) != len(indexes) or not all(jsc.truthy(c) for c in claims):
+            continue  # nothing established: send them exactly as they arrived
+        if len({jsc.js_string(c) for c in claims}) < 2:
+            continue  # one company owns both: the suffix would be noise
+        for index, company in zip(indexes, claims):
+            entry = labelled[index]
+            labelled[index] = {**entry, "filename": _with_company(name, company)}
+    return labelled
 
 
 def run_tail(

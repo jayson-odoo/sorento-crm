@@ -76,10 +76,16 @@ def decide(
         return jsc.get(jsc.get(ctx, "access"), "allowed") is True
 
     def wants_escalation_or_help() -> bool:
-        # OR of the two clauses, `==` / `!=` kept loose as written.
+        # OR of the two clauses, `==` / `!=` kept loose as written, plus the `ideate`
+        # exemption beside the `portal_link` one. DIVERGENCE from the live ladder,
+        # registered as `divergences.IDEATE_NOT_SHADOWED_BY_REQUEST_FOR_HELP`: "I have an
+        # idea" parses as `request_for_help` with `domain_hint: ideate`, and this arm sits
+        # one BEFORE `is_ideate_domain`, so the ideate lane was unreachable the moment
+        # access flipped to allow - the turn answered `out_of_scope` instead.
         return esc.get("is_escalation_confirmation") is True or (
             qf.get("message_type") == "request_for_help"
             and qf.get("domain_hint") != "portal_link"
+            and qf.get("domain_hint") != "ideate"
         )
 
     def is_cs_order_enquiry_pick() -> bool:
@@ -142,7 +148,18 @@ def decide(
         )
 
     def is_clarification() -> bool:
-        return qf.get("message_type") == "clarification"
+        if qf.get("message_type") == "clarification":
+            return True
+        # A ROUTER backstop, not a parser change (D11 - nothing here reads the customer's
+        # text). A cold "all of them" is stamped `message_type: 'casual'` with no domain
+        # hint even though the parser read the scope correctly, so `is_low_signal` swallowed
+        # it and the bot answered "Hi!" to a broaden reply. Registered as
+        # `divergences.BROADEN_ALL_IS_A_CLARIFICATION`.
+        return (
+            qf.get("scope_intent") == "broaden"
+            and qf.get("broaden_axis") == "all"
+            and qf.get("domain_hint") is None
+        )
 
     def is_unsupported_domain() -> bool:
         # The CONFIGURED list (D5), falling back to the two the JS hard-codes. A caller
@@ -255,10 +272,14 @@ def decide(
         branch_kind = "escalation_declined"
     elif tier_hit:
         branch_kind = "check_promotion"
-    elif is_low_signal():
-        branch_kind = "low_signal"
+    # `is_clarification` sits ABOVE `is_low_signal`, where live has it below. The two
+    # message_type sets are disjoint (`clarification` is in neither of low_signal's four
+    # clauses), so the swap changes nothing for a parse the live ladder ever saw - it only
+    # makes the broaden backstop above reachable, which `casual` would otherwise eat.
     elif is_clarification():
         branch_kind = "clarify_menu"
+    elif is_low_signal():
+        branch_kind = "low_signal"
     elif is_unsupported_domain():
         branch_kind = "not_supported"
     elif is_check_promotion():

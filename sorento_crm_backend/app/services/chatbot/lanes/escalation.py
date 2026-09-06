@@ -104,6 +104,12 @@ class TeamMembersFn(Protocol):
     def __call__(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]: ...
 
 
+class StaffLookupFn(Protocol):
+    """`(first_name) -> [{team_code, team_name, user_id, user_name, respond_user_id}]`."""
+
+    def __call__(self, name: str) -> list[dict[str, Any]]: ...
+
+
 # --------------------------------------------------------------------------- #
 # escalation-input.js
 # --------------------------------------------------------------------------- #
@@ -458,11 +464,22 @@ def run(
     team = jsc.get(context_item, "team")
 
     if dry_run:
-        # D14 / H37, AC-507. The seams are NOT reached - no assignee is picked, no cursor
+        # D14 / H37, AC-507. No WRITING seam is reached - nothing is drawn, no cursor
         # advances, no SLA row is written - and the turn still returns every action it WOULD
         # have taken, in order, each flagged `dry_run` and `preview`. The executor renders
         # its expressions against this shape, so a dry run that returned a shorter list
         # would be a different contract from the live one and could not be rendered against.
+        #
+        # The assignee is PREVIEWED, not left blank: `preview_assignee` reads the same pool
+        # and the same cursor as the live draw and advances neither, so the owner sees the
+        # name the live turn would have picked. "Would assign to somebody" answered the
+        # question nobody was asking.
+        #
+        # The ROUTING decision is previewed too, and that is not a nicety: the owner finds
+        # these defects from the console, and the console runs dry (`is_test`). A dry run
+        # that skipped the person / team gate would show the inherited team a live turn
+        # would never use, which is the very thing the gate exists to stop being shown.
+        # Both reads, no writes.
         #
         # `assign_conversation` is always present here: whether the live run omits it
         # depends on `is_already_assigned`, which only the seam knows, so a preview cannot
@@ -472,10 +489,22 @@ def run(
             "due_at": PREVIEW,
             "due_at_resolution": PREVIEW,
         }
+        routed, preview_assignee = _preview_routing(
+            ctx, context_item, team, services, session_factory
+        )
+        if routed is not None and routed["kind"] == "clarify":
+            clarify = {**context_item, "clarify_team": True, "clarify_text": routed["text"]}
+            return {
+                **escalation_result(clarify_team=clarify),
+                "actions": [],
+                "pending": {"kind": "team_clarify"},
+            }
+        if routed is not None and routed["kind"] == "assign":
+            team = routed["team"]
         actions = _assignment_actions(
             ctx,
             team,
-            assignee=None,
+            assignee=preview_assignee,
             sla=preview_sla,
             include_assign=True,
             dry_run=True,
@@ -484,8 +513,7 @@ def run(
         return {**result, "actions": actions, "pending": None}
 
     if services is not None:
-        actions = _assign(ctx, context_item, team, services)
-        return {**result, "actions": actions, "pending": None}
+        return _human_intervention(ctx, context_item, team, services, result)
 
     # No injected seam, so this is production: the session is opened HERE, off the TURN's
     # own factory (so it carries the contact's company scope, H56), and closed on the way
@@ -493,20 +521,257 @@ def run(
     from app.services.chatbot.lanes import escalation_services
 
     with escalation_services.production_session(session_factory) as db:
-        actions = _assign(ctx, context_item, team, production_services(db))
+        return _human_intervention(
+            ctx, context_item, team, production_services(db), result
+        )
+
+
+def _human_intervention(
+    ctx: dict[str, Any],
+    context_item: dict[str, Any],
+    team: Any,
+    services: Any,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    """Assign the conversation, or ask which team - one place, both seam sources.
+
+    The person / team decision needs a seam, so it happens HERE rather than in `run()`,
+    where the production bundle does not exist yet.
+    """
+    routed = _person_routing(ctx, context_item, team, services)
+    if routed is not None and routed["kind"] == "clarify":
+        # The tail keys on `clarify_text` (`compile_state`'s clarify arm), the same field
+        # `clarify-company-reply` writes; the item carries the context so the trace shows
+        # what was asked and why.
+        clarify = {**context_item, "clarify_team": True, "clarify_text": routed["text"]}
+        return {
+            **escalation_result(clarify_team=clarify),
+            "actions": [],
+            "pending": {"kind": "team_clarify"},
+        }
+    if routed is not None and routed["kind"] == "assign":
+        actions = _assign(
+            ctx,
+            context_item,
+            routed["team"],
+            services,
+            assignee=routed["assignee"],
+        )
+        return {**result, "actions": actions, "pending": None}
+    actions = _assign(ctx, context_item, team, services)
     return {**result, "actions": actions, "pending": None}
 
 
-def _assign(
+def _parser_team(ctx: dict[str, Any], team: Any) -> Any:
+    """The team the PARSER itself resolved, not the one the turn inherited.
+
+    `ctx.parse.output.routing` is post-processed, and `output_exchange` carries the previous
+    turn's routing into it - so by the time this lane sees it, a turn the parser routed
+    nowhere looks routed. `_parser_raw` is the pre-derivation snapshot the same block keeps
+    (`output_exchange` sets it, `engine` puts it on `ctx.parse`), and it is what says whether
+    THIS message named a team. Falls back to the derived value when there is no snapshot, so
+    an injected ctx behaves as it reads.
+    """
+    raw = jsc.get(jsc.get(ctx, "parse"), "_parser_raw")
+    if not isinstance(raw, dict):
+        return team
+    return jsc.get(jsc.get(raw, "routing"), "suggested_team")
+
+
+def _pick_staff(hits: list, team: Any) -> Any:
+    """The ONE staff member this ask names, or `None` when the roster cannot say.
+
+    One hit is the answer. Several hits for the SAME person are several team memberships,
+    not several people (5 of 22 staff on this install are on more than one team), so the
+    team the parser already resolved breaks that tie - and only that tie. Two DIFFERENT
+    people sharing a name is a real ambiguity and this function refuses to pick one:
+    choosing by the parser's team would answer a question about WHO with a fact about WHERE.
+
+    Refusing is NOT the same as asking, and the caller decides which it is (`_person_routing`,
+    the `_parser_team` check): a turn the parser routed nowhere asks, and a turn that already
+    carries the parser's own team escalates to that team. So an ambiguous name derails
+    nothing that knew where it was going - it only ever costs the direct pick.
+    """
+    if len(hits) == 1:
+        return hits[0]
+    people = {jsc.js_string(jsc.get(h, "user_id")) for h in hits}
+    if len(people) != 1:
+        return None
+    wanted = jsc.nullish_str(team).strip().lower()
+    if not wanted:
+        return None
+    matched = [h for h in hits if jsc.nullish_str(jsc.get(h, "team_code")).strip().lower() == wanted]
+    return matched[0] if len(matched) == 1 else None
+
+
+def _person_routing(
     ctx: dict[str, Any], context_item: dict[str, Any], team: Any, services: Any
+) -> dict[str, Any] | None:
+    """"escalate to Nurain" / "escalate to marketing": route by WHO, or ask which team.
+
+    Owner ruling, 6 Sep 2026, from two console turns that both arrived with
+    `routing = {suggested_team: null, suggested_agent: null}` and were assigned to whatever
+    team the PREVIOUS turn happened to be routed to - the comment named marketing_product
+    for a customer-service person and purchasing for a marketing ask.
+
+    Deterministic throughout, and off structured state only (D11 - the name is the parser's
+    own `person_mention`, never a regex over the customer's words):
+
+    * A named person is resolved against the staff roster. One match routes to THEIR team
+      with them as the assignee - a person the customer named is a direct pick, not a
+      round-robin draw. Two different people sharing the name ASKS.
+    * **A miss only asks when the PARSER itself resolved no team.** Review of #700: 70 parse
+      outputs in the corpus carry a `person_mention` ALONGSIDE a resolved `suggested_team`
+      - a greeting, a signature, a name in passing - and every one of those five names
+      returns zero roster hits. Asking there would replace correct routing with a question,
+      so a miss falls through to that team.
+
+      The team that decides this is `ctx.parse._parser_raw.routing.suggested_team`, the
+      parser's OWN answer, never the derived one - and that distinction is the owner's whole
+      case, measured on their turn: "escalate to Nurain" arrived with
+      `_parser_raw.routing = {suggested_team: null, suggested_agent: null}` while the
+      DERIVED routing had already inherited `purchasing` from the previous turn upstream in
+      `output_exchange`. Gating on the derived team would make this gate inert on exactly
+      the turn it was written for, which is what the first console run showed. With no
+      `_parser_raw` (a mocked parse, an injected ctx) the derived team stands in.
+    * No person, no team, and a previous turn that HAD one: ask. That is the inheritance
+      the owner rejected, and refusing it here is the whole fix. With no previous routing
+      to inherit there is nothing to be wrong about, so the lane carries on exactly as it
+      does today (`test_no_team_clarify_on_live_team_flows_through_unguarded`).
+
+    Returns `None` for "nothing to do here", which is every turn that names nobody and
+    arrives with a team.
+    """
+    output = jsc.get(jsc.get(ctx, "parse"), "output") or {}
+    person = jsc.nullish_str(jsc.get(output, "person_mention")).strip()
+
+    if person:
+        lookup = getattr(services, "staff_lookup", None) if services is not None else None
+        if lookup is None:
+            return None  # a bundle without the seam behaves exactly as it did before
+        try:
+            hits = [h for h in jsc.array(lookup(person)) if jsc.truthy(h)]
+        except Exception:  # noqa: BLE001 - a failed lookup never guesses
+            logger.warning("chatbot: staff lookup did not run", exc_info=True)
+            hits = []
+        picked = _pick_staff(hits, team)
+        if picked is not None:
+            return {
+                "kind": "assign",
+                "team": jsc.get(picked, "team_code"),
+                "assignee": {
+                    "assignee_id": jsc.get(picked, "user_id"),
+                    "assignee_name": jsc.get(picked, "user_name"),
+                    "assignee_respond_user_id": jsc.get(picked, "respond_user_id"),
+                    "team_set_code": jsc.get(picked, "team_code"),
+                    "is_already_assigned": False,
+                },
+            }
+        if jsc.truthy(_parser_team(ctx, team)):
+            return None  # the parser itself named a team: the mention was in passing
+        return {"kind": "clarify", "text": _team_clarify_text(person, hits)}
+
+    prev_team = jsc.get(jsc.get(_prev_variables(ctx), "routing"), "suggested_team")
+    if not jsc.truthy(team) and jsc.truthy(prev_team):
+        return {"kind": "clarify", "text": _team_clarify_text(None, [])}
+    return None
+
+
+def _team_clarify_text(person: Any, hits: list) -> str:
+    """The ask. Names the teams the customer can choose between, and nothing else.
+
+    With hits it is the teams THOSE people are on (that is the whole ambiguity); without,
+    it is the routing vocabulary, which is the exact set the router can act on - inventing
+    a shorter list would invite a reply nothing could resolve.
+    """
+    from app.services.chatbot.contracts import SUGGESTED_TEAMS
+
+    names: list[str] = []
+    for hit in hits:
+        name = jsc.get(hit, "team_name") or _pretty_team(jsc.get(hit, "team_code"))
+        if jsc.truthy(name) and name not in names:
+            names.append(name)
+    if not names:
+        names = [_pretty_team(t) for t in SUGGESTED_TEAMS]
+    listed = f"{', '.join(names[:-1])} or {names[-1]}" if len(names) > 1 else names[0]
+    if person and hits:
+        people = {jsc.js_string(jsc.get(h, "user_id")) for h in hits}
+        lead = (
+            f"{jsc.js_string(person)} is on more than one team"
+            if len(people) == 1
+            else f"More than one person here goes by {jsc.js_string(person)}"
+        )
+        return f"{lead}. Which team do you mean - {listed}?"
+    if person:
+        return (
+            f"I could not find anyone called {jsc.js_string(person)}. "
+            f"Which team should I pass this to - {listed}?"
+        )
+    return f"Which team should I pass this to - {listed}?"
+
+
+def _preview_routing(
+    ctx: dict[str, Any],
+    context_item: dict[str, Any],
+    team: Any,
+    services: Any,
+    session_factory: Any,
+) -> tuple[dict[str, Any] | None, Any]:
+    """`(routing decision, assignee)` for a dry run - both READS, in one unit of work.
+
+    Fails soft throughout, on purpose: a bundle with no preview seam (an older injected
+    stub), a lookup that raises, or no session factory at all leave the assignee null,
+    which is the placeholder AC-507 shipped with. A dry run must never fail a turn over the
+    extra detail it is trying to show.
+    """
+
+    def _both(bundle: Any) -> tuple[dict[str, Any] | None, Any]:
+        routed = _person_routing(ctx, context_item, team, bundle)
+        if routed is not None:
+            # A named person IS the assignee, and a clarify assigns nobody. Either way
+            # there is no rotation to preview.
+            return routed, routed.get("assignee")
+        seam = getattr(bundle, "preview_assignee", None)
+        if seam is None:
+            return None, None
+        return None, seam({**_next_assignee_body(ctx, context_item), "preview": True})
+
+    try:
+        if services is not None:
+            return _both(services)
+        if session_factory is None:
+            return None, None
+        # Production dry run: the same read-only unit of work the live branch uses, so both
+        # reads are scoped to the contact's company exactly as the draw would be (H56).
+        from app.services.chatbot.lanes import escalation_services
+
+        with escalation_services.production_session(session_factory) as db:
+            return _both(escalation_services.build(db))
+    except Exception:  # noqa: BLE001 - a preview is never worth failing a test turn for
+        logger.warning("chatbot: dry-run routing preview did not run", exc_info=True)
+        return None, None
+
+
+def _assign(
+    ctx: dict[str, Any],
+    context_item: dict[str, Any],
+    team: Any,
+    services: Any,
+    *,
+    assignee: Any = None,
 ) -> list[dict[str, Any]]:
     """Draw an assignee, start the SLA clock, and build the four actions in live's order.
 
     Both seams run before a single action is built, which is what makes the failure shape
     in `engine.py` true: the lane returns its whole list or raises before returning any of
     it, so "assigned but no SLA row" is not a state a caller can observe.
+
+    `assignee` is passed in ONLY when the customer named the person (the staff-lookup arm):
+    a direct pick is not a rotation, so the round robin is not drawn from at all. The SLA
+    clock still starts, because the escalation is just as real.
     """
-    assignee = services.next_assignee(_next_assignee_body(ctx, context_item))
+    if assignee is None:
+        assignee = services.next_assignee(_next_assignee_body(ctx, context_item))
     sla = services.sla_create(_sla_body(ctx, context_item, assignee))
     return _assignment_actions(
         ctx,
