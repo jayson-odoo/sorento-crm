@@ -1184,37 +1184,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         else:  # 'modify' | 'replace_combine' | anything else
             current_axes = {axis_of(e) for e in current}
             exclusive = o.get("scope_exclusive") is True
-            # OWNER RULING K, rule 2 (2026-09-06): CARRIED ENTITIES DIE ON A TOPIC CHANGE.
-            # The merge below keeps every prior entity whose axis this turn did not name,
-            # which is right within one subject and wrong across two: "delivery to hanlim,
-            # product srtwc286" followed by a promotion question answered about hanlim as
-            # well, because nothing here had ever asked whether the subject was still the
-            # same one (H61).
-            #
-            # THREE conditions, and each one is load-bearing:
-            #
-            # * `explicit` - a DECISIVE intent plus a domain, so this is the customer's
-            #   own domain and not the model's guess at a bare token's shape. A guessed
-            #   domain reads as a change on exactly the turns that are not one (the naked
-            #   code after a customer pick, fork exec 13687305), and dropping the pick
-            #   there answered for a customer nobody had mentioned.
-            # * `len(current) > 0` - the new question brings its own scope. A turn that
-            #   names no entity has the carry as its ONLY scope ("stock?" after a promo
-            #   for a product), and clearing it turns a continuation into "which product?".
-            # * `topic.changed` - the SAME definition the tail's offer carry uses. A turn
-            #   that names no domain, or the same one, is a continuation.
-            #
-            # `new_offer` is False here because the head cannot see one: offers are built
-            # in the tail, and the tail applies that half of the rule itself.
-            topic_moved = (
-                len(current) > 0
-                and explicit
-                and topic.changed(prev_state_domain, domain)
-            )
-            if topic_moved:
-                kept_prior = []
-                o["entities_dropped_on_topic_change"] = prev_state_domain  # diagnostic
-            elif exclusive:
+            if exclusive:
                 if len(current) == 0:
                     # "restrict to only [nothing]" is meaningless - almost always a
                     # tier/attribute change, not an entity narrow. Keep prior.
@@ -1652,10 +1622,16 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
                     if bare_entity_turn:
                         # RETYPE, in place: `cur_ents` holds the same dicts `o.entities`
                         # does, so the blocklist below, the axis map and the resolver all
-                        # see the domain's own type rather than the guessed one.
+                        # see the domain's own type rather than the guessed one. Stamped
+                        # only when the type actually MOVED - a diagnostic that fires on
+                        # every turn it agrees with says nothing about the ones it changed.
+                        retyped = False
                         for e in cur_ents:
-                            e["hint"] = bare_type
-                        o["bare_entity_retyped"] = bare_type  # diagnostic
+                            if jsc.lower_or_empty(jsc.get(e, "hint")) != bare_type:
+                                e["hint"] = bare_type
+                                retyped = True
+                        if retyped:
+                            o["bare_entity_retyped"] = bare_type  # diagnostic
                 else:
                     o["domain_inherit_blocked"] = prev_dom  # topic switch, kept current
 
@@ -1789,6 +1765,53 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             o["entities_emptied_by_filter"] = before > 0 and after == 0
             if dropped:
                 o["broaden_dropped"] = dropped
+
+    # -- OWNER RULING K, rule 2: CARRIED ENTITIES DIE ON A TOPIC CHANGE ------------------- #
+    # The entity-op executor keeps every prior entity whose axis this turn did not name,
+    # which is right within one subject and wrong across two: a customer named on an order
+    # turn kept scoping the promotion question that followed it, because nothing had ever
+    # asked whether the subject was still the same one (H61).
+    #
+    # Placed AFTER the blocklist rather than inside the executor, deliberately. The
+    # blocklist already removes a carried entity whose HINT cannot belong to the new
+    # domain, and pre-empting it would only move that same removal one step earlier while
+    # rewriting the diagnostics that describe it (measured: 13 captures changed nothing
+    # but those diagnostics). What is left for this pass is exactly what the blocklist
+    # cannot see: an entity whose hint is perfectly legal in the new domain and which
+    # nevertheless belongs to the old subject. The domain is also FINAL here - after the
+    # continuity carry and the #6 switch - so no reader has to know whether it was the
+    # model's guess or the carried one.
+    #
+    # THREE conditions, and each one is load-bearing:
+    #
+    # * `explicit` - a DECISIVE intent plus a domain, so this is the customer's own domain
+    #   and not the model's guess at a bare token's shape. A guessed domain reads as a
+    #   change on exactly the turns that are not one (the naked code after a customer
+    #   pick, fork exec 13687305) and dropping the pick there answered for a customer
+    #   nobody had mentioned.
+    # * a this-turn entity - the new question brings its own scope. A turn that names no
+    #   entity has the carry as its ONLY scope ("stock?" after a promo for a product), and
+    #   clearing it turns a continuation into "which product?".
+    # * `topic.changed` - the SAME definition the tail's offer carry uses. A turn that
+    #   names no domain, or the same one, is a continuation.
+    #
+    # `new_offer` is False here because the head cannot see one: offers are built in the
+    # tail, and the tail applies that half of the rule itself.
+    if not jsc.truthy(o.get("is_menu_label")) and jsc.is_array(o.get("entities")):
+        tc_current = [e for e in o["entities"] if jsc.truthy(e) and not ce_is_carried(e)]
+        if (
+            explicit
+            and len(tc_current) > 0
+            and topic.changed(prev_state_domain, o.get("domain_hint"))
+        ):
+            tc_dropped = [
+                f"{jsc.get(e, 'hint')}:{jsc.get(e, 'raw')}"
+                for e in o["entities"]
+                if jsc.truthy(e) and ce_is_carried(e)
+            ]
+            if tc_dropped:
+                o["entities"] = tc_current
+                o["entities_dropped_on_topic_change"] = tc_dropped  # diagnostic
 
     prior_routing = jsc.get(parent_input.get("previous_conversation_state"), "routing")
     if prior_routing is None:

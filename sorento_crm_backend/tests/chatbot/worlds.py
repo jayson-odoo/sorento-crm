@@ -576,6 +576,21 @@ def body_difference(
             "captured before the RS-9 Fix 6 tier-menu block, which is a `>`-only hunk in "
             "the body the export ships"
         )
+    prev_variables = (world.session_vars or {}).get("variables") or {}
+    if (
+        actual_variables.get("selection_context")
+        and not world.expected_variables.get("selection_context")
+        and actual_variables.get("last_result_set") == prev_variables.get("last_result_set")
+    ):
+        return (
+            "captured before OWNER RULING K rule 1 (6 Sep 2026): the offer roster on the "
+            "customer's screen now survives a turn that builds no offer of its own, so "
+            "'1', then '2', then '3' answer against the same list. This capture records "
+            "the old lifetime - the roster cleared the moment the turn had no offer of "
+            "its own - and the port re-seats exactly the list the session already held. "
+            "The node-level half is registered in tests/chatbot/divergences.py and the "
+            "rule is pinned by tests/chatbot/test_tail_units.py"
+        )
     if world.expected_variables.get("picker_last_result_set") and not actual_variables.get(
         "picker_last_result_set"
     ):
