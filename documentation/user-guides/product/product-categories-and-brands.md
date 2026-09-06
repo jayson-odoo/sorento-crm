@@ -25,6 +25,10 @@ Click **Create Category**, or use the per-row **Edit** / **Duplicate** action. T
 
 Save with **Create** / **Update**. **Duplicate** opens the create modal pre-filled from an existing category (code suffixed `-COPY`, name suffixed `(copy)`).
 
+A **Category Code** that differs from one you already hold only by case or spacing is refused
+with *"Category code already exists."* rather than silently creating a near-duplicate - the same
+check applies to warehouses, suppliers and units of measure.
+
 > **Setting a parent (nesting):** the category tree displays parent → child hierarchy, but the create/edit **modal does not expose a parent picker**. Nesting (`parent_category_id`) is assigned through the product master / category import or the API, not from this form. Flag this to your admin if you need to re-parent a category from the UI.
 
 ### Delete a category

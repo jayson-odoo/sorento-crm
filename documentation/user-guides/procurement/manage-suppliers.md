@@ -16,6 +16,12 @@ Create, edit, and delete the vendors you buy from. Use this when you need to add
    Fields marked * are required.
 3. Click **Create Supplier** to save. You'll return to the list with the new supplier added.
 
+A **Supplier Code** that differs from one you already hold only by case or spacing (e.g. `abc`
+vs `ABC`) is refused with *"Supplier code already exists."* rather than silently creating a
+near-duplicate - the same check applies to warehouses, product categories and units of measure.
+A trailing currency note in the **Supplier Name**, e.g. `ACME (RMB)`, is stripped automatically
+on both create and edit - the stored name is `ACME`.
+
 ## Edit a supplier
 
 1. Open the supplier from the list (click its row).

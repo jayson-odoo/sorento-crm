@@ -29,6 +29,18 @@ the row imports normally. The **Test** step lists exactly what will be created
 the counts. Rename them later in **[Product Categories](/master-data-management/product-categories)**
 or **[Brands](/master-data-management/brands)** if you want tidier display names.
 
+**The same product rules apply on every channel** - this upload, creating or editing a product by
+hand, and the AutoCount integration:
+
+* A description starting with `****` marks the product **Discontinued**, unless the file (or the
+  form) states the flag explicitly - an explicit value always wins.
+* Length, width and height are read from text like `880x450x220MM` in the description whenever
+  those fields are left blank - a value you typed or the file states explicitly is never
+  overwritten.
+* Every new product is linked to the tenant's default supplier (**Default supplier (new
+  products)** under **[User Management → Settings](/user-management/settings)**, with its
+  **Standard lead time (days)**), the same way this upload already links one.
+
 
 5. Drag the filled file in or click to browse.
 6. (Recommended) Click **[Test](/master-data-management/products#guide_target=template-upload.test-button)** first to run server-side validation only. Fix any reported errors, then continue.
