@@ -195,3 +195,9 @@ removed copy, for whoever restores a UI for them:
   a customer whose account code is longer than their name, or any second reader that needs the
   match field. Fix: carry `match_field` through the gate and test on it, deleting the length
   tie-break. | `plans/chatbot/PLAN-chatbot-turn-engine.md` | Low | Open |
+- **BL-062** (2026-09-06, ESB production first load): a 1,000-record `POST /api/v1/external/ingest/purchase_orders`
+  with per-record supplier back-create ran past production nginx's proxy_read_timeout and answered 504 while the
+  app kept processing and committed (records land, client sees a failure, re-offer is idempotent by `source_ref`).
+  **Trigger:** any document batch over ~200 records on a live company. Fix: batches above a threshold return 202
+  with a job id and run on the `imports` worker, verdict fetched by job; ESB caps document batches at 200 meanwhile.
+  | `plans/_archive/autocount/PLAN-ingest-parity-standardisation.md` | Medium | Open |
