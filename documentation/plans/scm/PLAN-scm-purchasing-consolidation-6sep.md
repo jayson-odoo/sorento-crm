@@ -1,9 +1,10 @@
 # PLAN - purchasing consolidation batch (6 Sep 2026)
 
 **Status:** Markup round 1 applied (captain, 6 Sep 2026): Q1-Q5 ruled, R1 and R7 revised,
-R11 clarified. Awaiting GO. Nothing built. UAC:
+R11 clarified. UAC:
 `scm-purchasing-consolidation-6sep-acceptance-criteria.md`. Lavish page:
-`mockups/purchasing-consolidation-6sep-plan.html`.
+`mockups/purchasing-consolidation-6sep-plan.html`. **Lane A (section 13: 1, 2 (R3 only), 3, 8,
+10 (R22)) built, browser-verified, review round 1 applied.** B/C/D awaiting GO.
 
 Feedback given 6 Sep on production (`fe-sorento.foundryx.my`). Twelve asks, four lanes, four
 PRs. Every "what exists" line below was measured on `origin/main` `cc0789971` (6 Sep), not on

@@ -13,7 +13,14 @@ export default function IncomingContainersPage() {
   return (
     <RequireAccess permission="scm.reorder.run">
       <Container>
-        <PageHeader title="Incoming Containers" />
+        {/* The menu entry is retired (R2) - the tree-derived trail would otherwise match
+            Supply Chain's Dashboard leaf (`/scm`, a bare prefix of this path) as a wrong
+            ancestor. `crumbs` is the documented escape hatch for "the sidebar names
+            nothing here" (PageHeader.inventory.test.ts S5-02), so this stays title-only. */}
+        <PageHeader
+          title="Incoming Containers"
+          crumbs={[{ title: 'Incoming Containers' }]}
+        />
       </Container>
 
       <Container>

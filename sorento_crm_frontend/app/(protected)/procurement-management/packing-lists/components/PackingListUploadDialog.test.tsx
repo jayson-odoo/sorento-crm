@@ -10,6 +10,14 @@
  * still SYNCHRONOUS.** It is not an order-book feed, it has no queued task, and it renders the
  * shipments it created in the dialog itself. So there is no job id, no drawer and no toast, and
  * a test asserting otherwise would be describing a feature that does not exist.
+ *
+ * Self-serve supplier picker (Deviations lane A, purchasing consolidation batch 6 Sep 2026;
+ * review round 1 S4): R3 moves this dialog onto the Packing Lists page, which - unlike
+ * `/scm/incoming` - carries no persistent supplier filter to source `supplierId` from. Rather
+ * than build a second, page-level picker, the dialog itself manages an internal
+ * `internalSupplierId` when its `supplierId` prop is left `undefined`; a caller that passes an
+ * explicit `supplierId` (even `null`) keeps deciding it, unchanged (`IncomingContainersView.tsx`,
+ * exercised below by every `openDialog()` test in this file - all of them pass a supplierId).
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -49,8 +57,13 @@ vi.mock('@/app/(protected)/scm/reorder/services/outstandingImportService', () =>
   getOutstandingUploadConfig: async () => ({ allowed_extensions: ['.xlsx', '.xls'] }),
 }));
 
+// A mutable mock (not a static object) so the self-serve describe block below can give
+// it real supplier options, while every other test in this file keeps the original
+// empty-data behaviour untouched (they all pass an explicit `supplierId`, so the picker
+// never renders for them and this hook's data is irrelevant).
+const useFulfilmentSuppliers = vi.fn(() => ({ data: [] as { value: string; label: string }[], isLoading: false }));
 vi.mock('@/app/(protected)/scm/hooks/useFulfilment', () => ({
-  useFulfilmentSuppliers: () => ({ data: [], isLoading: false }),
+  useFulfilmentSuppliers: () => useFulfilmentSuppliers(),
 }));
 
 import { PackingListUploadDialog } from './PackingListUploadDialog';
@@ -106,6 +119,13 @@ function openDialog(
   return { onImported };
 }
 
+/** No `supplierId`/`supplierName` prop at all - the self-serve branch (R3 deviation). */
+function openDialogSelfServe() {
+  const onImported = vi.fn();
+  render(<PackingListUploadDialog open onOpenChange={() => {}} onImported={onImported} />);
+  return { onImported };
+}
+
 function fileInput(): HTMLInputElement {
   return document.querySelector('input[type="file"]') as HTMLInputElement;
 }
@@ -125,9 +145,18 @@ function testButton() {
   return screen.getByRole('button', { name: /^Test$/i });
 }
 
+function confirmButton() {
+  return screen.getByRole('button', { name: 'Import packing list' });
+}
+
+function supplierSelect(): HTMLElement | null {
+  return screen.queryByLabelText('Supplier');
+}
+
 beforeEach(() => {
   previewPackingList.mockReset().mockResolvedValue(PREVIEW);
   applyPackingList.mockReset();
+  useFulfilmentSuppliers.mockReset().mockReturnValue({ data: [], isLoading: false });
 });
 
 describe('PackingListUploadDialog - the inherited two-step flow', () => {
@@ -203,6 +232,12 @@ describe('PackingListUploadDialog - whose lines these are', () => {
     openDialog();
 
     expect(screen.getByText(/Uploading as KAILU HARDWARE FACTORY\./)).toBeInTheDocument();
+  });
+
+  it('offers no Supplier picker when the caller already supplies one', () => {
+    openDialog();
+
+    expect(supplierSelect()).not.toBeInTheDocument();
   });
 
   it('offers neither Test nor Confirm with no supplier, rather than sending an unowned file',
@@ -419,5 +454,67 @@ describe('PackingListUploadDialog - the currency, asked for only when nothing el
     expect(await screen.findByText('TEMU1234567')).toBeInTheDocument();
     expect(screen.queryByText(/Priced in/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Nothing states which money/)).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Self-serve supplier picker (no supplierId prop) - review round 1 S4
+// ---------------------------------------------------------------------------
+
+describe('PackingListUploadDialog - self-serve supplier picker (no supplierId prop)', () => {
+  beforeEach(() => {
+    useFulfilmentSuppliers.mockReturnValue({
+      data: [{ value: 'sup-1', label: 'Kailu Hardware Factory' }],
+      isLoading: false,
+    });
+  });
+
+  it('offers a Supplier picker when no supplierId/supplierName is passed', () => {
+    openDialogSelfServe();
+
+    expect(supplierSelect()).toBeInTheDocument();
+  });
+
+  it('refuses Test and Confirm until a supplier is chosen', () => {
+    openDialogSelfServe();
+    pickFile();
+
+    expect(testButton()).toBeDisabled();
+    expect(confirmButton()).toBeDisabled();
+    expect(testButton()).toHaveAttribute('title', 'Choose a supplier first');
+  });
+
+  it('enables Test and Confirm once a supplier is picked and a file chosen', () => {
+    openDialogSelfServe();
+    fireEvent.click(supplierSelect()!);
+    fireEvent.click(screen.getByRole('option', { name: 'Kailu Hardware Factory' }));
+    pickFile();
+
+    expect(testButton()).toBeEnabled();
+    expect(confirmButton()).toBeEnabled();
+  });
+
+  it('carries the picked supplier on Confirm', async () => {
+    applyPackingList.mockResolvedValue({ shipments_created: 1, shipments_updated: 0, lines_skipped: 0, results: [] });
+    openDialogSelfServe();
+    fireEvent.click(supplierSelect()!);
+    fireEvent.click(screen.getByRole('option', { name: 'Kailu Hardware Factory' }));
+    const file = pickFile();
+
+    fireEvent.click(confirmButton());
+
+    await waitFor(() => expect(applyPackingList).toHaveBeenCalledTimes(1));
+    expect(applyPackingList).toHaveBeenCalledWith(
+      file,
+      expect.objectContaining({ supplierId: 'sup-1' }),
+    );
+  });
+
+  it('names the chosen supplier in the header once picked', () => {
+    openDialogSelfServe();
+    fireEvent.click(supplierSelect()!);
+    fireEvent.click(screen.getByRole('option', { name: 'Kailu Hardware Factory' }));
+
+    expect(screen.getByText(/Uploading as Kailu Hardware Factory/)).toBeInTheDocument();
   });
 });

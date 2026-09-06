@@ -53,11 +53,15 @@ export default function AttachmentUploadDialog({
   const [entityType, setEntityType] = useState<string>(propEntityType || '');
   const [entityId, setEntityId] = useState<string>(propEntityId || '');
   const [accessLevels, setAccessLevels] = useState<string[]>([]);
-  // Only relevant when the caller left `defaultDirectoryId` unset (opened from a screen
-  // with no folder context of its own, e.g. Packing Lists' Upload supplier documents) - a
-  // caller that DID pass one (opened from inside a specific Drive folder) keeps deciding
-  // it, unchanged. Seeded from the picked type's own default (R4) and always overridable.
+  // Only relevant when the caller left `defaultDirectoryId` unset OR passed root (a screen
+  // with no folder context of its own, e.g. Packing Lists' Upload supplier documents, or the
+  // Files browser at "All attachments") - a caller that DID pass a real folder id (opened from
+  // inside a specific Drive folder) keeps deciding it, unchanged. Seeded from the picked type's
+  // own default (R4) and always overridable.
   const [selectedDirectoryId, setSelectedDirectoryId] = useState<string>('');
+  // Once the user picks a folder themselves, a later type switch must not clobber it with
+  // that type's default (S3) - only auto-seeds before the user has touched the field.
+  const [folderTouched, setFolderTouched] = useState(false);
   const [validationError, setValidationError] = useState<string>('');
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
   const [isUploading, setIsUploading] = useState(false);
@@ -69,8 +73,12 @@ export default function AttachmentUploadDialog({
   const [targetFieldKeys, setTargetFieldKeys] = useState<string[]>([]);
 
   const { data: attachmentTypes = [], isLoading: isLoadingTypes } = useAttachmentTypesList();
-  const showFolderPicker = defaultDirectoryId === undefined;
-  const { data: directoryTree = [] } = useDirectoryTree();
+  // Root ("All attachments") reaches this dialog as either `undefined` (no prop passed
+  // at all) or explicit `null` (AttachmentBrowser / AttachmentsInFolderPanel both pass
+  // `directoryId ?? null`) - a real folder id is the only value that should skip the
+  // picker and file straight into it (B3, purchasing consolidation batch 6 Sep 2026).
+  const showFolderPicker = defaultDirectoryId == null;
+  const { data: directoryTree = [] } = useDirectoryTree(false, { enabled: showFolderPicker });
   const directoryOptions = showFolderPicker ? flattenDirectoryOptions(directoryTree) : [];
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
   const defaultAccessLevels = accessTypeOptions.length > 0 ? accessTypeOptions.map((o) => o.code) : ['dealer', 'end_user'];
@@ -108,6 +116,7 @@ export default function AttachmentUploadDialog({
       setTargetEntityType('');
       setTargetFieldKeys([]);
       setSelectedDirectoryId('');
+      setFolderTouched(false);
     }
   }, [open, propEntityType, propEntityId, defaultAccessLevels.join(',')]);
 
@@ -321,9 +330,11 @@ export default function AttachmentUploadDialog({
                 setTargetEntityType('');
                 setTargetFieldKeys([]);
                 // Pre-select the type's own default folder (R4) - only when the caller
-                // left the folder decision to this dialog (no `defaultDirectoryId`
-                // prop); the user can still change or clear it afterwards.
-                if (showFolderPicker) {
+                // left the folder decision to this dialog (no real `defaultDirectoryId`)
+                // AND the user has not already picked one themselves; a manual choice
+                // survives a later type switch (S3) instead of being clobbered by that
+                // type's default.
+                if (showFolderPicker && !folderTouched) {
                   const picked = attachmentTypes.find((type: AttachmentType) => type.id === value);
                   setSelectedDirectoryId(picked?.default_directory_id ?? '');
                 }
@@ -351,7 +362,10 @@ export default function AttachmentUploadDialog({
               <SearchableSelect
                 id="attachment-folder"
                 value={selectedDirectoryId}
-                onChange={setSelectedDirectoryId}
+                onChange={(value) => {
+                  setSelectedDirectoryId(value);
+                  setFolderTouched(true);
+                }}
                 options={directoryOptions}
                 placeholder="No folder (All files)"
                 clearable

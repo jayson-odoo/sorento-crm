@@ -128,6 +128,10 @@ def _file_the_upload(
             file_size_bytes=len(data),
             mime_type=content_type or "application/octet-stream",
             directory_id=default_directory_id,
+            # Without this the row reads `s3` (the schema default) regardless of where the
+            # bytes actually went - `storage_router`'s reads (preview, download, presigned
+            # URL) dispatch on this column, so a wrong value 404s the very file just filed.
+            storage_provider=provider,
         )
         # `attachment_id` was already minted above and handed to `AttachmentCreate.id`, so
         # it IS the new row's PK - no need to read it back off whatever the service returns.
@@ -135,6 +139,11 @@ def _file_the_upload(
         return attachment_id
     except Exception:  # noqa: BLE001 - a filing failure must not fail the apply itself
         logger.warning("Could not file the uploaded packing list as an attachment", exc_info=True)
+        # A failed INSERT (or the upload call itself) can leave the session in
+        # `PendingRollbackError` for every statement after it, which turned "no filed
+        # copy" into a 500 on the apply that was otherwise fine. Roll back so the caller's
+        # session is usable again.
+        db.rollback()
         return None
 
 
@@ -356,10 +365,12 @@ def apply(
 
     `file_in_drive` (R3, purchasing consolidation batch 6 Sep 2026): when true and no
     `attachment_id` was already given, the uploaded bytes are filed as an attachment ONCE
-    here and every shipment this call produces or updates is bound to that one filed copy.
-    Defaults to false - callers other than the Upload packing list route (batch
-    reprocessing, other tests of this function) do not suddenly start writing to Drive
-    and to storage just by calling `apply`.
+    the shipment set this call produces or updates is known, and only bound onto the
+    shipments that do not already carry one - a re-upload of the same file resolves to
+    the same shipments (see above) and must not mint a second Drive copy of a file
+    already filed on the first apply. Defaults to false - callers other than the Upload
+    packing list route (batch reprocessing, other tests of this function) do not
+    suddenly start writing to Drive and to storage just by calling `apply`.
     """
     _check_supplier(db, supplier_id)
     parsed = _parse(db, data)
@@ -383,18 +394,16 @@ def apply(
         db, {ln.item_code for b in parsed.blocks for ln in b.lines}
     )
 
-    filed_attachment_id = attachment_id
-    if filed_attachment_id is None and file_in_drive:
-        filed_attachment_id = _file_the_upload(
-            db, data=data, filename=source_ref, content_type=content_type, actor_id=actor_id
-        )
-
     from app.services.procurement_service import InboundShipmentService
 
     service = InboundShipmentService(db)
     created = updated = 0
     skipped_lines = 0
     results: list[dict] = []
+    # Filled once, after the loop, only when `file_in_drive` and at least one shipment
+    # this call touched is still missing one - never before, so a re-upload of an
+    # already-filed container costs nothing (see the docstring above).
+    unfiled_shipments: list[Any] = []
 
     for block in parsed.blocks:
         lines: list[InboundShipmentLineCreate] = []
@@ -448,7 +457,10 @@ def apply(
             shipment_date=shipment_date or date.today(),
             shipping_container_number=block.container_no,
             bill_of_lading_number=block.bl_no,
-            attachment_id=filed_attachment_id,
+            # A caller-supplied `attachment_id` still binds every block to it, same as
+            # before; the `file_in_drive` filing (below) only fills in for shipments
+            # that come out of this loop still unbound.
+            attachment_id=attachment_id,
             total_items_shipped=int(block.total_qty),
             total_cartons=int(block.total_cartons) if block.total_cartons else None,
             shipment_lines=lines,
@@ -460,6 +472,8 @@ def apply(
         existed = bool(getattr(shipment, "_already_existed", False))
         created += 0 if existed else 1
         updated += 1 if existed else 0
+        if file_in_drive and attachment_id is None and not shipment.attachment_id:
+            unfiled_shipments.append(shipment)
         results.append(
             {
                 "index": block.index,
@@ -470,6 +484,15 @@ def apply(
                 "created": not existed,
             }
         )
+
+    if file_in_drive and attachment_id is None and unfiled_shipments:
+        filed_attachment_id = _file_the_upload(
+            db, data=data, filename=source_ref, content_type=content_type, actor_id=actor_id
+        )
+        if filed_attachment_id:
+            for shipment in unfiled_shipments:
+                shipment.attachment_id = filed_attachment_id
+            db.commit()
 
     summary = _summarise(db, parsed, source_ref=source_ref)
     summary.update(

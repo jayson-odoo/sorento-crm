@@ -392,8 +392,7 @@ export default function AttachmentTypeFormDialog({
                     />
                   </FormControl>
                   <p className="text-xs text-muted-foreground">
-                    Where an upload of this type files by default. Pre-selects in Create
-                    Attachment when this type is chosen; the user can still change it.
+                    Where an upload of this type files by default - still changeable per upload.
                   </p>
                   <FormMessage />
                 </FormItem>

@@ -152,21 +152,18 @@ def _workbook(container: str, rows: list[tuple[str, float, float, float, str]]) 
 # --------------------------------------------------------------------------- #
 
 
-def test_apply_files_the_upload_in_the_types_default_folder(db, monkeypatch):
-    """Shipment + attachment, bound, no integration_log row."""
-    _seed_aliases(db)
-    category = _category(db)
-    uom = _uom(db)
-    product = _product(db, "TAP", category_id=category, uom_id=uom)
-    supplier = _supplier(db)
-    folder = _directory(db)
-    att_type = _packing_list_type(db, default_directory_id=folder.id)
-    db.commit()
+def _stub_backend(monkeypatch, *, provider: str = "r2") -> None:
+    """Storage upload is a real network PUT everywhere else in this codebase - stubbed
+    here to a fixed key, same shape `S3Service.upload_file` / `R2Service.upload_file`
+    return (`(key, url)`), and the same two CDN-url methods `cdn_base_url` dispatches
+    to depending on the provider.
 
-    # Storage upload is a real network PUT everywhere else in this codebase - stubbed
-    # here to a fixed key, same shape `S3Service.upload_file` / `R2Service.upload_file`
-    # return (`(key, url)`), and the same two CDN-url methods `cdn_base_url` dispatches
-    # to depending on the provider.
+    `provider` defaults to `r2`, deliberately NOT the schema/DB default (`s3`) for
+    `attachments.storage_provider` - a test that stubbed the configured provider AS
+    `s3` could not have caught review B1 (the row landing on `s3` regardless of what
+    the bytes were actually uploaded to).
+    """
+    monkeypatch.setattr("app.services.storage_router.default_provider", lambda: provider)
     monkeypatch.setattr(
         "app.services.storage_router.get_backend",
         lambda provider: type(
@@ -179,6 +176,20 @@ def test_apply_files_the_upload_in_the_types_default_folder(db, monkeypatch):
             },
         )(),
     )
+
+
+def test_apply_files_the_upload_in_the_types_default_folder(db, monkeypatch):
+    """Shipment + attachment, bound, no integration_log row."""
+    _seed_aliases(db)
+    category = _category(db)
+    uom = _uom(db)
+    product = _product(db, "TAP", category_id=category, uom_id=uom)
+    supplier = _supplier(db)
+    folder = _directory(db)
+    att_type = _packing_list_type(db, default_directory_id=folder.id)
+    db.commit()
+
+    _stub_backend(monkeypatch)
 
     container = f"{MARKER}U{uuid.uuid4().hex[:7].upper()}"
     out = packing_list_service.apply(
@@ -204,11 +215,110 @@ def test_apply_files_the_upload_in_the_types_default_folder(db, monkeypatch):
     assert str(attachment.attachment_type_id) == str(att_type.id)
     assert str(attachment.directory_id) == str(folder.id)
     assert attachment.company_id == DEFAULT_COMPANY_ID
+    # B1: the row must say where the bytes ACTUALLY went, not the schema default -
+    # `_stub_backend` configures the provider as `r2`, never `s3` (the column's
+    # `server_default`), so this fails if `storage_provider` is left unset again.
+    assert attachment.storage_provider == "r2"
 
     # R3: never the n8n intake webhook for this one - the reader already produced the
     # shipment, so firing it would create a second one through the external route.
     logs = db.query(IntegrationLog).filter(IntegrationLog.business_id == str(attachment.id)).all()
     assert logs == []
+
+
+def test_apply_twice_files_the_upload_only_once(db, monkeypatch):
+    """S1 (review round 1): a re-upload of the same file resolves to the same
+    shipment (AC-G3) and must not mint a second Drive copy of a file already filed
+    on the first apply.
+    """
+    _seed_aliases(db)
+    category = _category(db)
+    uom = _uom(db)
+    product = _product(db, "BASIN", category_id=category, uom_id=uom)
+    supplier = _supplier(db)
+    folder = _directory(db)
+    _packing_list_type(db, default_directory_id=folder.id)
+    db.commit()
+
+    _stub_backend(monkeypatch)
+    upload_calls: list[str] = []
+    monkeypatch.setattr(
+        "app.services.storage_router.get_backend",
+        lambda provider: type(
+            "CountingStubBackend",
+            (),
+            {
+                "upload_file": staticmethod(
+                    lambda **kw: (upload_calls.append("uploaded") or ("stub/key.xlsx", ""))
+                ),
+                "get_cloudfront_base_url": staticmethod(lambda key: f"https://cdn.test/{key}"),
+                "get_cdn_base_url": staticmethod(lambda key: f"https://cdn.test/{key}"),
+            },
+        )(),
+    )
+
+    container = f"{MARKER}U{uuid.uuid4().hex[:7].upper()}"
+    data = _workbook(container, [(product.product_code, 4, 1, 0.05, "")])
+
+    packing_list_service.apply(
+        db, data, supplier_id=str(supplier.id), source_ref="repeat.xlsx", file_in_drive=True,
+    )
+    db.commit()
+    packing_list_service.apply(
+        db, data, supplier_id=str(supplier.id), source_ref="repeat.xlsx", file_in_drive=True,
+    )
+    db.commit()
+
+    assert len(upload_calls) == 1, "the second apply must not upload again"
+
+    shipment = (
+        db.query(InboundShipment)
+        .filter(InboundShipment.shipping_container_number == container)
+        .one()
+    )
+    assert db.query(Attachment).filter(Attachment.id == shipment.attachment_id).count() == 1
+
+
+def test_apply_still_applies_the_shipment_when_filing_fails(db, monkeypatch):
+    """B2 (review round 1): a failed filing attempt must not leave the session
+    in `PendingRollbackError` for the rest of the apply - the shipment still
+    gets created, exactly as when the type is simply missing.
+    """
+    _seed_aliases(db)
+    category = _category(db)
+    uom = _uom(db)
+    product = _product(db, "BIDET", category_id=category, uom_id=uom)
+    supplier = _supplier(db)
+    folder = _directory(db)
+    _packing_list_type(db, default_directory_id=folder.id)
+    db.commit()
+
+    _stub_backend(monkeypatch)
+
+    def _boom(self, *args, **kwargs):
+        raise RuntimeError("forced create_attachment failure")
+
+    monkeypatch.setattr(
+        "app.services.resources_service.AttachmentService.create_attachment", _boom
+    )
+
+    container = f"{MARKER}U{uuid.uuid4().hex[:7].upper()}"
+    out = packing_list_service.apply(
+        db,
+        _workbook(container, [(product.product_code, 6, 1, 0.1, "")]),
+        supplier_id=str(supplier.id),
+        source_ref="boom.xlsx",
+        file_in_drive=True,
+    )
+    db.commit()
+
+    assert out["shipments_created"] == 1
+    shipment = (
+        db.query(InboundShipment)
+        .filter(InboundShipment.shipping_container_number == container)
+        .one()
+    )
+    assert shipment.attachment_id is None, "filing failed - nothing to bind"
 
 
 # --------------------------------------------------------------------------- #

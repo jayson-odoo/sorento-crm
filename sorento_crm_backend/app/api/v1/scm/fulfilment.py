@@ -25,6 +25,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
@@ -851,7 +852,13 @@ async def apply_packing_list(
                 detail="shipment_date must be YYYY-MM-DD",
             )
 
-    out = packing_list_service.apply(
+    # `file_in_drive=True` here means a real network PUT to storage (`_file_the_upload`
+    # in the service) - must not run directly on the event loop, same reasoning and same
+    # fix as the generic attachment upload route (`attachments.py`, the WORKER TIMEOUT /
+    # cascading-504 incident): one slow upload would otherwise freeze every other request
+    # this worker is holding.
+    out = await run_in_threadpool(
+        packing_list_service.apply,
         db,
         data,
         supplier_id=supplier,
