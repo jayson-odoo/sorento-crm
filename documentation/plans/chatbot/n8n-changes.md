@@ -1271,3 +1271,41 @@ week behind step 2 rather than riding with it.
   already drains `chat` via `worker.QUEUES`.
 - **Nothing here changes the egress.** The CRM still never sends; the Switch on
   `action.kind` over the existing send / assign / comment nodes is S1's and stays as it is.
+
+---
+
+## Owner ruling K (6 Sep 2026) - `compile-current-state` and `output_exchange` now DIVERGE by ruling
+
+**No n8n edit is required for this one, and that is the point of the section.** The four
+rules below change what the CRM persists and how it reads a reply, and n8n's own bodies
+are left exactly as they are - so from this deploy onward the two are known to disagree,
+by decision rather than by drift. If the n8n bodies are ever re-promoted from the CRM
+port, these are the four hunks that must ride with them.
+
+| n8n node | What live still does | What the CRM does now |
+| --- | --- | --- |
+| `compile-current-state` | recomputes `selection_context` / `last_result_set` from THIS turn's outcome only, so both reset to `null` / the answer's own rows whenever the turn builds no offer of its own | `tail/compile_state.py::_offer_carry` carries the previous label and roster forward on exactly those turns. A new offer this turn still replaces it, a domain change still clears it, and `member_offer` carries only while the escalation offer is unanswered |
+| `route-turn` | `is_offer_hold`'s last condition is `routing_roster_plan.length > 1`, so an out-of-range digit against a single-company roster falls through to `low_signal` | a live `last_result_set` under `selection_context: member_offer` is enough to reach `offer_hold`, so the roster is reprompted |
+| `output_exchange` (member-offer arm) | a reply carrying a date window or an entity reaches "Tier 4 - junk" and is reprompted as a bad pick, or "Tier 3 - new query" and abandons the offer | a FILTER MODIFICATION arm runs first: the window and the entity are kept, the carried domain is inherited, nothing is reprompted, and the offer stays pending |
+| `output_exchange` (domain continuity) | blocks the domain carry on the model's own hint (`domain_inherit_blocked`) | a bare single-entity turn inherits the carried business domain and the entity is TYPED by it; the resolver decides, and `disallowed-entity-gate` is the guard |
+
+The last row is a divergence from the LIVE parser body in a second sense worth recording:
+the hunk it descends from, `_bareEntityTurn`, exists only on the unpromoted
+`sub-semantic-parser-FORK` (`nodes/output_exchange.js`, exec 13687305), it was never
+promoted to the body answering turns today, and even on the fork it carries the domain
+without RETYPING the entity. The retype is the owner's own addition.
+
+### What proves it
+
+Every capture the ruling moves is registered in `tests/chatbot/divergences.py`, field
+scoped, so the rest of each capture is still graded byte for byte: 13
+`compile-current-state` (rule 1), 4 `output_exchange` (rule 4), 2 `output_exchange`
+(rule 2), and one blanket entry for the three diagnostic keys the port ADDS. 19 world
+replays skip by NAME through `worlds.body_difference`. Behaviour is pinned by
+`test_tail_units.py`, `test_output_exchange_rules.py`, `test_route_unit.py`,
+`test_resolve_gate_unit.py` and `test_topic_unit.py`.
+
+### Rollback
+
+There is no flag and none is needed: nothing in n8n changed, so reverting the CRM commits
+restores the previous behaviour on the next turn.

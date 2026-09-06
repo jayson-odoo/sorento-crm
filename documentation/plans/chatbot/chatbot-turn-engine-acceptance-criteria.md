@@ -1098,3 +1098,70 @@ contact inside the synchronous request. Different contacts run in parallel.
   six asserted STILL IN the pool so a well-meaning re-filter fails here, the three read-only
   POSTs allowed by name, and a source scan proving no turn-path file imports
   `sorento_crm_mcp`) and `test_dry_run_isolation.py::TestMcpToolPickRefusesWriteTools`. (H58, D10)
+
+- AC-816 `[BE][T]` **The pending context persists until the topic changes.** One owner ruling
+  (6 Sep 2026 console pass), four rules, and ONE definition of "the topic changed" -
+  `app/services/chatbot/topic.py::changed(previous_domain, new_domain, new_offer=...)`,
+  imported by both the head and the tail so the roster, the carried entities and the
+  pending offer cannot disagree about it. Its truth table is a test
+  (`tests/chatbot/test_topic_unit.py`): a new offer this turn always changes the topic; a
+  turn that names NO domain never does (a pick, a date window and a bare code all arrive
+  with `domain_hint: null`); a carried domain of `null` is not a change either (a subject
+  acquiring a name is the same subject); otherwise it is a change when the two named
+  domains differ.
+
+  1. **An offered list persists.** Given a tier menu, a did-you-mean, a promo picker or a
+     member offer was made, when the customer answers "1", then "2", then "3", then each
+     pick resolves against the SAME list: the tail carries `selection_context` and
+     `last_result_set` forward on every turn whose own ladder produced neither, including
+     across the answer that pick just produced. A NEW offer this turn replaces the carried
+     one (the ladder runs first and the carry only runs when the ladder was silent, so
+     H29 / AC-205 is untouched); a domain change clears it; an out-of-range pick reprompts
+     and keeps the list. `member_offer` carries only while the escalation offer is still
+     UNANSWERED - neither accepted (`is_escalation_confirmation` or a resolved
+     `preferred_assignee_id`) nor declined (`escalation_declined`) this turn - so
+     `_picker_carry`'s documented hazard, re-arming an offer somebody already declined,
+     stays closed. The rule the module chose is stated in `_offer_carry`'s docstring.
+     Evidence: `tests/chatbot/test_tail_units.py::TestTierAndPromoOffersCarryUntilOverwritten`
+     and `::TestTheMemberOfferCarryStopsAtTheAnswer`.
+  2. **Carried entities die on a topic change.** Given entities carried in the session
+     block, when the customer asks an explicit question in a DIFFERENT domain that brings
+     its own entity, then the carried set is dropped; when the domain is the same, or the
+     turn names none, or the turn brings no entity of its own, then they are kept. The
+     pass runs AFTER the domain blocklist, which keeps its own removals and its own
+     diagnostics, so what it decides is exactly what the blocklist cannot see: a hint that
+     is legal in the new domain and still belongs to the old subject.
+     Evidence: `tests/chatbot/test_output_exchange_rules.py`, two registered captures.
+  3. **A pending offer never captures non-pick text.** Given a pending member offer, when
+     the reply carries a genuine FILTER - a date window or an entity - then it is a
+     modification of the question the offer was made about: the window and the entity are
+     kept, the carried domain is inherited, no `member_reprompt` is stamped, no
+     `correction` is set, and the offer stays pending for the tail to carry. When the reply
+     is instead a genuinely out-of-range digit, then the roster is reprompted and kept -
+     `route.decide` reaches `offer_hold` on an ordinary SINGLE-company roster too, never
+     `low_signal`, which is what handed the customer a clarifier in place of the list they
+     were answering. Evidence: `tests/chatbot/test_output_exchange_rules.py` (the date case
+     and the product-code case, the latter asserted on the SEAM - the filter arm ran, the
+     entity survived, the domain is kept - rather than on the absence of a reprompt, which
+     passed for the wrong reason) and `test_route_unit.py`.
+  4. **A bare entity inherits the carried business domain.** Given a carried business
+     domain and a turn that is nothing but ONE entity, with the model naming neither a
+     domain nor an intent, when the turn is post-processed, then the domain is inherited
+     and the entity is TYPED by it - `product` for inventory / incoming / promotion,
+     `customer` for order - with no `domain_inherit_blocked` stamped, whatever the model
+     hinted. Inheritance is blocked only when the entity RESOLVES to an incompatible type,
+     which `disallowed-entity-gate` already refuses (today's clarify path), never on the
+     parser's hint. A domain with no bare-entity type does not take the rule: inheriting
+     there would let the blocklist drop the entity outright, which is worse than not
+     inheriting, and the trigger for a fifth row is a measured turn of that shape.
+     Evidence: `tests/chatbot/test_output_exchange_rules.py` (the inventory and order
+     cases) and `test_resolve_gate_unit.py::TestBareEntityInheritanceIsBlockedAtResolveTime`
+     (both sides of the resolve-time guard).
+
+  Rule 4 is a deliberate divergence from the LIVE parser body and is registered as one:
+  the hunk it descends from (`_bareEntityTurn`) exists only on the unpromoted
+  `sub-semantic-parser-FORK`, and even there it does not RETYPE. Every capture the four
+  rules move is registered in `tests/chatbot/divergences.py` field-scoped, so the rest of
+  each capture is still graded byte for byte, and 19 world replays skip by NAME through
+  `worlds.body_difference` rather than failing. Full chatbot suite green: 3561 passed,
+  131 skipped, 5 xfailed. (H60, H61)
