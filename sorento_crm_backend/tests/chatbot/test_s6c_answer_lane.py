@@ -2328,79 +2328,171 @@ def test_no_raw_text_regex_in_answer_modules() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Owner console defect D, REFRAMED (owner rev 3, turn evidence): NOT a same-attachment
-# duplicate. Two DIFFERENT presigned files legitimately share a filename
-# ("TLLU4618098 - WH.xlsx") under two different companies (Sorento pending-allocation vs
-# Mocha allocated). `engine._attachments_src` (engine.py:2710-2718) passes
-# `outcome_fragment['central-exchange']` through untouched, and the two send-attachments
-# wrap sites (engine.py:2342-2346 / :2925-2929) forward it verbatim - there is no dedupe
-# and no disambiguation anywhere on this path today.
+# Owner console defect D, REFRAMED TWICE.
 #
-# Contract: `_attachments_src` dedupes a TRUE duplicate (same attachment `id` reachable
-# twice, e.g. via two company scopes) down to one entry, and when two DIFFERENT ids share
-# a `filename`, both are kept and each entry's `filename` is disambiguated with its
-# `company` suffix (owner's own example: "TLLU4618098 - WH.xlsx (Mocha)") so neither is
-# silently dropped and neither reads as the other.
+# (owner rev 3, turn evidence) NOT a same-attachment duplicate: two DIFFERENT presigned
+# files legitimately share a filename under two different companies, and neither may be
+# dropped or read as the other.
+#
+# (review of #700, 6 Sep 2026) The first fix keyed on `entry["id"]` and `entry["company"]`,
+# and the PRODUCER emits neither. `sorento_crm_mcp/presenters.py::attach` builds exactly
+# `{url, filename, mimeType, attachmentType[, uploadedAt]}` - measured over 7402 attachment
+# entries in the capture corpus, zero with an id or a company - so that fix was dead code on
+# real data. These tests therefore use the REAL shapes and nothing else:
+#
+#   * the value on `outcome_fragment['central-exchange']` is the ANSWER ENVELOPE, and the
+#     list the executor sends from is `envelope.attachments` (`sub-send-attachments`' own
+#     `central-exchange` stub: `const a = n.first().json.attachments`);
+#   * identity is the `url` - the key the executor's `Remove Duplicates` node already uses;
+#   * the company is not on the entry, so it comes from the ROW that produced the file. The
+#     rows here are copied from capture `rs8a-t4-tierask-misroute.json`, which is the
+#     collision in the wild: one promotion flyer filename, two urls, a Mocha row and a
+#     Sorento row carrying that filename as their own value.
 # --------------------------------------------------------------------------- #
 
 
 class TestAttachmentDedupeAndFilenameDisambiguation:
-    def test_a_true_duplicate_same_id_twice_is_sent_once(self) -> None:
+    @staticmethod
+    def _row(company: str, value: str) -> dict:
+        return {
+            "fields": [
+                {"key": "company_name", "label": "Company", "value": company},
+                {"key": "promotion", "label": "Promotion", "value": value},
+            ]
+        }
+
+    def test_the_same_url_reachable_twice_is_sent_once(self) -> None:
         from app.services.chatbot.engine import _attachments_src
 
+        entry = {
+            "url": "https://cdn-sorento.com/promotion/7e5155f1/A3 Flyer.pdf",
+            "filename": "A3 Flyer.pdf",
+            "mimeType": "application/pdf",
+            "attachmentType": "Promotion",
+        }
         answer = {
             "outcome_fragment": {
-                "central-exchange": [
-                    {"id": "att-1", "filename": "spec-sheet.pdf", "company": "Sorento", "url": "s3://a"},
-                    {"id": "att-1", "filename": "spec-sheet.pdf", "company": "Sorento", "url": "s3://a"},
-                ]
+                "central-exchange": {
+                    "response": "Here you go.",
+                    "items": [self._row("Mocha", "A3 Flyer.pdf")],
+                    "attachments": [entry, dict(entry)],
+                }
             }
         }
         out = _attachments_src(answer)
-        assert isinstance(out, list) and len(out) == 1, (
-            "the SAME attachment id reachable twice (e.g. under two company scopes) must "
-            f"be sent once, not once per reachable path: {out!r}"
+        assert isinstance(out, dict), (
+            "the value handed back must stay the ENVELOPE the executor reads "
+            f"`.attachments` off, not a bare list: {out!r}"
+        )
+        assert len(out["attachments"]) == 1, (
+            "the SAME url reachable twice (e.g. under two company scopes) must be sent "
+            f"once, not once per reachable path: {out['attachments']!r}"
         )
 
-    def test_two_different_files_sharing_a_filename_are_both_kept_and_labelled_by_company(
-        self,
-    ) -> None:
-        """The exact reported shape: two DIFFERENT presigned files
-        ("TLLU4618098 - WH.xlsx"), different ids, different companies - Sorento's is
-        pending-allocation, Mocha's is allocated. Neither is a duplicate of the other and
-        neither may be dropped; each must read as its own company's file."""
+    def test_two_files_sharing_a_filename_are_labelled_from_their_own_rows(self) -> None:
+        """The real collision, from capture `rs8a-t4-tierask-misroute.json`: one flyer name,
+        two urls, and two rows - Mocha's and Sorento's - each carrying that filename as its
+        own value. Both files must send, and each must read as its own company's."""
         from app.services.chatbot.engine import _attachments_src
 
+        name = "MOCHA A3 Flyer 03082026_compressed.pdf"
         answer = {
             "outcome_fragment": {
-                "central-exchange": [
-                    {
-                        "id": "att-sorento-1",
-                        "filename": "TLLU4618098 - WH.xlsx",
-                        "company": "Sorento",
-                        "url": "s3://sorento/pending",
-                    },
-                    {
-                        "id": "att-mocha-1",
-                        "filename": "TLLU4618098 - WH.xlsx",
-                        "company": "Mocha",
-                        "url": "s3://mocha/allocated",
-                    },
-                ]
+                "central-exchange": {
+                    "response": "Here are the promotions.",
+                    "items": [self._row("Mocha", name), self._row("Sorento", name)],
+                    "attachments": [
+                        {
+                            "url": f"https://cdn-sorento.com/promotion/7e5155f1/{name}",
+                            "filename": name,
+                            "mimeType": "application/pdf",
+                            "attachmentType": "Promotion",
+                        },
+                        {
+                            "url": f"https://cdn-sorento.com/promotion/3c434a77/{name}",
+                            "filename": name,
+                            "mimeType": "application/pdf",
+                            "attachmentType": "Promotion",
+                        },
+                    ],
+                }
             }
         }
-        out = _attachments_src(answer)
-        assert isinstance(out, list) and len(out) == 2, (
+        out = _attachments_src(answer)["attachments"]
+        assert len(out) == 2, (
             f"both distinct files must be sent, never collapsed by filename alone: {out!r}"
         )
-        filenames = sorted(a.get("filename") for a in out)
-        assert filenames == [
-            "TLLU4618098 - WH.xlsx (Mocha)",
-            "TLLU4618098 - WH.xlsx (Sorento)",
+        assert [a["filename"] for a in out] == [
+            "MOCHA A3 Flyer 03082026_compressed (Mocha).pdf",
+            "MOCHA A3 Flyer 03082026_compressed (Sorento).pdf",
         ], (
-            "a filename collision across DIFFERENT ids/companies must be disambiguated "
-            f"with the company suffix on each entry, not collapsed or left identical: {out!r}"
+            "each file must be qualified with the company of the ROW that produced it, in "
+            f"row order, and the label must sit BEFORE the extension: {out!r}"
         )
+
+    def test_a_packing_list_is_claimed_by_the_row_whose_container_it_is_named_after(
+        self,
+    ) -> None:
+        """The owner's own example: "<container> - WH.xlsx" under two companies. The row
+        value is CONTAINED in the filename rather than equal to it, which is how a packing
+        list is named."""
+        from app.services.chatbot.engine import _attachments_src
+
+        def row(company: str) -> dict:
+            return {
+                "fields": [
+                    {"key": "company_name", "label": "Company", "value": company},
+                    {"key": "shipping_container_number", "label": "Container", "value": "TLLU4618098"},
+                ]
+            }
+
+        answer = {
+            "outcome_fragment": {
+                "central-exchange": {
+                    "items": [row("Sorento"), row("Mocha")],
+                    "attachments": [
+                        {"url": "s3://sorento/pending", "filename": "TLLU4618098 - WH.xlsx"},
+                        {"url": "s3://mocha/allocated", "filename": "TLLU4618098 - WH.xlsx"},
+                    ],
+                }
+            }
+        }
+        out = _attachments_src(answer)["attachments"]
+        assert [a["filename"] for a in out] == [
+            "TLLU4618098 - WH (Sorento).xlsx",
+            "TLLU4618098 - WH (Mocha).xlsx",
+        ], out
+
+    def test_an_unattributable_collision_is_left_exactly_as_it_arrived(self) -> None:
+        """No row claims the filename (35 of the corpus's 91 collisions carry no rows at
+        all), so nothing establishes which company either file belongs to. Labelling one of
+        them "Mocha" would be an assertion the data does not support - both go as they are,
+        and neither is dropped."""
+        from app.services.chatbot.engine import _attachments_src
+
+        answer = {
+            "outcome_fragment": {
+                "central-exchange": {
+                    "items": [],
+                    "attachments": [
+                        {"url": "s3://a/IAAU1689748 - WH.xlsx", "filename": "IAAU1689748 - WH.xlsx"},
+                        {"url": "s3://b/IAAU1689748 - WH.xlsx", "filename": "IAAU1689748 - WH.xlsx"},
+                    ],
+                }
+            }
+        }
+        out = _attachments_src(answer)["attachments"]
+        assert len(out) == 2
+        assert {a["filename"] for a in out} == {"IAAU1689748 - WH.xlsx"}
+
+    def test_the_casual_lane_envelope_passes_through_untouched(self) -> None:
+        """`central-exchange` on the low-signal lane is `{response}` with no attachments at
+        all, and the promotion answer's envelope carries other keys this must not disturb."""
+        from app.services.chatbot.engine import _attachments_src
+
+        central = {"response": "Hi! How can I help?"}
+        assert _attachments_src({"outcome_fragment": {"central-exchange": central}}) == central
+        assert _attachments_src({}) is None
 
 
 # --------------------------------------------------------------------------- #
