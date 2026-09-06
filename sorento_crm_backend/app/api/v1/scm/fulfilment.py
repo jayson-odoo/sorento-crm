@@ -770,6 +770,16 @@ class SpoLocationSplit(BaseModel):
     qty: float = Field(..., gt=0)
 
 
+class SpoTakeItem(BaseModel):
+    """One SO-covered take (R19/R20, replaces the plain `so_line_ids: list[str]` tick list):
+    `key` is a `so_coverage[].key`, `qty` is what the operator typed for it - or the cascade
+    default, on a row she never touched. Re-validated in `spo_conversion_service.create`
+    against that row's own outstanding and this line's own SPO qty; never trusted as sent."""
+
+    key: str
+    qty: float = Field(..., ge=0)
+
+
 class SpoLineConfirm(BaseModel):
     shipment_line_id: str
     qty: float = Field(0, ge=0)
@@ -785,10 +795,11 @@ class SpoLineConfirm(BaseModel):
     # is what every caller before this ask sent; a LIST narrows it, and the SPO quantity
     # falls to what those takes cover.
     po_take_ids: Optional[list[str]] = None
-    # Which demand this SPO is being pointed at - `so_coverage[].key` (F7, AC-G3). The
-    # project half is written as links; the retail half steers the split on screen and has
-    # no row of its own to hang a link on.
-    so_line_ids: list[str] = Field(default_factory=list)
+    # Which demand this SPO is being pointed at, AND how much of it (R19/R20, AC-I2/AC-I3).
+    # The project half is written onto `order_inquiry_links.qty` outright; the retail half
+    # onto `scm.order_link_claim` (`source='planner'`) - see
+    # `spo_conversion_service.create`'s docstring.
+    so_takes: list[SpoTakeItem] = Field(default_factory=list)
 
 
 class SpoCreateRequest(BaseModel):
@@ -1094,6 +1105,58 @@ def create_spo(
     out = spo_conversion_service.create(
         db,
         shipment_id,
+        [ln.model_dump() for ln in body.lines],
+        actor=_actor(current_user),
+        actor_user_id=current_user.get("id"),
+    )
+    db.commit()
+    return out
+
+
+@router.get("/inbound-shipments/{shipment_id}/spo/{purchase_order_id}/planner-state")
+def spo_planner_state(
+    shipment_id: str,
+    purchase_order_id: str,
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """What the planner re-opens an EXISTING SPO with (R24, AC-K1) - "Edit in planner", from
+    the Created SPOs grid or from the SPO document itself.
+
+    One entry per line of THIS SPO, each carrying both the `spo-suggestion` shape above (so
+    the PO-takes and SO-covered lightboxes work unchanged) and the state it was persisted
+    with: `spo_qty`, `location_splits`, `po_take_ids`, `so_takes`, `received_qty`. THIS
+    SPO's own claims are handed back - its PO pull reads open again, its ticked demand
+    outstanding again - because a state that reads as taken by somebody else cannot be
+    re-ticked. 404 when the id does not name one of this shipment's own SPOs; 409 when it
+    names a purchase order Create SPO did not mint.
+    """
+    return spo_conversion_service.planner_state(db, shipment_id, purchase_order_id)
+
+
+@router.put("/inbound-shipments/{shipment_id}/spo/{purchase_order_id}")
+def revise_spo(
+    shipment_id: str,
+    purchase_order_id: str,
+    body: SpoCreateRequest,
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Save the planner's edits to an SPO that already exists (R24, AC-K2..AC-K4).
+
+    The SAME body Create SPO posts, so one screen builds one payload for both actions. Only
+    lines currently ON this SPO may appear (422 otherwise - a new line is a new Create SPO
+    run, with its own number); a line left out, or sent `include: false`, is unwound for
+    that line alone. Every guard `create` applies is re-applied, plus one of this action's
+    own: a quantity that would drop an allocation below what it has already RECEIVED is
+    refused (422) naming the product and the warehouse, and nothing at all is written. The
+    SPO number and its header row are never touched. Same permission as `create_spo` -
+    editing a PO-book write is the same class of write as making one.
+    """
+    out = spo_conversion_service.revise(
+        db,
+        shipment_id,
+        purchase_order_id,
         [ln.model_dump() for ln in body.lines],
         actor=_actor(current_user),
         actor_user_id=current_user.get("id"),

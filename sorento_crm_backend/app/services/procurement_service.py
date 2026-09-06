@@ -1033,6 +1033,12 @@ class InboundShipmentService:
         method returned at `if not lines` and left a fully received container reading
         `in_transit` forever, while the detail page (a joined relationship load) showed
         the very lines it could not find.
+
+        CAVEAT (S4, review round 1): `spo_allocated_quantity` is summed per PRODUCT, not
+        per line, so a container carrying the same product on two lines gives BOTH lines
+        the whole product's allocated figure. Pre-existing and left as is here - the
+        column has one writer and changing what it means is a change to every reader of
+        it. Backlogged in `PLAN-scm-purchasing-consolidation-6sep.md` (Deviations, lane D).
         """
         shipment = (
             self.db.query(InboundShipment)
@@ -2335,6 +2341,131 @@ class SPOAllocationService:
                         "picking_date": ph_date,
                     }
                 )
+
+        # R23, AC-J2: which purchase-order line each allocation PULLED from, via
+        # `SPOAllocation.po_line_id`. No `line_no` on `purchase_order_lines` to name (the
+        # model carries no per-line ordinal), so that field is always null - the FE renders
+        # the PO number as the link's own label either way.
+        po_line_ids = {str(a.po_line_id) for a, *_ in rows if a.po_line_id}
+        po_info: Dict[str, dict] = {}
+        if po_line_ids:
+            from app.models.procurement import PurchaseOrder as _PurchaseOrder
+
+            for pol_id, po_id, po_number in (
+                self.db.query(
+                    PurchaseOrderLine.id, _PurchaseOrder.id, _PurchaseOrder.po_number
+                )
+                .join(_PurchaseOrder, _PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+                .filter(PurchaseOrderLine.id.in_(po_line_ids))
+                .all()
+            ):
+                po_info[str(pol_id)] = {
+                    "po_number": po_number,
+                    "purchase_order_id": str(po_id),
+                    "line_no": None,
+                }
+
+        # R23, AC-J2: every sales order this allocation covers - `order_inquiry_links`
+        # (project, R19's ticks already write these) keyed by `spo_allocation_id`, and the
+        # RETAIL half off each SPO line's own `source_ref.so_coverage` (R20 as amended,
+        # review round 1): that JSON is the authoritative record of a retail take - it is
+        # what `create` and `revise` write, and what `_retail_coverage`, `coverage_for_so_
+        # lines` and `planner_state` all read - while `scm.order_link_claim(source=
+        # 'planner')` is a best-effort audit echo beside it. Reading the claim here made
+        # this document disagree with the planner over the same take twice: a claim refused
+        # at write time (that write cannot fail the confirm) showed nothing covered, and the
+        # claim's own identity is one row per sales-order line, so two shipment lines of the
+        # same product taking one sales order kept only the second.
+        #
+        # `source_ref` hangs off the SPO LINE, one level above the allocation, so a line
+        # split across warehouses shows its coverage on the FIRST of its allocation rows -
+        # the same "first if several" `coverage_for_so_lines` already applies to the mirror
+        # image of this join, and the only reading that lets the header's `so_qty` foot.
+        so_covered_by_alloc: Dict[str, list] = {}
+        if alloc_ids:
+            from app.models.order import Customer as _Customer
+            from app.models.order import SalesOrder as _SalesOrder
+            from app.models.order import SalesOrderLine as _SalesOrderLine
+            from app.models.project_so import (
+                OrderInquiry,
+                OrderInquiryLink,
+                OrderInquiryRow,
+                ProjectSalesOrder,
+            )
+            from app.models.projects import Project as _Project
+
+            for spo_alloc_id, doc_no, provisional, link_qty, project_title in (
+                self.db.query(
+                    OrderInquiryLink.spo_allocation_id,
+                    ProjectSalesOrder.autocount_doc_no,
+                    ProjectSalesOrder.provisional_ref,
+                    OrderInquiryLink.qty,
+                    _Project.title,
+                )
+                .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+                .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+                .join(
+                    ProjectSalesOrder,
+                    ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
+                )
+                .outerjoin(_Project, _Project.id == ProjectSalesOrder.project_id)
+                .filter(OrderInquiryLink.spo_allocation_id.in_(alloc_ids))
+                .all()
+            ):
+                # The SALES side's own document number (`_project_coverage`'s own rule) -
+                # `OrderInquiryLink.document` is the PURCHASE side's number instead (already
+                # named by THIS document's own `spo_number`), so it is never what "SO
+                # covered" means to state here.
+                so_covered_by_alloc.setdefault(str(spo_alloc_id), []).append(
+                    {
+                        "document": doc_no or provisional,
+                        "customer": project_title,
+                        "demand_class": "project",
+                        "qty": float(link_qty or 0),
+                    }
+                )
+            from app.services.scm import spo_conversion_service as _spo_conv
+
+            # The FIRST allocation of each SPO line, in the order this document's own query
+            # walked them (`spo_line_number`, then id) - see the note above.
+            first_alloc_by_po_line: Dict[str, str] = {}
+            for allocation, *_ in rows:
+                if allocation.po_line_id:
+                    first_alloc_by_po_line.setdefault(
+                        str(allocation.po_line_id), str(allocation.id)
+                    )
+            coverage_rows = _spo_conv._spo_so_coverage_rows(
+                self.db, po_line_ids=list(first_alloc_by_po_line.keys())
+            )
+            so_line_ids = {so_line_id for so_line_id, *_ in coverage_rows}
+            so_info: Dict[str, tuple] = {}
+            if so_line_ids:
+                for sl_id, so_number, customer_name in (
+                    self.db.query(
+                        _SalesOrderLine.id,
+                        _SalesOrder.so_number,
+                        _Customer.customer_name,
+                    )
+                    .join(_SalesOrder, _SalesOrder.id == _SalesOrderLine.sales_order_id)
+                    .outerjoin(_Customer, _Customer.id == _SalesOrder.customer_id)
+                    .filter(_SalesOrderLine.id.in_(so_line_ids))
+                    .all()
+                ):
+                    so_info[str(sl_id)] = (so_number, customer_name)
+            for so_line_id, _spo_number, cover_qty, po_line_id, _po_id in coverage_rows:
+                allocation_id = first_alloc_by_po_line.get(po_line_id)
+                if not allocation_id:
+                    continue
+                so_number, customer_name = so_info.get(so_line_id, (None, None))
+                so_covered_by_alloc.setdefault(allocation_id, []).append(
+                    {
+                        "document": so_number,
+                        "customer": customer_name,
+                        "demand_class": "retail",
+                        "qty": float(cover_qty or 0),
+                    }
+                )
+
         supplier_counts: Dict[Optional[str], int] = {}
         for allocation, shipment, supplier_name, is_open in rows:
             allocated = allocation.allocated_quantity or 0
@@ -2380,6 +2511,8 @@ class SPOAllocationService:
                     else None,
                     grns=line_grns.get(str(allocation.id), []),
                     line_status=allocation.line_status,
+                    po=po_info.get(str(allocation.po_line_id)) if allocation.po_line_id else None,
+                    so_covered=so_covered_by_alloc.get(str(allocation.id), []),
                 )
             )
 
@@ -2411,6 +2544,31 @@ class SPOAllocationService:
         majority_name = entries[0][0] if entries else None
         extra_count = max(len(entries) - 1, 0)
 
+        linked_grns = self.get_linked_grns_for_spo(spo_number)
+
+        # R23, AC-J3: the header linkage strip - rollups across every line on this
+        # document. `packing_list` names the FIRST shipment any line landed off (a document
+        # is routinely one container; a split across several picks whichever line the
+        # query met first, same "first if several" reasoning `get_document`'s own GRN
+        # fallback already uses).
+        so_covered_all = [c for line in lines for c in (line.so_covered or [])]
+        packing_list = None
+        for allocation, shipment, *_ in rows:
+            if shipment is not None:
+                packing_list = {
+                    "id": str(shipment.id),
+                    "container": shipment.shipping_container_number,
+                }
+                break
+        linkage = {
+            "po_count": len({p["purchase_order_id"] for p in po_info.values()}),
+            "line_count": len(lines),
+            "so_count": len(so_covered_all),
+            "so_qty": sum(c.qty for c in so_covered_all),
+            "packing_list": packing_list,
+            "grn_count": len(linked_grns),
+        }
+
         return SPODocument(
             spo_number=spo_number,
             doc_date=doc_date,
@@ -2425,7 +2583,8 @@ class SPOAllocationService:
             # The GRNs received against this document - the retired per-allocation
             # page's Related Documents capability, now at its natural (document)
             # grain. Same key-matched reader the old page used.
-            linked_grns=self.get_linked_grns_for_spo(spo_number),
+            linked_grns=linked_grns,
+            linkage=linkage,
         )
 
     def delete_document(self, spo_number: str) -> dict:
@@ -2496,6 +2655,7 @@ class SPOAllocationService:
         created_by: str,
         *,
         forward_match: bool = True,
+        commit: bool = True,
     ):
         """Create a new SPO allocation.
 
@@ -2505,6 +2665,13 @@ class SPOAllocationService:
         written first, before the one that actually covers its warehouse exists -
         so that caller suppresses it here and fires it once, per SPO number, when
         the whole file has landed.
+
+        ``commit=False`` (S3, review round 1) FLUSHES instead, leaving the commit to
+        the caller: ``spo_conversion_service.revise`` re-deals a whole SPO's rows in
+        one transaction, and a commit per row meant a refusal on the third row left
+        the first two standing - a half-applied SPO, which is the one thing that
+        action promises never to leave behind. The shipment-line refresh is the
+        caller's too then (it commits, and ``revise`` runs it once at the end).
         """
         allocation_dict = allocation_data.model_dump()
         allocation_dict["receipt_status"] = _normalize_spo_receipt_status(
@@ -2546,10 +2713,13 @@ class SPOAllocationService:
                 self.db, allocation, allocation.container_number
             )
         self.db.add(allocation)
-        self.db.commit()
-        self.db.refresh(allocation)
-        self._capture_incoming_cost(allocation)
-        if allocation.inbound_shipment_id:
+        if commit:
+            self.db.commit()
+            self.db.refresh(allocation)
+        else:
+            self.db.flush()
+        self._capture_incoming_cost(allocation, commit=commit)
+        if commit and allocation.inbound_shipment_id:
             # An SPO document has no shipment until somebody books a container for it, and
             # there is nothing to refresh until then.
             InboundShipmentService(self.db).refresh_shipment_line_statuses(
@@ -2567,7 +2737,9 @@ class SPOAllocationService:
     def _next_spo_line_number(self, spo_number: str) -> int:
         return next_spo_line_number(self.db, spo_number)
 
-    def _capture_incoming_cost(self, allocation: SPOAllocation) -> None:
+    def _capture_incoming_cost(
+        self, allocation: SPOAllocation, *, commit: bool = True
+    ) -> None:
         """Stamp the packing-list cost, in its currency, on the inbound shipment line.
 
         AC-C3.2. The allocation is the moment the incoming cost becomes a fact about this
@@ -2591,6 +2763,12 @@ class SPOAllocationService:
 
         Best-effort: this runs AFTER the allocation has committed, so a failure here must
         not turn a successful write into a 500 for the caller.
+
+        ``commit=False`` (S3, review round 1) means the CALLER owns the transaction (the
+        one batch ``spo_conversion_service.revise`` writes): the stamp is flushed with the
+        rest of it, and a failure is re-raised rather than rolled back - a rollback here
+        would silently discard the caller's whole batch, and swallowing it would leave the
+        caller holding a session it cannot flush anyway.
         """
         try:
             line = (
@@ -2653,13 +2831,18 @@ class SPOAllocationService:
 
             line.currency = currency
             line.updated_at = datetime.utcnow()
-            self.db.commit()
+            if commit:
+                self.db.commit()
+            else:
+                self.db.flush()
         except Exception:  # noqa: BLE001 - best-effort side effect, see docstring
             logger.warning(
                 "Failed to capture the incoming cost for SPO allocation %s",
                 getattr(allocation, "id", None),
                 exc_info=True,
             )
+            if not commit:
+                raise
             self.db.rollback()
 
     def upsert_allocation(

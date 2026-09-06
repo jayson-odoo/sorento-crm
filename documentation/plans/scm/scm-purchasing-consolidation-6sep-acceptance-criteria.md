@@ -1,10 +1,10 @@
 # UAC - purchasing consolidation batch (6 Sep 2026)
 
-Plan: `PLAN-scm-purchasing-consolidation-6sep.md`. Status: markup round 1 applied 6 Sep 2026
-(Q1-Q5 ruled, AC-A1 / AC-D3 / AC-D4 / AC-E4 / AC-F4 revised). **Integrated A+B, C and D
-pending.** Lane A (groups A, B, C, H, AC-J1) and lane B (groups D, E) built, review round 1
-applied on both, lane A browser-verified. Groups F, G, I, the rest of J, K, L (lanes C/D)
-still open.
+Plan: `PLAN-scm-purchasing-consolidation-6sep.md`. Status: **Integrated A+B+D, C pending.**
+Markup round 1 applied 6 Sep 2026 (Q1-Q5 ruled, AC-A1 / AC-D3 / AC-D4 / AC-E4 / AC-F4
+revised). Lane A (groups A, B, C, H, AC-J1), lane B (groups D, E) and lane D (groups I, J, K)
+built, review round 1 applied on all three, lane A browser-verified. Groups F, G and L
+(lane C) still open.
 
 ## Journey
 

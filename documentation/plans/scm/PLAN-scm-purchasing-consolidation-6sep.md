@@ -1,11 +1,11 @@
 # PLAN - purchasing consolidation batch (6 Sep 2026)
 
-**Status:** Markup round 1 applied (captain, 6 Sep 2026): Q1-Q5 ruled, R1 and R7 revised,
-R11 clarified. UAC:
+**Status:** Integrated A+B+D, C pending. Markup round 1 applied (captain, 6 Sep 2026): Q1-Q5
+ruled, R1 and R7 revised, R11 clarified. UAC:
 `scm-purchasing-consolidation-6sep-acceptance-criteria.md`. Lavish page:
-`mockups/purchasing-consolidation-6sep-plan.html`. **Integrated A+B, C and D pending.** Lane A
-(section 13: 1, 2 (R3 only), 3, 8, 10 (R22)) and lane B (sections 4, 5) built, review round 1
-applied on both, lane A browser-verified.
+`mockups/purchasing-consolidation-6sep-plan.html`. Lane A (section 13: 1, 2 (R3 only), 3, 8,
+10 (R22)), lane B (sections 4, 5) and lane D (sections 9, 10 (R21), 11) built, review round 1
+applied on all three, lane A browser-verified.
 
 Feedback given 6 Sep on production (`fe-sorento.foundryx.my`). Twelve asks, four lanes, four
 PRs. Every "what exists" line below was measured on `origin/main` `cc0789971` (6 Sep), not on
@@ -478,3 +478,161 @@ No open questions remain. Waiting for GO.
 - **`consolidated_packing_list.build()` keeps emitting `costs` in its JSON payload.** The plan
   offered either choice ("may keep emitting costs ... or drop it; pick the smaller diff"); keeping
   it is the smaller diff and harmless - only `to_xlsx()` (the export) stops reading it.
+
+## Deviations (lane D)
+
+Measured while implementing sections 9-11 (D1/D2 only; D3 "Edit in planner" untouched by
+this lane).
+
+- **`scm.order_link_claim` had no `qty` column at all** (R20 assumed it might need one only
+  "if a NOT NULL column forces it"; it forces one regardless, since a planner claim is the
+  first source that states a quantity at write time). Migration `486_scm_claim_qty_planner`
+  adds `qty NUMERIC(15,4)`, nullable (every other source leaves it null), plus `planner` to
+  the `source` CHECK constraint.
+- **`SPODocumentLine.po.line_no` is always null** - `purchase_order_lines` carries no
+  per-line ordinal to name (measured against the model, not assumed). The FE type keeps the
+  field (`number | null`) so a future column can fill it without a contract change; today's
+  reader renders the PO number as the link label either way.
+- **The retail claim's `item_code`** is the shipment line's own PRODUCT's `product_code`
+  (`products.product_code`), not `inbound_shipment_lines.item_code` - that column does not
+  exist on the model (the plan's phrasing implied it did). Consistent with every other
+  claim source, which keys `item_code` on the product identity.
+- **Header linkage strip (AC-J3):** "PO n" and "SPO lines n" are plain text (no PO-list
+  filter-by-SPO-number route exists, per the plan's own "else no link" allowance). "GRN n"
+  links only when exactly one GRN is linked (the header's own "Goods receipts" field already
+  lists every GRN with its own link when there are several, so the strip does not duplicate
+  that control). "Packing list" names the FIRST shipment among the document's lines (a
+  document is routinely one container; a rare split picks whichever line the query meets
+  first, the same "first if several" reasoning `get_document`'s own GRN fallback already
+  uses).
+- **SO covered tabs partition by `kind`** (`project` vs `retail`, the family a coverage row
+  came from), not `demand_class` (what the SO itself is classified as, which can disagree
+  with `kind` - see `SoCoverageRow`'s own doc comment). This reads the UAC's "one tab
+  Project, one tab Retail" as a family split, matching how `_so_coverage`'s own server-side
+  merge already groups the two.
+
+Measured while implementing section 11 (D3, "Edit in planner").
+
+- **`spo_qty` is the SPO line's own `purchase_order_lines.qty_ordered`, not the sum of its
+  allocated quantities.** A line whose splits were left empty writes no `spo_allocations`
+  row at all (`create`'s own "absent/empty means no allocation is written"), so a summed
+  figure would read 0 for an SPO line that plainly carries a quantity. Wherever splits
+  exist the two agree, because `create` refuses a split that does not add up to the line.
+- **The RETAIL half of `so_takes` is read from the SPO line's own `source_ref.so_coverage`,
+  not from `scm.order_link_claim(source='planner')`.** `_retail_coverage` nets a coverage
+  row against `source_ref` (through `_spo_cover_by_so_line`), and the claim write is
+  best-effort - a claim refused at create time would then be missing from the state while
+  the row it covers still read as spent. The PROJECT half IS read from
+  `projects.order_inquiry_links`, for the mirror-image reason: that is the record
+  `_project_coverage` nets against. Each half is read from the row its own reader trusts.
+- **"PO header totals recomputed" has nothing to recompute.** `purchase_orders` carries no
+  stored total; `_existing_spos` sums `qty_ordered` over the header's lines on read, so the
+  header total follows its lines with no second write.
+- **`planner_state` hands THIS SPO's own claims back out of every "already claimed"
+  figure** (not in R24 as written, and necessary): `create` advanced the source PO line and
+  netted the demand it was pointed at, so a plain `suggest` reads the SPO being edited as
+  taken by somebody else and its own state cannot be re-ticked. `remaining_qty` gains its
+  `qty_ordered`, a source line's `open_qty` gains its pull (`_match_takes_for_line`'s new
+  `restore`), a coverage row's `qty` gains its take while `taken_qty` / `taken_by` lose it,
+  and `_validate_so_takes` takes an `own_taken` map for the same reason. Any OTHER SPO's
+  claim is untouched.
+- **Deleting an `order_inquiry_links` row obliges a `refresh_link_state` call.** The
+  inquiry row's `state` is DERIVED from its links, and `_assert_linkable` refuses anything
+  but `raised` / `partly_linked` - so re-saving the SAME project tick was refused (409,
+  `order_inquiry_not_raised`) until `revise` re-derived the state between the delete and
+  the re-link. `unwind` does not hit this because it never links anything afterwards, so
+  this is a `revise`-only addition, not a change to `unwind`.
+- **Two refusals R24 does not name.** An SPO cannot be emptied by a revision (422) - Delete
+  is the action for that, and a header with no lines is a document that says nothing; and a
+  shipment line that is NOT on this SPO cannot be added by editing it (422) - growing a
+  container's conversion is what a second Create SPO run is for, and it mints its own
+  number.
+- **"Nothing written" on the received guard is achieved by validating first, not by one
+  database transaction.** `SPOAllocationService.create_allocation` commits (as `create`
+  already relies on), so `revise` runs every guard - split sums, PO take caps,
+  `_validate_so_takes`, and the received check per `(shipment line, warehouse)` - over
+  every line in the body BEFORE the first write. AC-K3's observable promise holds: a
+  refusal leaves a valid change on another line of the same body unapplied.
+- **AC-K5 is a page-header action, not a Lines-tab control.** `SPODocumentDetail`'s header
+  renders on both tabs, so one button serves the Lines tab and the Header tab; a second
+  control inside the Lines grid would be the same action twice. It is HIDDEN unless the
+  document's lines agree on exactly one packing list AND one purchase order - which is what
+  a CRM SPO always is (one `create` run, one header per supplier, one container). An
+  imported or split document has no single SPO for the planner to load, so it gets no
+  action rather than a link pointing at whichever half the query met first.
+
+### Review round 1 (captain's rulings + what changed, 6 Sep 2026)
+
+Two rulings, then the findings they settle:
+
+- **R20 amended.** The authoritative record of a RETAIL take is the SPO line's own
+  `purchase_order_lines.source_ref.so_coverage` - written by `create` and `revise`, read by
+  `_retail_coverage`, `coverage_for_so_lines` and `planner_state`. `scm.order_link_claim
+  (source='planner')` stays as an AUDIT ECHO beside it: it is still written, still cleaned up
+  by `revise` and (now) by `unwind`, and nothing reads it for quantities. R20's original
+  "retail rows write `order_link_claim`" stands as a write; what it is NOT is the record.
+- **S3.** `revise` writes its new allocation rows in ONE batch: `forward_match=False`, no
+  `create_allocation` commit inside the loop, one commit at the end, no savepoint.
+
+Applied:
+
+- **B1/B2.** `SPOAllocationService.get_document` reads the retail half of `so_covered` from
+  `spo_conversion_service._spo_so_coverage_rows(db, po_line_ids=...)`, joined
+  `po_line_id -> spo_allocations.po_line_id`, and `linkage.so_count` / `so_qty` follow it.
+  Reading the claim made the document disagree with the planner twice over: a claim refused at
+  write time (that write cannot fail the confirm) showed nothing covered, and the claim's own
+  identity is one row per sales-order line, so two shipment lines of one product taking the
+  same sales order kept only the later write. `source_ref` hangs off the SPO LINE, one level
+  above the allocation, so a line split across warehouses shows its coverage on the FIRST of
+  its allocation rows - the same "first if several" `coverage_for_so_lines` already applies to
+  the mirror image of this join, and the only reading that lets `so_qty` foot.
+- **B3.** `unwind` deletes this SPO's `OrderLinkClaim(source='planner')` rows beside the
+  `OrderInquiryLink` delete, before the allocations they name go.
+- **B4.** `create` and `revise` refuse (422) a line that carries `so_takes` with no location
+  split, naming the product: "<code> needs a location before it can cover sales orders". Every
+  link a confirm writes hangs off an allocation, and a line with no split writes none, so the
+  takes were dropped in silence. The planner mirrors it: Create SPO / Save changes disabled
+  with the same sentence, naming the row.
+- **S1.** The SO-covered picker's footer totals are read through refs, so the frozen columns
+  memo prints the live `totalQty` / `totalTaken`.
+- **S2.** `_validate_so_takes` takes a `claimed` accumulator spanning every line of ONE request
+  and subtracts it from each row's outstanding, in both `create` and `revise`. Two lines of one
+  product can now SHARE a row's outstanding but cannot each be given all of it. On the `revise`
+  path the guard is present but not reachable end to end: one SPO header is one supplier, and
+  `uk_inbound_shipment_lines_ship_prod_sup` forbids one container carrying one product from one
+  factory twice, so a revision body never holds two lines of the same product. The `create`
+  path (several suppliers, one confirm) is where it bites, and where the test lives.
+- **S3.** Per the ruling. `SPOAllocationService.create_allocation` gains `commit=False`
+  (flush, no shipment-line refresh, cost capture flushed with it); `_write_allocations` gains
+  `commit=False` (no per-row commit, no forward-match sweep, `company_id` returned so the
+  caller can fire the sweep after its own commit); `revise` commits once, through
+  `refresh_shipment_line_statuses`, and then forward-matches once for the document.
+- **S4.** No code change. `refresh_shipment_line_statuses` carries a caveat comment, and
+  BL-060 in `documentation/backlogs/backlog.md` records the defect:
+  `spo_allocated_quantity` is summed per PRODUCT, not per shipment line.
+- **S5.** Save changes is disabled when no line is left included, with "An SPO has to keep at
+  least one line - delete it instead" - the sentence the server already refuses with.
+- **S6/S7.** The picker's tabs open sorted by Delivery date ascending and re-sort on a header
+  click (AC-I4, now under test), and it reports the order it is SHOWING (project tab then
+  retail, each in its own sort) through `onOrderChange`. The planner's Take cascade walks that
+  order, so "the rows after the one she edited" means the rows after it ON SCREEN. A row a
+  filter has hidden keeps the server's own place, at the end of the walk.
+- **S8.** The SPO document's "Edit in planner" links to
+  `/procurement-management/packing-lists/{shipment}/spo?edit={po}` - the planner's own route,
+  which `?tab=spo` was not.
+- **Nits.** The `useSearchParams` consumer on that page sits under a `Suspense` boundary;
+  `SPODocumentLineSOCovered` is a named FE interface with `document: string | null` (the dash
+  fallback the picker already renders); `planner_state` hands back only THIS line's own take
+  when it strips `taken_by` (one occurrence, so a SIBLING line of the same SPO covering the
+  same row is still named); `_write_allocations` reports the ROUNDED integer that was actually
+  written, the same figure `revise`'s update branch reports.
+
+Two more deviations this round makes explicit, neither a change of behaviour:
+
+- **The `Class` column of the SO-covered picker is not sortable** (AC-I4 names the other seven
+  columns). It paints `demand_class`, which the tab strip has already partitioned by `kind`, so
+  sorting it inside a tab would order a column that reads almost the same value all the way
+  down.
+- **`so_line_ids` is gone from the confirm payload**, replaced by `so_takes: [{key, qty}]`
+  (R19). Nothing else sent it: the planner is its only caller, and the service's own validation
+  is what turns a key into a quantity.

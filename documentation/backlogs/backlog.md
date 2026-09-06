@@ -196,3 +196,13 @@ removed copy, for whoever restores a UI for them:
   a customer whose account code is longer than their name, or any second reader that needs the
   match field. Fix: carry `match_field` through the gate and test on it, deleting the length
   tie-break. | `plans/chatbot/PLAN-chatbot-turn-engine.md` | Low | Open |
+- **BL-062** (2026-09-06, lane D review round 1, S4): `InboundShipmentService.refresh_shipment_
+  line_statuses` sums `spo_allocated_quantity` per PRODUCT, so a container carrying the same
+  product on two lines (two factories) gives BOTH lines the whole product's allocated figure -
+  each line then reads over-allocated and the container's own line statuses follow the wrong
+  number. Pre-existing, and unchanged by lane D. **Trigger:** a packing list with one product
+  from two suppliers is converted, and the line statuses disagree with the SPO. Fix: key the
+  rollup on the shipment LINE (through `spo_allocations.po_line_id` ->
+  `shipment_line_spo_link.inbound_shipment_line_id`, the chain `_own_state` already walks)
+  rather than on the product, and check every reader of the column. |
+  `plans/scm/PLAN-scm-purchasing-consolidation-6sep.md` | Medium | Open |

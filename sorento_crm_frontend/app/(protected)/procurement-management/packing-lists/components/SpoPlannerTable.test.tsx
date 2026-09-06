@@ -28,12 +28,18 @@ vi.mock('@/lib/toast', () => ({
 
 const suggestionFn: (...args: unknown[]) => Promise<unknown> = () => Promise.resolve(state.suggestion);
 
+const plannerStateFn: (...args: unknown[]) => Promise<unknown> = () =>
+  Promise.resolve(state.plannerState);
+
 const state = {
   suggestion: null as unknown,
   suggestionFn,
   create: vi.fn(),
   deleteSpo: vi.fn(),
   worksheet: vi.fn(),
+  plannerState: null as unknown,
+  plannerStateFn,
+  revise: vi.fn(),
 };
 
 /** The two lightbox bodies that FETCH (On hand, Incoming SPO) - mocked at the hook, so these
@@ -53,6 +59,8 @@ vi.mock('@/app/(protected)/scm/services/fulfilmentService', () => ({
   createSpo: (...args: unknown[]) => state.create(...args),
   deleteSpo: (...args: unknown[]) => state.deleteSpo(...args),
   downloadSpoWorksheet: (...args: unknown[]) => state.worksheet(...args),
+  getSpoPlannerState: (...args: unknown[]) => state.plannerStateFn(...args),
+  reviseSpo: (...args: unknown[]) => state.revise(...args),
 }));
 
 import { toast } from '@/lib/toast';
@@ -72,11 +80,11 @@ function suggestion(over: Record<string, unknown> = {}) {
   };
 }
 
-function renderTable() {
+function renderTable(editPoId: string | null = null) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <SpoPlannerTable shipmentId="sh-1" />
+      <SpoPlannerTable shipmentId="sh-1" initialEditPurchaseOrderId={editPoId} />
     </QueryClientProvider>,
   );
 }
@@ -93,6 +101,20 @@ beforeEach(() => {
     deleted_allocation_count: 0,
   });
   state.worksheet = vi.fn().mockResolvedValue(undefined);
+  state.plannerState = null;
+  state.plannerStateFn = () => Promise.resolve(state.plannerState);
+  state.revise = vi.fn().mockResolvedValue({
+    shipment_id: 'sh-1',
+    shipment_number: 'ABCU1000001',
+    purchase_order_id: 'po-1',
+    po_number: 'CRM-SPO-0001',
+    updated_line_count: 1,
+    removed_line_count: 0,
+    allocations: [],
+    removed_allocation_count: 0,
+    restored_po_line_count: 1,
+    demand_links: [],
+  });
   useLocationStock.mockReturnValue({ data: undefined, isLoading: false });
   useContainerRequestDrill.mockReturnValue({
     data: { kind: 'spo', rows: [], total: 0, history: [] },
@@ -471,6 +493,7 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     await openSoDrill();
 
     expect(screen.getByRole('checkbox', { name: 'Cover SI26-0100' })).toBeChecked();
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /retail/i }), { button: 0, ctrlKey: false });
     expect(screen.getByRole('checkbox', { name: 'Cover SO-2201' })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: 'Cover SO-2202' })).not.toBeChecked();
   });
@@ -498,12 +521,16 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
       { warehouse_id: 'wh-1', qty: 70 },
       { warehouse_id: 'wh-2', qty: 30 },
     ]);
-    expect(lines[0].so_line_ids).toEqual(['project:row-1', 'retail:sol-9']);
+    expect(lines[0].so_takes).toEqual([
+      { key: 'project:row-1', qty: 40 },
+      { key: 'retail:sol-9', qty: 30 },
+    ]);
   });
 
   it('re-splits when a tick changes', async () => {
     renderTable();
     await openSoDrill();
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /retail/i }), { button: 0, ctrlKey: false });
     fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SO-2201' }));
     await closeDrill();
     await createSpo();
@@ -512,13 +539,14 @@ describe('F7 - the SPO planner chooses its POs and its SOs', () => {
     const [, lines] = state.create.mock.calls[0];
     // Only the project row is ticked now: 40 at BRW, and 60 unassigned at the same BRW.
     expect(lines[0].location_splits).toEqual([{ warehouse_id: 'wh-1', qty: 100 }]);
-    expect(lines[0].so_line_ids).toEqual(['project:row-1']);
+    expect(lines[0].so_takes).toEqual([{ key: 'project:row-1', qty: 40 }]);
   });
 
   it('says nothing about a part-covered order, and Create SPO stays enabled (AC-A2)', async () => {
     renderTable();
     await openSoDrill();
 
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /retail/i }), { button: 0, ctrlKey: false });
     fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SO-2202' }));
     await closeDrill();
 
@@ -637,6 +665,7 @@ describe('F7 - the SO-covered cell reads the same arithmetic Create SPO sends', 
 
     // 12 to the first, 7 of the second's 90 - and the third is out of reach entirely.
     expect(screen.getByRole('checkbox', { name: 'Cover SI26-0100' })).toBeChecked();
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /retail/i }), { button: 0, ctrlKey: false });
     expect(screen.getByRole('checkbox', { name: 'Cover SO-2201' })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: 'Cover SO-2202' })).not.toBeChecked();
   });
@@ -646,6 +675,7 @@ describe('F7 - the SO-covered cell reads the same arithmetic Create SPO sends', 
     await screen.findByTitle(/which demand this spo is for/i);
     fireEvent.click(screen.getByTitle(/which demand this spo is for/i));
 
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /retail/i }), { button: 0, ctrlKey: false });
     fireEvent.click(screen.getByRole('checkbox', { name: 'Cover SO-2202' }));
     await closeDrill();
 
@@ -1251,23 +1281,32 @@ describe('R21 - the four figures open the shared lightbox', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
-  it('SO covered lists project first then retail, with the take per row and the unassigned footer (AC-G2, AC-G3)', async () => {
+  it('SO covered tabs Project and Retail, with the take per row and the unassigned footer shared (R18, AC-G2, AC-G3, AC-I1)', async () => {
     renderTable();
 
     const dialog = await openFigure(SO);
 
-    const rows = within(dialog).getAllByRole('row');
-    expect(rows[1].textContent).toContain('SI26-0100');
-    expect(rows[2].textContent).toContain('SO-2201');
-    expect(rows[3].textContent).toContain('SO-2202');
-    // Open / Take per row, off the one walk: 40 and 30 are served in full, and the order
-    // nobody ticked gets nothing. Column 6 is S5's new Taken column (all dashes here -
-    // nothing in this fixture is covered by another SPO); Take moved to 7 to make room.
-    expect(rows[1].querySelectorAll('td')[7].textContent).toBe('40');
-    expect(rows[3].querySelectorAll('td')[5].textContent).toBe('90');
-    expect(rows[3].querySelectorAll('td')[7].textContent).toBe('0');
+    // Project tab is the default - only SI26-0100 shows.
+    const projectRows = within(dialog).getAllByRole('row');
+    expect(projectRows[1].textContent).toContain('SI26-0100');
+    expect(within(dialog).queryByText('SO-2201')).not.toBeInTheDocument();
+    // Column 6 is S5's Taken column (dash - nothing here is covered by another SPO); Take
+    // (7) is an editable input, seeded from the cascade (R19).
+    const projectTakeInput = projectRows[1].querySelectorAll('td')[7].querySelector('input');
+    expect(projectTakeInput).toHaveValue(40);
+
+    fireEvent.mouseDown(within(dialog).getByRole('tab', { name: /retail/i }), { button: 0, ctrlKey: false });
+    const retailRows = within(dialog).getAllByRole('row');
+    expect(retailRows[1].textContent).toContain('SO-2201');
+    expect(retailRows[2].textContent).toContain('SO-2202');
+    expect(retailRows[2].querySelectorAll('td')[5].textContent).toBe('90');
+    // 40 and 30 are served in full, and the order nobody ticked gets nothing.
+    expect(retailRows[1].querySelectorAll('td')[7].querySelector('input')).toHaveValue(30);
+    expect(retailRows[2].querySelectorAll('td')[7].querySelector('input')).toHaveValue(0);
+    // The footer is shared beneath BOTH tabs - still reads 30 after switching tabs.
     expect(within(dialog).getByText('Unassigned 30')).toBeInTheDocument();
   });
+
 
   it('ticking in the SO dialog re-walks the take without closing it (AC-G2)', async () => {
     renderTable();
@@ -1372,6 +1411,134 @@ describe('R21 - the four figures open the shared lightbox', () => {
 
     await screen.findByTitle(PO);
     expect(screen.queryByTitle(INCOMING)).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * R19/AC-I2/AC-I3 - Take becomes an editable input, seeded by the waterfall; typing a
+ * number on one row re-runs the remainder for the rows AFTER it (in the coverage list's
+ * own order) only. The plan's own worked example (AC-I3): SPO qty 38, two retail rows
+ * outstanding 38 and 58 - type 30 on the first, the second seeds 8.
+ */
+describe('R19 - Take is editable and re-flows only the rows after it (AC-I2, AC-I3)', () => {
+  function takeExampleLine() {
+    return plannerLine({
+      packed_qty: 38,
+      remaining_qty: 38,
+      po_covered_qty: 38,
+      suggested_qty: 38,
+      po_takes: [
+        {
+          po_line_id: 'pol-38',
+          po_number: '202605-S0060',
+          qty: 38,
+          expected_date: '2026-09-01',
+          po_date: '2026-05-02',
+          supplier_name: 'Kailu',
+          open_qty: 38,
+        },
+      ],
+      so_coverage: [
+        {
+          key: 'retail:sol-first',
+          kind: 'retail' as const,
+          demand_class: 'retail' as const,
+          document: 'SO-3001',
+          customer_name: 'Dealer A',
+          required_date: '2026-09-10',
+          qty: 38,
+          warehouse_id: 'wh-1',
+          warehouse_code: 'BRW',
+          default_ticked: true,
+        },
+        {
+          key: 'retail:sol-second',
+          kind: 'retail' as const,
+          demand_class: 'retail' as const,
+          document: 'SO-3002',
+          customer_name: 'Dealer B',
+          required_date: '2026-09-20',
+          qty: 58,
+          warehouse_id: 'wh-2',
+          warehouse_code: 'MWH',
+          default_ticked: true,
+        },
+      ],
+    });
+  }
+
+  const openSoDrill = async () => {
+    await screen.findByTitle(/which demand this spo is for/i);
+    fireEvent.click(screen.getByTitle(/which demand this spo is for/i));
+    fireEvent.mouseDown(screen.getByRole('tab', { name: /retail/i }), { button: 0, ctrlKey: false });
+  };
+  const takeInput = (dialog: HTMLElement, document_: string) =>
+    within(dialog)
+      .getByText(document_)
+      .closest('tr')!
+      .querySelectorAll('td')[7]
+      .querySelector('input') as HTMLInputElement;
+
+  beforeEach(() => {
+    state.suggestion = suggestion({ lines: [takeExampleLine()] });
+    state.create = vi.fn().mockResolvedValue({
+      shipment_id: 'sh-1',
+      shipment_number: 'ABCU1000001',
+      created_spos: [],
+      skipped: [],
+      allocations: [],
+      demand_links: [],
+    });
+  });
+
+  it('types 30 on the first row and the second seeds 8', async () => {
+    renderTable();
+    await openSoDrill();
+    const dialog = screen.getByRole('dialog');
+
+    expect(takeInput(dialog, 'SO-3001')).toHaveValue(38);
+    // The default cascade gives the second row nothing (the first already claimed the
+    // whole 38), so it starts UNTICKED - she ticks it herself before typing (AC-I3's own
+    // journey: "she types 30 for the first order and 8 for the next").
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Cover SO-3002' }));
+
+    fireEvent.change(takeInput(dialog, 'SO-3001'), { target: { value: '30' } });
+
+    expect(takeInput(dialog, 'SO-3001')).toHaveValue(30);
+    expect(takeInput(dialog, 'SO-3002')).toHaveValue(8);
+    expect(within(dialog).getByText('Unassigned 0')).toBeInTheDocument();
+  });
+
+  it('sends the edited takes to Create SPO (AC-I3)', async () => {
+    renderTable();
+    await openSoDrill();
+    const dialog = screen.getByRole('dialog');
+
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Cover SO-3002' }));
+    fireEvent.change(takeInput(dialog, 'SO-3001'), { target: { value: '30' } });
+    fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: /^create spo$/i }));
+    await waitFor(() => expect(state.create).toHaveBeenCalledTimes(1));
+    const [, lines] = state.create.mock.calls[0];
+    expect(lines[0].so_takes).toEqual([
+      { key: 'retail:sol-first', qty: 30 },
+      { key: 'retail:sol-second', qty: 8 },
+    ]);
+  });
+
+  it('a take above its own row leaves Create SPO disabled with a destructive cell', async () => {
+    renderTable();
+    await openSoDrill();
+    const dialog = screen.getByRole('dialog');
+
+    fireEvent.change(takeInput(dialog, 'SO-3001'), { target: { value: '999' } });
+
+    expect(takeInput(dialog, 'SO-3001').className).toContain('border-destructive');
+    fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.getByRole('button', { name: /^create spo$/i })).toBeDisabled();
   });
 });
 
@@ -1532,10 +1699,14 @@ describe('S4 - schedule cells (AC-D1-AC-D5)', () => {
     fireEvent.click(await screen.findByRole('button', { name: /SRTWT7443 - 7 Sep/ }));
     const dialog = await screen.findByRole('dialog');
 
+    // Project tab is the default - the bucket-hit project row is there.
     const hitRow = within(dialog).getByText('SI26-0100').closest('tr') as HTMLElement;
-    const otherRow = within(dialog).getByText('SO-2201').closest('tr') as HTMLElement;
     expect(hitRow).toHaveAttribute('data-bucket-hit', 'true');
     expect(hitRow.className).toContain('bg-primary/10');
+
+    // The retail row in a DIFFERENT week bucket carries neither, on its own tab.
+    fireEvent.mouseDown(within(dialog).getByRole('tab', { name: /retail/i }), { button: 0, ctrlKey: false });
+    const otherRow = within(dialog).getByText('SO-2201').closest('tr') as HTMLElement;
     expect(otherRow).not.toHaveAttribute('data-bucket-hit');
   });
 
@@ -1661,6 +1832,7 @@ describe('S5 - occupied by another SPO (AC-E7, AC-E8)', () => {
 
     fireEvent.click(screen.getByTitle(/which demand this spo is for/i));
     const dialog = await screen.findByRole('dialog');
+    fireEvent.mouseDown(within(dialog).getByRole('tab', { name: /retail/i }), { button: 0, ctrlKey: false });
 
     const checkbox = within(dialog).getByRole('checkbox', { name: 'Cover SO-9000' });
     expect(checkbox).not.toBeChecked();
@@ -1756,5 +1928,318 @@ describe('editable cells keep focus while typing (live bug, 4 Sep)', () => {
     fireEvent.change(input, { target: { value: '70' } });
     expect(document.activeElement).toBe(input);
     expect(input).toHaveValue(70);
+  });
+});
+
+/**
+ * R24 (AC-K1..AC-K4) - editing an SPO that already exists, in the SAME planner.
+ *
+ * The state on screen is what was PERSISTED (`planner-state`), never the suggestion walk
+ * re-run over it: the operator is looking at a decision somebody already made, and a
+ * recomputed default would silently propose a different SPO the moment she opened it.
+ */
+function plannerStateLine(over: Record<string, unknown> = {}) {
+  return {
+    ...plannerLine(),
+    // The state the SPO was persisted with: 70 of the 100 packed, split across two
+    // warehouses, drawing from ONE of the two PO takes, pointed at ONE piece of demand.
+    spo_qty: 70,
+    location_splits: [
+      { warehouse_id: 'wh-1', warehouse_code: 'BRW', qty: 40 },
+      { warehouse_id: 'wh-2', warehouse_code: 'MWH', qty: 30 },
+    ],
+    po_take_ids: ['pol-1'],
+    so_takes: [{ key: 'project:row-1', qty: 40 }],
+    received_qty: 0,
+    ...over,
+  };
+}
+
+function plannerStateResponse(over: Record<string, unknown> = {}) {
+  return {
+    shipment_id: 'sh-1',
+    shipment_number: 'ABCU1000001',
+    purchase_order_id: 'po-1',
+    po_number: 'CRM-SPO-0001',
+    supplier_name: 'Kailu',
+    lines: [plannerStateLine()],
+    ...over,
+  };
+}
+
+describe('SpoPlannerTable - Edit in planner (R24)', () => {
+  beforeEach(() => {
+    state.suggestion = suggestion({ existing_spos: existingSpos(), lines: [plannerLine()] });
+    state.plannerState = plannerStateResponse();
+  });
+
+  it('AC-K1: the Created SPOs row action opens edit mode for that SPO, pre-filled', async () => {
+    renderTable();
+
+    await screen.findByRole('link', { name: 'CRM-SPO-0001' });
+    fireEvent.click(screen.getByRole('button', { name: /edit crm-spo-0001 in planner/i }));
+
+    expect(await screen.findByText('Editing CRM-SPO-0001')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /save changes/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^cancel$/i })).toBeInTheDocument();
+    // The persisted quantity, not the suggestion's own 100.
+    expect(screen.getByTestId('spo-qty-input')).toHaveValue(70);
+    // The Created SPOs grid steps aside while one of its own rows is being edited.
+    expect(screen.queryByRole('link', { name: 'CRM-SPO-0001' })).toBeNull();
+  });
+
+  it('AC-K5: `?edit=` opens edit mode straight away, without a click', async () => {
+    renderTable('po-1');
+
+    expect(await screen.findByText('Editing CRM-SPO-0001')).toBeInTheDocument();
+    expect(screen.getByTestId('spo-qty-input')).toHaveValue(70);
+  });
+
+  it('AC-K1: PO covers and SO covered read the persisted takes, never Done', async () => {
+    // A line the suggestion would lock (`remaining_qty` 0, everything already converted) -
+    // in EDIT mode it is this SPO's own take, so the cells stay live.
+    state.plannerState = plannerStateResponse({
+      lines: [plannerStateLine({ remaining_qty: 70 })],
+    });
+    renderTable('po-1');
+
+    await screen.findByText('Editing CRM-SPO-0001');
+    expect(screen.queryByText('Done')).toBeNull();
+    // pol-1 alone is ticked, and it has 60 open - capped at the line's own remainder.
+    expect(
+      screen.getByRole('button', { name: /which po covers this/i }),
+    ).toHaveTextContent('60');
+    // One project take of 40 (the persisted `so_takes`), not the cascade's own 70.
+    expect(
+      screen.getByRole('button', { name: /which demand this spo is for/i }),
+    ).toHaveTextContent('40');
+  });
+
+  it('AC-K2: Save sends the same confirm shape, PUT-side, and leaves edit mode', async () => {
+    renderTable('po-1');
+    await screen.findByText('Editing CRM-SPO-0001');
+
+    fireEvent.change(screen.getByTestId('spo-qty-input'), { target: { value: '80' } });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(state.revise).toHaveBeenCalledTimes(1));
+    const [, , lines] = state.revise.mock.calls[0];
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({
+      shipment_line_id: 'sl-1',
+      qty: 80,
+      include: true,
+      po_take_ids: ['pol-1'],
+    });
+    await waitFor(() => expect(screen.queryByText('Editing CRM-SPO-0001')).toBeNull());
+  });
+
+  it('AC-K4: a line typed to 0 goes out on the payload as include:false', async () => {
+    // TWO lines: zeroing one of them removes that line. Zeroing the ONLY line would empty
+    // the SPO, which Save refuses outright (S5, review round 1) - the test below.
+    state.plannerState = plannerStateResponse({
+      lines: [
+        plannerStateLine(),
+        plannerStateLine({
+          ...plannerLine({ shipment_line_id: 'sl-2', item_code: 'SRTWT9999' }),
+          spo_qty: 20,
+          location_splits: [{ warehouse_id: 'wh-1', warehouse_code: 'BRW', qty: 20 }],
+          po_take_ids: [],
+          so_takes: [],
+          received_qty: 0,
+        }),
+      ],
+    });
+    renderTable('po-1');
+    await screen.findByText('Editing CRM-SPO-0001');
+
+    fireEvent.change(screen.getAllByTestId('spo-qty-input')[0], { target: { value: '0' } });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(state.revise).toHaveBeenCalledTimes(1));
+    const [, , lines] = state.revise.mock.calls[0];
+    expect(lines[0]).toMatchObject({ shipment_line_id: 'sl-1', qty: 0, include: false });
+    expect(lines[1]).toMatchObject({ shipment_line_id: 'sl-2', include: true });
+  });
+
+  it('S5: emptying the SPO disables Save and says to delete it instead', async () => {
+    renderTable('po-1');
+    await screen.findByText('Editing CRM-SPO-0001');
+
+    fireEvent.change(screen.getByTestId('spo-qty-input'), { target: { value: '0' } });
+
+    expect(screen.getByRole('button', { name: /save changes/i })).toBeDisabled();
+    expect(
+      screen.getByText(/An SPO has to keep at least one line - delete it instead/),
+    ).toBeInTheDocument();
+    expect(state.revise).not.toHaveBeenCalled();
+  });
+
+  it('AC-K3: a qty below what was received disables Save and names the row', async () => {
+    state.plannerState = plannerStateResponse({
+      lines: [plannerStateLine({ received_qty: 50 })],
+    });
+    renderTable('po-1');
+    await screen.findByText('Editing CRM-SPO-0001');
+
+    // The received figure reads under the input from the start.
+    expect(screen.getByText('50 received')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /save changes/i })).toBeEnabled();
+
+    fireEvent.change(screen.getByTestId('spo-qty-input'), { target: { value: '20' } });
+
+    expect(screen.getByRole('button', { name: /save changes/i })).toBeDisabled();
+    expect(
+      screen.getByText(/SRTWT7443 - the qty is below what has already been received/),
+    ).toBeInTheDocument();
+    expect(state.revise).not.toHaveBeenCalled();
+  });
+
+  it('Cancel discards the edits and puts the Created SPOs grid back', async () => {
+    renderTable('po-1');
+    await screen.findByText('Editing CRM-SPO-0001');
+
+    fireEvent.change(screen.getByTestId('spo-qty-input'), { target: { value: '11' } });
+    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    await screen.findByRole('link', { name: 'CRM-SPO-0001' });
+    expect(screen.queryByText('Editing CRM-SPO-0001')).toBeNull();
+    expect(state.revise).not.toHaveBeenCalled();
+    // Back on the remainder planner's own default, not the 11 just typed.
+    expect(screen.getByTestId('spo-qty-input')).toHaveValue(100);
+  });
+
+  it('an SPO that cannot be opened says so and offers the way back', async () => {
+    state.plannerStateFn = () => Promise.reject(new Error('This shipment has no SPO with that id.'));
+    renderTable('po-1');
+
+    expect(await screen.findByText('This shipment has no SPO with that id.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /back to the planner/i }));
+    await screen.findByRole('link', { name: 'CRM-SPO-0001' });
+  });
+});
+
+/**
+ * Review round 1 - B4 (a take with no location) and S7 (the cascade follows the screen).
+ */
+describe('SpoPlannerTable - review round 1', () => {
+  function noLocationLine() {
+    return plannerLine({
+      packed_qty: 38,
+      remaining_qty: 38,
+      po_covered_qty: 38,
+      suggested_qty: 38,
+      // Nowhere for the quantity to go: no ranked destination and no warehouse on the row
+      // it is ticked against, so the walk produces no split at all.
+      suggested_warehouse_id: null,
+      location_options: [],
+      po_takes: [],
+      so_coverage: [
+        {
+          key: 'retail:sol-first',
+          kind: 'retail' as const,
+          demand_class: 'retail' as const,
+          document: 'SO-3001',
+          customer_name: 'Dealer A',
+          required_date: '2026-09-10',
+          qty: 38,
+          warehouse_id: null,
+          warehouse_code: null,
+          default_ticked: true,
+        },
+      ],
+    });
+  }
+
+  it('B4: a line ticked against a sales order with no location disables Create SPO and says why', async () => {
+    state.suggestion = suggestion({ lines: [noLocationLine()] });
+    renderTable();
+    await screen.findByRole('button', { name: /^create spo$/i });
+
+    expect(
+      screen.getByText(/SRTWT7443 needs a location before it can cover sales orders/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^create spo$/i })).toBeDisabled();
+  });
+
+  it('B4: the same line with nothing ticked converts, and the message is gone', async () => {
+    state.suggestion = suggestion({ lines: [noLocationLine()] });
+    renderTable();
+    const drill = await screen.findByTitle(/which demand this spo is for/i);
+    fireEvent.click(drill);
+    const dialog = screen.getByRole('dialog');
+    fireEvent.mouseDown(within(dialog).getByRole('tab', { name: /retail/i }), { button: 0 });
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Cover SO-3001' }));
+    fireEvent.keyDown(dialog, { key: 'Escape', code: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    expect(
+      screen.queryByText(/needs a location before it can cover sales orders/),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^create spo$/i })).toBeEnabled();
+  });
+
+  it('S7: a re-sort re-flows the cascade, so the rows after the top one on screen change', async () => {
+    state.suggestion = suggestion({
+      lines: [
+        plannerLine({
+          packed_qty: 38,
+          remaining_qty: 38,
+          po_covered_qty: 38,
+          suggested_qty: 38,
+          po_takes: [],
+          so_coverage: [
+            {
+              key: 'retail:sol-first',
+              kind: 'retail' as const,
+              demand_class: 'retail' as const,
+              document: 'SO-3001',
+              customer_name: 'Dealer A',
+              required_date: '2026-09-10',
+              qty: 38,
+              warehouse_id: 'wh-1',
+              warehouse_code: 'BRW',
+              default_ticked: true,
+            },
+            {
+              key: 'retail:sol-second',
+              kind: 'retail' as const,
+              demand_class: 'retail' as const,
+              document: 'SO-3002',
+              customer_name: 'Dealer B',
+              required_date: '2026-09-20',
+              qty: 58,
+              warehouse_id: 'wh-2',
+              warehouse_code: 'MWH',
+              default_ticked: false,
+            },
+          ],
+        }),
+      ],
+    });
+    renderTable();
+    const drill = await screen.findByTitle(/which demand this spo is for/i);
+    fireEvent.click(drill);
+    const dialog = screen.getByRole('dialog');
+    fireEvent.mouseDown(within(dialog).getByRole('tab', { name: /retail/i }), { button: 0 });
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Cover SO-3002' }));
+
+    const take = (document_: string) =>
+      within(dialog)
+        .getByText(document_)
+        .closest('tr')!
+        .querySelectorAll('td')[7]
+        .querySelector('input') as HTMLInputElement;
+
+    // Delivery date ascending: SO-3001 is first on screen and takes the whole 38.
+    expect(take('SO-3001')).toHaveValue(38);
+    expect(take('SO-3002')).toHaveValue(0);
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delivery date' }));
+
+    // Sorted the other way, SO-3002 is the first row on screen - so it is the one the
+    // cascade serves first.
+    await waitFor(() => expect(take('SO-3002')).toHaveValue(38));
+    expect(take('SO-3001')).toHaveValue(0);
   });
 });
