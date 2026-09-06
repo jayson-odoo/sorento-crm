@@ -2281,6 +2281,104 @@ class SPOAllocationService:
                         "picking_date": ph_date,
                     }
                 )
+
+        # R23, AC-J2: which purchase-order line each allocation PULLED from, via
+        # `SPOAllocation.po_line_id`. No `line_no` on `purchase_order_lines` to name (the
+        # model carries no per-line ordinal), so that field is always null - the FE renders
+        # the PO number as the link's own label either way.
+        po_line_ids = {str(a.po_line_id) for a, *_ in rows if a.po_line_id}
+        po_info: Dict[str, dict] = {}
+        if po_line_ids:
+            from app.models.procurement import PurchaseOrder as _PurchaseOrder
+
+            for pol_id, po_id, po_number in (
+                self.db.query(
+                    PurchaseOrderLine.id, _PurchaseOrder.id, _PurchaseOrder.po_number
+                )
+                .join(_PurchaseOrder, _PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+                .filter(PurchaseOrderLine.id.in_(po_line_ids))
+                .all()
+            ):
+                po_info[str(pol_id)] = {
+                    "po_number": po_number,
+                    "purchase_order_id": str(po_id),
+                    "line_no": None,
+                }
+
+        # R23, AC-J2: every sales order this allocation covers - `order_inquiry_links`
+        # (project, R19's ticks already write these) + `scm.order_link_claim` where
+        # `source='planner'` (retail, R20's new write). Keyed by `spo_allocation_id` so a
+        # line whose allocation is split (several rows on this document, one SPO number)
+        # only shows what THAT row itself covers.
+        so_covered_by_alloc: Dict[str, list] = {}
+        if alloc_ids:
+            from app.models.order import Customer as _Customer
+            from app.models.order import SalesOrder as _SalesOrder
+            from app.models.order import SalesOrderLine as _SalesOrderLine
+            from app.models.project_so import (
+                OrderInquiry,
+                OrderInquiryLink,
+                OrderInquiryRow,
+                ProjectSalesOrder,
+            )
+            from app.models.projects import Project as _Project
+            from app.models.scm import OrderLinkClaim
+
+            for spo_alloc_id, doc_no, provisional, link_qty, project_title in (
+                self.db.query(
+                    OrderInquiryLink.spo_allocation_id,
+                    ProjectSalesOrder.autocount_doc_no,
+                    ProjectSalesOrder.provisional_ref,
+                    OrderInquiryLink.qty,
+                    _Project.title,
+                )
+                .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+                .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+                .join(
+                    ProjectSalesOrder,
+                    ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
+                )
+                .outerjoin(_Project, _Project.id == ProjectSalesOrder.project_id)
+                .filter(OrderInquiryLink.spo_allocation_id.in_(alloc_ids))
+                .all()
+            ):
+                # The SALES side's own document number (`_project_coverage`'s own rule) -
+                # `OrderInquiryLink.document` is the PURCHASE side's number instead (already
+                # named by THIS document's own `spo_number`), so it is never what "SO
+                # covered" means to state here.
+                so_covered_by_alloc.setdefault(str(spo_alloc_id), []).append(
+                    {
+                        "document": doc_no or provisional,
+                        "customer": project_title,
+                        "demand_class": "project",
+                        "qty": float(link_qty or 0),
+                    }
+                )
+            for spo_alloc_id, so_number, claim_qty, customer_name in (
+                self.db.query(
+                    OrderLinkClaim.spo_allocation_id,
+                    OrderLinkClaim.so_number,
+                    OrderLinkClaim.qty,
+                    _Customer.customer_name,
+                )
+                .outerjoin(_SalesOrderLine, _SalesOrderLine.id == OrderLinkClaim.so_line_id)
+                .outerjoin(_SalesOrder, _SalesOrder.id == _SalesOrderLine.sales_order_id)
+                .outerjoin(_Customer, _Customer.id == _SalesOrder.customer_id)
+                .filter(
+                    OrderLinkClaim.spo_allocation_id.in_(alloc_ids),
+                    OrderLinkClaim.source == "planner",
+                )
+                .all()
+            ):
+                so_covered_by_alloc.setdefault(str(spo_alloc_id), []).append(
+                    {
+                        "document": so_number,
+                        "customer": customer_name,
+                        "demand_class": "retail",
+                        "qty": float(claim_qty or 0),
+                    }
+                )
+
         supplier_counts: Dict[Optional[str], int] = {}
         for allocation, shipment, supplier_name, is_open in rows:
             allocated = allocation.allocated_quantity or 0
@@ -2326,6 +2424,8 @@ class SPOAllocationService:
                     else None,
                     grns=line_grns.get(str(allocation.id), []),
                     line_status=allocation.line_status,
+                    po=po_info.get(str(allocation.po_line_id)) if allocation.po_line_id else None,
+                    so_covered=so_covered_by_alloc.get(str(allocation.id), []),
                 )
             )
 
@@ -2357,6 +2457,31 @@ class SPOAllocationService:
         majority_name = entries[0][0] if entries else None
         extra_count = max(len(entries) - 1, 0)
 
+        linked_grns = self.get_linked_grns_for_spo(spo_number)
+
+        # R23, AC-J3: the header linkage strip - rollups across every line on this
+        # document. `packing_list` names the FIRST shipment any line landed off (a document
+        # is routinely one container; a split across several picks whichever line the
+        # query met first, same "first if several" reasoning `get_document`'s own GRN
+        # fallback already uses).
+        so_covered_all = [c for line in lines for c in (line.so_covered or [])]
+        packing_list = None
+        for allocation, shipment, *_ in rows:
+            if shipment is not None:
+                packing_list = {
+                    "id": str(shipment.id),
+                    "container": shipment.shipping_container_number,
+                }
+                break
+        linkage = {
+            "po_count": len({p["purchase_order_id"] for p in po_info.values()}),
+            "line_count": len(lines),
+            "so_count": len(so_covered_all),
+            "so_qty": sum(c.qty for c in so_covered_all),
+            "packing_list": packing_list,
+            "grn_count": len(linked_grns),
+        }
+
         return SPODocument(
             spo_number=spo_number,
             doc_date=doc_date,
@@ -2371,7 +2496,8 @@ class SPOAllocationService:
             # The GRNs received against this document - the retired per-allocation
             # page's Related Documents capability, now at its natural (document)
             # grain. Same key-matched reader the old page used.
-            linked_grns=self.get_linked_grns_for_spo(spo_number),
+            linked_grns=linked_grns,
+            linkage=linkage,
         )
 
     def delete_document(self, spo_number: str) -> dict:

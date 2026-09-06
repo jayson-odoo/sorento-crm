@@ -750,6 +750,16 @@ class SpoLocationSplit(BaseModel):
     qty: float = Field(..., gt=0)
 
 
+class SpoTakeItem(BaseModel):
+    """One SO-covered take (R19/R20, replaces the plain `so_line_ids: list[str]` tick list):
+    `key` is a `so_coverage[].key`, `qty` is what the operator typed for it - or the cascade
+    default, on a row she never touched. Re-validated in `spo_conversion_service.create`
+    against that row's own outstanding and this line's own SPO qty; never trusted as sent."""
+
+    key: str
+    qty: float = Field(..., ge=0)
+
+
 class SpoLineConfirm(BaseModel):
     shipment_line_id: str
     qty: float = Field(0, ge=0)
@@ -765,10 +775,11 @@ class SpoLineConfirm(BaseModel):
     # is what every caller before this ask sent; a LIST narrows it, and the SPO quantity
     # falls to what those takes cover.
     po_take_ids: Optional[list[str]] = None
-    # Which demand this SPO is being pointed at - `so_coverage[].key` (F7, AC-G3). The
-    # project half is written as links; the retail half steers the split on screen and has
-    # no row of its own to hang a link on.
-    so_line_ids: list[str] = Field(default_factory=list)
+    # Which demand this SPO is being pointed at, AND how much of it (R19/R20, AC-I2/AC-I3).
+    # The project half is written onto `order_inquiry_links.qty` outright; the retail half
+    # onto `scm.order_link_claim` (`source='planner'`) - see
+    # `spo_conversion_service.create`'s docstring.
+    so_takes: list[SpoTakeItem] = Field(default_factory=list)
 
 
 class SpoCreateRequest(BaseModel):

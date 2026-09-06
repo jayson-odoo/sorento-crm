@@ -594,6 +594,24 @@ class SPOWithAllocationsGroup(BaseModel):
 # ---------------------------------------------------------------------------------------
 
 
+class SPODocumentLinePO(BaseModel):
+    """The purchase-order line an SPO line PULLED from, via `po_line_id` (R23, AC-J2)."""
+    po_number: str
+    purchase_order_id: str
+    #: Always null - `purchase_order_lines` carries no per-line ordinal to name.
+    line_no: Optional[int] = None
+
+
+class SPODocumentLineSOCovered(BaseModel):
+    """One sales order an allocation covers - `order_inquiry_links` (project) or
+    `scm.order_link_claim` (`source='planner'`, retail) joined on the allocation (R23,
+    AC-J2)."""
+    document: Optional[str] = None
+    customer: Optional[str] = None
+    demand_class: str
+    qty: float
+
+
 class SPODocumentLine(BaseModel):
     """One allocation line, with the computed fields the Lines tab renders (AC-13)."""
     id: str
@@ -631,6 +649,10 @@ class SPODocumentLine(BaseModel):
     #: Sparse on live data (the weak-matcher backfill) - the Received cell falls back to the
     #: document's key-matched `linked_grns` when this is empty.
     grns: List[LinkedGRNSimple] = []
+    #: R23, AC-J2 - the PO this line pulled from, null on a line with no `po_line_id`.
+    po: Optional[SPODocumentLinePO] = None
+    #: R23, AC-J2 - every sales order this allocation covers, empty when none.
+    so_covered: List[SPODocumentLineSOCovered] = []
 
     class Config:
         from_attributes = True
@@ -660,6 +682,21 @@ class SPODocumentRow(BaseModel):
     worst_overdue_days: int
 
 
+class SPODocumentLinkagePackingList(BaseModel):
+    id: str
+    container: Optional[str] = None
+
+
+class SPODocumentLinkage(BaseModel):
+    """The header linkage strip (R23, AC-J3) - rollups across every line on this document."""
+    po_count: int
+    line_count: int
+    so_count: int
+    so_qty: float
+    packing_list: Optional[SPODocumentLinkagePackingList] = None
+    grn_count: int
+
+
 class SPODocument(BaseModel):
     """The document form view's payload: header rollup + every line (AC-16)."""
     spo_number: str
@@ -676,6 +713,8 @@ class SPODocument(BaseModel):
     # so a Completed document can answer "received on WHICH goods receipt" - the
     # capability the retired per-allocation page's Related Documents panel carried.
     linked_grns: List[LinkedGRNSimple] = []
+    #: R23, AC-J3.
+    linkage: Optional[SPODocumentLinkage] = None
 
 
 class PickingLineBase(BaseModel):

@@ -438,3 +438,35 @@ received guards). Reviewer on Opus at the end of each lane.
 | Preview | Remarks are edited on the preview itself, no trip back to the plan table (R11 clarified). |
 
 No open questions remain. Waiting for GO.
+
+## Deviations (lane D)
+
+Measured while implementing sections 9-11 (D1/D2 only; D3 "Edit in planner" untouched by
+this lane).
+
+- **`scm.order_link_claim` had no `qty` column at all** (R20 assumed it might need one only
+  "if a NOT NULL column forces it"; it forces one regardless, since a planner claim is the
+  first source that states a quantity at write time). Migration `482_scm_claim_qty_planner`
+  adds `qty NUMERIC(15,4)`, nullable (every other source leaves it null), plus `planner` to
+  the `source` CHECK constraint.
+- **`SPODocumentLine.po.line_no` is always null** - `purchase_order_lines` carries no
+  per-line ordinal to name (measured against the model, not assumed). The FE type keeps the
+  field (`number | null`) so a future column can fill it without a contract change; today's
+  reader renders the PO number as the link label either way.
+- **The retail claim's `item_code`** is the shipment line's own PRODUCT's `product_code`
+  (`products.product_code`), not `inbound_shipment_lines.item_code` - that column does not
+  exist on the model (the plan's phrasing implied it did). Consistent with every other
+  claim source, which keys `item_code` on the product identity.
+- **Header linkage strip (AC-J3):** "PO n" and "SPO lines n" are plain text (no PO-list
+  filter-by-SPO-number route exists, per the plan's own "else no link" allowance). "GRN n"
+  links only when exactly one GRN is linked (the header's own "Goods receipts" field already
+  lists every GRN with its own link when there are several, so the strip does not duplicate
+  that control). "Packing list" names the FIRST shipment among the document's lines (a
+  document is routinely one container; a rare split picks whichever line the query meets
+  first, the same "first if several" reasoning `get_document`'s own GRN fallback already
+  uses).
+- **SO covered tabs partition by `kind`** (`project` vs `retail`, the family a coverage row
+  came from), not `demand_class` (what the SO itself is classified as, which can disagree
+  with `kind` - see `SoCoverageRow`'s own doc comment). This reads the UAC's "one tab
+  Project, one tab Retail" as a family split, matching how `_so_coverage`'s own server-side
+  merge already groups the two.

@@ -21,14 +21,24 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, timedelta
+from decimal import Decimal
 from urllib.parse import quote
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
-from app.models.procurement import InboundShipment, SPOAllocation, Supplier
+from app.models.order import Customer, SalesOrder, SalesOrderLine
+from app.models.procurement import (
+    InboundShipment, PurchaseOrder, PurchaseOrderLine, SPOAllocation, Supplier,
+)
 from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.project_so import (
+    INQUIRY_RAISED, IV_ORDER_BACK, OrderInquiry, OrderInquiryLink, OrderInquiryRow,
+    ProjectSalesOrder, ProjectSalesOrderLine, SO_STATUS_DRAFT,
+)
+from app.models.projects import Project
+from app.models.scm import OrderLinkClaim
 from app.models.user import UserPermission, UserRole, UserRoleAssignment, UserRolePermission
 from tests._pg_fixture import unique_code
 from tests.scm.conftest import requires_pg
@@ -747,3 +757,195 @@ def test_detail_denies_without_the_view_permission(scm_app):
     r = client.get(f"{DOCUMENTS_URL}/{unique_code('SPO-DENY')}")
     assert r.status_code == 403, r.text
     assert VIEW_PERMISSION in r.text
+
+
+# =================================================================================== #
+# R23, AC-J2/AC-J3 - lines carry `po` and `so_covered`; the header carries `linkage`.
+# =================================================================================== #
+
+
+def _project_link(db: Session, *, product: Product, allocation: SPOAllocation, qty: str):
+    """One `order_inquiry_links` row on `allocation`, the project half of R23's
+    `so_covered` (mirrors `test_spo_planner_selection._project_chain`'s own chain, built
+    directly here rather than imported - this suite owns its own fixtures)."""
+    project = Project(
+        id=_u(), title="ZZT linkage project", normalised_title="zzt linkage project",
+        project_code=unique_code("PRJ"),
+    )
+    db.add(project)
+    db.flush()
+    pso = ProjectSalesOrder(
+        id=_u(), project_id=project.id, area_group="TOWER",
+        provisional_ref=unique_code("PSO"), status=SO_STATUS_DRAFT, grouping_origin="area",
+    )
+    db.add(pso)
+    db.flush()
+    pso_line = ProjectSalesOrderLine(
+        id=_u(), project_sales_order_id=pso.id, line_no=1, product_id=product.id,
+        description="ZZT line", qty=Decimal(qty), uom="UNIT", unit_price=Decimal("1"),
+        amount=Decimal(qty),
+    )
+    db.add(pso_line)
+    db.flush()
+    inquiry = OrderInquiry(id=_u(), project_sales_order_id=pso.id, state=INQUIRY_RAISED)
+    db.add(inquiry)
+    db.flush()
+    row = OrderInquiryRow(
+        id=_u(), order_inquiry_id=inquiry.id, so_line_id=pso_line.id,
+        item_code=product.product_code, qty=Decimal(qty), verb=IV_ORDER_BACK,
+        state=INQUIRY_RAISED,
+    )
+    db.add(row)
+    db.flush()
+    db.add(OrderInquiryLink(
+        id=_u(), row_id=row.id, spo_allocation_id=allocation.id,
+        document=allocation.spo_number, qty=Decimal(qty),
+    ))
+    db.flush()
+    return pso, project
+
+
+def _retail_claim(db: Session, *, product: Product, warehouse: Warehouse,
+                   allocation: SPOAllocation, po_number: str, qty: str):
+    """One `scm.order_link_claim` row, `source='planner'` - the retail half of R23's
+    `so_covered` (R20's own write, exercised directly here rather than through
+    `spo_conversion_service.create`, which `test_spo_planner_selection.py` already
+    covers)."""
+    customer = Customer(
+        id=_u(), customer_code=unique_code("CUS"), customer_name="ZZT linkage dealer",
+    )
+    db.add(customer)
+    db.flush()
+    so = SalesOrder(
+        id=_u(), so_number=unique_code("SO"), customer_id=customer.id,
+        order_date=date.today(), status="open",
+    )
+    db.add(so)
+    db.flush()
+    so_line = SalesOrderLine(
+        id=_u(), sales_order_id=so.id, product_id=product.id, warehouse_id=warehouse.id,
+        qty_ordered=Decimal(qty), qty_delivered=0, required_date=date.today(),
+        line_status="open",
+    )
+    db.add(so_line)
+    db.flush()
+    db.add(OrderLinkClaim(
+        id=_u(), so_number=so.so_number, po_number=po_number, item_code=product.product_code,
+        source="planner", so_line_id=so_line.id, spo_allocation_id=allocation.id,
+        qty=Decimal(qty),
+    ))
+    db.flush()
+    return so, customer
+
+
+def test_document_line_carries_po_and_so_covered_ac_j2(scm_app):
+    """R23, AC-J2: the Lines tab's PO column resolves `po_line_id` to `{po_number,
+    purchase_order_id}`; the SO covered column lists every sales order the allocation
+    covers, project (`order_inquiry_links`) and retail (`order_link_claim`
+    `source='planner'`) both."""
+    client, db = _client(scm_app)
+    chain = _chain(db)
+    product = _product(db, chain)
+    warehouse = _warehouse(db)
+    supplier = _supplier(db)
+
+    po = PurchaseOrder(
+        id=_u(), po_number=unique_code("PO"), supplier_id=supplier.id,
+        issue_date=date.today(), status="open",
+    )
+    db.add(po)
+    db.flush()
+    po_line = PurchaseOrderLine(
+        id=_u(), purchase_order_id=po.id, product_id=product.id, qty_ordered=100,
+        qty_received=0,
+    )
+    db.add(po_line)
+    db.flush()
+
+    doc = unique_code("SPO-J2")
+    allocation = _line(
+        db, spo_number=doc, line_no=1, product=product, warehouse=warehouse, allocated=30,
+    )
+    allocation.po_line_id = po_line.id
+    db.flush()
+
+    pso, project = _project_link(db, product=product, allocation=allocation, qty="10")
+    so, customer = _retail_claim(
+        db, product=product, warehouse=warehouse, allocation=allocation,
+        po_number=doc, qty="20",
+    )
+
+    r = client.get(f"{DOCUMENTS_URL}/{doc}")
+    assert r.status_code == 200, r.text
+    line = r.json()["lines"][0]
+    assert line["po"] == {
+        "po_number": po.po_number, "purchase_order_id": str(po.id), "line_no": None,
+    }
+    covered = sorted(line["so_covered"], key=lambda c: c["demand_class"])
+    assert covered == [
+        {
+            "document": pso.autocount_doc_no or pso.provisional_ref,
+            "customer": project.title,
+            "demand_class": "project",
+            "qty": 10.0,
+        },
+        {
+            "document": so.so_number,
+            "customer": customer.customer_name,
+            "demand_class": "retail",
+            "qty": 20.0,
+        },
+    ]
+
+
+def test_header_linkage_strip_fields_ac_j3(scm_app):
+    """R23, AC-J3: the header linkage strip - `PO n · SPO lines n · SO covered n · qty ·
+    Packing list <container> · GRN n`, computed across every line on the document."""
+    client, db = _client(scm_app)
+    chain = _chain(db)
+    product = _product(db, chain)
+    warehouse = _warehouse(db)
+    supplier = _supplier(db)
+
+    po = PurchaseOrder(
+        id=_u(), po_number=unique_code("PO"), supplier_id=supplier.id,
+        issue_date=date.today(), status="open",
+    )
+    db.add(po)
+    db.flush()
+    po_line = PurchaseOrderLine(
+        id=_u(), purchase_order_id=po.id, product_id=product.id, qty_ordered=100,
+        qty_received=0,
+    )
+    db.add(po_line)
+    db.flush()
+
+    shipment = _shipment(db, supplier=supplier, estimated=date.today() - timedelta(days=3))
+    shipment.shipping_container_number = "ZZTU1234567"
+    db.flush()
+
+    doc = unique_code("SPO-J3")
+    allocation = _line(
+        db, spo_number=doc, line_no=1, product=product, warehouse=warehouse, allocated=30,
+        shipment=shipment, supplier=supplier,
+    )
+    allocation.po_line_id = po_line.id
+    db.flush()
+
+    _project_link(db, product=product, allocation=allocation, qty="10")
+    _retail_claim(
+        db, product=product, warehouse=warehouse, allocation=allocation,
+        po_number=doc, qty="20",
+    )
+
+    r = client.get(f"{DOCUMENTS_URL}/{doc}")
+    assert r.status_code == 200, r.text
+    linkage = r.json()["linkage"]
+    assert linkage == {
+        "po_count": 1,
+        "line_count": 1,
+        "so_count": 2,
+        "so_qty": 30.0,
+        "packing_list": {"id": str(shipment.id), "container": "ZZTU1234567"},
+        "grn_count": 0,
+    }
