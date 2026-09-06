@@ -1005,3 +1005,101 @@ class TestOwnerRulingATheCustomerPickerReachesTheProductionProbeSeam:
         assert f"({company_code})" in lines[0], (
             f"the picker line must still name the owning company: {message!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Review of #706, S1 + S2. `_cust_base` groups a customer FAMILY by normalised name
+# only - n8n's own grouping, and the two production captures of the shape (rg-15114061,
+# JYL JUBIN under Mocha and Sorento; rg-15125764, YI HONG TILING under both) show live
+# rendering a cross-ledger family as ONE picker line whose pick carries both ledgers'
+# uuids. That is kept: the customer named one business, the CRM holds it in two ledgers,
+# and the order answer downstream is already labelled per company (`routing_companies`),
+# so a silent pass with both ledgers is the complete answer, not a wrong one (S2 - the
+# coder's disagreement with the review, stated in the PR). What was wrong (S1) is the
+# SUFFIX: it read the representative row's code alone, so a two-ledger family printed one
+# ledger while its pick reached both. It now names every ledger the family spans.
+# --------------------------------------------------------------------------- #
+
+
+def _cust_row(uuid: str, name: str, *, company: tuple[str, str, str], code: str) -> dict:
+    """One resolver customer match in `ResolvedEntity.as_dict()`'s shape."""
+    company_id, company_name, company_code = company
+    return {
+        "entity_type": "customer",
+        "canonical_code": code,
+        "uuid": uuid,
+        "match_field": "customer_name",
+        "match_tier": "substring",
+        "similarity": None,
+        "company_id": company_id,
+        "company_name": company_name,
+        "company_code": company_code,
+        "display": {"customer_name": name, "phone_number": None, "email": None},
+    }
+
+
+SRT = ("zzt-co-srt", "Sorento", "SRT")
+MOCHA = ("zzt-co-mocha", "Mocha", "MOCHA")
+
+
+class TestAPickerLineNamesEveryLedgerItsFamilySpans:
+    PARSER = {
+        "domain_hint": "order",
+        "entities": [
+            {"raw": "a craft idea", "hint": "customer", "canonical_code": None, "current_message": True}
+        ],
+    }
+
+    def _gate(self, matches: list[dict]) -> dict:
+        from app.services.chatbot.lanes.business.gate import run_gate
+
+        resolver = {"resolutions": [{"token": "a craft idea", "matches": matches}]}
+        return run_gate({}, parser=dict(self.PARSER), resolver=resolver)
+
+    def test_a_two_ledger_family_prints_both_codes(self) -> None:
+        """S1. Two families: "A CRAFT IDEA" spanning SRT and MOCHA, and "A CRAFT IDEA
+        TRADING" in SRT only. The first line must say both ledgers, because its pick
+        carries both ledgers' rows; the second says its one."""
+        out = self._gate(
+            [
+                _cust_row("u-srt-1", "A CRAFT IDEA SDN BHD", company=SRT, code="300-A001"),
+                _cust_row("u-mocha", "A CRAFT IDEA SDN BHD", company=MOCHA, code="300-A001"),
+                _cust_row("u-srt-2", "A CRAFT IDEA TRADING SDN BHD", company=SRT, code="300-A002"),
+            ]
+        )
+        assert out["require_specific"] is True, out.get("gate_reason")
+        titles = [e["title"] for e in out["compatible_entities"]]
+        assert titles == ["A CRAFT IDEA SDN BHD (SRT, MOCHA)", "A CRAFT IDEA TRADING SDN BHD (SRT)"], (
+            f"a family spanning two ledgers must name both, in first-seen order: {titles!r}"
+        )
+        families = out["picker_families"]
+        assert set(families["A CRAFT IDEA"]) == {"u-srt-1", "u-mocha"}, families
+        assert "1. A CRAFT IDEA SDN BHD (SRT, MOCHA)" in out["gate_clarification"]
+
+    def test_a_ledger_with_no_code_on_the_row_contributes_nothing(self) -> None:
+        """An older payload: the MOCHA row has no `company_code`. The line names what it
+        can and never prints an empty pair of brackets."""
+        mocha_no_code = _cust_row("u-mocha", "A CRAFT IDEA SDN BHD", company=MOCHA, code="300-A001")
+        mocha_no_code["company_code"] = None
+        out = self._gate(
+            [
+                _cust_row("u-srt-1", "A CRAFT IDEA SDN BHD", company=SRT, code="300-A001"),
+                mocha_no_code,
+                _cust_row("u-srt-2", "A CRAFT IDEA TRADING SDN BHD", company=SRT, code="300-A002"),
+            ]
+        )
+        titles = [e["title"] for e in out["compatible_entities"]]
+        assert titles[0] == "A CRAFT IDEA SDN BHD (SRT)", titles
+
+    def test_the_same_name_in_two_ledgers_is_one_family_and_passes_with_both(self) -> None:
+        """S2, the disagreement stated as a test: one name in two ledgers is ONE family
+        (live parity, captures rg-15114061 / rg-15125764), the gate passes, and BOTH
+        ledgers' rows go forward so the order answer covers both, labelled per company."""
+        out = self._gate(
+            [
+                _cust_row("u-srt", "A CRAFT IDEA SDN BHD", company=SRT, code="300-A001"),
+                _cust_row("u-mocha", "A CRAFT IDEA SDN BHD", company=MOCHA, code="300-A001"),
+            ]
+        )
+        assert out["require_specific"] is False, out.get("gate_reason")
+        assert {e["uuid"] for e in out["compatible_entities"]} == {"u-srt", "u-mocha"}
