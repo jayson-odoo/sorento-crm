@@ -594,20 +594,32 @@ class TestPostProcessEmissionValidation:
 
 
 # --------------------------------------------------------------------------- #
-# 6. Duplicate path: a TEST envelope duplicating a LIVE message (D15).       #
+# 6. Duplicate path: a TEST envelope does NOT duplicate a LIVE message (D15). #
 # --------------------------------------------------------------------------- #
 
 
-class TestDuplicateIsTestFlagIsTheOriginalRows:
-    def test_a_test_envelope_duplicating_a_live_message_returns_is_test_false(
+class TestATestEnvelopeIsNeverADuplicateOfALiveTurn:
+    """**Rewritten by H57 (dry-run isolation PR).**
+
+    This class used to assert the opposite: that a TEST envelope for a message that had
+    already run LIVE came back `duplicate: true` carrying the live row's `is_test: false`
+    and its live-flagged actions. That followed from `_existing_turn` matching on
+    `(contact, message_id)` alone, and it was the SAME defect the audit found from the
+    other side - a test row shadowing a live delivery, which answered a real customer with
+    a canned test reply and `duplicate: true`, i.e. with silence
+    (`test_dry_run_isolation.py::TestD15DedupRespectsIsTest`). One lookup cannot be
+    world-aware in one direction only, so the fix narrows both: the dedup question is now
+    "has this message already been turned into a turn IN THIS WORLD".
+
+    What that buys, beyond the defect: replaying a real customer's message from the
+    Prompts screen's Test button is the whole point of that button, and until now it
+    answered `duplicate: true` and ran nothing at all for any message the bot had already
+    handled - which is every message worth testing against.
+    """
+
+    def test_a_test_envelope_for_an_already_live_message_runs_its_own_turn(
         self, session_factory, seeded, stub_parser, stub_access
     ):
-        """`_duplicate_result`'s own docstring states this as deliberate: 'a TEST envelope
-        duplicating a LIVE message reads back is_test: false with live-flagged actions' -
-        the flag describes the FIRST turn (whose reply/actions are being replayed), not the
-        second caller's envelope. This exercises that exact sentence rather than trusting
-        the docstring: first delivery LIVE, second delivery of the SAME message_id marked
-        `is_test=True`, and the duplicate result must carry the first turn's flag."""
         stub_parser()
         stub_access()
 
@@ -620,9 +632,26 @@ class TestDuplicateIsTestFlagIsTheOriginalRows:
         test_envelope = _envelope(is_test=True)
         second = engine_mod.run_turn(test_envelope, session_factory=session_factory)
 
+        assert second.duplicate is False, (
+            "a TEST envelope must not be answered from a LIVE row: the two are different "
+            "turns and the dedup lookup is narrowed to the envelope's own is_test (H57)"
+        )
+        assert second.turn_id != first.turn_id
+        assert second.is_test is True
+
+    def test_a_second_test_delivery_of_one_message_still_dedups(
+        self, session_factory, seeded, stub_parser, stub_access
+    ):
+        """D15 is not weakened, only scoped: WITHIN one world the second delivery of a
+        message is still a duplicate and still runs nothing."""
+        stub_parser()
+        stub_access()
+
+        first = engine_mod.run_turn(_envelope(is_test=True), session_factory=session_factory)
+        second = engine_mod.run_turn(
+            _envelope(is_test=True, ingress="poller"), session_factory=session_factory
+        )
+
         assert second.duplicate is True
         assert second.turn_id == first.turn_id
-        assert second.is_test is False, (
-            "a TEST envelope duplicating a LIVE message must read back is_test: false - "
-            "the flag comes from the ORIGINAL row, per _duplicate_result's own docstring"
-        )
+        assert second.is_test is True

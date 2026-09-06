@@ -1,0 +1,734 @@
+"""D14 audit (tester-first, RED): a dry run must be ZERO writes to business state, and it
+is not today. `Envelope.dry_run` is `is_test or test_run_id or (mode not live)`
+(`contracts.py::Envelope.dry_run`) and the engine's OWN write (`chatbot.turns`) already
+stamps `is_test` correctly - what is missing is everywhere ELSE a turn touches that never
+checks the flag at all. Six findings, six RED sections below, all in one file per the
+coordinator's brief so the audit lands as one commit.
+
+Every test here is expected to FAIL against the code as it stands on this branch
+(`fix/chatbot-dry-run-isolation`, `= origin/main` at 749248eb3) for the reason stated in
+its own docstring - an assertion, not a fixture error, an ImportError, or a collection
+failure. That is what makes it a correct RED: the coder's job is to make each assertion
+true, not to make the test merely stop erroring.
+
+Findings, each traced to the production line it audits:
+
+1. `TestIntegrationLogWritesRegardlessOfDryRun` - `app/api/v1/external/chat.py:230-249`
+   (`/turn`) and `:378-421` (`/complete`'s `_log_complete_call`) write ONE `integration_log`
+   row per call, carrying the real contact id and the customer's text, with no `is_test`
+   branch at all. D14 says a dry run is zero writes outside `chatbot.turns`; this table is
+   outside it. **Design tension, stated rather than hidden**: `test_chat_turn_endpoint.py
+   ::TestDryRunEndpointZeroWrites` already asserts the OPPOSITE - that the call log DOES
+   gain a row on a dry run - matching this file's own docstring ("every call writes an
+   integration_log on success AND failure ... regardless of is_test"). The two tests
+   cannot both be green; this file takes the position the brief asked for (skip the write
+   entirely on a dry run) and says so here rather than silently overriding the existing
+   test's contract. If the team instead prefers TAGGING (write the row, but stamp
+   `is_test = true` so it can be filtered out downstream), that needs a new column on
+   `integration_log` - none exists today (`app/models/integration.py::IntegrationLog` has
+   no `is_test` field) - and this file's two tests below would need rewriting to assert
+   the tag instead of the absence. That decision belongs to whoever resolves this finding,
+   not to this test file.
+
+2. `TestOrderingKeysSkipDryRunTurns` - `app/services/chatbot/dispatch.py:129/133/137`
+   build `chatbot:seq:{contact}` / `chatbot:done:{contact}` / `chatbot:running:{contact}`
+   from the contact id alone, with no test/live namespace. `engine.py`'s S7 branch
+   (~line 747 onward) takes a ticket, waits, marks running and marks done for EVERY turn
+   once `chatbot_ordering_enabled` is on, dry run or not - so a chat-console test turn for
+   a real contact takes a real ticket in the same queue a live WhatsApp message from that
+   contact is about to wait on.
+
+3. `TestD15DedupRespectsIsTest` - `_select_turn` (engine.py ~416-444) and
+   `_existing_turn` (~475-483) match a turn by `(contact_respond_id, message_id)` alone.
+   A test-marked row therefore SHADOWS a later live delivery of the same `messageId`:
+   `run_turn` (~742-747) returns `_duplicate_result(existing)` and the live message is
+   answered from the test row's canned response, with `duplicate: true` telling the caller
+   to send nothing at all.
+
+4. `TestOperatorSurfacesHideDryRunRows` - `app/api/v1/system/chatbot.py`: `failed_contacts`
+   (~185-243) aggregates over `status == 'failed'` with no `is_test` filter; `list_turns`
+   (~123-171) likewise; `retry_turn` (~277-386) has no `is_test` branch at all and will
+   happily re-post an `is_test` row's original message to the live n8n ingress via
+   `reinject_envelope`.
+
+5. `TestMcpToolPickRefusesWriteTools` - `lanes/business/fetch.py::tool_filter` (~87-124)
+   picks the single highest-`similarity` candidate with no allow-list check at all. The
+   embedded tool catalogue (`mcp_tool_capability_service.py`) includes write tools -
+   `crm_it_support_ticket_create`, `crm_complaint_close`, `crm_order_cancel`,
+   `crm_purchase_request_approve`, `crm_purchase_request_reject` - and nothing stops one of
+   them from being the top hit for an ordinary business question.
+
+6. `TestLiveTailSessionPatchAbsentIsPreserved` - `engine.py::run_tail`, the line
+   `session_patch = sealed.get("session_patch") or {}` (~2758), followed by an
+   unconditional `overwrite_for_contact(db, ..., state=session_patch)` on a live turn
+   (~2786-2788) whenever `write_session` is true. An ABSENT `session_patch` key (the
+   sealed reply carries no memory to save) collapses to the same `{}` an EXPLICIT reset
+   would produce, and the unconditional overwrite then WIPES the customer's remembered
+   state for no reason the turn actually gave. See `tail/compose.py:73` (`sealed =
+   composed.get("reply") or {}`) and `tail/compile_state.py:132` (`seal()`, where
+   `session_patch` is always the compiled `patch` verbatim in production - which is WHY
+   this file has to STUB the compile step to produce the absent-key shape at all; nothing
+   in the real compiler emits it today, but the engine's contract must hold regardless of
+   which lane composed the reply).
+
+Postgres only, via `tests/_pg_fixture.py` (`session_factory`) and, for the two ordering
+tests that must observe real per-contact ticket keys, a real local Redis
+(`settings.redis_url`, the same substrate `test_s7_ordering_and_offload.py` uses).
+Everything else is stubbed at the seams `test_engine.py` / `test_s3_switch_and_complete_
+by_body.py` / `test_s6b_fetch_lane.py` already established - nothing here reaches an LLM,
+n8n, respond.io or a live MCP server.
+"""
+from __future__ import annotations
+
+import json
+import uuid
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+from sqlalchemy import text
+
+import app.main  # noqa: F401  isort:skip - registers every model before any query
+from app.config import settings
+from app.models.chatbot_turn import ChatbotTurn
+from app.models.integration import IntegrationLog
+from app.services.chatbot import dispatch
+from app.services.chatbot import engine as engine_mod
+from app.services.chatbot.lanes import business as business_mod
+from app.services.chatbot.lanes.business.services import FetchServices
+from app.services.chatbot.tail import compile_state as compile_state_mod
+
+from tests.chatbot.test_chat_turn_endpoint import (
+    api_key,
+    client as external_chat_client,
+    seeded_contact,
+    stub_engine_seams,
+)
+from tests.chatbot.test_engine import (
+    CONTACT_ID,
+    _envelope,
+    _parser_output,
+    seeded,
+    stub_access,
+    stub_parser,
+)
+from tests.chatbot.test_s3_switch_and_complete_by_body import _set_completed_lanes
+from tests.chatbot.test_turns_admin_api import (
+    _contact,
+    _GRANTS,
+    _seed_turn,
+    BASE,
+    client,
+    db,
+    MANAGE,
+    VIEW,
+)
+from app.services.user_service import UserPermissionService
+
+_TURN_URL = "/api/v1/external/chat/turn"
+
+
+def _redis_client():
+    import redis
+
+    return redis.from_url(settings.redis_url, decode_responses=True)
+
+
+# --------------------------------------------------------------------------- #
+# Finding 1 - the integration_log row a dry-run call still writes
+# --------------------------------------------------------------------------- #
+
+
+class TestIntegrationLogWritesRegardlessOfDryRun:
+    """D14: the endpoint's OWN write must respect the flag too, not just the engine's."""
+
+    def test_dry_run_turn_writes_no_integration_log(
+        self, external_chat_client, api_key, session_factory, seeded_contact, stub_engine_seams
+    ):
+        before = session_factory().execute(
+            text("SELECT COUNT(*) FROM integration_log WHERE external_reference = :c"),
+            {"c": CONTACT_ID},
+        ).scalar()
+
+        envelope = _envelope()
+        envelope.message["message"]["messageId"] = "ZZT-msg-dry-run-no-log"
+        payload = {
+            "envelope": {
+                **json.loads(envelope.model_dump_json()),
+                "test_run_id": "ZZT-run-no-log",
+            }
+        }
+
+        resp = external_chat_client.post(_TURN_URL, json=payload, headers={"X-API-Key": api_key})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["duplicate"] is False
+
+        after = session_factory().execute(
+            text("SELECT COUNT(*) FROM integration_log WHERE external_reference = :c"),
+            {"c": CONTACT_ID},
+        ).scalar()
+        assert after == before, (
+            "a dry-run /chat/turn call must not write an integration_log row carrying "
+            "the real contact id and the customer's message text (D14). It does today: "
+            "app/api/v1/external/chat.py:230-249 writes one on every call regardless of "
+            "is_test/test_run_id. (Alternative the team may prefer instead of skipping "
+            "the write: keep the row but stamp it is_test=True - that needs a new column "
+            "on IntegrationLog, which does not exist today, so this test's SKIP framing "
+            "would need rewriting to a TAG assertion if that direction is chosen.)"
+        )
+
+    def test_dry_run_complete_writes_no_integration_log(
+        self, external_chat_client, api_key, session_factory, monkeypatch
+    ):
+        from app.api.v1.external import chat as chat_router_mod
+
+        turn = ChatbotTurn(
+            id=str(uuid.uuid4()),
+            contact_respond_id=CONTACT_ID,
+            message_id="ZZT-msg-dry-complete-no-log",
+            ingress="webhook",
+            envelope={
+                "message": {"messageId": "ZZT-msg-dry-complete-no-log"},
+                "contact": {"id": CONTACT_ID},
+            },
+            status="delegated",
+            is_test=True,
+            attempt=1,
+            trace=[],
+        )
+        db_session = session_factory()
+        db_session.add(turn)
+        db_session.commit()
+        turn_id = turn.id
+
+        class _FakeCompleted:
+            def as_dict(self) -> dict[str, Any]:
+                return {
+                    "turn_id": turn_id,
+                    "reply": {
+                        "text": "ok",
+                        "quick_replies": None,
+                        "result_set": None,
+                        "attachments_src": None,
+                    },
+                    "actions": [{"kind": "send_message", "text": "ok", "dry_run": True}],
+                    "session_patch": None,
+                }
+
+        monkeypatch.setattr(chat_router_mod, "complete_turn", lambda *a, **k: _FakeCompleted())
+
+        before = (
+            session_factory()
+            .query(IntegrationLog)
+            .filter(IntegrationLog.business_id == turn_id)
+            .count()
+        )
+
+        resp = external_chat_client.post(
+            f"/api/v1/external/chat/turn/{turn_id}/complete",
+            json={"item": {"branch_kind": "clarify_menu"}},
+            headers={"X-API-Key": api_key},
+        )
+        assert resp.status_code == 200, resp.text
+
+        after = (
+            session_factory()
+            .query(IntegrationLog)
+            .filter(IntegrationLog.business_id == turn_id)
+            .count()
+        )
+        assert after == before, (
+            "a dry-run turn's /complete call must not write an integration_log row "
+            "either (D14). It does today: _log_complete_call "
+            "(app/api/v1/external/chat.py:378-421) is called unconditionally, with no "
+            "read of the row's own is_test flag."
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Finding 2 - per-contact ordering keys are shared with live traffic
+# --------------------------------------------------------------------------- #
+
+
+class TestOrderingKeysSkipDryRunTurns:
+    """S7 mode's redis ticket keys (`dispatch.seq_key` / `done_key` / `running_key`) are
+    keyed on the contact id alone - a dry run must not take a place in the SAME queue a
+    live message from that contact is about to wait on."""
+
+    def test_dry_run_turn_never_touches_live_ordering_keys(
+        self, session_factory, seeded, stub_parser, stub_access, monkeypatch
+    ):
+        monkeypatch.setattr(engine_mod, "_s7_mode", lambda *a, **k: True)
+        monkeypatch.setattr(settings, "chatbot_queue_wait_seconds", 5.0, raising=False)
+        stub_parser()
+        stub_access()
+
+        # A contact id of this run's own, NOT the shared `CONTACT_ID`. Redis is the one
+        # substrate in this suite that is not rolled back per test and not per worktree:
+        # `settings.redis_url` is the same instance every lane on this machine uses, and
+        # the `delete` below is a real delete. Keyed on CONTACT_ID it would wipe another
+        # lane's in-flight ordering keys (and be wiped by them), which is a flake in both
+        # directions. The database rows this turn writes are still scratch-schema.
+        contact_id = f"ZZT-ordering-{uuid.uuid4().hex[:8]}"
+        db_session = session_factory()
+        db_session.execute(
+            text(
+                "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+                "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
+            ),
+            {"cid": contact_id, "phone": "+60000000008", "sv": json.dumps({"variables": {}})},
+        )
+        db_session.commit()
+
+        redis_client = _redis_client()
+        keys = (
+            dispatch.seq_key(contact_id),
+            dispatch.done_key(contact_id),
+            dispatch.running_key(contact_id),
+        )
+        redis_client.delete(*keys)
+        try:
+            envelope = _envelope(test_run_id="ZZT-run-ordering-dry")
+            envelope.contact = {**envelope.contact, "id": contact_id}
+            envelope.message["contact"]["id"] = contact_id
+            envelope.message["message"]["contactId"] = contact_id
+            envelope.message["message"]["messageId"] = f"ZZT-msg-{contact_id}"
+            assert envelope.dry_run is True
+
+            result = engine_mod.run_turn(envelope, session_factory=session_factory)
+
+            assert result.is_test is True
+            for key in keys:
+                assert redis_client.exists(key) == 0, (
+                    f"a dry-run turn touched the LIVE ordering key {key!r}, shared with "
+                    "real traffic for this contact (dispatch.py:129/133/137). D14 says a "
+                    "test envelope writes nothing outside chatbot.turns; a dry-run turn "
+                    "must bypass per-contact ordering entirely (or use a "
+                    "'chatbot:test:...' namespace of its own) rather than take a real "
+                    "ticket in the queue a live message from this contact is about to "
+                    "wait on."
+                )
+        finally:
+            redis_client.delete(*keys)
+            redis_client.close()
+
+
+# --------------------------------------------------------------------------- #
+# Finding 3 - D15 dedup ignores is_test
+# --------------------------------------------------------------------------- #
+
+
+class TestD15DedupRespectsIsTest:
+    """`_select_turn` matches `(contact_respond_id, message_id)` alone, so a test-marked
+    row shadows a later LIVE delivery of the same respond message id."""
+
+    MESSAGE_ID = "ZZT-msg-shadow-1"
+
+    def _seed_test_row(self, session_factory) -> ChatbotTurn:
+        row = ChatbotTurn(
+            id=str(uuid.uuid4()),
+            contact_respond_id=CONTACT_ID,
+            message_id=self.MESSAGE_ID,
+            ingress="console",
+            envelope={"message": {"messageId": self.MESSAGE_ID}, "contact": {"id": CONTACT_ID}},
+            status="done",
+            branch_kind="clarify_menu",
+            is_test=True,
+            attempt=1,
+            trace=[],
+            response={
+                "reply": {
+                    "text": "TEST-ONLY CANNED REPLY - must never reach a real customer",
+                    "quick_replies": None,
+                },
+                "actions": [
+                    {
+                        "kind": "send_message",
+                        "text": "TEST-ONLY CANNED REPLY - must never reach a real customer",
+                        "dry_run": True,
+                    }
+                ],
+            },
+        )
+        db_session = session_factory()
+        db_session.add(row)
+        db_session.commit()
+        return row
+
+    def test_a_live_delivery_of_a_test_shadowed_message_runs_as_its_own_turn(
+        self, session_factory, seeded, stub_parser, stub_access
+    ):
+        test_row = self._seed_test_row(session_factory)
+        stub_parser()
+        stub_access()
+
+        live_envelope = _envelope()
+        live_envelope.message["message"]["messageId"] = self.MESSAGE_ID
+        assert live_envelope.dry_run is False
+
+        result = engine_mod.run_turn(live_envelope, session_factory=session_factory)
+
+        assert result.duplicate is False, (
+            "a LIVE message must never be answered as a duplicate of a TEST row for the "
+            "same (contact, messageId) - _select_turn (engine.py ~429-444) orders by "
+            "attempt/created_at only and never checks is_test, so today this returns "
+            "_duplicate_result(test_row) and the customer is answered from the canned "
+            "test reply with duplicate:true (nothing sent at all)."
+        )
+        assert result.turn_id != test_row.id, (
+            "the live delivery must create its OWN row, not reuse the test row's id"
+        )
+        if result.reply is not None:
+            assert "TEST-ONLY CANNED REPLY" not in (result.reply.get("text") or ""), (
+                "the live turn's reply must not be the test row's canned text"
+            )
+
+        rows = (
+            session_factory()
+            .query(ChatbotTurn)
+            .filter(
+                ChatbotTurn.contact_respond_id == CONTACT_ID,
+                ChatbotTurn.message_id == self.MESSAGE_ID,
+            )
+            .all()
+        )
+        assert len(rows) == 2, (
+            f"expected the test row plus a new live row for this message, found "
+            f"{len(rows)}: {[(r.id, r.is_test) for r in rows]}"
+        )
+        assert any(r.is_test is False for r in rows), (
+            "a new is_test=False row must exist for the live delivery"
+        )
+
+    def test_a_live_redelivery_of_a_live_message_still_dedups(
+        self, session_factory, seeded, stub_parser, stub_access
+    ):
+        """The mirror, green today - kept as the guard the fix must not break: two LIVE
+        deliveries of the same message still run exactly once (D15's original contract,
+        already covered by test_engine.py::TestIdempotency, restated here beside the bug
+        it must not regress)."""
+        stub_parser()
+        stub_access()
+
+        first = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+        second = engine_mod.run_turn(
+            _envelope(ingress="poller"), session_factory=session_factory
+        )
+
+        assert second.duplicate is True
+        assert second.turn_id == first.turn_id
+
+        rows = (
+            session_factory()
+            .query(ChatbotTurn)
+            .filter(ChatbotTurn.contact_respond_id == CONTACT_ID)
+            .all()
+        )
+        assert len(rows) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Finding 4 - the operator screens count and act on test rows
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture()
+def _system_chatbot_permissions(monkeypatch):
+    """A class-scoped copy of `test_turns_admin_api._permissions`, applied only to this
+    class via `usefixtures` rather than imported as a module-wide `autouse` fixture: the
+    original is `autouse=True` at its OWN definition (baked into the function object, not
+    the importing module), so importing it here would apply it to every OTHER class in
+    this file too - which broke `TestIntegrationLogWritesRegardlessOfDryRun`'s real,
+    DB-seeded `integration.chat_turn.submit` grant the first time this was tried (it
+    mocks `UserPermissionService.check_user_has_permission` down to `slug in _GRANTS`,
+    and `_GRANTS` never contains that slug)."""
+    _GRANTS.clear()
+    _GRANTS.add(VIEW)
+    monkeypatch.setattr(
+        UserPermissionService,
+        "check_user_has_permission",
+        lambda self, uid, slug: slug in _GRANTS,
+    )
+    monkeypatch.setattr(UserPermissionService, "get_user_role_slugs", lambda self, uid: set())
+    yield
+    _GRANTS.clear()
+
+
+class TestOperatorSurfacesHideDryRunRows:
+    """`GET /turns/failed-contacts`, `GET /turns` and `POST /turns/{id}/retry` all read
+    `chatbot.turns` with no `is_test` awareness."""
+
+    pytestmark = pytest.mark.usefixtures("_system_chatbot_permissions")
+
+    def test_failed_contacts_excludes_contacts_whose_only_failures_are_test_turns(
+        self, client, db
+    ):
+        live_contact = _contact("live-failed")
+        test_only_contact = _contact("test-only-failed")
+        _seed_turn(db, contact_respond_id=live_contact, status="failed", stage="looked_up")
+        test_turn = _seed_turn(
+            db, contact_respond_id=test_only_contact, status="failed", stage="looked_up"
+        )
+        test_turn.is_test = True
+        db.commit()
+
+        resp = client.get(f"{BASE}/failed-contacts")
+        assert resp.status_code == 200, resp.text
+        ids = {item["contact_respond_id"] for item in resp.json()["items"]}
+
+        assert live_contact in ids
+        assert test_only_contact not in ids, (
+            "a contact whose ONLY failed turn is a dry-run (is_test) turn must not "
+            "surface on the operator's failed-contacts list (app/api/v1/system/"
+            "chatbot.py::failed_contacts, ~line 209) - it never happened to a real "
+            "customer and nothing there needs an operator's attention."
+        )
+
+    def test_list_turns_excludes_test_rows_by_default(self, client, db):
+        contact = _contact("list-mixed")
+        live_turn = _seed_turn(db, contact_respond_id=contact, status="done", message_id="ZZT-msg-list-live")
+        test_turn = _seed_turn(db, contact_respond_id=contact, status="done", message_id="ZZT-msg-list-test")
+        test_turn.is_test = True
+        db.commit()
+
+        resp = client.get(BASE, params={"contact_respond_id": contact})
+        assert resp.status_code == 200, resp.text
+        ids = {item["id"] for item in resp.json()["items"]}
+
+        assert live_turn.id in ids
+        assert test_turn.id not in ids, (
+            "GET /turns must exclude is_test rows by default (app/api/v1/system/"
+            "chatbot.py::list_turns, ~line 145) - an operator reading Chat History for "
+            "a real customer should not see the dry-run turns run against them from the "
+            "Prompts screen's Test button (AC-807) or the chat console."
+        )
+
+        resp2 = client.get(BASE, params={"contact_respond_id": contact, "include_test": "true"})
+        assert resp2.status_code == 200, resp2.text
+        ids2 = {item["id"] for item in resp2.json()["items"]}
+        assert test_turn.id in ids2, (
+            "include_test=true (name assumed - the coder may rename the query param) "
+            "must still surface the dry-run rows for whoever needs to audit them"
+        )
+
+    def test_retry_on_a_test_turn_is_refused_and_posts_nothing(self, client, db, monkeypatch):
+        _GRANTS.add(MANAGE)
+        contact = _contact("retry-test-row")
+        turn = _seed_turn(
+            db,
+            contact_respond_id=contact,
+            status="failed",
+            stage="looked_up",
+            message_id="ZZT-msg-retry-test-row",
+        )
+        turn.is_test = True
+        db.commit()
+
+        reinject_calls: list[Any] = []
+        monkeypatch.setattr(
+            "app.api.v1.system.chatbot.reinject_envelope",
+            lambda db_arg, row: reinject_calls.append(row.id),
+        )
+
+        resp = client.post(f"{BASE}/{turn.id}/retry")
+
+        assert resp.status_code == 409, resp.text
+        assert (
+            resp.json().get("detail", {}).get("code") == "test_turn_not_retryable"
+            or "test_turn_not_retryable" in resp.text
+        ), (
+            "retry_turn (app/api/v1/system/chatbot.py::retry_turn, ~line 277) has no "
+            "is_test check today and will happily claim + re-inject a dry-run turn's "
+            "original message at the live n8n ingress"
+        )
+        assert reinject_calls == [], (
+            "a dry-run turn's retry must never reach the ingress: reinject_envelope was "
+            f"called for {reinject_calls!r}"
+        )
+
+        db.expire_all()
+        reread = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn.id).one()
+        assert reread.retry_requested_at is None, (
+            "a refused retry must not leave the row claimed - the same rule "
+            "test_retry_unavailable_without_url already holds the endpoint to"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Finding 5 - MCP tool pick has no read-only allow-list
+# --------------------------------------------------------------------------- #
+
+
+class TestMcpToolPickRefusesWriteTools:
+    """`tool_filter` (fetch.py ~87-124) picks the single highest-similarity candidate
+    with no allow-list check. The embedded catalogue includes write tools -
+    `crm_it_support_ticket_create`, `crm_complaint_close`, `crm_order_cancel`,
+    `crm_purchase_request_approve`, `crm_purchase_request_reject` - and any one of them
+    can be the top hit for an ordinary business question."""
+
+    def test_a_post_tool_top_hit_is_never_called(self):
+        mcp_call = MagicMock(return_value='{"answers": []}')
+        services = FetchServices(
+            embed=lambda query: [0.1],
+            tool_search=lambda embedding, *, query, domain: [
+                {"name": "crm_order_cancel", "similarity": 0.99}
+            ],
+            mcp_call=mcp_call,
+        )
+        payload = {
+            "_exit_kind": "continue",
+            "gate": {
+                "compatible_entities": [
+                    {
+                        "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                        "entity_type": "product",
+                        "code": "SRTWB7096",
+                    }
+                ]
+            },
+        }
+
+        fragment = business_mod.run_fetch(payload, services=services, dry_run=False)
+
+        assert mcp_call.call_args_list == [], (
+            "the read-only chatbot must never call a write (POST) MCP tool: mcp_call "
+            f"was invoked with {mcp_call.call_args_list!r} - tool_filter picked "
+            "'crm_order_cancel' on similarity alone with no allow-list check "
+            "(lanes/business/fetch.py::tool_filter)"
+        )
+        reason = json.dumps(fragment, default=str)
+        assert fragment.get("kind") != "result", (
+            f"the turn must not read as an ordinary answered result when the only "
+            f"candidate tool was a write tool refused before the call: {fragment!r}"
+        )
+        assert "crm_order_cancel" in reason or "not_allowed" in reason or "refus" in reason.lower(), (
+            "the fetch fragment must name the refusal (a 'tool_not_allowed' reason, or "
+            "equivalent) so an operator reading the trace can see why nothing answered: "
+            f"{fragment!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Finding 6 - a live tail must not wipe session_vars on an absent session_patch
+# --------------------------------------------------------------------------- #
+
+
+class TestLiveTailSessionPatchAbsentIsPreserved:
+    """`run_tail`: `session_patch = sealed.get("session_patch") or {}` (engine.py ~2758)
+    treats an ABSENT key the same as an EXPLICIT `{}`, and the live write beneath it
+    (~2786-2788) is unconditional once `write_session` is true - so a sealed reply that
+    simply carries no memory to save wipes whatever was there before.
+
+    Every test stubs `compile_state.compile_current_state` (the seam `run_tail` imports
+    locally, so patching the module attribute is visible to the next call) rather than
+    driving the real compiler: nothing in production emits a session_patch-less reply
+    today (`compile_current_state`'s own `seal()` always sets the key to the compiled
+    patch verbatim - `tail/compile_state.py:132`), but the engine's own contract at the
+    write site must hold regardless of which lane produced the sealed reply, not only for
+    shapes the current compiler happens to emit.
+    """
+
+    def _seed_contact(self, session_factory, variables: dict[str, Any]) -> None:
+        db_session = session_factory()
+        db_session.execute(
+            text(
+                "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+                "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
+            ),
+            {"cid": CONTACT_ID, "phone": "+60000000009", "sv": json.dumps({"variables": variables})},
+        )
+        db_session.commit()
+
+    def _session_vars(self, session_factory) -> Any:
+        return session_factory().execute(
+            text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
+            {"c": CONTACT_ID},
+        ).scalar()
+
+    @staticmethod
+    def _prepare_clarify_menu(session_factory, stub_parser, stub_access) -> None:
+        _set_completed_lanes(session_factory, ["clarify_menu"])
+        stub_parser(
+            _parser_output(
+                message_type="clarification", domain_hint=None, user_goal="checking stock"
+            )
+        )
+        stub_access()
+
+    def test_session_patch_absent_leaves_the_blob_untouched(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ):
+        self._seed_contact(session_factory, {"x": 1})
+        self._prepare_clarify_menu(session_factory, stub_parser, stub_access)
+
+        def fake_compile(item, ctx, *, resolved=None, gate=None, execution_id=""):
+            return compile_state_mod.CompiledState(
+                item={"reply": {"text": "Sure - let me get that.", "quick_replies": None}}
+            )
+
+        monkeypatch.setattr(compile_state_mod, "compile_current_state", fake_compile)
+
+        engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        after = self._session_vars(session_factory)
+        assert after == {"variables": {"x": 1}}, (
+            "a sealed reply with NO session_patch key must leave the customer's memory "
+            f"untouched; got {after!r} instead. engine.py's `session_patch = sealed.get"
+            "(\"session_patch\") or {}` defaults an ABSENT key to {} exactly like an "
+            "explicit reset, and then unconditionally overwrites respond_contacts."
+            "session_vars for a live, write_session=True turn."
+        )
+
+    def test_session_patch_explicit_empty_still_resets(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ):
+        """Guard, green today: an EXPLICIT `{}` is a real reset and must still write."""
+        self._seed_contact(session_factory, {"x": 1})
+        self._prepare_clarify_menu(session_factory, stub_parser, stub_access)
+
+        def fake_compile(item, ctx, *, resolved=None, gate=None, execution_id=""):
+            return compile_state_mod.CompiledState(
+                item={
+                    "reply": {
+                        "text": "ok",
+                        "quick_replies": None,
+                        "session_patch": {},
+                    }
+                }
+            )
+
+        monkeypatch.setattr(compile_state_mod, "compile_current_state", fake_compile)
+
+        engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        after = self._session_vars(session_factory)
+        assert after == {}, (
+            "an EXPLICIT empty session_patch is a real reset and must still write {} - "
+            f"got {after!r}"
+        )
+
+    def test_dry_run_with_no_session_patch_is_untouched(
+        self, session_factory, stub_parser, stub_access, monkeypatch
+    ):
+        """Guard, green today: D14 already suppresses the write for a dry run regardless
+        of session_patch shape - kept here so a fix for the live case cannot regress it."""
+        self._seed_contact(session_factory, {"x": 1})
+        self._prepare_clarify_menu(session_factory, stub_parser, stub_access)
+
+        def fake_compile(item, ctx, *, resolved=None, gate=None, execution_id=""):
+            return compile_state_mod.CompiledState(
+                item={"reply": {"text": "ok", "quick_replies": None}}
+            )
+
+        monkeypatch.setattr(compile_state_mod, "compile_current_state", fake_compile)
+
+        envelope = _envelope(test_run_id="ZZT-run-session-guard")
+        assert envelope.dry_run is True
+
+        engine_mod.run_turn(envelope, session_factory=session_factory)
+
+        after = self._session_vars(session_factory)
+        assert after == {"variables": {"x": 1}}, (
+            f"a dry run must never write session_vars regardless of session_patch shape "
+            f"(D14); got {after!r}"
+        )

@@ -4,8 +4,8 @@ key - the seam `response_model` silently drops an undeclared field at
 in a test"), and the seam D14/AC-702's "zero writes" claim actually has to be measured
 against, not just asserted from inside `run_turn` (`test_engine.py`'s `TestDryRun` proves
 the engine writes nothing outside `chatbot.turns`; this file proves the ENDPOINT - which
-also writes an `integration_log` on every call, dry run or not, per its own docstring -
-does not silently touch anything else either).
+writes an `integration_log` on every LIVE call and none at all on a dry run (H57) - does
+not silently touch anything else either).
 
 Auth mirrors `test_module_and_endpoint.py`'s `key`/`db` fixtures (a real integration, a
 real issued `X-API-Key`, a role holding only `integration.chat_turn.submit`) but against
@@ -211,9 +211,21 @@ class TestResponseModelSurvival:
 
 
 class TestDryRunEndpointZeroWrites:
-    """AC-702 measured through the whole request, not just `run_turn` (the endpoint's
-    OWN write - the integration log - is the one exception D14 does not forbid: the
-    docstring says every call logs, dry run or not)."""
+    """AC-702 measured through the whole request, not just `run_turn` - the endpoint's
+    OWN write, the integration log, included.
+
+    **Amended by H57 (this PR).** This class used to assert `after_log == before_log + 1`,
+    reading the module docstring's "every call writes an integration_log" as covering a
+    dry run too. It does not any more, and the change is the fix rather than a weakened
+    test: `integration_log` is business state an operator reads per customer (real contact
+    id, the customer's message text, the endpoint that was called), so a row written
+    because somebody pressed Test on the Prompts screen describes a call that never
+    happened to that customer. Nothing is lost by skipping it - the turn's own
+    `chatbot.turns` row is written with `is_test = true` and carries the envelope, the
+    response and the whole trace, which is strictly more than the log line held. The LIVE
+    path still logs on success AND failure; `TestTheCallLogNeverStoresACredentialOrAn
+    UnboundedBody` below covers it.
+    """
 
     def _count(self, session_factory, table: str, *, where: str | None = None) -> int:
         """Unqualified table name only - resolved via the isolated schema's `search_path`
@@ -246,7 +258,7 @@ class TestDryRunEndpointZeroWrites:
             .count()
         )
 
-    def test_dry_run_touches_only_chatbot_turns_and_the_call_log(
+    def test_dry_run_touches_only_chatbot_turns(
         self, client, api_key, session_factory, seeded_contact, stub_engine_seams
     ):
         before_session_vars = session_factory().execute(
@@ -283,8 +295,9 @@ class TestDryRunEndpointZeroWrites:
         assert after_session_vars == before_session_vars, "session_vars must be untouched on a dry run"
         assert after_sla == before_sla == 0
         assert after_chat_history == before_chat_history == 0
-        # The ONE write D14 does not forbid: the endpoint's own audit log of the call.
-        assert after_log == before_log + 1
+        # H57: ZERO, not one. The call log is outside `chatbot.turns`, so D14's "a dry
+        # run writes nothing outside that table" covers it too.
+        assert after_log == before_log == 0
         # chatbot.turns gains exactly the one row for this turn, flagged is_test.
         assert after_turns == before_turns + 1
         row = (

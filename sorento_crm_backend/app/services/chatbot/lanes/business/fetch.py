@@ -16,6 +16,14 @@ Three hazards are fixed here rather than reproduced, and each says so at its own
 * **H11** - `tool-filter.js` returns `[]` on zero tools and that empty array is
   indistinguishable from "ran and found nothing to say". `tool_filter` keeps the empty
   item list for parity (D8) and adds `outcome`, which the caller can act on.
+* **H58** - the pick is an argmax over an embedded catalogue that contains WRITE tools
+  (`crm_order_cancel`, `crm_complaint_close`, the two purchase-request approvals,
+  `crm_it_support_ticket_create`, `crm_ideation_turn`), and `tool_filter` takes the top hit
+  with no further test. `CHATBOT_READ_ONLY_TOOLS` below is the allow-list: the chatbot's
+  retrieval seam (`services._tool_search`) drops everything else from the candidate list,
+  and `ensure_read_only` refuses it at both call seams anyway. The POOL keeps the write
+  tools, on purpose - the in-app AI assistant retrieves them and confirms with a human
+  before each one, which is a gate this chatbot does not have.
 
 **H43 is moot, not fixed.** The n8n query's `$4` is `domain`, LIKE-matched against
 `source_id`, and some live call sites never bind it. In process `domain` is a parameter of
@@ -502,15 +510,117 @@ def parse_mcp_content(raw: Any) -> Any:
     return raw
 
 
+class ToolNotAllowed(RuntimeError):
+    """H58: this tool is not one the chatbot may call, so it is not called at all.
+
+    Its own type rather than a bare `RuntimeError` because the caller answers it
+    differently from an MCP failure: a refusal is not "the read did not work", it is "the
+    read was never allowed", and `run_fetch` records it as the `tool_not_allowed` outcome
+    so the reason is on the trace an operator reads.
+    """
+
+
+# The MCP tools this chatbot may call. An ALLOW-list, so a tool that is not named here is
+# refused - a new write tool added to the MCP catalogue is out by default rather than in
+# until somebody remembers to deny it.
+#
+# **Why a literal and not a walk of `sorento_crm_mcp/catalog.py`.** The deployed backend
+# image does not contain that package: `sorento_crm/docker-compose.yml` builds the backend
+# with `context: ./sorento_crm_backend`, the Dockerfile's `COPY . .` therefore copies only
+# the backend, `mcp` is not in `requirements.txt` and no volume mounts it. A catalogue read
+# on the turn path would raise `ModuleNotFoundError` in every container, the path fallback
+# in `mcp_tool_capability_service._load_catalog_specs` would look for `/sorento_crm_mcp/`
+# and fail too, and `run_fetch`'s broad `except` would turn EVERY live business turn into
+# "MCP tool X failed". A frozen set costs nothing and cannot fail.
+#
+# The catalogue is still the source of truth for WHICH names belong here, and the two are
+# pinned together by `tests/chatbot/test_tool_pool_is_read_only.py`, which imports the
+# catalogue (available in CI and in a checkout, never in the container) and asserts this
+# set EQUALS "method GET, or the spec's own `read_only` flag". Drift in either direction
+# fails CI, which is where the catalogue is readable, instead of at 3am in production.
+#
+# The six the audit found, deliberately absent: `crm_complaint_close`, `crm_order_cancel`,
+# `crm_purchase_request_approve`, `crm_purchase_request_reject`,
+# `crm_it_support_ticket_create`, `crm_ideation_turn`. They stay in the MCP catalogue and
+# in the Tool-RAG pool - the in-app AI assistant retrieves them ON PURPOSE and gates each
+# behind a user confirmation and a permission check. The chatbot has no user to confirm
+# with, which is the whole difference.
+CHATBOT_READ_ONLY_TOOLS: frozenset[str] = frozenset(
+    {
+        "crm_certificates_list",
+        "crm_complaint_analytics",
+        "crm_complaints_list",
+        "crm_forms_management_forms_list",
+        "crm_incoming_stock_by_product",
+        "crm_incoming_stock_list",
+        "crm_incoming_stock_shipments",
+        "crm_inventory_stock_balance_list",
+        "crm_inventory_warehouses_list",
+        # POST, and still a read: the body carries the keyword because it does not fit in
+        # a query string. Same for the two below.
+        "crm_lookup_resolve",
+        "crm_marketing_promotion_attachments_list",
+        "crm_marketing_promotion_products_list",
+        "crm_marketing_promotions_list",
+        "crm_master_brands_list",
+        "crm_master_customers_list",
+        "crm_master_product_attachments_list",
+        "crm_master_product_categories_list",
+        "crm_master_products_list",
+        "crm_master_units_of_measure_list",
+        "crm_order_analytics",
+        "crm_order_management_orders_by_product_list",
+        "crm_order_management_orders_list",
+        "crm_portal_link_get",
+        "crm_project_detail",
+        "crm_project_forecast",
+        "crm_project_quotations_list",
+        "crm_projects_list",
+        "crm_resource_attachments_catalogue",
+        "crm_resource_attachments_current_stock_list",
+        "crm_resource_attachments_list",
+        "crm_sla_conversation_event_logs_list",
+        "crm_sla_conversation_tracking_dashboard",
+        "crm_sla_conversation_tracking_list",
+        "crm_system_tool_capabilities_summary",
+        "user_guides_read",
+    }
+)
+
+
+def ensure_read_only(name: Any) -> None:
+    """Refuse a tool the chatbot may not call. Raises `ToolNotAllowed`, returns nothing.
+
+    ONE rule, called at the TWO seams a tool name can reach the MCP client through: this
+    module's `call_tool` (the fetch step and the tier probe) and `services._mcp_call` (the
+    answer and miss-suggest probes, which call the bundle directly). Two call sites of one
+    function rather than two rules: whichever path a name arrives on, the same set decides.
+    """
+    if jsc.js_string(name) not in CHATBOT_READ_ONLY_TOOLS:
+        raise ToolNotAllowed(
+            f"MCP tool {name} is not allowed: the chatbot may only call read tools"
+        )
+
+
 def call_tool(name: str, args: dict[str, Any], *, mcp: Any) -> Any:
-    """One MCP tool call, passed straight through (D10).
+    """One MCP tool call, passed straight through (D10) - if the tool only READS.
 
     No re-shaping in either direction: the arguments are what `entity_ids_transformer`
     built and the result is what the tool returned, so `output_structurer` still sees the
     presenter shape it was written against. The endpoint is whatever `mcp` was constructed
     with, and `services.py` builds it from `settings.ai_assistant_mcp_url` - this module
     names no host, no scheme and no port.
+
+    **The allow-list check is HERE, at the egress, and it is not defensive coding (H58).**
+    The tool is chosen by cosine similarity and `tool_filter` takes the single top hit with
+    no further test, so until now the only thing standing between a customer's phrasing and
+    `crm_order_cancel` was that no phrasing had scored it first. The chatbot's retrieval
+    seam (`services._tool_search`) drops write tools from the candidate list, which is what
+    stops them being PICKED; this is what stops one being CALLED however it was named -
+    including the tier probe and a tool name that arrived on a payload rather than from the
+    search.
     """
+    ensure_read_only(name)
     return mcp.call_tool(name, args)
 
 

@@ -10,8 +10,11 @@ gets slower.
 This module is one of only three files allowed to import `app.services.chatbot`
 (`tests/chatbot/test_import_boundary.py` enforces it; the others are the trace/admin API
 and the RQ task the offload runs on). It is a thin adapter: validate, call `run_turn`,
-serialise, log. Every call writes an `integration_log` on success AND failure, the same as
-the ideation turn and the conversation-variables endpoint.
+serialise, log. Every LIVE call writes an `integration_log` on success AND failure, the
+same as the ideation turn and the conversation-variables endpoint - and a DRY RUN writes
+none at all (H57, D14): the call log is business state an operator reads per customer, and
+a test turn has nothing to say there that `chatbot.turns`' own `is_test` row does not
+already carry.
 
 **In S7 mode (`system_settings.chatbot_ordering_enabled`) `/turn` is the only trigger**: it runs the whole
 turn, orders it per contact, and returns the finished reply and actions, so `/complete`
@@ -36,6 +39,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
@@ -227,30 +231,40 @@ def chat_turn(
         error_message = "Failed to handle chatbot turn."
         to_reraise = HTTPException(status_code=response_status, detail=error_message)
 
-    try:
-        request_headers = sanitize_request_headers(dict(request.headers))
-        IntegrationLogService(db).create_integration_log(
-            IntegrationLogCreate(
-                integration_channel="n8n",
-                business_table="chatbot.turns",
-                business_id=(response_payload.turn_id if response_payload else str(uuid.uuid4())),
-                external_reference=str(payload.envelope.contact.get("id") or ""),
-                direction="inbound",
-                endpoint=str(request.url.path),
-                http_method=request.method,
-                request_headers=json.dumps(request_headers),
-                request_payload=_logged_payload(
-                    payload, reference=str(payload.envelope.contact.get("id") or "")
-                ),
-                status_code=response_status,
-                status="success" if response_status < 400 else "failed",
-                error_message=error_message,
+    # H57 / D14: a DRY RUN leaves no call log. `integration_log` is business state - it is
+    # what an operator reads to answer "what did n8n send us about this customer?" - and a
+    # row carrying a real contact id and the customer's message text, written because
+    # somebody pressed Test on the Prompts screen, describes something that never happened
+    # to that customer. The turn itself is not lost: `chatbot.turns` already holds this
+    # turn's envelope, response and trace under `is_test = true`, which is strictly more
+    # than this row would have carried. The LIVE path below is unchanged.
+    if not payload.envelope.dry_run:
+        try:
+            request_headers = sanitize_request_headers(dict(request.headers))
+            IntegrationLogService(db).create_integration_log(
+                IntegrationLogCreate(
+                    integration_channel="n8n",
+                    business_table="chatbot.turns",
+                    business_id=(
+                        response_payload.turn_id if response_payload else str(uuid.uuid4())
+                    ),
+                    external_reference=str(payload.envelope.contact.get("id") or ""),
+                    direction="inbound",
+                    endpoint=str(request.url.path),
+                    http_method=request.method,
+                    request_headers=json.dumps(request_headers),
+                    request_payload=_logged_payload(
+                        payload, reference=str(payload.envelope.contact.get("id") or "")
+                    ),
+                    status_code=response_status,
+                    status="success" if response_status < 400 else "failed",
+                    error_message=error_message,
+                )
             )
-        )
-    except Exception as log_error:  # noqa: BLE001
-        logger.warning(
-            "Failed to create integration log for chatbot turn: %s", log_error, exc_info=True
-        )
+        except Exception as log_error:  # noqa: BLE001
+            logger.warning(
+                "Failed to create integration log for chatbot turn: %s", log_error, exc_info=True
+            )
 
     if to_reraise is not None:
         raise to_reraise
@@ -384,17 +398,24 @@ def _log_complete_call(
     external_reference: str,
     status_code: int,
     error_message: str | None,
+    dry_run: bool = False,
 ) -> None:
-    """The `integration_log` row every `/complete` call writes, answered or refused.
+    """The `integration_log` row every LIVE `/complete` call writes, answered or refused.
 
     ONE writer for both complete routes and for both outcomes, because the module contract
-    is that no call to this endpoint is invisible - a 404 or a 409 on the id-less form is
-    exactly the call an operator reading an n8n run needs to find, and it used to be the
+    is that no live call to this endpoint is invisible - a 404 or a 409 on the id-less form
+    is exactly the call an operator reading an n8n run needs to find, and it used to be the
     only one that left no trace.
+
+    `dry_run` is H57 / D14, the same rule `/turn` follows above: a test turn writes nothing
+    outside `chatbot.turns`, and the call log is outside it. Read off the turn ROW's own
+    `is_test` rather than guessed, because the tail's caller sends no envelope.
 
     Best-effort, like every other post-response side effect here: the answer has already
     been decided and failing to describe it must not change it.
     """
+    if dry_run:
+        return
     try:
         request_headers = sanitize_request_headers(dict(request.headers))
         IntegrationLogService(db).create_integration_log(
@@ -449,6 +470,11 @@ def chat_turn_complete(
     error_message: str | None = None
     response_payload: CompleteResponse | None = None
     to_reraise: HTTPException | None = None
+    # H57 / D14: is this a TEST turn? Only the ROW knows - the tail's caller sends no
+    # envelope, and on the failure path below the answer is built here rather than read
+    # off `complete_turn`. `None` means "not looked up yet", so the failure path's own
+    # read is reused instead of paying for a second query on the way to the log.
+    row_is_test: bool | None = None
 
     try:
         if _s7_mode(db):
@@ -496,6 +522,7 @@ def chat_turn_complete(
         # the wrong direction for nothing else here.
         row = _turn_row(db, turn_id)
         dry_run = bool(getattr(row, "is_test", False))
+        row_is_test = dry_run
         reply = {
             "text": TAIL_ERROR_REPLY,
             "quick_replies": None,
@@ -521,6 +548,8 @@ def chat_turn_complete(
             is_test=dry_run,
         )
 
+    if row_is_test is None:
+        row_is_test = bool(getattr(_turn_row(db, turn_id), "is_test", False))
     _log_complete_call(
         db,
         request=request,
@@ -529,6 +558,7 @@ def chat_turn_complete(
         external_reference=turn_id,
         status_code=response_status,
         error_message=error_message,
+        dry_run=row_is_test,
     )
 
     if to_reraise is not None:
@@ -536,6 +566,24 @@ def chat_turn_complete(
 
     assert response_payload is not None
     return response_payload
+
+
+def _body_turn_key(payload: CompleteRequest) -> tuple[Any, Any]:
+    """`(contact id, respond message id)` out of an id-less `/complete` body.
+
+    One reader, because two callers ask the same question: the resolver below turns the
+    pair into a turn id, and the refusal path in `chat_turn_complete_by_body` needs the
+    same pair to find out whether the turn it could not complete was a TEST turn (H57 -
+    a refused call must not log a row a dry run is not allowed to write).
+
+    `ctx.text` IS `tf-message`'s own item, so the respond message id sits at
+    `ctx.text.message.messageId` - one level up from the message BODY
+    (`ctx.text.message.message.text`), which is the level that reads like the obvious one
+    and is wrong.
+    """
+    ctx = payload.ctx or {}
+    message = (ctx.get("text") or {}).get("message") or {}
+    return (ctx.get("contact") or {}).get("id"), message.get("messageId")
 
 
 def _resolve_turn_for_complete(db: Session, payload: CompleteRequest) -> str:
@@ -556,14 +604,7 @@ def _resolve_turn_for_complete(db: Session, payload: CompleteRequest) -> str:
     would disagree about which row IS the turn the moment a second one existed, so there is
     one helper and one answer.
     """
-    ctx = payload.ctx or {}
-    contact_id = ((ctx.get("contact") or {}).get("id"))
-    # `ctx.text` IS `tf-message`'s own item, so the respond message id sits at
-    # `ctx.text.message.messageId` - one level up from the message BODY
-    # (`ctx.text.message.message.text`), which is the level that reads like the obvious
-    # one and is wrong.
-    message = (ctx.get("text") or {}).get("message") or {}
-    message_id = message.get("messageId")
+    contact_id, message_id = _body_turn_key(payload)
     if contact_id in (None, "") or message_id in (None, ""):
         raise AppException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -645,15 +686,27 @@ def chat_turn_complete_by_body(
         # 409 that leaves no `integration_log` row is the one call an operator cannot
         # find when n8n reports a turn that was never finished.
         detail = refused.detail if isinstance(refused.detail, dict) else {}
-        ctx = payload.ctx or {}
+        contact_id, message_id = _body_turn_key(payload)
+        # H57: a refusal of a TEST turn is still a dry run, and a dry run writes nothing
+        # outside `chatbot.turns`. Only the 409 arm can have a row behind it (the two 404s
+        # are "no such turn"), so the lookup answers False by construction on those and
+        # costs one query on a path that is already refusing.
+        refused_row = (
+            find_turn_for_message(
+                db, contact_respond_id=str(contact_id), message_id=str(message_id)
+            )
+            if contact_id not in (None, "") and message_id not in (None, "")
+            else None
+        )
         _log_complete_call(
             db,
             request=request,
             payload=payload,
             business_id=str(uuid.uuid4()),
-            external_reference=str((ctx.get("contact") or {}).get("id") or ""),
+            external_reference=str(contact_id or ""),
             status_code=refused.status_code,
             error_message=str(detail.get("detail") or detail.get("message") or refused.detail),
+            dry_run=bool(getattr(refused_row, "is_test", False)),
         )
         raise
     return chat_turn_complete(turn_id, payload, request, current_user, db)

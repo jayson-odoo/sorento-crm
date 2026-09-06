@@ -10,7 +10,7 @@ created by `POST /chat/turn` and closed either by that same call (when the CRM f
 the turn) or by `POST /chat/turn/{id}/complete`; `delegated` is the state in between.
 
 Two columns carry the whole idempotency story (D15, AC-712): `message_id` plus the unique
-index on `(contact_respond_id, message_id)`. The webhook producer and the failover poller
+index on `(contact_respond_id, message_id, attempt, is_test)`. The webhook producer and the failover poller
 are two injectors of one envelope shape, so the same respond message can legitimately
 arrive twice. The SELECT-then-INSERT dedup in the engine is a TOCTOU window, so the
 unique index is the real backstop: the collision is caught, the winner's row is read, and
@@ -54,10 +54,16 @@ class ChatbotTurn(Base):
         # turned into a turn"; a manual RETRY of that message is deliberately a second
         # turn, attempt 2. On a two-column key the retried envelope collided with the row
         # it was retrying, so Retry was a no-op that reported success.
+        # Per WORLD too (H57, migration 481): a TEST turn and a LIVE delivery of one
+        # respond message are two different turns, and the live one must be able to run
+        # after the test one. Without `is_test` in the key the engine's dedup could not be
+        # narrowed to the envelope's own world - the index would have refused the row the
+        # narrowed SELECT had just decided to write.
         UniqueConstraint(
             "contact_respond_id",
             "message_id",
             "attempt",
+            "is_test",
             name="uq_chatbot_turns_contact_message_attempt",
         ),
         {"schema": "chatbot"},

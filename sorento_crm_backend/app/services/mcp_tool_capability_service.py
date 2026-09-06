@@ -10,6 +10,16 @@ For every MCP tool we emit:
 
 Both the body and the question bank are chunked and embedded, so the tool's real
 purpose - not just hand-picked phrases - drives retrieval.
+
+**The pool holds EVERY tool, write tools included, and that is deliberate (H58).** The
+in-app AI assistant retrieves from this same pool and its four record actions
+(`crm_complaint_close`, `crm_order_cancel`, the two purchase-request approvals) are put in
+it ON PURPOSE by `record_action_bootstrap` so its Tool-RAG can find them; it gates them
+with an explicit user confirmation and a permission check instead. The READ-ONLY rule
+belongs to the CHATBOT, which has no user to confirm with, and is applied on the chatbot's
+own retrieval and call seams (`app/services/chatbot/lanes/business/fetch.py`
+::`CHATBOT_READ_ONLY_TOOLS`). Filtering here would have taken the assistant's write tools
+away from it.
 """
 from __future__ import annotations
 
