@@ -153,6 +153,15 @@ cases:
   # the tier list, but persisted no product and no domain, so the valid "all" that followed
   # answered "I need at least one filter". "9" and not "3": the #34 script offers THREE
   # tiers, so "3" is in range and would grade the happy path instead.
+  #
+  # STILL RED on the 6 Sep lane run, and NOT for the reason this lane fixed. Measured on
+  # `console-check-1788709429`: the OFFER turn itself ("promotion 7445") persists
+  # `selection_context: null`, `entities: []` and `domain_hint: null`, so by turn 2 there
+  # is no offer to carry and `_offer_carry` never runs. The carry fix is proven by
+  # `TestACarriedOfferKeepsTheSubjectItWasMadeAbout` and
+  # `TestAnOutOfRangePickKeepsTheProductInScope`; what is left is the access-level ask
+  # arm showing the customer a numbered list and recording no list. Filed as a follow-up,
+  # and the case stays here as its contract.
   - name: an out-of-range tier pick keeps the product in scope
     cold: true
     turns:
