@@ -15,7 +15,8 @@ from sqlalchemy import text
 from app.config import settings
 from app.services.chatbot import contracts
 from app.services.chatbot import engine as engine_mod
-from app.services.chatbot.lanes.business import resolve_gate
+from app.services.chatbot.lanes.business import pickers, resolve_gate
+from app.services.chatbot.lanes.business.gate import run_gate
 from app.services.chatbot.lanes.business.services import ResolveGateServices, production_services
 from app.services.error_handler import AppException
 from tests.chatbot.conftest import set_chatbot_switches
@@ -585,3 +586,196 @@ class TestFixtureObservesADeliberateWriteMidTurn:
             "the fixture did not observe a write made mid-run_turn on a fresh session - "
             "every 'wrote nothing' D14 assertion in this suite would be vacuous"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Owner ruling, console pass 3 (6 Sep 2026), item A: the ambiguous-customer picker
+# ("Which customer do you mean?", `gate.py`'s "AMBIGUOUS CUSTOMER -> ASK WHICH COMPANY"
+# block, ~line 650) must stamp each option "N. <name> (<company code>) - has DO" / "-
+# no DO", the same shape as the ported `pickers.annotate_incoming` "- has incoming" /
+# "- no incoming" stamp and the retired spine's "has stock details" did-you-mean stamp.
+# Evidence turns 5ea477a6 (#15) and 934d4c18 (#16).
+#
+# `ResolveGateServices.probe`'s production binding is itself unreachable
+# (`app/services/chatbot/lanes/business/services.py::_probe` raises `NotImplementedError`
+# - S6b's entity-ids-transformer/output-structurer wiring for the PICKER probe has not
+# landed, unlike the fetch step's own use of them). The DO-stamp test below therefore
+# builds the picker's `probe` argument from a REAL `OrderService(db).list_orders(...)`
+# read against REAL seeded Postgres rows - never a hand-built n8n dict - wrapped in the
+# envelope shape `sorento_crm_mcp/presenters.py` documents for
+# `crm_order_management_orders_list` ("Customer" / "Actual Delivery Date" fields, read
+# verbatim from that file, 2026-09-07): the exact shape the real probe would hand
+# `annotate_customer` once wired.
+# --------------------------------------------------------------------------- #
+
+
+class TestOwnerRulingACustomerPickerLabelCarriesCompanyCode:
+    def test_which_customer_lines_carry_the_company_code(self) -> None:
+        """`gate.py`'s ambiguous-customer block renders "N. <name>" only today - no
+        company code. Built from `ResolvedEntity.as_dict()`'s own field shape
+        (app/services/entity_resolver.py), never a hand-built n8n dict."""
+        resolver = {
+            "resolutions": [
+                {
+                    "token": "ambigco",
+                    "matches": [
+                        {
+                            "entity_type": "customer",
+                            "canonical_code": "ZZTDOA",
+                            "uuid": "cust-a",
+                            "match_field": "customer_name",
+                            "match_tier": "substring",
+                            "similarity": None,
+                            "company_id": None,
+                            "company_name": None,
+                            "display": {
+                                "customer_name": "ZZT Ambigco Alpha Sdn Bhd",
+                                "phone_number": None,
+                                "email": None,
+                            },
+                        },
+                        {
+                            "entity_type": "customer",
+                            "canonical_code": "ZZTDOB",
+                            "uuid": "cust-b",
+                            "match_field": "customer_name",
+                            "match_tier": "substring",
+                            "similarity": None,
+                            "company_id": None,
+                            "company_name": None,
+                            "display": {
+                                "customer_name": "ZZT Ambigco Beta Sdn Bhd",
+                                "phone_number": None,
+                                "email": None,
+                            },
+                        },
+                    ],
+                }
+            ]
+        }
+        parser = {
+            "domain_hint": "order",
+            "entities": [
+                {"raw": "ambigco", "hint": "customer", "canonical_code": None, "current_message": True}
+            ],
+        }
+
+        out = run_gate({}, parser=parser, resolver=resolver)
+
+        assert out["require_specific"] is True, (
+            "fixture must reach the ambiguous-customer branch: "
+            f"gate_reason={out.get('gate_reason')!r}"
+        )
+        clarification = out["gate_clarification"]
+        assert "(ZZTDOA)" in clarification, (
+            f"RED (the actual gap): the picker line must carry the company code "
+            f"'(ZZTDOA)' next to the customer name: {clarification!r}"
+        )
+        assert "(ZZTDOB)" in clarification, (
+            f"RED (the actual gap): the picker line must carry the company code "
+            f"'(ZZTDOB)' next to the customer name: {clarification!r}"
+        )
+
+
+class TestOwnerRulingACustomerPickerDOStamp:
+    def test_which_customer_lines_carry_has_do_and_no_do(self, session_factory) -> None:
+        """Two similarly-named customers under Sorento (the suite's default company
+        scope, tests/conftest.py): one with a DO (an order carrying
+        `actual_delivery_date`, app/models/order.py:271), one with none. The picker's
+        suffix must read "- has DO" / "- no DO", never today's "- has delivery" /
+        "- no delivery" / "- no recent delivery", and must not confuse "an order
+        exists" with "a DO exists" - `pickers.annotate_customer`'s `with_delivery` set
+        is built from ANY matching order row today, with no read of the delivery-date
+        field at all, so customer B (an order but no DO YET) is the second, substantive
+        defect this test catches alongside the wording."""
+        from datetime import date
+
+        from app.models.order import Customer, Order
+        from app.services.order_service import OrderService
+
+        db = session_factory()
+        cust_a = Customer(customer_code="ZZTDOA", customer_name="ZZT Ambigco Alpha Sdn Bhd")
+        cust_b = Customer(customer_code="ZZTDOB", customer_name="ZZT Ambigco Beta Sdn Bhd")
+        db.add_all([cust_a, cust_b])
+        db.commit()
+        order_a = Order(
+            order_number="ZZTDOORD-A1",
+            customer_id=cust_a.id,
+            debtor_name=cust_a.customer_name,
+            actual_delivery_date=date(2026, 6, 1),
+        )
+        order_b = Order(
+            order_number="ZZTDOORD-B1",
+            customer_id=cust_b.id,
+            debtor_name=cust_b.customer_name,
+            actual_delivery_date=None,
+        )
+        db.add_all([order_a, order_b])
+        db.commit()
+
+        rows = OrderService(db).list_orders(customer_ids=[cust_a.id, cust_b.id], limit=100)["data"]
+        assert len(rows) == 2, f"seed must produce exactly the two orders under test, got {len(rows)}"
+
+        # The exact envelope shape `sorento_crm_mcp/presenters.py` builds for
+        # `crm_order_management_orders_list` (`("Customer", o.get("debtor_name"))`,
+        # `("Actual Delivery Date", o.get("actual_delivery_date"))`), fed with the REAL
+        # order rows just read - this is what the real probe would hand the annotator.
+        probe = {
+            "items": [
+                {
+                    "title": row.order_number,
+                    "fields": [
+                        {"label": "Customer", "value": row.debtor_name},
+                        {
+                            "label": "Actual Delivery Date",
+                            "value": row.actual_delivery_date.isoformat()
+                            if row.actual_delivery_date
+                            else None,
+                        },
+                    ],
+                }
+                for row in rows
+            ]
+        }
+
+        gate = {
+            "gate_clarification": (
+                "Which customer do you mean? Please choose:\n"
+                f"1. {cust_a.customer_name} ({cust_a.customer_code})\n"
+                f"2. {cust_b.customer_name} ({cust_b.customer_code})"
+            ),
+            "compatible_entities": [
+                {
+                    "uuid": cust_a.id,
+                    "entity_type": "customer",
+                    "code": cust_a.customer_code,
+                    "title": cust_a.customer_name,
+                },
+                {
+                    "uuid": cust_b.id,
+                    "entity_type": "customer",
+                    "code": cust_b.customer_code,
+                    "title": cust_b.customer_name,
+                },
+            ],
+        }
+
+        out = pickers.annotate_customer(dict(gate), probe=probe, parser={})
+        lines = out["escalate_message"].splitlines()
+        line_a = next(l for l in lines if l.startswith("1."))
+        line_b = next(l for l in lines if l.startswith("2."))
+
+        assert line_a.endswith(" - has DO"), (
+            f"RED (the actual gap): a customer WITH a DO (actual_delivery_date set) "
+            f"must read '- has DO': {line_a!r}"
+        )
+        assert line_b.endswith(" - no DO"), (
+            f"RED (the actual gap): a customer with NO DO must read '- no DO', not the "
+            f"current 'has delivery' wording that ignores actual_delivery_date "
+            f"entirely: {line_b!r}"
+        )
+
+        # Guard: picking "1" must still resolve to the FIRST customer - the annotator
+        # only appends a suffix, it must never reorder or renumber the roster.
+        assert gate["compatible_entities"][0]["uuid"] == cust_a.id
+        assert gate["compatible_entities"][0]["title"] == cust_a.customer_name

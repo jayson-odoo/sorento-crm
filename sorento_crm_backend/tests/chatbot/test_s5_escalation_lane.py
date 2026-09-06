@@ -1669,3 +1669,95 @@ class TestPersonMentionEscalationRoutesByStaffLookup:
             f"as it does today: {result!r}"
         )
         assert result["clarify"] is not None
+
+
+# --------------------------------------------------------------------------- #
+# Owner ruling, console pass 3 (6 Sep 2026), item D1: a pending escalation offer must
+# not consume a request naming a DIFFERENT team. Evidence turn 9a40182a: pending
+# {kind: escalation_offer, team: warehouse, domain: inventory}; "escalate to marketing"
+# assigned + commented "Team: warehouse" instead.
+#
+# `test_output_exchange_rules.py::TestOwnerRulingD1PendingOfferTeamMismatch` covers the
+# `is_escalation_confirmation` half. This file covers the OTHER half, at the lane's own
+# `run()` boundary: `escalation_context`'s team ladder (this file's own module
+# docstring) reads `ctx.parse.output.routing.suggested_team` with NO fallback to
+# `_parser_raw` at all outside the person-mention arm - `_person_routing`'s "no team, no
+# person, but a previous turn HAD one" clarify (~line 673) checks the CURRENT (already
+# inherited) `team`, never `_parser_team(ctx, team)` (the parser's OWN pre-derivation
+# answer, exec 13633742's own fix for the person-mention arm). So a turn whose CURRENT
+# team is only INHERITED from the stale pending offer (routing.suggested_team ==
+# "warehouse", exactly as `output_exchange.py`'s nullish chain falls back to when the
+# parser named nothing) reads as "team already known" and silently reassigns, rather
+# than asking - reproducing turn 9a40182a's shape one layer down from the
+# `is_escalation_confirmation` bug.
+# --------------------------------------------------------------------------- #
+
+
+class TestOwnerRulingD1LaneTeamMismatch:
+    def test_a_named_different_team_assigns_there_not_the_stale_pending_team(self) -> None:
+        """Guard: when the CURRENT turn's routing already names a team different from
+        the stale pending one (output_exchange.py's own req_help branch, covered in
+        test_output_exchange_rules.py, already wins here), the lane must assign to the
+        NAMED team - today's existing behaviour, kept green."""
+        from app.services.chatbot.lanes.escalation import run
+
+        ctx = _ctx(
+            routing={"suggested_team": "marketing_promotion", "suggested_agent": "general_enquiries"},
+            prev_variables={
+                "routing": {"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
+                "pending": {"kind": "escalation_offer", "team": "warehouse", "domain": "inventory"},
+            },
+            text="escalate to marketing",
+        )
+        item = _item(brand_code=None, company_id=None, company_name=None, routing_source="none")
+        services = _services()
+
+        result = run(ctx, item, services=services)
+
+        assert result["arm"] == "human-intervention"
+        kinds = [a["kind"] for a in result["actions"]]
+        assert "assign_conversation" in kinds
+        comment = next(a for a in result["actions"] if a["kind"] == "add_comment")
+        assert comment["text"].startswith("Team: marketing_promotion\n"), (
+            f"a named different team must be the one assigned and commented, not the "
+            f"stale pending 'warehouse': {comment['text']!r}"
+        )
+        services.next_assignee.assert_called_once()
+        assert services.next_assignee.call_args[0][0]["team_code"] == "marketing_promotion"
+
+    def test_an_inherited_team_with_no_parser_answer_asks_instead_of_silently_reassigning(
+        self,
+    ) -> None:
+        """RED (the actual gap): the CURRENT team is only INHERITED (routing.suggested_team
+        fell back to the stale pending offer's "warehouse", per output_exchange.py's own
+        nullish chain when the parser named nothing this turn) - `_person_routing`'s "no
+        team, no person" clarify checks the current (already-inherited) team, so it never
+        fires, and the lane silently re-assigns to the stale team instead of asking which
+        one the customer means."""
+        from app.services.chatbot.lanes.escalation import run
+
+        ctx = _ctx(
+            routing={"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
+            parser_raw={"routing": {"suggested_team": None, "suggested_agent": None}},
+            prev_variables={
+                "routing": {"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
+                "pending": {"kind": "escalation_offer", "team": "warehouse", "domain": "inventory"},
+            },
+            text="can someone else help me",
+        )
+        item = _item(brand_code=None, company_id=None, company_name=None, routing_source="none")
+        services = _services()
+
+        result = run(ctx, item, services=services)
+
+        assert result["arm"] == "clarify", (
+            f"RED (the actual gap): a team that is only INHERITED from a stale pending "
+            f"offer, with the parser itself naming nothing this turn, must ask which "
+            f"team rather than silently re-assign. Got arm={result['arm']!r}, "
+            f"actions={result['actions']!r}"
+        )
+        assert not any(a["kind"] == "assign_conversation" for a in result["actions"]), (
+            f"no assign_conversation may fire while the team is genuinely unresolved: "
+            f"{result['actions']!r}"
+        )
+        services.next_assignee.assert_not_called()
