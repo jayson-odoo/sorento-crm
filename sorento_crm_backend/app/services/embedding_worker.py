@@ -603,12 +603,18 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
     raise ValueError(f"Unsupported source type: {source_type}")
 
 
-def _embed_text_chunks(chunks: list[str]) -> list[list[float]]:
-    if not settings.openai_api_key:
-        raise ValueError("OPENAI_API_KEY is required for embedding worker")
+def _embed_text_chunks(db: Session, chunks: list[str]) -> list[list[float]]:
+    from app.services.llm_provider import resolve_openai_api_key
+
+    api_key = resolve_openai_api_key(db)
+    if not api_key:
+        raise ValueError(
+            "No OpenAI key is configured (System Management > AI Assistant or "
+            "the environment) for the embedding worker"
+        )
     if not chunks:
         return []
-    headers = {"Authorization": f"Bearer {settings.openai_api_key}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {"model": settings.embedding_model_name, "input": chunks}
     with httpx.Client(timeout=30) as client:
         response = client.post(settings.openai_embeddings_url, headers=headers, json=payload)
@@ -755,7 +761,7 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
         db.flush()
 
         chunks = _chunks_for_source(queue_item.source_type, source)
-        vectors = _embed_text_chunks(chunks)
+        vectors = _embed_text_chunks(db, chunks)
 
         read_svc.mark_previous_non_current(
             queue_item.source_type,

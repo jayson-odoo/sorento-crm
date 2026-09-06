@@ -33,7 +33,7 @@ from app.schemas.tickets import (
 )
 from app.services import tickets_service
 from app.services.ai_assistant_service import AIAssistantConfigService
-from app.services.llm_provider import get_provider
+from app.services.llm_provider import get_provider, resolve_api_key
 from app.services.ticket_draft_token_service import mint_draft_token
 
 logger = logging.getLogger(__name__)
@@ -259,11 +259,14 @@ class TicketIntakeService:
 
     def _draft_via_llm(self, original_message: str) -> ITSupportTicketDraftPreview:
         cfg = AIAssistantConfigService(self.db).get()
-        api_key = cfg.api_key_ciphertext or settings.openai_api_key
+        api_key = resolve_api_key(cfg, cfg.provider)
         if not api_key:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="LLM provider is not configured for ticket intake.",
+                detail=(
+                    "LLM provider key is missing from System Management > AI Assistant "
+                    "and the environment, so ticket intake cannot draft this ticket."
+                ),
             )
         provider = get_provider(cfg.provider, api_key, cfg.model)
         try:

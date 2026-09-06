@@ -173,6 +173,26 @@ def resolve_api_key(cfg: Any, provider_name: str) -> str:
     return generic or app_settings.openai_api_key or ""
 
 
+def resolve_openai_api_key(db: Any) -> str:
+    """The OpenAI key for a caller that always talks to OpenAI regardless of what
+    provider the assistant itself is configured for (embeddings, RAG search, the
+    chatbot business lane's tool search, ...).
+
+    Reads the SAME singleton row ``resolve_api_key`` reads (``AIAssistantConfigService``
+    - the row `AIAssistantConfigService.get`/`_ensure_singleton` already returns, not a
+    second query), then falls back to ``OPENAI_API_KEY``. This is the fix for the prod
+    401: those call sites read the environment only, so an owner who enters the key on
+    System Management > AI Assistant (and never touches .env, by design) leaves them
+    with no key at all outside whatever hardcoded fallback compose supplies.
+
+    Empty string means neither is configured; the caller decides how to say so.
+    """
+    from app.services.ai_assistant_service import AIAssistantConfigService
+
+    row = AIAssistantConfigService(db).get()
+    return resolve_api_key(row, "openai")
+
+
 class LLMProvider(Protocol):
     name: str
 

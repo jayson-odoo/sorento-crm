@@ -279,11 +279,11 @@ def fold_captions_into_text(message_text: str, attachments: list[dict[str, Any]]
 # ── default real seams ────────────────────────────────────────────────────────
 
 
-def default_clients() -> MediaClients:
+def default_clients(db: Any) -> MediaClients:
     return MediaClients(
         fetch_bytes=_default_fetch_bytes,
         store_bytes=_default_store_bytes,
-        caption_image=_default_caption_image,
+        caption_image=_make_caption_image(db),
     )
 
 
@@ -305,30 +305,32 @@ def _default_store_bytes(data: bytes, key: str, content_type: Optional[str]) -> 
     return cdn_base_url(provider, key)
 
 
-def _default_caption_image(data: bytes, content_type: Optional[str]) -> Optional[str]:
-    import base64
+def _make_caption_image(db: Any) -> Callable[[bytes, Optional[str]], Optional[str]]:
+    def call(data: bytes, content_type: Optional[str]) -> Optional[str]:
+        import base64
 
-    from app.config import settings
-    from app.services.llm_provider import ImagePart, OpenAIProvider
+        from app.services.llm_provider import ImagePart, OpenAIProvider, resolve_openai_api_key
 
-    api_key = (settings.openai_api_key or "").strip()
-    if not api_key:
-        return None  # key-gated (DC-6): no key → attach without caption
-    provider = OpenAIProvider(api_key=api_key, default_model="gpt-4o-mini")
-    image = ImagePart(mime=content_type or "image/jpeg", data_b64=base64.b64encode(data).decode())
-    result = provider.chat(
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    "This image was attached to a product-improvement idea over WhatsApp. "
-                    "Describe what it shows in one concise sentence for the idea record "
-                    "(focus on any UI, sketch, screenshot, or defect depicted). No preamble."
-                ),
-            }
-        ],
-        images=[image],
-        max_tokens=120,
-    )
-    text = (getattr(result, "content", None) or "").strip()
-    return text or None
+        api_key = resolve_openai_api_key(db)
+        if not api_key:
+            return None  # key-gated (DC-6): no key → attach without caption
+        provider = OpenAIProvider(api_key=api_key, default_model="gpt-4o-mini")
+        image = ImagePart(mime=content_type or "image/jpeg", data_b64=base64.b64encode(data).decode())
+        result = provider.chat(
+            messages=[
+                {
+                    "role": "user",
+                    "content": (
+                        "This image was attached to a product-improvement idea over WhatsApp. "
+                        "Describe what it shows in one concise sentence for the idea record "
+                        "(focus on any UI, sketch, screenshot, or defect depicted). No preamble."
+                    ),
+                }
+            ],
+            images=[image],
+            max_tokens=120,
+        )
+        text = (getattr(result, "content", None) or "").strip()
+        return text or None
+
+    return call

@@ -27,10 +27,9 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.services import ai_prompt_registry
 from app.services.ai_assistant_service import AIAssistantConfigService
-from app.services.llm_provider import get_provider
+from app.services.llm_provider import get_provider, resolve_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +109,7 @@ def extract_ideate_turn(
         logger.warning("ideate_extractor: config read failed; empty extraction", exc_info=True)
         return IdeateExtraction()
 
-    api_key = config.api_key_ciphertext or settings.openai_api_key
+    api_key = resolve_api_key(config, config.provider)
     if not api_key:
         return IdeateExtraction()
 
