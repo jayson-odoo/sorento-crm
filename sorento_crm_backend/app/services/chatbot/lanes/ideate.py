@@ -27,7 +27,7 @@ import logging
 from typing import Any, Mapping
 
 from app.services.chatbot import jsc
-from app.services.chatbot.contracts import PREVIEW
+from app.services.chatbot.contracts import PREVIEW, PREVIEW_IDEATE_REPLY
 
 logger = logging.getLogger(__name__)
 
@@ -139,13 +139,20 @@ def preview_result(ctx: Mapping[str, Any]) -> dict[str, Any]:
     reads "unchanged", which is the truth about a turn that wrote nothing. Echoing the
     prior pointer rather than nulling it also keeps a preview from looking like it wiped an
     open draft.
+
+    **`status` keeps the `<preview>` marker and `reply_text` does NOT.** They are read by
+    two different audiences: `status` and the trace facts are the operator's, and the
+    marker is exactly what tells them the tool was never called; `reply_text` becomes the
+    customer-facing reply and the `send_message` action that carries it, and a customer
+    reading "<preview>" has been sent a placeholder from somebody else's diagnostic
+    vocabulary. One value, said in each audience's own words.
     """
     session_vars = jsc.get(jsc.get(ctx, "session"), "session_vars") or {}
     nested = jsc.get(jsc.get(session_vars, "variables"), "ideation")
     ideation = nested if jsc.truthy(nested) else jsc.get(session_vars, "ideation")
     return {
         "status": PREVIEW,
-        "reply_text": PREVIEW,
+        "reply_text": PREVIEW_IDEATE_REPLY,
         "link": None,
         "session_vars": {"ideation": ideation if ideation is not None else None},
     }

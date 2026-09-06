@@ -173,6 +173,28 @@ def _cust_name(match: Any) -> str:
     return raw.strip()
 
 
+def _display_name(match: Any) -> str | None:
+    """The resolver's own human label for this record, or `None` when it gave none.
+
+    A CRM addition to the ported node's entity shape, and the reason is a defect the
+    customer reads. `canonical_code` for a customer is the ACCOUNT code
+    (`entity_resolver._probe_customer`) or the denormalised `debtor_name`
+    (`_probe_customer_debtor_name`), and the two land on DIFFERENT `customers` rows for
+    one trading name - so the per-uuid de-dupe below keeps both, and the not-found line
+    printed "300-H070" at a customer who has never seen that string. The resolver already
+    knows the name; the gate was simply dropping it.
+
+    Customers only, deliberately: they are the one type whose `canonical_code` is not what
+    the customer typed. A product code IS the product's name to this audience.
+    """
+    display = jsc.get(match, "display")
+    for key in ("customer_name", "debtor_name"):
+        value = jsc.get(display, key)
+        if jsc.truthy(value):
+            return jsc.js_string(value).strip()
+    return None
+
+
 def _cust_base(match: Any) -> str:
     """`_custBase` - the family GROUPING KEY, never customer copy."""
     name = _cust_name(match) or jsc.js_string(jsc.get(match, "canonical_code") or "")
@@ -210,11 +232,18 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     by_uuid: dict[Any, dict[str, Any]] = {}
     for m in flat:
         if jsc.truthy(m) and jsc.truthy(jsc.get(m, "uuid")):
-            by_uuid[jsc.get(m, "uuid")] = {
+            entity = {
                 "uuid": jsc.get(m, "uuid"),
                 "entity_type": jsc.get(m, "entity_type"),
                 "code": jsc.get(m, "canonical_code"),
             }
+            # Written only when there IS one, so every entity the resolver gave no name
+            # for keeps exactly the three keys the JS emits. Registered against the
+            # capture corpus as `CAPTURE_BODY_ADDITIONS["disallowed-entity-gate"]`.
+            display_name = _display_name(m)
+            if display_name:
+                entity["display_name"] = display_name
+            by_uuid[jsc.get(m, "uuid")] = entity
     entities = list(by_uuid.values())
 
     allowed = ALLOWED.get(domain)  # `ALLOWED[domain] ?? null`

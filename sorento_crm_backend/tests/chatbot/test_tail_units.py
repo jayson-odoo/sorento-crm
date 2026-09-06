@@ -408,6 +408,184 @@ class TestTheMemberOfferCarryStopsAtTheAnswer:
         patch = _compile({"outcome": {}}, self._ctx_with_open_offer(domain_hint="inventory"))
         assert patch["variables"]["selection_context"] != "member_offer"
 
+
+# --------------------------------------------------------------------------- #
+# AC-816 rule 1, the TTL half (owner ruling, 6 Sep 2026): a member offer has the
+# SAME lifetime as a did-you-mean offer - three turns, or the first answered turn
+# that is not a pick.
+# --------------------------------------------------------------------------- #
+
+
+class TestTheMemberOfferHasTheSameTtlAsTheDymOffer:
+    """An UNANSWERED escalation offer cannot live forever.
+
+    Rule 1 gave `member_offer` an unbounded carry: while the customer neither accepted
+    nor declined, the arming pin was re-seated every turn, so a "yes" typed twenty turns
+    later about something else was still read as "yes, escalate" and assigned a human.
+    The owner ruled the lifetime is the dym offer's: `ttl` 3, and an answered turn with no
+    pick ends it (`compile_state`'s dym block, arms 5 to 7 - the precedent this copies,
+    with its own justification: an offer the customer has moved on from is not an offer).
+
+    The clock lives on the `pending` marker rather than on a new session key, because the
+    marker is already what says "this offer is open" and a second key could disagree with
+    it.
+    """
+
+    ROSTER = [{"idx": i, "label": f"Member {i}", "uuid": f"u{i}"} for i in range(1, 4)]
+
+    def _ctx(self, *, ttl=None, answered=False, **qf_overrides):
+        qf_overrides.setdefault("domain_hint", "order")
+        ctx = _ctx(**qf_overrides)
+        pending = {"kind": "member_offer", "team": "customer_service", "domain": "order"}
+        if ttl is not None:
+            pending["ttl"] = ttl
+        ctx["session"] = {
+            "session_vars": {
+                "variables": {
+                    "selection_context": "member_offer",
+                    "last_result_set": self.ROSTER,
+                    "domain_hint": "order",
+                    "pending": pending,
+                }
+            }
+        }
+        return ctx
+
+    def _answering_item(self):
+        """A turn that ANSWERED: `central-exchange` rows are what `answered` reads."""
+        return {
+            "outcome": {
+                "central-exchange": {
+                    "response": "Here are the orders.",
+                    "items": [{"title": "SO-1", "fields": []}],
+                }
+            }
+        }
+
+    def test_a_fresh_offer_starts_the_clock_at_three(self) -> None:
+        ctx = _ctx(domain_hint="order")
+        patch = _compile(
+            {
+                "outcome": {
+                    "build-cs-member-offer": {
+                        "member_offer": True,
+                        "selection_context": "member_offer",
+                        "cs_last_result_set": self.ROSTER,
+                        "response": "Who should I pass this to?",
+                        "manualResponse": True,
+                    }
+                }
+            },
+            ctx,
+        )
+        pending = patch["variables"].get("pending") or {}
+        assert pending.get("kind") == "member_offer"
+        assert pending.get("ttl") == 3, (
+            f"a member offer made this turn starts at ttl 3: {pending!r}"
+        )
+
+    def test_an_unanswered_turn_decrements_the_clock(self) -> None:
+        patch = _compile({"outcome": {}}, self._ctx(ttl=3))
+        variables = patch["variables"]
+        assert variables["selection_context"] == "member_offer"
+        assert (variables.get("pending") or {}).get("ttl") == 2
+
+    def test_the_offer_is_gone_on_the_third_carried_turn(self) -> None:
+        """ttl 3 at the offer, 2 after one carry, 1 after two - and the turn that would
+        make it 0 does not carry at all."""
+        variables = _compile({"outcome": {}}, self._ctx(ttl=1))["variables"]
+        assert variables.get("selection_context") != "member_offer", (
+            f"a member offer with one turn left must not survive another: {variables!r}"
+        )
+        assert (variables.get("pending") or {}).get("kind") != "member_offer"
+
+    def test_an_answered_turn_with_no_pick_ends_it_at_once(self) -> None:
+        """The dym block's arm 5, applied to the member offer: the customer asked
+        something else and got an answer, so the roster is no longer what is on screen."""
+        variables = _compile(self._answering_item(), self._ctx(ttl=3))["variables"]
+        assert variables.get("selection_context") != "member_offer", (
+            f"an answered turn abandons the offer: {variables!r}"
+        )
+        assert (variables.get("pending") or {}).get("kind") != "member_offer"
+
+    def test_a_filter_modification_keeps_it_and_spends_one_turn(self) -> None:
+        """Rule 3's tail half. The customer narrowed the SAME question, so the roster is
+        still on their screen even though the turn answered - but it is a turn, and the
+        clock does not stand still or the narrow arm becomes the unbounded carry again."""
+        ctx = self._ctx(ttl=3, member_offer_filter_modification=True)
+        variables = _compile(self._answering_item(), ctx)["variables"]
+        assert variables["selection_context"] == "member_offer"
+        assert variables["last_result_set"] == self.ROSTER
+        assert (variables.get("pending") or {}).get("ttl") == 2
+
+    def test_the_clock_runs_for_exactly_member_offer_ttl_turns(self) -> None:
+        """The offer's LIFETIME equals the number that declares it, end to end.
+
+        Every other case here injects a `ttl` by hand and looks at one hop, so between
+        them they never say how many turns an offer actually lives: the code could
+        decrement by two, or die a turn early, and each of them would still pass on its
+        own hop (reviewer, #705). This one starts from a REAL offer turn - the ladder
+        writes the clock, the test does not seed it - and chains the real compiler, each
+        turn's patch becoming the next turn's session, until the offer is gone. Verified
+        to go red on `carried_ttl = ttl - 2`.
+
+        The vehicle is UNANSWERED turns, deliberately: an answered turn with no pick ends
+        the offer at once (its own test above), so a chain of those would measure that rule
+        and never reach the clock.
+        """
+        ttl = pending_mod.MEMBER_OFFER_TTL
+        assert ttl >= 2, "a one-turn offer would make the 'one turn before' assertion vacuous"
+
+        # Turn 0 is the OFFER, composed by the real ladder, so the clock this chain then
+        # counts down is the one `pending.derive` wrote - not one the test seeded. Seeding
+        # it from the constant would have made the whole chain self-consistent at any
+        # value, which is the trap the reviewer named.
+        offer_turn = _compile(
+            {
+                "outcome": {
+                    "build-cs-member-offer": {
+                        "member_offer": True,
+                        "selection_context": "member_offer",
+                        "cs_last_result_set": self.ROSTER,
+                        "response": "Who should I pass this to?",
+                        "manualResponse": True,
+                    }
+                }
+            },
+            _ctx(domain_hint="order"),
+        )
+        variables = offer_turn["variables"]
+        assert variables["pending"]["ttl"] == ttl, (
+            "the offer turn must start the clock at MEMBER_OFFER_TTL, or the count below "
+            f"measures a number nobody declared: {variables['pending']!r}"
+        )
+
+        for turn in range(1, ttl + 1):
+            ctx = _ctx(domain_hint="order")
+            ctx["session"] = {"session_vars": {"variables": variables}}
+            variables = _compile({"outcome": {}}, ctx)["variables"]
+            if turn < ttl:
+                assert variables["selection_context"] == "member_offer", (
+                    f"the offer died on carried turn {turn} of {ttl}: {variables!r}"
+                )
+                assert (variables.get("pending") or {}).get("ttl") == ttl - turn, (
+                    f"turn {turn} of {ttl} did not spend exactly one: {variables!r}"
+                )
+            else:
+                assert variables.get("selection_context") != "member_offer", (
+                    f"the offer outlived its {ttl} turns: {variables!r}"
+                )
+                assert (variables.get("pending") or {}).get("kind") != "member_offer"
+
+    def test_an_expired_offer_is_not_open_to_the_parser(self) -> None:
+        """The seam the whole rule exists for: `output_exchange._offer_is_open` is what
+        turns a bare "yes" into `is_escalation_confirmation`, and it must read the offer's
+        liveness rather than only its kind."""
+        from app.services.chatbot.head.output_exchange import _offer_is_open
+
+        assert _offer_is_open({"pending": {"kind": "member_offer", "ttl": 2}}) is True
+        assert _offer_is_open({"pending": {"kind": "member_offer", "ttl": 0}}) is False
+
 # --------------------------------------------------------------------------- #
 # AC-302: the canned copy, including the two arms with no vendored capture
 # --------------------------------------------------------------------------- #
@@ -678,3 +856,239 @@ class TestAnsweredDomainEquivalence:
             "block would land in the wrong half of the reply on each:\n"
             + "\n".join(mismatches[:10])
         )
+
+
+# --------------------------------------------------------------------------- #
+# The filter header on a PICK-RESOLVED order list (prod turn 1c175a0a, 6 Sep 2026).
+# --------------------------------------------------------------------------- #
+
+
+class TestThePickResolvedOrderListStatesItsScope:
+    """"customer a craft delivery order" -> "1" answered with no header at all.
+
+    The reply opened straight at `1. *Company:* Sorento *Order Number:* REP202608-0514`,
+    while the DIRECT form of the same question stamps
+    `Customer: ... / Product: ... / Order: ... / Dates: ...` above the list. The customer
+    is then reading a scoped answer with nothing saying what it was scoped to - the exact
+    ambiguity `_search_scope_header` exists to remove ("1 order" reads equally as "1 order
+    ever" and "1 order this month").
+
+    The composer is not missing and is not duplicated: it is
+    `compile_state._search_scope_header`, and the pick turn falls out of it on ONE guard.
+    A positional pick names a ROW, so the parser emits `domain_hint: null` (AC-816 rule 4
+    says so explicitly, which is why the bare-entity inheritance excludes a pick), and the
+    guard tests THIS turn's domain against `_DATE_SCOPE_DOMAINS`. The old spine never hit
+    it because its own parser body inherited the domain onto the pick turn - capture
+    `compile-current-state/b56-pick-turn`, whose expected reply opens
+    `Customer: CHIN CHUN HARDWARE SDN BHD\nProduct: srtwc286\nDates: all dates\n\nHere
+    are the orders I found.`, is the same turn shape with `domain_hint: order` on it.
+
+    The fix is at the arm: a turn that names NO domain is a continuation of the carried
+    one, which is `topic.changed`'s own rule and the same one the offer carry uses.
+    """
+
+    ROSTER = [
+        {"idx": 1, "label": "A CRAFT IDEA SDN BHD [A/C I]", "uuid": "cust-1", "entity_type": "customer"},
+        {"idx": 2, "label": "A CRAFT IDEA SDN BHD (SRT)", "uuid": "cust-2", "entity_type": "customer"},
+    ]
+
+    ORDER_ROWS = [
+        {
+            "title": "REP202608-0514",
+            "fields": [
+                {"key": "company_name", "label": "Company", "value": "Sorento"},
+                {"key": "order_number", "label": "Order Number", "value": "REP202608-0514"},
+                {"key": "customer", "label": "Customer", "value": "A CRAFT IDEA SDN BHD [A/C I]"},
+            ],
+        }
+    ]
+
+    GATE = {
+        "gate_passed": True,
+        "gate_reason": "ok",
+        "compatible_entities": [
+            {
+                "uuid": "cust-1",
+                "entity_type": "customer",
+                "code": "300-A011",
+                "display_name": "A CRAFT IDEA SDN BHD [A/C I]",
+            }
+        ],
+    }
+
+    RESOLVED = {
+        "resolutions": [
+            {
+                # The PICKER RESOLUTION rewrites the entity to the row the customer
+                # picked, so this is the token the resolver saw - exactly the shape
+                # `compile-current-state/b56-pick-turn` carries (`customer` /
+                # `CHIN CHUN HARDWARE SDN BHD` / `ordinal: 1`). The ONE difference from
+                # that capture, and the whole defect, is `domain_hint`.
+                "token": "A CRAFT IDEA SDN BHD [A/C I]",
+                "matches": [
+                    {
+                        "entity_type": "customer",
+                        "canonical_code": "300-A011",
+                        "uuid": "cust-1",
+                        "match_field": "customer_name",
+                        "display": {"customer_name": "A CRAFT IDEA SDN BHD [A/C I]"},
+                    }
+                ],
+            }
+        ]
+    }
+
+    def _pick_ctx(self):
+        """The turn the customer sent: the bare digit "1", so NO domain and NO intent."""
+        ctx = _ctx(
+            message_type="business_query",
+            intent_hint=None,
+            domain_hint=None,
+            entities=[
+                {"hint": "customer", "raw": "A CRAFT IDEA SDN BHD [A/C I]", "ordinal": 1}
+            ],
+            reference_positions=[1],
+            positions_resolved=1,
+        )
+        ctx["text"] = {"message": {"message": {"text": "1"}}}
+        ctx["session"] = {
+            "session_vars": {
+                "variables": {
+                    "domain_hint": "order",
+                    "selection_context": "disambiguation",
+                    "last_result_set": self.ROSTER,
+                }
+            }
+        }
+        return ctx
+
+    def _answered(self):
+        return {
+            "outcome": {
+                "central-exchange": {
+                    "response": (
+                        "1. *Company:* Sorento\n*Order Number:* REP202608-0514\n"
+                        "*Customer:* A CRAFT IDEA SDN BHD [A/C I]"
+                    ),
+                    "items": self.ORDER_ROWS,
+                }
+            }
+        }
+
+    def _reply(self):
+        return compile_current_state(
+            self._answered(), self._pick_ctx(), resolved=self.RESOLVED, gate=self.GATE
+        ).item["reply"]["text"]
+
+    def test_the_header_is_stamped_above_the_list(self) -> None:
+        text = self._reply()
+        first = text.split("\n")[0]
+        assert first.startswith("Customer: "), (
+            "a pick-resolved order list must state its scope like the direct path does, "
+            f"and this reply opens at {first!r}"
+        )
+        assert "\nDates: all dates\n" in text, (
+            f"the date line is what makes '1 order' unambiguous: {text!r}"
+        )
+        assert text.index("Customer: ") < text.index("1. *Company:*"), (
+            "the header goes ABOVE the list, not after it"
+        )
+
+    def test_the_header_names_the_customer_the_pick_resolved(self) -> None:
+        text = self._reply()
+        assert "A CRAFT IDEA SDN BHD" in text.split("Here")[0].split("1. *Company:*")[0], (
+            f"the header must name the customer the pick resolved to: {text!r}"
+        )
+        assert "300-A011" not in text, (
+            f"an internal debtor code must never reach the header: {text!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# AC-816 rule 1: an offer that is carried carries its SUBJECT (prod exec 15445325).
+# --------------------------------------------------------------------------- #
+
+
+class TestACarriedOfferKeepsTheSubjectItWasMadeAbout:
+    """"promotion 7445" -> a three-tier picker -> "9" -> "all" answered nothing.
+
+    The out-of-range "9" re-prompted correctly and rule 1 kept the tier list, but the
+    session patch it wrote had `entities: []` and `domain_hint: null` - the model reads a
+    bare digit as `casual` with no positions extracted (exec 15445325), and the variables
+    object is built FROM SCRATCH from this turn's parse. So the next reply, a perfectly
+    valid "all", arrived with no product in scope and fell to the generic "I need at least
+    one filter" instead of every tier's promotions for 7445 (exec 15445363).
+
+    An offer whose subject is gone is an offer nobody can answer, so the carry takes the
+    subject with it: when the ladder produced no domain and no entities of its own, the
+    carried ones stand. Narrow by construction - this only runs on the turns
+    `_offer_carry` already carries (the ladder was silent AND the topic did not change),
+    and a turn that names its own domain or entities keeps them.
+    """
+
+    TIERS = [
+        {"idx": 1, "label": "Dealer", "value": "Dealer"},
+        {"idx": 2, "label": "End User", "value": "End User"},
+        {"idx": 3, "label": "Contractor", "value": "Contractor"},
+    ]
+    ENTITY = {
+        "raw": "7445",
+        "hint": "product",
+        "canonical_code": "SRTWC7445",
+        "current_message": False,
+        "confident": True,
+    }
+
+    def _out_of_range_ctx(self):
+        """The "9" turn as the model really emits it: casual, no positions, no entities."""
+        ctx = _ctx(
+            message_type="casual",
+            intent_hint=None,
+            domain_hint=None,
+            entities=[],
+        )
+        ctx["text"] = {"message": {"message": {"text": "9"}}}
+        ctx["session"] = {
+            "session_vars": {
+                "variables": {
+                    "message_type": "business_query",
+                    "domain_hint": "promotion",
+                    "intent_hint": "check_promotion",
+                    "selection_context": "tier_offer",
+                    "last_result_set": self.TIERS,
+                    "entities": [self.ENTITY],
+                    "response": "Which access level?",
+                }
+            }
+        }
+        return ctx
+
+    def test_the_tier_list_survives_an_out_of_range_digit(self) -> None:
+        variables = _compile({"outcome": {}}, self._out_of_range_ctx())["variables"]
+        assert variables["selection_context"] == "tier_offer"
+        assert variables["last_result_set"] == self.TIERS
+
+    def test_the_product_and_the_domain_survive_with_it(self) -> None:
+        variables = _compile({"outcome": {}}, self._out_of_range_ctx())["variables"]
+        assert variables["domain_hint"] == "promotion", (
+            "the next reply resolves against the offer's own domain, and the re-prompt "
+            f"turn named none: {variables!r}"
+        )
+        raws = [str(e.get("raw")) for e in (variables.get("entities") or [])]
+        assert raws == ["7445"], (
+            "the product the offer was made about must ride with it, or the next 'all' "
+            f"has nothing to be all OF: {variables!r}"
+        )
+        assert all(
+            e.get("current_message") is False for e in (variables.get("entities") or [])
+        ), "a carried entity is not one the customer typed this turn"
+
+    def test_a_turn_that_names_its_own_subject_keeps_it(self) -> None:
+        """The guard: the carry FILLS a gap, it never overwrites."""
+        ctx = self._out_of_range_ctx()
+        ctx["parse"]["output"]["domain_hint"] = "promotion"
+        ctx["parse"]["output"]["entities"] = [
+            {"raw": "8899", "hint": "product", "current_message": True, "confident": True}
+        ]
+        variables = _compile({"outcome": {}}, ctx)["variables"]
+        assert [str(e.get("raw")) for e in variables["entities"]] == ["8899"]

@@ -286,10 +286,21 @@ def _mcp_call(db: Session | None = None) -> McpCallFn:
         three, the did-you-mean probe) and go nowhere near the ported call node. This is
         the single choke point where a tool name becomes an MCP request, so it is where the
         rule has to hold. The probes name read tools and are unaffected.
+
+        **The PARSE is here too, for the same reason the read-only check is.**
+        `MCPRuntimeClient.call_tool` returns a STRING - `"\\n".join` of the `content[]`
+        text blocks, or `json.dumps(result)` when there are none. The fetch step ran the
+        answer through `fetch.parse_mcp_content`; the four probe seams
+        (`answer.run_crossdomain` and `miss_suggest`'s three) did not, so every probe
+        answer arrived as a string, `run_crossdomain`'s
+        `probe_result if isinstance(probe_result, dict) else {}` dropped it, and
+        `crossdomain_render` degraded to `no_envelope` on turns that had a perfectly good
+        answer. Parsing at the seam fixes all four at once and is idempotent: the fetch
+        path's own `parse_mcp_content` returns a non-string unchanged.
         """
         from app.config import settings
         from app.services.ai_assistant_service import MCPRuntimeClient
-        from app.services.chatbot.lanes.business.fetch import ensure_read_only
+        from app.services.chatbot.lanes.business.fetch import ensure_read_only, parse_mcp_content
 
         ensure_read_only(name)
 
@@ -299,9 +310,70 @@ def _mcp_call(db: Session | None = None) -> McpCallFn:
         # `CHATBOT_MCP_TIMEOUT_SECONDS` overrides it per environment.
         timeout = int(getattr(settings, "chatbot_mcp_timeout_seconds", 0) or 10)
         client = MCPRuntimeClient(settings.ai_assistant_mcp_url, timeout_seconds=timeout)
-        return client.call_tool(name, args)
+        return parse_mcp_content(client.call_tool(name, args))
 
     return call
+
+
+def _mcp_probe(db: Session | None = None) -> McpProbeFn:
+    """The PROBE seam: `sub-get-results`' workflowInputs in, the tool's answer out.
+
+    The four probe call sites build what the n8n node builds - `crossdomain-probe`'s and
+    `dym-probe` / `sibling-probe` / `promo-dym-probe`'s `workflowInputs`, which is
+    `{tool, contact_id, entities, semantic_input, user_prompt}`. In n8n that goes to a
+    SUB-WORKFLOW whose first node is `entity-ids-transformer`; the port called the MCP
+    client with it directly, so the tool got `entities` / `semantic_input` / `user_prompt`
+    and none of the filter keys it takes.
+
+    MEASURED against the local MCP on 6 Sep 2026: `crm_incoming_stock_list` answers those
+    arguments with `{"data": [], "total": 0, "page": 1, "limit": null}` - the raw list
+    serialiser, with no `items` / `answers` / `has_result`, so the renderer degrades even
+    once the string is parsed. The same call with `entity_ids_transformer`'s arguments
+    answers with the render envelope. So this is not tidiness: without it the probe asks
+    the wrong question and cannot be answered.
+
+    The transform lives HERE rather than at the four call sites because those sites are
+    ported NODES, graded against captures of the `workflowInputs` they emit
+    (`test_s6c_answer_lane.py::TestCrossdomainProbe`). The sub-workflow boundary is the
+    seam, so the seam is where its first node runs - which is exactly what `run_fetch`'s
+    own tier probe already does inline.
+    """
+    call = _mcp_call(db)
+
+    def probe(name: str, args: dict[str, Any]) -> Any:
+        from app.services.chatbot.lanes.business.fetch import entity_ids_transformer
+
+        trigger = dict(args) if isinstance(args, dict) else {}
+        # `miss_suggest._probe_args` passes the tool as the first parameter and leaves it
+        # off the body; `crossdomain_probe_args` puts it on both. The name wins either way,
+        # because it is the name `_mcp_call` will actually call.
+        trigger["tool"] = name
+        semantic = trigger.get("semantic_input")
+        # Both builders resolve the workspace through `fetch.space_id_or_default` before
+        # they write it, so reading it back is exact - and passing it on keeps the
+        # transformer from falling back to n8n's literal on an install that has a
+        # workspace row.
+        space_id = semantic.get("space_id") if isinstance(semantic, dict) else None
+        return call(name, entity_ids_transformer(trigger, space_id=space_id))
+
+    return probe
+
+
+def _family_row(row: Any) -> dict[str, Any]:
+    """One products row as `sibling-transform` reads it: `product_code` and `id`.
+
+    Those are the ONLY two keys the port takes off a family row
+    (`miss_suggest._sibling_transform`, which also accepts the `code` / `uuid` spellings),
+    so nothing else is serialised - a wider dict would be a shape nobody reads and a set
+    of ORM attributes to keep loaded.
+    """
+    if isinstance(row, dict):
+        return row
+    uuid = getattr(row, "id", None)
+    return {
+        "product_code": getattr(row, "product_code", None),
+        "id": str(uuid) if uuid else None,
+    }
 
 
 def _family_fetch(db: Session) -> FamilyFetchFn:
@@ -311,6 +383,12 @@ def _family_fetch(db: Session) -> FamilyFetchFn:
         n8n calls a raw host over HTTP for this (the same class of hazard as H52's MCP
         endpoint). In process it is a service call, so there is no url to go stale and no
         credential in the workflow.
+
+        **The rows are SERIALISED, and that is what makes the seam usable.** n8n receives
+        JSON; `ProductService.list_products` returns `{"data": [Product ORM objects]}`,
+        and `jsc.get(row, "product_code")` returns its default on anything that is not a
+        dict - so `sibling_transform` found no siblings on any live turn and the D3
+        family offer was silently skipped for every partly-typed variant code.
         """
         from app.services.product_service import ProductService
 
@@ -318,16 +396,18 @@ def _family_fetch(db: Session) -> FamilyFetchFn:
         # `GET https://<raw ip>/api/v1/master-data/products?query=..&variant_filter=all&limit=5000`.
         # Same read, same three parameters, no host and no credential (the H52 class of
         # hazard, on a second node).
-        return ProductService(db).list_products(
+        payload = ProductService(db).list_products(
             query=query, variant_filter="all", limit=5000, page=1
         )
+        rows = payload.get("data") if isinstance(payload, dict) else None
+        return {"data": [_family_row(row) for row in (rows if isinstance(rows, list) else [])]}
 
     return call
 
 
 def production_answer_services(db: Session) -> AnswerServices:
     """S6c's bundle. The probe is the SAME MCP client the fetch step uses (H52, D10)."""
-    return AnswerServices(mcp_probe=_mcp_call(db), family_fetch=_family_fetch(db))
+    return AnswerServices(mcp_probe=_mcp_probe(db), family_fetch=_family_fetch(db))
 
 
 def answer_services_for(session_factory: Any) -> AnswerServices:
@@ -338,7 +418,7 @@ def answer_services_for(session_factory: Any) -> AnswerServices:
     `family_fetch` to the caller's session, which is right for a caller that already has one
     open and wrong for this lane, whose whole point is that it runs with none. So the family
     read opens its OWN short session and closes it again; the probe seam needs no session at
-    all (`_mcp_call` never touches its parameter).
+    all (`_mcp_probe` never touches its parameter).
 
     The wider "every bundle takes a factory" change is deliberately NOT made here - only the
     ONE bundle whose caller holds no session needs it today, and the rest have no such caller.
@@ -351,7 +431,7 @@ def answer_services_for(session_factory: Any) -> AnswerServices:
         finally:
             db.close()
 
-    return AnswerServices(mcp_probe=_mcp_call(None), family_fetch=family_fetch)
+    return AnswerServices(mcp_probe=_mcp_probe(None), family_fetch=family_fetch)
 
 
 def fetch_services(db: Session) -> FetchServices:

@@ -30,6 +30,21 @@ class Divergence:
     strip_paths: tuple[tuple[str, ...], ...] = ()
 
 
+# The five owner-ruling-K captures whose re-prompt turn named no domain and no entities,
+# so the SUBJECT carry (AC-816 rule 1, 6 Sep 2026) moves them on those two fields as well
+# as on the three the whole group moves on. Measured, one capture at a time: the other
+# eight in the group are byte-equal on `entities` and `domain_hint`.
+_SUBJECT_CARRY_MOVES = frozenset(
+    {
+        "rs34-02-escalation",
+        "rs51-03-escalation",
+        "rs6-05-escalation",
+        "exec-14123374",
+        "out-15143898",
+    }
+)
+
+
 # Every entry here must name a hazard id or an owner decision from the plan, and be
 # traceable to an AC. S1 shipped with none; S2 adds two - AC-202 authorises the `pending`
 # marker, and AC-205 is the H29 fix, whose only capture records the DEFECT.
@@ -88,6 +103,22 @@ DIVERGENCES: list[Divergence] = [
                 ("variables", "selection_context"),
                 ("variables", "last_result_set"),
                 ("variables", "pending"),
+            )
+            # THE SUBJECT CARRY (prod exec 15445325, same ruling, 6 Sep 2026). A carried
+            # offer now takes the domain and the entities it was made ABOUT with it, so
+            # the five captures where the re-prompt turn named neither also move on those
+            # two fields. Added per NAME, not to the whole group: the other eight are
+            # byte-equal on `entities` and `domain_hint` and go on being graded there,
+            # which is the difference between a field-scoped divergence and a blanket one.
+            + (
+                (
+                    ("reply", "session_patch", "variables", "domain_hint"),
+                    ("reply", "session_patch", "variables", "entities"),
+                    ("variables", "domain_hint"),
+                    ("variables", "entities"),
+                )
+                if name in _SUBJECT_CARRY_MOVES
+                else ()
             ),
         )
         for name in (

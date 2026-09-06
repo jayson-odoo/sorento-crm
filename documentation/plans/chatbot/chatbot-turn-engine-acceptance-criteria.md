@@ -394,6 +394,15 @@ clone or live. Each AC traces to a journey step (A1 to D1).
   - `previous_conversation_state` (the variables dict) and `referenced_result_set` REPLACE
     what the session read returned, for that turn only. Never written back - D14's
     zero-writes rule is unchanged and is what the test asserts.
+  - **Membership decides, not truthiness, and the value IS the variables map.**
+    `previous_conversation_state: {}` is an explicit override meaning "this contact
+    remembers NOTHING" - a COLD turn - and it is a different instruction from not sending
+    the key at all, which leaves the stored row in place. The value is assigned straight to
+    `session_vars.variables`, so it is the variables map itself and never a wrapper around
+    one. (`engine._harness_keys_present` at `engine.py:351`, `_inject_harness_session` at
+    `engine.py:378-380`.) The console check spells the same thing as `cold: true` on a case
+    (`scripts/chatbot_console_check.py`), which is what makes an owner-reported cold turn
+    reproducible against a contact who has real stored state.
 
   And given a LIVE envelope, when it carries any of the three, then all three are IGNORED
   and the `received` record carries `facts.harness_keys_ignored` naming them in the declared
@@ -1181,6 +1190,60 @@ contact inside the synchronous request. Different contacts run in parallel.
      stays closed. The rule the module chose is stated in `_offer_carry`'s docstring.
      Evidence: `tests/chatbot/test_tail_units.py::TestTierAndPromoOffersCarryUntilOverwritten`
      and `::TestTheMemberOfferCarryStopsAtTheAnswer`.
+
+     **And a member offer has the DID-YOU-MEAN OFFER'S LIFETIME** (owner ruling, 6 Sep
+     2026). "Unanswered" is not a licence to live forever: an offer the customer simply
+     ignored was re-armed on every later turn, so a bare "yes" about something else -
+     three, or twenty, turns on - still read as `is_escalation_confirmation` and assigned
+     a human to a conversation nobody had asked to escalate. Given a pending member offer
+     (`pending.kind = member_offer`, `selection_context = 'member_offer'`), when three
+     turns pass without a reply to it, OR when the customer asks something else on ONE
+     turn and gets an answer, then the offer is gone: `selection_context`,
+     `last_result_set` and the `pending` marker are all cleared, and a later affirmative
+     is not an escalation confirmation and assigns nobody
+     (`output_exchange._offer_is_open` reads the marker's liveness, not only its kind). An
+     accepted assignment or a decline still ends it on the turn it happens, unchanged. A
+     filter modification under the offer (rule 3) does NOT clear it - the roster is still
+     on screen - but it SPENDS one turn against the clock, or the narrow arm becomes the
+     unbounded carry again. `ttl` starts at 3 (`tail/pending.MEMBER_OFFER_TTL`) and rides
+     on the `pending` marker rather than a session key of its own, because the marker is
+     already what says the offer is open and a second key could disagree with it; a marker
+     with no `ttl` (written by n8n, or before this rule) is treated as open and starts its
+     clock on the next carry.
+
+     The rule is a deliberate divergence from the live spine, and the spine says why in
+     its own words: `export/sub-output-live/nodes/compile-current-state.js` around line
+     1307 gives the picker carry NO lifecycle on purpose - "NOT the suggest/did-you-mean
+     offer: that one already has a lifecycle of its own directly above (`dym_offer` with a
+     TTL ...), and two managers for one offer is how an offer ends up outliving both". The
+     hazard it names is real and the ruling answers it the other way round: ONE manager,
+     and it is the TTL, so the member offer and the did-you-mean offer expire by the same
+     rule instead of one of them not expiring at all. No capture moves - the blanket
+     H13/H14 divergence already strips `pending` from every `compile-current-state`
+     comparison, so `ttl` is invisible to the corpus and the 3600-test chatbot suite is
+     green with no new entry.
+     Evidence: `tests/chatbot/test_tail_units.py::TestTheMemberOfferHasTheSameTtlAsTheDymOffer`
+     (the clock, the answered arm, the filter arm and the `_offer_is_open` seam) and
+     `tests/chatbot/test_r3_pending_end_to_end.py::TestAnAbandonedMemberOfferStopsConfirming`
+     (the owner's own sequence, through the real head/tail round trip on the database).
+
+     **A carried offer carries its SUBJECT.** Given an offered list that survives a turn,
+     when that turn named no domain and no entities of its own, then the carried
+     `domain_hint` and `entities` ride forward with `selection_context` and
+     `last_result_set` - an offer whose subject is gone is an offer nobody can answer.
+     Prod execs 15445325 / 15445363: "promotion 7445" offered three tiers, the
+     out-of-range "9" re-prompted correctly and kept the list, and the session it wrote
+     had `entities: []` and `domain_hint: null` (the model reads a bare digit as `casual`
+     with no positions, and `variables` is built from scratch out of that parse) - so the
+     valid "all" that followed answered "I need at least one filter" instead of every
+     tier's promotions for 7445. The carry FILLS a gap and never overwrites: a turn that
+     names its own domain or entities keeps them, and a turn naming a different domain
+     never reaches the carry at all. Carried entities are stamped `current_message:
+     false`, which is the flag rule 2 keys on. Five of the thirteen owner-ruling-K
+     captures move on these two fields and are registered per NAME rather than for the
+     whole group, so the other eight go on being graded on them.
+     Evidence: `tests/chatbot/test_tail_units.py::TestACarriedOfferKeepsTheSubjectItWasMadeAbout`
+     and `tests/chatbot/test_r3_pending_end_to_end.py::TestAnOutOfRangePickKeepsTheProductInScope`.
   2. **Carried entities die on a topic change.** Given entities carried in the session
      block, when the customer asks an explicit question in a DIFFERENT domain that brings
      its own entity, then the carried set is dropped; when the domain is the same, or the
@@ -1209,6 +1272,25 @@ contact inside the synchronous request. Different contacts run in parallel.
      and the product-code case, the latter asserted on the SEAM - the filter arm ran, the
      entity survived, the domain is kept - rather than on the absence of a reprompt, which
      passed for the wrong reason) and `test_route_unit.py`.
+
+     **And a bare entity under an open roster is never small talk.** Given a pending
+     member offer and a reply that is nothing but a token, when the model emits it
+     `casual` (which it does for anything with no verb), then the turn is still read as a
+     reply to the question the offer was made about: the label is decided by STATE - an
+     offer is open and an entity was named - not by whether a verb was heard (D11). Prod
+     exec 15443838 is the measured case: "rpacc" under a six-name roster on `order` came
+     back `offer_hold` with ZERO entities and the roster re-shown, because the casual arm
+     wipes `entities` and the domain-continuity block skips casual outright, so by the
+     time the ladder asked "is this a filter?" there was nothing left that could be one.
+     The same turn under an inventory thread with no roster answered, which is why rule 3
+     read as working. WHICH kind of reply it is - a narrowing, a new query, or junk -
+     stays the ladder's decision and is deliberately not taken here; a turn that engages
+     the offer with a pick signal (a yes / no, a number, a position) keeps every arm it
+     has today. The resolver then still reaches the product through
+     `fallback_to_all_types`, whatever type rule 4's retype stamped on the bare token.
+     Evidence:
+     `tests/chatbot/test_r3_pending_end_to_end.py::TestAPendingOrderRosterDoesNotSwallowABareProductCode`
+     (the owner's three-turn chain, real resolver, real seeded rows).
   4. **A bare entity inherits the carried business domain.** Given a carried business
      domain and a turn that is nothing but ONE entity - no `ordinal` on it, because a
      positional pick names a ROW and is never bare - with the model naming neither a
