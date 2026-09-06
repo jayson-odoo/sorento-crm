@@ -1146,6 +1146,106 @@ export async function applyPackingList(
   return readJson(res, 'Failed to import the packing list');
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Supplier documents: one dialog, a proforma invoice AND/OR a packing list (R12-R14,
+ * purchasing consolidation batch, lane C)
+ *
+ * ── BACKEND CONTRACT (app/api/v1/scm/fulfilment.py) ────────────────────────
+ *  POST /api/v1/scm/supplier-documents/preview  multipart: files[] + supplier_id +
+ *       optional currency -> 200 SupplierDocumentsPreview. Writes nothing.
+ *  POST /api/v1/scm/supplier-documents/apply    same body, supplier_id required ->
+ *       200 SupplierDocumentsApplyResult. Auth: `scm.reorder.run`.
+ *
+ * Each file is classified by its own title cell (`发票`/`PROFORMA INVOICE` vs `装箱单`/
+ * `PACKING LIST`) - proforma invoice, packing list, or combined when a file states both.
+ * `apply` writes proforma invoices first, then packing lists (one draft shipment per
+ * container block, same as `applyPackingList`), then matches PI prices onto the shipment
+ * lines they price by product, for every container this supplier holds - whichever order
+ * the files were uploaded in.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+export type SupplierDocumentKind = 'proforma_invoice' | 'packing_list' | 'combined' | 'unreadable';
+
+export interface SupplierDocumentBlock {
+  container_no: string | null;
+  seal_no: string | null;
+  cartons: number | null;
+  cbm_total: number | null;
+  amount: number | null;
+  line_count: number;
+  note_count: number;
+}
+
+export interface SupplierDocumentHeader {
+  pi_number: string | null;
+  invoice_date: string | null;
+  consignee: string | null;
+  shipper: string | null;
+  /** `提单号` - fills `forwarder_order_ref` on apply, never `bill_of_lading_number`. */
+  so_ref: string | null;
+}
+
+export interface SupplierDocumentFilePreview {
+  name: string;
+  kind: SupplierDocumentKind;
+  blocks: SupplierDocumentBlock[];
+  header: SupplierDocumentHeader;
+  unmatched: string[];
+  errors: string[];
+}
+
+export interface SupplierDocumentPriceMatch {
+  container_no: string;
+  pi_number: string | null;
+  matched_lines: number;
+  unmatched_lines: number;
+}
+
+export interface SupplierDocumentsPreview {
+  files: SupplierDocumentFilePreview[];
+  price_matches: SupplierDocumentPriceMatch[];
+}
+
+export interface SupplierDocumentsApplyResult {
+  proforma_invoice_ids: string[];
+  shipment_ids: string[];
+  links_written: number;
+  attachment_ids: string[];
+}
+
+function supplierDocumentsForm(
+  files: File[],
+  opts: { supplierId?: string | null; currency?: string | null },
+): FormData {
+  const body = new FormData();
+  for (const file of files) body.append('files', file);
+  if (opts.supplierId) body.append('supplier_id', opts.supplierId);
+  if (opts.currency) body.append('currency', opts.currency);
+  return body;
+}
+
+export async function previewSupplierDocuments(
+  files: File[],
+  opts: { supplierId?: string | null; currency?: string | null } = {},
+): Promise<SupplierDocumentsPreview> {
+  const res = await apiFetch('/api/v1/scm/supplier-documents/preview', {
+    method: 'POST',
+    body: supplierDocumentsForm(files, opts),
+  });
+  return readJson<SupplierDocumentsPreview>(res, 'Failed to read the supplier documents');
+}
+
+export async function applySupplierDocuments(
+  files: File[],
+  opts: { supplierId?: string | null; currency?: string | null } = {},
+): Promise<SupplierDocumentsApplyResult> {
+  const res = await apiFetch('/api/v1/scm/supplier-documents/apply', {
+    method: 'POST',
+    body: supplierDocumentsForm(files, opts),
+  });
+  return readJson<SupplierDocumentsApplyResult>(res, 'Failed to import the supplier documents');
+}
+
 export async function getAllocationSuggestion(shipmentId: string): Promise<AllocationSuggestion> {
   const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/allocation-suggestion`);
   return readJson<AllocationSuggestion>(res, 'Failed to work out what this container draws down');

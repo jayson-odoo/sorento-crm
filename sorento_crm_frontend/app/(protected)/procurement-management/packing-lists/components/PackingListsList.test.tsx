@@ -73,8 +73,8 @@ vi.mock('../services/packingListService', () => ({
 // The reader dialog (opened only when the CTA is reachable) sources its own supplier list -
 // irrelevant to gating, stubbed so opening it never reaches the network.
 vi.mock('@/app/(protected)/scm/services/fulfilmentService', () => ({
-  previewPackingList: vi.fn(),
-  applyPackingList: vi.fn(),
+  previewSupplierDocuments: vi.fn(),
+  applySupplierDocuments: vi.fn(),
   getFulfilmentSuppliers: vi.fn(async () => []),
 }));
 
@@ -133,10 +133,10 @@ beforeEach(() => {
   useHasAnyPermission.mockReturnValue(true);
 });
 
-describe('PackingListsList - Upload packing list is primary when reachable (AC-B1)', () => {
-  it('shows Upload packing list as the primary button', () => {
+describe('PackingListsList - Upload supplier documents is primary when reachable (AC-B1)', () => {
+  it('shows Upload supplier documents as the primary button', () => {
     renderList();
-    expect(screen.getByRole('button', { name: /Upload packing list/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Upload supplier documents/i })).toBeInTheDocument();
   });
 
   it('puts Create Packing List and Import Container Status in the gear menu', () => {
@@ -162,7 +162,7 @@ describe('PackingListsList - falls back to Create Packing List when the reader i
     renderList();
 
     expect(screen.getByRole('button', { name: /^Create Packing List$/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Upload packing list/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Upload supplier documents/i })).not.toBeInTheDocument();
 
     fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), { button: 0 });
     // Not duplicated in the gear now that it is the primary action - exactly one on screen.
@@ -174,7 +174,7 @@ describe('PackingListsList - falls back to Create Packing List when the reader i
     renderList();
 
     expect(screen.getByRole('button', { name: /^Create Packing List$/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Upload packing list/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Upload supplier documents/i })).not.toBeInTheDocument();
   });
 
   it('primary Create Packing List routes to the manual form', () => {
