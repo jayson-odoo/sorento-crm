@@ -88,6 +88,7 @@ class Customer(Base, CompanyScopedMixin):
         "first_name",
         "last_name",
         "market_segment_code",
+        "region",
     ]
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -122,6 +123,9 @@ class Customer(Base, CompanyScopedMixin):
     mobile_number = Column(String(50), nullable=True)
     # SCM (M2): demand-nature channel routing via the customer's market segment.
     market_segment_code = Column(String(50), ForeignKey("market_segments.code", ondelete="SET NULL"), nullable=True)
+    # AutoCount `Debtor.AreaCode` (migration 476, D16). Free text, not an FK -
+    # AutoCount states no reference table for it.
+    region = Column(String(80), nullable=True)
     # How this row got here. Set to 'project_lead' by the lead wizard, which can
     # create a customer for an organisation that has never bought anything: order and
     # invoice pickers can filter prospects out if the noise becomes real. Null on the
@@ -513,4 +517,34 @@ class SalesOrderLine(Base, CompanyScopedMixin):
         Index("ix_sales_order_lines_product_id", "product_id"),
         Index("ix_sales_order_lines_warehouse_id", "warehouse_id"),
         Index("ix_sales_order_lines_product_warehouse_status", "product_id", "warehouse_id", "line_status"),
+    )
+
+
+class OrderInquiryConflict(Base, CompanyScopedMixin):
+    """One disagreement between the Order Inquiry sheet's warehouse and the
+    ESB's (migration 476, D22).
+
+    The Order Inquiry import only ever writes `warehouse_id` where it is
+    still NULL (`project_order_inquiry_import_service`); the ESB SO line
+    writer overwrites a non-NULL warehouse when AutoCount states a different
+    location, and records the disagreement here so the worklist can render
+    it rather than the change vanishing silently.
+    """
+    __tablename__ = "order_inquiry_conflicts"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    sales_order_id = Column(UUID(as_uuid=False), ForeignKey("sales_orders.id", ondelete="CASCADE"), nullable=False)
+    sales_order_line_id = Column(UUID(as_uuid=False), ForeignKey("sales_order_lines.id", ondelete="CASCADE"), nullable=False)
+    previous_warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True)
+    new_warehouse_id = Column(UUID(as_uuid=False), ForeignKey("warehouses.id", ondelete="SET NULL"), nullable=True)
+    # What overwrote the inquiry's warehouse - "autocount_esb" today, room for
+    # a second source later without a schema change.
+    source = Column(String(32), nullable=False)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    # `company_id`'s own index comes from `CompanyScopedMixin`'s `Column(index=True)`
+    # (auto-named `ix_order_inquiry_conflicts_company_id`, same as the migration's
+    # explicit one) - declaring it again here would collide.
+    __table_args__ = (
+        Index("ix_order_inquiry_conflicts_sales_order_id", "sales_order_id"),
     )

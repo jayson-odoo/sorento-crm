@@ -68,7 +68,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
-from app.models.order import Customer, SalesOrder, SalesOrderLine
+from app.models.order import Customer, OrderInquiryConflict, SalesOrder, SalesOrderLine
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Product
 from app.models.sales_agent import SalesAgent
@@ -78,6 +78,8 @@ from app.services.integration_reference_service import (
     IntegrationReferenceService,
     ReferenceConflict,
 )
+from app.services.rules.document_rules import derive_document_status
+from app.services.scm import outstanding_diff
 # `MasterRefResolver` is the ref/code/name/back-create ladder (D1/D2/D10),
 # shared with `ShippingOrderIngestService` (S3) - lifted out in S3 rather than
 # duplicated, see that module's docstring.
@@ -361,7 +363,17 @@ class DocumentIngestService(MasterRefResolver):
         # site - which passes none - is unaffected.
         self._agent_class_cache: dict[str, Optional[str]] = {}
         self._customer_code_cache: dict[str, Optional[str]] = {}
+        self._product_code_cache: dict[str, Optional[str]] = {}
+        self._warehouse_code_cache: dict[str, Optional[str]] = {}
         self._segment_cache: dict[Any, Optional[str]] = {}
+        # D10 (S2): the same before/after line picture
+        # `outstanding_import_service.apply()` feeds `planning_change_service
+        # .build_batch`, built here across the WHOLE batch (one call, not one
+        # per record - `build_batch`'s own scoping rule) so the route's hook
+        # can react to a sales_orders push exactly as a weekly upload does.
+        self.so_diff_before: list[outstanding_diff.Line] = []
+        self.so_diff_after: list[outstanding_diff.Line] = []
+        self.so_header_id_by_number: dict[str, str] = {}
 
     # --------------------------------------------------------------- the batch
     def ingest(
@@ -516,7 +528,6 @@ class DocumentIngestService(MasterRefResolver):
         # line 3 belongs on the SAME record verdict as one triggered by the
         # header, not a per-line list nothing reads (D9).
         warnings: list[str] = []
-        status = self._status(spec, payload.status)
         # The header is resolved (not yet written into) BEFORE `_header_values`, unlike
         # every other value here: D4's fill-only `order_type` and never-downgraded
         # `demand_class` both have to read what the row ALREADY holds, which does not
@@ -525,12 +536,45 @@ class DocumentIngestService(MasterRefResolver):
         # below, once `header_values` is complete and about to be written, so no query
         # the ref/demand ladders run in between can autoflush a half-built row and fail
         # on its own not-null constraints.
+        #
+        # Also why `status` is derived AFTER `_header` now (D20, S2): an absent
+        # `payload.status` falls back to `document_rules.derive_document_status`,
+        # which for an UPDATE has to read the row's OWN existing status - not
+        # readable until `_header` has found it.
         header, outcome = self._header(spec, payload)
+        canonical_status = payload.status
+        if canonical_status is None:
+            existing_canonical = (
+                _canonical_status(spec, getattr(header, "status", None))
+                if outcome is IngestOutcome.UPDATED
+                else None
+            )
+            line_dicts = [
+                {
+                    "qty_ordered": line.qty_ordered,
+                    spec.line_delivered_field: getattr(line, spec.line_delivered_field, None),
+                }
+                for line in payload.lines
+            ]
+            canonical_status = derive_document_status(line_dicts, existing_canonical)
+        status = self._status(spec, canonical_status)
         header_values = self._header_values(spec, payload, status, warnings, header)
-        line_values = [
-            self._line_values(spec, line, index, status, warnings)
-            for index, line in enumerate(payload.lines)
-        ]
+        # D9: a line whose product does not resolve is DROPPED, not a reason
+        # to fail the whole document - `_line_values`' only raise is the
+        # ladder's Product rung (`line_refs` never resolves anything else that
+        # can raise; warehouse is NULL+warning, never an exception). The rest
+        # of the document still lands, and the drop is counted on the verdict
+        # (`lines.dropped`) rather than silently disappearing.
+        line_values: list[dict[str, Any]] = []
+        dropped = 0
+        for index, line in enumerate(payload.lines):
+            try:
+                line_values.append(self._line_values(spec, line, index, status, warnings))
+            except MissingReference:
+                dropped += 1
+
+        if spec.entity_type == "sales_orders" and outcome is IngestOutcome.UPDATED:
+            self._capture_planning_diff_before(header, payload)
 
         # Only an update overwrites anything, and only a dry run needs to say so.
         diff = (
@@ -544,6 +588,10 @@ class DocumentIngestService(MasterRefResolver):
         self.db.flush()
 
         line_counts = self._sync_lines(spec, header, line_values)
+        if dropped:
+            line_counts["dropped"] = dropped
+        if spec.entity_type == "sales_orders":
+            self._capture_planning_diff_after(header, payload)
         if spec.entity_type == "purchase_orders":
             self._write_order_link_claims(header, payload)
         self.refs.link(
@@ -906,6 +954,84 @@ class DocumentIngestService(MasterRefResolver):
             )
         return self._customer_code_cache[customer_id]
 
+    def _product_code_of(self, product_id: Optional[str]) -> Optional[str]:
+        """Memoised per batch (same reason as `_customer_code_of`) - the D10
+        planning diff identifies a line by its product CODE, matching
+        `outstanding_import_service`'s own `outstanding_diff.Line.item_code`."""
+        if not product_id:
+            return None
+        if product_id not in self._product_code_cache:
+            self._product_code_cache[product_id] = (
+                self.db.query(Product.product_code).filter(Product.id == product_id).scalar()
+            )
+        return self._product_code_cache[product_id]
+
+    def _warehouse_code_of(self, warehouse_id: Optional[str]) -> Optional[str]:
+        """Same as `_product_code_of`, for `outstanding_diff.Line.location`."""
+        if not warehouse_id:
+            return None
+        if warehouse_id not in self._warehouse_code_cache:
+            self._warehouse_code_cache[warehouse_id] = (
+                self.db.query(Warehouse.warehouse_code)
+                .filter(Warehouse.id == warehouse_id)
+                .scalar()
+            )
+        return self._warehouse_code_cache[warehouse_id]
+
+    def _capture_planning_diff_before(self, header: Any, payload: Any) -> None:
+        """D10: the sales order's OWN lines, read before this record's write
+        touches any of them - the same "read the old position while it is
+        still the one in the database" rule `outstanding_import_service
+        .apply()` follows for its own `before_positions`. UPDATE only: a
+        CREATE has no before state, matching `outstanding_diff`'s own
+        `added` classification for a line with nothing on the `before` side.
+        """
+        self.so_header_id_by_number[payload.so_number] = str(header.id)
+        existing = (
+            self.db.query(SalesOrderLine)
+            .filter(SalesOrderLine.sales_order_id == str(header.id))
+            .all()
+        )
+        for row in existing:
+            if row.line_status == CANCELLED:
+                continue
+            self.so_diff_before.append(
+                outstanding_diff.Line(
+                    doc_number=payload.so_number,
+                    item_code=self._product_code_of(row.product_id) or "",
+                    location=self._warehouse_code_of(row.warehouse_id) or "",
+                    qty=float(row.qty_ordered or 0),
+                    required_date=row.required_date,
+                    row_ref=str(row.id),
+                )
+            )
+
+    def _capture_planning_diff_after(self, header: Any, payload: Any) -> None:
+        """The AFTER half of `_capture_planning_diff_before` - read back post-sync
+        so every line carries its real, persisted id (`row_ref`), which is what
+        `_run_document_hooks` needs to tell `planning_change_service.build_batch`
+        which `sales_order_lines` row a changed `Diff.Change` belongs to.
+        """
+        self.so_header_id_by_number[payload.so_number] = str(header.id)
+        current = (
+            self.db.query(SalesOrderLine)
+            .filter(SalesOrderLine.sales_order_id == str(header.id))
+            .all()
+        )
+        for row in current:
+            if row.line_status == CANCELLED:
+                continue
+            self.so_diff_after.append(
+                outstanding_diff.Line(
+                    doc_number=payload.so_number,
+                    item_code=self._product_code_of(row.product_id) or "",
+                    location=self._warehouse_code_of(row.warehouse_id) or "",
+                    qty=float(row.qty_ordered or 0),
+                    required_date=row.required_date,
+                    row_ref=str(row.id),
+                )
+            )
+
     def _line_values(
         self, spec: DocumentSpec, line: Any, index: int, status: str, warnings: list[str]
     ) -> dict[str, Any]:
@@ -913,15 +1039,27 @@ class DocumentIngestService(MasterRefResolver):
             column: getattr(line, field) for column, field in spec.line_fields
         }
         for column, ref_field, model, code_field, name_field in spec.line_refs:
-            values[column] = self._resolve_master(
+            ref_value = getattr(line, ref_field)
+            code_value = getattr(line, code_field) if code_field else None
+            resolved_id = self._resolve_master(
                 model=model,
                 ref_field=f"lines.{index}.{ref_field}",
-                ref=getattr(line, ref_field),
+                ref=ref_value,
                 code_field=f"lines.{index}.{code_field}" if code_field else None,
-                code=getattr(line, code_field) if code_field else None,
+                code=code_value,
                 name=getattr(line, name_field) if name_field else None,
                 warnings=warnings,
             )
+            # D22: a line that names NO location at all leaves the column out of
+            # `values` entirely rather than writing `None` - an UPDATE's
+            # per-column setattr (`_sync_lines`) then leaves whatever warehouse
+            # the row already carries untouched, instead of clearing a
+            # warehouse the Order Inquiry sheet set and this push never
+            # mentioned. A location that WAS sent and failed to resolve still
+            # writes `None` (unchanged, D10) - only "nothing sent" is new.
+            if model is Warehouse and not (ref_value or code_value):
+                continue
+            values[column] = resolved_id
         # Same shape-driven PO currency fill as the header, for the per-line
         # `currency` column purchase-order lines alone carry.
         if "currency" in values and not values["currency"]:
@@ -997,6 +1135,29 @@ class DocumentIngestService(MasterRefResolver):
             row = by_ref.pop(values["source_ref"], None)
             if row is not None:
                 values.pop("line_number", None)
+                # D22: a resolved warehouse that DIFFERS from what the row
+                # already carries overwrites it (the AutoCount location wins)
+                # but is also recorded, so the Order Inquiry worklist can
+                # render the disagreement rather than it vanishing silently.
+                if spec.entity_type == "sales_orders" and "warehouse_id" in values:
+                    new_warehouse_id = values["warehouse_id"]
+                    old_warehouse_id = row.warehouse_id
+                    if (
+                        new_warehouse_id
+                        and old_warehouse_id
+                        and str(new_warehouse_id) != str(old_warehouse_id)
+                    ):
+                        self.db.add(
+                            OrderInquiryConflict(
+                                id=str(uuid.uuid4()),
+                                company_id=self.company_id,
+                                sales_order_id=str(header.id),
+                                sales_order_line_id=str(row.id),
+                                previous_warehouse_id=old_warehouse_id,
+                                new_warehouse_id=new_warehouse_id,
+                                source="autocount_esb",
+                            )
+                        )
                 for column, value in values.items():
                     setattr(row, column, value)
                 counts["updated"] += 1

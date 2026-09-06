@@ -327,27 +327,36 @@ def test_a_warehouse_code_owned_only_by_another_company_is_never_resolved(world)
     """A stock location company A does not have must be reported, not borrowed from B.
 
     Borrowing it would place company A's demand in a warehouse it cannot ship from, and
-    every coverage / netting number for that location would then be wrong.
+    every coverage / netting number for that location would then be wrong - so the
+    isolation rule is that `warehouse_id` is never B's row, never that the line vanishes.
+    AC-P2-3/D9 (S2) changed the SECOND half: the line is now KEPT with `warehouse_id`
+    NULL and the code reported, matching the ESB's own warehouse-unresolved rule, rather
+    than silently dropping demand a re-upload could otherwise still see and fix.
     """
     db = world.db
     item = _code("ITEM")
     location = _code("WH")[:50]
     world.product(item, world.a)
-    world.warehouse(location, world.b)
+    warehouse_b = world.warehouse(location, world.b)
     so_number = _code("SO")
 
     _act_as(db, world.a)
     file = _workbook([[so_number, item, 10, date(2026, 7, 1), location]])
     preview = svc.preview(db, file, SO)
 
-    assert preview.counts["added"] == 0
+    assert preview.counts["added"] == 1
     assert [(i.field, i.value) for i in preview.resolution_issues] == [
         ("stock_location", location)
     ]
 
     out = svc.apply(db, file, SO)
-    assert out["applied"]["added"] == 0
-    assert _written_lines(db, so_number) == []
+    assert out["applied"]["added"] == 1
+    written = _written_lines(db, so_number)
+    assert len(written) == 1
+    assert written[0][1] is None, (
+        "an unresolvable location must be NULL, never borrowed from another company"
+    )
+    assert str(written[0][1]) != warehouse_b
 
 
 def test_a_warehouse_code_held_by_both_companies_resolves_to_the_active_one(world):

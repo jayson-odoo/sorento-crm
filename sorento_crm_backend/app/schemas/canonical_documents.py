@@ -150,6 +150,11 @@ class CanonicalSalesOrder(_CanonicalDocument):
     FIRST sync can adopt an existing row by.
     """
 
+    # D20 (S2): optional here - absent, `document_ingest_service` derives it
+    # via `document_rules.derive_document_status`. `CanonicalShippingOrder`
+    # does NOT override this (S3's own decision, D20 for SPO) - its `status`
+    # stays the required field `_CanonicalDocument` declares.
+    status: Optional[str] = Field(None, min_length=1, max_length=50)
     so_number: str = Field(..., min_length=1, max_length=100)
     customer_ref: Optional[str] = Field(None, max_length=255)
     # v2 code/name fallback (D1/D2). `customer_code` is written to
@@ -160,6 +165,11 @@ class CanonicalSalesOrder(_CanonicalDocument):
     # `String(50)` column - a longer value can only ever fail at INSERT.
     customer_code: Optional[str] = Field(None, max_length=50)
     customer_name: Optional[str] = Field(None, max_length=255)
+    # D16/D8 (S2): used ONLY when back-creating a customer off (customer_code,
+    # customer_name) - never applied to an existing row (that is what the
+    # customers master push's own market_segment_code/region are for).
+    customer_segment: Optional[str] = Field(None, max_length=50)
+    customer_region: Optional[str] = Field(None, max_length=80)
     sales_agent_ref: Optional[str] = Field(None, max_length=255)
     agent_code: Optional[str] = Field(None, max_length=100)
     # v2 demand classification (D4). FILL-only: written to `sales_orders.order_type`
@@ -175,6 +185,8 @@ class CanonicalSalesOrder(_CanonicalDocument):
 
 
 class CanonicalPurchaseOrder(_CanonicalDocument):
+    # D20 (S2): same override as CanonicalSalesOrder.status - see its comment.
+    status: Optional[str] = Field(None, min_length=1, max_length=50)
     po_number: str = Field(..., min_length=1, max_length=100)
     supplier_ref: Optional[str] = Field(None, max_length=255)
     # v2 code/name fallback (D1). `agent_code` is accepted for symmetry with

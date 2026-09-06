@@ -86,6 +86,7 @@ _QTY_EPSILON = 0.0005
 # manual supplier create and the ESB masters push - this import keeps the
 # name every call site in this module already uses.
 from app.services.rules.master_rules import clean_supplier_name as _clean_supplier_name
+from app.services.rules import customer_rules
 
 
 @dataclass(frozen=True)
@@ -136,13 +137,16 @@ class _Binding:
     # is a resolution issue the operator has to see.
     party_code_header_col: Optional[str] = None
     # Whether an unresolved counterparty code gets a MINIMAL master row created for it
-    # rather than only reported. Purchase-order creditor codes only (AC below): 2,177 of
-    # 5,243 PO-book documents in the captain's own file carried a creditor code the
-    # supplier master had never seen, so every one of them landed with no supplier at
-    # all. The sales side keeps the code on the header instead (`party_code_header_col`)
-    # and stays exactly as it was - a debtor code with no customer row still names a
-    # market segment fallback there, which a back-created customer with no segment
-    # would only make WORSE.
+    # rather than only reported. Purchase-order creditor codes only, originally (AC
+    # below): 2,177 of 5,243 PO-book documents in the captain's own file carried a
+    # creditor code the supplier master had never seen, so every one of them landed
+    # with no supplier at all.
+    #
+    # AC-P2-1/D8 (S2) turns this on for the sales side too, matching the ESB's own
+    # `MasterRefResolver` (which has back-created a customer on a debtor code+name
+    # pair since D2) - a debtor code the file ALSO names a customer for is worth
+    # creating, and `party_code_header_col` still keeps the raw code on the header
+    # even when a name is not sent, so a code-only row is exactly as it was.
     party_back_create: bool = False
     # The counterparty model's own "name" column, read only when `party_back_create` is
     # set - the file's label column (`SUPPLIER` on the PO export) becomes this row's
@@ -176,6 +180,11 @@ _BINDINGS: dict[str, _Binding] = {
         # ... and the code itself is kept on the header whether or not it resolves, so an
         # order this feed cannot link is still attributable and still fixable later.
         party_code_header_col="debtor_code",
+        # AC-P2-1/D8 (S2): back-created via `customer_rules.back_create_customer`
+        # when the file names BOTH a debtor code and a name - `outstanding_reader`
+        # already reads the export's `PROJECT/CUSTOMER` column into `Line.label`
+        # for every SO row, so no new reading code is needed, only the write.
+        party_back_create=True, party_name_col="customer_name",
         # `scm.committed_v` counts exactly one sales-order status, so writing and reading are
         # the same value here.
         write_status="open", live_statuses=("open",),
@@ -535,9 +544,14 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
                                           "no product with this code"))
             continue
         if l.location and _norm(l.location) not in warehouses:
+            # AC-P2-3/D9 (S2): KEPT, not skipped, matching the ESB's own
+            # warehouse-unresolved=NULL+warning rule - an unresolvable
+            # LOCATION does not invalidate the demand a line represents the
+            # way an unresolvable ITEM does. The write path below already
+            # leaves `warehouse_id` NULL for it (`resolved.warehouse_by_code
+            # .get(...)` on a location this dict has no entry for).
             issues.append(ResolutionIssue(row, "stock_location", l.location,
                                           "no warehouse with this code"))
-            continue
         kept.append(l)
 
         # Who sold it. Read only where the document type HAS an agent, so the purchase book
@@ -571,13 +585,14 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
                 if slot.get(key) is None and extra.get(key) is not None:
                     slot[key] = extra.get(key)
 
-        # The counterparty is resolved but NEVER gates the line, unlike the item and the
-        # location. A quantity with no product cannot be planned, and a quantity in the wrong
-        # warehouse makes every coverage figure for that location wrong - so those rows are
-        # dropped. An unknown creditor leaves the quantity and the arrival date perfectly
-        # true, and dropping the line would make on-order UNDERSTATE supply, which is what
-        # causes a second, unnecessary purchase. So it is reported and the header is left
-        # unlinked.
+        # The counterparty is resolved but NEVER gates the line, and (AC-P2-3/D9, S2)
+        # neither does the location any more - only the ITEM does. A quantity with no
+        # product cannot be planned, so that row is dropped; a quantity at an unknown
+        # location is still real demand/supply, just unlocated, so it is KEPT with
+        # `warehouse_id` NULL (see the location check above). An unknown creditor leaves
+        # the quantity and the arrival date perfectly true, and dropping the line would
+        # make on-order UNDERSTATE supply, which is what causes a second, unnecessary
+        # purchase. So it is reported and the header is left unlinked.
         code = _norm(extra.get("party_code"))
         if bind.party is None:
             # Nothing is LINKED on this path, but the code is not discarded either: the
@@ -623,7 +638,15 @@ def _resolve(db: Session, read: ReadResult, bind: _Binding) -> _Resolved:
             # sales book keeps it on the header, so the order stays attributable and there
             # is nothing for the operator to fix in this file - reporting 2,546 of them
             # would bury the rows that really did fail.
-            if bind.party_back_create:
+            #
+            # AC-P2-1/D8 (S2): a Customer additionally needs a NAME to back-create (the
+            # unique index is on the pair) - a code-only debtor row falls through to the
+            # `party_code_header_col` branch below exactly as it did before this bind
+            # turned `party_back_create` on, kept and unreported.
+            can_back_create = bind.party_back_create and (
+                bind.party is not Customer or l.label
+            )
+            if can_back_create:
                 # The purchase book has nowhere to put an unlinked code, and 2,177 of
                 # 5,243 documents in the captain's own file arrived exactly this way -
                 # not a typo, a supplier AutoCount already deals with that the master
@@ -2558,6 +2581,10 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
     # migrated one), must not poison the whole transaction - the code is left exactly as
     # unresolved as it always was rather than crashing the upload.
     created_supplier_codes: list[str] = []
+    # AC-P2-1/D8 (S2): the customer mirror of `created_supplier_codes` - reported
+    # under its own `customers_created`/`customers_created_codes` keys, the same
+    # shape the supplier side already reports under.
+    created_customer_codes: list[str] = []
     if bind.party_back_create and resolved.party_raw_code_by_code:
         party_ids_by_code: dict[str, str] = {}
         code_col = getattr(bind.party, bind.party_code_col)
@@ -2570,9 +2597,22 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
                 party_ids_by_code[code] = str(existing.id)
                 continue
             raw_code = resolved.party_raw_code_by_code.get(code, code)
-            name = resolved.party_label_by_code.get(code) or raw_code
+            name = resolved.party_label_by_code.get(code)
+            if bind.party is Customer:
+                # AC-P2-1/D8: a customer needs BOTH code and name (the unique
+                # index is on the pair) - unlike the supplier side, a code
+                # with no name is left exactly as unresolved as it always
+                # was, still attributable via `party_code_header_col`.
+                if not name:
+                    continue
+                created = customer_rules.back_create_customer(db, code=raw_code, name=name)
+                if created is None:
+                    continue
+                party_ids_by_code[code] = str(created.id)
+                created_customer_codes.append(raw_code)
+                continue
             created = back_create_supplier(
-                db, code=raw_code, name=name, party=bind.party,
+                db, code=raw_code, name=name or raw_code, party=bind.party,
                 code_col=bind.party_code_col, name_col=bind.party_name_col)
             if created is None:
                 continue
@@ -2591,7 +2631,10 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
     # above. Re-queried by name rather than trusting `_resolve`'s snapshot, for the same
     # reason the code loop re-queries by code: a name this run's own code-based creation
     # (or an earlier name in THIS loop) just created must be found, not re-created.
-    if bind.party_back_create and resolved.party_cleaned_name_by_key:
+    # Supplier only: no S2 scenario needs a customer back-created off a NAME
+    # alone (D8 requires code AND name), and `_clean_supplier_name`'s cleaning
+    # rule (trailing currency notes, etc.) is a supplier-specific concern.
+    if bind.party_back_create and bind.party is not Customer and resolved.party_cleaned_name_by_key:
         party_ids_by_name_key: dict[str, str] = {}
         name_col = getattr(bind.party, bind.party_name_col)
         for name_key in sorted(resolved.party_cleaned_name_by_key):
@@ -3002,4 +3045,7 @@ def apply(db: Session, file_data: bytes, doc_type: str = SO,
         # a person can read either.
         "suppliers_created": len(created_supplier_codes),
         "suppliers_created_codes": created_supplier_codes[:CREATED_SUPPLIERS_LISTED],
+        # AC-P2-1/D8 (S2): same shape, the customer side of the same fact.
+        "customers_created": len(created_customer_codes),
+        "customers_created_codes": created_customer_codes[:CREATED_SUPPLIERS_LISTED],
     }

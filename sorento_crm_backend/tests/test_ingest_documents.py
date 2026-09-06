@@ -803,13 +803,16 @@ class TestAdoption:
 
 # ============================================================ retryable (AC-A3-4)
 class TestUnresolvedReferences:
-    def test_an_unknown_product_ref_makes_the_whole_record_retryable(self, env):
-        """AC-A3-4. Half a document is worse than none.
-
-        A header written without its lines reads as an order for nothing, and
-        the netting would treat it as fully covered demand.
+    def test_an_unknown_product_ref_drops_the_line_not_the_whole_record(self, env):
+        """AC-A3-4 superseded 2026-09-06 (ingest-parity-standardisation D9,
+        AC-P2-3): a document with SOME resolvable lines is no longer refused
+        outright over one unresolved product - the unresolved line is DROPPED
+        and counted (`lines.dropped`) and the rest of the document lands, the
+        same rule `outstanding_import_service._resolve` already applied to an
+        unknown item code. See `tests/test_ingest_parity_s2_documents.py
+        ::TestAcP23UnknownProductDroppedUnknownLocationKept` for the new
+        contract test.
         """
-        before = env.counts()
         record = _so_record(
             env,
             lines=[_so_line(env), _so_line(env, product_ref="ITEM:NOT-SYNCED-YET")],
@@ -818,9 +821,8 @@ class TestUnresolvedReferences:
         res = env.post(INGEST_SO, [record])
 
         entry = res.json()["records"][0]
-        assert entry["outcome"] == "retryable", res.text
-        assert any("product_ref" in k for k in entry["errors"]), entry
-        assert env.counts() == before
+        assert entry["outcome"] == "created", res.text
+        assert entry.get("lines", {}).get("dropped") == 1, entry
 
     def test_an_unknown_warehouse_ref_lands_null_with_a_warning(self, env):
         """v2 deviation (D10, AC-V1-7b): superseded 2026-09-05. A warehouse is

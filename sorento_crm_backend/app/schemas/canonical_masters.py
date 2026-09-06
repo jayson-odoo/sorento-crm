@@ -100,6 +100,13 @@ class CanonicalCustomer(_Canonical):
     payment_terms_code: Optional[str] = Field(None, max_length=100)
     country: Optional[str] = Field(None, max_length=100)
     is_active: Optional[bool] = None
+    # D16 (S2): AutoCount `Debtor.DebtorType` / `Debtor.AreaCode`. `market_segment_code`
+    # folds through `customer_rules.fold_market_segment` - an unknown spelling drops
+    # with warning `segment_unknown` rather than failing the record, fill-only (a
+    # hand-set segment is never overwritten). `region` is free text, written whenever
+    # sent (no reference table - AutoCount states none for it).
+    market_segment_code: Optional[str] = Field(None, max_length=50)
+    region: Optional[str] = Field(None, max_length=80)
 
 
 class CanonicalSalesAgent(_Canonical):

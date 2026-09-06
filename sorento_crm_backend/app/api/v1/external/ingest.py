@@ -55,8 +55,10 @@ from app.services.master_ingest_service import (
     UnsupportedIngestEntity,
 )
 from app.services.master_read_service import MasterReadService
+from app.services import planning_change_service
 from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 from app.services.scm import plan_exception_service, reorder_run_service
+from app.services.scm.outstanding_diff import diff_lines
 from app.services.scm.outstanding_import_service import supersede_crm_raised_pos
 from app.services.shipping_order_ingest_service import (
     SHIPPING_ORDER_ENTITIES,
@@ -211,6 +213,7 @@ def _run_document_hooks(
     """
     if entity == "sales_orders":
         _run_plan_exception_hook(db, service, actor=actor)
+        _run_planning_change_hook(db, service, actor=actor)
     elif entity == "purchase_orders":
         _run_supersede_and_relink_hooks(db, service, actor=actor)
 
@@ -253,6 +256,43 @@ def _run_plan_exception_hook(db: Session, service, *, actor: Optional[str]) -> N
     except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
         db.rollback()
         logger.warning("ingest.plan_exception_hook_failed", exc_info=True)
+
+
+def _run_planning_change_hook(db: Session, service, *, actor: Optional[str]) -> None:
+    """D10 (S2, BL-058): the ESB's own `planning_change_batches` row, built
+    from the SAME before/after line picture `outstanding_import_service
+    .apply()` diffs after its own upload - `service.so_diff_before`/
+    `so_diff_after`, gathered per record in `DocumentIngestService._apply`
+    (`Diff` docstring: "the documents named in the extract ARE the scope",
+    which is exactly the batch this push named). Called through the MODULE
+    attribute (`planning_change_service.build_batch`), same reason as
+    `plan_exception_service.generate_batch` above - a caller monkeypatching
+    the module sees this call.
+    """
+    if not service.so_diff_before and not service.so_diff_after:
+        return
+    try:
+        diff = diff_lines(service.so_diff_before, service.so_diff_after)
+        applied_line_ids: dict[int, str] = {}
+        for change in diff.changes:
+            line_id = (change.after.row_ref if change.after else None) or (
+                change.before.row_ref if change.before else None
+            )
+            if line_id:
+                applied_line_ids[id(change)] = line_id
+        planning_change_service.build_batch(
+            db,
+            diff,
+            applied_line_ids=applied_line_ids,
+            order_ids=dict(service.so_header_id_by_number),
+            actor=actor,
+            import_job_id=None,
+            file_name=None,
+        )
+        db.commit()
+    except Exception:  # noqa: BLE001 - best-effort, the ingest already succeeded
+        db.rollback()
+        logger.warning("ingest.planning_change_hook_failed", exc_info=True)
 
 
 def _run_supersede_and_relink_hooks(db: Session, service, *, actor: Optional[str]) -> None:

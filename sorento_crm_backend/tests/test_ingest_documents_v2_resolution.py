@@ -357,8 +357,13 @@ class TestLineProductCodeLadder:
         lines = env.so_lines(header["id"])
         assert str(lines[0]["product_id"]) == str(product.id)
 
-    def test_a_miss_on_a_sent_product_code_is_retryable_and_writes_nothing(self, env):
-        before = env.counts()
+    def test_a_miss_on_a_sent_product_code_drops_the_line_not_the_record(self, env):
+        """Superseded 2026-09-06 (ingest-parity-standardisation D9, AC-P2-3):
+        an unresolved product code no longer fails the whole record - the
+        line is dropped and the (now line-less) header still lands, matching
+        `tests/test_ingest_documents.TestUnresolvedReferences` and
+        `tests/test_ingest_parity_s2_documents.py
+        ::TestAcP23UnknownProductDroppedUnknownLocationKept`."""
         line = {
             "source_ref": _ref("SOL"),
             "product_code": f"{MARKER}-NOT-SYNCED-YET",
@@ -369,10 +374,11 @@ class TestLineProductCodeLadder:
         res = env.post(INGEST_SO, [record])
 
         entry = res.json()["records"][0]
-        assert entry["outcome"] == "retryable", res.text
-        assert "not found" in entry["errors"].get("lines.0.product_code", ""), entry
-        assert env.header("sales_orders", record["source_ref"]) is None
-        assert env.counts() == before
+        assert entry["outcome"] == "created", res.text
+        assert entry.get("lines", {}).get("dropped") == 1, entry
+        header = env.header("sales_orders", record["source_ref"])
+        assert header is not None
+        assert env.so_lines(header["id"]) == []
 
 
 # ================================================================= AC-V1-7b

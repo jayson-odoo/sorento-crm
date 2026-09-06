@@ -429,15 +429,15 @@ class TestHooksNeverRunOnADryRun:
 
 # ================================================================== AC-V5-5
 class TestPlanningChangeIsNotRunByIngest:
-    def test_planning_change_service_build_batch_is_never_called(self, env, monkeypatch):
-        """AC-V5-5. A guard, not a feature: `planning_change_service.build_batch`
-        needs the upload's own `Diff` of `Line`s, which the ingest route has no
-        equivalent for, and D7 explicitly defers it to the backlog ("the
-        captain asks why an ingested SO changed the plan and there is no
-        change batch to show"). This PASSES TODAY - nothing calls it either
-        way - and must stay green through S5; it exists so a future change
-        that wires ingest into planning_change_service without a deliberate
-        decision trips a test instead of shipping silently.
+    def test_planning_change_service_build_batch_is_called(self, env, monkeypatch):
+        """AC-V5-5 / D10 (ingest-parity-standardisation S2, BL-058). This test
+        used to guard the OPPOSITE - `build_batch` deferred by D7 pending "the
+        upload's own `Diff` of `Line`s, which the ingest route has no
+        equivalent for" - and its own docstring predicted this exact flip the
+        day that equivalent got built: `DocumentIngestService` now gathers a
+        before/after `outstanding_diff.Line` picture per sales_orders record
+        (`_capture_planning_diff_before`/`_after`) and `_run_document_hooks`
+        diffs it once per non-dry batch, same as the upload's own `apply()`.
         """
         from app.services import planning_change_service
 
@@ -450,7 +450,7 @@ class TestPlanningChangeIsNotRunByIngest:
         res = env.post(INGEST_SO, [record])
 
         assert res.json()["records"][0]["outcome"] == "created", res.text
-        assert calls == [], (
-            "AC-V5-5: planning_change_service.build_batch must not be called "
-            "by document ingest in v2 (deferred by D7)"
+        assert calls, (
+            "AC-P2-4/D10: planning_change_service.build_batch must be called "
+            "after a non-dry ESB sales_orders batch"
         )

@@ -79,6 +79,7 @@ from app.services.integration_reference_service import (
     ReferenceConflict,
 )
 from app.services.rules import product_rules
+from app.services.rules import customer_rules
 from app.services.rules.customer_rules import customer_identity
 from app.services.rules.master_rules import clean_supplier_name, resolve_master_by_code
 # The agent code's one normalisation, imported rather than restated: the master
@@ -357,7 +358,19 @@ def _customer_columns(payload: Any, db: Session, company_id: str, warnings: list
         "tax_id",
         "country",
         "is_active",
+        "region",
     )
+    # D16 (S2): folded through the same rule the customer importer uses
+    # (`customer_rules.fold_market_segment`) so the two can never map a
+    # spelling two different ways. An unrecognised value is dropped with
+    # warning `segment_unknown` rather than failing the whole customer over
+    # one optional column - `market_segment_code` is a foreign key.
+    if "market_segment_code" in payload.model_fields_set and payload.market_segment_code:
+        canonical = customer_rules.fold_market_segment(db, payload.market_segment_code)
+        if canonical is None:
+            warnings.append("segment_unknown")
+        else:
+            columns["market_segment_code"] = canonical
     return columns
 
 
@@ -703,6 +716,8 @@ class MasterIngestService:
             self._require_same_company(spec, existing_id, payload.source_ref)
             if entity_type == "products":
                 self._finalize_product_discontinued(payload, columns, existing_id)
+            if entity_type == "customers":
+                self._finalize_customer_segment_fill_only(columns, existing_id)
             diff = self._diff(spec, existing_id, columns)
             self._update(spec, existing_id, columns)
             self._link(entity_type, existing_id, payload)
@@ -734,6 +749,8 @@ class MasterIngestService:
                 )
             if entity_type == "products":
                 self._finalize_product_discontinued(payload, columns, adopted)
+            if entity_type == "customers":
+                self._finalize_customer_segment_fill_only(columns, adopted)
             # Captured before the UPDATE, and the reason the dry run exists: an
             # adoption overwrites a row somebody typed in by hand, and the
             # operator gets no other chance to see what it replaces.
@@ -782,6 +799,21 @@ class MasterIngestService:
         if existing_row_id is not None and current_discontinued and not new_flag:
             columns["discontinued_notified_at"] = None
             columns["discontinued_notify_batch_id"] = None
+
+    def _finalize_customer_segment_fill_only(
+        self, columns: dict[str, Any], existing_row_id: Optional[str]
+    ) -> None:
+        """D16: a segment already set by hand is never overwritten - the row's
+        OWN value wins over whatever this push resolved, on an update only (a
+        create has nothing to protect)."""
+        if existing_row_id is None or "market_segment_code" not in columns:
+            return
+        current = self.db.execute(
+            text("SELECT market_segment_code FROM customers WHERE id = :id"),
+            {"id": existing_row_id},
+        ).scalar()
+        if current:
+            columns.pop("market_segment_code")
 
     def _post_write_product_hooks(self, entity_type: str, product_id: str) -> None:
         """D5: the default-supplier `product_suppliers` link, on create AND
