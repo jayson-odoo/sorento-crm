@@ -441,14 +441,29 @@ async def get_orders(
         # dedicated path rather than shoehorning it into `service.list_orders` -
         # the row shape (SO number/product/outstanding qty/order date/customer/
         # requested delivery date) has nothing in common with `OrderResponse`.
+        # Hoisted above the so_outstanding arm: BOTH buckets need it for the cap.
+        _date_scoped = _has_orders_date_filter(
+            order_date_from, order_date_to, actual_delivery_date_from, actual_delivery_date_to
+        )
         if order_status == "so_outstanding":
             from fastapi.encoders import jsonable_encoder
 
+            # The SAME external cap the DO buckets take, applied BEFORE the read
+            # (review, should-fix 7). This arm returned up to 500 rows to an
+            # external/AI caller that every other bucket hard-caps at 20 - the cap is
+            # what stops one WhatsApp turn pulling a five-hundred-row page through the
+            # MCP and into a message, and a new bucket is exactly where it gets
+            # forgotten. `_date_scoped` is computed once, above both arms now, because
+            # the cap relaxes for a date-narrowed read and this bucket takes a date
+            # window like the others.
+            _so_limit = _external_orders_limit(
+                request, limit, cap=_EXTERNAL_ORDERS_LIST_LIMIT_CAP, date_scoped=_date_scoped
+            )
             rows = so_outstanding_rows(
                 db,
                 customer_ids=_resolved_customer_ids,
                 product_ids=_resolved_product_ids,
-                limit=min(limit, 500),
+                limit=min(_so_limit, 500),
             )
             payload: dict = {
                 "data": rows,
@@ -473,9 +488,6 @@ async def get_orders(
                 }
             return JSONResponse(content=jsonable_encoder(payload))
 
-        _date_scoped = _has_orders_date_filter(
-            order_date_from, order_date_to, actual_delivery_date_from, actual_delivery_date_to
-        )
         limit = _external_orders_limit(
             request, limit, cap=_EXTERNAL_ORDERS_LIST_LIMIT_CAP, date_scoped=_date_scoped
         )

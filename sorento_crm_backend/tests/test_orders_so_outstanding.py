@@ -242,3 +242,73 @@ def test_route_list_do_without_include_summary_has_no_pipeline(client, db):
     body = resp.json()
     assert "summary" not in body or body.get("summary") is None
     assert "groups" not in body or body.get("groups") is None
+
+
+# ----------------------------- should-fix 7: the external cap applies to this bucket too
+
+
+def test_route_so_outstanding_takes_the_external_cap(client, db, monkeypatch):
+    """Every DO bucket hard-caps an external/AI caller at 20 rows; the new bucket returned
+    up to 500. That cap is what stops one WhatsApp turn pulling a five-hundred-row page
+    through the MCP and into a message, and a new bucket is exactly where it is forgotten.
+    """
+    from app.api.v1.order_management import orders as orders_mod
+
+    monkeypatch.setattr(orders_mod.app_settings, "external_api_key", "zzt-console-key")
+    cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT Cap Customer")
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="SRTWC8517-CAP")
+    for _ in range(25):
+        _so_line(db, customer_id=cust.id, product_id=prod.id, ordered=5, delivered=0)
+    db.commit()
+
+    params = {"order_status": "so_outstanding", "customer_ids": cust.id, "limit": 500}
+    external = client.get(BASE, params=params, headers={"X-API-Key": "zzt-console-key"})
+    assert external.status_code == 200, external.text
+    assert len(external.json()["data"]) == 20, "the external cap did not reach this bucket"
+
+    # A staff caller (no API key) is unchanged: the cap is about the external surface.
+    staff = client.get(BASE, params=params)
+    assert staff.status_code == 200, staff.text
+    assert len(staff.json()["data"]) == 25
+
+
+def test_route_so_outstanding_cap_lifts_for_a_date_scoped_read(client, db, monkeypatch):
+    """The same relaxation the DO buckets get: a date-narrowed question wants the whole
+    window, not a truncated top-20.
+
+    What is graded here is the CAP LIFTING, not date filtering: `so_outstanding_rows` takes
+    no date window of its own today (it reads `sales_order_lines`, which the DO date
+    columns do not describe), so every seeded row comes back either way. The assertion is
+    that 25 come back rather than 20 - i.e. `date_scoped` reached `_external_orders_limit`
+    for this bucket exactly as it does for the others."""
+    from datetime import date
+
+    from app.api.v1.order_management import orders as orders_mod
+
+    monkeypatch.setattr(orders_mod.app_settings, "external_api_key", "zzt-console-key")
+    cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ZZT Window Customer")
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="SRTWC8517-WINDOW")
+    for _ in range(25):
+        _so_line(
+            db,
+            customer_id=cust.id,
+            product_id=prod.id,
+            ordered=5,
+            delivered=0,
+            order_date=date(2026, 6, 10),
+        )
+    db.commit()
+
+    resp = client.get(
+        BASE,
+        params={
+            "order_status": "so_outstanding",
+            "customer_ids": cust.id,
+            "limit": 500,
+            "order_date_from": "2026-06-01",
+            "order_date_to": "2026-06-30",
+        },
+        headers={"X-API-Key": "zzt-console-key"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert len(resp.json()["data"]) == 25

@@ -1013,15 +1013,12 @@ class StockService:
         return payload
 
     def open_so_qty_by_product(self, product_ids: list[str]) -> dict[str, int]:
-        """Open (not-yet-DO'd) SO quantity per product, across every warehouse (A2).
+        """Open (not-yet-DO'd) SO quantity per PRODUCT, across every warehouse (A2).
 
-        Feeds `sellable = on_hand - open_so_qty` (AC-903/AC-904). Product-level
-        only, not per-warehouse: the plan's per-warehouse split ("per warehouse
-        when the line has one, else the product total row") has no AC that reads
-        a per-warehouse Open SO number, and A0 measured only 0.8% of open SO
-        lines lack `warehouse_id` - not enough of a data problem to earn a second
-        aggregation with nothing to test it against (`documentation/plans/chatbot/
-        chatbot-growth-r1-acceptance-criteria.md` AC-904b).
+        The product TOTAL. `open_so_qty_by_product_warehouse` is the per-warehouse
+        split; both exist because a per-warehouse row and the product summary row
+        are two different questions and the review found the first cut answering
+        the second one everywhere (should-fix 5).
 
         An open DO (created, not yet delivered) is NOT subtracted here - AutoCount
         deducts stock at DO creation, so it is already out of `on_hand` (AC-904b).
@@ -1043,6 +1040,52 @@ class StockService:
             .all()
         )
         return {str(pid): int(qty or 0) for pid, qty in rows}
+
+    def open_so_qty_by_product_warehouse(
+        self, product_ids: list[str]
+    ) -> tuple[dict[tuple[str, str], int], dict[str, int]]:
+        """The same open SO quantity, split the way the plan says to spend it (A2).
+
+        Returns `({(product_id, warehouse_id): qty}, {product_id: unlocated_qty})`.
+
+        The first cut subtracted the PRODUCT-WIDE open SO from EVERY per-warehouse row,
+        so a product with 100 open SO across two warehouses read as 100 unsellable in
+        each - "Sellable 0 (oversold by 80)" against a warehouse holding 20, which is
+        arithmetic the customer can see is wrong. The plan is explicit: per warehouse
+        where the SO line has one, and the remainder (lines with no `warehouse_id`) on
+        the PRODUCT TOTAL row only, never spread across the warehouse rows. A0 measured
+        that remainder at 0.8% of open lines, which is why it is a small correction and
+        not a redesign - but a small correction applied to every row is still wrong on
+        every row.
+        """
+        from app.models.order import SalesOrderLine
+
+        ids = [str(pid) for pid in product_ids if pid]
+        if not ids:
+            return {}, {}
+        delta = SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered
+        rows = (
+            self.db.query(
+                SalesOrderLine.product_id,
+                SalesOrderLine.warehouse_id,
+                func.sum(delta).label("open_qty"),
+            )
+            .filter(
+                SalesOrderLine.product_id.in_(ids),
+                SalesOrderLine.line_status == "open",
+                delta > 0,
+            )
+            .group_by(SalesOrderLine.product_id, SalesOrderLine.warehouse_id)
+            .all()
+        )
+        by_pair: dict[tuple[str, str], int] = {}
+        unlocated: dict[str, int] = {}
+        for pid, wid, qty in rows:
+            if wid:
+                by_pair[(str(pid), str(wid))] = int(qty or 0)
+            else:
+                unlocated[str(pid)] = unlocated.get(str(pid), 0) + int(qty or 0)
+        return by_pair, unlocated
 
     # ------------------------------------------------------ stock visibility
 

@@ -33,9 +33,21 @@ def db():
         yield s
 
 
-def _warehouse(db):
+def _warehouse(db, code: str | None = None):
+    """A warehouse, with a UNIQUE code by default.
+
+    `uq_warehouses_company_warehouse_code` means a test that wants TWO warehouses cannot
+    reuse a fixed code, and the per-warehouse split tests want two.
+    """
     wh_id = str(uuid.uuid4())
-    db.add(Warehouse(id=wh_id, warehouse_code="BRW", warehouse_name="BUKIT RAJA", is_active=True))
+    db.add(
+        Warehouse(
+            id=wh_id,
+            warehouse_code=code or unique_code("W"),
+            warehouse_name="BUKIT RAJA",
+            is_active=True,
+        )
+    )
     db.flush()
     return wh_id
 
@@ -197,3 +209,78 @@ def test_with_sellable_attaches_to_stock_summary_entries(db):
     entry = body["stock_summary"][0]
     assert entry["open_so_qty"] == 4
     assert entry["sellable"] == 8  # 12 - 4
+
+
+# ------------------------------------------------- should-fix 5: the per-warehouse split
+
+
+def test_open_so_splits_by_warehouse_and_keeps_the_unlocated_remainder(db):
+    """`open_so_qty_by_product_warehouse` returns the per-pair map AND the lines that
+    carry no `warehouse_id`, separately - the plan's split, which the first cut skipped."""
+    prod_id = _product(db, "SRTWC8517-SPLIT")
+    wh_a = _warehouse(db)
+    wh_b = _warehouse(db)
+    _so_line(db, prod_id, wh_a, ordered=30, delivered=0)  # 30 in A
+    _so_line(db, prod_id, wh_b, ordered=12, delivered=2)  # 10 in B
+    _so_line(db, prod_id, None, ordered=5, delivered=0)   # 5 with no warehouse
+    db.commit()
+
+    by_pair, unlocated = StockService(db).open_so_qty_by_product_warehouse([prod_id])
+    assert by_pair[(prod_id, wh_a)] == 30
+    assert by_pair[(prod_id, wh_b)] == 10
+    assert unlocated == {prod_id: 5}
+    # The product TOTAL is still the sum of all three, which is what the summary row uses.
+    assert StockService(db).open_so_qty_by_product([prod_id]) == {prod_id: 45}
+
+
+def test_each_warehouse_row_subtracts_only_its_own_open_so(db):
+    """The defect this closes: the product-wide open SO was subtracted from EVERY
+    per-warehouse row, so a product with 30 open SO in warehouse A read as 30 unsellable in
+    warehouse B as well - "0 (oversold by 10)" against a warehouse holding 20 and owing
+    nothing."""
+    prod_id = _product(db, "SRTWC8517-PERWH")
+    wh_a = _warehouse(db)
+    wh_b = _warehouse(db)
+    row_a = _stock(db, prod_id, wh_a, 100)
+    row_b = _stock(db, prod_id, wh_b, 20)
+    _so_line(db, prod_id, wh_a, ordered=30, delivered=0)  # all of it is warehouse A's
+    db.commit()
+
+    result = {"data": [row_a, row_b], "pagination": {"total": 2, "page": 1, "limit": 50}}
+    resp = _with_sellable(StockService(db), result)
+    body = __import__("json").loads(resp.body)
+    a, b = body["data"][0], body["data"][1]
+    assert (a["open_so_qty"], a["sellable"]) == (30, 70)
+    assert (b["open_so_qty"], b["sellable"]) == (0, 20), (
+        "warehouse B owes nothing and must not carry warehouse A's open SO"
+    )
+
+
+def test_the_summary_row_still_carries_the_product_total(db):
+    """The other half: the SUMMARY row is the product, so it takes the product total -
+    per-warehouse quantities plus the lines that name no warehouse."""
+    prod_id = _product(db, "SRTWC8517-TOTAL")
+    wh_a = _warehouse(db)
+    _so_line(db, prod_id, wh_a, ordered=30, delivered=0)
+    _so_line(db, prod_id, None, ordered=5, delivered=0)
+    db.commit()
+
+    result = {
+        "data": [],
+        "pagination": {"total": 0, "page": 1, "limit": 50},
+        "stock_summary": [
+            {
+                "product_id": prod_id,
+                "product_code": "SRTWC8517-TOTAL",
+                "product_name": "SRTWC8517-TOTAL",
+                "total_on_hand": 100,
+                "locations": [],
+                "flags": {},
+            }
+        ],
+    }
+    resp = _with_sellable(StockService(db), result)
+    body = __import__("json").loads(resp.body)
+    entry = body["stock_summary"][0]
+    assert entry["open_so_qty"] == 35
+    assert entry["sellable"] == 65

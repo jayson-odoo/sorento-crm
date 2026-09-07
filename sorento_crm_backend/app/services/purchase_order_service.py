@@ -65,12 +65,9 @@ def purchase_orders_placed_rows(
     if product_ids:
         q = q.filter(PurchaseOrderLine.product_id.in_(product_ids))
     # Line `expected_date` else header's - COALESCE, not a Python fallback, so
-    # the date filter and the sort both see the same effective value.
-    effective_date = func.coalesce(PurchaseOrderLine.expected_date, PurchaseOrder.expected_date)
-    if expected_date_from is not None:
-        q = q.filter(effective_date >= expected_date_from)
-    if expected_date_to is not None:
-        q = q.filter(effective_date <= expected_date_to)
+    # the date filter, the sort and the SUMMARY all see the same effective value.
+    effective_date = _effective_expected_date()
+    q = _apply_expected_date_window(q, expected_date_from, expected_date_to)
 
     sort_col = {
         "expected_date": effective_date,
@@ -101,15 +98,54 @@ def purchase_orders_placed_rows(
     return out
 
 
+#: The effective expected date: the LINE's, else the header's. COALESCE rather than a
+#: Python fallback so the filter, the sort and the summary all read one value.
+def _effective_expected_date():
+    return func.coalesce(PurchaseOrderLine.expected_date, PurchaseOrder.expected_date)
+
+
+def _apply_expected_date_window(q, expected_date_from, expected_date_to):
+    """The `expected_date_from/to` window, on any query that has both tables joined.
+
+    ONE helper, called by the rows query and by the summary, because the review found the
+    summary with no window at all and a second hand-written copy is how they drift again.
+    """
+    effective_date = _effective_expected_date()
+    if expected_date_from is not None:
+        q = q.filter(effective_date >= expected_date_from)
+    if expected_date_to is not None:
+        q = q.filter(effective_date <= expected_date_to)
+    return q
+
+
 def purchase_orders_placed_summary(
-    db, *, product_ids: Optional[list[str]] = None
+    db,
+    *,
+    product_ids: Optional[list[str]] = None,
+    expected_date_from: Optional[str] = None,
+    expected_date_to: Optional[str] = None,
 ) -> dict:
+    """`po_placed_qty` / `po_placed_count` over EXACTLY the rows the list returned.
+
+    The date window is applied here too (review, should-fix 6). Without it, "PO for X
+    arriving this month" listed the month's lines and summarised the whole open book, so
+    the summary contradicted the list it sat under - the one failure mode a summary has.
+    The window is built by the same `_expected_date_window` the rows use, so the two
+    cannot read one date differently.
+    """
     delta = PurchaseOrderLine.qty_ordered - PurchaseOrderLine.qty_received
-    q = db.query(func.sum(delta), func.count(PurchaseOrderLine.id)).filter(
-        PurchaseOrderLine.line_status == "open", delta > 0
+    q = (
+        db.query(func.sum(delta), func.count(PurchaseOrderLine.id))
+        # JOINED even when no window is asked for: the effective date COALESCEs the
+        # header's column, so the join has to be there for the filter to resolve, and a
+        # conditional join would make the unfiltered count depend on whether a date was
+        # passed. Every line has a header (FK, not null), so the join drops no row.
+        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+        .filter(PurchaseOrderLine.line_status == "open", delta > 0)
     )
     if product_ids:
         q = q.filter(PurchaseOrderLine.product_id.in_(product_ids))
+    q = _apply_expected_date_window(q, expected_date_from, expected_date_to)
     qty, count = q.one()
     return {"po_placed_qty": _plain_number(qty) or 0, "po_placed_count": int(count or 0)}
 

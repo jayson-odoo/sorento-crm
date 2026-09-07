@@ -85,7 +85,15 @@ def get_purchase_orders_placed(
             payload["summary"] = {
                 "scope": "filter",
                 "row_count": len(rows),
-                **purchase_orders_placed_summary(db, product_ids=resolved_product_ids),
+                # The SAME filters the rows took, the date window included (review,
+                # should-fix 6): a summary that counts more than the list under it is
+                # worse than no summary.
+                **purchase_orders_placed_summary(
+                    db,
+                    product_ids=resolved_product_ids,
+                    expected_date_from=expected_date_from,
+                    expected_date_to=expected_date_to,
+                ),
             }
         return JSONResponse(content=jsonable_encoder(payload))
     except AppException:
