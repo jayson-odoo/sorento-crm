@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ChatbotTurnResponse(BaseModel):
@@ -78,3 +78,72 @@ class RetryTurnResponse(BaseModel):
     # The attempt the RE-INJECTED turn will carry when it arrives as its own row. The row
     # being retried keeps its own attempt: it is a record of what happened.
     attempt: int
+
+
+# --------------------------------------------------------------------------- #
+# In-app console (Slice D final, chatbot growth r1): a dry-run turn from the
+# `system-management/chatbot-console` page, run in process by
+# `app/services/chatbot/console_service.py`.
+# --------------------------------------------------------------------------- #
+
+
+class ConsoleMediaInput(BaseModel):
+    """An attached image or voice note, sent as base64 on the console turn body.
+
+    `content_base64` rather than a multipart upload: the console body is already one small
+    JSON POST, and a base64 image/short voice note stays well under the existing
+    `MAX_TURN_BODY_BYTES`-style budgets other chatbot endpoints already police.
+    """
+
+    kind: str  # "image" | "audio"
+    filename: str
+    mime: str
+    content_base64: str
+
+
+class ConsoleTurnRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    contact_respond_id: str
+    text: str = ""
+    # Membership matters, not just presence: `null` means "use this contact's stored
+    # session", `{}` means "this contact remembers nothing" (a console Reset). Pydantic
+    # can't distinguish "omitted" from "sent as null" once the field has a default, so the
+    # route always receives one of the two, never a third "missing" state.
+    session_vars: dict[str, Any] | None = None
+    prompt_version_id: str | None = None
+    run_id: str
+    media: ConsoleMediaInput | None = None
+
+
+class ConsoleTraceSummary(BaseModel):
+    tool: str | None = None
+    args_short: dict[str, Any] | None = None
+    crossdomain_rungs: list[str] = Field(default_factory=list)
+    reveals_dropped: list[str] = Field(default_factory=list)
+
+
+class ConsoleTurnResponse(BaseModel):
+    turn_id: str | None = None
+    branch_kind: str | None = None
+    reply_text: str = ""
+    quick_replies: list[str] = Field(default_factory=list)
+    send_messages: list[str] = Field(default_factory=list)
+    # The patched state the NEXT turn should send back as `session_vars`. Null when this
+    # turn produced no session patch (a failed lane never writes one) - the caller keeps
+    # whatever it already had rather than treating null as "forget everything".
+    session_vars: dict[str, Any] | None = None
+    trace_summary: ConsoleTraceSummary
+
+
+class ConsolePromptVersion(BaseModel):
+    id: str
+    version: int
+    label: str | None = None
+    chars: int
+
+
+class ConsoleMediaStatusResponse(BaseModel):
+    status: str  # "pending" | "done" | "failed"
+    text: str | None = None
+    error: str | None = None

@@ -1,0 +1,79 @@
+/** The in-app chatbot console (Slice D final, chatbot growth r1): a WhatsApp-style
+ * dry-run page under System Management. Every turn is `is_test=True`, `ingress=console`
+ * (D14) - nothing here reaches a real customer.
+ */
+
+export interface ConsoleMediaInput {
+  kind: 'image' | 'audio';
+  filename: string;
+  mime: string;
+  content_base64: string;
+}
+
+export interface ConsoleTurnRequest {
+  contact_respond_id: string;
+  text: string;
+  /** Membership matters: `null` = use the contact's stored session, `{}` = a Reset
+   * ("this contact remembers nothing"). */
+  session_vars: Record<string, unknown> | null;
+  prompt_version_id: string | null;
+  run_id: string;
+  media?: ConsoleMediaInput | null;
+}
+
+export interface ConsoleTraceSummary {
+  tool: string | null;
+  args_short: Record<string, unknown> | null;
+  crossdomain_rungs: string[];
+  reveals_dropped: string[];
+}
+
+export interface ConsoleTurnResponse {
+  turn_id: string | null;
+  branch_kind: string | null;
+  reply_text: string;
+  quick_replies: string[];
+  send_messages: string[];
+  session_vars: Record<string, unknown> | null;
+  trace_summary: ConsoleTraceSummary;
+}
+
+export interface ConsolePromptVersion {
+  id: string;
+  version: number;
+  label: string | null;
+  chars: number;
+}
+
+export interface ConsoleMediaStatusResponse {
+  status: 'pending' | 'done' | 'failed';
+  text: string | null;
+  error: string | null;
+}
+
+/** One bubble in the console thread. A single turn can produce several bot bubbles
+ * (`reply_text` plus each `send_messages` entry), so the thread is a flat list of
+ * bubbles, not one entry per turn. */
+export interface ChatbotConsoleMessage {
+  id: string;
+  role: 'user' | 'bot';
+  text: string;
+  /** The turn this bubble came from - null for the two opening greeting lines and for
+   * the customer's own typed messages. */
+  turnId?: string | null;
+  branchKind?: string | null;
+  /** Only the LAST bot bubble of a turn carries these - chips send that text on click. */
+  quickReplies?: string[];
+  /** Media status/preview, wired in commit 2. */
+  mediaKind?: 'image' | 'audio' | null;
+  mediaStatus?: 'pending' | 'done' | 'failed' | null;
+  mediaCaption?: string | null;
+  mediaUrl?: string | null;
+  mediaError?: string | null;
+  mediaId?: string | null;
+}
+
+export const CONSOLE_GREETING_MESSAGES: readonly string[] = [
+  'Sorento chat console (dry run, nothing reaches WhatsApp).',
+  'Type a message to test the bot.',
+];
