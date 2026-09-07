@@ -3495,6 +3495,10 @@ class PickingHeaderService:
         grn = self.get_grn(grn_id)
         prev_status = grn.picking_status
         prev_spo_number = grn.spo_number
+        # D28: read before anything moves - a re-point or a line rewrite
+        # leaves these allocations with no picking line at all, and the
+        # re-syncs below are what release the receipt they still carry.
+        previously_linked = self._allocation_ids_of_grn(grn_id)
 
         update_data = grn_data.model_dump(exclude_unset=True)
         picking_lines_payload = update_data.pop("picking_lines", None)
@@ -3584,9 +3588,13 @@ class PickingHeaderService:
             and spo_key_changed
         ):
             if prev_spo_number and str(prev_spo_number).strip():
-                self.sync_received_for_spo_number(prev_spo_number)
+                self.sync_received_for_spo_number(
+                    prev_spo_number, released_allocation_ids=previously_linked
+                )
             if grn.spo_number and str(grn.spo_number).strip():
-                self.sync_received_for_spo_number(grn.spo_number)
+                self.sync_received_for_spo_number(
+                    grn.spo_number, released_allocation_ids=previously_linked
+                )
 
         return grn
 
@@ -3599,17 +3607,25 @@ class PickingHeaderService:
         if not grn or not grn.spo_number or not str(grn.spo_number).strip():
             return
         lines = self.db.query(PickingLine).filter(PickingLine.picking_header_id == grn_id).all()
+        released = {str(line.spo_allocation_id) for line in lines if line.spo_allocation_id}
         for line in lines:
             line.spo_allocation_id = None
         self.db.flush()
-        self.sync_received_for_spo_number(grn.spo_number)
+        # D28: the allocations this GRN just let go are named explicitly - the
+        # re-sync is what releases their stored receipt, and after the unlink
+        # no picking line is left to prove they ever had one.
+        self.sync_received_for_spo_number(grn.spo_number, released_allocation_ids=released)
     
     def delete_grn(self, grn_id: str):
         """Delete a GRN and its lines."""
         grn = self.get_grn(grn_id)
         spo_number = grn.spo_number
         was_approved = grn.picking_status == "approved"
-        
+        # D28: read BEFORE the lines go - these are the allocations this GRN is
+        # releasing, and the re-sync below has no other way to know they ever
+        # had a picking line.
+        released = self._allocation_ids_of_grn(grn_id)
+
         # Explicitly delete picking lines first to avoid foreign key constraint issues
         self.db.query(PickingLine).filter(PickingLine.picking_header_id == grn_id).delete()
         
@@ -3617,7 +3633,7 @@ class PickingHeaderService:
         self.db.delete(grn)
         self.db.commit()
         if was_approved and spo_number and str(spo_number).strip():
-            self.sync_received_for_spo_number(spo_number)
+            self.sync_received_for_spo_number(spo_number, released_allocation_ids=released)
         return {"message": "GRN deleted successfully"}
 
     def bulk_delete_grns(self, grn_ids: list[str]) -> dict:
@@ -3626,6 +3642,7 @@ class PickingHeaderService:
             return {"message": "No GRNs to delete", "deleted_count": 0}
         deleted = 0
         spo_numbers_to_sync = set()
+        released_by_spo: dict[str, set] = {}
         for gid in grn_ids:
             grn = (
                 self.db.query(PickingHeader)
@@ -3638,12 +3655,19 @@ class PickingHeaderService:
             if grn:
                 if grn.picking_status == "approved" and grn.spo_number and str(grn.spo_number).strip():
                     spo_numbers_to_sync.add(str(grn.spo_number))
+                    # D28: same release list as `delete_grn`, read before the
+                    # lines go, accumulated per SPO number.
+                    released_by_spo.setdefault(str(grn.spo_number), set()).update(
+                        self._allocation_ids_of_grn(gid)
+                    )
                 self.db.query(PickingLine).filter(PickingLine.picking_header_id == gid).delete()
                 self.db.delete(grn)
                 deleted += 1
         self.db.commit()
         for spo_number in spo_numbers_to_sync:
-            self.sync_received_for_spo_number(spo_number)
+            self.sync_received_for_spo_number(
+                spo_number, released_allocation_ids=released_by_spo.get(spo_number, set())
+            )
         return {"message": f"{deleted} GRN(s) deleted", "deleted_count": deleted}
 
     def get_grn_by_picking_number(self, picking_number: str):
@@ -3969,6 +3993,49 @@ class PickingHeaderService:
         received_map = {str(r[0]): int(r[1]) for r in rows}
         return {aid: received_map.get(aid, 0) for aid in allocation_ids}
 
+    def _allocation_ids_of_grn(self, grn_id: str) -> set:
+        """The allocations this GRN's picking lines currently point at (D28).
+
+        Read before a delete or an unlink, so the re-sync afterwards can tell
+        "this allocation is being released" apart from "nothing ever picked
+        against this allocation" - the two look identical once the lines are
+        gone, and only the first may zero a stored receipt.
+        """
+        rows = (
+            self.db.query(PickingLine.spo_allocation_id)
+            .filter(
+                PickingLine.picking_header_id == grn_id,
+                PickingLine.spo_allocation_id.isnot(None),
+            )
+            .all()
+        )
+        return {str(row[0]) for row in rows}
+
+    def _allocation_has_picking_line(self, allocation_id: str) -> bool:
+        """Whether ANY picking line points at this allocation (D28,
+        spo-xlsx-supersede).
+
+        `compute_received_for_allocation` answers 0 for an allocation nothing
+        has ever picked against, and writing that 0 back would erase a receipt
+        this system did not compute: an ESB-stated `qty_received`, or the
+        receipt a superseded xlsx-era row carried onto its AutoCount lines
+        (D26). A GRN deletion lowering an ESB-era line's receipt is named out
+        of scope in the plan - it cannot lower one below the ESB-stated value
+        today either.
+
+        Deliberately NOT filtered to approved goods-received headers: the
+        question here is ownership ("does a GRN draw against this row at all"),
+        not how much has been approved, and a line whose GRN is still pending
+        is exactly the row whose receipt should compute to 0 rather than stay
+        frozen.
+        """
+        return (
+            self.db.query(PickingLine.id)
+            .filter(PickingLine.spo_allocation_id == allocation_id)
+            .first()
+            is not None
+        )
+
     def sync_grn_received_to_spo(self, picking_header_id: str) -> None:
         """After GRN is approved: set quantity_received on each affected SPO allocation (DB field, for legacy/reports).
         From picking lines (spo_allocation_id = allocation, header approved). Idempotent.
@@ -3984,6 +4051,10 @@ class PickingHeaderService:
             if not alloc:
                 continue
             shipment_ids.add(alloc.inbound_shipment_id)
+            if not self._allocation_has_picking_line(alloc_id):
+                # D28: nothing picks against this row, so its stored receipt
+                # was stated (ESB) or carried (D26), not computed here.
+                continue
             total = self.compute_received_for_allocation(alloc_id)
             alloc.quantity_received = total
             alloc.receipt_status = "fully_received" if total >= alloc.allocated_quantity else "pending"
@@ -3992,10 +4063,27 @@ class PickingHeaderService:
         for sid in shipment_ids:
             inbound_svc.refresh_shipment_line_statuses(sid)
 
-    def sync_received_for_spo_number(self, spo_number: Optional[str]) -> None:
-        """Re-sync DB quantity_received for all allocations under this SPO (optional background use)."""
+    def sync_received_for_spo_number(
+        self,
+        spo_number: Optional[str],
+        *,
+        released_allocation_ids: Optional[set] = None,
+    ) -> None:
+        """Re-sync DB quantity_received for all allocations under this SPO (optional background use).
+
+        `released_allocation_ids` (D28, spo-xlsx-supersede): allocations a
+        caller has just DETACHED - a GRN unlinked, re-pointed or deleted - and
+        is therefore explicitly releasing. They recompute even though no
+        picking line points at them any more, because that recompute IS the
+        release: the stored receipt they still carry is the one being given
+        back. Every OTHER allocation with no picking line keeps its stored
+        value (an ESB-stated receipt, or one carried onto an AutoCount line by
+        the first-push supersede), which nothing here computed and nothing
+        here may zero.
+        """
         if not spo_number or not spo_number.strip():
             return
+        released = {str(value) for value in (released_allocation_ids or set())}
         target_key = _spo_match_key(spo_number)
         if not target_key:
             return
@@ -4005,6 +4093,15 @@ class PickingHeaderService:
             if _spo_match_key(alloc.spo_number) != target_key:
                 continue
             alloc_id = str(alloc.id)
+            if alloc_id not in released and not self._allocation_has_picking_line(alloc_id):
+                # D28: same rule as `sync_grn_received_to_spo` - an allocation
+                # with no picking line keeps its stored value. This sweep runs
+                # over EVERY row of the SPO number, so without it one GRN
+                # approval recomputed the whole document to 0 for every line
+                # nothing had been picked against.
+                if alloc.inbound_shipment_id:
+                    shipment_ids.add(alloc.inbound_shipment_id)
+                continue
             total = self.compute_received_for_allocation(alloc_id)
             alloc.quantity_received = total
             alloc.receipt_status = "fully_received" if total >= alloc.allocated_quantity else "pending"
