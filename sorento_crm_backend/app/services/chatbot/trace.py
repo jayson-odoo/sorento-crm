@@ -66,10 +66,23 @@ def _cap(raw: Any, *, limit: int = RAW_BYTE_CAP) -> Any:
 class TurnTrace:
     """An ordered list of stage records, plus the clock for the stage in progress."""
 
-    __slots__ = ("_records", "_started_perf", "_started_iso")
+    __slots__ = ("_records", "_events", "_started_perf", "_started_iso")
 
     def __init__(self) -> None:
         self._records: list[dict[str, Any]] = []
+        # A9 (chatbot-growth-r1): sub-events WITHIN a stage - one MCP tool call, one
+        # cross-domain rung probe, which restricted fields a turn saw/granted/dropped.
+        # A SEPARATE list from `_records` ON PURPOSE: `_records` is what `record()`
+        # writes and what `_close_turn` persists to `chatbot.turns.trace`, and
+        # `test_trace_legibility.py::_assert_trace_is_legible` walks EVERY entry of
+        # that persisted array demanding a plain-language `summary`/`why`/`raw` - a
+        # tool call or a probe's raw args/envelope has none of those, by design (it
+        # is the technical detail a Slice D turn-detail view reads, not an operator
+        # sentence). Mixing the two would either break that legibility guarantee or
+        # force a fake summary onto a payload that is not prose. Not yet persisted -
+        # Slice D (this plan's trace-ui lane) is what decides where these live in
+        # `chatbot.turns` and exposes them; this stays in-process for now.
+        self._events: list[dict[str, Any]] = []
         self._started_perf: float | None = None
         self._started_iso: str | None = None
 
@@ -120,9 +133,31 @@ class TurnTrace:
         )
         self.start()
 
+    def add(self, kind: str, payload: dict[str, Any]) -> None:
+        """A sub-event WITHIN the current stage (A9, chatbot-growth-r1): one MCP tool
+        call, one cross-domain rung probe, or which restricted fields a turn saw /
+        granted / dropped. See the `_events` slot's own comment for why this is a
+        SEPARATE list from `record()`'s, not an entry appended to it.
+
+        `payload` is capped the SAME way a stage's `raw` is (`_cap`, 32 KB) - one
+        tool's whole envelope must never grow a turn's trace past what the rest of
+        the row already costs.
+        """
+        self._events.append(
+            {
+                "kind": kind,
+                "at": _now_iso(),
+                "payload": _cap(payload),
+            }
+        )
+
     @property
     def records(self) -> list[dict[str, Any]]:
         return self._records
+
+    @property
+    def events(self) -> list[dict[str, Any]]:
+        return self._events
 
     def stages(self) -> list[str]:
         return [r["stage"] for r in self._records]

@@ -22,6 +22,7 @@ from __future__ import annotations
 from typing import Any
 
 import logging
+import time
 
 from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business import fetch as fetch_mod
@@ -183,6 +184,7 @@ def run_fetch(
     services: FetchServices,
     dry_run: bool = False,
     space_id: str | None = None,
+    trace: Any = None,
 ) -> dict[str, Any]:
     """S6b: the fetch step, the next call site after `run_until_exit`'s `continue` exit.
 
@@ -207,6 +209,11 @@ def run_fetch(
     nothing about production, and this lane writes nothing either way - the only write on
     the whole turn is `chatbot.turns`, which the engine owns. The parameter is taken (and
     unused) so the engine's call site reads the same as every other lane's.
+
+    `trace` (A9, chatbot-growth-r1): the turn's live `TurnTrace`, optional - when given,
+    "the read" below records one `tool` event (`name`, `args`, the envelope, `ms`) via
+    `trace.add`. `None` is a no-op, so every existing caller (and every world/replay test)
+    is unaffected by omitting it.
     """
     _ = dry_run
     raw_gate = payload.get("gate")
@@ -317,6 +324,7 @@ def run_fetch(
             f"{tool_name} needs a document or entity filter and none could be built",
             outcome="not_found",
         )
+    _tool_started = time.perf_counter()
     try:
         raw = fetch_mod.call_tool(tool_name, args, mcp=_McpSeam(services.mcp_call))
     except fetch_mod.ToolNotAllowed as refused:
@@ -332,12 +340,42 @@ def run_fetch(
         return _error_fragment(f"MCP tool {tool_name} failed: {exc}")
 
     envelope = fetch_mod.parse_mcp_content(raw)
+    if trace is not None:
+        # A9: ONE call, ONE tool, ONE envelope this turn - the same "the read" this
+        # whole function is named for. `envelope` rides through `trace.add`'s own
+        # 32 KB cap, so a large result set never grows the trace unbounded.
+        trace.add(
+            "tool",
+            {
+                "name": tool_name,
+                "args": args,
+                "envelope": envelope,
+                "ms": int((time.perf_counter() - _tool_started) * 1000),
+            },
+        )
     # The ERROR check comes BEFORE the render: an error envelope has no rows, and rendering
     # it first would build a "No matching results found." message for a turn that failed.
     if isinstance(envelope, dict) and isinstance(envelope.get("error"), str):
         return _error_fragment(envelope["error"])
 
     structured = fetch_mod.output_structurer(envelope, trigger)
+    if trace is not None:
+        restricted = envelope.get("restricted_fields") if isinstance(envelope, dict) else None
+        if isinstance(restricted, dict) and restricted:
+            access = trigger.get("access") if isinstance(trigger.get("access"), dict) else {}
+            granted_raw = access.get("attributes")
+            granted = list(granted_raw) if isinstance(granted_raw, list) else []
+            # A9: which restricted keys this turn's envelope carried, which the
+            # contact's access actually granted, and which were therefore dropped -
+            # the same "attributes is a list, today always None" contract A2 reads.
+            trace.add(
+                "reveals",
+                {
+                    "restricted_fields_seen": sorted(restricted.keys()),
+                    "granted": sorted(granted),
+                    "dropped": sorted(k for k in restricted if k not in granted),
+                },
+            )
     item = fetch_mod.fetch_result(structured, tool=tool_item, tier_probe=None)
     return {
         "kind": "result",
@@ -387,6 +425,7 @@ def complete_answer(
     space_id: str | None = None,
     dry_run: bool = False,
     crossdomain_ladder: dict[str, list[str]] | None = None,
+    trace: Any = None,
 ) -> dict[str, Any]:
     """S6c: finish the business turn in process, and return `{reply, actions, ...}`.
 
@@ -538,6 +577,7 @@ def complete_answer(
             space_id=space_id,
             dry_run=dry_run,
             crossdomain_ladder=crossdomain_ladder,
+            trace=trace,
         )
         result_item = answer_mod.build_result(
             promo,

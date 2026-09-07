@@ -1009,6 +1009,7 @@ def _apply_crossdomain_rung(
     contact_id: Any,
     space_id: Any,
     ladder: dict[str, list[str]] | None,
+    trace: Any = None,
 ) -> None:
     """Mutates `render["_xdBlock"]` in place: tries the ladder's next rung for the codes
     the first probe found NOTHING for, and swaps the "no X and no Y" sentence for the
@@ -1087,6 +1088,21 @@ def _apply_crossdomain_rung(
     block["any"] = True
     block["nothing_note"] = new_note
     block["rung"] = rung
+    if trace is not None:
+        # A9: the ladder's OWN probe, over exactly the codes the first probe found
+        # nothing for - `run_crossdomain` records the first (hard-coded) probe
+        # itself, so this is the second `crossdomain` event when it fires.
+        row_count = sum(len(v) for v in lines_by_code.values())
+        trace.add(
+            "crossdomain",
+            {
+                "rung": rung,
+                "tool": args.get("tool"),
+                "args": args,
+                "rows": row_count,
+                "rendered": new_note,
+            },
+        )
 
 
 def run_crossdomain(
@@ -1101,6 +1117,7 @@ def run_crossdomain(
     space_id: Any = None,
     dry_run: bool = False,
     crossdomain_ladder: dict[str, list[str]] | None = None,
+    trace: Any = None,
 ) -> dict[str, Any]:
     """`crossdomain-zeroset -> crossdomain-gate -> crossdomain-probe -> crossdomain-render`,
     then A7's further ladder rung (`_apply_crossdomain_rung`) when the first probe still
@@ -1109,6 +1126,9 @@ def run_crossdomain(
     D14: a dry run makes the SAME probe(s). The read is what a test turn has to reproduce,
     or console and clone testing prove nothing about production; the writes are what D14
     suppresses, and this lane has none.
+
+    `trace` (A9, chatbot-growth-r1): the turn's live `TurnTrace`, optional - `None` is a
+    no-op, same contract as `run_fetch`'s own `trace` parameter.
     """
     zeroset = crossdomain_zeroset(
         validator_result, parser=parser, resolved=resolved, session_block=session_block
@@ -1133,6 +1153,19 @@ def run_crossdomain(
         zeroset=xd,
         validator=validator_result,
     )
+    if trace is not None:
+        block = render.get("_xdBlock") if isinstance(render, dict) else {}
+        block = block if isinstance(block, dict) else {}
+        trace.add(
+            "crossdomain",
+            {
+                "rung": xd.get("other_tool"),  # the hard-coded first probe names its rung by tool
+                "tool": args.get("tool"),
+                "args": args,
+                "rows": block.get("probed_rows"),
+                "rendered": block.get("block"),
+            },
+        )
     _apply_crossdomain_rung(
         render,
         xd=xd,
@@ -1141,6 +1174,7 @@ def run_crossdomain(
         contact_id=contact_id,
         space_id=space_id,
         ladder=crossdomain_ladder,
+        trace=trace,
     )
     return {"zeroset": zeroset, "render": render}
 

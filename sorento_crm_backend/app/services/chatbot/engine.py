@@ -1527,6 +1527,7 @@ def _run_stages(  # noqa: PLR0915
                             services=business_services.fetch_services(db),
                             dry_run=dry_run,
                             space_id=business_services.fetch_space_id(db),
+                            trace=turn_trace,
                         )
                     except Exception as fetch_error:  # noqa: BLE001 - shadow, like above
                         logger.exception("chatbot turn %s: fetch step failed", turn_id)
@@ -1990,6 +1991,7 @@ def _run_business_answer(
             space_id=space_id,
             dry_run=dry_run,
             crossdomain_ladder=crossdomain_ladder,
+            trace=turn_trace,
         )
     except Exception as exc:  # noqa: BLE001 - the lane's failure, with the lane's reply
         logger.exception("chatbot turn %s: business answer failed", turn_id)
