@@ -35,7 +35,7 @@ import {
   Undo2,
   Ungroup,
 } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -212,12 +212,6 @@ export function CanvasToolbar({
   selectionIsGroup,
   trailing,
 }: CanvasToolbarProps) {
-  // Controlled rather than left to Radix's own uncontrolled state: the trigger
-  // only listens for `pointerdown` by default (touch/mouse), so a plain
-  // `click` - keyboard activation via the accessibility tree, and how the
-  // component's own tests drive it - would otherwise never open it. `onClick`
-  // below opens it explicitly alongside Radix's own pointerdown handling.
-  const [trailingOverflowOpen, setTrailingOverflowOpen] = useState(false);
   return (
     // `relative` is load-bearing, not decoration (r4d): each button's label is
     // an `sr-only` span, which is `position: absolute`, and a static row is not
@@ -364,7 +358,7 @@ export function CanvasToolbar({
             <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
             {trailing}
           </div>
-          <DropdownMenu open={trailingOverflowOpen} onOpenChange={setTrailingOverflowOpen}>
+          <DropdownMenu>
             <Tooltip delayDuration={300}>
               <TooltipTrigger asChild>
                 <DropdownMenuTrigger asChild>
@@ -373,7 +367,6 @@ export function CanvasToolbar({
                     size="sm"
                     data-testid="toolbar-trailing-overflow-trigger"
                     className="ml-auto h-8 w-8 shrink-0 p-0 md:hidden"
-                    onClick={() => setTrailingOverflowOpen(true)}
                   >
                     <MoreHorizontal className="size-4" />
                     <span className="sr-only">More actions</span>

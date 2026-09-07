@@ -135,7 +135,15 @@ describe('trailing group collapses into an overflow menu below md (S7, AC-S7-3)'
   it('opens the SAME actions in a menu, reachable and functional', () => {
     renderToolbar(trailingActions());
 
-    fireEvent.click(screen.getByTestId('toolbar-trailing-overflow-trigger'));
+    // Radix opens its DropdownMenu on pointerdown, not click (S1) - a plain
+    // `fireEvent.click` never reaches it, and the trigger carries no explicit
+    // `onClick` of its own to fake that: adding one double-toggles a real
+    // mouse click (pointerdown opens it, the click that follows would close
+    // it right back).
+    fireEvent.pointerDown(
+      screen.getByTestId('toolbar-trailing-overflow-trigger'),
+      new MouseEvent('pointerdown', { bubbles: true, button: 0 }),
+    );
 
     const menu = screen.getByRole('menu');
     expect(within(menu).getByText('Save')).toBeInTheDocument();
