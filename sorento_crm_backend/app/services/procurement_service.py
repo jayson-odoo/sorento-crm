@@ -4222,12 +4222,12 @@ class PickingHeaderService:
 
         A member that is not LIVE (`_is_live_group_member`: cancelled, or
         closed for any reason other than a receipt) is skipped completely - no
-        share, no write, no reopen (AC-X41). The group's approved picking
-        total is still the FULL sum over the non-released side, and it goes to
-        the live members in Seq order with the remainder on the last live
-        line: a receipt drawn against a line that has since been retired is
-        still a receipt this document took, and the lines still standing are
-        the only ones that can carry it.
+        share, no write, no reopen (AC-X41). Its OWN approved draws stay with
+        it and are NOT counted for anybody else (AC-X42): the row still
+        reports the receipt it was retired holding, so redistributing that
+        same figure onto the standing lines would make the group report one
+        GRN twice. What the live members share is the picking total of the
+        live members, in Seq order, remainder on the last live line.
         """
         member_ids = [str(member.id) for member in members]
         released_ids = released & set(member_ids)
@@ -4271,10 +4271,12 @@ class PickingHeaderService:
 
         if not live_targets:
             return
-        # The full picking sum of the non-released side, including any drawn
-        # against a member that is no longer live - that receipt was still
-        # taken, and only the standing lines can carry it (AC-X41).
-        kept_total = sum(computed.get(str(member.id), 0) for member in non_released)
+        # The picking sum of the LIVE non-released members only (AC-X42): a
+        # non-live member keeps its own draws, because it also keeps its own
+        # receipt - it is never written here. Counting them again for the
+        # live lines reported one GRN twice, once on the retired line that
+        # still shows it and once redistributed onto the standing ones.
+        kept_total = sum(computed.get(str(member.id), 0) for member in live_targets)
         shares = shipping_order_rules.distribute_received(
             kept_total, [int(member.allocated_quantity or 0) for member in live_targets]
         )

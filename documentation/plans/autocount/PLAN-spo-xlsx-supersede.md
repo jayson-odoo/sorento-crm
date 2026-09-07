@@ -208,6 +208,18 @@ once; then the dedupe runs on production by the captain with `--dry-run` first.
     cost of the closed-only path, not a D28c regression.
   - Not exposed on any API surface: `SPOAllocationResponse` exposes `quantity_received` (computed
     on read), but nothing needs the provenance figure, so the column stays server-side.
+  - Round 4b (security finding, AC-X42): the live members share the picking total of the LIVE
+    members only. A non-live (retired, cancelled) member keeps its own approved draws AND its own
+    stored receipt, so counting those draws again for the standing lines made the group report one
+    GRN twice (a retired line holding 10 with its own 10-unit GRN also handed 10 to a live
+    sibling: 20 reported for one receipt).
+- Scope note on D28 / D28c, documented boundary: the floor only ever over-states, never
+  under-states. A carried floor on a NON-RELEASED sibling is not clawed back when the GRN behind
+  the original xlsx receipt is later deleted - the carry was a statement about that line at
+  supersede time, and nothing in this design lowers a statement (see the monotonic-floor note
+  above). The direction of the residual error is therefore over-stating a receipt, never losing
+  one; the correction is the same as for a keying error, the deletion endpoint followed by a
+  re-push.
 - Test debt, round 4:
   `tests/test_spo_xlsx_supersede.py::TestAcX33GroupRecomputeKeepsLineStatusConsistent::
   test_a_line_closed_by_the_leftover_sweep_is_never_reopened` seeds its closed member as `closed`
