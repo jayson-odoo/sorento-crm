@@ -1153,9 +1153,16 @@ contact inside the synchronous request. Different contacts run in parallel.
   matches, case-insensitively, then the turn routes to THAT member's team with that member as
   the assignee and no round-robin draw happens (a named person is a direct pick; the SLA clock
   still starts). Given no match or more than one, then the lane CLARIFIES, naming the teams,
-  and assigns nobody. Given no person, no team, and a previous turn that HAD one, then the
-  lane clarifies rather than inheriting it; given nothing to inherit, the lane behaves exactly
-  as it does today, so live's own unguarded null-team path and the B-TEAM-1' xfail both stand.
+  and assigns nobody. ~~Given no person, no team, and a previous turn that HAD one, then the
+  lane clarifies rather than inheriting it~~ - **SUPERSEDED by AC-821 (owner rules R-a /
+  R-c, 7 Sep 2026).** That inheritance premise could not tell "escalate to marketing" from
+  "I want to talk to a human" (both reach the lane with a null parser team over the same
+  carried team, and D11 forbids reading the two messages apart), so it fired on the second
+  and answered a request that named no team with the eight-team menu - production turns
+  1f0428cb / 9089ef88. It is deleted; the discriminator is the parser's own word now, and a
+  turn with nothing to inherit still behaves exactly as it did. Given nothing to inherit,
+  the lane behaves exactly as it does today, so live's own unguarded null-team path and the
+  B-TEAM-1' xfail both stand.
   The roster read is `users` x `team_members` x `agent_teams` on the turn's own
   company-scoped session, one hit per person per team, and it compares `users.status` as a
   literal (the column is a native enum in production, where `lower()` does not exist for it).
@@ -1564,9 +1571,18 @@ contact inside the synchronous request. Different contacts run in parallel.
     and null ONLY when the customer named no team at all. Amended in
     `SEMANTIC_PARSER_PROMPT_SLIM`'s ROUTING section and stated on the wire schema
     (`head/parser._build_json_schema`), which stays `string_or_null` for that reason.
-  * **Given** a turn whose parser team is null, **then** the lane assigns the routing
-    table's default and never clarifies, whatever an earlier turn carried (R-a). The D1
-    open-offer premise and the `is_escalation_confirmation` short-circuit both stand.
+  * **Given** a turn whose parser team is null, **then** the lane assigns and never
+    clarifies, whatever an earlier turn carried (R-a). It assigns **the routing chain's own
+    result: the CARRIED team when a previous turn had one, else the table default** -
+    `llm_team if req_help -> derived -> prior_routing -> DEFAULT_SUGGESTED_TEAM`. Corrected
+    after the review of #713 (blocker B3), which measured the code assigning `purchasing`
+    on the mt-r2 turn where this AC had said `customer_service`. **The CODE is what stands**
+    (captain's ruling, 7 Sep 2026): the carried team is the pre-#706 chain and live parity,
+    a product browse routes to purchasing by the owner's own table and "talk to a human"
+    straight after it inherits that, and the owner's complaint was the eight-team MENU, not
+    the team. Both shapes are pinned in the tests: `Team: purchasing` on the dump shape and
+    `Team: customer_service` on a truly cold one. The D1 open-offer premise and the
+    `is_escalation_confirmation` short-circuit both stand.
   * **Given** a parser team that is an exact catalogue member, **then** the lane assigns
     THAT team, never an unrelated carried one (R-c).
   * **Given** a parser team that names several catalogue members ("marketing" - the three
@@ -1618,13 +1634,26 @@ contact inside the synchronous request. Different contacts run in parallel.
   * **Given** an open clarify and a reply that answers something else, **then** nothing
     resolves and the turn routes normally.
 
-  **Lifetime: one turn, and no clock is added.** `compile_state`'s clarify arm stamps
-  `selection_context` on the ask turn only, and `_offer_carry` (the block that keeps a
-  label alive) needs a non-empty `last_result_set`, which a team clarify has none of - so
-  the ask expires on the very next turn whatever the customer says. The member offer's
-  3-turn TTL is deliberately NOT copied: it would only make the ask live longer.
-  `offer_is_open` is deliberately not taught this kind either, because it is what turns a
-  bare "yes" into an acceptance and "yes" is not an answer to "which team".
+  **Lifetime: one turn, enforced by an explicit exclusion in `_offer_carry`.** The first
+  cut of this AC claimed the life was one turn for free, because `_offer_carry` needs a
+  non-empty `last_result_set` and "a team clarify has no roster". The review of #713
+  (blocker B1) measured that FALSE: the clarify arm carries the PREVIOUS turn's roster
+  forward (`compile_state` ~:2075) before it stamps the marker, so production dump
+  0d7d5a23 arrives `team_clarify` with fifteen rows behind it, `topic.changed` returns
+  False whenever either domain is falsy and a clarify turn's domain is null by
+  construction, and the ttl branch is `member_offer` only - so the label was carried
+  indefinitely, retyping every later team-naming turn into an escalation and re-emitting a
+  marker that outranks `member_offer` and `escalation_offer` and would mask a real offer.
+  `_offer_carry` now excludes the kind outright. The member offer's 3-turn TTL is still not
+  copied, and now for a reason that holds: a roster stays on the customer's screen, a
+  question does not. `offer_is_open` is deliberately not taught this kind either, because
+  it is what turns a bare "yes" into an acceptance and "yes" is not an answer to "which
+  team".
+
+  **Given** an open clarify and a turn that brings its OWN business question (a
+  `business_query`, or any turn with a domain hint), **then** it is ANSWERED, however many
+  team words it carries - "which promotions is marketing running" is a question, not an
+  answer to "which team".
   Evidence: `tests/chatbot/test_pass4_item1a_team_clarify_consumed.py`,
   `tests/chatbot/test_s5_escalation_lane.py::TestAnAcceptanceIsNeverAskedWhichTeam::test_an_open_offer_for_the_default_team_still_asks`
   (the marker's options). (H74)

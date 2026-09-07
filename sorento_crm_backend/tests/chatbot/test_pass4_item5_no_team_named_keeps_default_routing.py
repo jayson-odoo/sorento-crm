@@ -79,10 +79,18 @@ class TestARequestNamingNoTeamKeepsTheDefaultRoutingEvenOverAStaleCarriedTeam:
         item = _item(brand_code=None, company_id=None, company_name=None, routing_source="none")
         result = run(ctx, item, services=_services())
         assert result["arm"] == "human-intervention", (
-            "a request naming NO team must keep the default/derived routing - it must not "
-            "clarify over the whole catalogue merely because an UNRELATED previous turn "
-            f"carried a non-default team: arm={result['arm']!r}"
+            "a request naming NO team must keep the routing chain's own result - it must "
+            "not clarify over the whole catalogue merely because an UNRELATED previous "
+            f"turn carried a non-default team: arm={result['arm']!r}"
         )
+        # CAPTAIN RULING (review of #713, B3): the team is the CARRIED one, not the table
+        # default, and that is the CODE being kept rather than the docs. The chain is
+        # `llm_team if req_help -> derived -> prior_routing -> DEFAULT`, which is the
+        # pre-#706 behaviour and live parity: a product browse routes to purchasing by the
+        # owner's own table, and "talk to a human" straight after it inherits that. The
+        # owner's complaint was the eight-team MENU, never the team.
+        comment = next(a for a in result["actions"] if a["kind"] == "add_comment")
+        assert comment["text"].startswith("Team: purchasing\n"), comment["text"]
 
 
 class TestARequestNamingNoTeamKeepsTheDefaultRoutingThroughTheEngine:
@@ -165,9 +173,70 @@ class TestARequestNamingNoTeamKeepsTheDefaultRoutingThroughTheEngine:
             "a request naming no team must assign (an `add_comment` action carrying "
             f"'Team: ...'), not clarify: actions={head.actions!r}"
         )
+        # B3, through the REAL routing chain: the carried `purchasing` is what this turn
+        # assigns to, because the chain prefers a previous turn's routing over the hard
+        # default. Pinned so the difference between "keeps the chain's result" and "keeps
+        # the table default" can never again be documented one way and coded the other.
+        assert any("Team: purchasing" in (a.get("text") or "") for a in comments), (
+            f"the carried team is what the chain resolves to on this shape: {comments!r}"
+        )
         sends = [a for a in (head.actions or []) if a.get("kind") == "send_message"]
         send_text = " ".join((s.get("text") or "") for s in sends)
         assert "Which team should I pass this to" not in send_text, (
             f"the eight-team clarify must not fire on a request that names no team: "
             f"{send_text!r}"
+        )
+
+
+class TestATrulyColdRequestGetsTheRoutingTablesOwnDefault:
+    """The other half of the B3 pin (review of #713). With NOTHING carried - a cold
+    session, no previous routing - the chain falls all the way to its hard default, and
+    THAT is where `customer_service` comes from. Stating both shapes in tests is what
+    stops "the routing table's default" and "the carried team" being confused again."""
+
+    @pytest.fixture()
+    def cold(self, session_factory):
+        db = session_factory()
+        db.execute(
+            text(
+                "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+                "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
+            ),
+            {"cid": CONTACT_ID, "phone": "+60000000009", "sv": json.dumps({"variables": {}})},
+        )
+        db.commit()
+        set_chatbot_switches(session_factory)
+        db.execute(
+            text("UPDATE system_settings SET chatbot_completed_lanes = CAST(:l AS jsonb)"),
+            {"l": '["out_of_scope"]'},
+        )
+        db.commit()
+        return db
+
+    def test_a_cold_request_for_a_human_is_assigned_to_customer_service(
+        self, cold, session_factory, monkeypatch
+    ):
+        qf = _parser_output(
+            message_type="request_for_help",
+            intent_hint=None,
+            domain_hint=None,
+            entities=[],
+            is_affirmative=None,
+            user_goal="trying to talk to a human",
+            routing={"suggested_team": None, "suggested_agent": None},
+            escalation={"is_escalation_confirmation": False, "company_pick": None},
+        )
+        _stub_parser(monkeypatch, qf)
+        envelope = _envelope(is_test=True)
+        envelope.contact["phone"] = "+60000000009"
+        envelope.message["contact"]["phone"] = "+60000000009"
+        envelope.message["message"]["messageId"] = "ZZT-mt-r2-cold"
+        envelope.message["message"]["message"]["text"] = "I want to talk to a human"
+
+        head = engine_mod.run_turn(envelope, session_factory=session_factory)
+
+        assert head.branch_kind == "out_of_scope", (head.branch_kind, head.error)
+        comments = [a for a in (head.actions or []) if a.get("kind") == "add_comment"]
+        assert any("Team: customer_service" in (a.get("text") or "") for a in comments), (
+            f"with nothing carried the chain's hard default is the answer: {comments!r}"
         )
