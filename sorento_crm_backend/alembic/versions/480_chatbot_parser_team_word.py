@@ -31,7 +31,7 @@ publish is skipped when a version already carries the same template (which is wh
 on a fresh install, where 475 already published this exact amended text).
 
 Revision ID: 480_chatbot_team_word
-Revises: 477_spo_alloc_container_number
+Revises: 486_scm_claim_qty_planner
 """
 import logging
 
@@ -43,7 +43,7 @@ from app.services.ai_prompt_registry import PROMPT_KEYS
 from app.services.ai_prompt_seed import seed_prompt_registry
 
 revision = "480_chatbot_team_word"
-down_revision = "477_spo_alloc_container_number"
+down_revision = "486_scm_claim_qty_planner"
 branch_labels = None
 depends_on = None
 
