@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from app.services.chatbot.lanes.business import answer as answer_mod
 from app.services.chatbot.lanes.business.services import (
     AnswerServices,
     FetchServices,
@@ -301,3 +302,82 @@ class TestTheSuffixedCodeShapeReachesTheRung:
         stub_access()
         _, said, _ = _run_stock_turn(session_factory, monkeypatch, po_response=NO_ROWS, code=code)
         assert f"No stock, no incoming and no PO for {code}." in said, said
+
+
+class TestIssue736SeparatorInsensitiveRequestedSet:
+    """The one line that had Foundre's rule off for most of the catalogue (#736).
+
+    `crossdomain_zeroset` builds its `requested` set by testing each resolved match's
+    `canonical_code` for membership in the RESOLVER's token set. The resolver strips dashes
+    and spaces from a product token before resolving it, so "SRTWT7445-LV-NEW" arrives as
+    the token `SRTWT7445LVNEW` while the match it resolved to carries the hyphenated
+    `canonical_code`. That test used `_norm_code` (strip + upper) on both sides, so it
+    could never be true for a code with a separator: `requested` empty, `missing` empty,
+    `active` False, `run_crossdomain` returning before it probed anything.
+
+    Measured on two live turns whose traces are otherwise identical field for field
+    (console-check-1788789839): `CB2904` - whose token and canonical code are the same
+    string - got both rungs; `SRTWT7445-LV-NEW` got no cross-domain event at all.
+
+    This class drives the ZEROSET with the resolver shape those live turns actually
+    carried (an `intersection`, no `resolutions`, the token separator-stripped), which is
+    the shape the rest of the file's stubs do not produce - and is therefore the shape that
+    let the defect live.
+    """
+
+    @staticmethod
+    def _zeroset_for(token: str, canonical_code: str):
+        return answer_mod.crossdomain_zeroset(
+            {"answers": [], "has_result": False},
+            parser={
+                "message_type": "business_query",
+                "intent_hint": "check_stock",
+                "domain_hint": "inventory",
+                "access_levels": [],
+            },
+            resolved={
+                # No `resolutions` key: the live gate stores its result as `tokens` +
+                # `intersection`, which is the branch the defect was in.
+                "tokens": [token],
+                "intersection": [
+                    {
+                        "entity_type": "product",
+                        "canonical_code": canonical_code,
+                        "uuid": "9e1dc720-ab0b-4296-8852-1afcc77290a2",
+                    }
+                ],
+            },
+            session_block={"session_vars": {"variables": {}}},
+        )
+
+    @pytest.mark.parametrize(
+        "token,code",
+        [
+            ("SRTWT7445LVNEW", "SRTWT7445-LV-NEW"),
+            ("MSK11AQT", "MSK11A-QT"),
+            ("CWCX1009SH", "CWCX1009-SH"),
+            ("SRT 2405 CR", "SRT2405-CR"),
+        ],
+        ids=["srtwt7445", "msk11a", "cwcx1009", "spaced-token"],
+    )
+    def test_a_separator_stripped_token_still_matches_its_canonical_code(
+        self, token, code
+    ) -> None:
+        xd = self._zeroset_for(token, code)["_xd"]
+        assert xd["active"] is True, f"{code}: zeroset inactive, so no probe can run"
+        assert xd["requested"] == [code]
+        assert [m["code"] for m in xd["missing"]] == [code]
+
+    def test_an_unseparated_code_is_unchanged(self) -> None:
+        """`CB2904` is the control: it worked before this fix and must still work."""
+        xd = self._zeroset_for("CB2904", "CB2904")["_xd"]
+        assert xd["active"] is True
+        assert xd["requested"] == ["CB2904"]
+
+    def test_a_token_that_is_a_different_product_still_does_not_match(self) -> None:
+        """The test is separator-insensitive, NOT fuzzy: a genuinely different code must
+        still fail the membership test, or the zeroset would start declaring absences
+        about products the customer never named (H62)."""
+        xd = self._zeroset_for("SRTWT7445LVNEW", "SRTWB103")["_xd"]
+        assert xd["active"] is False
+        assert xd["requested"] == []

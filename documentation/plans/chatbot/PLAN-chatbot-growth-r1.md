@@ -189,7 +189,8 @@ migration 490 published, via the `--prompt-version` flag, so nothing is promoted
 |---|---|---|
 | 1 | the tenant's `production` label (v1, FULL) | **11 pass / 3 fail** (14 cases) |
 | 2 | pinned to the growth r1 body | **13 pass / 1 fail** (14 cases; the 1 is an `XFAIL` another lane owns) |
-| 3 | pinned, after the three suffixed-code cases were added | **13 pass / 4 fail** (17 cases; the 3 new reds are finding 2 below) |
+| 3 | pinned, after the three suffixed-code cases were added | **13 pass / 4 fail** (17 cases; the 3 new reds were finding 2) |
+| 4 | pinned, after the #736 separator fix | **16 pass / 1 fail** (17 cases; the 1 is the `XFAIL` another lane owns) |
 
 **Foundre's rule now works from a real turn, and it never did before.** The console check of
 7 Sep found it unreachable; the cause was one missing field. `engine._TurnSwitches` - the
@@ -210,37 +211,36 @@ What still stands red, and who owns it:
 1. **The multi-turn carry into a PO follow-up** - marked `expected_red_until:
    feat/chatbot-growth-dialogue` in the case file, so it reports `XFAIL` and will report
    `XPASS` (a failure) the moment that lane fixes it. This lane changes no carry rule.
-2. **A suffixed product code does not reach the ladder, and the resolver is NOT why.**
-   `SRTWT7445-LV-NEW`, `MSK11A-QT` and `CWCX1009-SH` answer the bare miss with no
-   cross-domain sentence and record no `crossdomain` trace event, while `CB2904` and
-   `SRTWB103` get theirs. Because that shape is most of the catalogue, this is Foundre's
-   rule off for most products.
+2. **FIXED (issue #736): a suffixed product code never reached the ladder.** One line in
+   `crossdomain_zeroset`. The RESOLVER strips dashes and spaces from a product token
+   before resolving it, so "SRTWT7445-LV-NEW" arrives as the token `SRTWT7445LVNEW` while
+   the match it resolved to carries `canonical_code: "SRTWT7445-LV-NEW"`. The membership
+   test that builds `requested` compared both sides with `_norm_code` (strip + upper), so
+   it could never be true for a code containing a separator: `requested` stayed empty,
+   `missing` with it, `active` came out False, and `run_crossdomain` returned before
+   probing anything. **Foundre's rule was off for every hyphenated code**, which is most
+   of the catalogue, while `CB2904` - whose token and canonical code are the same string -
+   worked.
 
-   **The match_tier hypothesis is DISPROVEN, measured 8 Sep 2026.** Called the real
-   resolver (`resolve_reference_post`, `tokens=[code]`, `entity_types=["product"]`) for
-   all five codes, under the Sorento-only company scope and unscoped:
+   Found by reading two live turns whose traces are otherwise identical field for field
+   (console-check-1788789839): same gate shape, same single compatible entity, same
+   `match_tier`, same uuid, same tool call, same empty envelope; `CB2904` recorded both
+   `crossdomain` events, `SRTWT7445-LV-NEW` recorded none. The earlier `match_tier`
+   theory was measured and disproven first (all five codes resolve 1 match at tier
+   `exact`), which is what left the token normalisation as the only remaining difference.
 
-   | code | matches | tier |
-   |---|---|---|
-   | SRTWT7445-LV-NEW | 1 | exact |
-   | MSK11A-QT | 1 | exact |
-   | CWCX1009-SH | 1 | exact |
-   | CB2904 | 1 | exact |
-   | SRTWB103 | 1 | exact |
-
-   Identical. The suffix does not change how a code resolves, so `crossdomain_zeroset`
-   excludes no tier these codes land on - and its `requested` builder already accepts a
-   single non-exact match as an ask (`exacts` first, else `len(prods) == 1`, answer.py),
-   which is exactly the "one uuid is an unambiguous ask" rule, already shipped. There is
-   no tier rule left to widen, so NO code change was made: widening a replay-graded node
-   on a disproven premise would be a speculative edit to the one place H62 protects.
-
-   `tests/chatbot/test_foundre_rung_end_to_end.py::TestTheSuffixedCodeShapeReachesTheRung`
-   drives all three through `run_turn` with that measured resolution and every one reaches
-   the rung, so the mechanism is sound for the shape. The three are also console cases now,
-   so the red is measured per code rather than described. **The next probe is the persisted
-   `looked_up` raw of a red run** - specifically `zs.returned_codes` and `zs.missing` on the
-   turn - not the tier.
+   The fix reuses `_type_norm`, which already exists in the same file and whose docstring
+   names this exact mismatch ("the resolver strips dashes and spaces off product-hint
+   tokens before it resolves them ... This is the key both sides are compared through") -
+   this call site was simply the one not using it. Applied to BOTH sides of the membership
+   test only: the `_n` key that reaches persisted state and the `by_code` lookup against
+   the tool's own output still use `_norm_code`, so no emitted value changes shape and the
+   corpus does not move (replay + worlds 1957 passed, no divergence registered).
+   `TestIssue736SeparatorInsensitiveRequestedSet` drives the zeroset with the resolver
+   shape the live turns carried - `tokens` + `intersection`, no `resolutions`, which is
+   the branch the defect lived in and the shape the other stubs do not produce - over
+   three suffixed codes plus a spaced token, with `CB2904` as the control and a
+   different-code negative that must still fail (H62).
 
 3. **The live prompt is unstable on the two A1 spec phrasings** and they swap between runs,
    because the live REQUESTED ATTRIBUTES section has no rule for a bare "spec" and no entry

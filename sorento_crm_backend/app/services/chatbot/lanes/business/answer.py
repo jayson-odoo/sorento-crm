@@ -498,7 +498,24 @@ def crossdomain_zeroset(
             elif len(prods) == 1 and jsc.truthy(jsc.get(prods[0], "canonical_code")):
                 add(jsc.get(prods[0], "canonical_code"), jsc.get(prods[0], "uuid"), False)
     else:
-        tokens = {_norm_code(t) for t in jsc.array(rz.get("tokens"))}
+        # SEPARATOR-INSENSITIVE, and that is the whole of issue #736. The RESOLVER strips
+        # dashes and spaces off a product token before it resolves it, so a customer's
+        # "SRTWT7445-LV-NEW" arrives here as the token `SRTWT7445LVNEW` while the match it
+        # resolved to carries `canonical_code: "SRTWT7445-LV-NEW"`. `_norm_code` only
+        # strips and upper-cases, so the membership test below could never be true for a
+        # code with a separator in it: `requested` stayed empty, `missing` with it,
+        # `active` came out False, and `run_crossdomain` returned before probing anything.
+        # Foundre's rule was therefore OFF for every hyphenated code - most of the
+        # catalogue - while it worked for `CB2904`, whose token and canonical code are the
+        # same string. Measured on two live turns whose traces are otherwise identical
+        # field for field (console-check-1788789839).
+        #
+        # `_type_norm` is the key the rest of this file already compares these two sides
+        # through, and its own docstring names this exact mismatch; this call site was
+        # simply the one that did not use it. Applied to BOTH sides of the test only - the
+        # `_n` key that reaches persisted state and the `by_code` lookup against the tool's
+        # own output still use `_norm_code`, so no emitted value changes shape.
+        tokens = {_type_norm(t) for t in jsc.array(rz.get("tokens"))}
         if isinstance(rz.get("intersection"), list):
             intersection: list[Any] = rz["intersection"]
         elif jsc.truthy(rz.get("by_entity_type")):
@@ -508,7 +525,7 @@ def crossdomain_zeroset(
         else:
             intersection = []
         for m in intersection:
-            if is_prod(m) and jsc.truthy(jsc.get(m, "canonical_code")) and _norm_code(
+            if is_prod(m) and jsc.truthy(jsc.get(m, "canonical_code")) and _type_norm(
                 jsc.get(m, "canonical_code")
             ) in tokens:
                 add(jsc.get(m, "canonical_code"), jsc.get(m, "uuid"), False)
