@@ -154,3 +154,19 @@ shipping_orders` with one record whose lines carry `source_ref` (DtlKey), `produ
 - **AC-X31 [BE][T]** `repoint_allocation_dependants` requires `company_id` (a call without it is a
   TypeError); `scripts/backfill_grn_spo_allocation_links.py` registers the company-scope listeners
   and pins one company so its closing recompute reads rows again.
+
+- **AC-X32 [BE][T]** (D26 remainder) Given an xlsx row received 50 against AutoCount lines
+  allocated 29 and 18 (group total above the sum); after the supersede line 1 reads 29 and line 2
+  reads 21 (remainder on the LAST line), both closed. The same shape through the D28a group
+  recompute (picking total 50 on two `autocount` lines 29 / 18) yields 29 / 21.
+
+- **AC-X23 (seed fix)** the reverse-payload-order test seeds received 30, not 47, so Seq order
+  (29 / 1) and payload order (12 / 18) differ.
+
+- **AC-X33 [BE][T]** (D28a status) The group recompute writes `line_status` consistently with
+  `quantity_received`: a line whose receipt reaches its allocation reads closed, a line whose
+  receipt is below it and was open stays open; a line already closed by the leftover sweep is
+  never reopened. No row ends `closed` with `receipt_status pending`.
+
+- **AC-X34 [BE]** `_autocount_group_members` filters `spo_number` in SQL (the query carries
+  company, spo_number, product); a product present on many SPOs does not load them all.
