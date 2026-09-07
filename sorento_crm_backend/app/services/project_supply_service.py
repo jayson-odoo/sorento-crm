@@ -5802,6 +5802,13 @@ class ProjectSupplyService:
         if not wanted:
             return
         service = ProjectOrderInquiryService(self.db)
+        if inquiry is None:
+            # `refresh_for_decision`'s gate correctly raised no header when the Buy
+            # residual and the donor holes were both empty, but this line's step-3
+            # borrow still needs somewhere to write its own ORDER_BACK row: the asker
+            # is covered by a document, not by nothing, and that is not "no header
+            # needed", it is a header this method is the first to discover it needs.
+            inquiry = service.ensure_inquiry(order, actor_user_id=actor_user_id)
 
         for line, item in wanted:
             qty = _dec(item.qty)

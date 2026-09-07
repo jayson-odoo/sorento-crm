@@ -228,7 +228,8 @@ def seeded():
 # ------------------------------------------------------------------ derivation
 
 def _confirmed_inquiry(db, order, *, actor_user_id, buy=None):
-    """The Buy-only handoff, written the way Stage 1C writes it.
+    """The Buy-only handoff, written the way Stage 1C writes it - returning just the
+    header, which is what most of the cases below want.
 
     `derive_for_sales_order` is gone: the SO path no longer nets anything, and the only
     creator of a standard demand row is `refresh_for_decision`, inside the atomic
@@ -239,6 +240,21 @@ def _confirmed_inquiry(db, order, *, actor_user_id, buy=None):
 
     ``buy`` defaults to each line's full quantity, which is what a line nothing covers
     resolves to and what these cases were originally written against.
+
+    A thin wrapper over `_confirm`, which does the actual writing and returns the whole
+    result dict - the empty-header gate's own cases (fix/oi-empty-header) need `created`
+    and `exceptions` too, which is why that one exists alongside this one rather than the
+    other way round.
+    """
+    return _confirm(db, order, actor_user_id=actor_user_id, buy=buy)["inquiry"]
+
+
+def _confirm(db, order, *, actor_user_id, buy=None):
+    """The Buy-only handoff, written the way Stage 1C writes it - returning the WHOLE
+    result dict. `_confirmed_inquiry` is a thin wrapper over this that keeps only
+    `result["inquiry"]`, for the cases that just need the header; the empty-header
+    gate's own cases (fix/oi-empty-header) need `created` and `exceptions` too, which is
+    why this one exists.
 
     ``stock_location`` is read straight off ``line.stock_location`` - exactly what
     ``ProjectSupplyService._write_decision`` does after ``_restamp_stock_location`` has
@@ -275,7 +291,7 @@ def _confirmed_inquiry(db, order, *, actor_user_id, buy=None):
     )
     db.add(decision)
     db.flush()
-    result = service.refresh_for_decision(
+    return service.refresh_for_decision(
         order,
         decision,
         [
@@ -291,9 +307,83 @@ def _confirmed_inquiry(db, order, *, actor_user_id, buy=None):
         ],
         actor_user_id=actor_user_id,
     )
-    return result["inquiry"]
 
 
+def test_a_confirmation_with_no_buy_raises_no_inquiry_header(seeded):
+    """A plan entirely covered by Reserve, Borrow or timely SPO cover has nothing to buy,
+    so no `OrderInquiry` header is minted (option 1, fix/oi-empty-header). Before this fix
+    a header was created unconditionally and the confirmation's zero rows left a numbered,
+    permanently-empty OI dangling off the SO list's "Order inquiries" column - the OI
+    worklist itself, being rows-based, never showed it (prod OI-000020, local OI-000007).
+    """
+    db, company_id, owner = seeded
+    project = _project(db, company_id, owner)
+    order = _sales_order(db, project)
+    _line(db, order, _product(db, "CB6633"), "600", date(2027, 1, 7))
+
+    result = _confirm(db, order, actor_user_id=owner, buy=0)
+
+    assert result["inquiry"] is None
+    assert result["created"] == 0
+    assert result["exceptions"] == []
+    assert result["settled_in_place"] == []
+    assert (
+        db.query(OrderInquiry)
+        .filter(OrderInquiry.project_sales_order_id == order.id)
+        .count()
+        == 0
+    )
+
+
+def test_a_later_confirmation_with_buy_raises_the_header_then(seeded):
+    """The order's NEXT revision, once CS actually has something to buy, mints the header
+    the all-covered confirmation before it correctly declined - numbered `OI-000001`, not
+    retroactively assigned to the revision that raised nothing, proving no number was
+    burned by declining to raise a header for it.
+    """
+    db, company_id, owner = seeded
+    project = _project(db, company_id, owner)
+    order = _sales_order(db, project)
+    _line(db, order, _product(db, "CB6633"), "600", date(2027, 1, 7))
+    _confirm(db, order, actor_user_id=owner, buy=0)
+
+    result = _confirm(db, order, actor_user_id=owner, buy=600)
+
+    inquiry = result["inquiry"]
+    assert inquiry is not None
+    assert inquiry.inquiry_no == "OI-000001"
+    assert result["created"] == 1
+    active = [row for row in _rows(db, inquiry.id) if row.state != INQUIRY_CANCELLED]
+    assert len(active) == 1
+    assert active[0].qty == Decimal("600")
+
+
+def test_a_reconfirm_with_no_buy_keeps_the_existing_header_and_cancels_its_rows(seeded):
+    """A header that already exists is untouched by the gate (AC-H4 territory): a
+    reconfirm that drops the Buy to zero still uses the ONE header purchasing has been
+    quoting, and cancels the row it can no longer stand behind rather than raising a
+    second header or leaving a stale instruction live.
+    """
+    db, company_id, owner = seeded
+    project = _project(db, company_id, owner)
+    order = _sales_order(db, project)
+    _line(db, order, _product(db, "CB6633"), "600", date(2027, 1, 7))
+    first = _confirm(db, order, actor_user_id=owner, buy=600)
+    first_inquiry = first["inquiry"]
+    assert first_inquiry is not None
+
+    second = _confirm(db, order, actor_user_id=owner, buy=0)
+
+    assert second["inquiry"].id == first_inquiry.id
+    assert (
+        db.query(OrderInquiry)
+        .filter(OrderInquiry.project_sales_order_id == order.id)
+        .count()
+        == 1
+    )
+    rows = _rows(db, first_inquiry.id)
+    assert len(rows) == 1
+    assert rows[0].state == INQUIRY_CANCELLED
 
 
 def test_publishing_a_sales_order_raises_no_inquiry_row(seeded):
