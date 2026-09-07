@@ -39,7 +39,14 @@ import pytest
 from sqlalchemy import text
 
 from app.models.inventory import StorageZone, Warehouse
-from app.models.procurement import InboundShipment, PickingHeader, PickingLine, SPOAllocation
+from app.models.procurement import (
+    InboundShipment,
+    PickingHeader,
+    PickingLine,
+    PurchaseOrder,
+    PurchaseOrderLine,
+    SPOAllocation,
+)
 from app.models.project_so import (
     IV_ORDER_BACK,
     OrderInquiry,
@@ -3823,3 +3830,347 @@ class TestAcX50StorageZoneCarriesLikeInboundShipment:
                 f"every new line of the group must carry the superseded row's "
                 f"storage_zone_id - got {row}"
             )
+
+
+# ============================================================================ #
+# Round 7 (security round 6, 2026-09-08, PLAN D25c amended)
+# ============================================================================ #
+# Five writers produce ref-less rows. Two load an Excel aggregate with
+# `source_system` NULL (Procurement Upload SPO, n8n packing list); one writes
+# `scm_upload`; two SCM writers raise ONE row per PO line with `po_line_id`
+# set and `source_system` NULL (`spo_conversion_service._write_allocations`,
+# `allocation_suggestion_service`). The last two are not aggregates and must
+# never be superseded.
+
+
+def _seed_po_line(env, *, product_id: str, qty_ordered: int = 29, qty_received: int = 0) -> str:
+    """A minimal `purchase_order_lines` row under MARKER - the FK a
+    `po_line_id`-carrying `spo_allocations` row needs (AC-X52)."""
+    po = PurchaseOrder(
+        id=str(uuid.uuid4()), company_id=env.company_a,
+        po_number=unique_code(MARKER), status="active",
+    )
+    env.db.add(po)
+    env.db.flush()
+    po_line = PurchaseOrderLine(
+        id=str(uuid.uuid4()), company_id=env.company_a,
+        purchase_order_id=po.id, product_id=product_id,
+        qty_ordered=qty_ordered, qty_received=qty_received, line_status="open",
+    )
+    env.db.add(po_line)
+    env.db.flush()
+    return po_line.id
+
+
+# ============================================================================ #
+# AC-X52 (D25c guard)
+# ============================================================================ #
+class TestAcX52PoLineIdRowIsNeverASupersedeCandidate:
+    def test_a_null_source_row_with_a_po_line_id_is_adopted_not_superseded(self, env):
+        """AC-X52 (D25c guard, security round 6). A ref-less NULL-source
+        row carrying `po_line_id` (the SCM writers' shape - ONE row per PO
+        line, never an Excel aggregate) is never a supersede candidate: on
+        a first push naming its product and warehouse it keeps its id AND
+        its `po_line_id` (adopted in place per the pre-existing rules),
+        `lines.superseded` absent.
+
+        RED today: `is_xlsx_era_row` has no `po_line_id` guard - this row
+        (NULL `source_system`, no `source_ref`) is gathered into
+        `supersede_pool` exactly like a genuine Excel aggregate, deleted,
+        and its `po_line_id` (the PO -> SPO -> GRN chain) is lost with it:
+        `len(rows) == 1` fails (two rows land instead) and the surviving
+        row's id is the NEW one, not the seeded one.
+        """
+        wh_id = env.refs.resolve(entity_type="warehouses", source_ref=env.warehouse_ref)
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+
+        po_line_id = _seed_po_line(env, product_id=product_id, qty_ordered=29, qty_received=0)
+
+        row = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=wh_code,
+            warehouse_id=wh_id, allocated_quantity=29, quantity_received=0,
+            line_status="open", receipt_status="pending", source_system=None,
+            po_line_id=po_line_id,
+        )
+        env.db.add(row)
+        env.db.flush()
+        env.db.commit()
+
+        line = _spo_line(env, warehouse_ref=env.warehouse_ref, qty_ordered=29, qty_received=0)
+        record = _spo_record(env, number=number, lines=[line], supplier_ref=env.supplier_ref)
+
+        res = env.post(INGEST_SPO, [record])
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        lines_summary = entry.get("lines") or {}
+        assert "superseded" not in lines_summary, lines_summary
+
+        rows = _spo_rows(env, number)
+        assert len(rows) == 1, (
+            "a po_line_id row must be ADOPTED in place, never superseded "
+            f"into two rows - got {rows}"
+        )
+        assert str(rows[0]["id"]) == str(row.id), (
+            "adoption in place must keep the SAME row id", rows
+        )
+        assert rows[0]["po_line_id"] is not None and str(rows[0]["po_line_id"]) == str(
+            po_line_id
+        ), ("po_line_id must survive - the PO -> SPO -> GRN chain must never be severed", rows)
+        assert rows[0]["source_ref"] == line["source_ref"], rows
+
+    def test_the_dedupe_leaves_a_po_line_id_row_alone(self, env):
+        """AC-X52, dedupe half. The dedupe must skip a document whose only
+        ref-less row carries `po_line_id`, even alongside `autocount` ref
+        rows for the SAME product/warehouse - deleting it would sever the
+        PO linkage.
+
+        RED today: the dedupe's own document-selection predicate has no
+        `po_line_id IS NULL` guard, so this document is gathered as a
+        candidate and the row is removed exactly like a genuine xlsx row.
+        """
+        wh_id = env.refs.resolve(entity_type="warehouses", source_ref=env.warehouse_ref)
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+
+        po_line_id = _seed_po_line(env, product_id=product_id, qty_ordered=29, qty_received=29)
+
+        row = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=wh_code,
+            warehouse_id=wh_id, allocated_quantity=29, quantity_received=29,
+            line_status="closed", receipt_status="fully_received", source_system=None,
+            po_line_id=po_line_id,
+        )
+        env.db.add(row)
+        env.db.flush()
+
+        doc_ref = f"{MARKER}:ACDOC:{uuid.uuid4().hex[:8]}"
+        ref_row = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=2, product_id=product_id, location_code=wh_code,
+            warehouse_id=wh_id, allocated_quantity=18, quantity_received=0,
+            line_status="open", receipt_status="pending", source_system="autocount",
+            source_ref=f"{MARKER}:AC1:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+        )
+        env.db.add(ref_row)
+        env.db.flush()
+        env.db.commit()
+
+        from scripts.dedupe_spo_xlsx_superseded import run
+
+        run(env.db, env.company_a, dry_run=False)
+
+        env.db.expire_all()
+        still_there = env.db.execute(
+            text("SELECT id, po_line_id FROM spo_allocations WHERE id = :id"),
+            {"id": row.id},
+        ).mappings().first()
+        assert still_there is not None, (
+            "a po_line_id row must never be removed by the dedupe", still_there
+        )
+        assert str(still_there["po_line_id"]) == str(po_line_id), still_there
+
+
+# ============================================================================ #
+# AC-X53a (read path)
+# ============================================================================ #
+class TestAcX53aCrmSpoReadsComputedLikeNullSource:
+    def test_a_crm_spo_row_reads_computed_from_its_approved_picking_line(self, env):
+        """AC-X53a (read path). `_receipt_is_computed` must treat
+        `crm_spo` exactly like NULL: an SCM-raised allocation stamped
+        `crm_spo` with one approved GRN of 5 must list `quantity_received
+        5` on the SPO allocations read path (`SPOAllocationService.
+        list_allocations`), not its stored 0.
+
+        RED today: `_receipt_is_computed` returns `getattr(allocation,
+        "source_system", None) is None` - a `crm_spo` row is not None, so
+        the read path skips the compute and reports the stored value (0).
+        """
+        from app.services.procurement_service import SPOAllocationService
+
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        wh_id = env.refs.resolve(entity_type="warehouses", source_ref=env.warehouse_ref)
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+
+        allocation = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, warehouse_id=wh_id,
+            allocated_quantity=29, quantity_received=0, line_status="open",
+            receipt_status="pending", source_system="crm_spo",
+        )
+        env.db.add(allocation)
+        env.db.flush()
+
+        header = PickingHeader(
+            id=str(uuid.uuid4()), company_id=env.company_a,
+            picking_number=unique_code(MARKER), picking_type="goods_received",
+            picking_status="approved",
+        )
+        env.db.add(header)
+        env.db.flush()
+        env.db.add(
+            PickingLine(
+                id=str(uuid.uuid4()), company_id=env.company_a,
+                picking_header_id=header.id, spo_allocation_id=allocation.id,
+                product_id=product_id, quantity_expected=5, quantity_picked=5,
+            )
+        )
+        env.db.flush()
+        env.db.commit()
+
+        result = SPOAllocationService(env.db).list_allocations(limit=100)
+        rows = {str(r.id): r for r in result["data"]}
+        row = rows.get(str(allocation.id))
+        assert row is not None, "the seeded allocation must appear on the read path"
+        assert row.quantity_received == 5, (
+            "a crm_spo row must read its COMPUTED receipt from the approved "
+            f"picking line, exactly like a NULL-source row - got {row.quantity_received}"
+        )
+
+
+# ============================================================================ #
+# AC-X54 (D26 carry, packing-list columns)
+# ============================================================================ #
+class TestAcX54PackingListColumnsCarryOntoTheGroup:
+    def test_uom_rejected_and_notes_carry_the_ac_x1_shape(self, env):
+        """AC-X54. The AC-X1 shape, with the xlsx row ALSO carrying
+        `uom_id`, `quantity_rejected 2` and `allocation_notes 'damaged
+        carton'`. After the push: BOTH new lines carry the `uom_id`
+        (first non-null, like `storage_zone_id` / `inbound_shipment_id`,
+        AC-X50/AC-X6); line 1 (the group's first line / repoint target)
+        carries `quantity_rejected 2` and notes containing `'damaged
+        carton'`; line 2 carries `quantity_rejected 0` - the group total
+        lands on the FIRST line only, never split.
+
+        RED today: the writer never reads `line_plan.uom_id`, `group.
+        rejected_total` or `group.notes` at all - both new lines land
+        with `uom_id IS NULL`, `quantity_rejected 0` and no notes.
+        """
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        uom_id = env.db.execute(
+            text("SELECT base_uom_id FROM products WHERE id = :id"), {"id": product_id}
+        ).scalar()
+        assert uom_id is not None, "the seeded product must carry a base uom"
+
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        legacy = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=wh_code,
+            allocated_quantity=47, quantity_received=47, line_status="closed",
+            receipt_status="fully_received", source_system="scm_upload",
+            uom_id=uom_id, quantity_rejected=2, allocation_notes="damaged carton",
+        )
+        env.db.add(legacy)
+        env.db.flush()
+        env.db.commit()
+
+        line1 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=29, qty_received=0, line_number=1
+        )
+        line2 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=18, qty_received=0, line_number=2
+        )
+        record = _spo_record(
+            env, number=number, lines=[line1, line2], supplier_ref=env.supplier_ref
+        )
+
+        res = env.post(INGEST_SPO, [record])
+        assert res.status_code == 200, res.text
+
+        rows = {r["source_ref"]: r for r in _spo_rows(env, number)}
+        first = rows[line1["source_ref"]]
+        second = rows[line2["source_ref"]]
+
+        assert first["uom_id"] is not None and str(first["uom_id"]) == str(uom_id), first
+        assert second["uom_id"] is not None and str(second["uom_id"]) == str(uom_id), second
+
+        assert first["quantity_rejected"] == 2, (
+            f"the group's rejected total must land on the FIRST line - got {first}"
+        )
+        assert "damaged carton" in (first["allocation_notes"] or ""), first
+        assert second["quantity_rejected"] == 0, (
+            f"the rejected total must never be split onto the second line - got {second}"
+        )
+
+
+# ============================================================================ #
+# AC-X55 (D25c, warehouse-keyed and location-keyed groups never merge)
+# ============================================================================ #
+class TestAcX55AWarehouseKeyedGroupNeverMergesWithADifferentlyKeyedOne:
+    def test_a_warehouse_id_row_and_a_location_code_row_stay_two_separate_groups(self, env):
+        """AC-X55. Row A: NULL-source, `location_code` NULL, `warehouse_id`
+        W, 10/10 closed. Row B: `source_system='scm_upload'`,
+        `location_code`= W's OWN warehouse_code (any case), `warehouse_id`
+        NULL, 5/5 closed. Same product, same SPO, no ref rows. A first
+        push names ONE line for W's warehouse_code, qty 15, received 0.
+
+        The incoming line resolves BOTH `warehouse_id=W` and
+        `location_code=<W's code>`, so it answers to BOTH row A's key
+        (`wh:W`) and row B's key (`loc:<CODE>`) - but it is still only ONE
+        line, and warehouse-keyed groups are considered first and claim it
+        first (the id is the exact statement, the code the fallback): row
+        A is superseded (carries its own 10), row B's group then finds no
+        counterpart left and is KEPT, not double-claimed and not merged
+        with row A's.
+
+        Expected: 200, outcome `created`, `lines.superseded 1`, exactly
+        ONE row carrying the pushed line's `source_ref` with
+        `quantity_received 10` (row A's own carry, not row A's 10 + row
+        B's 5 combined), row B still present and closed, no error/conflict
+        in the verdict.
+        """
+        wh_id = env.refs.resolve(entity_type="warehouses", source_ref=env.warehouse_ref)
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+
+        row_a = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=None,
+            warehouse_id=wh_id, allocated_quantity=10, quantity_received=10,
+            line_status="closed", receipt_status="fully_received", source_system=None,
+        )
+        row_b = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=2, product_id=product_id, location_code=wh_code.lower(),
+            warehouse_id=None, allocated_quantity=5, quantity_received=5,
+            line_status="closed", receipt_status="fully_received", source_system="scm_upload",
+        )
+        env.db.add_all([row_a, row_b])
+        env.db.flush()
+        env.db.commit()
+
+        line = _spo_line(env, warehouse_ref=env.warehouse_ref, qty_ordered=15, qty_received=0)
+        record = _spo_record(env, number=number, lines=[line], supplier_ref=env.supplier_ref)
+
+        res = env.post(INGEST_SPO, [record])
+
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        assert not entry.get("errors"), entry
+        assert entry["outcome"] == "created", entry
+        lines_summary = entry.get("lines") or {}
+        assert lines_summary.get("superseded") == 1, lines_summary
+
+        rows = _spo_rows(env, number)
+        by_ref = {r["source_ref"]: r for r in rows if r["source_ref"]}
+        assert len(by_ref) == 1, (
+            "exactly one row must carry the pushed line's source_ref", rows
+        )
+        new_row = by_ref[line["source_ref"]]
+        assert new_row["quantity_received"] == 10, (
+            "row A's own 10 must carry - never row A + row B combined (15) "
+            f"and never row B's alone - got {new_row}"
+        )
+
+        row_b_after = {str(r["id"]): r for r in rows}.get(str(row_b.id))
+        assert row_b_after is not None, (
+            "row B must still be present - its own group found no incoming "
+            "counterpart once row A's group claimed the only line", rows
+        )
+        assert row_b_after["line_status"] == "closed", row_b_after
