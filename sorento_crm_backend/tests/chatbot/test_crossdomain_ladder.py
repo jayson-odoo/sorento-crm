@@ -151,7 +151,10 @@ class TestAC922StockMissIncomingMissPOMiss:
         tool_names = [name for name, _ in calls]
         assert tool_names == [_INCOMING_TOOL, _PO_TOOL]
         block = result["render"]["_xdBlock"]["block"]
-        assert "No stock, no incoming and no purchase order for SRTWC8517." in block
+        # AC-922's own wording: "no PO", the customer's two letters and the same word the
+        # question used - not `rung.replace("_", " ")`, which spelled it out (review, item 9).
+        assert "No stock, no incoming and no PO for SRTWC8517." in block
+        assert "no purchase order" not in block
         assert "escalate" in block.lower()
 
 

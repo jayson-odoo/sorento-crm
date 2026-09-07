@@ -883,9 +883,23 @@ def crossdomain_render(
         # these codes and, if that rung answers, swap this sentence for its own without
         # re-deriving which codes it is even about. Additive - nothing here reads them yet
         # when the ladder has no further rung, so this render's own wording is unchanged.
-        "nothing_codes": list(nothing),
+        #
+        # GATED ON `can_state_absence`, exactly as `nothing_note` and `only_other_note`
+        # are, and the first cut of A7 was not (review, blocker 2). "Missing" means the
+        # PRIMARY render did not ECHO the code, which is only the same statement as "this
+        # code has nothing" when the render is product-keyed or empty. A warehouse
+        # breakdown answers about the code without ever printing it, so an ungated list
+        # let the ladder append "No stock and no incoming for X, but a PO is placed"
+        # underneath the stock it had just shown - the exact defect `can_state_absence`
+        # exists to prevent, reintroduced one rung further along. Empty here means the
+        # rung never runs, which is the right answer: there is nothing we can honestly
+        # say is absent.
+        "nothing_codes": list(nothing) if can_state_absence else [],
         "nothing_note": nothing_note,
-        "nothing_missing": list(nothing_missing),
+        # Same gate, same reason: the rung reads this to build its probe entities, so
+        # leaving it populated while `nothing_codes` is empty would only invite the
+        # next reader to make the mistake again.
+        "nothing_missing": list(nothing_missing) if can_state_absence else [],
     }
     return out
 
@@ -898,6 +912,10 @@ def crossdomain_render(
 #: with an entry" shape `_CHATBOT_COLUMN_DEFAULTS` uses elsewhere.
 _CROSSDOMAIN_RUNG_TOOL: dict[str, str] = {"purchase_order": "crm_procurement_purchase_orders_placed_list"}
 _CROSSDOMAIN_RUNG_TEAM: dict[str, str] = {"purchase_order": "purchasing"}
+#: What the rung is CALLED in a sentence to a customer. Not `rung.replace("_", " ")`, which
+#: produced "no purchase order for X" where AC-922 asks for "no PO for X" - the customer's
+#: own word for the thing, and the same two letters the question used (review, item 9).
+_CROSSDOMAIN_RUNG_WORD: dict[str, str] = {"purchase_order": "PO"}
 
 
 def _next_crossdomain_rung(origin_domain: Any, *, ladder: dict[str, list[str]] | None) -> str | None:
@@ -1045,7 +1063,7 @@ def _apply_crossdomain_rung(
         # The rung answered NOTHING either - AC-922's wording, one step further than the
         # existing "no X and no Y".
         still_nothing_note = (
-            f"No stock, no incoming and no {rung.replace('_', ' ')} for {', '.join(nothing_codes)}."
+            f"No stock, no incoming and no {_CROSSDOMAIN_RUNG_WORD[rung]} for {', '.join(nothing_codes)}."
         )
         team = _CROSSDOMAIN_RUNG_TEAM.get(rung)
         offer = (
@@ -1070,7 +1088,7 @@ def _apply_crossdomain_rung(
         )
         if still_nothing:
             parts.append(
-                f"No stock, no incoming and no {rung.replace('_', ' ')} for {', '.join(still_nothing)}.{offer}"
+                f"No stock, no incoming and no {_CROSSDOMAIN_RUNG_WORD[rung]} for {', '.join(still_nothing)}.{offer}"
             )
         else:
             parts[-1] = parts[-1] + offer
@@ -1088,6 +1106,26 @@ def _apply_crossdomain_rung(
     block["any"] = True
     block["nothing_note"] = new_note
     block["rung"] = rung
+    # THE OFFER AND THE ROUTING HAVE TO NAME THE SAME TEAM (review, should-fix 8). The
+    # sentence just written says "escalate to purchasing team" because a PO is what
+    # answered, while `tail/pending.escalation_team` reads the TURN's routing - which for
+    # a stock question is `warehouse`. The customer would have been told one team and
+    # handed to another, which is the H64 shape: a discriminator produced in one place and
+    # ignored in the other. The rung is what answered, so the rung's team is the turn's
+    # team from here on; stamped on the parser's own routing, which is the one field
+    # `escalation_team` and `escalate_catalog` both read.
+    rung_team = _CROSSDOMAIN_RUNG_TEAM.get(rung)
+    if rung_team:
+        block["team"] = rung_team
+        if isinstance(parser, dict):
+            routing = parser.get("routing")
+            if not isinstance(routing, dict):
+                routing = {}
+                parser["routing"] = routing
+            routing["suggested_team"] = rung_team
+            # Said out loud on the trace: a turn whose team changed mid-lane with no
+            # record of why is the kind of thing an operator cannot reconstruct.
+            parser["crossdomain_rung_team"] = rung_team
     if trace is not None:
         # A9: the ladder's OWN probe, over exactly the codes the first probe found
         # nothing for - `run_crossdomain` records the first (hard-coded) probe
