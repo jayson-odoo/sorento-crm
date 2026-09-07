@@ -264,11 +264,11 @@ class TestAcX2LinksMoveToTheFirstIncomingLine:
             {"id": picking_line.id},
         ).scalar()
         claim_alloc = env.db.execute(
-            text("SELECT spo_allocation_id FROM scm.order_link_claim WHERE id = :id"),
+            text("SELECT spo_allocation_id FROM order_link_claim WHERE id = :id"),
             {"id": claim.id},
         ).scalar()
         link_alloc = env.db.execute(
-            text("SELECT spo_allocation_id FROM projects.order_inquiry_links WHERE id = :id"),
+            text("SELECT spo_allocation_id FROM order_inquiry_links WHERE id = :id"),
             {"id": link.id},
         ).scalar()
 
@@ -387,7 +387,7 @@ class TestAcX5AGroupWithNoIncomingCounterpartIsKeptNotSuperseded:
         assert str(legacy_p.id) not in rows, "P's group had an incoming line and must be gone"
 
         claim_alloc = env.db.execute(
-            text("SELECT spo_allocation_id FROM scm.order_link_claim WHERE id = :id"),
+            text("SELECT spo_allocation_id FROM order_link_claim WHERE id = :id"),
             {"id": claim.id},
         ).scalar()
         assert str(claim_alloc) == str(legacy_q.id)
@@ -749,7 +749,9 @@ class TestAcX11XlsxThenGrnThenPushMatchesPushThenGrn:
                     }
                 ],
             )
-            assert result_a.records[0].outcome is IngestOutcome.UPDATED, result_a.records[0].errors
+            # AC-X1: a first push whose spo_number holds only ref-less rows
+            # supersedes them - the verdict reads `created`, not `updated`.
+            assert result_a.records[0].outcome is IngestOutcome.CREATED, result_a.records[0].errors
 
             # ---- company B: first push -> GRN ----
             company_b = self._seed_company(db)

@@ -85,12 +85,139 @@ class TestSec1AdoptionPathReceivedGuard:
     """Blocker 1: adoption (`_adopt_lines` -> `_claim`) now runs the same
     `received_guard` the by-ref update path already ran, AND `_write_row`
     clamps `quantity_received` to `max(stored, incoming)` on every path as a
-    second, independent line of defence."""
+    second, independent line of defence.
 
-    def test_sec_1_adoption_path_never_erases_a_received_quantity(self, db):
+    Two shapes, both pinning "a received quantity is never erased by a
+    push", per the captain's 2026-09-07 ruling reconciling this file with
+    `PLAN-spo-xlsx-supersede.md` (D25): a pure xlsx-era spo_number (no ref
+    row anywhere on it) is now a D25 first-push SUPERSEDE, not the old
+    adopt-in-place ladder blocker 1 was written against - so shape (a) below
+    is revised to assert the CARRY-FORWARD outcome, and shape (b) is a new
+    sibling that pins the ORIGINAL adoption-path property exactly, with a
+    ref row present so D25 does not fire.
+    """
+
+    def test_sec_1a_first_push_supersede_carries_the_received_quantity_forward(self, db):
+        """(a) First-push shape: revised 2026-09-07 (D25). This spo_number
+        holds only a ref-less xlsx-era row - no ref row anywhere on it - so
+        the ESB's first-ever push against it is a D25 supersede, not an
+        adoption. The property under test is unchanged (a received quantity
+        is never erased): the surviving AutoCount line must carry the
+        group's received quantity FORWARD (D26) rather than reset it -
+        `quantity_received` 5, `line_status` open, `receipt_status` pending -
+        and no row on this spo_number may end up with a receipt LOWER than
+        it held before the push. The old assertions (row untouched by id,
+        `received_locked` warning, outcome `updated`) belonged to the
+        adopt-in-place ladder this shape no longer takes - see 1(b) for that
+        property, now pinned against a spo_number with a ref row present.
+        """
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         _product_id, product_ref = _seed_product(db)
         spo_number = _code("SPO")
+
+        # A ref-less, xlsx-era row: allocated 10, already received 5 - via a
+        # GRN this test does not need to run to prove the point.
+        row = SPOAllocation(
+            id=str(uuid.uuid4()),
+            company_id=DEFAULT_COMPANY_ID,
+            spo_number=spo_number,
+            spo_line_number=1,
+            product_id=_product_id,
+            allocated_quantity=10,
+            quantity_received=5,
+            receipt_status="pending",
+            line_status="open",
+        )
+        db.add(row)
+        db.flush()
+
+        svc = _shipping_order_svc(db)
+        # The ESB's first-ever push naming this SPO number: no row carries a
+        # ref anywhere on it yet, so D25 supersedes the ref-less row rather
+        # than adopting it in place.
+        result = svc.ingest(
+            "shipping_orders",
+            [
+                {
+                    "source_ref": f"DK-{spo_number}",
+                    "spo_number": spo_number,
+                    "status": "open",
+                    "lines": [
+                        {
+                            "source_ref": f"DK-{spo_number}-L1",
+                            "product_ref": product_ref,
+                            "qty_ordered": "10",
+                            "qty_received": "0",
+                        }
+                    ],
+                }
+            ],
+        )
+        record = result.records[0]
+        assert record.outcome is IngestOutcome.CREATED, record.errors
+
+        db.flush()
+        rows = (
+            db.execute(
+                text(
+                    "SELECT allocated_quantity, quantity_received, line_status, "
+                    "receipt_status, source_ref FROM spo_allocations WHERE spo_number = :n"
+                ),
+                {"n": spo_number},
+            )
+            .mappings()
+            .all()
+        )
+        surviving = [r for r in rows if r["source_ref"]]
+        assert len(surviving) == 1, rows
+        line = surviving[0]
+        assert line["allocated_quantity"] == 10, line
+        assert line["quantity_received"] == 5, line
+        assert line["line_status"] == "open", line
+        assert line["receipt_status"] == "pending", line
+
+        for r in rows:
+            assert r["quantity_received"] >= 5, (
+                "no row on this spo_number may end up with a lower receipt "
+                f"than it held before the push - {r}"
+            )
+
+    def test_sec_1b_adoption_path_with_a_ref_row_present_never_erases_a_received_quantity(
+        self, db
+    ):
+        """(b) Sibling to 1(a), for the security reviewer: with a REF row
+        already on this spo_number (ESB-era - only ONE row here is
+        ref-less), D25's first-push supersede does NOT apply, and the
+        ORIGINAL blocker-1 property is pinned exactly as before the D25
+        revision: the adoption path (`_adopt_lines` -> `_claim`) must never
+        erase a received quantity - the ref-less pool row is left completely
+        unchanged, `received_locked` is warned, and the record's own outcome
+        is `updated`.
+        """
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        _product_id, product_ref = _seed_product(db)
+        spo_number = _code("SPO")
+
+        # An existing ESB-era row (any DtlKey) on the same spo_number -
+        # closed, so it cannot trip the S2 "open row under a different
+        # DocKey" guard - which is what keeps this spo_number OUT of D25's
+        # first-push supersede.
+        ref_row = SPOAllocation(
+            id=str(uuid.uuid4()),
+            company_id=DEFAULT_COMPANY_ID,
+            spo_number=spo_number,
+            spo_line_number=2,
+            product_id=_product_id,
+            allocated_quantity=3,
+            quantity_received=3,
+            receipt_status="fully_received",
+            line_status="closed",
+            source_system="autocount",
+            source_ref=f"DK-{spo_number}-OLD",
+            source_doc_ref=f"DK-{spo_number}-OLDDOC",
+        )
+        db.add(ref_row)
+        db.flush()
 
         # A ref-less, xlsx-era pool row: allocated 10, already received 5 -
         # via a GRN this test does not need to run to prove the point.
@@ -109,11 +236,11 @@ class TestSec1AdoptionPathReceivedGuard:
         db.flush()
 
         svc = _shipping_order_svc(db)
-        # The ESB's first-ever push naming this SPO number: a ref-less line
-        # (no existing row carries this source_ref yet, so it goes through
-        # adoption, not the by-ref path) that would erase the receipt if
-        # nothing guarded it - allocated STAYS at 10 (never shrinks), only
-        # `qty_received` regresses to 0.
+        # A push naming this SPO number under a fresh DocKey: a ref-less
+        # line (no existing row carries this source_ref yet, so it goes
+        # through adoption, not the by-ref path) that would erase the
+        # receipt if nothing guarded it - allocated STAYS at 10 (never
+        # shrinks), only `qty_received` regresses to 0.
         result = svc.ingest(
             "shipping_orders",
             [
