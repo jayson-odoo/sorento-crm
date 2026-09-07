@@ -153,7 +153,9 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
     safety ceiling of GROUPS_CEILING rows with ``groups_truncated`` = how many
     were cut, so a runaway filter cannot blow the payload). ``products`` stays
     as the per-product totals - the header line above the groups; the consumer
-    never sums rows itself.
+    never sums rows itself. Both also carry ``order_date_from``/``order_date_to`` -
+    the MIN/MAX ``order_date`` across EVERY DO in the row, delivered or not
+    (unlike ``delivered_from``/``to``, which is the delivered subset only).
 
     Computed ONLY when the caller asked for it (``include_summary=true`` on the
     endpoint - n8n sends it when the parser saw a quantity question: "how many",
@@ -268,6 +270,9 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
                 # exact per-product customer count - the presenter must not derive
                 # it from a groups[] slice that the ceiling may have cut
                 func.count(func.distinct(name_col)),
+                # unfiltered order_date span - EVERY DO in the row, delivered or not
+                func.min(Order.order_date),
+                func.max(Order.order_date),
             )
             .select_from(OrderLine)
             .join(Order, Order.id == OrderLine.order_id)
@@ -293,8 +298,10 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
                 "pending_quantity": _plain_number(pq) or 0,
                 **({"delivered_from": pf.isoformat(), "delivered_to": pt.isoformat()}
                    if (pf is not None and pt is not None) else {}),
+                **({"order_date_from": odf.isoformat(), "order_date_to": odt.isoformat()}
+                   if (odf is not None and odt is not None) else {}),
             }
-            for code, oc, dq, pq, pf, pt, cc in prod_rows[:GROUPS_CEILING]
+            for code, oc, dq, pq, pf, pt, cc, odf, odt in prod_rows[:GROUPS_CEILING]
         ]
         if len(prod_rows) > GROUPS_CEILING:
             summary["products_truncated"] = True
@@ -311,6 +318,9 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
                 func.sum(OrderLine.quantity).filter(pending),
                 func.min(Order.actual_delivery_date).filter(delivered),
                 func.max(Order.actual_delivery_date).filter(delivered),
+                # unfiltered order_date span - EVERY DO in the row, delivered or not
+                func.min(Order.order_date),
+                func.max(Order.order_date),
             )
             .select_from(OrderLine)
             .join(Order, Order.id == OrderLine.order_id)
@@ -336,8 +346,10 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
                 "pending_quantity": _plain_number(pq) or 0,
                 **({"delivered_from": gf.isoformat(), "delivered_to": gt.isoformat()}
                    if (gf is not None and gt is not None) else {}),
+                **({"order_date_from": godf.isoformat(), "order_date_to": godt.isoformat()}
+                   if (godf is not None and godt is not None) else {}),
             }
-            for cname, code, oc, dq, pq, gf, gt in grp_rows[:GROUPS_CEILING]
+            for cname, code, oc, dq, pq, gf, gt, godf, godt in grp_rows[:GROUPS_CEILING]
         ]
         if len(grp_rows) > GROUPS_CEILING:
             # Only the ceiling tells us "more" - the exact remainder would be
@@ -613,8 +625,14 @@ class OrderService:
                     )
                 )
             )
+            # Product-code match: the DO grid free-text search box should also
+            # find orders by a line's product code (product name/description
+            # stays reserved for the advanced product_query filter below).
+            product_ids = self.db.query(Order.id).filter(
+                Order.lines.any(OrderLine.product.has(Product.product_code.ilike(term)))
+            )
             query_filter = Order.id.in_(
-                direct_ids.union(customer_ids).union(transporter_ids)
+                direct_ids.union(customer_ids).union(transporter_ids).union(product_ids)
             )
         if customer_query and (customer_query := (customer_query or "").strip()):
             customer_clause, _ = resolve_via_embedding_then_ilike(
