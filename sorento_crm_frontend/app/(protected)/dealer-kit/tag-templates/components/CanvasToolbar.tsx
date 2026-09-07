@@ -13,6 +13,7 @@ import {
   Banknote,
   Barcode,
   Boxes,
+  ChevronDown,
   Copy,
   Expand,
   Group,
@@ -37,6 +38,7 @@ import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 
 /** Which pointer tool is active (D35). */
@@ -131,6 +133,49 @@ export function ToolbarButton({
         {shortcut && <span className="ml-2 text-muted-foreground">{shortcut}</span>}
       </TooltipContent>
     </Tooltip>
+  );
+}
+
+/**
+ * `ToolbarButton`'s dropdown sibling (S6): the Template menu opens a
+ * `DropdownMenu` instead of firing a click straight away, with a small
+ * caret added so the trigger still reads as this button, just one that
+ * opens a menu - not a different kind of control in the row.
+ */
+export function ToolbarDropdownButton({
+  icon: Icon,
+  label,
+  disabled,
+  children,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <DropdownMenu>
+      <Tooltip delayDuration={300}>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 w-auto shrink-0 gap-0.5 px-1.5"
+              disabled={disabled}
+              aria-label={label}
+            >
+              <Icon className="size-4" />
+              <ChevronDown className="size-3" />
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="text-xs">
+          {label}
+        </TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end">{children}</DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

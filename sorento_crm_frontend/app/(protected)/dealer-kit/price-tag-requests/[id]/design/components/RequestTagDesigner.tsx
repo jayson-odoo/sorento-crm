@@ -69,6 +69,7 @@ import { IMPOSITION_PRESETS, familyLabel } from '@/lib/dealer-kit/tag-template-t
 import { lineFamily } from '@/lib/dealer-kit/line-family';
 import {
   applyDesignToAllLines,
+  applyDesignToSiblings,
   autoArrange,
   defaultTemplateFor,
   normaliseImpositionPreset,
@@ -86,13 +87,18 @@ import {
 } from '@/lib/dealer-kit/request-tags';
 import { formatTagPrice } from '@/lib/dealer-kit/price-badge';
 import { TagCanvasEditor } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
-import { ToolbarButton } from '@/app/(protected)/dealer-kit/tag-templates/components/CanvasToolbar';
+import {
+  ToolbarButton,
+  ToolbarDropdownButton,
+} from '@/app/(protected)/dealer-kit/tag-templates/components/CanvasToolbar';
+import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { useKitLibrary } from '@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings';
 import { TagSizeControl } from '@/app/(protected)/dealer-kit/components/TagSizeControl';
 import { useAutosave } from '@/hooks/useAutosave';
 import { ArrangeSheetView } from './ArrangeSheetView';
 import { TemplatePickDialog } from './TemplatePickDialog';
 import { SaveAsTemplateDialog } from './SaveAsTemplateDialog';
+import { UpdateTemplateDialog } from './UpdateTemplateDialog';
 import {
   resolveRequestLines,
   transitionPriceTagRequest,
@@ -100,7 +106,11 @@ import {
   type PriceTagRequestDetail,
   type PriceTagRequestLine,
 } from '../../../../services/priceTagRequestService';
-import { listPublishedTemplates } from '../../../../services/tagTemplateService';
+import {
+  listPublishedTemplates,
+  publishTemplate,
+  updateTemplate as updateTagTemplate,
+} from '../../../../services/tagTemplateService';
 import { FocusShell, FocusToggle } from '../../../../components/FocusMode';
 import { AutosaveIndicator } from '../../../../components/AutosaveIndicator';
 import {
@@ -185,6 +195,9 @@ export function RequestTagDesigner({
   const [pickerLineId, setPickerLineId] = useState<string | null>(null);
   /** "Save as template" (S4, D1): the currently designed tag, published in one go. */
   const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
+  /** "Update <template>" (S6, D6): republish the source template from this line's design. */
+  const [updateTemplateOpen, setUpdateTemplateOpen] = useState(false);
+  const [updatingTemplate, setUpdatingTemplate] = useState(false);
 
   /**
    * The one bulk apply worth undoing (S5, AC-S5-3): "Apply this design to all
@@ -814,14 +827,91 @@ export function RequestTagDesigner({
     [router, loadTemplates],
   );
 
+  // -- Update template (S6, D6) -------------------------------------------------
+
+  // Only PUBLISHED templates are eligible - `templates` is already
+  // `listPublishedTemplates()`'s own result, so a template someone deleted
+  // or never published resolves to null and the Template menu offers only
+  // "Save as new template" (AC-S6-1).
+  const updateEligibleTemplate = selectedTag
+    ? templates.find((t) => t.id === selectedTag.template_id) ?? null
+    : null;
+  const updateSiblingCount =
+    selectedTag && updateEligibleTemplate
+      ? request.lines.filter(
+          (l) =>
+            l.id !== selectedLineId && tags[l.id]?.template_id === updateEligibleTemplate.id,
+        ).length
+      : 0;
+  const updateNextVersionNo = (updateEligibleTemplate?.published_version_no ?? 0) + 1;
+
+  const handleUpdateTemplate = useCallback(
+    async (applyToSiblings: boolean) => {
+      if (!selectedTag || !selectedLineId || !updateEligibleTemplate) return;
+      setUpdatingTemplate(true);
+      try {
+        // Existing PUT (S1's updateTemplate carries print_size too now) then
+        // the existing publish route - no new backend for this slice.
+        await updateTagTemplate(updateEligibleTemplate.id, {
+          layers: selectedTag.layers,
+          width_mm: selectedTag.width_mm,
+          height_mm: selectedTag.height_mm,
+        });
+        const published = await publishTemplate(
+          updateEligibleTemplate.id,
+          `Updated from ${request.doc_number}`,
+        );
+        if (applyToSiblings && updateSiblingCount > 0) {
+          bulkUndoRef.current = tags;
+          setTags(
+            applyDesignToSiblings(
+              tags,
+              request.lines,
+              selectedLineId,
+              updateEligibleTemplate.id,
+              newTagId,
+            ),
+          );
+          toast.success(
+            `Updated "${updateEligibleTemplate.name}" (v${published.published_version_no}) and applied to ${updateSiblingCount} other line${updateSiblingCount === 1 ? '' : 's'}`,
+            { action: { label: 'Undo', onClick: undoBulkApply } },
+          );
+        } else {
+          toast.success(
+            `Updated "${updateEligibleTemplate.name}" (v${published.published_version_no})`,
+          );
+        }
+        // Refetches the published list (AC-S6-3): the Template menu, the
+        // size presets and the "Use template..." picker all read from it.
+        loadTemplates();
+        setUpdateTemplateOpen(false);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Could not update the template');
+      } finally {
+        setUpdatingTemplate(false);
+      }
+    },
+    [
+      selectedTag,
+      selectedLineId,
+      updateEligibleTemplate,
+      updateSiblingCount,
+      tags,
+      request.lines,
+      request.doc_number,
+      loadTemplates,
+      undoBulkApply,
+    ],
+  );
+
   // -- Render ----------------------------------------------------------------
 
   // The canvas toolbar's own right-end group (S7): Full screen, the
-  // Template dropdown (still today's "Save as template" until S6 turns it
-  // into one) and Save. Only reaches the screen in design mode - it is
-  // handed to TagCanvasEditor, which only mounts there; arrange mode keeps
-  // its own Full screen + Save in the request bar below, since
-  // ArrangeSheetView has no canvas toolbar of its own to move them into.
+  // Template dropdown (S6) and Save. Only reaches the screen in design
+  // mode - it is handed to TagCanvasEditor, which only mounts there;
+  // arrange mode keeps its own Full screen + Save in the request bar
+  // below, since ArrangeSheetView has no canvas toolbar of its own to
+  // move them into (AC-S7-5 holds for free the same way).
   const toolbarTrailing = (
     <>
       <ToolbarButton
@@ -830,12 +920,16 @@ export function RequestTagDesigner({
         onClick={() => setFocus(!focus)}
         active={focus}
       />
-      <ToolbarButton
-        icon={LayoutTemplate}
-        label="Save as template"
-        onClick={() => setSaveTemplateOpen(true)}
-        disabled={!selectedTag}
-      />
+      <ToolbarDropdownButton icon={LayoutTemplate} label="Template" disabled={!selectedTag}>
+        {updateEligibleTemplate && (
+          <DropdownMenuItem onSelect={() => setUpdateTemplateOpen(true)}>
+            Update &quot;{updateEligibleTemplate.name}&quot;
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem onSelect={() => setSaveTemplateOpen(true)}>
+          Save as new template
+        </DropdownMenuItem>
+      </ToolbarDropdownButton>
       <ToolbarButton
         icon={saving ? Loader2 : Save}
         iconClassName={saving ? 'animate-spin' : undefined}
@@ -1072,6 +1166,18 @@ export function RequestTagDesigner({
         defaultFamily={saveTemplateDefaultFamily}
         onCreated={handleTemplateCreated}
       />
+
+      {updateEligibleTemplate && (
+        <UpdateTemplateDialog
+          open={updateTemplateOpen}
+          onOpenChange={setUpdateTemplateOpen}
+          templateName={updateEligibleTemplate.name}
+          nextVersionNo={updateNextVersionNo}
+          siblingCount={updateSiblingCount}
+          saving={updatingTemplate}
+          onConfirm={handleUpdateTemplate}
+        />
+      )}
     </div>
     </FocusShell>
   );
