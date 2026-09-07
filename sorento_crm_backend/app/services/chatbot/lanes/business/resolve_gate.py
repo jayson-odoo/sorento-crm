@@ -244,6 +244,130 @@ def retype_shipment_miss(
     return True
 
 
+_BARE_MEMBER_OFFER_TYPES = ("product", "customer")
+_BARE_REPLY_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def resolve_bare_reply_under_member_offer(
+    parser: dict[str, Any],
+    *,
+    ctx: dict[str, Any],
+    services: ResolveGateServices,
+    dry_run: bool = False,
+) -> bool:
+    """A bare reply the parser extracted NOTHING from, under an open `member_offer`,
+    narrows the carried pair by asking the RESOLVER - never by pattern-matching the
+    customer's own text. Mutates `parser` (== `ctx.parse.output`) in place.
+
+    Owner console pass 5, item B2 (H80/AC-829, closed per review round 1 with #698's own
+    rule restated: "the whole message goes to the resolver as one token, the resolver
+    types it"). Turn 6ea9fd1a: "rpacc" after a working "last month" (hanlim/srtwc286)
+    resolves to NOTHING in `ctx.parse.output.entities` (`[]`) - the parser has no verb,
+    no code shape it recognises, nothing - so nothing downstream of the parser can invent
+    a product entity for it, and the carried pair rides through the entity-op executor
+    unchanged (`output_exchange`'s own filter-modification arm, `member_offer_filter_
+    modification`). Production's real "RPACC" is a literal product code (two rows, one
+    per company, same-code cross-company duplicates - `d7eeb622-...` Mocha,
+    `c18fa9ea-...` Sorento), NOT a suffix of any code the offer's own
+    `routing_companies[].codes` carries (measured: review round 1, B3 - the first cut of
+    this fix invented a "SRTWC286-SH-RPACC" shape no capture's `routing_companies` has).
+    Only the resolver can tell a real code from junk text, so this asks it - one extra
+    probe call, `allowed_entity_types=["product", "customer"]` (the two the carried pair
+    spans), OR-mode, `fallback_to_all_types=True` (the resolver decides, same contract
+    every other caller of it gets).
+
+    * A single entity_type / canonical_code across every match (same-code cross-company
+      duplicates collapse to ONE answer, the same rule `gate.py`'s own OR-mode classifier
+      uses for a normal token) REPLACES the carried entity of that type, `current_message:
+      True`, and promotes `message_type` to `business_query` if it was `casual` - the
+      SAME promotion the pre-existing "bare entity under an open member roster" block
+      (AC-816 rule 3) already makes, and for the same reason: a `casual` message_type left
+      in place routes the rest of the turn through the tail's `escalate-catalog` /
+      `cs-offer-gate` as an UNANSWERED offer, even once the query has just been answered.
+    * Anything else (no match, a genuinely ambiguous match, a type outside the pair) -
+      changes NOTHING. The carried pair rides through as it always did, and the EXISTING
+      pipeline answers not-found off it - never `offer_hold`, because `output_exchange`'s
+      own ladder already decided this turn is a filter modification (a working date
+      window survives from "last month") before `resolve_gate` ever runs; `offer_hold`'s
+      own precondition (NO date, NO entity at all) is a different, narrower shape, tested
+      as a regression guard in `test_pass5_item2_...py::TestB3...`.
+
+    Bare = the whole message, capped at 4 words (`co_company_pick`'s own bound, above) -
+    a longer message is a real sentence, not a code, and is left to the ladder's other
+    arms. Never restricted to a single-word CODE SHAPE: the customer's own words decide
+    nothing here, the resolver does.
+    """
+    from app.services.chatbot.head.output_exchange import offer_is_open
+
+    prev = _prev_variables(ctx)
+    if jsc.get(prev, "selection_context") != "member_offer" or not offer_is_open(prev):
+        return False
+    entities = jsc.array(parser.get("entities"))
+    if any(jsc.truthy(e) and jsc.get(e, "current_message") is True for e in entities):
+        return False  # this turn named something of its own - not a bare reply
+    message = jsc.get(jsc.get(jsc.get(ctx, "text"), "message"), "message")
+    raw = jsc.js_string(jsc.get(message, "text") or "").strip()
+    words = _BARE_REPLY_WORD_RE.findall(raw.lower())
+    if not raw or not words or len(words) > 4:
+        return False
+
+    body: dict[str, Any] = {
+        "query": raw,
+        "tokens": [raw],
+        "match_mode": "or",
+        "allowed_entity_types": list(_BARE_MEMBER_OFFER_TYPES),
+        "access_levels": [],
+        "domain": jsc.get(parser, "domain_hint") if jsc.truthy(jsc.get(parser, "domain_hint")) else "",
+        "fallback_to_all_types": True,
+        "limit": 15,
+        "spec_fallback": True,
+        "understand_phrase": True,
+    }
+    if dry_run:
+        body["dry_run"] = True
+    result = services.resolve_entity(body)
+    resolutions = jsc.get(result, "resolutions")
+    matches = jsc.array(jsc.get(resolutions[0], "matches")) if jsc.is_array(resolutions) and resolutions else []
+    if not matches:
+        return False
+
+    # Same-code collapse, gate.py's own rule for a normal token: several matches that
+    # agree on BOTH entity_type and canonical_code are cross-company duplicates of ONE
+    # answer, not a choice. Anything else (a genuine choice, or a mix of types) is left
+    # alone - guessing which one the customer meant is not this function's job.
+    types = {jsc.js_string(jsc.get(m, "entity_type")).lower() for m in matches}
+    codes = {jsc.js_string(jsc.get(m, "canonical_code") or "").lower() for m in matches}
+    if len(types) != 1 or len(codes) != 1:
+        return False
+    matched_type = next(iter(types))
+    if matched_type not in _BARE_MEMBER_OFFER_TYPES or not next(iter(codes)):
+        return False
+
+    canonical = jsc.get(matches[0], "canonical_code")
+    new_entity = {
+        "raw": raw,
+        "hint": matched_type,
+        "canonical_code": canonical,
+        "current_message": True,
+        "confident": True,
+    }
+    out_entities: list[Any] = []
+    replaced = False
+    for e in entities:
+        if not replaced and jsc.lower_or_empty(jsc.get(e, "hint")) == matched_type:
+            out_entities.append(new_entity)
+            replaced = True
+        else:
+            out_entities.append(e)
+    if not replaced:
+        out_entities.append(new_entity)
+    parser["entities"] = out_entities
+    parser["bare_member_offer_entity_resolved"] = matched_type  # diagnostic
+    if parser.get("message_type") == "casual":
+        parser["message_type"] = "business_query"
+    return True
+
+
 # --------------------------------------------------------------------------- #
 # get-access-types -> Aggregate
 # --------------------------------------------------------------------------- #
@@ -595,6 +719,13 @@ def run(
                     "tier_gate": _snapshot(tier_gate_out),
                 },
             )
+
+    # ── a bare reply under an open member offer narrows the carried pair (item B2) ────
+    # Placed BEFORE resolve-entity, deliberately: it MUTATES `parser["entities"]`, and the
+    # main resolve-entity call two lines down reads that same object to build its own
+    # tokens - so a narrowed product/customer rides the ONE round trip the rest of the
+    # turn makes, exactly as a customer's own explicit entity would have.
+    resolve_bare_reply_under_member_offer(parser, ctx=ctx, services=services, dry_run=dry_run)
 
     # ── resolve-entity ──────────────────────────────────────────────────────
     resolved = services.resolve_entity(resolve_entity_body(ctx, dry_run=dry_run))

@@ -2,14 +2,18 @@ import { toast as sonnerToast } from 'sonner';
 import type { ExternalToast } from 'sonner';
 
 /**
- * The one toast standard (M6-04).
+ * The one toast standard (M6-04, revised 2026-09-07).
  *
- * A success clears itself - the reader already saw it land, and a stack of
- * toasts that never age out is its own kind of noise. An error does the
- * opposite: it waits for the reader to dismiss it, because a network failure
- * that auto-dismissed while the reader was looking away used to read as
- * "nothing happened" rather than "it failed" - the close button is what makes
- * "wait for me" legible instead of stuck.
+ * Every toast auto-dismisses - a success clears itself fast (4s), an error
+ * sits a little longer (5s) so it is readable, and the close button covers
+ * "I want it gone before the timer." M6-04 originally made errors sticky
+ * (`duration: Infinity`) on the theory that an auto-dismissed error while the
+ * reader looked away read as "nothing happened"; in practice a failing
+ * background refetch (window focus, `refetchInterval` polling, an
+ * invalidation) re-raised that toast every cycle, so a sticky error toast
+ * never seemed to leave the screen at all. `providers/query-provider.tsx`
+ * carries the fix for the repeat case (only the first failure of a given
+ * query toasts); every error toast in the app just needs to not be stuck.
  *
  * Every call site imports `toast` from HERE, never from `'sonner'` directly
  * (`lib/toast.inventory.test.ts` holds the floor); `components/ui/sonner.tsx`
@@ -22,13 +26,14 @@ import type { ExternalToast } from 'sonner';
  *
  * `promise`, `custom` and `warning` are deliberate raw passthroughs, not
  * bugs: nothing in the app calls `toast.promise` today (its error branch
- * would need to unwrap a string/JSX/function result to make sticky, which is
- * machinery with no caller to justify it - see PRINCIPLES.md "simplest thing
- * that works"), and every live `toast.custom` call site already sets its own
- * `duration`/`close` per call (query-provider's error path included), which
- * is the same "caller wins" contract this file enforces for `success`/`error`.
+ * would need to unwrap a string/JSX/function result, which is machinery with
+ * no caller to justify it - see PRINCIPLES.md "simplest thing that works"),
+ * and every live `toast.custom` call site already sets its own `duration`/
+ * `close` per call (query-provider's error path included), which is the same
+ * "caller wins" contract this file enforces for `success`/`error`.
  */
 const SUCCESS_DURATION_MS = 4000;
+const ERROR_DURATION_MS = 5000;
 
 type Message = Parameters<typeof sonnerToast>[0];
 
@@ -37,7 +42,7 @@ function success(message: Message, data?: ExternalToast) {
 }
 
 function error(message: Message, data?: ExternalToast) {
-  return sonnerToast.error(message, { duration: Infinity, closeButton: true, ...data });
+  return sonnerToast.error(message, { duration: ERROR_DURATION_MS, closeButton: true, ...data });
 }
 
 export const toast = Object.assign(

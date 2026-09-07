@@ -546,6 +546,12 @@ DIVERGENCES: list[Divergence] = [
             # over a `suggest_offer` roster is merged through `apply_dym_pick` instead of
             # replacing the scope. n8n has no such arm either.
             ("output", "suggest_offer_pick_merged"),
+            # Console pass 5, item B2 (H80/AC-829): stamped by
+            # `resolve_gate.resolve_bare_reply_under_member_offer` when a bare reply under
+            # an open member_offer resolved against the RESOLVER and replaced a half of
+            # the carried pair. Same class as the five above - a key no capture can
+            # contain, because `sub-resolve-and-gate` has no equivalent arm at all.
+            ("output", "bare_member_offer_entity_resolved"),
         ),
     ),
 ]
@@ -770,6 +776,90 @@ ESCALATION_ROUTES_BY_STAFF_LOOKUP = Divergence(
         "a named person routes to their own team by staff lookup, and a null-team ask with "
         "a previous routing asks instead of inheriting it. Live has neither gate. Not "
         "fixture-visible: the gate is in `run()`, and the four graded nodes are unchanged."
+    ),
+)
+
+
+# Owner console pass 5, item B1 (7 Sep 2026, H79/AC-828). `entity_op == "reuse"`'s
+# `broaden_axis == "date"` wipe unconditionally nulled `date_filter_start` /
+# `date_filter_end` / `date_mode` whenever `broaden_axis` was `"date"`, even when the
+# SAME parser output already carried a concrete date this turn (prod turns e4381b0d /
+# 98526b81, "last month" under an open member_offer, `user_goal: "trying to specify the
+# date range as last month"`). The wipe now only fires when the turn ALSO supplied no
+# date of its own (gated on `has_current_date`, already computed one line above and
+# already used by the sibling `elif`, just never consulted by this one).
+#
+# Not fixture-visible: no captured `output_exchange` fixture anywhere in the corpus
+# carries `broaden_axis: "date"` at all (grepped the whole corpus, zero hits), so no
+# replay can show either the old or the new behaviour - the shape reached production
+# without ever being captured. Pinned by
+# tests/chatbot/test_pass5_item2_member_offer_business_query_filter_route.py::
+# TestB1LastMonthUnderMemberOfferKeepsTheParsersOwnDateFilter.
+BROADEN_AXIS_DATE_KEEPS_A_CONCRETE_DATE_THIS_TURN = Divergence(
+    node="output_exchange",
+    fixture=None,
+    hazard="H79 (owner console pass 5, 7 Sep 2026)",
+    reason=(
+        "broaden_axis == 'date' no longer wipes date_filter_start/end/mode when the "
+        "SAME parser output already set a concrete date this turn. Not fixture-visible: "
+        "no capture in the corpus carries broaden_axis: 'date' at all."
+    ),
+)
+
+
+# Owner console pass 5, item B2 (7 Sep 2026, H80/AC-829, D11 inventory row R-b). A bare
+# reply under an open `member_offer` that the parser extracted NOTHING from (prod turn
+# 6ea9fd1a, "rpacc" - `entities: []`) is now sent to the RESOLVER as one token
+# (`resolve_gate.resolve_bare_reply_under_member_offer`, between the resolver seam and
+# the gate) and, on an unambiguous match, REPLACES the matching half of the carried
+# entity pair - a mechanism `sub-resolve-and-gate` has no equivalent of at all.
+#
+# Not fixture-visible: this is a NEW resolver round trip with no n8n counterpart, so no
+# `sub-resolve-and-gate` capture can show it either firing or not - the node's own
+# graded shape (`ctx_resolved.ctx.parse.output.entities`) only diverges on a turn this
+# precise precondition matches (open member_offer, zero entities named this turn, a
+# bare reply of four words or fewer), and the full corpus replay stays green because no
+# capture has that shape. Pinned by
+# tests/chatbot/test_pass5_item2_member_offer_business_query_filter_route.py::
+# TestB2ABareProductCodeUnderTheOfferNarrowsTheProduct.
+BARE_MEMBER_OFFER_REPLY_ASKS_THE_RESOLVER = Divergence(
+    node="sub-resolve-and-gate",
+    fixture=None,
+    hazard="H80 (owner console pass 5, 7 Sep 2026)",
+    reason=(
+        "a bare reply under an open member_offer with zero entities of its own is sent "
+        "to the resolver as one token and replaces the matching half of the carried "
+        "pair on an unambiguous match. n8n has no such arm. Not fixture-visible: no "
+        "capture has the precondition shape (open offer, zero entities, a short bare "
+        "reply)."
+    ),
+)
+
+
+# Issue #715 (H77/AC-825, closed console pass 5, 7 Sep 2026). `gate.py`'s own "A PINNED
+# PICK WINS OVER FUZZY RE-RESOLUTION" mechanism widened `pin_types` / `pin_bases` /
+# `pin_codes` and `_keep`'s own uuid check from this-turn-only `pins` / `pin_uuids` to
+# carried-or-current `pins_all` / `pin_uuids_all` - a carried customer pick now REPLACES
+# the resolver's own re-resolved rows for a shared debtor code, never merges with them.
+#
+# Not fixture-visible: reachable only when a carried customer pin's debtor code is
+# shared by MULTIPLE distinct accounts the resolver's bare re-search returns (production
+# scale - one code shared by 99 rows); no seedable-at-test-scale capture can show it,
+# and no corpus fixture happens to carry that shape either (the 182 graded
+# `disallowed-entity-gate` captures are unchanged). Pinned by
+# tests/chatbot/test_pass4_item2_last_month_keeps_customer_scope.py::
+# TestACarriedCustomerPickIsPinnedAtTheGateNotAtTheResolver.
+CARRIED_CUSTOMER_PIN_REPLACES_SHARED_DEBTOR_CODE_ROWS = Divergence(
+    node="disallowed-entity-gate",
+    fixture=None,
+    hazard="H77 (issue #715, closed console pass 5, 7 Sep 2026)",
+    reason=(
+        "a carried customer pin's filter (pin_types / pin_bases / pin_codes / _keep's "
+        "uuid check) now reads pins_all / pin_uuids_all instead of this-turn-only pins / "
+        "pin_uuids, so the resolver's own wrong rows for a shared debtor code are "
+        "REPLACED by the picked uuid. Not fixture-visible: no corpus capture carries a "
+        "carried pin over a debtor code shared by several distinct resolver rows; the "
+        "182 graded disallowed-entity-gate captures are unchanged."
     ),
 )
 

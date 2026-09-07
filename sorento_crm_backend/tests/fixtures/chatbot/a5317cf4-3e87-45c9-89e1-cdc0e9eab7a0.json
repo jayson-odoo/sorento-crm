@@ -1,0 +1,521 @@
+{
+ "source": "n8n execution runData (clone Hnd4S8SVH6pftjxs); request_item = popped item chat-turn posted; response = chat-turn output verbatim",
+ "n8n_exec_id": "15527110",
+ "started_at": "2026-09-07T05:46:06.949Z",
+ "why": "#713 run1 biz-attach-d photo request -> 1 action, send_attachments missing",
+ "turn_id": "a5317cf4-3e87-45c9-89e1-cdc0e9eab7a0",
+ "request_item": {
+  "mode": "uac",
+  "test_run_id": "reg-2026-09-07-c4b8e070-biz-attach-d",
+  "contact": {
+   "id": 437264483,
+   "firstName": "Jayson",
+   "lastName": "",
+   "phone": "+60123456789",
+   "countryCode": "MY",
+   "status": "open",
+   "custom_fields": [
+    {
+     "name": "is_human_intervened",
+     "value": "false"
+    },
+    {
+     "name": "is_allowed_stock",
+     "value": "true"
+    },
+    {
+     "name": "is_allowed_voice",
+     "value": "true"
+    }
+   ]
+  },
+  "message": {
+   "event_type": "message.received",
+   "contact": {
+    "id": 437264483,
+    "firstName": "Jayson",
+    "lastName": "",
+    "phone": "+60123456789",
+    "countryCode": "MY",
+    "status": "open",
+    "custom_fields": [
+     {
+      "name": "is_human_intervened",
+      "value": "false"
+     },
+     {
+      "name": "is_allowed_stock",
+      "value": "true"
+     },
+     {
+      "name": "is_allowed_voice",
+      "value": "true"
+     }
+    ]
+   },
+   "message": {
+    "messageId": 1788759966833,
+    "contactId": 437264483,
+    "channelId": 453209,
+    "traffic": "incoming",
+    "timestamp": 1788759966833,
+    "message": {
+     "type": "text",
+     "text": "send me the photo of SRTWC8517-SH-UF"
+    }
+   }
+  },
+  "previous_conversation_state": {}
+ },
+ "response": {
+  "turn_id": "a5317cf4-3e87-45c9-89e1-cdc0e9eab7a0",
+  "is_test": true,
+  "ctx": {
+   "contact": {
+    "id": 437264483,
+    "firstName": "Jayson",
+    "lastName": "",
+    "phone": "+60123456789",
+    "countryCode": "MY",
+    "status": "open",
+    "custom_fields": [
+     {
+      "name": "is_human_intervened",
+      "value": "false"
+     },
+     {
+      "name": "is_allowed_stock",
+      "value": "true"
+     },
+     {
+      "name": "is_allowed_voice",
+      "value": "true"
+     }
+    ]
+   },
+   "text": {
+    "event_type": "message.received",
+    "contact": {
+     "id": 437264483,
+     "firstName": "Jayson",
+     "lastName": "",
+     "phone": "+60123456789",
+     "countryCode": "MY",
+     "status": "open",
+     "custom_fields": [
+      {
+       "name": "is_human_intervened",
+       "value": "false"
+      },
+      {
+       "name": "is_allowed_stock",
+       "value": "true"
+      },
+      {
+       "name": "is_allowed_voice",
+       "value": "true"
+      }
+     ]
+    },
+    "message": {
+     "messageId": 1788759966833,
+     "contactId": 437264483,
+     "channelId": 453209,
+     "traffic": "incoming",
+     "timestamp": 1788759966833,
+     "message": {
+      "type": "text",
+      "text": "send me the photo of SRTWC8517-SH-UF"
+     }
+    }
+   },
+   "session": {
+    "respond_io_id": "437264483",
+    "session_vars": {
+     "variables": {},
+     "user_response": "I read Sorento, SRTWC8349-RL (product) and SRT86-MBT (product) from that photo.\n\nHere's what you want:\n• product: SRT86-MBT (+1 more)\n\nBut no incoming matched these.\nBut here are the stock details for the requested products:\n\n- *Product Code:* SRTWC8349-RL-HP\n*Total:* 97\n*BRW:* 73\n*MWH:* 24\n\n- *Product Code:* SRT86-MBT\n*Total:* 0\n⚠️  *(PRODUCT DISCONTINUED)*\n\nWould you like me to escalate to purchasing team?"
+    }
+   },
+   "parse": {
+    "output": {
+     "message_type": "business_query",
+     "intent_hint": "check_product_attachment",
+     "domain_hint": "product_attachment",
+     "scope_intent": null,
+     "is_affirmative": null,
+     "user_goal": "trying to get the photo of SRTWC8517-SH-UF",
+     "access_levels": [],
+     "broaden_axis": null,
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [
+      {
+       "raw": "SRTWC8517-SH-UF",
+       "hint": "product",
+       "canonical_code": null,
+       "current_message": true,
+       "confident": true
+      },
+      {
+       "raw": "photo",
+       "hint": "attachment_type",
+       "canonical_code": "photo",
+       "current_message": true,
+       "confident": true
+      }
+     ],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": "marketing_product",
+      "suggested_agent": "general_enquiries"
+     },
+     "escalation": {
+      "is_escalation_confirmation": false
+     },
+     "domain_signal_source": "intent_explicit",
+     "scope_exclusive_applied": false,
+     "entity_op_applied": "replace_combine",
+     "query_brands": [],
+     "entities_filtered": false,
+     "entities_emptied_by_filter": false
+    },
+    "_parser_raw": {
+     "message_type": "business_query",
+     "intent_hint": "check_product_attachment",
+     "domain_hint": "product_attachment",
+     "scope_intent": null,
+     "is_affirmative": null,
+     "user_goal": "trying to get the photo of SRTWC8517-SH-UF",
+     "access_levels": [],
+     "broaden_axis": null,
+     "date_mode": null,
+     "date_filter_start": null,
+     "date_filter_end": null,
+     "match_mode": "and",
+     "demand_qty": null,
+     "entities": [
+      {
+       "raw": "SRTWC8517-SH-UF",
+       "hint": "product",
+       "canonical_code": null,
+       "current_message": true,
+       "confident": true
+      },
+      {
+       "raw": "photo",
+       "hint": "attachment_type",
+       "canonical_code": "photo",
+       "current_message": true,
+       "confident": true
+      }
+     ],
+     "entity_op": "replace_combine",
+     "scope_exclusive": false,
+     "requested_attributes": [],
+     "contains_flyer": false,
+     "reference_positions": [],
+     "reference_target": null,
+     "person_mention": null,
+     "is_active": null,
+     "order_status": null,
+     "correction": false,
+     "routing": {
+      "suggested_team": "marketing_product",
+      "suggested_agent": "general_enquiries"
+     },
+     "escalation": {
+      "is_escalation_confirmation": false,
+      "company_pick": null
+     }
+    }
+   },
+   "access": {
+    "allowed": true,
+    "decision": "allow",
+    "agent_name": "General Enquiries",
+    "attributes": null,
+    "all_attributes_allowed": null
+   },
+   "media": null
+  },
+  "item": {
+   "allowed": true,
+   "decision": "allow",
+   "agent_name": "General Enquiries",
+   "attributes": null,
+   "all_attributes_allowed": null,
+   "branch_kind": "business_query"
+  },
+  "branch_kind": "business_query",
+  "delegate": null,
+  "reply": {
+   "text": "Couldn't find some items:\n\n\"photo\" (attachment type) - did you mean:\n  1. Product Photos\n\"send me the photo of SRTWC8517-SH-UF\" (product) - did you mean:\n  2. SRTFC2031\n  3. SRTFP4001\n  4. SRTWC6011-RL-BL\n\nReply a number to pick, or 'yes' to escalate to marketing product.",
+   "quick_replies": "Yes escalate,No it's okay",
+   "result_set": [
+    {
+     "idx": 1,
+     "label": "Product Photos",
+     "value": "Product Photos",
+     "product": "Product Photos",
+     "uuid": "90e76894-8384-4186-a3f7-ef73667726ff",
+     "entity_type": "attachment_type"
+    },
+    {
+     "idx": 2,
+     "label": "SRTFC2031",
+     "value": "SRTFC2031",
+     "product": "SRTFC2031",
+     "uuid": "95acc0e3-85ce-4315-bce6-9b255137144f",
+     "entity_type": "product"
+    },
+    {
+     "idx": 3,
+     "label": "SRTFP4001",
+     "value": "SRTFP4001",
+     "product": "SRTFP4001",
+     "uuid": "dc94a891-95df-4584-8354-a4230aa73f86",
+     "entity_type": "product"
+    },
+    {
+     "idx": 4,
+     "label": "SRTWC6011-RL-BL",
+     "value": "SRTWC6011-RL-BL",
+     "product": "SRTWC6011-RL-BL",
+     "uuid": "cb78c0c6-56f6-4f08-8f6a-2de86efbbd50",
+     "entity_type": "product"
+    }
+   ],
+   "attachments_src": null
+  },
+  "actions": [
+   {
+    "kind": "send_message",
+    "text": "Couldn't find some items:\n\n\"photo\" (attachment type) - did you mean:\n  1. Product Photos\n\"send me the photo of SRTWC8517-SH-UF\" (product) - did you mean:\n  2. SRTFC2031\n  3. SRTFP4001\n  4. SRTWC6011-RL-BL\n\nReply a number to pick, or 'yes' to escalate to marketing product.",
+    "quick_replies": "Yes escalate,No it's okay",
+    "result_set": [
+     {
+      "idx": 1,
+      "label": "Product Photos",
+      "value": "Product Photos",
+      "product": "Product Photos",
+      "uuid": "90e76894-8384-4186-a3f7-ef73667726ff",
+      "entity_type": "attachment_type"
+     },
+     {
+      "idx": 2,
+      "label": "SRTFC2031",
+      "value": "SRTFC2031",
+      "product": "SRTFC2031",
+      "uuid": "95acc0e3-85ce-4315-bce6-9b255137144f",
+      "entity_type": "product"
+     },
+     {
+      "idx": 3,
+      "label": "SRTFP4001",
+      "value": "SRTFP4001",
+      "product": "SRTFP4001",
+      "uuid": "dc94a891-95df-4584-8354-a4230aa73f86",
+      "entity_type": "product"
+     },
+     {
+      "idx": 4,
+      "label": "SRTWC6011-RL-BL",
+      "value": "SRTWC6011-RL-BL",
+      "product": "SRTWC6011-RL-BL",
+      "uuid": "cb78c0c6-56f6-4f08-8f6a-2de86efbbd50",
+      "entity_type": "product"
+     }
+    ],
+    "dry_run": true
+   }
+  ],
+  "session_patch": {
+   "variables": {
+    "message_type": "business_query",
+    "intent_hint": "check_product_attachment",
+    "domain_hint": "product_attachment",
+    "user_goal": "trying to get the photo of SRTWC8517-SH-UF",
+    "query_brands": [],
+    "access_levels": [],
+    "entities": [
+     {
+      "raw": "SRTWC8517-SH-UF",
+      "hint": "product",
+      "canonical_code": null,
+      "current_message": true,
+      "confident": true
+     },
+     {
+      "raw": "photo",
+      "hint": "attachment_type",
+      "canonical_code": "photo",
+      "current_message": true,
+      "confident": true
+     }
+    ],
+    "routing": {
+     "suggested_team": "marketing_product",
+     "suggested_agent": "general_enquiries"
+    },
+    "escalation": {
+     "is_escalation_confirmation": false
+    },
+    "response": "Couldn't find some items:\n\n\"photo\" (attachment type) - did you mean:\n  1. Product Photos\n\"send me the photo of SRTWC8517-SH-UF\" (product) - did you mean:\n  2. SRTFC2031\n  3. SRTFP4001\n  4. SRTWC6011-RL-BL\n\nReply a number to pick, or 'yes' to escalate to marketing product.",
+    "last_result_set": [
+     {
+      "idx": 1,
+      "label": "Product Photos",
+      "value": "Product Photos",
+      "product": "Product Photos",
+      "uuid": "90e76894-8384-4186-a3f7-ef73667726ff",
+      "entity_type": "attachment_type"
+     },
+     {
+      "idx": 2,
+      "label": "SRTFC2031",
+      "value": "SRTFC2031",
+      "product": "SRTFC2031",
+      "uuid": "95acc0e3-85ce-4315-bce6-9b255137144f",
+      "entity_type": "product"
+     },
+     {
+      "idx": 3,
+      "label": "SRTFP4001",
+      "value": "SRTFP4001",
+      "product": "SRTFP4001",
+      "uuid": "dc94a891-95df-4584-8354-a4230aa73f86",
+      "entity_type": "product"
+     },
+     {
+      "idx": 4,
+      "label": "SRTWC6011-RL-BL",
+      "value": "SRTWC6011-RL-BL",
+      "product": "SRTWC6011-RL-BL",
+      "uuid": "cb78c0c6-56f6-4f08-8f6a-2de86efbbd50",
+      "entity_type": "product"
+     }
+    ],
+    "selection_context": "suggest_offer",
+    "date_filter_start": null,
+    "requested_attributes": [],
+    "date_filter_end": null,
+    "date_mode": null,
+    "match_mode": "and",
+    "contains_flyer": false,
+    "dym_offer": {
+     "id": "a5317cf4-3e87-45c9-89e1-cdc0e9eab7a0",
+     "domain": "product_attachment",
+     "ttl": 3,
+     "candidates": [
+      {
+       "code": "Product Photos",
+       "uuid": "90e76894-8384-4186-a3f7-ef73667726ff",
+       "entity_type": "attachment_type",
+       "for_raw": "photo",
+       "for_hint": "attachment_type",
+       "for_canonical": "photo"
+      },
+      {
+       "code": "SRTFC2031",
+       "uuid": "95acc0e3-85ce-4315-bce6-9b255137144f",
+       "entity_type": "product",
+       "for_raw": "send me the photo of SRTWC8517-SH-UF",
+       "for_hint": "product",
+       "for_canonical": null
+      },
+      {
+       "code": "SRTFP4001",
+       "uuid": "dc94a891-95df-4584-8354-a4230aa73f86",
+       "entity_type": "product",
+       "for_raw": "send me the photo of SRTWC8517-SH-UF",
+       "for_hint": "product",
+       "for_canonical": null
+      },
+      {
+       "code": "SRTWC6011-RL-BL",
+       "uuid": "cb78c0c6-56f6-4f08-8f6a-2de86efbbd50",
+       "entity_type": "product",
+       "for_raw": "send me the photo of SRTWC8517-SH-UF",
+       "for_hint": "product",
+       "for_canonical": null
+      }
+     ],
+     "picked": []
+    },
+    "dym_candidates": [
+     {
+      "code": "Product Photos",
+      "uuid": "90e76894-8384-4186-a3f7-ef73667726ff",
+      "entity_type": "attachment_type",
+      "for_raw": "photo",
+      "for_hint": "attachment_type",
+      "for_canonical": "photo"
+     },
+     {
+      "code": "SRTFC2031",
+      "uuid": "95acc0e3-85ce-4315-bce6-9b255137144f",
+      "entity_type": "product",
+      "for_raw": "send me the photo of SRTWC8517-SH-UF",
+      "for_hint": "product",
+      "for_canonical": null
+     },
+     {
+      "code": "SRTFP4001",
+      "uuid": "dc94a891-95df-4584-8354-a4230aa73f86",
+      "entity_type": "product",
+      "for_raw": "send me the photo of SRTWC8517-SH-UF",
+      "for_hint": "product",
+      "for_canonical": null
+     },
+     {
+      "code": "SRTWC6011-RL-BL",
+      "uuid": "cb78c0c6-56f6-4f08-8f6a-2de86efbbd50",
+      "entity_type": "product",
+      "for_raw": "send me the photo of SRTWC8517-SH-UF",
+      "for_hint": "product",
+      "for_canonical": null
+     }
+    ],
+    "ideation": null,
+    "routing_roster_plan": null,
+    "routing_brand": "sorento",
+    "routing_brand_source": "resolved",
+    "routing_company": "00000000-0000-0000-0000-000000000001",
+    "routing_companies": [
+     {
+      "company_id": "00000000-0000-0000-0000-000000000001",
+      "company_name": "Sorento",
+      "brand_code": "sorento",
+      "codes": [
+       "SRTWC8517-SH-UF"
+      ],
+      "labels": [
+       "SRTWC8517-SH-UF"
+      ]
+     }
+    ],
+    "pending": {
+     "kind": "escalation_offer",
+     "team": "marketing_product",
+     "domain": "product_attachment"
+    }
+   },
+   "user_response": "Couldn't find some items:\n\n\"photo\" (attachment type) - did you mean:\n  1. Product Photos\n\"send me the photo of SRTWC8517-SH-UF\" (product) - did you mean:\n  2. SRTFC2031\n  3. SRTFP4001\n  4. SRTWC6011-RL-BL\n\nReply a number to pick, or 'yes' to escalate to marketing product.",
+   "quick_reply": "Yes escalate,No it's okay"
+  },
+  "delegate_payload": null,
+  "duplicate": false
+ }
+}
