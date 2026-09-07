@@ -88,8 +88,23 @@ once; then the dedupe runs on production by the captain with `--dry-run` first.
   was received, not what the xlsx said was allocated; allocated comes from AutoCount from now on.
 - Production dedupe touches ~3,294 documents; `--dry-run` output is reviewed before `--apply`.
 
-## 5. Test debt
+## 5. Test debt and as-built notes
 
 - AC-X4 revises `tests/test_ingest_review_fixes.py::test_a_closed_ref_less_spo_row_is_not_adopted_by_a_new_dtlkey`:
   its seed is a pure xlsx-era SPO, so under D25 the closed row is superseded, not preserved. The
   S4 property (a retired row is not resurrected) is re-asserted with a ref row present.
+- Two more pre-existing tests encoded in-place adoption of a pure xlsx-era SPO and were revised
+  under D25 (captain, 2026-09-07): `tests/test_ingest_shipping_orders.py::TestShippingOrderAdoption::
+  test_xlsx_era_rows_are_matched_by_product_and_location_and_adopted` (AC-V3-4; id survival moved to
+  the ref-row case) and `tests/test_ingest_parity_security_fixes.py::TestSec1AdoptionPathReceivedGuard`
+  (SEC-1; the receipt-never-erased property now pinned in two shapes: first push carries the receipt
+  onto the AutoCount line, ESB-era push keeps the untouched-row + `received_locked` behaviour).
+- As built: D25 is detected with a query on `(company_id, spo_number, source_ref IS NOT NULL)`
+  (`_has_ref_row`), not on `_existing_rows`, which deliberately excludes other DocKeys' rows.
+  `_adopt_lines` is skipped on a first push: the pool then holds only kept ref-less rows and pass 3
+  (position only) could otherwise claim one for an unrelated product. D28 needed a release list:
+  GRN unlink / re-point / delete pass the allocations they detached so their receipt drops to what
+  the remaining picking lines prove; every other picking-less allocation keeps its stored value.
+- Shared algorithm: `shipping_order_rules.plan_xlsx_supersede(incoming, refless_rows) ->
+  SupersedePlan` (pure), `carried_received`, `repoint_allocation_dependants`; the ingest creates
+  rows from the plan, `scripts/dedupe_spo_xlsx_superseded.py` updates existing ref rows from it.
