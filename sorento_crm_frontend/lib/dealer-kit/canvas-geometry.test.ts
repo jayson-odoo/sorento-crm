@@ -26,6 +26,7 @@ import {
   descendantsOf,
   fitView,
   hitLayerAt,
+  layerOverflowsArtboard,
   marqueeHits,
   moveLayers,
   refitAncestors,
@@ -959,5 +960,64 @@ describe('renameFontFamilyInLayers', () => {
     expect(renameFontFamilyInLayers(layers, 'Sorento Display', 'Sorento Display Pro')).toBe(
       layers,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// layerOverflowsArtboard (S4, AC-S4-1/2/5): whether ANY part of a layer's
+// rotated bounding box falls past the tag's own artboard - what decides
+// whether the canvas ghosts it (a second, unclipped, dimmed draw pass) or
+// draws it once, exactly as before a round S4 ever existed.
+// ---------------------------------------------------------------------------
+
+describe('layerOverflowsArtboard (S4)', () => {
+  const doc60x40 = { width_mm: 60, height_mm: 40 };
+
+  it('a layer fully inside the artboard does not overflow', () => {
+    const layer = box({ id: 'l1', x: 10, y: 10, w: 20, h: 10 });
+
+    expect(layerOverflowsArtboard(layer, doc60x40)).toBe(false);
+  });
+
+  it('a layer exactly touching an edge counts as inside, not overflowing', () => {
+    // Right edge lands exactly on width_mm (40 + 20 = 60) - the epsilon in
+    // the implementation exists precisely so this reads as "inside", the
+    // same way a person would describe a tag that fits to the millimetre.
+    const layer = box({ id: 'l1', x: 40, y: 10, w: 20, h: 10 });
+
+    expect(layerOverflowsArtboard(layer, doc60x40)).toBe(false);
+    // Same for the left/top edges, at 0.
+    const flushTopLeft = box({ id: 'l2', x: 0, y: 0, w: 20, h: 10 });
+    expect(layerOverflowsArtboard(flushTopLeft, doc60x40)).toBe(false);
+  });
+
+  it('a layer whose box runs past an edge overflows', () => {
+    const pastRight = box({ id: 'l1', x: 45, y: 10, w: 20, h: 10 });
+    expect(layerOverflowsArtboard(pastRight, doc60x40)).toBe(true);
+
+    const pastLeft = box({ id: 'l2', x: -5, y: 10, w: 20, h: 10 });
+    expect(layerOverflowsArtboard(pastLeft, doc60x40)).toBe(true);
+
+    const pastBottom = box({ id: 'l3', x: 10, y: 35, w: 20, h: 10 });
+    expect(layerOverflowsArtboard(pastBottom, doc60x40)).toBe(true);
+  });
+
+  it('rotation can push a layer that fits axis-aligned past the edge (its own box is not what overflows)', () => {
+    // Flush against the left edge, unrotated - inside (touching only).
+    const unrotated = box({ id: 'l1', x: 0, y: 15, w: 20, h: 10, rotation: 0 });
+    expect(layerOverflowsArtboard(unrotated, doc60x40)).toBe(false);
+
+    // The SAME box, rotated 30 degrees about its own centre: one swept
+    // corner swings to a negative x, which the layer's own axis-aligned
+    // x_mm/width_mm never shows - only the rotated AABB this function takes.
+    const rotated = box({ id: 'l1', x: 0, y: 15, w: 20, h: 10, rotation: 30 });
+    expect(layerOverflowsArtboard(rotated, doc60x40)).toBe(true);
+  });
+
+  it('rotation that keeps every swept corner inside does not overflow', () => {
+    // Comfortably inside, rotated - the AABB grows but still fits.
+    const layer = box({ id: 'l1', x: 20, y: 15, w: 10, h: 6, rotation: 45 });
+
+    expect(layerOverflowsArtboard(layer, doc60x40)).toBe(false);
   });
 });

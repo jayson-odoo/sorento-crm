@@ -427,6 +427,77 @@ describe('InspectorPanel - polygon shape (S4, AC-S4-1)', () => {
   });
 });
 
+describe('InspectorPanel - Edit points button eligibility (S5, AC-S5-5)', () => {
+  function shapeLayer(overrides: Partial<TagLayer> = {}): TagLayer {
+    return {
+      id: 'sh1',
+      type: 'shape',
+      x_mm: 0,
+      y_mm: 0,
+      width_mm: 40,
+      height_mm: 20,
+      rotation_deg: 0,
+      z_index: 1,
+      locked: false,
+      visible: true,
+      slot_binding: null,
+      text_override: null,
+      props: {
+        kind: 'shape',
+        shape: 'polygon',
+        fill: '#e0e0e0',
+        stroke: '#999999',
+        strokeWidth: 0.5,
+        cornerRadius: 0,
+      },
+      ...overrides,
+    } as TagLayer;
+  }
+
+  it('is enabled for an unlocked, visible polygon', () => {
+    render(
+      <InspectorPanel
+        layer={shapeLayer()}
+        onUpdate={vi.fn()}
+        onUpdateProps={vi.fn()}
+        onToggleEditPoints={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Edit points' })).not.toBeDisabled();
+  });
+
+  // Same eligibility `cornerHandleLayer` gates the CANVAS side's own corner
+  // handles on (r4b) - a locked or hidden layer has no corner handles to
+  // edit points of, so the button disables rather than opening a mode with
+  // nothing on the canvas for it to show.
+  it('disables for a LOCKED polygon', () => {
+    render(
+      <InspectorPanel
+        layer={shapeLayer({ locked: true })}
+        onUpdate={vi.fn()}
+        onUpdateProps={vi.fn()}
+        onToggleEditPoints={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Edit points' })).toBeDisabled();
+  });
+
+  it('disables for a HIDDEN polygon', () => {
+    render(
+      <InspectorPanel
+        layer={shapeLayer({ visible: false })}
+        onUpdate={vi.fn()}
+        onUpdateProps={vi.fn()}
+        onToggleEditPoints={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: 'Edit points' })).toBeDisabled();
+  });
+});
+
 describe('InspectorPanel - price badge box and typography (r4b, AC-S6-1/4)', () => {
   function badgeLayer(props: Record<string, unknown> = {}): TagLayer {
     return {

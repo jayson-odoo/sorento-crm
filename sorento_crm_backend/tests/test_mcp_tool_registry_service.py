@@ -18,6 +18,7 @@ class _FakeSpec:
     path: str
     method: str = "GET"
     module: str = ""
+    restricted_fields: tuple = ()
 
 
 @pytest.fixture
@@ -133,6 +134,63 @@ def test_sync_catalog_deactivates_removed_tools(db: Session, monkeypatch, cleanu
     db.commit()
     db.refresh(row)
     assert row.is_active is True
+
+
+def test_sync_catalog_writes_restricted_fields(db: Session, monkeypatch, cleanup_tool_names):
+    """AC-964: a `restricted=` field on a presenter's tool reaches `mcp_tools.restricted_fields`
+    from a sync alone, with no FE change - this is the sync half of that contract, on a
+    FAKE tool declaring one (the real tools that will carry `inventory.sellable` /
+    `purchase_orders.supplier` are added by a sibling lane)."""
+    from app.services import mcp_tool_registry_service as svc
+
+    name = f"phase1_test_{uuid.uuid4().hex[:8]}"
+    cleanup_tool_names.append(name)
+    fake_specs = (
+        _FakeSpec(
+            name=name,
+            description="A tool with one restricted field.",
+            path="/api/v1/phase1/test",
+            restricted_fields=(("inventory.sellable", "Sellable stock"),),
+        ),
+    )
+    monkeypatch.setattr(svc, "_load_specs", lambda: fake_specs)
+
+    svc.sync_catalog(db)
+    db.commit()
+
+    row = db.query(McpTool).filter(McpTool.tool_name == name).one()
+    assert row.restricted_fields == [{"key": "inventory.sellable", "label": "Sellable stock"}]
+
+    # Re-sync with the field dropped: the row must follow the catalog, not keep a stale key.
+    monkeypatch.setattr(
+        svc,
+        "_load_specs",
+        lambda: (_FakeSpec(name=name, description="v2", path="/api/v1/phase1/test"),),
+    )
+    svc.sync_catalog(db)
+    db.commit()
+    db.refresh(row)
+    assert row.restricted_fields == []
+
+
+def test_sync_catalog_tool_with_nothing_restricted_syncs_empty_list(
+    db: Session, monkeypatch, cleanup_tool_names
+):
+    from app.services import mcp_tool_registry_service as svc
+
+    name = f"phase1_test_{uuid.uuid4().hex[:8]}"
+    cleanup_tool_names.append(name)
+    monkeypatch.setattr(
+        svc,
+        "_load_specs",
+        lambda: (_FakeSpec(name=name, description="v1", path="/a"),),
+    )
+
+    svc.sync_catalog(db)
+    db.commit()
+
+    row = db.query(McpTool).filter(McpTool.tool_name == name).one()
+    assert row.restricted_fields == []
 
 
 def test_sync_catalog_preserves_agent_id(db: Session, monkeypatch, cleanup_tool_names):

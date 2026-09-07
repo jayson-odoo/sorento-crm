@@ -246,6 +246,51 @@ class TestIntegrationLogWritesRegardlessOfDryRun:
 
 
 # --------------------------------------------------------------------------- #
+# Chatbot growth r1 addendum (AC-982, review 7 Sep 2026): a table added since this
+# file's original findings, held to the same D14 posture as Finding 1's
+# `integration_log` before/after count.
+# --------------------------------------------------------------------------- #
+
+
+class TestDryRunTurnLeavesContactFieldRevealsUntouched:
+    """`contact_field_reveals` (chatbot growth r1, Slice C) is admin-managed only -
+    written by `contact_field_reveal_service.set_granted_keys`, called from the
+    `/system/chatbot/contacts/{id}/field-reveals` PUT and nowhere on the turn path.
+    A dry run must leave its row count unchanged, same D14 posture as every other
+    table this file counts."""
+
+    def test_dry_run_turn_writes_no_contact_field_reveals_row(
+        self, external_chat_client, api_key, session_factory, seeded_contact, stub_engine_seams
+    ):
+        before = session_factory().execute(
+            text("SELECT COUNT(*) FROM contact_field_reveals")
+        ).scalar()
+
+        envelope = _envelope()
+        envelope.message["message"]["messageId"] = "ZZT-msg-dry-run-no-field-reveal"
+        payload = {
+            "envelope": {
+                **json.loads(envelope.model_dump_json()),
+                "test_run_id": "ZZT-run-no-field-reveal",
+            }
+        }
+
+        resp = external_chat_client.post(_TURN_URL, json=payload, headers={"X-API-Key": api_key})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["duplicate"] is False
+
+        after = session_factory().execute(
+            text("SELECT COUNT(*) FROM contact_field_reveals")
+        ).scalar()
+        assert after == before, (
+            "a dry-run /chat/turn call must not write a contact_field_reveals row "
+            "(AC-982) - nothing on the turn path imports the write side of "
+            "contact_field_reveal_service, so this is a structural guarantee "
+            "restated as a count."
+        )
+
+
+# --------------------------------------------------------------------------- #
 # Finding 2 - per-contact ordering keys are shared with live traffic
 # --------------------------------------------------------------------------- #
 

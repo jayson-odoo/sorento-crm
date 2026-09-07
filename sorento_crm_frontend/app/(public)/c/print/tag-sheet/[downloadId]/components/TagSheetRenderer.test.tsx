@@ -7,7 +7,7 @@
  * proof on screen and the PDF cannot state a price differently.
  */
 
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import type { TagLayer, TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
@@ -679,6 +679,246 @@ describe('image fit on the print page (S3b, AC-3/5)', () => {
       />,
     );
     expect(containContainer.querySelector('img')).toHaveStyle({ objectFit: 'contain' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Image crop on the print page (S8, PLAN D8, AC-S8-4/6)
+//
+// jsdom never actually decodes an image, so `CroppedImage`'s own `onLoad`
+// (which is what tells it the SOURCE's real pixel size) never fires on its
+// own - `fireImageLoad` below dispatches it by hand with a known
+// naturalWidth/naturalHeight, the same event the real browser would raise.
+// ---------------------------------------------------------------------------
+
+function fireImageLoad(img: HTMLImageElement, natural: { width: number; height: number }) {
+  Object.defineProperty(img, 'naturalWidth', { value: natural.width, configurable: true });
+  Object.defineProperty(img, 'naturalHeight', { value: natural.height, configurable: true });
+  fireEvent.load(img);
+}
+
+describe('image crop on the print page (S8, AC-S8-4)', () => {
+  it('before the natural size loads, falls back to the plain (uncropped) fit render', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'img',
+            type: 'image',
+            width_mm: 60,
+            height_mm: 20,
+            props: {
+              kind: 'image',
+              source: { type: 'asset', assetId: 'a1' },
+              fit: 'contain',
+              cropRect: { x: 0.25, y: 0, width: 0.5, height: 1 },
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+        assets={{ a1: 'https://cdn.test/photo.png' }}
+      />,
+    );
+
+    const images = container.querySelectorAll('img');
+    expect(images).toHaveLength(1);
+    expect(images[0]).toHaveStyle({ objectFit: 'contain' });
+  });
+
+  it('once loaded, shows only the cropped region - the img scaled and offset inside a locked-aspect wrapper (AC-S8-4)', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'img',
+            type: 'image',
+            width_mm: 60,
+            height_mm: 20,
+            props: {
+              kind: 'image',
+              source: { type: 'asset', assetId: 'a1' },
+              fit: 'contain',
+              cropRect: { x: 0.25, y: 0, width: 0.5, height: 1 },
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+        assets={{ a1: 'https://cdn.test/photo.png' }}
+      />,
+    );
+
+    fireImageLoad(container.querySelector('img')!, { width: 300, height: 150 });
+
+    // Cropped to half the source width - the img is drawn at 200% and
+    // shifted left 50% so only that half ever shows through the wrapper's
+    // own `overflow: hidden`.
+    const cropped = container.querySelector('img')!;
+    expect(cropped).toHaveStyle({ width: '200%', height: '100%', left: '-50%', top: '0%' });
+    const wrapper = cropped.parentElement!;
+    expect(wrapper).toHaveStyle({ overflow: 'hidden', aspectRatio: '150 / 150' });
+  });
+
+  it('never swaps in a second <img> once the natural size loads (S3 review)', () => {
+    // The print page's own readiness effect snapshots `document.images`
+    // ONCE, synchronously - a second `<img>` appearing only after the
+    // FIRST one's own `load` had already settled that snapshot would never
+    // be in it, so `data-dk-print-ready` could flip true before the
+    // actually-cropped element had painted and Chromium could capture the
+    // uncropped picture instead.
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'img',
+            type: 'image',
+            width_mm: 60,
+            height_mm: 20,
+            props: {
+              kind: 'image',
+              source: { type: 'asset', assetId: 'a1' },
+              fit: 'contain',
+              cropRect: { x: 0.25, y: 0, width: 0.5, height: 1 },
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+        assets={{ a1: 'https://cdn.test/photo.png' }}
+      />,
+    );
+
+    const before = container.querySelectorAll('img');
+    expect(before).toHaveLength(1);
+    const node = before[0];
+
+    fireImageLoad(node, { width: 300, height: 150 });
+
+    const after = container.querySelectorAll('img');
+    expect(after).toHaveLength(1);
+    // The SAME DOM node, not a different one at the same query position -
+    // this is what actually rules out an unmount/remount.
+    expect(after[0]).toBe(node);
+  });
+
+  it('centers the CONTAIN window in its own box, the same way Konva centers it (S3 review)', () => {
+    // A wider-than-tall crop (0.5 wide, full height) inside a 60x20mm box:
+    // `contain` sizes the window to the box's own height and leaves it
+    // narrower than the box - a block layout would pin that auto-sized
+    // window to the left edge instead of centering it the way Konva's
+    // `x={(w - drawW) / 2}` (`KonvaTagLayer.tsx`) always does.
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'img',
+            type: 'image',
+            width_mm: 60,
+            height_mm: 20,
+            props: {
+              kind: 'image',
+              source: { type: 'asset', assetId: 'a1' },
+              fit: 'contain',
+              cropRect: { x: 0.25, y: 0, width: 0.5, height: 1 },
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+        assets={{ a1: 'https://cdn.test/photo.png' }}
+      />,
+    );
+
+    fireImageLoad(container.querySelector('img')!, { width: 300, height: 150 });
+
+    const cropped = container.querySelector('img')!;
+    const windowWrapper = cropped.parentElement!;
+    const outerWrapper = windowWrapper.parentElement!;
+    expect(outerWrapper).toHaveStyle({
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+    });
+  });
+
+  it('works the same for stretch and cover fits, not just contain (AC-S8-4)', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'img',
+            type: 'image',
+            width_mm: 60,
+            height_mm: 20,
+            props: {
+              kind: 'image',
+              source: { type: 'asset', assetId: 'a1' },
+              fit: 'cover',
+              cropRect: { x: 0, y: 0.25, width: 1, height: 0.5 },
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+        assets={{ a1: 'https://cdn.test/photo.png' }}
+      />,
+    );
+
+    fireImageLoad(container.querySelector('img')!, { width: 300, height: 150 });
+
+    const cropped = container.querySelector('img')!;
+    expect(cropped).toHaveStyle({ width: '100%', height: '200%', left: '0%', top: '-50%' });
+  });
+
+  it('keeps the circle mask on the OUTER box, unaffected by cropping', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'img',
+            type: 'image',
+            width_mm: 60,
+            height_mm: 20,
+            props: {
+              kind: 'image',
+              source: { type: 'asset', assetId: 'a1' },
+              fit: 'contain',
+              maskShape: 'circle',
+              cropRect: { x: 0.25, y: 0, width: 0.5, height: 1 },
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+        assets={{ a1: 'https://cdn.test/photo.png' }}
+      />,
+    );
+
+    fireImageLoad(container.querySelector('img')!, { width: 300, height: 150 });
+
+    // The outer per-layer box carries the mask, same as the uncropped path -
+    // cropping only ever touches the img/wrapper nested inside it.
+    const outer = container.querySelector('img')!.closest('div[style*="border-radius"]');
+    expect(outer).toHaveStyle({ borderRadius: '50%' });
+  });
+
+  it('a template saved before S8 (no cropRect) renders exactly as before (AC-S8-6)', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'img',
+            type: 'image',
+            width_mm: 60,
+            height_mm: 20,
+            props: { kind: 'image', source: { type: 'asset', assetId: 'a1' }, fit: 'contain' },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+        assets={{ a1: 'https://cdn.test/photo.png' }}
+      />,
+    );
+
+    // No cropRect at all: exactly one plain <img>, `isCropped` is false, so
+    // this never even enters `CroppedImage` - no `onLoad` needed to prove it.
+    const images = container.querySelectorAll('img');
+    expect(images).toHaveLength(1);
+    expect(images[0]).toHaveStyle({ objectFit: 'contain', width: '100%', height: '100%' });
   });
 });
 

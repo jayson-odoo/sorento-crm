@@ -32,58 +32,14 @@ import {
   scalePolygonPoints,
 } from '@/lib/dealer-kit/polygon-path';
 import { paddedBox } from '@/lib/dealer-kit/text-reflow';
+import { cropPixels, fittedCropDraw, type CropRect } from '@/lib/dealer-kit/image-crop';
+import { useHtmlImage } from './useHtmlImage';
 
 // `TagLayerDisplay` is resolved by whoever owns the data (the editor, the
 // designer) and handed DOWN: the canvas draws layers and knows nothing about
 // products, which is what lets one component render a template, a placed tag
 // and a preview.
 export type { TagLayerDisplay };
-
-/**
- * Load an image for Konva.
- *
- * Konva needs a real HTMLImageElement rather than a URL, and re-rendering with
- * a half-loaded one paints nothing, so the element only reaches the stage once
- * it has decoded.
- *
- * **No `crossOrigin`.** It used to be `anonymous`, for a reason that does not
- * hold: a signed URL needs no CORS, and `anonymous` makes the browser DISCARD
- * an image whose response carries no `Access-Control-Allow-Origin`. The R2
- * bucket serving library assets sends none, so every badge, icon and diagram on
- * a tag failed to decode and sat on the placeholder text below forever - which
- * is exactly what the eight seeded templates showed, all 28 pieces of artwork,
- * on a canvas that was otherwise correct.
- *
- * What `anonymous` would buy is an UNTAINTED canvas, and nothing here wants
- * one: the tag PDF is rendered by headless Chromium against the print page, not
- * by `stage.toDataURL()`, and there is no `toDataURL` anywhere under
- * `dealer-kit/`. Bring it back only alongside a client-side canvas export - and
- * with a CORS rule on the bucket, or the export will draw blanks instead.
- */
-function useHtmlImage(url: string | null | undefined): HTMLImageElement | null {
-  const [image, setImage] = useState<HTMLImageElement | null>(null);
-
-  useEffect(() => {
-    if (!url) {
-      setImage(null);
-      return;
-    }
-    let live = true;
-    const element = new window.Image();
-    element.src = url;
-    element.onload = () => {
-      if (live) setImage(element);
-    };
-    element.onerror = () => {
-      if (live) setImage(null);
-    };
-    return () => {
-      live = false;
-    };
-  }, [url]);
-
-  return image;
-}
 
 interface KonvaTagLayerProps {
   layer: TagLayer;
@@ -113,6 +69,22 @@ interface KonvaTagLayerProps {
    * resolves which BLOCK a hovered child belongs to.
    */
   onHoverChange?: (id: string, hovering: boolean) => void;
+  /**
+   * The GHOST pass draws a layer that overflows the artboard at 0.3 so it
+   * stays visible past the clip instead of vanishing (S4). Absent = 1, same
+   * as every layer before this.
+   */
+  opacity?: number;
+  /**
+   * The id reported to `onSelect`/`onDoubleClick`/`onDragStart`/`onDragMove`/
+   * `onDragEnd`/`onHoverChange` (S4 fix, #720). The GHOST pass renders with a
+   * Konva `id` distinct from the real layer's (`${id}-ghost`, so `stage.
+   * findOne` and a test's `getByTestId` never collide with the clipped
+   * copy's own node) - but selecting or dragging the GHOST must still act on
+   * the REAL layer, which is what this carries. Absent means `layer.id`,
+   * the ordinary single-copy case.
+   */
+  interactionId?: string;
 }
 
 /** Convert mm to canvas pixels. */
@@ -137,6 +109,8 @@ export function KonvaTagLayer({
   onDragMove,
   onDragEnd,
   onHoverChange,
+  opacity,
+  interactionId,
 }: KonvaTagLayerProps) {
   if (!layer.visible) return null;
 
@@ -144,6 +118,10 @@ export function KonvaTagLayer({
   const y = mm2px(layer.y_mm, scale);
   const w = mm2px(layer.width_mm, scale);
   const h = mm2px(layer.height_mm, scale);
+  // The GHOST pass's own Konva id is `${id}-ghost` (S4 fix, #720), but every
+  // callback below still has to report the REAL layer it draws - that is
+  // what makes clicking or dragging the ghost act on the actual layer.
+  const reportId = interactionId ?? layer.id;
 
   // Selecting on mousedown rather than click, because a drag never produces a
   // click: without it, dragging an unselected layer moved a layer the inspector
@@ -155,28 +133,28 @@ export function KonvaTagLayer({
     if ('button' in e.evt && e.evt.button !== 0) return;
     e.cancelBubble = true;
     const shiftKey = 'shiftKey' in e.evt ? e.evt.shiftKey : false;
-    onSelect?.(layer.id, shiftKey);
+    onSelect?.(reportId, shiftKey);
   };
 
   const handleDoubleClick = (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
     e.cancelBubble = true;
-    onDoubleClick?.(layer.id);
+    onDoubleClick?.(reportId);
   };
 
   const handleDragStart = () => {
-    onDragStart?.(layer.id);
+    onDragStart?.(reportId);
   };
 
   const handleDragMove = (e: Konva.KonvaEventObject<DragEvent>) => {
     const node = e.target;
-    onDragMove?.(layer.id, px2mm(node.x(), scale), px2mm(node.y(), scale));
+    onDragMove?.(reportId, px2mm(node.x(), scale), px2mm(node.y(), scale));
   };
 
   const handleDragEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
     const node = e.target;
     // Snap to final position.
-    onDragMove?.(layer.id, px2mm(node.x(), scale), px2mm(node.y(), scale));
-    onDragEnd?.(layer.id);
+    onDragMove?.(reportId, px2mm(node.x(), scale), px2mm(node.y(), scale));
+    onDragEnd?.(reportId);
   };
 
   return (
@@ -187,6 +165,7 @@ export function KonvaTagLayer({
       width={w}
       height={h}
       rotation={layer.rotation_deg}
+      opacity={opacity}
       listening={listening}
       draggable={draggable && !layer.locked}
       onMouseDown={handleMouseDown}
@@ -196,8 +175,8 @@ export function KonvaTagLayer({
       onDragStart={handleDragStart}
       onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}
-      onMouseEnter={() => onHoverChange?.(layer.id, true)}
-      onMouseLeave={() => onHoverChange?.(layer.id, false)}
+      onMouseEnter={() => onHoverChange?.(reportId, true)}
+      onMouseLeave={() => onHoverChange?.(reportId, false)}
     >
       <LayerContent props={layer.props} w={w} h={h} scale={scale} display={display} />
     </Group>
@@ -266,6 +245,7 @@ function LayerContent({
           url={display?.imageUrl ?? null}
           fit={props.fit}
           maskShape={props.maskShape ?? 'none'}
+          cropRect={props.cropRect}
         />
       );
 
@@ -483,16 +463,28 @@ function ImageContent({
   url,
   fit,
   maskShape,
+  cropRect,
 }: {
   w: number;
   h: number;
   url: string | null;
   fit: 'cover' | 'contain' | 'stretch';
   maskShape: 'none' | 'circle';
+  cropRect?: CropRect;
 }) {
   const image = useHtmlImage(url);
 
-  if (!image) {
+  // A not-yet-loaded (or genuinely 0x0) `HTMLImageElement` reads
+  // `naturalWidth`/`naturalHeight` (and so `.width`/`.height`) as 0, which
+  // `cropPixels` turns into a 0x0 crop rect - Konva's own `drawImage` throws
+  // `InvalidStateError` on a source OR destination rect with a zero
+  // dimension (r6 S8 review, #723 - the Versions sheet's "View" crash).
+  // `useHtmlImage` only ever resolves `image` from `onload`, so this
+  // SHOULD be unreachable once `!image` above is false - checked anyway,
+  // since the failure mode is a full-page crash (caught only by the error
+  // boundary) rather than a misdrawn picture, and it costs nothing to
+  // treat "loaded but 0x0" the same as "not loaded yet".
+  if (!image || image.width <= 0 || image.height <= 0) {
     return (
       <>
         <Rect width={w} height={h} fill="#f0f0f0" stroke="#ccc" strokeWidth={1} />
@@ -509,30 +501,22 @@ function ImageContent({
     );
   }
 
-  // `contain` letterboxes inside the box, `cover` fills it and overflows; the
-  // clip below is what turns overflow into a crop rather than a picture spilling
-  // over the layer next to it. `stretch` draws at the box's own size - nothing
-  // to letterbox or crop, so it needs neither the ratio math nor a clip.
-  let drawW: number;
-  let drawH: number;
-  if (fit === 'stretch') {
-    drawW = w;
-    drawH = h;
-  } else {
-    const ratio = image.width / image.height;
-    const boxRatio = w / h;
-    const wide = fit === 'contain' ? ratio > boxRatio : ratio < boxRatio;
-    drawW = wide ? w : h * ratio;
-    drawH = wide ? w / ratio : h;
-  }
+  // Crop applies BEFORE fit (S8): `crop` tells Konva which source pixels to
+  // draw, and `fittedCropDraw` (shared with the canvas crop-mode overlay,
+  // `TagCanvasEditor.tsx` - r6 S8 review, #723) places the CROPPED region,
+  // not the whole picture. Absent `cropRect` resolves to the whole image, so
+  // this is a no-op for anything saved before S8.
+  const crop = cropPixels(cropRect, image);
+  const draw = fittedCropDraw(cropRect, image, fit, w, h);
 
   const body = (
     <KonvaImage
       image={image}
-      x={(w - drawW) / 2}
-      y={(h - drawH) / 2}
-      width={drawW}
-      height={drawH}
+      crop={crop}
+      x={draw.x}
+      y={draw.y}
+      width={draw.width}
+      height={draw.height}
     />
   );
 

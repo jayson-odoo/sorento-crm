@@ -155,3 +155,101 @@ export interface RetryTurnResponse {
   /** What the RE-INJECTED turn will carry. The retried row keeps its own attempt. */
   attempt: number;
 }
+
+/**
+ * `trace_detail` (chatbot growth r1, Slice D). Composed by the backend from
+ * `trace` records, including `kind`-tagged entries the `data` / `dialogue`
+ * lanes write as their slices land (`tool`, `crossdomain`, `reveals`, `decay`,
+ * `focus`) plus an `open_question` entry. A kind this build has not shipped
+ * yet renders as an empty section - `null` for a singleton, `[]` for a list -
+ * never an error.
+ */
+export interface TurnDetailStage {
+  name: string;
+  started_at: string | null;
+  ms: number | null;
+  status: TraceStatus;
+  summary: string | null;
+  error: string | null;
+}
+
+export interface TurnDetailParse {
+  raw: Record<string, unknown> | null;
+  post_processed: Record<string, unknown> | null;
+  prompt_version: number | string | null;
+  model: string | null;
+}
+
+export interface TurnDetailDecay {
+  slot: string | null;
+  value: unknown;
+  set_at_turn: number | null;
+  age_turns: number | null;
+  age_minutes: number | null;
+  reason: string | null;
+}
+
+export interface TurnDetailOpenQuestion {
+  before: unknown;
+  answer: unknown;
+  after: unknown;
+  handler: string | null;
+  outcome: string | null;
+}
+
+export interface TurnDetailFocus {
+  slot: string | null;
+  before: unknown;
+  after: unknown;
+  rule: string | null;
+  source: string | null;
+}
+
+export interface TurnDetailTool {
+  name: string | null;
+  args: Record<string, unknown> | null;
+  /** May carry `{truncated: true, bytes, head}` in place of the real envelope past 8 KB. */
+  envelope: Record<string, unknown> | null;
+  ms: number | null;
+}
+
+export interface TurnDetailCrossdomain {
+  rung: number | null;
+  tool: string | null;
+  args: Record<string, unknown> | null;
+  rows: number | null;
+  rendered: boolean | null;
+}
+
+export interface TurnDetailReveals {
+  restricted_fields_seen: string[];
+  granted: string[];
+  dropped: string[];
+}
+
+export interface TurnDetailSessionDiffEntry {
+  key: string;
+  change: 'gained' | 'lost';
+}
+
+export interface TurnDetailSession {
+  before: Record<string, unknown>;
+  after: Record<string, unknown>;
+  diff: TurnDetailSessionDiffEntry[];
+}
+
+export interface TurnDetail {
+  stages: TurnDetailStage[];
+  parse: TurnDetailParse | null;
+  decay: TurnDetailDecay[];
+  open_question: TurnDetailOpenQuestion | null;
+  focus: TurnDetailFocus[];
+  tool: TurnDetailTool | null;
+  crossdomain: TurnDetailCrossdomain[];
+  reveals: TurnDetailReveals;
+  session: TurnDetailSession;
+}
+
+export interface ChatbotTurnDetail extends ChatbotTurn {
+  trace_detail: TurnDetail;
+}

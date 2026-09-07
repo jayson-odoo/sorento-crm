@@ -10,7 +10,7 @@
  * CSS variables.
  */
 
-import { useMemo, type CSSProperties } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
 import JsBarcode from 'jsbarcode';
 
 import type {
@@ -44,6 +44,7 @@ import {
   MM_TO_PT,
 } from '@/lib/dealer-kit/barcode';
 import { paddedBox } from '@/lib/dealer-kit/text-reflow';
+import { cropWindowStyle, isCropped, type CropRect } from '@/lib/dealer-kit/image-crop';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -304,18 +305,136 @@ function renderImageLayer(
         backgroundColor: url ? 'transparent' : '#f5f5f5',
       }}
     >
-      {url && (
+      {url &&
+        (isCropped(props.cropRect) ? (
+          <CroppedImage url={url} cropRect={props.cropRect as CropRect} fit={props.fit} />
+        ) : (
+          <img
+            src={url}
+            alt=""
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit:
+                props.fit === 'cover' ? 'cover' : props.fit === 'stretch' ? 'fill' : 'contain',
+            }}
+          />
+        ))}
+    </div>
+  );
+}
+
+/**
+ * A cropped image, fitted per `fit` (S8).
+ *
+ * CSS `object-fit` has no "and only this sub-rectangle" mode, so this
+ * reproduces contain/cover on a plain `<div>` instead: `aspectRatio` set to
+ * the CROPPED region's own ratio, sized with the same `min`/`max`-width
+ * percentage-plus-aspect-ratio technique that gets `object-fit: cover` and
+ * `contain` behaviour out of a div that has no image of its own. The crop
+ * fraction's own W:H only equals the source's real pixel ratio when the
+ * source happens to be square, so this needs the REAL natural size first -
+ * `onLoad` measures it; until then the fallback style below shows the plain
+ * (uncropped) fit so there is always something reasonable on screen, never
+ * a blank box.
+ *
+ * ONE `<img>` element for the whole life of the component (S3 review), not
+ * a second one swapped in once `natural` resolves: the tree shape (outer
+ * flex wrapper > window div > img) never changes, only the STYLE objects
+ * do, so React never unmounts/remounts the element. The print page's own
+ * readiness effect (`page.tsx`) snapshots `document.images` ONCE,
+ * synchronously, the moment the payload arrives - a second `<img>` that
+ * only appeared later (after the first one's own `load` had already
+ * settled that snapshot) was never in it, so `data-dk-print-ready` could
+ * flip true before that second, actually-cropped element had painted -
+ * Chromium's own `page.pdf()` could capture the first (uncropped) picture
+ * instead of the crop the layer actually asks for.
+ */
+function CroppedImage({
+  url,
+  cropRect,
+  fit,
+}: {
+  url: string;
+  cropRect: CropRect;
+  fit: 'cover' | 'contain' | 'stretch';
+}) {
+  const [natural, setNatural] = useState<{ width: number; height: number } | null>(null);
+  const layout = natural ? cropWindowStyle(cropRect, natural) : null;
+
+  const base: CSSProperties = { position: 'relative', overflow: 'hidden' };
+  const windowStyle: CSSProperties = !layout
+    ? { ...base, width: '100%', height: '100%' }
+    : fit === 'stretch'
+      ? { ...base, width: '100%', height: '100%' }
+      : fit === 'cover'
+        ? {
+            ...base,
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            minWidth: '100%',
+            minHeight: '100%',
+            width: 'auto',
+            height: 'auto',
+            aspectRatio: layout.aspectRatio,
+          }
+        : {
+            ...base,
+            maxWidth: '100%',
+            maxHeight: '100%',
+            width: 'auto',
+            height: 'auto',
+            aspectRatio: layout.aspectRatio,
+          };
+
+  const imgStyle: CSSProperties = layout
+    ? {
+        position: 'absolute',
+        width: layout.img.width,
+        height: layout.img.height,
+        left: layout.img.left,
+        top: layout.img.top,
+      }
+    : {
+        width: '100%',
+        height: '100%',
+        objectFit: fit === 'cover' ? 'cover' : fit === 'stretch' ? 'fill' : 'contain',
+      };
+
+  return (
+    // `display: flex` + centered content (S3 review) so the CONTAIN branch's
+    // auto-sized window - `width/height: auto` against `aspectRatio`, no
+    // positioning of its own - lands centered like Konva does explicitly
+    // (`x={(w - drawW) / 2}`, `KonvaTagLayer.tsx`), not pinned to the
+    // wrapper's top-left the way a plain block layout would leave it.
+    // `cover`'s own child already centers itself (absolute + translate,
+    // untouched by flex alignment); `stretch` fills 100% either way.
+    <div
+      style={{
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        overflow: 'hidden',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <div style={windowStyle}>
         <img
           src={url}
           alt=""
-          style={{
-            width: '100%',
-            height: '100%',
-            objectFit:
-              props.fit === 'cover' ? 'cover' : props.fit === 'stretch' ? 'fill' : 'contain',
-          }}
+          onLoad={(e) =>
+            setNatural({
+              width: e.currentTarget.naturalWidth,
+              height: e.currentTarget.naturalHeight,
+            })
+          }
+          style={imgStyle}
         />
-      )}
+      </div>
     </div>
   );
 }
