@@ -364,6 +364,12 @@ export function InspectorPanel({
                 variant={editingPoints ? 'primary' : 'secondary'}
                 size="sm"
                 className="w-full"
+                // Same eligibility `cornerHandleLayer` gates the canvas
+                // side on (AC-S5-5 review): a locked or hidden layer has
+                // no corner handles to edit points OF, so the button
+                // disables rather than staying clickable into a mode with
+                // nothing for it to show.
+                disabled={layer.locked || !layer.visible}
                 onClick={() => onToggleEditPoints(layer.id)}
               >
                 {editingPoints ? 'Done editing points' : 'Edit points'}
