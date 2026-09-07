@@ -2,16 +2,17 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Loader2, RotateCcw, SendHorizonal } from 'lucide-react';
+import { Loader2, Mic, Paperclip, RotateCcw, SendHorizonal, Square } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
+import { formatElapsed, useVoiceRecorder } from '@/components/common/conversation/useVoiceRecorder';
 import { cn } from '@/lib/utils';
 import { getRespondContactsOutbound } from '../../respond-contacts/services/respondContactOutboundService';
 import { useChatbotConsole } from '../hooks/useChatbotConsole';
-import type { ChatbotConsoleMessage } from '../types/chatbotConsole.types';
+import type { ChatbotConsoleMessage, ConsoleMediaInput } from '../types/chatbotConsole.types';
 
 export const CHATBOT_CONSOLE_VIEW_PERMISSION = 'system.chat_history.view';
 
@@ -31,14 +32,35 @@ function promptVersionLabel(version: { version: number; label: string | null; ch
   return version.label ? `${base} (${version.label})` : base;
 }
 
+function MediaPreview({ message }: { message: ChatbotConsoleMessage }) {
+  if (!message.mediaKind || !message.mediaUrl) return null;
+  if (message.mediaKind === 'image') {
+    return (
+      <a href={message.mediaUrl} target="_blank" rel="noreferrer noopener" className="mb-1.5 block">
+        {/* A local blob: URL, not a remote one - next/image cannot optimise it, so a
+            plain img is correct here rather than a config exception. */}
+        <img src={message.mediaUrl} alt="Attached" className="max-h-48 rounded-lg object-cover" />
+      </a>
+    );
+  }
+  return (
+    <audio controls src={message.mediaUrl} className="mb-1.5 h-9 max-w-full">
+      Your browser cannot play this audio.
+    </audio>
+  );
+}
+
 function MessageBubble({
   message,
   onQuickReply,
+  onRetryMedia,
 }: {
   message: ChatbotConsoleMessage;
   onQuickReply: (text: string) => void;
+  onRetryMedia: (media: ConsoleMediaInput) => void;
 }) {
   const isUser = message.role === 'user';
+  const isMediaPending = message.mediaStatus === 'pending';
   return (
     <div className={cn('flex', isUser ? 'justify-end' : 'justify-start')}>
       <div
@@ -47,7 +69,27 @@ function MessageBubble({
           isUser ? 'bg-primary/15 text-foreground' : 'bg-muted text-foreground',
         )}
       >
-        <p className="whitespace-pre-wrap break-words">{message.text}</p>
+        <MediaPreview message={message} />
+        <p
+          className={cn(
+            'whitespace-pre-wrap break-words',
+            !isUser && (isMediaPending || message.mediaStatus) && 'italic text-muted-foreground',
+          )}
+        >
+          {isMediaPending ? <Loader2 className="mr-1 inline size-3.5 animate-spin" /> : null}
+          {message.text}
+        </p>
+        {message.mediaStatus === 'failed' && message.mediaRetry ? (
+          <div className="mt-1.5">
+            <button
+              type="button"
+              onClick={() => onRetryMedia(message.mediaRetry as ConsoleMediaInput)}
+              className="rounded-full border bg-secondary px-3 py-1 text-xs hover:bg-secondary/80"
+            >
+              Retry
+            </button>
+          </div>
+        ) : null}
         {message.branchKind ? (
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <Badge variant="secondary" size="sm">
@@ -111,11 +153,14 @@ export default function ChatbotConsole() {
     sending,
     sendText,
     sendQuickReply,
+    sendMedia,
+    retryMedia,
     reset,
   } = useChatbotConsole();
 
   const [draft, setDraft] = useState('');
   const threadEndRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -136,6 +181,22 @@ export default function ChatbotConsole() {
     setDraft('');
     void sendText(text);
   };
+
+  const handleFilePicked = (file: File | null) => {
+    if (!file) return;
+    const kind = file.type.startsWith('audio/') ? 'audio' : 'image';
+    const caption = draft;
+    setDraft('');
+    void sendMedia(kind, file, caption);
+  };
+
+  const voice = useVoiceRecorder({
+    onClip: (file) => {
+      const caption = draft;
+      setDraft('');
+      void sendMedia('audio', file, caption);
+    },
+  });
 
   return (
     <div
@@ -180,7 +241,7 @@ export default function ChatbotConsole() {
       {/* Thread - the ONLY scrolling region. */}
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1" data-testid="chatbot-console-thread">
         {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} onQuickReply={sendQuickReply} />
+          <MessageBubble key={message.id} message={message} onQuickReply={sendQuickReply} onRetryMedia={retryMedia} />
         ))}
         {sending ? <TypingIndicator /> : null}
         <div ref={threadEndRef} />
@@ -188,7 +249,28 @@ export default function ChatbotConsole() {
 
       {/* Composer - pinned at the bottom. */}
       <div className="border-t pt-3">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*,audio/*"
+          aria-label="Attach image or audio"
+          className="hidden"
+          onChange={(e) => {
+            handleFilePicked(e.target.files?.[0] ?? null);
+            e.target.value = '';
+          }}
+        />
         <div className="flex items-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            disabled={sending || voice.recording}
+            onClick={() => fileInputRef.current?.click()}
+            aria-label="Attach image or audio"
+          >
+            <Paperclip className="size-4" />
+          </Button>
           <Textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -200,9 +282,34 @@ export default function ChatbotConsole() {
             }}
             placeholder="Ask, or attach voice/image"
             rows={2}
-            disabled={sending}
+            disabled={sending || voice.recording}
             className="min-w-0 flex-1 resize-none"
           />
+          {voice.available ? (
+            <Button
+              type="button"
+              variant={voice.recording ? 'destructive' : 'outline'}
+              size="icon"
+              disabled={sending && !voice.recording}
+              aria-label={voice.recording ? `Recording, ${formatElapsed(voice.seconds)}, release to send` : 'Hold to record a voice message'}
+              title={voice.reason ?? undefined}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                void voice.start();
+              }}
+              onPointerUp={() => voice.recording && voice.stop()}
+              onPointerLeave={() => voice.recording && voice.cancel()}
+            >
+              {voice.recording ? (
+                <span className="flex items-center gap-1 text-2xs tabular-nums">
+                  <Square className="size-3.5" />
+                  {formatElapsed(voice.seconds)}
+                </span>
+              ) : (
+                <Mic className="size-4" />
+              )}
+            </Button>
+          ) : null}
           <Button
             type="button"
             size="icon"

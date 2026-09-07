@@ -148,6 +148,13 @@ class ConsoleTurnResponse(BaseModel):
     # whatever it already had rather than treating null as "forget everything".
     session_vars: dict[str, Any] | None = None
     trace_summary: ConsoleTraceSummary
+    # Media (commit 2): all null on a plain text turn. `media_status` is one of
+    # "pending" | "done" | "failed" only when the request carried a `media` attachment.
+    media_status: str | None = None
+    media_id: str | None = None
+    # What was read/heard, for the muted "Read from image: ..." / "Heard: ..." line.
+    media_text: str | None = None
+    media_error: str | None = None
 
 
 class ConsolePromptVersion(BaseModel):

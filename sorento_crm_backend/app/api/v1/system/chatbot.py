@@ -50,6 +50,7 @@ from app.schemas.chatbot_turn import (
     ChatbotTurnDetailResponse,
     ChatbotTurnListResponse,
     ChatbotTurnResponse,
+    ConsoleMediaStatusResponse,
     ConsolePromptVersion,
     ConsoleTurnRequest,
     ConsoleTurnResponse,
@@ -526,6 +527,7 @@ def console_turn(
         session_vars=payload.session_vars,
         prompt_version_id=payload.prompt_version_id,
         run_id=payload.run_id,
+        media=payload.media.model_dump() if payload.media is not None else None,
     )
     return ConsoleTurnResponse(
         turn_id=result.turn_id,
@@ -535,7 +537,25 @@ def console_turn(
         send_messages=result.send_messages,
         session_vars=result.session_vars,
         trace_summary=result.trace_summary,
+        media_status=result.media_status,
+        media_id=result.media_id,
+        media_text=result.media_text,
+        media_error=result.media_error,
     )
+
+
+@router.get("/console/media/{media_id}", response_model=ConsoleMediaStatusResponse)
+def console_media_status(
+    media_id: str,
+    _user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Poll fallback for a media turn whose synchronous wait timed out (commit 2). The FE
+    calls this every 2s until `status != "pending"`, then sends the extracted `text` as a
+    plain console turn. See `console_service.get_console_media_status`.
+    """
+    status_body = console_service.get_console_media_status(db, media_id)
+    return ConsoleMediaStatusResponse(**status_body)
 
 
 @router.get("/console/prompt-versions", response_model=list[ConsolePromptVersion])

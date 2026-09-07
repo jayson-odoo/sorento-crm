@@ -36,6 +36,12 @@ export interface ConsoleTurnResponse {
   send_messages: string[];
   session_vars: Record<string, unknown> | null;
   trace_summary: ConsoleTraceSummary;
+  /** Media (commit 2): all null on a plain text turn. */
+  media_status: 'pending' | 'done' | 'failed' | null;
+  media_id: string | null;
+  /** What was read/heard, for the muted "Read from image: ..." / "Heard: ..." line. */
+  media_text: string | null;
+  media_error: string | null;
 }
 
 export interface ConsolePromptVersion {
@@ -68,9 +74,13 @@ export interface ChatbotConsoleMessage {
   mediaKind?: 'image' | 'audio' | null;
   mediaStatus?: 'pending' | 'done' | 'failed' | null;
   mediaCaption?: string | null;
+  /** Local object URL for the user bubble's own thumbnail/player preview. */
   mediaUrl?: string | null;
   mediaError?: string | null;
   mediaId?: string | null;
+  /** Carried on a FAILED status bubble so its Retry chip can resend the exact same
+   * attachment without asking the user to re-attach it. */
+  mediaRetry?: ConsoleMediaInput | null;
 }
 
 export const CONSOLE_GREETING_MESSAGES: readonly string[] = [
