@@ -50,7 +50,7 @@ function renderWithClient(contactId = 'c1') {
 
 function putCalls() {
   return apiFetch.mock.calls.filter(
-    ([, options]: [string, { method?: string } | undefined]) => options?.method === 'PUT',
+    (call) => (call[1] as { method?: string } | undefined)?.method === 'PUT',
   );
 }
 
@@ -114,6 +114,25 @@ describe('ContactFieldRevealsSection', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
+    expect(putCalls()).toHaveLength(0);
+  });
+
+  it('renders an inline error and fires no PUT when the grants read fails', async () => {
+    apiFetch.mockImplementation((url: string, options?: { method?: string }) => {
+      if (url.includes('/field-reveal-keys')) return ok({ items: KEYS });
+      if (options?.method === 'PUT') {
+        throw new Error('a PUT must never fire when the grants read failed');
+      }
+      // The contact's own field-reveals GET fails.
+      return Promise.resolve({ ok: false, json: () => Promise.resolve({}) });
+    });
+    renderWithClient();
+
+    expect(
+      await screen.findByText(/field reveals could not be loaded/i),
+    ).toBeInTheDocument();
+    // The checklist itself never rendered, so there is nothing to toggle.
+    expect(screen.queryByRole('switch')).not.toBeInTheDocument();
     expect(putCalls()).toHaveLength(0);
   });
 

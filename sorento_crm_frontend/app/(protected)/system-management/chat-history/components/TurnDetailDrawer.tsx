@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { Badge } from '@/components/ui/badge';
+import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { SearchableCode } from '@/components/common/find-in-text/SearchableCode';
@@ -351,7 +351,7 @@ function ChipRow({
 }: {
   label: string;
   chips: string[];
-  tone: 'destructive' | 'success' | 'secondary';
+  tone: BadgeProps['variant'];
 }) {
   return (
     <div>
@@ -361,7 +361,7 @@ function ChipRow({
       ) : (
         <div className="flex flex-wrap gap-1">
           {chips.map((c) => (
-            <Badge key={c} variant={tone as never} appearance="light" size="sm">
+            <Badge key={c} variant={tone} appearance="light" size="sm">
               {c}
             </Badge>
           ))}

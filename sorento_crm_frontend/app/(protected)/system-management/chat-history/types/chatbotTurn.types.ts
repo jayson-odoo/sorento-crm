@@ -208,7 +208,7 @@ export interface TurnDetailFocus {
 export interface TurnDetailTool {
   name: string | null;
   args: Record<string, unknown> | null;
-  /** May carry `{truncated: true, note}` in place of the real envelope past 8 KB. */
+  /** May carry `{truncated: true, bytes, head}` in place of the real envelope past 8 KB. */
   envelope: Record<string, unknown> | null;
   ms: number | null;
 }

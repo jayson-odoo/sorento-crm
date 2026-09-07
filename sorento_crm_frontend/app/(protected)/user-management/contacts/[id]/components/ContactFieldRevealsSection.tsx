@@ -37,7 +37,11 @@ import type { FieldRevealKey } from '../services/contactFieldRevealService';
  */
 export default function ContactFieldRevealsSection({ contactId }: { contactId: string }) {
   const { data: keys, isLoading: keysLoading, isError: keysFailed } = useFieldRevealKeys();
-  const { data: granted, isLoading: grantedLoading } = useContactFieldReveals(contactId);
+  const {
+    data: granted,
+    isLoading: grantedLoading,
+    isError: grantedFailed,
+  } = useContactFieldReveals(contactId);
   const update = useSetContactFieldReveals(contactId);
 
   const [confirmingOff, setConfirmingOff] = useState<FieldRevealKey | null>(null);
@@ -67,6 +71,17 @@ export default function ContactFieldRevealsSection({ contactId }: { contactId: s
     return (
       <p className="text-sm text-destructive">
         Field reveals could not be loaded. Reload the page to try again.
+      </p>
+    );
+  }
+
+  // A failed grants read must never let a toggle fire off the wrong base state -
+  // `grantedSet` below would silently read every key as ungranted and a save
+  // would revert whatever this contact actually holds.
+  if (grantedFailed) {
+    return (
+      <p className="text-sm text-destructive">
+        This contact&apos;s field reveals could not be loaded. Reload the page to try again.
       </p>
     );
   }
@@ -105,7 +120,10 @@ export default function ContactFieldRevealsSection({ contactId }: { contactId: s
               id={switchId}
               aria-label={`Reveal ${item.label.toLowerCase()}`}
               checked={on}
-              disabled={update.isPending}
+              // `granted === undefined` is belt and suspenders alongside the
+              // `grantedFailed` early return above: no PUT can ever fire off an
+              // unknown base state, even if that guard is ever refactored away.
+              disabled={update.isPending || granted === undefined}
               onCheckedChange={(checked) => toggle(item, checked)}
             />
           </div>
