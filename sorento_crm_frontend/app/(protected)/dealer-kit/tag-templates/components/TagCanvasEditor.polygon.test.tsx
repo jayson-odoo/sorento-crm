@@ -1,27 +1,33 @@
 /**
- * Free-corner polygon editing on the canvas (S4, AC-S4-2/7; r4b AC-S4-10/11).
+ * Polygon select mode vs edit-points mode (S5, PLAN D5).
  *
- * The geometry itself is pinned in `lib/dealer-kit/polygon-path.test.ts`.
- * This is the WIRING: SELECTING a polygon puts a handle on every corner and
- * every edge midpoint (r4b - the first cut hid them behind a double-click and
- * the user, having picked Polygon and dragged, saw nothing at all), the
- * Transformer gives up its resize anchors so they cannot sit on top of those
- * handles, a drag commits ONE new set of normalized points plus the box that
- * now contains them, and deselecting takes the handles away again.
+ * r5 gave a selected polygon (or a boxed list-only price badge) vertex/edge
+ * handles the instant it was clicked, at the cost of every Transformer
+ * resize anchor (AC-S4-10 from that round) - a polygon could not be resized
+ * by dragging its box at all. S5 splits that one state into two, the
+ * Figma/Illustrator pattern: a single click SELECTS (full anchor set, no
+ * vertex handles, a box-drag resizes the shape via its normalised points);
+ * double-click, Enter, or the Inspector's "Edit points" button drops into
+ * EDIT-POINTS mode (anchors gone, vertex/edge handles back) - everything the
+ * geometry tests below exercised in r5 now runs inside that mode instead.
+ *
+ * The geometry itself (`movePoint`/`moveEdge`/`refitPolygon`/`snapDelta`) is
+ * pinned in `lib/dealer-kit/polygon-path.test.ts`. This is the WIRING.
  *
  * Konva does not run in jsdom, so `react-konva` is stood in for by divs that
  * carry the props a handle is identified and driven by - the same pattern
- * `TagCanvasEditor.guides.test.tsx` uses for a ruler guide's `stroke`. A
- * Konva drag reports the node's position through `e.target.x()/y()`, so the
- * stand-in turns the press / move / release it is driven by into exactly
- * that, and records `position()` so the drag-end snap-back can be asserted.
+ * `TagCanvasEditor.guides.test.tsx` uses for a ruler guide's `stroke`, and
+ * `TagCanvasEditor.reflow.test.tsx` uses for a fake Konva node the
+ * Transformer's own imperative API (`.nodes()`, `x()/y()/scaleX()/scaleY()`)
+ * can run against unmodified.
  */
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { TagLayer, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
 import { polygonPoints } from '@/lib/dealer-kit/polygon-path';
+import { CANVAS_PX_PER_MM } from '@/lib/dealer-kit/canvas-geometry';
 
 // -- Stand-ins ---------------------------------------------------------------
 
@@ -29,7 +35,46 @@ import { polygonPoints } from '@/lib/dealer-kit/polygon-path';
 const konva = vi.hoisted(() => ({
   positions: [] as { x: number; y: number }[],
   anchors: [] as unknown[],
+  nodesById: new Map<
+    string,
+    {
+      id: () => string;
+      x: (v?: number) => number;
+      y: (v?: number) => number;
+      width: (v?: number) => number;
+      height: (v?: number) => number;
+      scaleX: (v?: number) => number;
+      scaleY: (v?: number) => number;
+      rotation: (v?: number) => number;
+      findOne: () => undefined;
+    }
+  >(),
+  onTransformEnd: undefined as (() => void) | undefined,
+  transformerNodes: [] as unknown[],
 }));
+
+function fakeNode(layer: TagLayer) {
+  const state = {
+    x: layer.x_mm * CANVAS_PX_PER_MM,
+    y: layer.y_mm * CANVAS_PX_PER_MM,
+    width: layer.width_mm * CANVAS_PX_PER_MM,
+    height: layer.height_mm * CANVAS_PX_PER_MM,
+    scaleX: 1,
+    scaleY: 1,
+    rotation: layer.rotation_deg,
+  };
+  return {
+    id: () => layer.id,
+    x: (v?: number) => (v === undefined ? state.x : (state.x = v)),
+    y: (v?: number) => (v === undefined ? state.y : (state.y = v)),
+    width: (v?: number) => (v === undefined ? state.width : (state.width = v)),
+    height: (v?: number) => (v === undefined ? state.height : (state.height = v)),
+    scaleX: (v?: number) => (v === undefined ? state.scaleX : (state.scaleX = v)),
+    scaleY: (v?: number) => (v === undefined ? state.scaleY : (state.scaleY = v)),
+    rotation: (v?: number) => (v === undefined ? state.rotation : (state.rotation = v)),
+    findOne: () => undefined,
+  };
+}
 
 vi.mock('konva/lib/Global', () => ({ Konva: { dragButtons: [0, 1] } }));
 
@@ -66,7 +111,7 @@ vi.mock('react-konva', async () => {
   // coordinates. Press / move / release stands in for the drag itself: jsdom
   // has no DragEvent that carries coordinates, and Konva's drag is built out
   // of these three anyway. `evt.shiftKey` carries the fireEvent option
-  // through, the same one Konva's own `evt` would carry (S1).
+  // through, the same one Konva's own `evt` would carry (r5 S1).
   const dragged = (event: { clientX: number; clientY: number; shiftKey?: boolean }) => ({
     target: {
       x: () => event.clientX,
@@ -81,9 +126,8 @@ vi.mock('react-konva', async () => {
       // Konva delivers a `dragend` even when the node is DESTROYED mid-drag:
       // the drag manager holds the node, not the scene graph, so unmounting a
       // handle while the button is still down fires the handler one last time
-      // at the position the pointer had reached. That is the whole of the
-      // Escape defect (r4d), so the stand-in has to do it too - held in a ref
-      // and fired from the unmount cleanup, exactly where Konva fires it.
+      // at the position the pointer had reached - the stand-in has to do it
+      // too, held in a ref and fired from the unmount cleanup.
       const live = React.useRef<{ clientX: number; clientY: number; shiftKey: boolean } | null>(
         null,
       );
@@ -123,16 +167,61 @@ vi.mock('react-konva', async () => {
       );
     };
 
+  // Stage forwards a `findOne(#id)` that answers from `konva.nodesById` - the
+  // same map `KonvaTagLayer` below registers a layer's fake Konva node into.
+  // `TagCanvasEditor`'s own attach-effect calls exactly this (`stage.findOne`)
+  // to hand the Transformer its selected nodes, so wiring it here is what
+  // makes a REAL resize (scale on the node, then `onTransformEnd`) reach the
+  // component's own commit path unmodified - the same idiom
+  // `TagCanvasEditor.reflow.test.tsx` uses for the identical reason.
+  function StageStandIn(props: {
+    children?: React.ReactNode;
+    ref?: React.Ref<{ getPointerPosition: () => null; findOne: (s: string) => unknown }>;
+  }) {
+    const instance = {
+      getPointerPosition: () => null,
+      findOne: (selector: string) => konva.nodesById.get(selector.slice(1)),
+    };
+    if (typeof props.ref === 'function') props.ref(instance);
+    else if (props.ref && 'current' in (props.ref as { current: unknown })) {
+      (props.ref as { current: unknown }).current = instance;
+    }
+    return <div data-konva="stage">{props.children}</div>;
+  }
+
   return {
-    Stage: passthrough('stage'),
+    Stage: StageStandIn,
     Layer: passthrough('layer'),
     Group: draggable('group'),
     Rect: draggable('rect'),
     Circle: draggable('circle'),
     Line: passthrough('line'),
-    Transformer: function TransformerStandIn(props: { enabledAnchors?: unknown[] }) {
+    Transformer: function TransformerStandIn(props: {
+      enabledAnchors?: unknown[];
+      ref?: React.Ref<unknown>;
+      onTransformEnd?: () => void;
+    }) {
       konva.anchors.push(props.enabledAnchors);
-      return <div data-konva="transformer" data-anchors={JSON.stringify(props.enabledAnchors)} />;
+      konva.onTransformEnd = props.onTransformEnd;
+      // `konva.transformerNodes` lives on the module-level hoisted object,
+      // not a closure local: `TransformerStandIn` is a plain function
+      // component, so every parent re-render (selecting a layer among them)
+      // would otherwise hand out a FRESH instance with `nodes` reset to
+      // empty, throwing away whatever the attach-effect had just set on the
+      // previous render's instance.
+      const instance = {
+        nodes: (arg?: unknown[]) =>
+          arg === undefined ? konva.transformerNodes : (konva.transformerNodes = arg),
+        getLayer: () => ({ batchDraw: () => {} }),
+        getActiveAnchor: () => undefined,
+      };
+      if (typeof props.ref === 'function') props.ref(instance);
+      else if (props.ref && 'current' in (props.ref as { current: unknown })) {
+        (props.ref as { current: unknown }).current = instance;
+      }
+      return (
+        <div data-konva="transformer" data-anchors={JSON.stringify(props.enabledAnchors)} />
+      );
     },
   };
 });
@@ -146,22 +235,25 @@ vi.mock('./KonvaTagLayer', () => ({
     layer: TagLayer;
     onSelect?: (id: string, additive: boolean) => void;
     onDoubleClick?: (id: string) => void;
-  }) => (
-    <div
-      data-testid={`layer-${layer.id}`}
-      data-x={layer.x_mm}
-      data-y={layer.y_mm}
-      data-w={layer.width_mm}
-      data-h={layer.height_mm}
-      data-points={
-        layer.props.kind === 'shape' && layer.props.shape === 'polygon'
-          ? JSON.stringify(polygonPoints(layer.props))
-          : undefined
-      }
-      onClick={() => onSelect?.(layer.id, false)}
-      onDoubleClick={() => onDoubleClick?.(layer.id)}
-    />
-  ),
+  }) => {
+    if (!konva.nodesById.has(layer.id)) konva.nodesById.set(layer.id, fakeNode(layer));
+    return (
+      <div
+        data-testid={`layer-${layer.id}`}
+        data-x={layer.x_mm}
+        data-y={layer.y_mm}
+        data-w={layer.width_mm}
+        data-h={layer.height_mm}
+        data-points={
+          layer.props.kind === 'shape' && layer.props.shape === 'polygon'
+            ? JSON.stringify(polygonPoints(layer.props))
+            : undefined
+        }
+        onClick={() => onSelect?.(layer.id, false)}
+        onDoubleClick={() => onDoubleClick?.(layer.id)}
+      />
+    );
+  },
 }));
 
 vi.mock('@/lib/dealer-kit/fonts', () => ({
@@ -200,9 +292,25 @@ import { TagCanvasEditor } from './TagCanvasEditor';
 const W_PX = 120;
 const H_PX = 60;
 
-function shapeLayer(shape: 'polygon' | 'rect', extra: Record<string, unknown> = {}): TagLayer {
+const FULL_ANCHORS = [
+  'top-left',
+  'top-right',
+  'bottom-left',
+  'bottom-right',
+  'middle-left',
+  'middle-right',
+  'top-center',
+  'bottom-center',
+];
+
+function shapeLayer(
+  id: string,
+  shape: 'polygon' | 'rect',
+  extra: Record<string, unknown> = {},
+  overrides: Partial<TagLayer> = {},
+): TagLayer {
   return {
-    id: 'sh1',
+    id,
     type: 'shape',
     x_mm: 0,
     y_mm: 0,
@@ -223,17 +331,48 @@ function shapeLayer(shape: 'polygon' | 'rect', extra: Record<string, unknown> = 
       cornerRadius: 0,
       ...extra,
     },
+    ...overrides,
   } as TagLayer;
 }
 
-function docWith(layer: TagLayer): TagTemplateDoc {
-  return { width_mm: 60, height_mm: 40, layers: [layer] };
+function boxedBadge(id: string): TagLayer {
+  return {
+    id,
+    type: 'price_badge',
+    x_mm: 0,
+    y_mm: 0,
+    width_mm: 40,
+    height_mm: 20,
+    rotation_deg: 0,
+    z_index: 1,
+    locked: false,
+    visible: true,
+    slot_binding: null,
+    text_override: null,
+    props: {
+      kind: 'price_badge',
+      variant: 'list_only',
+      fill: '#ffffff',
+      textColor: '#000000',
+      cornerRadius: 0,
+      showNett: true,
+      showBox: true,
+    },
+  } as unknown as TagLayer;
+}
+
+function docWith(...layers: TagLayer[]): TagTemplateDoc {
+  return { width_mm: 60, height_mm: 40, layers };
 }
 
 function handle(container: HTMLElement, name: string) {
   const element = container.querySelector(`[data-name="${name}"]`);
   if (!element) throw new Error(`no handle named ${name}`);
   return element as HTMLElement;
+}
+
+function queryHandle(container: HTMLElement, name: string) {
+  return container.querySelector(`[data-name="${name}"]`);
 }
 
 function pointsOf(layerId = 'sh1') {
@@ -250,81 +389,289 @@ function boxOf(layerId = 'sh1') {
   };
 }
 
-/** Selection is all it takes now (r4b, AC-S4-10). */
-function selectShape() {
-  fireEvent.click(screen.getByTestId('layer-sh1'));
+/** Single click: SELECT mode (AC-S5-1). */
+function selectShape(id = 'sh1') {
+  fireEvent.click(screen.getByTestId(`layer-${id}`));
+}
+
+/** Double click: EDIT-POINTS mode (AC-S5-2). Konva fires a plain click first,
+ * same as a real pointer would - the component's own click handler runs
+ * before the double-click one either way. */
+function enterEditPoints(id = 'sh1') {
+  fireEvent.click(screen.getByTestId(`layer-${id}`));
+  fireEvent.doubleClick(screen.getByTestId(`layer-${id}`));
 }
 
 function lastAnchors() {
   return konva.anchors.at(-1);
 }
 
-describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    konva.positions.length = 0;
-    konva.anchors.length = 0;
-  });
+beforeEach(() => {
+  vi.clearAllMocks();
+  konva.positions.length = 0;
+  konva.anchors.length = 0;
+  konva.nodesById.clear();
+  konva.transformerNodes = [];
+  konva.onTransformEnd = undefined;
+});
 
-  it('SELECTING a polygon shows a handle on every corner and every edge (AC-S4-10)', () => {
+// ---------------------------------------------------------------------------
+// Select mode (AC-S5-1, AC-S5-4)
+// ---------------------------------------------------------------------------
+
+describe('select mode - single click (S5, AC-S5-1)', () => {
+  it('shows the full Transformer anchor set and no vertex/edge handles', () => {
     const { container } = render(
-      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,
     );
 
-    expect(container.querySelector('[data-name="polygon-vertex-0"]')).toBeNull();
+    expect(queryHandle(container, 'polygon-vertex-0')).toBeNull();
 
     selectShape();
+
+    expect(lastAnchors()).toEqual(FULL_ANCHORS);
+    expect(queryHandle(container, 'polygon-vertex-0')).toBeNull();
+    expect(queryHandle(container, 'polygon-edge-0')).toBeNull();
+  });
+
+  it('gives a boxed list-only price badge the same select mode (AC-S5-4)', () => {
+    const { container } = render(
+      <TagCanvasEditor doc={docWith(boxedBadge('sh1'))} onChange={vi.fn()} />,
+    );
+
+    selectShape();
+
+    expect(lastAnchors()).toEqual(FULL_ANCHORS);
+    expect(queryHandle(container, 'polygon-vertex-0')).toBeNull();
+  });
+
+  it('leaves a rectangle on its ordinary anchors regardless - it has no points to edit', () => {
+    const { container } = render(
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'rect'))} onChange={vi.fn()} />,
+    );
+
+    selectShape();
+
+    expect(lastAnchors()).toEqual(FULL_ANCHORS);
+    expect(queryHandle(container, 'polygon-vertex-0')).toBeNull();
+  });
+
+  it('a box-drag resize in select mode grows the box and leaves the normalised points untouched (AC-S5-1)', () => {
+    let latestLayers: TagLayer[] = [];
+    render(
+      <TagCanvasEditor
+        doc={docWith(shapeLayer('sh1', 'polygon'))}
+        onChange={vi.fn()}
+        onLayersChange={(layers) => {
+          latestLayers = layers;
+        }}
+      />,
+    );
+
+    // The attach-effect only wires the Transformer to a SELECTED node, so
+    // the resize below has to follow a real select first.
+    selectShape();
+    expect(lastAnchors()).toEqual(FULL_ANCHORS);
+
+    const before = polygonPoints(shapeLayer('sh1', 'polygon').props);
+
+    // A corner-anchor drag: Konva reports it as a `scale` on the node the
+    // Transformer is attached to, not a new width/height directly.
+    const node = konva.nodesById.get('sh1')!;
+    node.scaleX(1.5);
+    node.scaleY(2);
+    act(() => {
+      konva.onTransformEnd?.();
+    });
+
+    const resized = latestLayers.find((l) => l.id === 'sh1')!;
+    // Box grew by exactly the scale (40mm * 1.5, 20mm * 2) - the resize
+    // reached the layer.
+    expect(resized.width_mm).toBeCloseTo(60);
+    expect(resized.height_mm).toBeCloseTo(40);
+    // The shape's own points are normalised 0-1 against that box, so a plain
+    // box resize needs no change to them at all - this is the whole point of
+    // select mode not touching `props`.
+    // Comparing the RESOLVED points (as `KonvaTagLayer`/the Layers panel see
+    // them, defaulting when absent) rather than the raw `props.points`: a
+    // fresh shape carries no explicit points until something writes them,
+    // and select-mode's whole point is that a box resize is not that
+    // something.
+    expect(resized.props.kind === 'shape' ? polygonPoints(resized.props) : null).toEqual(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Entering edit-points mode (AC-S5-2)
+// ---------------------------------------------------------------------------
+
+describe('entering edit-points mode (S5, AC-S5-2)', () => {
+  it('double-click shows vertex + edge handles and clears the Transformer anchors', () => {
+    const { container } = render(
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,
+    );
+
+    enterEditPoints();
 
     for (let i = 0; i < 4; i += 1) {
       expect(handle(container, `polygon-vertex-${i}`)).toBeTruthy();
       expect(handle(container, `polygon-edge-${i}`)).toBeTruthy();
     }
-    // Corner 2 is the bottom right of the box; edge 0 runs along the top.
-    expect(handle(container, 'polygon-vertex-2').getAttribute('data-x')).toBe(String(W_PX));
-    expect(handle(container, 'polygon-vertex-2').getAttribute('data-y')).toBe(String(H_PX));
-    expect(handle(container, 'polygon-edge-0').getAttribute('data-x')).toBe(String(W_PX / 2));
-    expect(handle(container, 'polygon-edge-0').getAttribute('data-y')).toBe('0');
-  });
-
-  it('gives the Transformer no box anchors while a polygon is selected (AC-S4-10)', () => {
-    render(<TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />);
-
-    expect(lastAnchors()).toEqual(expect.arrayContaining(['top-left']));
-
-    selectShape();
-
-    // Empty, not absent: react-konva keeps the rotater, which is the one grip
-    // a polygon still wants.
     expect(lastAnchors()).toEqual([]);
   });
 
-  it('a double-click is harmless - it just selects, same as the click', () => {
+  it('Enter toggles edit-points mode on the current selection', () => {
     const { container } = render(
-      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,
+    );
+
+    selectShape();
+    expect(queryHandle(container, 'polygon-vertex-0')).toBeNull();
+
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(handle(container, 'polygon-vertex-0')).toBeTruthy();
+    expect(lastAnchors()).toEqual([]);
+
+    fireEvent.keyDown(window, { key: 'Enter' });
+    expect(queryHandle(container, 'polygon-vertex-0')).toBeNull();
+    expect(lastAnchors()).toEqual(FULL_ANCHORS);
+  });
+
+  it('the Inspector "Edit points" button enters the same mode', () => {
+    const { container } = render(
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,
+    );
+
+    selectShape();
+    fireEvent.click(screen.getByRole('button', { name: 'Edit points' }));
+
+    expect(handle(container, 'polygon-vertex-0')).toBeTruthy();
+    expect(lastAnchors()).toEqual([]);
+    // The button itself flips label once inside the mode.
+    expect(screen.getByRole('button', { name: 'Done editing points' })).toBeInTheDocument();
+  });
+
+  it('gives a boxed price badge the same edit-points mode (AC-S5-4)', () => {
+    const { container } = render(
+      <TagCanvasEditor doc={docWith(boxedBadge('sh1'))} onChange={vi.fn()} />,
+    );
+
+    enterEditPoints();
+
+    expect(handle(container, 'polygon-vertex-0')).toBeTruthy();
+    expect(lastAnchors()).toEqual([]);
+  });
+
+  it('a rectangle offers neither mode change - a second click is just a click (no points to edit)', () => {
+    const { container } = render(
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'rect'))} onChange={vi.fn()} />,
+    );
+
+    enterEditPoints();
+
+    expect(queryHandle(container, 'polygon-vertex-0')).toBeNull();
+    expect(lastAnchors()).toEqual(FULL_ANCHORS);
+  });
+
+  it('a locked polygon offers neither mode (AC-S5-5)', () => {
+    const { container } = render(
+      <TagCanvasEditor
+        doc={docWith(shapeLayer('sh1', 'polygon', {}, { locked: true }))}
+        onChange={vi.fn()}
+      />,
+    );
+
+    // A locked layer cannot even be entered into single-selection by click in
+    // the real editor (marquee/click ignore locked layers upstream of this
+    // guard); asserting the mode itself never arms is the contract this file
+    // owns - `cornerHandleLayer`'s guard reads `layer.locked` directly.
+    fireEvent.doubleClick(screen.getByTestId('layer-sh1'));
+    fireEvent.keyDown(window, { key: 'Enter' });
+
+    expect(queryHandle(container, 'polygon-vertex-0')).toBeNull();
+  });
+
+  it('a hidden polygon offers neither mode (AC-S5-5)', () => {
+    const { container } = render(
+      <TagCanvasEditor
+        doc={docWith(shapeLayer('sh1', 'polygon', {}, { visible: false }))}
+        onChange={vi.fn()}
+      />,
     );
 
     fireEvent.doubleClick(screen.getByTestId('layer-sh1'));
+    fireEvent.keyDown(window, { key: 'Enter' });
 
-    expect(handle(container, 'polygon-vertex-0')).toBeTruthy();
+    expect(queryHandle(container, 'polygon-vertex-0')).toBeNull();
   });
+});
 
-  it('leaves a rectangle alone - only a polygon has corners to edit', () => {
+// ---------------------------------------------------------------------------
+// Leaving edit-points mode (AC-S5-3)
+// ---------------------------------------------------------------------------
+
+describe('leaving edit-points mode (S5, AC-S5-3)', () => {
+  it('Esc returns to select mode, keeping the shape selected', () => {
     const { container } = render(
-      <TagCanvasEditor doc={docWith(shapeLayer('rect'))} onChange={vi.fn()} />,
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,
     );
 
-    selectShape();
+    enterEditPoints();
+    expect(handle(container, 'polygon-vertex-0')).toBeTruthy();
 
-    expect(container.querySelector('[data-name="polygon-vertex-0"]')).toBeNull();
-    expect(lastAnchors()).toEqual(expect.arrayContaining(['top-left']));
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    expect(queryHandle(container, 'polygon-vertex-0')).toBeNull();
+    // Selection survives - the Transformer's full anchor set is back, not
+    // Escape's OTHER job (deselect), which only runs once there is no mode
+    // left to step out of.
+    expect(lastAnchors()).toEqual(FULL_ANCHORS);
   });
 
+  it('Enter (again) returns to select mode', () => {
+    const { container } = render(
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,
+    );
+
+    enterEditPoints();
+    fireEvent.keyDown(window, { key: 'Enter' });
+
+    expect(queryHandle(container, 'polygon-vertex-0')).toBeNull();
+    expect(lastAnchors()).toEqual(FULL_ANCHORS);
+  });
+
+  it('selecting a different layer exits edit-points mode for the first one', () => {
+    const { container } = render(
+      <TagCanvasEditor
+        doc={docWith(
+          shapeLayer('sh1', 'polygon'),
+          shapeLayer('sh2', 'rect', {}, { x_mm: 45 }),
+        )}
+        onChange={vi.fn()}
+      />,
+    );
+
+    enterEditPoints('sh1');
+    expect(handle(container, 'polygon-vertex-0')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('layer-sh2'));
+
+    expect(queryHandle(container, 'polygon-vertex-0')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Geometry inside edit-points mode (r5 S1 Shift-lock behaviour, unchanged -
+// only how the mode is ENTERED moved, in the describe blocks above).
+// ---------------------------------------------------------------------------
+
+describe('edit-points mode geometry (r4b/r5, now behind double-click/Enter)', () => {
   it('dragging a corner writes the new normalized point, and only that one (AC-S4-2)', () => {
     const onChange = vi.fn();
     const { container } = render(
-      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={onChange} />,
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={onChange} />,
     );
-    selectShape();
+    enterEditPoints();
 
     const vertex = handle(container, 'polygon-vertex-1');
     fireEvent.mouseDown(vertex);
@@ -350,9 +697,9 @@ describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
 
   it('follows the cursor while the corner is still being dragged', () => {
     const { container } = render(
-      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,
     );
-    selectShape();
+    enterEditPoints();
 
     const vertex = handle(container, 'polygon-vertex-1');
     fireEvent.mouseDown(vertex);
@@ -363,11 +710,10 @@ describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
 
   it('GROWS the box when a corner is dragged past its right wall (AC-S4-11)', () => {
     const { container } = render(
-      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,
     );
-    selectShape();
+    enterEditPoints();
 
-    // 180px is 60mm: 20mm past the 40mm box.
     const vertex = handle(container, 'polygon-vertex-1');
     fireEvent.mouseDown(vertex);
     fireEvent.mouseUp(vertex, { clientX: 180, clientY: 0 });
@@ -383,9 +729,9 @@ describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
 
   it('moves the layer origin when the growth is off the left wall (AC-S4-11)', () => {
     const { container } = render(
-      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,
     );
-    selectShape();
+    enterEditPoints();
 
     const vertex = handle(container, 'polygon-vertex-0');
     fireEvent.mouseDown(vertex);
@@ -394,20 +740,15 @@ describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
     expect(boxOf()).toEqual({ x: -20, y: 0, width: 60, height: 20 });
     expect(pointsOf()[0]).toEqual({ x: 0, y: 0 });
     expect(pointsOf()[3]).toEqual({ x: 0.333333, y: 1 });
-    // The handle itself was dropped at -60px, in the OLD box's coordinates.
-    // Without this it would strand out in the margin while the corner it
-    // stands for had already moved to the new box's origin.
     expect(konva.positions.at(-1)).toEqual({ x: 0, y: 0 });
   });
 
   it('snaps a dragged EDGE handle back onto the recomputed midpoint', () => {
     const { container } = render(
-      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,
     );
-    selectShape();
+    enterEditPoints();
 
-    // Edge 0 is the top edge; its midpoint starts at (60, 0). Drag it 30mm
-    // (90px) up, so the whole box moves up and the midpoint is back at y 0.
     const edge = handle(container, 'polygon-edge-0');
     fireEvent.mouseDown(edge);
     fireEvent.mouseUp(edge, { clientX: W_PX / 2, clientY: -90 });
@@ -418,12 +759,10 @@ describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
 
   it('dragging an edge midpoint moves both of its endpoints (AC-S4-2)', () => {
     const { container } = render(
-      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,
     );
-    selectShape();
+    enterEditPoints();
 
-    // Edge 0 is the top edge; its midpoint starts at (60, 0). Half the box
-    // down leaves the shape in the bottom half, so the box refits to it.
     const edge = handle(container, 'polygon-edge-0');
     fireEvent.mouseDown(edge);
     fireEvent.mouseUp(edge, { clientX: W_PX / 2, clientY: H_PX / 2 });
@@ -437,15 +776,12 @@ describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
     ]);
   });
 
-  it('Shift snaps a corner drag to the dominant axis (S1, AC-S1-1)', () => {
+  it('Shift snaps a corner drag to the dominant axis (r5 S1)', () => {
     const { container } = render(
-      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,
     );
-    selectShape();
+    enterEditPoints();
 
-    // Vertex 1 (top right) starts at (120, 0). dx=20, dy=3: the ratio is well
-    // under tan(22.5deg), so the corner is pinned to the dominant (x) axis -
-    // the raw y of 3 never reaches the shape.
     const vertex = handle(container, 'polygon-vertex-1');
     fireEvent.mouseDown(vertex);
     fireEvent.mouseMove(vertex, { clientX: 140, clientY: 3, shiftKey: true });
@@ -453,14 +789,12 @@ describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
     expect(konva.positions.at(-1)).toEqual({ x: 140, y: 0 });
   });
 
-  it('Shift snaps a corner drag to the diagonal when the deltas are close (S1, AC-S1-1)', () => {
+  it('Shift snaps a corner drag to the diagonal when the deltas are close (r5 S1)', () => {
     const { container } = render(
-      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,
     );
-    selectShape();
+    enterEditPoints();
 
-    // dx=10, dy=12: close enough to 45 degrees that both land on the average
-    // magnitude, 11, rather than either raw value.
     const vertex = handle(container, 'polygon-vertex-1');
     fireEvent.mouseDown(vertex);
     fireEvent.mouseMove(vertex, { clientX: 130, clientY: 12, shiftKey: true });
@@ -468,11 +802,11 @@ describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
     expect(konva.positions.at(-1)).toEqual({ x: 131, y: 11 });
   });
 
-  it('frees the corner once Shift is released mid-drag (S1, AC-S1-2)', () => {
+  it('frees the corner once Shift is released mid-drag (r5 S1)', () => {
     const { container } = render(
-      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,
     );
-    selectShape();
+    enterEditPoints();
 
     const vertex = handle(container, 'polygon-vertex-1');
     fireEvent.mouseDown(vertex);
@@ -480,24 +814,17 @@ describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
     expect(konva.positions.at(-1)).toEqual({ x: 140, y: 0 });
     const pushedWhileLocked = konva.positions.length;
 
-    // Shift comes up: the handler no longer overrides the node's position,
-    // so nothing new is pushed and the corner follows the raw cursor. clientY
-    // is 4, not 0 (r5 review): a leftover snap would have zeroed y anyway, so
-    // 0 could not have told a freed drag apart from a still-locked one - only
-    // a nonzero y that reaches the shape proves the lock actually let go.
     fireEvent.mouseMove(vertex, { clientX: 150, clientY: 4 });
     expect(konva.positions.length).toBe(pushedWhileLocked);
     expect(pointsOf()[1]).toEqual({ x: 1.25, y: 4 / 60 });
   });
 
-  it('Shift constrains an EDGE drag to its dominant axis too (S1, AC-S1-3)', () => {
+  it('Shift constrains an EDGE drag to its dominant axis too (r5 S1)', () => {
     const { container } = render(
-      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,
     );
-    selectShape();
+    enterEditPoints();
 
-    // Edge 0's midpoint starts at (60, 0), same dx/dy as the first corner
-    // case above.
     const edge = handle(container, 'polygon-edge-0');
     fireEvent.mouseDown(edge);
     fireEvent.mouseMove(edge, { clientX: 80, clientY: 3, shiftKey: true });
@@ -505,33 +832,11 @@ describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
     expect(konva.positions.at(-1)).toEqual({ x: 80, y: 0 });
   });
 
-  it('gives a boxed price badge the same handles (r4b, AC-S6-2)', () => {
-    const badge = {
-      id: 'sh1',
-      type: 'price_badge',
-      x_mm: 0,
-      y_mm: 0,
-      width_mm: 40,
-      height_mm: 20,
-      rotation_deg: 0,
-      z_index: 1,
-      locked: false,
-      visible: true,
-      slot_binding: null,
-      text_override: null,
-      props: {
-        kind: 'price_badge',
-        variant: 'list_only',
-        fill: '#ffffff',
-        textColor: '#000000',
-        cornerRadius: 0,
-        showNett: true,
-        showBox: true,
-      },
-    } as unknown as TagLayer;
-
-    const { container } = render(<TagCanvasEditor doc={docWith(badge)} onChange={vi.fn()} />);
-    selectShape();
+  it('gives a boxed price badge the same handles once in edit-points mode (r4b, AC-S6-2)', () => {
+    const { container } = render(
+      <TagCanvasEditor doc={docWith(boxedBadge('sh1'))} onChange={vi.fn()} />,
+    );
+    enterEditPoints();
 
     expect(handle(container, 'polygon-vertex-2').getAttribute('data-x')).toBe(String(W_PX));
     expect(lastAnchors()).toEqual([]);
@@ -543,65 +848,21 @@ describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
     expect(boxOf()).toEqual({ x: 0, y: 0, width: 60, height: 20 });
   });
 
-  it('leaves an unboxed price badge alone - it has no callout to shape', () => {
-    const badge = {
-      id: 'sh1',
-      type: 'price_badge',
-      x_mm: 0,
-      y_mm: 0,
-      width_mm: 40,
-      height_mm: 20,
-      rotation_deg: 0,
-      z_index: 1,
-      locked: false,
-      visible: true,
-      slot_binding: null,
-      text_override: null,
-      props: {
-        kind: 'price_badge',
-        variant: 'list_only',
-        fill: '#ffffff',
-        textColor: '#000000',
-        cornerRadius: 0,
-        showNett: true,
-      },
-    } as unknown as TagLayer;
-
-    const { container } = render(<TagCanvasEditor doc={docWith(badge)} onChange={vi.fn()} />);
-    selectShape();
-
-    expect(container.querySelector('[data-name="polygon-vertex-0"]')).toBeNull();
-    expect(lastAnchors()).toEqual(expect.arrayContaining(['top-left']));
-  });
-
-  it('deselecting takes the handles away (AC-S4-7)', () => {
-    const { container } = render(
-      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
-    );
-    selectShape();
-    expect(container.querySelector('[data-name="polygon-vertex-0"]')).toBeTruthy();
-
-    fireEvent.keyDown(window, { key: 'Escape' });
-
-    expect(container.querySelector('[data-name="polygon-vertex-0"]')).toBeNull();
-  });
-
   it('never strands a drag preview when the handles disappear mid-drag (r4c)', () => {
     const { container } = render(
-      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,
     );
-    selectShape();
+    enterEditPoints();
 
     const vertex = handle(container, 'polygon-vertex-1');
     fireEvent.mouseDown(vertex);
     fireEvent.mouseMove(vertex, { clientX: W_PX / 4, clientY: 0 });
-    // Sanity check: the preview IS showing the dragged point before Escape.
     expect(pointsOf()[1]).toEqual({ x: 0.25, y: 0 });
 
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(container.querySelector('[data-name="polygon-vertex-0"]')).toBeNull();
 
-    selectShape();
+    enterEditPoints();
 
     expect(pointsOf()).toEqual([
       { x: 0, y: 0 },
@@ -612,27 +873,24 @@ describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
   });
 
   /**
-   * r4d: Escape CANCELS the drag, it does not commit half of it.
-   *
-   * Measured on the request designer: press a corner, move, press Escape, and
-   * the box refitted around wherever the pointer had got to (W 33.2 -> 52.54),
-   * the shape kept the half-drag and the designer autosaved it. The handles
-   * unmount on the Escape, and Konva still delivers that node's `dragend`, so
-   * the commit path ran on a drag the user had just abandoned.
+   * r4d: Escape CANCELS the drag, it does not commit half of it. Escape's
+   * FIRST job now is dropping edit-points mode (S5) - the in-flight drag is
+   * cancelled ahead of that, in the same keydown, so this still holds.
    */
   it('Escape mid-drag cancels it: nothing committed, nothing to undo (r4d)', () => {
     const { container } = render(
-      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,
     );
-    selectShape();
+    enterEditPoints();
 
     const before = boxOf();
     const vertex = handle(container, 'polygon-vertex-1');
     fireEvent.mouseDown(vertex);
     fireEvent.mouseMove(vertex, { clientX: 180, clientY: 0 });
 
-    // The handles unmount here, and the stand-in fires the `dragend` Konva
-    // fires on a node destroyed mid-drag.
+    // The FIRST Escape here only drops edit-points mode back to select -
+    // the handles unmount, and the stand-in fires the `dragend` Konva fires
+    // on a node destroyed mid-drag, which must still commit nothing.
     fireEvent.keyDown(window, { key: 'Escape' });
 
     expect(boxOf()).toEqual(before);
@@ -642,23 +900,20 @@ describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
       { x: 1, y: 1 },
       { x: 0, y: 1 },
     ]);
-    // No history entry either: an abandoned drag is not a step to undo.
     expect(screen.getByRole('button', { name: 'Undo' })).toBeDisabled();
   });
 
   it('releasing after an Escape still commits nothing (r4d)', () => {
     const { container } = render(
-      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,
     );
-    selectShape();
+    enterEditPoints();
 
     const before = boxOf();
     const vertex = handle(container, 'polygon-vertex-1');
     fireEvent.mouseDown(vertex);
     fireEvent.mouseMove(vertex, { clientX: 180, clientY: 0 });
     fireEvent.keyDown(window, { key: 'Escape' });
-    // The button comes up after the handle has gone; Konva reports it against
-    // the node it was dragging, which no longer exists.
     fireEvent.mouseUp(vertex, { clientX: 180, clientY: 0 });
 
     expect(boxOf()).toEqual(before);
@@ -667,9 +922,9 @@ describe('TagCanvasEditor polygon corner handles (S4, r4b)', () => {
 
   it('one drag is one undo (AC-S4-7)', () => {
     const { container } = render(
-      <TagCanvasEditor doc={docWith(shapeLayer('polygon'))} onChange={vi.fn()} />,
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,
     );
-    selectShape();
+    enterEditPoints();
 
     const vertex = handle(container, 'polygon-vertex-1');
     fireEvent.mouseDown(vertex);

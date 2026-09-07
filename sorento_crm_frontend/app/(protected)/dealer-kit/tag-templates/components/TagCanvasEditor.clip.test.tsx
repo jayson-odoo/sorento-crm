@@ -10,9 +10,18 @@
  * (`canvasWidthPx`/`canvasHeightPx`) - the one geometry the editor already
  * computes and the one this test can read off the background `Rect` without
  * having to reproduce the zoom/scale arithmetic itself.
+ *
+ * Extended (#720 fix, S4, AC-S4-1/3): a layer the resize left past the edge
+ * is not just clipped away - it is drawn a SECOND time, unclipped, at 30%
+ * opacity, fully interactive (`TagCanvasEditor`'s own ghost pass), and the
+ * Layers panel row for it carries an "outside" marker. `KonvaTagLayer` is
+ * stood in for by a clickable div (same idiom as `TagCanvasEditor.polygon.
+ * test.tsx`) rather than `() => null`, so the ghost pass actually renders
+ * something this file can assert against; `LayersPanel` itself is left
+ * UNMOCKED, since the marker is its own real behaviour, not this file's.
  */
 
-import { render } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { TagLayer, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
@@ -56,7 +65,23 @@ vi.mock('react-konva', () => {
 });
 
 vi.mock('./KonvaTagLayer', () => ({
-  KonvaTagLayer: () => null,
+  KonvaTagLayer: ({
+    layer,
+    onSelect,
+    interactionId,
+    opacity,
+  }: {
+    layer: TagLayer;
+    onSelect?: (id: string, additive: boolean) => void;
+    interactionId?: string;
+    opacity?: number;
+  }) => (
+    <div
+      data-testid={`layer-${layer.id}`}
+      data-opacity={opacity ?? 1}
+      onClick={() => onSelect?.(interactionId ?? layer.id, false)}
+    />
+  ),
 }));
 
 vi.mock('@/lib/dealer-kit/fonts', () => ({
@@ -130,5 +155,79 @@ describe('TagCanvasEditor artboard clip (S9 review S4)', () => {
     clipFunc!(ctx);
 
     expect(rectCalls).toEqual([[0, 0, artboardBg!.width, artboardBg!.height]]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Ghost pass (#720 fix, S4, AC-S4-1/3): a layer a resize left past the edge
+// stays visible (dimmed) and interactive OUTSIDE the clip, and the Layers
+// panel flags it - it never actually disappears, only the clipped copy does.
+// ---------------------------------------------------------------------------
+
+function overflowingLayerDoc(): TagTemplateDoc {
+  const layer: TagLayer = {
+    id: 'text-1',
+    type: 'text',
+    // 55 + 20 = 75mm, well past the 60mm-wide artboard below.
+    x_mm: 55,
+    y_mm: 5,
+    width_mm: 20,
+    height_mm: 6,
+    rotation_deg: 0,
+    z_index: 1,
+    locked: false,
+    visible: true,
+    slot_binding: null,
+    text_override: null,
+    props: { ...defaultTextProps(), text: 'Hello' },
+  };
+  return { width_mm: 60, height_mm: 40, layers: [layer] };
+}
+
+describe('TagCanvasEditor ghost pass for off-artboard layers (S4, AC-S4-1/3)', () => {
+  it('draws the overflowing layer twice: the clipped copy AND a selectable ghost at 30% opacity', () => {
+    render(<TagCanvasEditor doc={overflowingLayerDoc()} onChange={vi.fn()} />);
+
+    // The clipped copy, same as any layer - it still exists and still draws,
+    // even though the artboard Group's own clipFunc hides the part past the
+    // edge in a real Konva render.
+    expect(screen.getByTestId('layer-text-1')).toBeInTheDocument();
+
+    // The ghost pass: a SECOND node for the same layer, drawn outside the
+    // clip at reduced opacity (AC-S4-1). Its own Konva id is suffixed so it
+    // never collides with the clipped copy above.
+    const ghost = screen.getByTestId('layer-text-1-ghost');
+    expect(ghost.getAttribute('data-opacity')).toBe('0.3');
+  });
+
+  it('the ghost is fully interactive - clicking it selects the REAL layer (AC-S4-1)', () => {
+    render(<TagCanvasEditor doc={overflowingLayerDoc()} onChange={vi.fn()} />);
+
+    // Nothing selected yet: Delete is disabled.
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId('layer-text-1-ghost'));
+
+    // `interactionId` on the ghost routes the click to the layer's REAL id
+    // (`text-1`, not `text-1-ghost`) - selection now holds, so Delete arms.
+    expect(screen.getByRole('button', { name: 'Delete' })).not.toBeDisabled();
+  });
+
+  it('flags the overflowing layer in the Layers panel with the outside marker', () => {
+    render(<TagCanvasEditor doc={overflowingLayerDoc()} onChange={vi.fn()} />);
+
+    expect(
+      screen.getByTitle('Partly outside the tag, it will not print'),
+    ).toBeInTheDocument();
+  });
+
+  it('a fully-inside layer draws once - no ghost, no marker (AC-S4-5)', () => {
+    render(<TagCanvasEditor doc={doc()} onChange={vi.fn()} />);
+
+    expect(screen.getByTestId('layer-text-1')).toBeInTheDocument();
+    expect(screen.queryByTestId('layer-text-1-ghost')).not.toBeInTheDocument();
+    expect(
+      screen.queryByTitle('Partly outside the tag, it will not print'),
+    ).not.toBeInTheDocument();
   });
 });
