@@ -195,9 +195,11 @@ def select_tool(db: Any, *, query: str, domain: str | None, services: Any) -> li
     A `domain` outside the parser's own declared enum must never reach this call in the
     first place (evidence turn b5b19cec-dccc-4eda-b766-1aeb1362957b: `domain_hint:
     "purchasing"`, a TEAM name, zeroed `search_tool_chunks`'s `source_id LIKE
-    '%purchasing%'` filter and the turn ended `not_found`) - `output_exchange.py` coerces
-    an out-of-enum hint to `None` before this lane ever sees it (F3), so `domain` here is
-    trusted as-is with no retry.
+    '%purchasing%'` filter and the turn ended `not_found`) - `contracts.coerce_domain_hint`
+    guards both ways in: the parser's emission in `output_exchange.py`, and the contact's
+    carried memory in `engine.py` (turn fca4aa5e-806b-4403-aa2e-fc2d0961fb2d parsed as
+    `incoming` and still arrived here as `purchasing` before the second guard existed). So
+    `domain` here is trusted as-is with no retry.
     """
     _ = db
     embedding = services.embed(query)

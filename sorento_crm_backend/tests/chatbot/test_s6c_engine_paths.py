@@ -13,9 +13,12 @@ regex over customer text.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
+
+from app.models.chatbot_turn import ChatbotTurn
 
 from app.services.chatbot.lanes.business.services import (
     AnswerServices,
@@ -643,4 +646,206 @@ class TestOfferArmSkipsBuildSuggestOfferSafely:
             "build_suggest_offer changed a field the offer-arm picker owns - "
             f"before={before!r} after={after!r}; the __init__.py:433-439 comment "
             "citing this test is wrong and the offer arm needs the node after all"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# 5. F3: no `domain` outside the parser's own enum ever reaches `select_tool`, from
+#    EITHER of the two ways a domain enters a turn - this turn's emission, and the
+#    contact's carried memory.
+# --------------------------------------------------------------------------- #
+
+
+class TestF3DomainHintNeverLeavesTheEnumEndToEnd:
+    """Two live turns, two entry points, one guard (`contracts.coerce_domain_hint`).
+
+    * b5b19cec-dccc-4eda-b766-1aeb1362957b: the parser itself tagged
+      `domain_hint: "purchasing"` - a TEAM name, not a domain.
+    * fca4aa5e-806b-4403-aa2e-fc2d0961fb2d: the parser emitted a clean `incoming` and the
+      turn STILL reached the gate as `purchasing`, because the contact's stored
+      `variables.domain_hint` was `"purchasing"` and `resolve_gate.retype_shipment_miss`
+      adopted it over this turn's own domain. That second turn is why the emission guard
+      alone was not the fix, and why this class drives both through `run_turn`.
+
+    Either way `select_tool`'s `source_id LIKE '%<domain>%'` filter matches nothing (every
+    incoming tool's `source_id` is `implemented::crm_incoming_stock_*`), so the turn ends
+    `not_found` with no tool called. The assertion is on the `domain` `tool_search`
+    receives, which is the value `select_tool` was handed.
+    """
+
+    @staticmethod
+    def _domain_recording_fetch_services(seen: list[Any]) -> FetchServices:
+        def _tool_search(embedding, *, query, domain):
+            seen.append(domain)
+            return []
+
+        def _mcp_call(name: str, args: dict) -> Any:
+            raise AssertionError("no tool can be picked from an empty candidate list")
+
+        return FetchServices(
+            embed=lambda query: [0.0, 0.0, 0.0],
+            tool_search=_tool_search,
+            mcp_call=_mcp_call,
+        )
+
+    @staticmethod
+    def _shipment_token_is_only_a_product() -> ResolveGateServices:
+        """The resolver's answer for the container-hinted token: PRODUCT matches and no
+        `inbound_shipment` at all, keyed by `token` - which is the key
+        `resolve_gate._matched_types_by_token` reads, and the whole trigger for the
+        retype. `_srtwc8517_resolved_bundle` keys its resolutions by `raw`, so it cannot
+        drive this path."""
+
+        def _resolve_entity(body: dict[str, Any]) -> dict[str, Any]:
+            return {
+                "tokens": ["SRTWC8517"],
+                "resolutions": [
+                    {
+                        "token": "SRTWC8517",
+                        "matches": [
+                            {
+                                "uuid": "11111111-1111-1111-1111-111111111111",
+                                "entity_type": "product",
+                                "canonical_code": "SRTWC8517",
+                            }
+                        ],
+                    }
+                ],
+                "unresolved_tokens": [],
+            }
+
+        return ResolveGateServices(
+            access_types=lambda **_: [{"name": "Sorento Dealer"}],
+            resolve_entity=_resolve_entity,
+            probe=lambda **_: None,
+        )
+
+    @classmethod
+    def _wire(cls, session_factory, engine_mod, monkeypatch, seen: list[Any]) -> None:
+        set_chatbot_switches(session_factory, business_lane=True)
+        bundle = cls._shipment_token_is_only_a_product()
+        monkeypatch.setattr(
+            engine_mod.business_services,
+            "production_services",
+            lambda db, *, space_id=None: bundle,
+        )
+        monkeypatch.setattr(
+            engine_mod.business_services,
+            "fetch_services",
+            lambda db: cls._domain_recording_fetch_services(seen),
+        )
+        monkeypatch.setattr(
+            engine_mod.business_services,
+            "answer_services_for",
+            lambda session_factory: _no_probe_answer_services(),
+        )
+
+    def test_a_team_name_in_the_emission_never_becomes_a_domain(
+        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        """Turn b5b19cec: the emission's own `domain_hint`, coerced in `output_exchange`.
+
+        The assertion is NOT on `select_tool` here, and the reason is the router rather
+        than the guard: `route.is_low_signal`'s fourth clause sends a `business_query`
+        with no domain to the clarifier lane, so a coerced emission never reaches the
+        business lane at all - asking the customer which question they mean instead of
+        searching tools for a team name. The carried case below is the one that does
+        reach `select_tool`, because that turn has a domain of its own.
+        """
+        from app.services.chatbot import engine as engine_mod
+
+        seen: list[Any] = []
+        self._wire(session_factory, engine_mod, monkeypatch, seen)
+        stub_parser(
+            _parser_output(
+                domain_hint="purchasing",
+                intent_hint="check_incoming",
+                routing={
+                    "suggested_team": "purchasing",
+                    "suggested_agent": "incoming_stock_enquiries",
+                    "team_source": None,
+                },
+            )
+        )
+        stub_access()
+
+        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        row = (
+            session_factory()
+            .query(ChatbotTurn)
+            .filter(ChatbotTurn.id == result.turn_id)
+            .first()
+        )
+        understood = [r for r in (row.trace or []) if r.get("stage") == "understood"]
+        assert understood, "the turn must have parsed for this to grade anything"
+        assert understood[0]["facts"]["domain"] is None, (
+            f"the lane was handed domain {understood[0]['facts']['domain']!r}; a TEAM name "
+            "must be null by the time anything downstream reads it"
+        )
+        assert "purchasing" not in seen, (
+            "a team name reached tool selection, where its `source_id LIKE` filter matches "
+            "nothing"
+        )
+
+    def test_a_team_name_carried_in_the_contacts_memory_never_overwrites_this_turns_domain(
+        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        """Turn fca4aa5e, end to end: stored `variables.domain_hint = "purchasing"`, a
+        container-hinted token the resolver only knows as a PRODUCT, and this turn's own
+        `incoming` / `check_incoming`. `retype_shipment_miss` adopts the carried domain on
+        exactly that shape, so before the engine cleaned the carried value `select_tool`
+        was handed the team name even though the parse was clean."""
+        from sqlalchemy import text as sql_text
+
+        from app.services.chatbot import engine as engine_mod
+        from tests.chatbot.test_engine import CONTACT_ID
+
+        db = session_factory()
+        db.execute(
+            sql_text(
+                "UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) "
+                "WHERE respond_io_id = :cid"
+            ),
+            {
+                "cid": CONTACT_ID,
+                "sv": json.dumps(
+                    {
+                        "variables": {
+                            "domain_hint": "purchasing",
+                            "intent_hint": "stock_check",
+                            "message_type": "business_query",
+                        }
+                    }
+                ),
+            },
+        )
+        db.commit()
+
+        seen: list[Any] = []
+        self._wire(session_factory, engine_mod, monkeypatch, seen)
+        stub_parser(
+            _parser_output(
+                domain_hint="incoming",
+                intent_hint="check_incoming",
+                user_goal="checking when SRTWC8517 arrives",
+                entities=[
+                    {
+                        "raw": "SRTWC8517",
+                        "hint": "inbound_shipment",
+                        "canonical_code": None,
+                        "current_message": True,
+                        "confident": True,
+                    }
+                ],
+            )
+        )
+        stub_access()
+
+        engine_mod.run_turn(_envelope(), session_factory=session_factory)
+
+        assert seen, "the turn must have reached tool selection for this to grade anything"
+        assert seen[0] == "incoming", (
+            f"select_tool was handed {seen[0]!r}; the carried team name must never displace "
+            "the domain this turn actually named"
         )

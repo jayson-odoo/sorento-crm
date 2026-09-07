@@ -141,7 +141,13 @@ class TestDomainHintEnumGuard:
     parser tagged `domain_hint: "purchasing"` - a TEAM name, not one of its own declared
     domains - and `select_tool`'s `source_id LIKE '%purchasing%'` filter matched nothing,
     ending the turn `not_found`. A `domain_hint` outside the prompt's own enum must be
-    coerced to null here, not retried downstream."""
+    coerced to null here, not retried downstream.
+
+    This is the EMISSION half of the guard (`contracts.coerce_domain_hint`). The carried
+    half - the same team name arriving from the contact's stored memory, which is what
+    turn fca4aa5e-806b-4403-aa2e-fc2d0961fb2d actually failed on - is graded by
+    `test_engine.TestCarriedDomainHintGuard` and end to end by
+    `test_s6c_engine_paths.TestF3DomainHintNeverLeavesTheEnumEndToEnd`."""
 
     def test_a_team_name_outside_the_enum_becomes_null(self) -> None:
         assert _domain_hint_out("purchasing") is None

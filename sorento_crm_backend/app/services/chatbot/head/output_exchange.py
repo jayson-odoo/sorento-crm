@@ -32,9 +32,9 @@ from typing import Any
 from app.services.chatbot import jsc, topic
 from app.services.chatbot.contracts import (
     DEFAULT_SUGGESTED_TEAM,
-    DOMAIN_HINTS,
     ENTITY_HINTS,
     INTENT_HINTS,
+    coerce_domain_hint,
 )
 
 
@@ -866,16 +866,13 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     #     so it mis-fires the domain->business_query clobber. Coerce to real null here.
     o["domain_hint"] = norm(o.get("domain_hint"))
     o["intent_hint"] = norm(o.get("intent_hint"))
-    # (c) F3 (review, 7 Sep 2026, evidence turn b5b19cec-dccc-4eda-b766-1aeb1362957b): the
-    #     parser tagged `domain_hint: "purchasing"` for "IBWB248什么时候会到仓库？" -
-    #     "purchasing" is a TEAM name, not one of the prompt's own declared domains, and
-    #     `select_tool`'s `source_id LIKE '%purchasing%'` filter matched nothing (every
-    #     incoming tool's `source_id` is `implemented::crm_incoming_stock_*`), so the turn
-    #     ended `not_found`. A domain outside the prompt's own enum must not reach that
-    #     filter at all: coerce it to null here, the same place the literal string "null"
-    #     already is, so every downstream reader sees one clean signal.
-    if o["domain_hint"] is not None and o["domain_hint"] not in DOMAIN_HINTS:
-        o["domain_hint"] = None
+    # (c) F3 (review, 7 Sep 2026, evidence turn b5b19cec-dccc-4eda-b766-1aeb1362957b): a
+    #     `domain_hint` outside the prompt's own enum - "purchasing", a TEAM name - zeroed
+    #     `select_tool`'s `source_id LIKE '%purchasing%'` filter and ended the turn
+    #     `not_found`. Coerced here, the same place the literal string "null" already is,
+    #     so every downstream reader sees one clean signal. `coerce_domain_hint` carries
+    #     the evidence and is the SAME guard the engine puts on the carried domain.
+    o["domain_hint"] = coerce_domain_hint(o["domain_hint"])
 
     # reuse means "no new value this turn" - but if the parser emitted current entities it
     # contradicts itself. Promote to additive replace_combine so the new value survives.
