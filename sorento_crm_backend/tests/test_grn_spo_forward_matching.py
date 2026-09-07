@@ -2145,3 +2145,85 @@ def test_the_picking_lines_listing_carries_it_and_searches_on_it(world):
     result = PickingHeaderService(world.db).list_picking_lines(query=SPO)
 
     assert [line.spo_number_raw for line in result["data"]] == [SPO]
+
+
+# ---------------------------------------------------------------------------
+# AC-X25 (D28 release list, spo-xlsx-supersede reviewer round) - deleting a
+# GRN releases the receipt it drew, whether one at a time (`delete_grn`) or
+# in bulk (`bulk_delete_grns`); a sibling allocation with no picking line at
+# all keeps its stored value either way.
+# ---------------------------------------------------------------------------
+
+
+def test_delete_grn_drops_the_released_allocations_receipt_to_zero(world):
+    """AC-X25. A GRN with one approved picking line of 5 against an
+    allocation; deleting it via `delete_grn` must drop that allocation's
+    `quantity_received` to 0. A sibling allocation with no picking line at
+    all keeps its stored value.
+    """
+    from app.services.procurement_service import PickingHeaderService
+
+    product, warehouse = world.product(), world.warehouse()
+    allocation = world.allocation(product_id=product, warehouse_id=warehouse, quantity=10)
+    sibling = world.allocation(
+        product_id=product, warehouse_id=warehouse, quantity=7, received=7
+    )
+    grn = world.grn(status="approved", spo_number=SPO)
+    world.line(
+        header_id=grn, product_id=product, warehouse_id=warehouse,
+        quantity=5, allocation_id=allocation,
+    )
+    world.db.commit()
+
+    svc = PickingHeaderService(world.db)
+    svc.sync_grn_received_to_spo(grn)
+    world.db.expire_all()
+    before = world.db.execute(
+        text("SELECT quantity_received FROM spo_allocations WHERE id = :id"), {"id": allocation}
+    ).scalar()
+    assert before == 5, before
+
+    svc.delete_grn(grn)
+
+    world.db.expire_all()
+    after = world.db.execute(
+        text("SELECT quantity_received FROM spo_allocations WHERE id = :id"), {"id": allocation}
+    ).scalar()
+    sibling_after = world.db.execute(
+        text("SELECT quantity_received FROM spo_allocations WHERE id = :id"), {"id": sibling}
+    ).scalar()
+    assert after == 0, after
+    assert sibling_after == 7, sibling_after
+
+
+def test_bulk_delete_grns_drops_the_released_allocations_receipt_to_zero(world):
+    """AC-X25. Same property as `delete_grn`, via `bulk_delete_grns`."""
+    from app.services.procurement_service import PickingHeaderService
+
+    product, warehouse = world.product(), world.warehouse()
+    allocation = world.allocation(product_id=product, warehouse_id=warehouse, quantity=10)
+    sibling = world.allocation(
+        product_id=product, warehouse_id=warehouse, quantity=7, received=7
+    )
+    grn = world.grn(status="approved", spo_number=SPO)
+    world.line(
+        header_id=grn, product_id=product, warehouse_id=warehouse,
+        quantity=5, allocation_id=allocation,
+    )
+    world.db.commit()
+
+    svc = PickingHeaderService(world.db)
+    svc.sync_grn_received_to_spo(grn)
+    world.db.expire_all()
+
+    svc.bulk_delete_grns([grn])
+
+    world.db.expire_all()
+    after = world.db.execute(
+        text("SELECT quantity_received FROM spo_allocations WHERE id = :id"), {"id": allocation}
+    ).scalar()
+    sibling_after = world.db.execute(
+        text("SELECT quantity_received FROM spo_allocations WHERE id = :id"), {"id": sibling}
+    ).scalar()
+    assert after == 0, after
+    assert sibling_after == 7, sibling_after

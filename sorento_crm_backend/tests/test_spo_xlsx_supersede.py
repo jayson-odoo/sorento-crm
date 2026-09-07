@@ -1,7 +1,7 @@
 """RED tests for the SPO first-push supersede fix.
 
-UAC: documentation/plans/autocount/spo-xlsx-supersede-acceptance-criteria.md (AC-X1..AC-X12).
-PLAN: documentation/plans/autocount/PLAN-spo-xlsx-supersede.md (D25..D29).
+UAC: documentation/plans/autocount/spo-xlsx-supersede-acceptance-criteria.md (AC-X1..AC-X27).
+PLAN: documentation/plans/autocount/PLAN-spo-xlsx-supersede.md (D25..D30).
 
 Written BEFORE any implementation exists (Phase 2, test-first): `_split_rows` /
 `_apply_scoped` in `app.services.shipping_order_ingest_service` carry none of
@@ -10,20 +10,29 @@ D25 (first-push supersede), D26 (receipt-carry-per-group) or D27
 current tree, for the reason recorded in its own docstring - not for an
 unrelated fixture defect.
 
+Round 2 (AC-X13..AC-X22, security-review + reviewer rounds, 2026-09-07) adds
+D25a (per-group, xlsx-only supersede eligibility), D26a (group-total guard +
+merged-shipment warning), D28a (group-aware recompute for
+`source_system='autocount'` rows), D30 (supersede needs `.delete`) and D27a
+(shipment line-status refresh) - none of which exist in the tree this file is
+written against either, same test-first rule.
+
 Substrate reused wholesale from `tests/test_ingest_shipping_orders.py`
 (imported, not copied, per the tester brief): the `env` fixture (itself
 re-exported from `tests/test_ingest_documents.py`), `_spo_record`, `_spo_line`,
 `_spo_rows`, `_seed_legacy_row` (extended there with an `inbound_shipment_id`
-kwarg for AC-X6), `INGEST_SPO`, `READ_SPO`, `MARKER`.
+kwarg for AC-X6 and a `source_system` kwarg for AC-X13), `INGEST_SPO`,
+`READ_SPO`, `MARKER`.
 
-AC-X10 (the dedupe script) and AC-X12 (the contract note) are NOT here:
-AC-X10 is `tests/test_dedupe_spo_xlsx_superseded.py`; AC-X12 is folded into
-this file as a light contract-listing check since it needs no fixture beyond
-an HTTP GET.
+AC-X10, AC-X20 and AC-X21 (the dedupe script) are NOT here: they live in
+`tests/test_dedupe_spo_xlsx_superseded.py`. AC-X12 is folded into this file as
+a light contract-listing check since it needs no fixture beyond an HTTP GET.
 """
 from __future__ import annotations
 
+import logging
 import uuid
+from contextlib import contextmanager
 from datetime import date
 
 from sqlalchemy import text
@@ -52,6 +61,8 @@ from tests.test_ingest_shipping_orders import (
 )
 
 __all__ = ["env"]
+
+_SUPERSEDE_LOGGER = "app.services.shipping_order_ingest_service"
 
 
 # --------------------------------------------------------------------- helpers
@@ -101,13 +112,26 @@ def _order_link_claim_pointing_at(env, allocation_id: str, spo_number: str) -> O
     return claim
 
 
-def _order_inquiry_link_pointing_at(env, allocation_id: str, *, qty: int = 10) -> OrderInquiryLink:
+def _order_inquiry_link_pointing_at(
+    env, allocation_id: str, *, qty: int = 10, null_company: bool = False
+) -> OrderInquiryLink:
     """One `projects.order_inquiry_links` row on `allocation_id` (AC-X2/AC-X5).
 
     Mirrors `tests/scm/test_spo_allocation_documents.py::_project_link`'s
     chain, trimmed to what this fixture needs: no `Project` row (`project_id`
     is nullable on `ProjectSalesOrder`, and `env.stock_transfer` already seeds
-    one the same way for the same reason).
+    one the same way for the same reason). `null_company` (AC-X19, S4) leaves
+    the LINK ROW's own `company_id` NULL - the column is nullable - while its
+    parent chain (`ProjectSalesOrder`/`OrderInquiry`/`OrderInquiryRow`) stays
+    scoped normally; only the dependant `repoint_allocation_dependants` reads
+    is what AC-X19 is about.
+
+    Forced NULL via a raw UPDATE, not by passing `company_id=None` to the
+    constructor: `company_scope`'s `before_insert` auto-stamp treats an
+    explicit `None` exactly like an omitted value - a live check confirmed
+    it silently overwrites it with the ambient scope's own company on
+    flush, which would make this fixture "pass" for the wrong reason (the
+    dependant never actually ends up NULL at all).
     """
     pso = ProjectSalesOrder(
         id=str(uuid.uuid4()),
@@ -141,7 +165,82 @@ def _order_inquiry_link_pointing_at(env, allocation_id: str, *, qty: int = 10) -
     )
     env.db.add(link)
     env.db.flush()
+    if null_company:
+        env.db.execute(
+            text("UPDATE order_inquiry_links SET company_id = NULL WHERE id = :id"),
+            {"id": link.id},
+        )
+        env.db.flush()
     return link
+
+
+def _seed_principal_with_permissions(env, slugs: list[str]) -> str:
+    """A fresh user + role holding EXACTLY `slugs` - never superadmin (AC-X17,
+    D30). `check_user_has_permission` bypasses every check for a superadmin
+    role, and `env`'s own principal always is one, so a genuinely narrower
+    principal has to be a different user entirely.
+    """
+    from app.models.user import (
+        User,
+        UserPermission,
+        UserRole,
+        UserRoleAssignment,
+        UserRolePermission,
+    )
+
+    user_id = str(uuid.uuid4())
+    suffix = user_id[:8]
+    user = User(
+        id=user_id,
+        name=f"{MARKER} principal {suffix}",
+        email=f"{MARKER.lower()}-{suffix}@integrations.local",
+        password="x",
+        status="active",
+    )
+    env.db.add(user)
+    env.db.flush()
+    role = UserRole(
+        id=str(uuid.uuid4()),
+        slug=f"{MARKER.lower()}-role-{suffix}",
+        name=f"{MARKER} role {suffix}",
+    )
+    env.db.add(role)
+    env.db.flush()
+    env.db.add(UserRoleAssignment(user_id=user_id, role_id=role.id))
+    env.db.flush()
+    for slug in slugs:
+        perm = UserPermission(id=str(uuid.uuid4()), slug=slug, name=slug)
+        env.db.add(perm)
+        env.db.flush()
+        env.db.add(UserRolePermission(role_id=role.id, permission_id=perm.id))
+    env.db.flush()
+    env.db.commit()
+    return user_id
+
+
+@contextmanager
+def _as_principal(user_id: str):
+    """Swap `get_external_api_user`'s override for one call (AC-X17).
+
+    `env`'s own override always answers the fixed superadmin dict; this
+    temporarily answers `user_id` instead, for the one `env.post` call inside
+    the `with` block, then restores whatever was there.
+    """
+    from app.dependencies import get_external_api_user
+    from app.main import app as fastapi_app
+
+    def _override():
+        return {"id": user_id, "email": f"{MARKER.lower()}-principal@integrations.local"}
+
+    previous = fastapi_app.dependency_overrides.get(get_external_api_user)
+    fastapi_app.dependency_overrides[get_external_api_user] = _override
+    try:
+        yield
+    finally:
+        if previous is not None:
+            fastapi_app.dependency_overrides[get_external_api_user] = previous
+        else:
+            fastapi_app.dependency_overrides.pop(get_external_api_user, None)
 
 
 # ============================================================================ #
@@ -841,6 +940,602 @@ class TestAcX11XlsxThenGrnThenPushMatchesPushThenGrn:
 
 
 # ============================================================================ #
+# AC-X13 (D25a)
+# ============================================================================ #
+class TestAcX13OnlyScmUploadRowsAreSupersedeCandidates:
+    def test_a_null_source_ref_less_row_is_never_a_supersede_candidate(self, env):
+        """AC-X13 (D25a). A ref-less row written by the CRM UI / n8n
+        packing-list route (`source_system` NULL) is not an xlsx-era
+        supersede candidate - only `source_system='scm_upload'` rows are. On
+        a first push naming its product + location, the row is adopted or
+        left per the PRE-EXISTING (pre-D25) rules, never deleted, and
+        `lines.superseded` is absent.
+
+        RED today: D25a's per-group `source_system` filter does not exist -
+        `_split_rows`'s `first_push` branch buckets EVERY ref-less row into
+        `supersede_pool` regardless of `source_system`, so this NULL-source
+        row is superseded exactly like an xlsx row would be: `lines.
+        superseded` reads `1` and the row is gone.
+        """
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        legacy = _seed_legacy_row(
+            env,
+            spo_number=number,
+            spo_line_number=1,
+            location_code=wh_code,
+            allocated_quantity=10,
+            quantity_received=0,
+            line_status="open",
+            source_system=None,
+        )
+
+        line = _spo_line(env, warehouse_ref=env.warehouse_ref, qty_ordered=10, qty_received=0)
+        record = _spo_record(env, number=number, lines=[line], supplier_ref=env.supplier_ref)
+
+        res = env.post(INGEST_SPO, [record])
+
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        assert "superseded" not in (entry.get("lines") or {}), entry
+
+        rows = _spo_rows(env, number)
+        assert str(legacy.id) in {str(r["id"]) for r in rows}, (
+            "a NULL-source ref-less row must never be superseded/deleted - "
+            "only scm_upload rows are supersede candidates"
+        )
+
+
+# ============================================================================ #
+# AC-X14 (D25a, per-group)
+# ============================================================================ #
+class TestAcX14PerGroupEligibilitySurvivesAPriorPushsRefRow:
+    def test_a_still_xlsx_group_is_superseded_on_the_push_that_first_names_it(self, env):
+        """AC-X14 (D25a, per-group). xlsx rows for P and Q on SPO N; push 1
+        (a DocKey) names P only - Q is kept, closed, untouched. Push 2 (the
+        SAME DocKey) now ALSO names Q, at qty 20 / received 0, while Q's
+        xlsx row carried received 20. After push 2, Q's group must hold
+        EXACTLY ONE row - ref set, received 20, closed - the xlsx Q row
+        gone (`lines.superseded 1` on push 2); no open Q row may exist.
+
+        RED today: eligibility is decided per DOCUMENT
+        (`_has_ref_row(payload)`, D25), not per group - after push 1 gave
+        the spo_number a ref row (P's), push 2 sees `first_push=False` for
+        the WHOLE document, so Q's still-xlsx-era, still-ref-less, CLOSED
+        row falls into `already_closed` (S4) rather than the supersede
+        pool: it is never superseded, and push 2's Q line is created as a
+        brand new, OPEN row alongside it - TWO rows, not one, and an open
+        row exists where none should.
+        """
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        _seed_legacy_row(
+            env,
+            spo_number=number,
+            spo_line_number=1,
+            product_ref=env.product_ref,
+            location_code=wh_code,
+            allocated_quantity=10,
+            quantity_received=10,
+            line_status="closed",
+        )
+        legacy_q = _seed_legacy_row(
+            env,
+            spo_number=number,
+            spo_line_number=2,
+            product_ref=env.product2_ref,
+            location_code=wh_code,
+            allocated_quantity=20,
+            quantity_received=20,
+            line_status="closed",
+        )
+
+        p_line = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, product_ref=env.product_ref,
+            qty_ordered=10, qty_received=0,
+        )
+        record1 = _spo_record(env, number=number, lines=[p_line], supplier_ref=env.supplier_ref)
+        res1 = env.post(INGEST_SPO, [record1])
+        assert res1.status_code == 200, res1.text
+
+        q_line = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, product_ref=env.product2_ref,
+            qty_ordered=20, qty_received=0,
+        )
+        record2 = dict(record1, lines=[p_line, q_line])
+        res2 = env.post(INGEST_SPO, [record2])
+
+        assert res2.status_code == 200, res2.text
+        entry2 = res2.json()["records"][0]
+        assert entry2.get("lines", {}).get("superseded") == 1, entry2
+
+        product2_id = env.refs.resolve(entity_type="products", source_ref=env.product2_ref)
+        q_rows = [
+            r for r in _spo_rows(env, number) if str(r["product_id"]) == str(product2_id)
+        ]
+        assert len(q_rows) == 1, ("Q's group must hold exactly one row after push 2", q_rows)
+        q_row = q_rows[0]
+        assert q_row["source_ref"] == q_line["source_ref"]
+        assert q_row["quantity_received"] == 20
+        assert q_row["line_status"] == "closed"
+        assert str(legacy_q.id) not in {str(r["id"]) for r in q_rows}
+        assert not any(r["line_status"] == "open" for r in q_rows)
+
+
+# ============================================================================ #
+# AC-X15 (D26a guard)
+# ============================================================================ #
+class TestAcX15GuardOnGroupTotalBelowCarriedReceipt:
+    def test_a_first_push_undercutting_the_carried_receipt_is_not_superseded(self, env):
+        """AC-X15 (D26a guard). The AC-X1 xlsx row (allocated 47, received
+        47, closed) and a first push with ONE line for P at L, `qty_ordered
+        1`, `qty_received 0` - the incoming group's own allocated total (1)
+        is below the group's carried receipt (47). The group must NOT be
+        superseded: the xlsx row stays (still present, closed), a new OPEN
+        row of 1 is created normally (no carry), the record warns
+        `received_locked`, and the xlsx row's own receipt never drops below
+        what it held before the push.
+
+        RED today: D26a's guard does not exist - `plan_xlsx_supersede`
+        dumps the WHOLE carried receipt (47) onto the single incoming line
+        regardless of its own allocated_quantity, so the group IS
+        superseded: the xlsx row is deleted, and the new row lands
+        `allocated_quantity=1`, `quantity_received=47`, CLOSED - not the
+        open, uncarried row of 1 this AC wants - and no `received_locked`
+        warning is emitted at all.
+        """
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        legacy = _seed_legacy_row(
+            env,
+            spo_number=number,
+            spo_line_number=1,
+            location_code=wh_code,
+            allocated_quantity=47,
+            quantity_received=47,
+            line_status="closed",
+        )
+
+        line = _spo_line(env, warehouse_ref=env.warehouse_ref, qty_ordered=1, qty_received=0)
+        record = _spo_record(env, number=number, lines=[line], supplier_ref=env.supplier_ref)
+
+        res = env.post(INGEST_SPO, [record])
+
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        assert "received_locked" in (entry.get("warnings") or []), entry
+
+        rows = _spo_rows(env, number)
+        by_id = {str(r["id"]): r for r in rows}
+        assert str(legacy.id) in by_id, (
+            "the xlsx row must not be deleted - the group total undercuts its receipt"
+        )
+        assert by_id[str(legacy.id)]["line_status"] == "closed"
+        assert by_id[str(legacy.id)]["quantity_received"] == 47
+
+        by_ref = {r["source_ref"]: r for r in rows if r["source_ref"]}
+        new_row = by_ref[line["source_ref"]]
+        assert new_row["allocated_quantity"] == 1
+        assert new_row["quantity_received"] == 0
+        assert new_row["line_status"] == "open"
+
+
+# ============================================================================ #
+# AC-X16 (D26a shipments)
+# ============================================================================ #
+class TestAcX16MergedShipmentsWarnAndLogTheDropped:
+    def test_two_shipments_on_one_group_use_the_first_and_warn_and_log_the_dropped(
+        self, env, caplog
+    ):
+        """AC-X16 (D26a shipments). Two xlsx rows for P at L on SPO N,
+        linked to two DIFFERENT inbound shipments A (line 1) and B (line
+        2); a first push naming P at L with two lines. Every new line must
+        carry shipment A (D26's own "first non-null" rule - already
+        correct), the record must ALSO warn `shipment_merged`, and the
+        supersede must log at INFO the dropped shipment (B)'s identity.
+
+        RED today: D26a's warning/log for a merged shipment does not exist
+        - only the "use the first" behaviour (D26) is there. The
+        `shipment_merged` warning is absent, and no INFO log line names
+        shipment B at all.
+        """
+        shipment_a = InboundShipment(
+            id=str(uuid.uuid4()),
+            shipment_number=f"{MARKER}-SHA-{uuid.uuid4().hex[:6]}",
+            shipping_container_number=f"{MARKER}-CONTA-{uuid.uuid4().hex[:6]}",
+            shipment_date=date(2026, 1, 1),
+            shipment_status="pending",
+        )
+        shipment_b = InboundShipment(
+            id=str(uuid.uuid4()),
+            shipment_number=f"{MARKER}-SHB-{uuid.uuid4().hex[:6]}",
+            shipping_container_number=f"{MARKER}-CONTB-{uuid.uuid4().hex[:6]}",
+            shipment_date=date(2026, 1, 1),
+            shipment_status="pending",
+        )
+        env.db.add_all([shipment_a, shipment_b])
+        env.db.flush()
+
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        _seed_legacy_row(
+            env,
+            spo_number=number,
+            spo_line_number=1,
+            location_code=wh_code,
+            allocated_quantity=29,
+            quantity_received=0,
+            line_status="open",
+            inbound_shipment_id=shipment_a.id,
+        )
+        _seed_legacy_row(
+            env,
+            spo_number=number,
+            spo_line_number=2,
+            location_code=wh_code,
+            allocated_quantity=18,
+            quantity_received=0,
+            line_status="open",
+            inbound_shipment_id=shipment_b.id,
+        )
+
+        line1 = _spo_line(env, warehouse_ref=env.warehouse_ref, qty_ordered=29, qty_received=0, line_number=1)
+        line2 = _spo_line(env, warehouse_ref=env.warehouse_ref, qty_ordered=18, qty_received=0, line_number=2)
+        record = _spo_record(
+            env, number=number, lines=[line1, line2], supplier_ref=env.supplier_ref
+        )
+
+        with caplog.at_level(logging.INFO, logger=_SUPERSEDE_LOGGER):
+            res = env.post(INGEST_SPO, [record])
+
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        assert "shipment_merged" in (entry.get("warnings") or []), entry
+
+        rows = _spo_rows(env, number)
+        for row in rows:
+            assert str(row["inbound_shipment_id"]) == str(shipment_a.id), row
+
+        assert (
+            str(shipment_b.id) in caplog.text or shipment_b.shipment_number in caplog.text
+        ), caplog.text
+
+
+# ============================================================================ #
+# AC-X17 (D30)
+# ============================================================================ #
+class TestAcX17SupersedeNeedsDeletePermission:
+    """AC-X17 (D30). Only a principal holding `scm.shipping_orders.delete`
+    may have the supersede actually DELETE the xlsx row; a principal with
+    only `.edit` still gets the full carry (receipt, links) but the row is
+    CLOSED, annotated and warned instead. Both cases log at INFO.
+    """
+
+    def _seed_ac_x1_fixture(self, env):
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        legacy = _seed_legacy_row(
+            env,
+            spo_number=number,
+            spo_line_number=1,
+            location_code=wh_code,
+            allocated_quantity=47,
+            quantity_received=47,
+            line_status="closed",
+        )
+        picking_line = _picking_line_pointing_at(env, legacy.id)
+        claim = _order_link_claim_pointing_at(env, legacy.id, number)
+        link = _order_inquiry_link_pointing_at(env, legacy.id)
+        line1 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=29, qty_received=0, line_number=1
+        )
+        line2 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=18, qty_received=0, line_number=2
+        )
+        record = _spo_record(
+            env, number=number, lines=[line1, line2], supplier_ref=env.supplier_ref
+        )
+        return number, legacy, picking_line, claim, link, record, line1, line2
+
+    def test_without_delete_permission_the_xlsx_row_is_closed_not_deleted(self, env, caplog):
+        """AC-X17, without `.delete`. Receipts carry and links move exactly
+        as AC-X1/AC-X2, but the xlsx row is CLOSED, its `allocation_notes`
+        reads `superseded by <DocKey>`, and the record warns
+        `superseded_closed_only`.
+
+        RED today: D30 does not exist - the service has no notion of the
+        calling principal's grants at all, so the supersede deletes the row
+        unconditionally regardless of the caller's permissions. The xlsx
+        row's id is gone entirely, not closed, `allocation_notes` is never
+        set, and no `superseded_closed_only` warning nor INFO log line
+        exists.
+        """
+        number, legacy, picking_line, claim, link, record, line1, line2 = (
+            self._seed_ac_x1_fixture(env)
+        )
+        user_id = _seed_principal_with_permissions(env, ["scm.shipping_orders.edit"])
+
+        with caplog.at_level(logging.INFO, logger=_SUPERSEDE_LOGGER):
+            with _as_principal(user_id):
+                res = env.post(INGEST_SPO, [record])
+
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        assert "superseded_closed_only" in (entry.get("warnings") or []), entry
+
+        rows = _spo_rows(env, number)
+        by_id = {str(r["id"]): r for r in rows}
+        assert str(legacy.id) in by_id, "without .delete the xlsx row must be closed, not removed"
+        closed_row = by_id[str(legacy.id)]
+        assert closed_row["line_status"] == "closed"
+        assert closed_row["allocation_notes"] == f"superseded by {record['source_ref']}", closed_row
+
+        by_ref = {r["source_ref"]: r for r in rows if r["source_ref"]}
+        target_id = str(by_ref[line1["source_ref"]]["id"])
+
+        picking_line_alloc = env.db.execute(
+            text("SELECT spo_allocation_id FROM picking_lines WHERE id = :id"),
+            {"id": picking_line.id},
+        ).scalar()
+        claim_alloc = env.db.execute(
+            text("SELECT spo_allocation_id FROM order_link_claim WHERE id = :id"),
+            {"id": claim.id},
+        ).scalar()
+        link_alloc = env.db.execute(
+            text("SELECT spo_allocation_id FROM order_inquiry_links WHERE id = :id"),
+            {"id": link.id},
+        ).scalar()
+        assert str(picking_line_alloc) == target_id
+        assert str(claim_alloc) == target_id
+        assert str(link_alloc) == target_id
+
+        assert str(legacy.id) in caplog.text, caplog.text
+
+    def test_with_delete_permission_the_xlsx_row_is_deleted_as_ac_x1(self, env, caplog):
+        """AC-X17, with `.delete` held too: AC-X1's own behaviour (deleted),
+        no `superseded_closed_only` warning, and the supersede still logs
+        at INFO.
+
+        RED today: the row IS already deleted regardless of permissions
+        (D30 doesn't check anything yet), so this half is a live control -
+        only the INFO-log assertion is red (no logging exists at all yet).
+        """
+        number, legacy, picking_line, claim, link, record, line1, line2 = (
+            self._seed_ac_x1_fixture(env)
+        )
+        user_id = _seed_principal_with_permissions(
+            env, ["scm.shipping_orders.edit", "scm.shipping_orders.delete"]
+        )
+
+        with caplog.at_level(logging.INFO, logger=_SUPERSEDE_LOGGER):
+            with _as_principal(user_id):
+                res = env.post(INGEST_SPO, [record])
+
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        assert "superseded_closed_only" not in (entry.get("warnings") or []), entry
+
+        rows = _spo_rows(env, number)
+        assert len(rows) == 2, "with .delete held the xlsx row must be gone, AC-X1's own shape"
+        assert str(legacy.id) not in {str(r["id"]) for r in rows}
+
+        assert str(legacy.id) in caplog.text, caplog.text
+
+
+# ============================================================================ #
+# AC-X18 (D28a)
+# ============================================================================ #
+class TestAcX18GroupAwareRecomputeForAutocountOwnedLines:
+    def test_a_repointed_picking_lines_total_is_redistributed_not_dumped_on_one_line(self, env):
+        """AC-X18 (D28a). After the AC-X1 supersede (line 1 = 29, line 2 =
+        18), one picking line of 47 now points at line 1 (the group's own
+        repointed GRN draw). Running `sync_received_for_spo_number(N)` and
+        `sync_grn_received_to_spo(<that header>)` must leave line 1 at 29
+        and line 2 at 18 - the group total (47) redistributed in Seq order,
+        never 47 dumped onto line 1 alone. A sibling allocation whose
+        `source_system` is `scm_upload`, with its own picking line of 5,
+        still recomputes to 5 (D28's per-allocation rule, unaffected).
+
+        RED today: D28a's group-aware recompute for `source_system=
+        'autocount'` rows does not exist - both recompute methods still
+        recompute PER ALLOCATION (`compute_received_for_allocation`, summing
+        only the picking lines that point at THAT row): line 1 is
+        overwritten to 47 (the whole picking line's quantity, since it is
+        the only one pointing at line 1) - never 29.
+        """
+        from app.services.procurement_service import PickingHeaderService
+
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        _seed_legacy_row(
+            env,
+            spo_number=number,
+            spo_line_number=1,
+            location_code=wh_code,
+            allocated_quantity=47,
+            quantity_received=47,
+            line_status="closed",
+        )
+        line1 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=29, qty_received=0, line_number=1
+        )
+        line2 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=18, qty_received=0, line_number=2
+        )
+        record = _spo_record(
+            env, number=number, lines=[line1, line2], supplier_ref=env.supplier_ref
+        )
+        res = env.post(INGEST_SPO, [record])
+        assert res.status_code == 200, res.text
+
+        rows = {r["source_ref"]: r for r in _spo_rows(env, number)}
+        line1_id = rows[line1["source_ref"]]["id"]
+        line2_id = rows[line2["source_ref"]]["id"]
+
+        header = PickingHeader(
+            id=str(uuid.uuid4()),
+            company_id=env.company_a,
+            picking_number=unique_code(MARKER),
+            picking_type="goods_received",
+            picking_status="approved",
+            spo_number=number,
+        )
+        env.db.add(header)
+        env.db.flush()
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        env.db.add(
+            PickingLine(
+                id=str(uuid.uuid4()),
+                company_id=env.company_a,
+                picking_header_id=header.id,
+                spo_allocation_id=line1_id,
+                product_id=product_id,
+                quantity_expected=47,
+                quantity_picked=47,
+            )
+        )
+        env.db.flush()
+
+        # A sibling allocation (scm_upload), unrelated to the group above,
+        # with its own picking line - the D28 per-allocation rule must be
+        # left untouched by the D28a change.
+        product2_id = env.refs.resolve(entity_type="products", source_ref=env.product2_ref)
+        sibling = SPOAllocation(
+            id=str(uuid.uuid4()),
+            company_id=env.company_a,
+            spo_number=number,
+            spo_line_number=99,
+            product_id=product2_id,
+            allocated_quantity=5,
+            quantity_received=0,
+            line_status="open",
+            receipt_status="pending",
+            source_system="scm_upload",
+        )
+        env.db.add(sibling)
+        env.db.flush()
+        env.db.add(
+            PickingLine(
+                id=str(uuid.uuid4()),
+                company_id=env.company_a,
+                picking_header_id=header.id,
+                spo_allocation_id=sibling.id,
+                product_id=product2_id,
+                quantity_expected=5,
+                quantity_picked=5,
+            )
+        )
+        env.db.flush()
+        env.db.commit()
+
+        svc = PickingHeaderService(env.db)
+        svc.sync_grn_received_to_spo(header.id)
+        svc.sync_received_for_spo_number(number)
+
+        env.db.expire_all()
+        final = (
+            env.db.execute(
+                text("SELECT id, quantity_received FROM spo_allocations WHERE spo_number = :n"),
+                {"n": number},
+            )
+            .mappings()
+            .all()
+        )
+        by_id = {str(r["id"]): r["quantity_received"] for r in final}
+
+        assert by_id[str(line1_id)] == 29, (
+            f"line 1 must recompute to 29 (its own share of the group), not 47 - "
+            f"got {by_id[str(line1_id)]}"
+        )
+        assert by_id[str(line2_id)] == 18, by_id
+        assert by_id[str(sibling.id)] == 5, by_id
+
+
+# ============================================================================ #
+# AC-X19 (S4)
+# ============================================================================ #
+class TestAcX19DependantsWithNullCompanyIdStillRepoint:
+    def test_a_null_company_claim_and_link_still_repoint_to_line_1(self, env):
+        """AC-X19 (S4). The xlsx row's `order_link_claim` and
+        `order_inquiry_links` dependants carry `company_id` NULL (both
+        columns are nullable); after the supersede both must still point at
+        line 1, not NULL.
+
+        RED today: `repoint_allocation_dependants`'s query is
+        `if company_id: query.filter(model.company_id == company_id)` - SQL
+        equality against NULL is never true, so a NULL-company dependant is
+        excluded from the move entirely. Confirmed live: the failure mode is
+        even sharper than a stale FK - `order_inquiry_links` carries
+        `ck_order_inquiry_links_one_target` (exactly one of `po_line_id` /
+        `spo_allocation_id` set), so when the superseded row is then DELETED
+        and its `ON DELETE SET NULL` fires on the un-repointed link, the
+        UPDATE that nulls `spo_allocation_id` violates the CHECK constraint
+        outright and the whole push 500s with an uncaught `IntegrityError`
+        instead of the record answering a clean per-record verdict.
+
+        Forced NULL via a raw UPDATE after insert, not via the constructor:
+        `company_scope`'s `before_insert` auto-stamp silently overwrites an
+        explicit `company_id=None` with the ambient scope's own company on
+        flush (confirmed live) - a fixture that let it do that would pass
+        for the wrong reason, the dependant never actually being NULL.
+        """
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        legacy = _seed_legacy_row(
+            env,
+            spo_number=number,
+            spo_line_number=1,
+            location_code=wh_code,
+            allocated_quantity=47,
+            quantity_received=47,
+            line_status="closed",
+        )
+        claim = OrderLinkClaim(
+            company_id=env.company_a,
+            so_number=f"{MARKER}-SO-{uuid.uuid4().hex[:8]}",
+            po_number=number,
+            source="autocount",
+            spo_allocation_id=legacy.id,
+        )
+        env.db.add(claim)
+        env.db.flush()
+        env.db.execute(
+            text("UPDATE order_link_claim SET company_id = NULL WHERE id = :id"),
+            {"id": claim.id},
+        )
+        env.db.flush()
+        link = _order_inquiry_link_pointing_at(env, legacy.id, null_company=True)
+
+        line1 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=29, qty_received=0, line_number=1
+        )
+        line2 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=18, qty_received=0, line_number=2
+        )
+        record = _spo_record(
+            env, number=number, lines=[line1, line2], supplier_ref=env.supplier_ref
+        )
+
+        res = env.post(INGEST_SPO, [record])
+        assert res.status_code == 200, res.text
+
+        rows = {r["source_ref"]: r for r in _spo_rows(env, number)}
+        target_id = str(rows[line1["source_ref"]]["id"])
+
+        claim_alloc = env.db.execute(
+            text("SELECT spo_allocation_id FROM order_link_claim WHERE id = :id"),
+            {"id": claim.id},
+        ).scalar()
+        link_alloc = env.db.execute(
+            text("SELECT spo_allocation_id FROM order_inquiry_links WHERE id = :id"),
+            {"id": link.id},
+        ).scalar()
+
+        assert claim_alloc is not None and str(claim_alloc) == target_id, claim_alloc
+        assert link_alloc is not None and str(link_alloc) == target_id, link_alloc
+
+
+# ============================================================================ #
 # AC-X12
 # ============================================================================ #
 class TestAcX12ContractListsLinesSuperseded:
@@ -855,3 +1550,273 @@ class TestAcX12ContractListsLinesSuperseded:
         res = env.client.get("/api/v1/external/contract")
         assert res.status_code == 200, res.text
         assert "superseded" in res.text, "contract note must list lines.superseded"
+
+
+# ============================================================================ #
+# AC-X22 (S9)
+# ============================================================================ #
+class TestAcX22RecomputeNeverCrossesCompanyScope:
+    def test_sync_received_for_spo_number_under_company_a_never_writes_company_b(self, env):
+        """AC-X22 (S9). Company B holds an allocation sharing the SAME
+        `spo_number` as company A's, with its own picking line; calling
+        `sync_received_for_spo_number(N)` UNDER COMPANY A's SCOPE must
+        never write company B's row.
+
+        RED today: `sync_received_for_spo_number` queries
+        `self.db.query(SPOAllocation).filter(SPOAllocation.spo_number.
+        isnot(None)).all()` with no explicit `company_id` predicate of its
+        own - it relies ENTIRELY on whatever ambient ORM scope the caller's
+        session happens to carry. Called here under company A's scope, the
+        ambient auto-filter is exactly what should stop company B's row
+        being read at all; if it does not, company B's row is recomputed
+        too - see the assertion for the actual observed value.
+        """
+        from app.models.base import set_company_scope
+        from app.models.company import Company
+        from app.services.procurement_service import PickingHeaderService
+
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+
+        row_a = SPOAllocation(
+            id=str(uuid.uuid4()),
+            company_id=env.company_a,
+            spo_number=number,
+            spo_line_number=1,
+            product_id=product_id,
+            allocated_quantity=10,
+            quantity_received=0,
+            line_status="open",
+            receipt_status="pending",
+            source_system="scm_upload",
+        )
+        env.db.add(row_a)
+        env.db.flush()
+
+        other = Company(
+            id=str(uuid.uuid4()),
+            name=f"{MARKER} B {uuid.uuid4().hex[:6]}",
+            code=unique_code(MARKER)[:10],
+        )
+        env.db.add(other)
+        env.db.flush()
+        company_b = str(other.id)
+
+        row_b = SPOAllocation(
+            id=str(uuid.uuid4()),
+            company_id=company_b,
+            spo_number=number,
+            spo_line_number=1,
+            product_id=product_id,
+            allocated_quantity=10,
+            quantity_received=0,
+            line_status="open",
+            receipt_status="pending",
+            source_system="scm_upload",
+        )
+        env.db.add(row_b)
+        env.db.flush()
+
+        header = PickingHeader(
+            id=str(uuid.uuid4()),
+            company_id=company_b,
+            picking_number=unique_code(MARKER),
+            picking_type="goods_received",
+            picking_status="approved",
+            spo_number=number,
+        )
+        env.db.add(header)
+        env.db.flush()
+        env.db.add(
+            PickingLine(
+                id=str(uuid.uuid4()),
+                company_id=company_b,
+                picking_header_id=header.id,
+                spo_allocation_id=row_b.id,
+                product_id=product_id,
+                quantity_expected=6,
+                quantity_picked=6,
+            )
+        )
+        env.db.flush()
+        env.db.commit()
+
+        set_company_scope(env.db, frozenset({env.company_a}))
+        PickingHeaderService(env.db).sync_received_for_spo_number(number)
+
+        env.db.expire_all()
+        after_b = env.db.execute(
+            text("SELECT quantity_received FROM spo_allocations WHERE id = :id"),
+            {"id": row_b.id},
+        ).scalar()
+        assert after_b == 0, (
+            "sync_received_for_spo_number under company A's scope must never "
+            f"write company B's allocation - got {after_b}"
+        )
+
+
+# ============================================================================ #
+# AC-X23 (D26 Seq order)
+# ============================================================================ #
+class TestAcX23DistributionFollowsLineNumberNotPayloadPosition:
+    def test_reverse_payload_order_still_distributes_by_line_number(self, env):
+        """AC-X23 (D26 Seq order, reviewer kill test). The AC-X1 push with
+        its two lines sent in REVERSE payload order (line_number 2 first,
+        then line_number 1) must still yield line 1 = 29 and line 2 = 18 -
+        distribution follows `line_number`, not payload position.
+        """
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        _seed_legacy_row(
+            env,
+            spo_number=number,
+            spo_line_number=1,
+            location_code=wh_code,
+            allocated_quantity=47,
+            quantity_received=47,
+            line_status="closed",
+        )
+
+        line1 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=29, qty_received=0, line_number=1
+        )
+        line2 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=18, qty_received=0, line_number=2
+        )
+        # REVERSE payload order: line_number 2 first, then 1.
+        record = _spo_record(
+            env, number=number, lines=[line2, line1], supplier_ref=env.supplier_ref
+        )
+
+        res = env.post(INGEST_SPO, [record])
+
+        assert res.status_code == 200, res.text
+        rows = {r["source_ref"]: r for r in _spo_rows(env, number)}
+        first = rows[line1["source_ref"]]
+        second = rows[line2["source_ref"]]
+        assert first["quantity_received"] == 29, (
+            "line_number 1 must carry 29 regardless of payload position", first
+        )
+        assert first["line_status"] == "closed"
+        assert second["quantity_received"] == 18, (
+            "line_number 2 must carry 18 regardless of payload position", second
+        )
+        assert second["line_status"] == "closed"
+
+
+# ============================================================================ #
+# AC-X24 (D26 max rule, AutoCount side)
+# ============================================================================ #
+class TestAcX24AutocountAboveTheCarryWins:
+    def test_an_incoming_qty_received_above_the_carry_wins_on_that_line(self, env):
+        """AC-X24 (D26 max rule, reviewer kill test). The xlsx row received
+        10 of 47; a first push whose line 1 states `qty_received 25` and
+        line 2 states `qty_received 0`. Line 1 must read 25 (AutoCount's
+        own stated figure, above the 10 carried onto it, wins), line 2
+        reads 0, and the group's total received never drops below the 10
+        the xlsx row carried before the push.
+        """
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        _seed_legacy_row(
+            env,
+            spo_number=number,
+            spo_line_number=1,
+            location_code=wh_code,
+            allocated_quantity=47,
+            quantity_received=10,
+            line_status="open",
+        )
+
+        line1 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=29, qty_received=25, line_number=1
+        )
+        line2 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=18, qty_received=0, line_number=2
+        )
+        record = _spo_record(
+            env, number=number, lines=[line1, line2], supplier_ref=env.supplier_ref
+        )
+
+        res = env.post(INGEST_SPO, [record])
+
+        assert res.status_code == 200, res.text
+        rows = {r["source_ref"]: r for r in _spo_rows(env, number)}
+        first = rows[line1["source_ref"]]
+        second = rows[line2["source_ref"]]
+        assert first["quantity_received"] == 25, first
+        assert second["quantity_received"] == 0, second
+        assert first["quantity_received"] + second["quantity_received"] >= 10, (
+            "the group's total received must never drop below the 10 the xlsx "
+            "row carried before the push",
+            first,
+            second,
+        )
+
+
+# ============================================================================ #
+# AC-X26 (D27a)
+# ============================================================================ #
+class TestAcX26ShipmentLineStatusRefreshedAfterSupersede:
+    def test_the_ingest_supersede_refreshes_the_linked_shipments_line_status(
+        self, env, monkeypatch
+    ):
+        """AC-X26 (D27a). After the AC-X1 supersede,
+        `InboundShipmentService.refresh_shipment_line_statuses` must run for
+        the linked shipment - same as every other writer of allocations
+        already does.
+
+        RED today: `_supersede_xlsx_rows` never calls it at all.
+        """
+        import app.services.procurement_service as procurement_service
+
+        calls: list[str] = []
+        real = procurement_service.InboundShipmentService.refresh_shipment_line_statuses
+
+        def _spy(self, shipment_id):
+            calls.append(str(shipment_id))
+            return real(self, shipment_id)
+
+        monkeypatch.setattr(
+            procurement_service.InboundShipmentService, "refresh_shipment_line_statuses", _spy
+        )
+
+        shipment = InboundShipment(
+            id=str(uuid.uuid4()),
+            shipment_number=f"{MARKER}-SH-{uuid.uuid4().hex[:6]}",
+            shipping_container_number=f"{MARKER}-CONT-{uuid.uuid4().hex[:6]}",
+            shipment_date=date(2026, 1, 1),
+            shipment_status="pending",
+        )
+        env.db.add(shipment)
+        env.db.flush()
+
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        _seed_legacy_row(
+            env,
+            spo_number=number,
+            spo_line_number=1,
+            location_code=wh_code,
+            allocated_quantity=47,
+            quantity_received=47,
+            line_status="closed",
+            inbound_shipment_id=shipment.id,
+        )
+        line1 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=29, qty_received=0, line_number=1
+        )
+        line2 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=18, qty_received=0, line_number=2
+        )
+        record = _spo_record(
+            env, number=number, lines=[line1, line2], supplier_ref=env.supplier_ref
+        )
+
+        res = env.post(INGEST_SPO, [record])
+        assert res.status_code == 200, res.text
+
+        assert str(shipment.id) in calls, (
+            "the supersede must refresh the linked shipment's line statuses, "
+            f"same as every other allocation writer - calls: {calls}"
+        )
