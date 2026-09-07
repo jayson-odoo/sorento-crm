@@ -1725,8 +1725,9 @@ describe('SalesOrderDetail - removing a line', () => {
    * The backend already refuses a removal that would orphan a project sales order or a
    * purchase order claim (409 `SO_LINE_LINKED_TO_PROJECT` / `SO_LINE_LINKED_TO_CLAIM`) - the
    * mutation's own error toast covers that, so nothing here re-asserts a 409 path; these
-   * cover the FE half: the control, the confirm, the omission on Save, and the two ways out
-   * (a guard, and Cancel) that must never lose or silently drop a line.
+   * cover the FE half: the control removes immediately with no confirmation, the omission on
+   * Save, and the two ways out (a guard, and Cancel) that must never lose or silently drop a
+   * line.
    */
   const TWO_LINES: SalesOrderLine[] = [
     {
@@ -1765,29 +1766,16 @@ describe('SalesOrderDetail - removing a line', () => {
     expect(screen.queryByRole('button', { name: 'Remove line' })).not.toBeInTheDocument();
   });
 
-  it('asks before removing, then drops the row and the totals follow', async () => {
+  it('removes the row immediately, with no dialog, and the totals follow', () => {
     renderTwoLines();
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
     openTab('Lines');
 
     fireEvent.click(within(rowFor('TAP-CHR-12')).getByRole('button', { name: 'Remove line' }));
 
-    // Names the SKU, the qty and the order - not a generic "are you sure".
-    expect(
-      screen.getByText(
-        'Remove TAP-CHR-12 (qty 45) from SO-2026/07-0042? It is deleted when you save.',
-      ),
-    ).toBeInTheDocument();
-    // Nothing removed yet - the row and the qty total both still carry it.
-    expect(screen.getByLabelText('Unit price on TAP-CHR-12')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
-
-    // `ConfirmDeleteDialog` runs `onDelete` through a `useMutation`, so the removal lands on
-    // the next tick rather than synchronously with the click.
-    await waitFor(() =>
-      expect(screen.queryByLabelText('Unit price on TAP-CHR-12')).not.toBeInTheDocument(),
-    );
+    // No confirmation - nothing is written until Save, and Cancel restores the row.
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Unit price on TAP-CHR-12')).not.toBeInTheDocument();
     expect(screen.getByLabelText('Unit price on CW-BASIN-450')).toBeInTheDocument();
     // 320 + 45 = 365 before; 320 after the removed line drops out of the footer sum (both
     // Qty ordered and Outstanding qty read 320 here, since nothing has been delivered).
@@ -1802,10 +1790,7 @@ describe('SalesOrderDetail - removing a line', () => {
     openTab('Lines');
 
     fireEvent.click(within(rowFor('TAP-CHR-12')).getByRole('button', { name: 'Remove line' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
-    await waitFor(() =>
-      expect(screen.queryByLabelText('Unit price on TAP-CHR-12')).not.toBeInTheDocument(),
-    );
+    expect(screen.queryByLabelText('Unit price on TAP-CHR-12')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
 
     await screen.findByRole('button', { name: /^Edit$/ });
@@ -1834,16 +1819,13 @@ describe('SalesOrderDetail - removing a line', () => {
     expect(screen.getByLabelText('Unit price on CW-BASIN-450')).toBeInTheDocument();
   });
 
-  it('keeps the session open and the row visible again after Cancel', async () => {
+  it('keeps the session open and the row visible again after Cancel', () => {
     renderTwoLines();
     fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
     openTab('Lines');
 
     fireEvent.click(within(rowFor('TAP-CHR-12')).getByRole('button', { name: 'Remove line' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
-    await waitFor(() =>
-      expect(screen.queryByLabelText('Unit price on TAP-CHR-12')).not.toBeInTheDocument(),
-    );
+    expect(screen.queryByLabelText('Unit price on TAP-CHR-12')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 

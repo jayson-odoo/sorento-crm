@@ -24,7 +24,6 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import {
   Card,
   CardFooter,
@@ -143,14 +142,16 @@ import { useSalesOrderActions } from '../../actions';
  * exactly as it was. `line_total` is NOT sent: it is what the source document charged.
  *
  * A LINE IS REMOVED BY OMISSION, never a separate endpoint. The trash icon that appears per
- * row while editing does not delete anything itself - it asks first (`ConfirmDeleteDialog`),
- * then drops the line from `removedLineIds` and its draft, so the row disappears from the
- * grid and the totals below it. Nothing is written until Save, at which point the removed
- * line is simply left out of `lines`: the BE upserts what it is sent and deletes any existing
- * row that is missing, which is what the class docstring above already describes - a removal
- * is that same mechanism, carried by absence rather than a new one. The BE refuses with a 409
- * when the line is still reconciled to a project sales order or claimed by a purchase order,
- * and the mutation's own error toast is enough - the session stays open either way.
+ * row while editing drops the line from `removedLineIds` and its draft immediately - no
+ * confirmation, because nothing is written until Save and Cancel restores every removed row.
+ * The row disappears from the grid and the totals below it the moment it is clicked; Save is
+ * the actual commit point, and until then the removal is just staged edit-session state, the
+ * same as a typed quantity. At Save, the removed line is simply left out of `lines`: the BE
+ * upserts what it is sent and deletes any existing row that is missing, which is what the
+ * class docstring above already describes - a removal is that same mechanism, carried by
+ * absence rather than a new one. The BE refuses with a 409 when the line is still reconciled
+ * to a project sales order or claimed by a purchase order, and the mutation's own error toast
+ * is enough - the session stays open either way.
  *
  * MONEY IS A STRING END TO END. The backend sends `Decimal`, which Pydantic serialises as a
  * string, and every sum here goes through `project-sales/_shared/lib/money` - which does the
@@ -416,9 +417,6 @@ export function SalesOrderDetail({ id }: { id: string }) {
   // docstring). Reset on every fresh session and after a save, so a leftover removal from a
   // prior edit cannot silently carry into the next one.
   const [removedLineIds, setRemovedLineIds] = useState<Set<string>>(new Set());
-  // Which line's trash icon was pressed - one dialog for the whole grid, the same pattern
-  // `linksLineId` above already uses.
-  const [pendingRemoveLineId, setPendingRemoveLineId] = useState<string | null>(null);
 
   const beginEdit = (so: SalesOrder) => {
     setPlanningChangeBatch(null);
@@ -434,7 +432,6 @@ export function SalesOrderDetail({ id }: { id: string }) {
     }
     setLineDrafts(drafts);
     setRemovedLineIds(new Set());
-    setPendingRemoveLineId(null);
     originalLineSignatureRef.current = lineSignature(
       so.lines.map((l) => ({
         sku: l.sku,
@@ -454,7 +451,6 @@ export function SalesOrderDetail({ id }: { id: string }) {
     setIsEditing(false);
     setError(null);
     setRemovedLineIds(new Set());
-    setPendingRemoveLineId(null);
   };
 
   // `?edit=1` opens the session on arrival - the same entry the list's Pencil action uses -
@@ -546,18 +542,28 @@ export function SalesOrderDetail({ id }: { id: string }) {
     [isEditing, lineDrafts],
   );
 
-  // The trash icon's click: asks first, unless removing would leave nothing on the order -
-  // in which case there is nothing to confirm, only to say. `lines` already excludes any
-  // line removed earlier in this same session, so its length IS what would remain before
-  // this one too.
-  const handleRequestRemoveLine = useCallback(
+  // The trash icon's click: removes the row right away, unless removing would leave nothing
+  // on the order - in which case nothing is removed, only said. Nothing is written here; Save
+  // is the commit point and Cancel restores every removed row (see the class docstring).
+  // `lines` already excludes any line removed earlier in this same session, so its length IS
+  // what would remain before this one too.
+  const handleRemoveLine = useCallback(
     (row: SalesOrderLine) => {
       if (lines.length <= 1) {
         setError('An order needs at least one line.');
         return;
       }
       setError(null);
-      setPendingRemoveLineId(row.id);
+      setRemovedLineIds((prev) => {
+        const next = new Set(prev);
+        next.add(row.id);
+        return next;
+      });
+      setLineDrafts((prev) => {
+        const next = { ...prev };
+        delete next[row.id];
+        return next;
+      });
     },
     [lines],
   );
@@ -1100,7 +1106,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
                   size="sm"
                   aria-label="Remove line"
                   title="Remove line"
-                  onClick={() => handleRequestRemoveLine(row.original)}
+                  onClick={() => handleRemoveLine(row.original)}
                 >
                   <Trash2 className="size-4" />
                 </Button>
@@ -1121,7 +1127,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
       qtyDeliveredTotal,
       outstandingTotal,
       amountTotal,
-      handleRequestRemoveLine,
+      handleRemoveLine,
     ],
   );
 
@@ -1183,27 +1189,6 @@ export function SalesOrderDetail({ id }: { id: string }) {
   const so = data;
   const lineCount = so.line_count ?? lines.length;
   const linksLine = linksLineId ? (lines.find((l) => l.id === linksLineId) ?? null) : null;
-  // The line the trash icon was pressed on - still IN `lines` until the dialog is confirmed,
-  // same lifetime `linksLine` above has for its own dialog.
-  const pendingRemoveLine = pendingRemoveLineId
-    ? (lines.find((l) => l.id === pendingRemoveLineId) ?? null)
-    : null;
-
-  const handleConfirmRemoveLine = async () => {
-    const removeId = pendingRemoveLineId;
-    if (!removeId) return;
-    setRemovedLineIds((prev) => {
-      const next = new Set(prev);
-      next.add(removeId);
-      return next;
-    });
-    setLineDrafts((prev) => {
-      const next = { ...prev };
-      delete next[removeId];
-      return next;
-    });
-    setPendingRemoveLineId(null);
-  };
 
   const handleSave = async () => {
     setError(null);
@@ -1770,28 +1755,6 @@ export function SalesOrderDetail({ id }: { id: string }) {
           <SoLineLinksBody links={linksLine.linked_to ?? []} />
         </PlanRowDialog>
       ) : null}
-
-      {/* The remove-line confirm - one dialog for the whole grid, same shape as the Linked
-          lightbox above. Nothing has been written yet, so there is nothing to invalidate and
-          no success toast worth showing - `successMessage` says what actually happened
-          instead of the component's own default "Deleted successfully", which would be a lie
-          until Save. */}
-      <ConfirmDeleteDialog
-        open={!!pendingRemoveLineId}
-        onOpenChange={(next) => {
-          if (!next) setPendingRemoveLineId(null);
-        }}
-        title="Remove line"
-        confirmLabel="Remove"
-        description={
-          pendingRemoveLine
-            ? `Remove ${pendingRemoveLine.sku} (qty ${fmtInt(pendingRemoveLine.qty_ordered)}) ` +
-              `from ${so.so_number}? It is deleted when you save.`
-            : ''
-        }
-        onDelete={handleConfirmRemoveLine}
-        successMessage="Line removed. Save to apply."
-      />
     </div>
   );
 }
