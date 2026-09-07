@@ -549,7 +549,37 @@ def apply(prev_focus: dict[str, Any], turn: Turn) -> Outputs:
     domain_from_switch_word(out.focus, turn, out)
     date_restated_only(out.focus, turn, out)
     anaphora_reuses(out.focus, turn, out)
+    _record_domain(out.focus, turn, out)
     return out
+
+
+def _record_domain(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
+    """The domain slot takes whatever the turn CONCLUDED. Bookkeeping, not a seventh rule.
+
+    Runs LAST on purpose. The domain is the one axis several rules can move - the model's
+    own decisive term, `reuse_alive`, `domain_from_switch_word`, and the positional and
+    broaden blocks in `output_exchange` that are not focus rules at all - so recording it
+    at any earlier point would file the value one of them was about to overwrite. And it
+    has to be recorded, because it is what the NEXT turn inherits: a slot only ever written
+    by the reuse rule could never be set by the turn that first named the domain.
+
+    A slot a rule already wrote THIS turn is left alone, so `domain_from_switch_word`'s own
+    trace line stands rather than being followed by a second one saying the same thing.
+    """
+    domain = turn.o.get("domain_hint")
+    if not jsc.truthy(domain):
+        return
+    if _set_this_turn(focus, "domain", turn):
+        return
+    _set(
+        focus,
+        "domain",
+        domain,
+        turn,
+        out,
+        rule="record_domain",
+        source="pick" if turn.answered_by_pick else "current_message",
+    )
 
 
 # --------------------------------------------------------------------------- #

@@ -641,3 +641,429 @@ def body_difference(
             "body fixes and `tests/chatbot/test_tail_units.py` pins"
         )
     return None
+
+
+# --------------------------------------------------------------------------- #
+# The OWNER worlds (growth r1 slice B5, AC-940 to AC-948)
+# --------------------------------------------------------------------------- #
+#
+# Derived worlds grade the PORT: a real execution replayed, byte for byte. These grade the
+# RULES, and they have to be authored rather than derived for one reason - every capture in
+# the corpus predates the code they are about. There is no recorded turn where a focus slot
+# aged out, because nothing aged before slice B1; none where the parser said `topic_reset`,
+# because no promoted prompt emits it; none where a pick resolved against frozen options,
+# because the options were not frozen.
+#
+# **Same chaining property as `MultiTurnWorld`, which is the whole point** (see this module's
+# docstring): turn N+1 reads the session turn N wrote, through `run_turn` and
+# `complete_turn`, so a lifecycle rule the code gets wrong changes the answer two turns
+# later. The session read and write, the turn rows, the decay pass, the parse
+# post-processing, the six focus rules, the open-question resolver and the state compiler
+# all run for real against a blank Postgres schema.
+#
+# **What is stubbed, and why.** The PARSER (the emission is authored, exactly as a derived
+# world feeds `_parser_raw`), the ACCESS check, and the LANE that renders a roster - `arm`
+# writes what that lane would have persisted. The last one is the only addition to the
+# derived worlds' stub list, and it is there because rendering a real picker needs a
+# resolver, an MCP call and a product catalogue, none of which says anything about whether
+# "2" resolves to the second row.
+#
+# **These worlds assert DIALOGUE FACTS, never reply prose.** Which product is in scope,
+# which domain, whether the question was answered, what decayed. The words a customer reads
+# are the owner console pass's job (AC-991), and asserting them here would pin copy that
+# the console pass exists to change.
+
+
+@dataclass(frozen=True)
+class OwnerTurn:
+    """One authored turn: what the customer said, what the parser made of it, what must
+    then be true."""
+
+    message: str
+    # Overrides on `tests.chatbot.test_engine._parser_output()`. A v3 emission sets
+    # `answers_open_question`, `anaphora` or `topic_reset`; a v1-shaped one leaves them out.
+    emission: dict[str, Any] = field(default_factory=dict)
+    expect: dict[str, Any] = field(default_factory=dict)
+    # The roster the PREVIOUS reply showed, as the lane would have persisted it. Written
+    # into the session before this turn runs.
+    arm: dict[str, Any] | None = None
+    # A quoted reply: the rows the quoted message carried (AC-947).
+    quoted_rows: list[dict[str, Any]] | None = None
+
+
+@dataclass(frozen=True)
+class OwnerWorld:
+    world_id: str
+    acs: tuple[str, ...]
+    why: str
+    turns: tuple[OwnerTurn, ...]
+    # The focus TTL this world runs under. Named per world because the TTL is what two of
+    # them are about.
+    ttl_turns: int = 3
+
+
+def _product(code: str, **over: Any) -> dict[str, Any]:
+    return {
+        "raw": code,
+        "hint": "product",
+        "canonical_code": code,
+        "current_message": True,
+        "confident": True,
+        **over,
+    }
+
+
+def _customer(name: str) -> dict[str, Any]:
+    return {
+        "raw": name,
+        "hint": "customer",
+        "canonical_code": name,
+        "current_message": True,
+        "confident": True,
+    }
+
+
+def _roster(*codes: str) -> list[dict[str, Any]]:
+    return [
+        {"idx": i, "label": code, "code": code, "uuid": f"uuid-{code}", "entity_type": "product"}
+        for i, code in enumerate(codes, start=1)
+    ]
+
+
+def _answers(**kw: Any) -> dict[str, Any]:
+    return {"resolved": False, "picks": [], "yes_no": None, "free_text": None, **kw}
+
+
+OWNER_WORLDS: tuple[OwnerWorld, ...] = (
+    OwnerWorld(
+        world_id="owner-pick-then-next-pick",
+        acs=("AC-944",),
+        why=(
+            "A picker of three products is offered. '2' resolves to the SECOND FROZEN "
+            "option, and a second pick against the same list still resolves - the roster "
+            "is on the customer's screen until it ages out, which is owner ruling K rule "
+            "1 seen from the dialogue side."
+        ),
+        turns=(
+            OwnerTurn(
+                message="SRTKS8091 got stock?",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "inventory",
+                    "intent_hint": "check_stock",
+                    "entities": [_product("SRTKS8091")],
+                },
+                expect={"focus_products": ["SRTKS8091"], "focus_domain": "inventory"},
+            ),
+            OwnerTurn(
+                message="2",
+                arm={
+                    "selection_context": "disambiguation",
+                    "last_result_set": _roster("SRTKS8091-A", "SRTKS8091-B", "SRTKS8091-C"),
+                },
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "answers_open_question": _answers(resolved=True, picks=[2]),
+                },
+                expect={
+                    "answered": "product_pick",
+                    "focus_products": ["SRTKS8091-B"],
+                    "qf": {"entity_op": "replace"},
+                },
+            ),
+            OwnerTurn(
+                message="1",
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "answers_open_question": _answers(resolved=True, picks=[1]),
+                },
+                expect={"answered": "product_pick", "focus_products": ["SRTKS8091-A"]},
+            ),
+        ),
+    ),
+    OwnerWorld(
+        world_id="owner-escalate-declined-after-a-result",
+        acs=("AC-945",),
+        why=(
+            "An escalation offer, then 'no'. The declined copy is the lane's; what this "
+            "grades is that the answer REACHES the escalation handler as a decline and "
+            "never as a new query."
+        ),
+        turns=(
+            OwnerTurn(
+                message="SRTWC8517 stock?",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "inventory",
+                    "intent_hint": "check_stock",
+                    "entities": [_product("SRTWC8517")],
+                },
+                expect={"focus_products": ["SRTWC8517"]},
+            ),
+            OwnerTurn(
+                message="no",
+                arm={"pending": {"kind": "escalation_offer", "team": "warehouse"}},
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "entities": [],
+                    "is_affirmative": False,
+                    "answers_open_question": _answers(resolved=True, yes_no="no"),
+                },
+                expect={"answered": "escalate_yes_no", "qf": {"is_affirmative": False}},
+            ),
+        ),
+    ),
+    OwnerWorld(
+        world_id="owner-escalate-offer-left-unanswered-then-decays",
+        acs=("AC-945",),
+        why=(
+            "The offer is neither accepted nor declined: the customer asks a stock "
+            "question instead. It is ANSWERED, the offer is left open, and the offer is "
+            "cleared by its own TTL with a `decay` trace line rather than being answered "
+            "silently by a later 'yes' about something else."
+        ),
+        turns=(
+            OwnerTurn(
+                message="do you have MSK11A-QT",
+                arm={"pending": {"kind": "escalation_offer", "team": "warehouse"}},
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "inventory",
+                    "intent_hint": "check_stock",
+                    "entities": [_product("MSK11A-QT")],
+                    "answers_open_question": _answers(resolved=False),
+                },
+                expect={"answered": None, "focus_products": ["MSK11A-QT"]},
+            ),
+            OwnerTurn(
+                message="and SRTWC8517",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": None,
+                    "entities": [_product("SRTWC8517")],
+                },
+                expect={"focus_products": ["SRTWC8517"]},
+            ),
+            OwnerTurn(
+                message="and SRTKS6091",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": None,
+                    "entities": [_product("SRTKS6091")],
+                },
+                expect={"focus_products": ["SRTKS6091"], "open_question_gone": True},
+            ),
+        ),
+    ),
+    OwnerWorld(
+        world_id="owner-filter-change-after-a-do-result",
+        acs=("AC-946",),
+        why=(
+            "'for customer ABC instead' replaces the customer slot and leaves the "
+            "products; 'last month' then replaces ONLY the date window. One axis per "
+            "turn, which is `replace_same_axis` and `date_restated_only` together."
+        ),
+        turns=(
+            OwnerTurn(
+                message="DO for SRTWC8517",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "order",
+                    "intent_hint": "check_order",
+                    "entities": [_product("SRTWC8517")],
+                },
+                expect={"focus_products": ["SRTWC8517"], "focus_domain": "order"},
+            ),
+            OwnerTurn(
+                message="for customer ABC instead",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "order",
+                    "intent_hint": "check_order",
+                    "entities": [_customer("ABC")],
+                },
+                expect={
+                    "focus_customer": "ABC",
+                    "focus_products": ["SRTWC8517"],
+                    "focus_domain": "order",
+                },
+            ),
+            OwnerTurn(
+                message="last month",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "order",
+                    "intent_hint": "check_order",
+                    "entities": [],
+                    "entity_op": "reuse",
+                    "date_filter_start": "2026-08-01",
+                    "date_filter_end": "2026-08-31",
+                },
+                expect={
+                    "focus_customer": "ABC",
+                    "focus_date_window": {
+                        "start": "2026-08-01",
+                        "end": "2026-08-31",
+                        "mode": None,
+                    },
+                    "qf": {"date_filter_start": "2026-08-01"},
+                },
+            ),
+        ),
+    ),
+    OwnerWorld(
+        world_id="owner-what-about-y-after-a-stock-answer",
+        acs=("AC-942",),
+        why=(
+            "'incoming?' after a stock answer keeps the products and switches the domain; "
+            "'what about Y' after that replaces the product and KEEPS incoming. The two "
+            "halves are `domain_from_switch_word` and `replace_same_axis`, and the second "
+            "is what proves the switch did not also become sticky."
+        ),
+        turns=(
+            OwnerTurn(
+                message="SRTWC8517 stock?",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "inventory",
+                    "intent_hint": "check_stock",
+                    "entities": [_product("SRTWC8517")],
+                },
+                expect={"focus_products": ["SRTWC8517"], "focus_domain": "inventory"},
+            ),
+            OwnerTurn(
+                message="incoming?",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "entity_op": "reuse",
+                },
+                expect={
+                    "focus_products": ["SRTWC8517"],
+                    "focus_domain": "incoming",
+                    "qf": {"domain_hint": "incoming", "domain_switched_by_keyword": "incoming"},
+                },
+            ),
+            OwnerTurn(
+                message="SRTKS6091",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [_product("SRTKS6091")],
+                },
+                expect={
+                    "focus_products": ["SRTKS6091"],
+                    "focus_domain": "incoming",
+                    "qf": {"domain_hint": "incoming"},
+                },
+            ),
+        ),
+    ),
+    OwnerWorld(
+        world_id="owner-product-decays-after-its-ttl",
+        acs=("AC-940", "AC-941"),
+        why=(
+            "A product asked at turn 1, with no product named since. At turn 3 (age 2, "
+            "TTL 3) it still carries; at turn 5 (age 4) it is GONE, with a `decay` trace "
+            "line naming the slot and its age in turns. This is the one property no "
+            "captured world can show, because nothing aged before slice B1."
+        ),
+        turns=(
+            OwnerTurn(
+                message="SRTWC8517 stock?",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "inventory",
+                    "intent_hint": "check_stock",
+                    "entities": [_product("SRTWC8517")],
+                },
+                expect={"focus_products": ["SRTWC8517"]},
+            ),
+            OwnerTurn(
+                message="ok thanks",
+                emission={"message_type": "casual", "domain_hint": None, "entities": []},
+                expect={"focus_products": ["SRTWC8517"]},
+            ),
+            OwnerTurn(
+                message="and the price?",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "entity_op": "reuse",
+                },
+                # Age 2 at this turn: inside the TTL, so the scope is still there and the
+                # question is answerable.
+                expect={"focus_products": ["SRTWC8517"], "decayed": ()},
+            ),
+            OwnerTurn(
+                message="ok",
+                emission={"message_type": "casual", "domain_hint": None, "entities": []},
+                expect={},
+            ),
+            OwnerTurn(
+                message="and the price?",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": None,
+                    "intent_hint": None,
+                    "entities": [],
+                    "entity_op": "reuse",
+                },
+                # Age 4 at this turn: past the TTL, so the slot is dropped at intake and
+                # the turn reaches the lanes with no product to answer about.
+                # `domain` ages out with it: the two turns between were casual, so
+                # neither restated one, and a slot nobody restates is a slot the customer
+                # has moved on from whichever axis it is.
+                expect={"focus_products": None, "decayed": ("domain", "products")},
+            ),
+        ),
+    ),
+    OwnerWorld(
+        world_id="owner-quoted-reply-pick",
+        acs=("AC-947",),
+        why=(
+            "A quoted reply to an OLDER picker resolves against THAT message's frozen "
+            "options, not against the roster the latest turn left open. The rows the "
+            "customer is looking at are the ones they quoted."
+        ),
+        turns=(
+            OwnerTurn(
+                message="SRTKS8091 got stock?",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "inventory",
+                    "intent_hint": "check_stock",
+                    "entities": [_product("SRTKS8091")],
+                },
+                expect={"focus_products": ["SRTKS8091"]},
+            ),
+            OwnerTurn(
+                message="2",
+                arm={
+                    "selection_context": "disambiguation",
+                    "last_result_set": _roster("NEW-1", "NEW-2", "NEW-3"),
+                },
+                quoted_rows=_roster("OLD-1", "OLD-2", "OLD-3"),
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "entities": [],
+                    "answers_open_question": _answers(resolved=True, picks=[2]),
+                },
+                expect={"answered": "product_pick", "focus_products": ["OLD-2"]},
+            ),
+        ),
+    ),
+)

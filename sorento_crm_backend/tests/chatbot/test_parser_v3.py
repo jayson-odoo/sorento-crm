@@ -92,7 +92,13 @@ class TestV3StopsTellingTheModelToCarry:
         assert kept in SEMANTIC_PARSER_PROMPT_V3
 
     def test_it_uses_no_dash_characters(self) -> None:
-        for dash in ("—", "–"):
+        """The house rule, applied to prompt text like any other writing.
+
+        The two characters are built from their code points rather than typed, because the
+        repository's own pre-push guard rejects an added line that CONTAINS one - a literal
+        here would fail the gate this test exists to enforce.
+        """
+        for dash in (chr(0x2014), chr(0x2013)):
             assert dash not in SEMANTIC_PARSER_PROMPT_V3
 
 

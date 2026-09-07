@@ -189,9 +189,14 @@ def from_state(variables: Any, *, asked_at_turn: int) -> dict[str, Any] | None:
     payload = {
         "domain": stored.get("domain_hint"),
         "team": pending.get("team"),
-        # Issue #708: the entities that already resolved. They are the scope the pick
-        # must not throw away, and they are frozen with the options for that reason.
-        "keep": [e for e in jsc.array(stored.get("entities")) if isinstance(e, dict)],
+        # ISSUE #708: the siblings that already resolved, and ONLY when the offer records
+        # which token it was made FOR. `dym_offer.candidates` carries `for_raw` /
+        # `for_canonical` on exactly the partial-miss turns the issue is about, and without
+        # that linkage there is nothing that says which token the pick answers - so a keep
+        # list would be a guess, and the guess is what puts the very token the picker was
+        # disambiguating back into scope beside its own answer. `head/output_exchange`'s
+        # own #708 block draws the same line and says so at more length.
+        "keep": _siblings_to_keep(stored, context, dym_offer),
     }
     if dym_offer:
         payload["offer_id"] = dym_offer.get("id")
@@ -468,6 +473,25 @@ def _code_key(entity: Any) -> str:
     if not isinstance(entity, dict):
         return ""
     return jsc.nullish_str(entity.get("canonical_code") or entity.get("raw")).strip().lower()
+
+
+def _siblings_to_keep(stored: dict, context: str, dym_offer: dict) -> list[dict[str, Any]]:
+    """The prior entities the pick must not throw away, minus the tokens it answers."""
+    candidates = [c for c in jsc.array(dym_offer.get("candidates")) if isinstance(c, dict)]
+    if context != "suggest_offer" or not candidates:
+        return []
+    source_keys = set()
+    for candidate in candidates:
+        source_keys |= {
+            _code_key({"canonical_code": candidate.get("for_canonical")}),
+            _code_key({"canonical_code": candidate.get("for_raw")}),
+        }
+    source_keys -= {""}
+    return [
+        e
+        for e in jsc.array(stored.get("entities"))
+        if isinstance(e, dict) and _code_key(e) not in source_keys
+    ]
 
 
 def _rows_are_customers(rows: list[dict[str, Any]]) -> bool:

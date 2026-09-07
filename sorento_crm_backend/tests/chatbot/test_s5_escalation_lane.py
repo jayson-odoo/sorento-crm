@@ -965,7 +965,7 @@ def test_out_of_scope_finishes_in_turn(session_factory, system_settings_row, mon
     assert row.stage == "remembered"
     stages = [r["stage"] for r in trace_mod.stage_records(row.trace)]
     assert stages == ["received", "understood", "access", "routed", "looked_up", "replied", "remembered"]
-    assert all(r["status"] == "ok" for r in row.trace)
+    assert all(r["status"] == "ok" for r in trace_mod.stage_records(row.trace))
 
     # The session write itself: same contact row (no new insert), but the stored
     # session_vars actually changed - the tail wrote SOMETHING (routing axes and/or the

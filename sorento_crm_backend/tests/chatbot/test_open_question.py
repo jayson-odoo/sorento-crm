@@ -246,12 +246,38 @@ class TestIssue708PartialMissKeepsTheSiblings:
             {
                 "selection_context": "suggest_offer",
                 "last_result_set": _rows("A", "B"),
-                "entities": [{"raw": "SRTKS6091", "hint": "product"}],
+                "entities": [
+                    {"raw": "SRTKS6091", "hint": "product", "canonical_code": "SRTKS6091"},
+                    {"raw": "SRTKS8091", "hint": "product", "canonical_code": "SRTKS8091"},
+                ],
+                "dym_offer": {
+                    "candidates": [
+                        {"code": "A", "for_raw": "SRTKS8091", "for_canonical": "SRTKS8091"},
+                        {"code": "B", "for_raw": "SRTKS8091", "for_canonical": "SRTKS8091"},
+                    ]
+                },
             },
             asked_at_turn=3,
         )
 
-        assert question["payload"]["keep"] == [{"raw": "SRTKS6091", "hint": "product"}]
+        assert [e["raw"] for e in question["payload"]["keep"]] == ["SRTKS6091"], (
+            "the token the picker was offered FOR is not a sibling to keep"
+        )
+
+    def test_with_no_linkage_nothing_is_kept_rather_than_guessed(self) -> None:
+        """A picker with no `dym_offer.candidates` records no `for_raw`, so there is
+        nothing that says which token the pick answers - and keeping the prior scope there
+        puts the very token being disambiguated back beside its own answer."""
+        question = oq.from_state(
+            {
+                "selection_context": "disambiguation",
+                "last_result_set": _rows("A", "B"),
+                "entities": [{"raw": "SRTKS8091", "hint": "product"}],
+            },
+            asked_at_turn=3,
+        )
+
+        assert question["payload"]["keep"] == []
 
 
 # --------------------------------------------------------------------------- #

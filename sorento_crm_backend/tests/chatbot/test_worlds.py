@@ -325,3 +325,275 @@ def test_the_grader_fails_on_a_one_character_text_change(world, world_db, stub_w
 
     with pytest.raises(AssertionError):
         _assert_world(world, mutated, done.session_patch)
+
+
+# --------------------------------------------------------------------------- #
+# The OWNER worlds (growth r1 slice B5, AC-940 to AC-948)
+# --------------------------------------------------------------------------- #
+#
+# `worlds.OWNER_WORLDS` carries the cases and the reason each one exists. This is the
+# runner: one contact per world, one turn after another, each reading the session the
+# previous turn wrote - the same chaining property `test_multi_turn_world_replay` has and
+# for the same reason. What differs is what is graded: a derived world grades the reply an
+# execution actually produced, and these grade the DIALOGUE FACTS, because the rules they
+# are about have no captured execution to be graded against.
+
+
+OWNER_CONTACT = "ZZT-owner-world-contact"
+
+
+@pytest.fixture()
+def owner_stubs(monkeypatch):
+    """The parser and the access check, stubbed at the seams the derived worlds use."""
+    from app.services.chatbot.head import parser as parser_mod
+
+    def _install(emission: dict) -> None:
+        monkeypatch.setattr(
+            parser_mod,
+            "resolve_config",
+            lambda db, *, current_date, override_version_id=None: parser_mod.ParserConfig(
+                system_prompt="stub",
+                prompt_version=3,
+                provider="openai",
+                model="gpt-test",
+                api_key="sk-test",
+            ),
+        )
+        monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: emission)
+        monkeypatch.setattr(
+            engine_mod,
+            "check_access",
+            lambda db, **kw: {
+                "allowed": True,
+                "decision": "allow",
+                "agent_name": "General Enquiries",
+                "attributes": None,
+                "all_attributes_allowed": None,
+            },
+        )
+        monkeypatch.setattr(engine_mod, "default_space_id", lambda db: None)
+
+    return _install
+
+
+def _owner_emission(overrides: dict) -> dict:
+    from tests.chatbot.test_engine import _parser_output
+
+    emission = _parser_output()
+    # A v1-shaped authored turn carries none of the three v3 keys, exactly as every capture
+    # does; a v3-shaped one sets only the ones it is about.
+    for key in ("answers_open_question", "anaphora", "topic_reset"):
+        emission.pop(key, None)
+    emission.update(overrides)
+    return emission
+
+
+def _owner_fragments() -> dict:
+    """The `sub-output` trigger contract, minimal, so the TAIL runs and writes the session.
+
+    `not_supported` because these worlds grade memory and scope, not the answer: any lane
+    that composes a reply would drag its own copy, its own roster and its own offer
+    lifecycle into a test about which product is in scope.
+    """
+    return {
+        "item": {"branch_kind": "not_supported", "allowed": True},
+        "result": None,
+        "resolved": None,
+        "gate": None,
+        "offer_hold": None,
+        "suggest_offer": None,
+        "not_found": None,
+        "incoming_picker": None,
+        "access_choice": None,
+        "crossdomain_render": None,
+        "answer": None,
+        "clarify": None,
+    }
+
+
+def _owner_envelope(message: str, index: int, quoted: str | None = None) -> dict:
+    inner: dict[str, Any] = {
+        "messageId": f"ZZT-owner-msg-{index}",
+        "contactId": OWNER_CONTACT,
+        "message": {"type": "text", "text": message},
+    }
+    if quoted is not None:
+        inner["replyTo"] = {"id": quoted}
+    return {
+        "message": {"contact": {"id": OWNER_CONTACT}, "message": inner},
+        "contact": {"id": OWNER_CONTACT},
+        "ingress": "console",
+        "is_test": False,
+    }
+
+
+def _owner_session(session_factory) -> dict:
+    db = session_factory()
+    row = db.execute(
+        text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
+        {"c": OWNER_CONTACT},
+    ).first()
+    raw = row.session_vars if row is not None else {}
+    stored = json.loads(raw) if isinstance(raw, str) else (raw or {})
+    return stored.get("variables") or {}
+
+
+def _patch_owner_session(session_factory, patch: dict, *, drop: tuple[str, ...] = ()) -> None:
+    db = session_factory()
+    row = db.execute(
+        text("SELECT session_vars FROM respond_contacts WHERE respond_io_id = :c"),
+        {"c": OWNER_CONTACT},
+    ).first()
+    raw = row.session_vars if row is not None else {}
+    stored = json.loads(raw) if isinstance(raw, str) else (raw or {})
+    variables = {
+        k: v for k, v in (stored.get("variables") or {}).items() if k not in drop
+    }
+    variables.update(patch)
+    db.execute(
+        text("UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) WHERE respond_io_id = :c"),
+        {"c": OWNER_CONTACT, "sv": json.dumps({**stored, "variables": variables})},
+    )
+    db.commit()
+
+
+def _codes(entities: Any) -> list[str] | None:
+    if not isinstance(entities, list):
+        return None
+    return [e.get("canonical_code") or e.get("raw") for e in entities if isinstance(e, dict)]
+
+
+def _assert_owner_expectations(
+    world: worlds_mod.OwnerWorld,
+    turn: worlds_mod.OwnerTurn,
+    index: int,
+    *,
+    variables: dict,
+    qf: dict,
+    trace: list,
+) -> None:
+    where = f"{world.world_id} turn {index + 1} ({turn.message!r})"
+    focus = variables.get("focus") or {}
+    expect = turn.expect
+
+    if "focus_products" in expect:
+        slot = focus.get("products") or {}
+        got = _codes(slot.get("value"))
+        assert got == expect["focus_products"], f"{where}: focus.products"
+    if "focus_domain" in expect:
+        assert (focus.get("domain") or {}).get("value") == expect["focus_domain"], (
+            f"{where}: focus.domain"
+        )
+    if "focus_customer" in expect:
+        slot = (focus.get("customer") or {}).get("value") or {}
+        assert slot.get("canonical_code") == expect["focus_customer"], f"{where}: focus.customer"
+    if "focus_date_window" in expect:
+        assert (focus.get("date_window") or {}).get("value") == expect["focus_date_window"], (
+            f"{where}: focus.date_window"
+        )
+    if "answered" in expect:
+        assert qf.get("open_question_answered") == expect["answered"], (
+            f"{where}: which handler answered the open question"
+        )
+    if expect.get("open_question_gone"):
+        assert variables.get("open_question") is None, f"{where}: the offer should be closed"
+    if "decayed" in expect:
+        decayed = tuple(r["slot"] for r in trace if r.get("kind") == "decay")
+        assert decayed == expect["decayed"], f"{where}: what decayed at intake"
+    for key, value in (expect.get("qf") or {}).items():
+        assert qf.get(key) == value, f"{where}: qf.{key}"
+
+
+@pytest.mark.parametrize(
+    "world", worlds_mod.OWNER_WORLDS, ids=lambda w: w.world_id
+)
+def test_owner_world(world, owner_stubs, session_factory, monkeypatch) -> None:
+    """One authored conversation, turn by turn, on the CRM's own memory."""
+    from app.models.chatbot_turn import ChatbotTurn
+    from app.models.user import SystemSetting
+
+    db = session_factory()
+    db.execute(text("DELETE FROM respond_contacts WHERE respond_io_id = :c"), {"c": OWNER_CONTACT})
+    db.execute(
+        text(
+            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+            "VALUES (gen_random_uuid()::text, :c, :p, CAST(:sv AS jsonb))"
+        ),
+        {"c": OWNER_CONTACT, "p": "+60000000777", "sv": json.dumps({"variables": {}})},
+    )
+    settings_row = db.query(SystemSetting).first()
+    if settings_row is None:
+        settings_row = SystemSetting()
+        db.add(settings_row)
+    settings_row.chatbot_focus_ttl_turns = world.ttl_turns
+    db.commit()
+
+    for index, turn in enumerate(world.turns):
+        if turn.arm:
+            # The lane that would have rendered this roster, stubbed by writing what it
+            # would have persisted. See `worlds.OWNER_WORLDS`' own note. `open_question` is
+            # REMOVED with the same write: for this release it is a mirror derived from the
+            # legacy keys, and a present-but-null one means "it aged out", which would make
+            # the stub arm nothing at all.
+            _patch_owner_session(session_factory, turn.arm, drop=("open_question",))
+        if turn.quoted_rows is not None:
+            monkeypatch.setattr(
+                engine_mod,
+                "_read_session_vars",
+                lambda db, *, respond_io_id, reply_to_id, _rows=turn.quoted_rows: {
+                    "respond_io_id": respond_io_id,
+                    "session_vars": {
+                        **_stored_session_vars(session_factory, respond_io_id),
+                        "referenced_result_set": _rows,
+                        "referenced_state": None,
+                    },
+                },
+            )
+        owner_stubs(_owner_emission(turn.emission))
+        envelope = _owner_envelope(
+            turn.message, index, quoted="ZZT-owner-quoted" if turn.quoted_rows else None
+        )
+        result = engine_mod.run_turn(Envelope(**envelope), session_factory=session_factory)
+        assert result.status != "failed", (
+            f"{world.world_id} turn {index + 1} failed at {result.stage}: {result.error}"
+        )
+        engine_mod.complete_turn(
+            result.turn_id, _owner_fragments(), session_factory=session_factory
+        )
+        row = (
+            session_factory()
+            .query(ChatbotTurn)
+            .filter(ChatbotTurn.id == result.turn_id)
+            .first()
+        )
+        _assert_owner_expectations(
+            world,
+            turn,
+            index,
+            variables=_owner_session(session_factory),
+            qf=((result.ctx or {}).get("parse") or {}).get("output") or {},
+            trace=list(row.trace or []),
+        )
+        if turn.quoted_rows is not None:
+            monkeypatch.undo()
+
+
+def _stored_session_vars(session_factory, respond_io_id: str) -> dict:
+    from app.services.conversation_variables_service import get_for_contact
+
+    return get_for_contact(session_factory(), respond_io_id=respond_io_id)
+
+
+class TestTheOwnerWorldsCoverWhatTheOwnerAskedFor:
+    """Six cases were named on 7 Sep 2026; each has a world and each names its ACs."""
+
+    def test_every_world_says_which_criteria_it_grades_and_why(self) -> None:
+        for world in worlds_mod.OWNER_WORLDS:
+            assert world.acs, f"{world.world_id} grades no stated criterion"
+            assert len(world.why) > 80, f"{world.world_id} does not say why it exists"
+            assert len(world.turns) >= 2, f"{world.world_id} is not multi-turn"
+
+    def test_the_criteria_the_plan_names_are_all_covered(self) -> None:
+        covered = {ac for world in worlds_mod.OWNER_WORLDS for ac in world.acs}
+
+        assert {"AC-940", "AC-941", "AC-942", "AC-944", "AC-945", "AC-946", "AC-947"} <= covered
