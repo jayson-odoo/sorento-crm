@@ -120,15 +120,17 @@ test.describe('purchasing user guides - UI claim validation', () => {
     console.log(`  [info] "Latest products import" panel visible: ${await importPanel.isVisible().catch(() => false)}`);
   });
 
-  // docs/user-guides/purchasing/upload-spo.md
-  test('Procurement → SPO Allocations has Import options menu with Import SPO', async ({
+  // docs/user-guides/purchasing/upload-spo.md - Upload SPO is now the primary button
+  // (purchasing consolidation batch 6 Sep 2026, R5); Create SPO Allocation moved into
+  // the Actions menu.
+  test('Procurement → SPO Allocations has Upload SPO as the primary button', async ({
     page,
   }) => {
     await page.goto('/procurement-management/spo-allocations');
-    const importBtn = page.getByRole('button', { name: /import options/i });
-    await expect(importBtn).toBeVisible();
-    await importBtn.click();
-    await expect(page.getByRole('menuitem', { name: /import spo/i })).toBeVisible();
+    const uploadBtn = page.getByRole('button', { name: /upload spo/i });
+    await expect(uploadBtn).toBeVisible();
+    await uploadBtn.click();
+    await expect(page.getByRole('heading', { name: /import spo/i })).toBeVisible();
   });
 
   // docs/user-guides/purchasing/manage-resource-folders.md - Quick Access

@@ -77,6 +77,7 @@ import {
   moveLayers,
   refitAncestors,
   removeLayers,
+  renameFontFamilyInLayers,
   reorderZ,
   reparentLayer,
   stageToMm,
@@ -523,6 +524,21 @@ export function TagCanvasEditor({
       if (nextSelection) setSelectedIds(nextSelection);
     },
     [history],
+  );
+
+  /**
+   * A brand font was renamed: rewrite every layer in the OPEN document that
+   * named the old family, so unsaved edits do not save the dead name back
+   * (AC-5, PLAN-brand-font-manage.md). The pure rewrite lives in
+   * `canvas-geometry.ts` next to the other layer-array functions, testable
+   * without mounting this component.
+   */
+  const renameFontFamilyInOpenDoc = useCallback(
+    (oldName: string, newName: string) => {
+      const next = renameFontFamilyInLayers(layers, oldName, newName);
+      if (next !== layers) commit(next);
+    },
+    [layers, commit],
   );
 
   // -- Layer mutations -------------------------------------------------------
@@ -3576,10 +3592,28 @@ export function TagCanvasEditor({
 
       <FontUploadDialog
         open={fontUploadOpen}
-        onCancel={() => setFontUploadOpen(false)}
+        fonts={library.fonts}
+        onCancel={() => {
+          setFontUploadOpen(false);
+          // A delete started inside the dialog keeps counting down after it
+          // closes (D7 - the window is the server's, not the dialog's), so
+          // whatever happened while it was open - a commit, a cancel, a
+          // failure - has to be caught up on here, or the Font Family
+          // dropdown can go on offering a family the server already deleted.
+          void library.reload();
+        }}
         onUploaded={(asset) => {
           library.remember(asset);
           setFontUploadOpen(false);
+        }}
+        onRenamed={(asset, oldName) => {
+          library.rename(asset.id, asset.name);
+          renameFontFamilyInOpenDoc(oldName, asset.name);
+          void library.reload();
+        }}
+        onDeleted={(id) => {
+          library.forget(id);
+          void library.reload();
         }}
       />
 

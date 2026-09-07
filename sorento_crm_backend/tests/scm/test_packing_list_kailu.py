@@ -101,6 +101,14 @@ def test_the_first_line_matches_the_printed_row(resolver):
     assert first.cbm_per_unit == pytest.approx(0.002448)
 
 
+def test_the_title_row_is_never_read_as_the_shipper(resolver):
+    # S1, review round 1: row 0 is `马来西亚 PACKING LIST` - the document's own title, not a
+    # letterhead. `_shipper_of` used to accept it because it resolves to no known field.
+    out = read_workbook(_fixture_bytes(), resolver)
+
+    assert out.shipper is None
+
+
 def test_an_item_code_with_an_embedded_newline_survives_verbatim(resolver):
     # The supplier's own spelling, newline and all - item codes are never reformatted.
     out = read_workbook(_fixture_bytes(), resolver)

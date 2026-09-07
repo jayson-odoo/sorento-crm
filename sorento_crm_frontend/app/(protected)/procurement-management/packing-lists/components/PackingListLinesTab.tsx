@@ -17,11 +17,12 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { formatDate } from '@/lib/helpers';
 import { formatStatusLabel } from '@/lib/status-badge';
 import { spoDetailHref } from '@/lib/spo-detail';
-import { useConsolidatedPackingList } from '@/app/(protected)/scm/hooks/useFulfilment';
+import { useConsolidatedPackingList, useShipmentLinePhotos } from '@/app/(protected)/scm/hooks/useFulfilment';
 import { getProducts } from '@/app/(protected)/master-data-management/products/services/productService';
 import { ProductComboboxSearchable } from './ProductComboboxSearchable';
 import { SupplierCombobox } from './SupplierCombobox';
 import { PackingListSplitCard } from './PackingListSplitCard';
+import { ShipmentLinePhotosCell } from './ShipmentLinePhotosCell';
 import { deriveLineCells, fmtDp, fmtStated, toNum } from './packingListLineMath';
 import {
   usePackingListRecord,
@@ -176,6 +177,8 @@ export function PackingListLinesTab() {
 
   const packingListId = packingList?.id ?? null;
   const consolidated = useConsolidatedPackingList(packingListId);
+  // R25 (lane C, slice C3): every line's photos in one read, not one per row.
+  const linePhotos = useShipmentLinePhotos(packingListId);
 
   const {
     value: searchInput,
@@ -262,6 +265,17 @@ export function PackingListLinesTab() {
    *  A ref lets the footer read the CURRENT totals without `columns` needing to change. */
   const footerTotalsRef = useRef(footerTotals);
   footerTotalsRef.current = footerTotals;
+
+  /** Read by the Photos cell INSTEAD of `linePhotos.data` directly, for the same reason
+   *  `footerTotalsRef` exists (S7's S3-class defect, reintroduced here by C3): a query's
+   *  `data` is a fresh reference on every fetch (and, worse, some test doubles return a
+   *  fresh literal on every CALL, so every keystroke's re-render sees a "changed" value
+   *  even though nothing was fetched). Listing `linePhotos.data` as a `columns` dependency
+   *  rebuilt every column - with brand-new cell renderers - on every keystroke, which
+   *  remounted every `<Input>` on the grid and dropped focus after one character. The ref
+   *  lets the Photos cell read the CURRENT map without `columns` needing to change. */
+  const linePhotosRef = useRef(linePhotos.data);
+  linePhotosRef.current = linePhotos.data;
 
   /** Server-searched, so any of the 10k+ products is reachable rather than a first page. */
   const fetchProducts = async (query: string, pageIndex: number) => {
@@ -864,6 +878,24 @@ export function PackingListLinesTab() {
         enableSorting: false,
         meta: { headerTitle: 'Status' },
       },
+      {
+        id: 'photos',
+        header: ({ column }) => <DataGridColumnHeader title="Photos" column={column} />,
+        cell: ({ row }) => {
+          const line = row.original;
+          return (
+            <ShipmentLinePhotosCell
+              shipmentId={packingListId as string}
+              lineId={line.id ?? null}
+              productLabel={line.product_code || 'this line'}
+              photos={line.id ? (linePhotosRef.current?.[line.id] ?? []) : []}
+            />
+          );
+        },
+        size: 220,
+        enableSorting: false,
+        meta: { headerTitle: 'Photos' },
+      },
     ];
 
     if (editing) {
@@ -890,13 +922,15 @@ export function PackingListLinesTab() {
     }
 
     return cols;
-    // `footerTotals` deliberately absent: it is a fresh object on every keystroke and the
-    // footer cells read it through `footerTotalsRef` instead, precisely so this memo does
-    // NOT rebuild while somebody is typing (AC-J1, see `footerTotalsRef`'s own comment).
+    // `footerTotals` and `linePhotos.data` deliberately absent: both are fresh references on
+    // every render for reasons that have nothing to do with an edit (a query result, and in
+    // at least one test double, a fresh object literal per call) - the footer and Photos
+    // cells read them through `footerTotalsRef` / `linePhotosRef` instead, precisely so this
+    // memo does NOT rebuild while somebody is typing (AC-J1, see those refs' own comments).
     // `setLineField` and `removeLine` are stable (`useCallback`, empty deps, in
     // `packing-list-context.tsx`) so they cost nothing as dependencies here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing, suppliers, supplierNameById, setLineField, removeLine]);
+  }, [editing, suppliers, supplierNameById, setLineField, removeLine, packingListId]);
 
   const table = useReactTable({
     data: rows,

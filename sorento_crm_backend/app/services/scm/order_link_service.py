@@ -219,6 +219,12 @@ SOURCE_ORDER_INQUIRY = "order_inquiry"
 #: (V4, migration 473_scm_claim_autocount_source).
 SOURCE_AUTOCOUNT = "autocount"
 
+#: The SPO planner's SO-covered dialog (R20, migration 482) - a RETAIL tick, written FULLY
+#: RESOLVED (both `so_line_id` and `spo_allocation_id` known at write time, unlike a book
+#: claim) and the only source that carries its own `qty` rather than reading one off a link
+#: beside it.
+SOURCE_PLANNER = "planner"
+
 
 def find_claim(
     db: Session,
@@ -656,13 +662,16 @@ def claim_placed_on_po(
     po_line_id: Optional[str] = None,
     spo_allocation_id: Optional[str] = None,
     source: str = SOURCE_ORDER_INQUIRY,
+    qty: Optional[float] = None,
 ) -> OrderLinkClaim:
     """Record a Link PO / Link SPO pairing as a claim, for the audit trail
     (PLAN-demo-followups-19aug-ladder-v2.md section G, PLAN-scm-cs-planning-uat.md 3.I).
 
     `source` is what the caller is: `order_inquiry` (the default) for the audit row written
     beside a link, `crm_supply` for a supply writer claiming a line it has just created for
-    known demand (G12's write-time rule). It applies to a claim this call CREATES; a claim
+    known demand (G12's write-time rule), `planner` for the SPO planner's retail tick (R20)
+    - the only one of the three that also passes `qty`, since it is the only source with no
+    link row of its own to read one off. It applies to a claim this call CREATES; a claim
     that already exists keeps the source of whoever stated the pairing first.
 
     The purchase side is whichever column the caller resolved: `po_line_id` for a purchase
@@ -700,6 +709,8 @@ def claim_placed_on_po(
         if existing.po_line_id is None and existing.spo_allocation_id is None:
             existing.po_line_id = po_line_id
             existing.spo_allocation_id = spo_allocation_id
+        if existing.qty is None and qty is not None:
+            existing.qty = qty
         existing.resolved_at = _resolved_at(existing, now)
         return existing
 
@@ -713,6 +724,7 @@ def claim_placed_on_po(
         so_line_id=so_line_id,
         po_line_id=po_line_id,
         spo_allocation_id=spo_allocation_id,
+        qty=qty,
     )
     claim.resolved_at = _resolved_at(claim, now)
     db.add(claim)

@@ -120,7 +120,7 @@ import { PlanNumberButton } from './PlanNumberButton';
 import { EM_DASH } from '../lib/format';
 
 /** Radix's TabsTrigger switches on mouse down; a bare `click` leaves the old panel up. */
-function switchTab(name: string) {
+function switchTab(name: string | RegExp) {
   const tab = screen.getByRole('tab', { name });
   fireEvent.mouseDown(tab);
   fireEvent.click(tab);
@@ -1123,7 +1123,7 @@ describe('SoCoveragePicker', () => {
     },
   ];
 
-  it('lists project first then retail, pre-ticked, with the unassigned remainder stated', () => {
+  it('lists Project and Retail across two tabs, pre-ticked, with the unassigned remainder shared (R18)', () => {
     renderWithClient(
       <SoCoveragePicker
         coverage={coverage}
@@ -1133,10 +1133,19 @@ describe('SoCoveragePicker', () => {
       />,
     );
 
-    const rows = screen.getAllByRole('row');
-    expect(rows[1].textContent).toContain('OI-0042');
-    expect(rows[2].textContent).toContain('SO404352');
+    // Project tab is the default.
+    expect(screen.getByRole('tab', { name: 'Project (1)' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Retail (1)' })).toBeTruthy();
+    const projectRows = screen.getAllByRole('row');
+    expect(projectRows[1].textContent).toContain('OI-0042');
     expect(screen.getByLabelText('Cover OI-0042')).toBeChecked();
+    expect(screen.getByText('Unassigned 20')).toBeTruthy();
+    expect(screen.queryByText('SO404352')).toBeNull();
+
+    switchTab(/retail/i);
+    const retailRows = screen.getAllByRole('row');
+    expect(retailRows[1].textContent).toContain('SO404352');
+    // The footer is shared beneath both tabs - still 20 after switching.
     expect(screen.getByText('Unassigned 20')).toBeTruthy();
 
     // AC-J3: the Open column foots too (40 + 20), beside the existing Unassigned line.
@@ -1155,17 +1164,20 @@ describe('SoCoveragePicker', () => {
       />,
     );
 
+    switchTab(/retail/i);
     fireEvent.click(screen.getByLabelText('Cover SO404352'));
 
     expect(onChange).toHaveBeenCalledWith(['project:1', 'retail:2']);
   });
 
-  it('says so when there is no open demand to point at', () => {
+  it('says so when there is no open demand to point at, on either tab', () => {
     renderWithClient(
       <SoCoveragePicker coverage={[]} tickedKeys={[]} onChange={() => {}} unassigned={0} />,
     );
 
-    expect(screen.getByText('No open demand this SPO could cover.')).toBeTruthy();
+    expect(screen.getByText('No open project demand this SPO could cover.')).toBeTruthy();
+    switchTab(/retail/i);
+    expect(screen.getByText('No open retail demand this SPO could cover.')).toBeTruthy();
   });
 
   it('headers name Delivery date and Outstanding, the family\'s own words (S3, AC-C1)', () => {
@@ -1188,19 +1200,23 @@ describe('SoCoveragePicker', () => {
       <SoCoveragePicker coverage={coverage} tickedKeys={[]} onChange={() => {}} unassigned={0} />,
     );
 
-    const rows = screen.getAllByRole('row');
-    // The inquiry row: the pill reads "Project", plus the "· inquiry" suffix naming where
-    // the row itself came from.
-    expect(within(rows[1] as HTMLElement).getByText('Project')).toBeTruthy();
-    expect(within(rows[1] as HTMLElement).getByText('· inquiry')).toBeTruthy();
-    // The book-line row: the same pill, no suffix - it did not come from an inquiry.
-    expect(within(rows[2] as HTMLElement).getByText('Retail')).toBeTruthy();
-    expect(within(rows[2] as HTMLElement).queryByText('· inquiry')).toBeNull();
+    // The inquiry row (Project tab, default): the pill reads "Project", plus the
+    // "· inquiry" suffix naming where the row itself came from.
+    const projectRows = screen.getAllByRole('row');
+    expect(within(projectRows[1] as HTMLElement).getByText('Project')).toBeTruthy();
+    expect(within(projectRows[1] as HTMLElement).getByText('· inquiry')).toBeTruthy();
+
+    // The book-line row (Retail tab): the same pill, no suffix - it did not come from an
+    // inquiry.
+    switchTab(/retail/i);
+    const retailRows = screen.getAllByRole('row');
+    expect(within(retailRows[1] as HTMLElement).getByText('Retail')).toBeTruthy();
+    expect(within(retailRows[1] as HTMLElement).queryByText('· inquiry')).toBeNull();
     // Actually rendered as the `Badge` primitive, not a plain string (AC-J3's "same pill").
     expect(container.querySelectorAll('[data-slot="badge"]').length).toBeGreaterThan(0);
   });
 
-  it('an unclassified book line reads Unclassified, and the Class filter narrows by demand_class (R3, AC-J3)', () => {
+  it('an unclassified book line reads Unclassified, on the Retail tab (R3, R18, AC-J3)', () => {
     const withUnclassified = [
       ...coverage,
       {
@@ -1220,17 +1236,12 @@ describe('SoCoveragePicker', () => {
       <SoCoveragePicker coverage={withUnclassified} tickedKeys={[]} onChange={() => {}} unassigned={0} />,
     );
 
+    // R18: the tabs partition by `kind`, not `demand_class` - a book line with no class is
+    // still `kind: 'retail'`, so it lives on the Retail tab, unclassified pill and all.
+    expect(screen.queryByText('Unclassified')).toBeNull();
+    switchTab(/retail/i);
     expect(screen.getByText('Unclassified')).toBeTruthy();
-
-    fireEvent.pointerDown(screen.getByRole('button', { name: /filters/i }), { button: 0 });
-    fireEvent.click(screen.getByRole('button', { name: /add condition/i }));
-    fireEvent.change(screen.getByLabelText('Filter field'), { target: { value: 'demand_class' } });
-    fireEvent.change(screen.getByLabelText('Filter value'), { target: { value: 'unclassified' } });
-    fireEvent.click(screen.getByRole('button', { name: /^apply$/i }));
-
     expect(screen.getByText('SO404600')).toBeTruthy();
-    expect(screen.queryByText('OI-0042')).toBeNull();
-    expect(screen.queryByText('SO404352')).toBeNull();
   });
 
   it('renders as a DataGrid with resizable columns (S3, AC-C2)', () => {
@@ -1270,15 +1281,18 @@ describe('SoCoveragePicker', () => {
     fireEvent.change(search, { target: { value: 'ANOTHER' } });
     fireEvent.keyDown(search, { key: 'Enter' });
 
+    // The match (SO404400, retail) is on the Retail tab; Project shows its own empty state.
+    expect(screen.getByText('No open project demand this SPO could cover.')).toBeTruthy();
+    switchTab(/retail/i);
     expect(screen.getByText('SO404400')).toBeTruthy();
-    expect(screen.queryByText('OI-0042')).toBeNull();
     expect(screen.queryByText('SO404352')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
 
-    expect(screen.getByText('OI-0042')).toBeTruthy();
     expect(screen.getByText('SO404352')).toBeTruthy();
     expect(screen.getByText('SO404400')).toBeTruthy();
+    switchTab(/project/i);
+    expect(screen.getByText('OI-0042')).toBeTruthy();
   });
 
   it('filters by a condition, shows the active count, and Clear filters restores every row (S3, AC-C4)', () => {
@@ -1286,6 +1300,9 @@ describe('SoCoveragePicker', () => {
       <SoCoveragePicker coverage={coverageWithThird} tickedKeys={[]} onChange={() => {}} unassigned={0} />,
     );
 
+    // The filter is scoped to the tab that opened it (the toolbar reads the ACTIVE table),
+    // so it is applied from the Retail tab, before the popover leaves the rest inert.
+    switchTab(/retail/i);
     fireEvent.pointerDown(screen.getByRole('button', { name: /filters/i }), { button: 0 });
     fireEvent.click(screen.getByRole('button', { name: /add condition/i }));
 
@@ -1294,7 +1311,6 @@ describe('SoCoveragePicker', () => {
     fireEvent.click(screen.getByRole('button', { name: /^apply$/i }));
 
     expect(screen.getByText('SO404400')).toBeTruthy();
-    expect(screen.queryByText('OI-0042')).toBeNull();
     expect(screen.queryByText('SO404352')).toBeNull();
 
     // Radix marks the trigger `aria-hidden` while the popover is open (its own accessible
@@ -1305,7 +1321,6 @@ describe('SoCoveragePicker', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /clear filters/i }));
 
-    expect(screen.getByText('OI-0042')).toBeTruthy();
     expect(screen.getByText('SO404352')).toBeTruthy();
     expect(screen.getByText('SO404400')).toBeTruthy();
   });
@@ -1321,6 +1336,7 @@ describe('SoCoveragePicker', () => {
       />,
     );
 
+    switchTab(/retail/i);
     expect(screen.getByLabelText('Cover SO404400')).toBeChecked();
     expect(screen.getByText('Unassigned 5')).toBeTruthy();
 
@@ -1361,6 +1377,7 @@ describe('SoCoveragePicker', () => {
     renderWithClient(
       <SoCoveragePicker coverage={takenCoverage} tickedKeys={['project:1']} onChange={() => {}} unassigned={20} />,
     );
+    switchTab(/retail/i);
 
     const checkbox = screen.getByLabelText('Cover SO404500');
     expect(checkbox).toBeDisabled();
@@ -1378,9 +1395,108 @@ describe('SoCoveragePicker', () => {
     renderWithClient(
       <SoCoveragePicker coverage={takenCoverage} tickedKeys={['project:1']} onChange={onChange} unassigned={20} />,
     );
+    switchTab(/retail/i);
 
     fireEvent.click(screen.getByLabelText('Cover SO404500'));
 
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  // ------------------------------------------------------------------ //
+  // AC-I4 / S1 / S7 (review round 1) - sorting, live footers, the order
+  // the cascade is told to walk.
+  // ------------------------------------------------------------------ //
+
+  const threeRetail = [
+    coverage[0],
+    coverage[1], // SO404352, 2026-09-20
+    {
+      key: 'retail:3',
+      kind: 'retail' as const,
+      demand_class: 'retail' as const,
+      document: 'SO404400',
+      customer_name: 'ANOTHER DEALER',
+      required_date: '2026-08-05',
+      qty: 10,
+      warehouse_code: 'MWH',
+      taken_qty: 0,
+      taken_by: [],
+    },
+  ];
+
+  function documentsOnScreen(): string[] {
+    return screen
+      .getAllByRole('row')
+      .slice(1)
+      .map((row) => row.textContent ?? '')
+      .filter((text) => text.includes('SO') || text.includes('OI-'));
+  }
+
+  it('AC-I4: each tab opens sorted by Delivery date ascending, and a header click re-sorts', () => {
+    renderWithClient(
+      <SoCoveragePicker coverage={threeRetail} tickedKeys={[]} onChange={() => {}} unassigned={0} />,
+    );
+    switchTab(/retail/i);
+
+    // 2026-08-05 before 2026-09-20, whatever order the server sent them in.
+    const ascending = documentsOnScreen();
+    expect(ascending[0]).toContain('SO404400');
+    expect(ascending[1]).toContain('SO404352');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delivery date' }));
+
+    const descending = documentsOnScreen();
+    expect(descending[0]).toContain('SO404352');
+    expect(descending[1]).toContain('SO404400');
+  });
+
+  it('S1: the footer totals follow the live takes, not the ones at mount', () => {
+    // The columns memo is frozen at mount (the Take input would lose its caret otherwise),
+    // so the footer has to read the totals through a ref - rendered here across a props
+    // change to prove it does.
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const view = (takes: Record<string, number>) => (
+      <QueryClientProvider client={client}>
+        <SoCoveragePicker
+          coverage={coverage}
+          tickedKeys={['project:1']}
+          onChange={() => {}}
+          unassigned={0}
+          takes={takes}
+          onTakeChange={() => {}}
+          spoQty={60}
+        />
+      </QueryClientProvider>
+    );
+    const { rerender } = render(view({ 'project:1': 40 }));
+
+    let footer = screen.getByText('Total').closest('tr') as HTMLElement;
+    expect(within(footer).getByText('40')).toBeTruthy();
+
+    rerender(view({ 'project:1': 25 }));
+
+    footer = screen.getByText('Total').closest('tr') as HTMLElement;
+    expect(within(footer).getByText('25')).toBeTruthy();
+  });
+
+  it('S7: reports the order it is SHOWING, and reports it again after a re-sort', () => {
+    const onOrderChange = vi.fn();
+    renderWithClient(
+      <SoCoveragePicker
+        coverage={threeRetail}
+        tickedKeys={[]}
+        onChange={() => {}}
+        unassigned={0}
+        onOrderChange={onOrderChange}
+      />,
+    );
+
+    // Project rows first, then retail, each by delivery date ascending.
+    expect(onOrderChange).toHaveBeenLastCalledWith(['project:1', 'retail:3', 'retail:2']);
+
+    switchTab(/retail/i);
+    fireEvent.click(screen.getByRole('button', { name: 'Delivery date' }));
+
+    expect(onOrderChange).toHaveBeenLastCalledWith(['project:1', 'retail:2', 'retail:3']);
   });
 });

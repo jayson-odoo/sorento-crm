@@ -33,6 +33,7 @@ from sqlalchemy.orm import Session
 from app.models.dealer_kit import Asset
 from app.models.resources import Attachment
 from app.services.company_scope import get_company_scope, resolve_write_company_id
+from app.services.error_handler import AppException
 from app.services.image_thumbnailer import store_thumbnail, thumbnail_key_for
 from app.services.storage_router import (
     cdn_base_url,
@@ -651,6 +652,256 @@ def purge_objects(objects: Iterable[StoredObject]) -> None:
         delete_object_best_effort(stored.provider, stored.key)
 
 
+# --------------------------------------------------------------------------- #
+# Brand fonts: named by FAMILY, not by id (PLAN-brand-font-manage.md)
+#
+# Everything above this point treats a library asset as something a document
+# points at by ID. A font is the one kind that is not: a text layer stores
+# ``props.fontFamily`` as a plain string, because that string IS the CSS
+# family `@font-face` declares - the inspector, the layer and the stylesheet
+# would otherwise have three different names for the same face. So renaming
+# or deleting a font cannot reuse ``referenced_asset_ids`` (it walks IDs) and
+# needs its own guard, keyed on the name instead.
+# --------------------------------------------------------------------------- #
+def _font_family_shapes(name: str) -> Iterator[dict]:
+    """The jsonb containment shapes that mean "a text layer names this font".
+
+    One holder, unlike ``_tag_layer_shapes``'s two: an asset id can sit under
+    ``props.assetId`` (badge, or an image saved before S3b) or nested under
+    ``props.source`` (an image saved since) - a font's family sits flat on
+    ``props.fontFamily`` for BOTH a text layer and a price badge's figure
+    (``TextLayerProps`` / ``PriceBadgeLayerProps``), and there is no second
+    place it could be.
+
+    No recursion into a group's members either: `groupSelectedLayers`
+    (`TagCanvasEditor.tsx`) files a group by the plain ids of its children in
+    ``props.children`` - the members themselves stay siblings in the SAME flat
+    ``layers`` array, so a top-level walk already sees them.
+    """
+    holder = {"fontFamily": name}
+    yield {"layers": [{"props": holder}]}
+    yield {"sheets": [{"tags": [{"layers": [{"props": holder}]}]}]}
+
+
+def _rewrite_layers(layers: Optional[list], old: str, new: str) -> bool:
+    """Rewrite ``props.fontFamily == old`` to ``new`` in place. True if it did."""
+    changed = False
+    for layer in layers or []:
+        props = (layer or {}).get("props") or {}
+        if props.get("fontFamily") == old:
+            props["fontFamily"] = new
+            changed = True
+    return changed
+
+
+def _rewrite_font_family_in_doc(doc: Optional[dict], old: str, new: str) -> bool:
+    """Rewrite every text layer naming ``old`` to ``new``, in EITHER document
+    shape - a tag template's bare ``layers`` or a tag sheet's ``sheets``."""
+    if not doc:
+        return False
+    changed = _rewrite_layers(doc.get("layers"), old, new)
+    for sheet in doc.get("sheets", []) or []:
+        for tag in (sheet or {}).get("tags", []) or []:
+            if _rewrite_layers((tag or {}).get("layers"), old, new):
+                changed = True
+    return changed
+
+
+def _font_company_scope(company_id: Optional[str]):
+    """The scope a font's own guard/rewrite reads under.
+
+    UNLIKE ``referenced_asset_ids`` (which fails closed to ALL companies,
+    because an asset id is unique everywhere and missing a reference means
+    destroying artwork someone else can see): a font is named by a STRING,
+    and two companies can each have their own "Sorento Display". The rename
+    route already treats ``FONT_NAME_TAKEN`` as same-company; the guard and
+    the rewrite have to agree, or a company's rename would silently rewrite
+    another company's identically-named font, and a delete would refuse
+    because of a template that company can never see (S1 review, 7 Sep 2026).
+
+    Fail-closed the OTHER way here: an asset with no resolvable company sees
+    NOTHING (``frozenset()``, 0 rows) rather than every company's docs -
+    scope ``None`` would leak, and UNSET already means "resolver never ran",
+    which is not this caller's problem to paper over.
+    """
+    return frozenset({company_id}) if company_id else frozenset()
+
+
+def font_family_users(db: Session, name: str, company_id: Optional[str]) -> list[str]:
+    """Titles of every template, published version, tag sheet or draft in
+    ``company_id`` that still names this family.
+
+    Four documents can name a family: a live ``tag_template.doc``, a
+    published ``tag_template_version.doc`` (Restore copies one straight back
+    into the draft, so a font only an old version still names is not safe to
+    delete either), a ``page_version.doc`` (a tag sheet), and ``page.draft_doc``.
+
+    ``PageVersion`` and ``TagTemplateVersion`` are not themselves company-owned
+    (see their docstrings - each is reachable only through its parent), so
+    each is joined to that parent here: the company predicate
+    ``company_scope`` installs only reaches a ``CompanyScopedMixin`` mapper
+    actually present in the statement, and a bare query against either table
+    on its own would scope to nothing.
+
+    A tag-sheet page with no name of its own is unreachable in practice
+    (``Page.name`` is required at the column), but the fallback costs nothing
+    and matches how the guard is described in the UAC.
+    """
+    from app.models.base import company_scope
+    from app.models.dealer_kit import Page, PageVersion, TagTemplate, TagTemplateVersion
+
+    shapes = list(_font_family_shapes(name))
+    titles: set[str] = set()
+
+    with company_scope(db, _font_company_scope(company_id)):
+        templates = (
+            db.query(TagTemplate.name)
+            .filter(or_(*[TagTemplate.doc.contains(shape) for shape in shapes]))
+            .all()
+        )
+        titles |= {row[0] for row in templates}
+
+        published = (
+            db.query(TagTemplate.name)
+            .join(TagTemplateVersion, TagTemplateVersion.template_id == TagTemplate.id)
+            .filter(or_(*[TagTemplateVersion.doc.contains(shape) for shape in shapes]))
+            .all()
+        )
+        titles |= {row[0] for row in published}
+
+        versions = (
+            db.query(Page.name)
+            .join(PageVersion, PageVersion.page_id == Page.id)
+            .filter(or_(*[PageVersion.doc.contains(shape) for shape in shapes]))
+            .all()
+        )
+        titles |= {(row[0] or "a price tag request") for row in versions}
+
+        drafts = (
+            db.query(Page.name)
+            .filter(or_(*[Page.draft_doc.contains(shape) for shape in shapes]))
+            .all()
+        )
+        titles |= {(row[0] or "a price tag request") for row in drafts}
+
+    return sorted(titles)
+
+
+def rename_font_family(db: Session, old: str, new: str, company_id: Optional[str]) -> int:
+    """Rewrite every doc in ``company_id`` naming ``old`` to ``new``.
+
+    Flushes, never commits. Same shape as the guard above: a jsonb containment
+    test finds candidate ROWS, and the actual edit happens in Python, because
+    jsonb has no "find this key inside an array and replace it" operator.
+    Reassigning the key on the dict SQLAlchemy already loaded is not enough -
+    it does not know the JSONB column changed unless told, so every rewritten
+    row is ``flag_modified``. Scoped the same way ``font_family_users`` is, and
+    for the same reason: two companies can each own a font of this name.
+    """
+    from sqlalchemy.orm.attributes import flag_modified
+
+    from app.models.base import company_scope
+    from app.models.dealer_kit import Page, PageVersion, TagTemplate, TagTemplateVersion
+
+    if old == new:
+        return 0
+
+    shapes = list(_font_family_shapes(old))
+    rewritten = 0
+
+    with company_scope(db, _font_company_scope(company_id)):
+        templates = (
+            db.query(TagTemplate)
+            .filter(or_(*[TagTemplate.doc.contains(shape) for shape in shapes]))
+            .all()
+        )
+        for template in templates:
+            if _rewrite_font_family_in_doc(template.doc, old, new):
+                flag_modified(template, "doc")
+                rewritten += 1
+
+        published = (
+            db.query(TagTemplateVersion)
+            .join(TagTemplate, TagTemplateVersion.template_id == TagTemplate.id)
+            .filter(or_(*[TagTemplateVersion.doc.contains(shape) for shape in shapes]))
+            .all()
+        )
+        for version in published:
+            if _rewrite_font_family_in_doc(version.doc, old, new):
+                flag_modified(version, "doc")
+                rewritten += 1
+
+        versions = (
+            db.query(PageVersion)
+            .join(Page, PageVersion.page_id == Page.id)
+            .filter(or_(*[PageVersion.doc.contains(shape) for shape in shapes]))
+            .all()
+        )
+        for version in versions:
+            if _rewrite_font_family_in_doc(version.doc, old, new):
+                flag_modified(version, "doc")
+                rewritten += 1
+
+        drafts = (
+            db.query(Page)
+            .filter(or_(*[Page.draft_doc.contains(shape) for shape in shapes]))
+            .all()
+        )
+        for page in drafts:
+            if _rewrite_font_family_in_doc(page.draft_doc, old, new):
+                flag_modified(page, "draft_doc")
+                rewritten += 1
+
+    db.flush()
+    return rewritten
+
+
+def delete_asset_guarded(db: Session, asset_id: str) -> None:
+    """Delete one asset - rows, then bytes - refusing while anything names it.
+
+    A font is named by FAMILY (see the section above); anything else is named
+    by ID, the same rule ``delete_unreferenced`` already enforces on its own -
+    checked here FIRST so the caller gets the specific reason (which
+    templates) rather than a silent no-op.
+
+    Commits and purges itself, the same as ``flyer_reading_service``'s own
+    delete-and-sweep: a delete-with-purge is one atomic unit end to end, not a
+    flush the caller finishes.
+    """
+    row = (
+        db.query(Asset, Attachment)
+        .join(Attachment, Attachment.id == Asset.attachment_id)
+        .filter(Asset.id == asset_id, Attachment.is_deleted.is_(False))
+        .first()
+    )
+    if row is None:
+        raise AppException(
+            status_code=404,
+            message="Asset not found. Someone might have deleted it already.",
+            code="ASSET_NOT_FOUND",
+        )
+    asset, _attachment = row
+
+    if asset.kind == FONT:
+        titles = font_family_users(db, asset.name, asset.company_id)
+        if titles:
+            raise AppException(
+                status_code=409,
+                message=f"Still used by: {', '.join(titles[:5])}",
+                code="FONT_IN_USE",
+            )
+    elif referenced_asset_ids(db, [asset_id]):
+        raise AppException(
+            status_code=409,
+            message="Still used by a page, template or reading.",
+            code="ASSET_IN_USE",
+        )
+
+    objects = delete_unreferenced(db, [asset_id])
+    db.commit()
+    purge_objects(objects)
+
+
 __all__ = [
     "DECORATIVE",
     "FONT",
@@ -662,10 +913,13 @@ __all__ = [
     "background_asset_ids",
     "background_urls",
     "create_from_bytes",
+    "delete_asset_guarded",
     "delete_unreferenced",
     "font_assets",
+    "font_family_users",
     "list_assets",
     "mime_for_upload",
+    "rename_font_family",
     "tag_sheet_asset_ids",
     "purge_objects",
     "referenced_asset_ids",

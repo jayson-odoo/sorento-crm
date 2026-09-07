@@ -15,7 +15,7 @@
  * every keystroke.
  */
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { TagLayer } from '@/lib/dealer-kit/tag-template-types';
@@ -517,6 +517,81 @@ describe('InspectorPanel - price badge box and typography (r4b, AC-S6-1/4)', () 
 
     expect(screen.getByLabelText('Font Size')).toHaveValue(null);
   });
+
+  it('offers a Show currency checkbox, on by default, and writes the flag (S3c, AC-13)', () => {
+    const onUpdateProps = vi.fn();
+    render(
+      <InspectorPanel layer={badgeLayer()} onUpdate={vi.fn()} onUpdateProps={onUpdateProps} />,
+    );
+
+    const checkbox = screen.getByRole('checkbox', { name: 'Show currency' });
+    expect(checkbox).toBeChecked();
+    fireEvent.click(checkbox);
+
+    expect(onUpdateProps).toHaveBeenCalledWith(
+      'pb1',
+      expect.objectContaining({ showCurrency: false }),
+    );
+  });
+
+  it('shows the checkbox unchecked once the badge has switched it off', () => {
+    render(
+      <InspectorPanel
+        layer={badgeLayer({ showCurrency: false })}
+        onUpdate={vi.fn()}
+        onUpdateProps={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole('checkbox', { name: 'Show currency' })).not.toBeChecked();
+  });
+});
+
+describe('InspectorPanel - image fit (S3b, AC-1/5)', () => {
+  function imageLayer(props: Record<string, unknown> = {}): TagLayer {
+    return {
+      id: 'img1',
+      type: 'image',
+      x_mm: 0,
+      y_mm: 0,
+      width_mm: 40,
+      height_mm: 20,
+      rotation_deg: 0,
+      z_index: 1,
+      locked: false,
+      visible: true,
+      slot_binding: null,
+      text_override: null,
+      props: { kind: 'image', source: null, fit: 'contain', ...props },
+    } as TagLayer;
+  }
+
+  it('offers Cover, Contain and Stretch', () => {
+    render(
+      <InspectorPanel layer={imageLayer()} onUpdate={vi.fn()} onUpdateProps={vi.fn()} />,
+    );
+
+    expect(screen.getByRole('option', { name: 'Cover' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Contain' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Stretch' })).toBeInTheDocument();
+  });
+
+  it('writes stretch when chosen (AC-1)', () => {
+    const onUpdateProps = vi.fn();
+    render(
+      <InspectorPanel layer={imageLayer()} onUpdate={vi.fn()} onUpdateProps={onUpdateProps} />,
+    );
+
+    const select = screen
+      .getByRole('option', { name: 'Stretch' })
+      .closest('select') as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'stretch' } });
+
+    expect(onUpdateProps).toHaveBeenCalledWith(
+      'img1',
+      expect.objectContaining({ fit: 'stretch' }),
+    );
+  });
 });
 
 describe('InspectorPanel - padding row (S3, AC-S3-1/2)', () => {
@@ -582,12 +657,150 @@ describe('InspectorPanel - padding row (S3, AC-S3-1/2)', () => {
 
     render(<InspectorPanel layer={badge} onUpdate={vi.fn()} onUpdateProps={onUpdateProps} />);
 
-    expect(screen.getByText('Padding (mm)')).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('Top'), { target: { value: '2' } });
+    // A price badge shows Margin ABOVE Padding (S3b, AC-6), so "Top" exists
+    // twice - scope to the Padding group's own section.
+    const paddingSection = screen.getByText('Padding (mm)').closest('div') as HTMLElement;
+    expect(paddingSection).toBeInTheDocument();
+    fireEvent.change(within(paddingSection).getByLabelText('Top'), { target: { value: '2' } });
+
+    // A fresh badge carries neither field, so this is also its first-edit
+    // seeding (S3b, AC-10): `margin` is written as zeros alongside the edited
+    // `padding`, not left for `objectContaining` to hide.
+    expect(onUpdateProps).toHaveBeenCalledWith(
+      'pb1',
+      expect.objectContaining({
+        margin: { top: 0, right: 0, bottom: 0, left: 0 },
+        padding: { top: 2, right: 0, bottom: 0, left: 0 },
+      }),
+    );
+  });
+});
+
+describe('InspectorPanel - price badge margin (S3b, AC-6/9/10)', () => {
+  function badgeLayer(props: Record<string, unknown> = {}): TagLayer {
+    return {
+      id: 'pb1',
+      type: 'price_badge',
+      x_mm: 0,
+      y_mm: 0,
+      width_mm: 40,
+      height_mm: 20,
+      rotation_deg: 0,
+      z_index: 1,
+      locked: false,
+      visible: true,
+      slot_binding: null,
+      text_override: null,
+      props: {
+        kind: 'price_badge',
+        variant: 'list_only',
+        fill: '#ffffff',
+        textColor: '#000000',
+        cornerRadius: 2,
+        showNett: true,
+        ...props,
+      },
+    } as TagLayer;
+  }
+
+  it('shows a Margin (mm) group above Padding (mm) (AC-6)', () => {
+    render(
+      <InspectorPanel layer={badgeLayer()} onUpdate={vi.fn()} onUpdateProps={vi.fn()} />,
+    );
+
+    const labels = screen.getAllByText(/^(Margin|Padding) \(mm\)$/).map((el) => el.textContent);
+    expect(labels).toEqual(['Margin (mm)', 'Padding (mm)']);
+  });
+
+  it('shows a legacy badge (padding set, no margin) with margin = the old padding, padding = 0 (AC-9)', () => {
+    render(
+      <InspectorPanel
+        layer={badgeLayer({ padding: { top: 1, right: 2, bottom: 3, left: 4 } })}
+        onUpdate={vi.fn()}
+        onUpdateProps={vi.fn()}
+      />,
+    );
+
+    const marginSection = screen.getByText('Margin (mm)').closest('div') as HTMLElement;
+    expect(within(marginSection).getByLabelText('Top')).toHaveValue(1);
+    expect(within(marginSection).getByLabelText('Right')).toHaveValue(2);
+    expect(within(marginSection).getByLabelText('Bottom')).toHaveValue(3);
+    expect(within(marginSection).getByLabelText('Left')).toHaveValue(4);
+
+    const paddingSection = screen.getByText('Padding (mm)').closest('div') as HTMLElement;
+    expect(within(paddingSection).getByLabelText('Top')).toHaveValue(0);
+  });
+
+  it('seeds margin from the legacy padding and zeroes padding on the first Margin edit (AC-10)', () => {
+    const onUpdateProps = vi.fn();
+    render(
+      <InspectorPanel
+        layer={badgeLayer({ padding: { top: 1, right: 2, bottom: 3, left: 4 } })}
+        onUpdate={vi.fn()}
+        onUpdateProps={onUpdateProps}
+      />,
+    );
+
+    const marginSection = screen.getByText('Margin (mm)').closest('div') as HTMLElement;
+    fireEvent.change(within(marginSection).getByLabelText('Top'), { target: { value: '9' } });
 
     expect(onUpdateProps).toHaveBeenCalledWith(
       'pb1',
-      expect.objectContaining({ padding: { top: 2, right: 0, bottom: 0, left: 0 } }),
+      expect.objectContaining({
+        // The side just edited changes; the sides untouched keep the legacy
+        // padding, so the callout does not jump (AC-10).
+        margin: { top: 9, right: 2, bottom: 3, left: 4 },
+        padding: { top: 0, right: 0, bottom: 0, left: 0 },
+      }),
+    );
+  });
+
+  it('seeds margin from the legacy padding and restarts padding on the first Padding edit (AC-10)', () => {
+    const onUpdateProps = vi.fn();
+    render(
+      <InspectorPanel
+        layer={badgeLayer({ padding: { top: 1, right: 2, bottom: 3, left: 4 } })}
+        onUpdate={vi.fn()}
+        onUpdateProps={onUpdateProps}
+      />,
+    );
+
+    const paddingSection = screen.getByText('Padding (mm)').closest('div') as HTMLElement;
+    fireEvent.change(within(paddingSection).getByLabelText('Left'), { target: { value: '5' } });
+
+    expect(onUpdateProps).toHaveBeenCalledWith(
+      'pb1',
+      expect.objectContaining({
+        margin: { top: 1, right: 2, bottom: 3, left: 4 },
+        padding: { top: 0, right: 0, bottom: 0, left: 5 },
+      }),
+    );
+  });
+
+  it('edits margin and padding independently once the badge already carries a margin', () => {
+    const onUpdateProps = vi.fn();
+    render(
+      <InspectorPanel
+        layer={badgeLayer({
+          margin: { top: 2, right: 2, bottom: 2, left: 2 },
+          padding: { top: 1, right: 1, bottom: 1, left: 1 },
+        })}
+        onUpdate={vi.fn()}
+        onUpdateProps={onUpdateProps}
+      />,
+    );
+
+    const marginSection = screen.getByText('Margin (mm)').closest('div') as HTMLElement;
+    fireEvent.change(within(marginSection).getByLabelText('Top'), { target: { value: '9' } });
+
+    expect(onUpdateProps).toHaveBeenLastCalledWith(
+      'pb1',
+      expect.objectContaining({
+        margin: { top: 9, right: 2, bottom: 2, left: 2 },
+        // Padding is untouched by a Margin edit once the badge already has
+        // one - the two are independent from here on (AC-7).
+        padding: { top: 1, right: 1, bottom: 1, left: 1 },
+      }),
     );
   });
 });

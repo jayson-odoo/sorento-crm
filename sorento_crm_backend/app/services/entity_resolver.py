@@ -1318,11 +1318,11 @@ def _probe_transporter(db: Session, tokens: list[str]) -> dict[str, list[Resolve
 
 
 def _probe_inbound_shipment(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
-    """Exact match across shipment_number / container / BOL / invoice."""
+    """Exact match across shipment_number / container / BOL / SO ref / invoice."""
     result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
     if not tokens:
         return result
-    # All four match fields are number-style identifiers - strip whitespace
+    # All the match fields are number-style identifiers - strip whitespace
     # both sides so 'SHP- 2026-001' matches 'SHP-2026-001' etc.
     normalized = [_strip_all_ws(t.lower()) for t in tokens]
     rows = (
@@ -1331,6 +1331,11 @@ def _probe_inbound_shipment(db: Session, tokens: list[str]) -> dict[str, list[Re
             InboundShipment.shipment_number,
             InboundShipment.shipping_container_number,
             InboundShipment.bill_of_lading_number,
+            # `提单号` lands here (the SO field), not `bill_of_lading_number`, on an
+            # upload made through the supplier-documents dialog (Q1 ruling) - a search
+            # on the B/L alone missed every container uploaded that way (S3, review
+            # round 1).
+            InboundShipment.forwarder_order_ref,
             InboundShipment.invoice_number,
             InboundShipment.shipment_status,
             InboundShipment.estimated_arrival_date,
@@ -1341,6 +1346,7 @@ def _probe_inbound_shipment(db: Session, tokens: list[str]) -> dict[str, list[Re
                 _ws_insensitive_lower(InboundShipment.shipment_number).in_(normalized),
                 _ws_insensitive_lower(InboundShipment.shipping_container_number).in_(normalized),
                 _ws_insensitive_lower(InboundShipment.bill_of_lading_number).in_(normalized),
+                _ws_insensitive_lower(InboundShipment.forwarder_order_ref).in_(normalized),
                 _ws_insensitive_lower(InboundShipment.invoice_number).in_(normalized),
             ),
             InboundShipment.shipment_status != _DRAFT_SHIPMENT_STATUS,
@@ -1357,6 +1363,8 @@ def _probe_inbound_shipment(db: Session, tokens: list[str]) -> dict[str, list[Re
                 match_field = "shipping_container_number"
             elif row.bill_of_lading_number and _strip_all_ws(row.bill_of_lading_number.lower()) == tl_no_ws:
                 match_field = "bill_of_lading_number"
+            elif row.forwarder_order_ref and _strip_all_ws(row.forwarder_order_ref.lower()) == tl_no_ws:
+                match_field = "forwarder_order_ref"
             elif row.invoice_number and _strip_all_ws(row.invoice_number.lower()) == tl_no_ws:
                 match_field = "invoice_number"
             if not match_field:
@@ -1854,6 +1862,9 @@ def _prefix_probe_inbound_shipment(db: Session, token: str) -> list[ResolvedEnti
                 _norm_prefix(InboundShipment.shipment_number, token),
                 _norm_prefix(InboundShipment.shipping_container_number, token),
                 _norm_prefix(InboundShipment.bill_of_lading_number, token),
+                # `提单号` lands here (the SO field), not `bill_of_lading_number`, on an
+                # upload made through the supplier-documents dialog (S3, review round 1).
+                _norm_prefix(InboundShipment.forwarder_order_ref, token),
                 _norm_prefix(InboundShipment.invoice_number, token),
             ),
             InboundShipment.shipment_status != _DRAFT_SHIPMENT_STATUS,

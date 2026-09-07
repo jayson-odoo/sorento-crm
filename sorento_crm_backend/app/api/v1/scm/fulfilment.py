@@ -10,9 +10,10 @@ this system.
 """
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import date
-from typing import Optional
+from typing import Annotated, Optional, Union
 
 from fastapi import (
     APIRouter,
@@ -25,6 +26,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
@@ -40,7 +42,9 @@ from app.services.scm import (
     supplier_code_alias_service,
     loading_plan_service,
     packing_list_service,
+    shipment_line_photos,
     spo_conversion_service,
+    supplier_document_service,
     supplier_inventory_service,
     supplier_notice_service,
 )
@@ -602,14 +606,29 @@ def cancel_loading_plan(
     return out
 
 
+class LoadingPlanLineEditIn(BaseModel):
+    """One row's typed edit (R11): a qty override, a remark, or both."""
+
+    qty: Optional[float] = Field(None, ge=0)
+    remark: Optional[str] = Field(None, max_length=2000)
+
+
 class LoadingPlanEdits(BaseModel):
-    """The WHOLE map of typed quantities, `row_key -> qty` (R6).
+    """The WHOLE map of typed quantities and remarks, `row_key -> qty | {qty?, remark?}`
+    (R6, R11).
 
     Not a patch: what is not in the map is not an edit any more, so a cleared cell cannot
-    survive as a stale override, and one Save is one transaction.
+    survive as a stale override, and one Save is one transaction. A bare number is still
+    accepted - it is what a qty-only edit is still STORED as (AC-E5); the object form only
+    carries something once a remark rides along with it (`loading_plan_service.save_edits`).
+    Both branches of the bare-number union reject a negative qty (review round 1, S3): a
+    negative ask is not a smaller request, it is a typo, and it used to reach the sheet model
+    as a genuine negative number rather than a 422.
     """
 
-    line_edits: dict[str, float] = Field(default_factory=dict)
+    line_edits: dict[str, Union[Annotated[float, Field(ge=0)], LoadingPlanLineEditIn]] = Field(
+        default_factory=dict
+    )
 
 
 @router.put("/loading-plans/{plan_id}/edits")
@@ -621,7 +640,11 @@ def save_loading_plan_edits(
 ):
     plan = _plan_or_404(db, plan_id)
     _refuse_cancelled(plan)
-    loading_plan_service.save_edits(db, plan, body.line_edits)
+    edits = {
+        key: (value if isinstance(value, (int, float)) else value.model_dump())
+        for key, value in body.line_edits.items()
+    }
+    loading_plan_service.save_edits(db, plan, edits)
     out = loading_plan_service.record_dict(db, plan)
     db.commit()
     return out
@@ -750,6 +773,16 @@ class SpoLocationSplit(BaseModel):
     qty: float = Field(..., gt=0)
 
 
+class SpoTakeItem(BaseModel):
+    """One SO-covered take (R19/R20, replaces the plain `so_line_ids: list[str]` tick list):
+    `key` is a `so_coverage[].key`, `qty` is what the operator typed for it - or the cascade
+    default, on a row she never touched. Re-validated in `spo_conversion_service.create`
+    against that row's own outstanding and this line's own SPO qty; never trusted as sent."""
+
+    key: str
+    qty: float = Field(..., ge=0)
+
+
 class SpoLineConfirm(BaseModel):
     shipment_line_id: str
     qty: float = Field(0, ge=0)
@@ -765,10 +798,11 @@ class SpoLineConfirm(BaseModel):
     # is what every caller before this ask sent; a LIST narrows it, and the SPO quantity
     # falls to what those takes cover.
     po_take_ids: Optional[list[str]] = None
-    # Which demand this SPO is being pointed at - `so_coverage[].key` (F7, AC-G3). The
-    # project half is written as links; the retail half steers the split on screen and has
-    # no row of its own to hang a link on.
-    so_line_ids: list[str] = Field(default_factory=list)
+    # Which demand this SPO is being pointed at, AND how much of it (R19/R20, AC-I2/AC-I3).
+    # The project half is written onto `order_inquiry_links.qty` outright; the retail half
+    # onto `scm.order_link_claim` (`source='planner'`) - see
+    # `spo_conversion_service.create`'s docstring.
+    so_takes: list[SpoTakeItem] = Field(default_factory=list)
 
 
 class SpoCreateRequest(BaseModel):
@@ -851,14 +885,92 @@ async def apply_packing_list(
                 detail="shipment_date must be YYYY-MM-DD",
             )
 
-    out = packing_list_service.apply(
+    # `file_in_drive=True` here means a real network PUT to storage (`_file_the_upload`
+    # in the service) - must not run directly on the event loop, same reasoning and same
+    # fix as the generic attachment upload route (`attachments.py`, the WORKER TIMEOUT /
+    # cascading-504 incident): one slow upload would otherwise freeze every other request
+    # this worker is holding.
+    out = await run_in_threadpool(
+        packing_list_service.apply,
         db,
         data,
         supplier_id=supplier,
         shipment_date=parsed_date,
         currency=currency,
         source_ref=file.filename,
+        content_type=file.content_type,
+        file_in_drive=True,
         actor_id=current_user.get("id"),
+    )
+    db.commit()
+    return out
+
+
+@router.post("/supplier-documents/preview")
+async def preview_supplier_documents(
+    files: list[UploadFile] = File(..., description="One or more proforma invoices / packing lists"),
+    supplier_id: Optional[str] = Form(None),
+    currency: Optional[str] = Form(
+        None, description="Only needed when neither the file nor the price list says"
+    ),
+    _user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """One dialog, several supplier documents (R12): each file classified by its title
+    cell, previewed by whichever reader(s) it is - proforma invoice, packing list, or both.
+
+    "Writes nothing" is about the SHIPMENT/INVOICE data - `preview` still writes AI
+    translation fills and bumps `hit_count` on a memory hit (`translation_service`'s own
+    writes), and those are lost without a commit here (B3, review round 1): a second
+    preview of the same file used to ask the model again instead of finding its own answer
+    already in the memory. `run_in_threadpool` (B4) for the same reason the sibling upload
+    route above does - a slow read must not freeze every other request this worker holds.
+    """
+    read = [(f.filename, await read_upload(f)) for f in files]
+    out = await run_in_threadpool(
+        supplier_document_service.preview, db, read, supplier_id=supplier_id, currency=currency,
+    )
+    db.commit()
+    return out
+
+
+@router.post("/supplier-documents/apply")
+async def apply_supplier_documents(
+    files: list[UploadFile] = File(..., description="The same files the preview was taken from"),
+    supplier_id: str = Form(..., description="Whose documents these are"),
+    currency: Optional[str] = Form(
+        None, description="Only needed when neither the file nor the price list says"
+    ),
+    translations: Optional[str] = Form(
+        None,
+        description=(
+            "JSON array of {source_text, target_text} - the preview's edited "
+            "translation cells (R16)"
+        ),
+    ),
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Proforma invoices first, then packing lists, then price links (R12-R14). Each file
+    is filed in Drive under its own type (Proforma Invoice / Packing List)."""
+    read = [(f.filename, await read_upload(f), f.content_type) for f in files]
+    parsed_translations = None
+    if translations:
+        try:
+            parsed_translations = json.loads(translations)
+        except (TypeError, ValueError) as exc:
+            raise AppException(422, "translations must be a JSON array", detail="translations") from exc
+        if not isinstance(parsed_translations, list):
+            raise AppException(422, "translations must be a JSON array", detail="translations")
+    out = await run_in_threadpool(
+        supplier_document_service.apply,
+        db,
+        read,
+        supplier_id=supplier_id,
+        currency=currency,
+        actor_id=current_user.get("id"),
+        actor_name=_actor(current_user),
+        translations=parsed_translations,
     )
     db.commit()
     return out
@@ -957,7 +1069,11 @@ def list_inbound_shipments(
                 "shipment_id": str(r.id),
                 "shipment_number": r.shipment_number,
                 "container_no": r.shipping_container_number,
-                "bl_no": r.bill_of_lading_number,
+                # `forwarder_order_ref` (the SO field) is where `提单号` lands on an
+                # upload made through the supplier-documents dialog (Q1 ruling) -
+                # `bill_of_lading_number` stays for the manual form, so a listing that
+                # only read the latter showed a blank B/L for every uploaded container.
+                "bl_no": r.bill_of_lading_number or r.forwarder_order_ref,
                 "status": r.shipment_status,
                 "lines": line_counts.get(str(r.id), 0),
                 "suppliers": suppliers_by_shipment.get(str(r.id), []),
@@ -986,7 +1102,9 @@ def consolidated_packing_list_for_shipment(
     db: Session = Depends(get_db),
 ):
     """The Sorento packing list: every factory on this container, subtotalled and split."""
-    return consolidated_packing_list.build(db, shipment_id)
+    payload = consolidated_packing_list.build(db, shipment_id)
+    consolidated_packing_list.redact_photo_refs(payload)
+    return payload
 
 
 @router.get("/inbound-shipments/{shipment_id}/packing-list/export")
@@ -1003,6 +1121,53 @@ def export_consolidated_packing_list(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": content_disposition(filename)},
     )
+
+
+@router.get("/inbound-shipments/{shipment_id}/line-photos")
+def get_shipment_line_photos(
+    shipment_id: str,
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """Every line's supplier photos on this container, keyed by line id (R25)."""
+    return shipment_line_photos.list_for_shipment(db, shipment_id)
+
+
+@router.post("/inbound-shipments/{shipment_id}/lines/{line_id}/photos")
+async def upload_shipment_line_photos(
+    shipment_id: str,
+    line_id: str,
+    files: list[UploadFile] = File(..., description="One or more image files"),
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Add photos to a shipment line, in upload order (R25). Returns the line's full
+    photo list, this upload included."""
+    return await shipment_line_photos.upload_photos(
+        db,
+        shipment_id=shipment_id,
+        line_id=line_id,
+        files=files,
+        actor_id=current_user.get("id"),
+    )
+
+
+@router.delete("/inbound-shipments/{shipment_id}/lines/{line_id}/photos/{photo_id}")
+def delete_shipment_line_photo(
+    shipment_id: str,
+    line_id: str,
+    photo_id: str,
+    _user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Immediate delete - same `shipment_line_photos.delete_photo` the deferred
+    `shipment_line_photo.delete` record action calls (`record_actions.py`); the FE's own
+    "x" on a thumbnail goes through that deferred path (D7), never this route directly.
+    Scoped to shipment_id/line_id (review round 1, item 1): a photo id under another
+    shipment 404s rather than deleting.
+    """
+    shipment_line_photos.delete_photo(db, shipment_id, line_id, photo_id)
+    return {"message": "Photo deleted"}
 
 
 @router.post("/inbound-shipments/{shipment_id}/allocations")
@@ -1066,6 +1231,58 @@ def create_spo(
     out = spo_conversion_service.create(
         db,
         shipment_id,
+        [ln.model_dump() for ln in body.lines],
+        actor=_actor(current_user),
+        actor_user_id=current_user.get("id"),
+    )
+    db.commit()
+    return out
+
+
+@router.get("/inbound-shipments/{shipment_id}/spo/{purchase_order_id}/planner-state")
+def spo_planner_state(
+    shipment_id: str,
+    purchase_order_id: str,
+    _user: dict = Depends(_READ),
+    db: Session = Depends(get_db),
+):
+    """What the planner re-opens an EXISTING SPO with (R24, AC-K1) - "Edit in planner", from
+    the Created SPOs grid or from the SPO document itself.
+
+    One entry per line of THIS SPO, each carrying both the `spo-suggestion` shape above (so
+    the PO-takes and SO-covered lightboxes work unchanged) and the state it was persisted
+    with: `spo_qty`, `location_splits`, `po_take_ids`, `so_takes`, `received_qty`. THIS
+    SPO's own claims are handed back - its PO pull reads open again, its ticked demand
+    outstanding again - because a state that reads as taken by somebody else cannot be
+    re-ticked. 404 when the id does not name one of this shipment's own SPOs; 409 when it
+    names a purchase order Create SPO did not mint.
+    """
+    return spo_conversion_service.planner_state(db, shipment_id, purchase_order_id)
+
+
+@router.put("/inbound-shipments/{shipment_id}/spo/{purchase_order_id}")
+def revise_spo(
+    shipment_id: str,
+    purchase_order_id: str,
+    body: SpoCreateRequest,
+    current_user: dict = Depends(_WRITE),
+    db: Session = Depends(get_db),
+):
+    """Save the planner's edits to an SPO that already exists (R24, AC-K2..AC-K4).
+
+    The SAME body Create SPO posts, so one screen builds one payload for both actions. Only
+    lines currently ON this SPO may appear (422 otherwise - a new line is a new Create SPO
+    run, with its own number); a line left out, or sent `include: false`, is unwound for
+    that line alone. Every guard `create` applies is re-applied, plus one of this action's
+    own: a quantity that would drop an allocation below what it has already RECEIVED is
+    refused (422) naming the product and the warehouse, and nothing at all is written. The
+    SPO number and its header row are never touched. Same permission as `create_spo` -
+    editing a PO-book write is the same class of write as making one.
+    """
+    out = spo_conversion_service.revise(
+        db,
+        shipment_id,
+        purchase_order_id,
         [ln.model_dump() for ln in body.lines],
         actor=_actor(current_user),
         actor_user_id=current_user.get("id"),

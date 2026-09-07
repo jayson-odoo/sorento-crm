@@ -19,12 +19,19 @@ vi.mock('../../services/tagDataService', () => ({
 vi.mock('../../services/assetService', () => ({
   listAssets: vi.fn(async () => []),
   listFontAssets: vi.fn(async () => []),
+  fontAssetUrl: (id: string) => `/api/v1/public/dealer-kit/fonts/${id}`,
 }));
 
 import { toast } from '@/lib/toast';
-import { getProductTagData, getProductSetTagData } from '../../services/tagDataService';
+import {
+  getProductTagData,
+  getProductSetTagData,
+  listSpecKeys,
+} from '../../services/tagDataService';
+import { listFontAssets } from '../../services/assetService';
 import {
   resetTagBindingsToastDedupeForTests,
+  useKitLibrary,
   useTagBindings,
 } from './useTagBindings';
 import type { ProductTagData } from '@/lib/dealer-kit/tag-template-types';
@@ -137,3 +144,77 @@ describe('a product that keeps failing to resolve', () => {
     expect(mockToastError).toHaveBeenCalledTimes(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The kit library: rename and delete update the dropdown without a reload
+// (PLAN-brand-font-manage.md)
+// ---------------------------------------------------------------------------
+
+describe('useKitLibrary forget/rename', () => {
+  const mockListFontAssets = vi.mocked(listFontAssets);
+
+  beforeEach(() => {
+    vi.mocked(listSpecKeys).mockResolvedValue([]);
+  });
+
+  function font(overrides: { id: string; name: string }) {
+    return {
+      id: overrides.id,
+      name: overrides.name,
+      kind: 'font',
+      tags: [],
+      url: null,
+      mime_type: null,
+    };
+  }
+
+  it('forget drops the font from the list and the dropdown', async () => {
+    mockListFontAssets.mockResolvedValue([
+      font({ id: 'f-1', name: 'Sorento Display' }),
+      font({ id: 'f-2', name: 'Sorento Body' }),
+    ]);
+    const { result } = renderHook(() => useKitLibrary());
+
+    await waitForFonts(result, 2);
+
+    act(() => {
+      result.current.forget('f-1');
+    });
+
+    expect(result.current.fonts.map((f) => f.id)).toEqual(['f-2']);
+    expect(result.current.fontOptions.some((o) => o.value === 'Sorento Display')).toBe(
+      false,
+    );
+  });
+
+  it('rename swaps the label without dropping the option', async () => {
+    mockListFontAssets.mockResolvedValue([font({ id: 'f-1', name: 'Sorento Display' })]);
+    const { result } = renderHook(() => useKitLibrary());
+
+    await waitForFonts(result, 1);
+
+    act(() => {
+      result.current.rename('f-1', 'Sorento Display Renamed');
+    });
+
+    expect(result.current.fonts[0].name).toBe('Sorento Display Renamed');
+    expect(
+      result.current.fontOptions.some((o) => o.value === 'Sorento Display Renamed'),
+    ).toBe(true);
+    expect(result.current.fontOptions.some((o) => o.value === 'Sorento Display')).toBe(
+      false,
+    );
+  });
+});
+
+/** Waits for the initial `reload()` effect to land `count` fonts. */
+async function waitForFonts(
+  result: { current: ReturnType<typeof useKitLibrary> },
+  count: number,
+): Promise<void> {
+  for (let i = 0; i < 20 && result.current.fonts.length < count; i += 1) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+}

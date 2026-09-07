@@ -17,7 +17,9 @@
  * here are resolved at render time by the pricing engine.
  */
 
-import type { PriceBadgeLayerProps } from './tag-template-types';
+import type { LayerPadding, PriceBadgeLayerProps } from './tag-template-types';
+
+const ZERO_PADDING: LayerPadding = { top: 0, right: 0, bottom: 0, left: 0 };
 
 /** What a badge's figure is set in, once every absent field is resolved. */
 export interface PriceBadgeTypography {
@@ -75,18 +77,51 @@ export function priceBadgeTypography(
   };
 }
 
+export interface PriceBadgeInsets {
+  /** Insets the callout (and the figure with it) from the layer box. */
+  margin: LayerPadding;
+  /** Insets the figure from the callout's own edge. */
+  padding: LayerPadding;
+}
+
+/**
+ * Resolve a badge's two insets, ONE place for both renderers (S3b, AC-7/8).
+ *
+ * A badge saved before `margin` existed only had `padding`, and that field
+ * did both jobs at once: it inset the callout from the layer box AND the
+ * figure drew flush inside that smaller box - there was nothing to keep the
+ * two apart. `margin` absent is exactly that badge, so it reads as
+ * `margin = padding, padding = 0` - the same callout position, the same
+ * flush figure, pixel-identical (AC-9). Once a badge carries `margin` (even
+ * all zeros, once the inspector has written it - AC-10) the two are read
+ * exactly as stored and are independent from then on.
+ */
+export function priceBadgeInsets(
+  props: Pick<PriceBadgeLayerProps, 'margin' | 'padding'>,
+): PriceBadgeInsets {
+  if (props.margin) {
+    return { margin: props.margin, padding: props.padding ?? ZERO_PADDING };
+  }
+  return { margin: props.padding ?? ZERO_PADDING, padding: ZERO_PADDING };
+}
+
 /** What a tag prints when there is no price to print. */
 export const NO_PRICE_TEXT = 'Price TBC';
 
 /**
  * `RM 1,599`. Whole ringgit: a price tag in a showroom never shows cents, and
  * the flyer this feature reproduces does not either.
+ *
+ * `showCurrency: false` (S3c, AC-13/14) drops the `RM ` prefix and nothing
+ * else - the grouping and rounding stay identical, so `760` is still whole
+ * ringgit with the same thousands separator a four-digit price would show.
  */
-export function formatTagPrice(amount: number): string {
-  return `RM ${amount.toLocaleString('en-MY', {
+export function formatTagPrice(amount: number, showCurrency = true): string {
+  const grouped = amount.toLocaleString('en-MY', {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
-  })}`;
+  });
+  return showCurrency ? `RM ${grouped}` : grouped;
 }
 
 export interface PriceBadgeInput {
@@ -137,17 +172,20 @@ export interface PriceBadgeParts {
  */
 export function priceBadgeParts(
   props: Pick<PriceBadgeLayerProps, 'variant' | 'showNett'> &
-    Partial<Pick<PriceBadgeLayerProps, 'showBox'>>,
+    Partial<Pick<PriceBadgeLayerProps, 'showBox' | 'showCurrency'>>,
   input: PriceBadgeInput,
 ): PriceBadgeParts {
   const { listPrice, offerPrice } = input;
   const promo = props.variant === 'promo' && offerPrice != null;
+  // Absent = true (AC-15): a badge saved before this flag existed keeps `RM`.
+  const showCurrency = props.showCurrency ?? true;
 
   if (promo) {
     const nettLabel = props.showNett ? 'NETT' : null;
-    const amountText = formatTagPrice(offerPrice as number);
+    const amountText = formatTagPrice(offerPrice as number, showCurrency);
     return {
-      struckText: listPrice != null ? `LP: ${formatTagPrice(listPrice)}` : null,
+      struckText:
+        listPrice != null ? `LP: ${formatTagPrice(listPrice, showCurrency)}` : null,
       boxed: true,
       polygonBox: false,
       spLabel: 'SP',
@@ -169,7 +207,7 @@ export function priceBadgeParts(
     };
   }
 
-  const amountText = formatTagPrice(listPrice);
+  const amountText = formatTagPrice(listPrice, showCurrency);
   return {
     struckText: null,
     // The white callout on the flyer IS the badge, not a shape behind it

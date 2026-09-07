@@ -1039,10 +1039,49 @@ def cancel_record(db: Session, plan: LoadingPlan, *, actor: Optional[str] = None
     return plan
 
 
-def save_edits(db: Session, plan: LoadingPlan, edits: dict[str, float]) -> LoadingPlan:
-    """Replace the typed quantities WHOLE (R6). Not a patch: what is not in the map is not an
-    edit any more, so a cleared cell cannot survive as a stale override."""
-    plan.line_edits = {str(k): float(v) for k, v in (edits or {}).items()}
+def edit_value(raw) -> dict:
+    """One row's line edit, read back off `plan.line_edits` - a bare number (what every plan
+    saved before remarks existed, and the common case even now) reads as `{qty: n}` (R11,
+    AC-E5). An absent row reads as `{}`, same as a row with neither a qty override nor a
+    remark.
+    """
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    return {"qty": raw}
+
+
+def _normalized_edit(value):
+    """What actually gets STORED for one row's edit (R11). A bare number when there is only
+    a qty override - the shape every plan already had, and still the common case - the
+    object form only once a remark rides along with it. `None` when neither survives (a row
+    typed back to nothing), so `save_edits` below drops it from the map entirely.
+    """
+    if isinstance(value, dict):
+        qty = value.get("qty")
+        remark = value.get("remark")
+    else:
+        qty = value
+        remark = None
+    remark = str(remark).strip() if remark else None
+    if not remark:
+        return None if qty is None else float(qty)
+    out: dict = {"remark": remark}
+    if qty is not None:
+        out["qty"] = float(qty)
+    return out
+
+
+def save_edits(db: Session, plan: LoadingPlan, edits: dict) -> LoadingPlan:
+    """Replace the typed quantities and remarks WHOLE (R6, R11). Not a patch: what is not in
+    the map is not an edit any more, so a cleared cell cannot survive as a stale override."""
+    normalized: dict = {}
+    for key, value in (edits or {}).items():
+        stored = _normalized_edit(value)
+        if stored is not None:
+            normalized[str(key)] = stored
+    plan.line_edits = normalized
     db.flush()
     return plan
 

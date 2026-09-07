@@ -41,6 +41,7 @@ import {
   saveBlobAs,
 } from '@/app/(protected)/project-sales/_shared/services/fileDownload';
 import type { SupplierCheck, UploadTestResult } from '../reorder/components/UploadTestVerdict';
+import type { SupplierSheetModel } from '../components/SupplierSheet';
 
 export interface StockListSummary {
   rows: number;
@@ -334,6 +335,24 @@ export type LoadingPlanStatus = 'planning' | 'sent' | 'cancelled';
 /** Which document the plan was started from. `none` is a real answer, not a missing one. */
 export type PlanDocumentKind = 'stock_list' | 'proforma' | 'none';
 
+/**
+ * One plan line's edit (R11): the typed quantity, the typed remark, or both. Neither field
+ * is required - a row carrying only a remark has no qty override, and vice versa.
+ */
+export interface LoadingPlanLineEdit {
+  qty?: number;
+  remark?: string;
+}
+
+/** A stored or typed line edit, normalized (AC-E5): a bare number - what every plan saved
+ *  before remarks existed - reads as `{qty: n}`. */
+export function normalizeLineEdit(
+  raw: number | LoadingPlanLineEdit | undefined,
+): LoadingPlanLineEdit {
+  if (raw === undefined) return {};
+  return typeof raw === 'number' ? { qty: raw } : raw;
+}
+
 export interface LoadingPlanRecord {
   id: string;
   supplier_id: string;
@@ -371,8 +390,10 @@ export interface LoadingPlanRecord {
   open_count: number;
   cancelled_at: string | null;
   cancelled_by: string | null;
-  /** The typed quantities, `row_key -> qty`. Applied to `suggested_qty` by the build. */
-  line_edits: Record<string, number>;
+  /** The typed quantities and remarks, `row_key -> qty | {qty?, remark?}` (R11). A bare
+   *  number is what every plan saved before remarks existed - `normalizeLineEdit` reads it
+   *  as `{qty: n}`. Applied to `suggested_qty` (and `remark`) by the build. */
+  line_edits: Record<string, number | LoadingPlanLineEdit>;
   /** What the last build of this plan asked for, so the list does not have to re-run one
    *  build per row to fill a column. Null before the plan has ever been opened. */
   to_request_qty: number | null;
@@ -433,12 +454,14 @@ export async function updateLoadingPlanCutOff(
 }
 
 /**
- * The typed quantities, WHOLE map, one transaction (R6). Not a patch: what is not in the map
- * is not an edit any more, so a cleared cell cannot survive as a stale override.
+ * The typed quantities and remarks, WHOLE map, one transaction (R6, R11). Not a patch: what
+ * is not in the map is not an edit any more, so a cleared cell cannot survive as a stale
+ * override. Always sent in the object form (`{qty?, remark?}`) - AC-E5's bare-number reading
+ * is for what an OLD plan already has stored, not what this writes.
  */
 export async function saveLoadingPlanEdits(
   id: string,
-  edits: Record<string, number>,
+  edits: Record<string, LoadingPlanLineEdit>,
 ): Promise<LoadingPlanRecord> {
   const res = await apiFetch(`/api/v1/scm/loading-plans/${id}/edits`, {
     method: 'PUT',
@@ -581,7 +604,8 @@ export async function getNoticeDocumentUrl(
  * `build` is a pure read: ONE table over every product on the supplier's current stock list.
  * Rows with open sales-order need (`has_demand: true`) are ranked against the ACTIVE
  * Fulfilment Priority policy and carry a NETTED `suggested_qty`
- * (`max(open_so_need - on_hand - incoming_spo, 0)`) - `outstanding_po` is NOT subtracted
+ * (`max(open_so_need - on_hand - incoming_spo - incoming_pl_unallocated, 0)`, R6) -
+ * `outstanding_po` is NOT subtracted
  * (captain, 20 Aug follow-up: a PO placed but not yet allocated is not supply this container
  * can count on, often the very demand this request is asking the supplier to pack; an SPO
  * allocation is real incoming stock on the water). `outstanding_po` still travels on the row
@@ -638,7 +662,8 @@ export interface ContainerRequestRow {
   product_name: string | null;
   /** Gross outstanding SO need, all classes - what the Need column shows. */
   open_so_need: number;
-  /** NETTED against on_hand / incoming_spo only, floored at 0 - the editable ask.
+  /** NETTED against on_hand / incoming_spo / incoming_pl_unallocated only, floored at 0 -
+   *  the editable ask.
    *  `outstanding_po` is shown below but deliberately not part of this subtraction (captain,
    *  20 Aug follow-up - see the module docstring). The plan's saved edit for this row, when
    *  it has one, is ALREADY applied here (R2). */
@@ -660,6 +685,11 @@ export interface ContainerRequestRow {
    *  location-specific, so it cannot be netted against a pool the way an SPO can. */
   incoming_pl: number;
   incoming_pl_shipments: ContainerRequestIncomingShipment[];
+  /** The part of `incoming_pl` not yet turned into an SPO (R6) - what the formula actually
+   *  subtracts, netting the full `incoming_pl` would double-subtract a container that
+   *  already has one. Optional on the FE type only because Phase 1 mocks it as `incoming_pl`
+   *  until the backend sends the real figure; every row the backend returns carries it. */
+  incoming_pl_unallocated?: number;
   /** Placed with a supplier but not yet allocated to a shipment - real context, never
    *  deducted from `suggested_qty`. Company-wide, not pool-only: a PO carries no landing
    *  location until it is allocated. */
@@ -706,6 +736,11 @@ export interface ContainerRequestRow {
   /** False for a stock-list product with no open sales-order need behind it - still shown
    *  (one table), just unranked and muted. */
   has_demand: boolean;
+  /** The plan's own instruction to the supplier for this line (R11), read off
+   *  `plan.line_edits[row_key].remark` the same way `suggested_qty` reads its `qty`. Optional
+   *  on the FE type for the same Phase 1 reason as `incoming_pl_unallocated` - absent until
+   *  the backend build sets it. */
+  remark?: string | null;
 }
 
 /** One site pool (BRW / MWH / WH3 / DC1 / RSW), for the row popover's location table. */
@@ -995,6 +1030,33 @@ export async function getSupplierChatContacts(
 }
 
 /**
+ * The exact document Send would produce, without writing anything (R9, AC-E2).
+ *
+ * Same body as `sendContainerRequest` - Ms Tee's reviewed lines - and the same read
+ * permission `build` uses (`scm.dashboard.view`), because nothing is created. The Preview
+ * page (`LoadingPlanView`) calls this in place of Phase 1's client-side `mockSupplierSheet`,
+ * so what she previews and what a Send freezes into the notice's own `sheet_json` can never
+ * disagree. A line's `remark` is NOT part of this body (`ContainerRequestLine` carries only
+ * `qty`) - the sheet's remark column is read off the PLAN's own saved `line_edits`
+ * (`supplier_notice_service._line_remarks`), the same as a Send does, so a remark typed but
+ * not yet saved does not show here either.
+ *
+ * ── BACKEND CONTRACT (app/api/v1/scm/container_requests.py) ────────────────
+ *  POST /api/v1/scm/container-requests/preview -> 200 SupplierSheetModel. Auth: `scm.dashboard.view`.
+ */
+export async function previewContainerRequest(
+  planId: string,
+  lines: ContainerRequestLine[],
+): Promise<SupplierSheetModel> {
+  const res = await apiFetch('/api/v1/scm/container-requests/preview', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ plan_id: planId, lines }),
+  });
+  return readJson<SupplierSheetModel>(res, 'Failed to build the request preview');
+}
+
+/**
  * The request as a file for the quantities currently on screen, WITHOUT sending it (R23).
  *
  * The gear menu's "Download XLSX" / "Download PDF". `POST` because the lines are the body -
@@ -1144,6 +1206,171 @@ export async function applyPackingList(
   const qs = opts.validateOnly ? '?validate_only=true' : '';
   const res = await apiFetch(`/api/v1/scm/packing-lists/apply${qs}`, { method: 'POST', body });
   return readJson(res, 'Failed to import the packing list');
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Supplier documents: one dialog, a proforma invoice AND/OR a packing list (R12-R14,
+ * purchasing consolidation batch, lane C)
+ *
+ * ── BACKEND CONTRACT (app/api/v1/scm/fulfilment.py) ────────────────────────
+ *  POST /api/v1/scm/supplier-documents/preview  multipart: files[] + supplier_id +
+ *       optional currency -> 200 SupplierDocumentsPreview. Writes nothing.
+ *  POST /api/v1/scm/supplier-documents/apply    same body, supplier_id required, PLUS
+ *       optional `translations` (JSON string, `SupplierDocumentTranslation[]`) ->
+ *       200 SupplierDocumentsApplyResult. Auth: `scm.reorder.run`.
+ *
+ * Each file is classified by its own title cell (`发票`/`PROFORMA INVOICE` vs `装箱单`/
+ * `PACKING LIST`) - proforma invoice, packing list, or combined when a file states both.
+ * `apply` writes proforma invoices first, then packing lists (one draft shipment per
+ * container block, same as `applyPackingList`), then matches PI prices onto the shipment
+ * lines they price by product, for every container this supplier holds - whichever order
+ * the files were uploaded in.
+ *
+ * Translation memory (R15/R16): every block's `lines` (unmatched descriptions, matched
+ * remarks) and `notes`, plus the file's `footer_note`, gain `<field>_en` (the English,
+ * null when untranslated) and `<field>_en_source` (`'manual' | 'ai' | null`) beside the
+ * Chinese. Editing a cell in the preview and sending it back in `apply`'s `translations`
+ * writes a `manual` row that outranks any `ai` guess from then on.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+export type SupplierDocumentKind = 'proforma_invoice' | 'packing_list' | 'combined' | 'unreadable';
+
+/**
+ * A translated phrase, memory-first (R15/R16, purchasing consolidation batch, lane C):
+ * `text_en` is null when nobody has translated `text` yet (no AI key configured, or the
+ * call failed - never an error, just untranslated); `text_en_source` says whether a
+ * person typed it (`manual`, always wins) or the AI Assistant's configured model filled
+ * the gap (`ai`). Shared shape for a note/footer AND (folded into
+ * `SupplierDocumentLinePreview` below) a line's description/remark.
+ */
+export interface SupplierDocumentTextItem {
+  text: string;
+  text_en: string | null;
+  text_en_source: 'manual' | 'ai' | null;
+}
+
+/**
+ * One line worth translating in the preview - NOT every line in the block (Phase 2
+ * backend contract): an UNMATCHED line's own 品名 `description` (a matched line shows
+ * the product master name elsewhere and needs no translation, ruling 5 of the 3 Sep
+ * batch), or a MATCHED line's `remark` (only a matched line becomes a shipment line, so
+ * only its remark round-trips into `remarks` on apply). A line with neither is absent
+ * from this array entirely.
+ */
+export interface SupplierDocumentLinePreview {
+  item_code: string;
+  matched: boolean;
+  description: string | null;
+  description_en: string | null;
+  description_en_source: 'manual' | 'ai' | null;
+  remark: string | null;
+  remark_en: string | null;
+  remark_en_source: 'manual' | 'ai' | null;
+}
+
+export interface SupplierDocumentBlock {
+  container_no: string | null;
+  seal_no: string | null;
+  cartons: number | null;
+  cbm_total: number | null;
+  amount: number | null;
+  line_count: number;
+  note_count: number;
+  /** Only the lines that carry a translatable description or remark (see above). */
+  lines: SupplierDocumentLinePreview[];
+  /** The block's own accessory-line notes (`840 水箱空瓷：1个`), each translated. */
+  notes: SupplierDocumentTextItem[];
+}
+
+export interface SupplierDocumentHeader {
+  pi_number: string | null;
+  invoice_date: string | null;
+  consignee: string | null;
+  shipper: string | null;
+  /** `提单号` - fills `forwarder_order_ref` on apply, never `bill_of_lading_number`. */
+  so_ref: string | null;
+}
+
+export interface SupplierDocumentFilePreview {
+  name: string;
+  kind: SupplierDocumentKind;
+  blocks: SupplierDocumentBlock[];
+  header: SupplierDocumentHeader;
+  unmatched: string[];
+  errors: string[];
+  /** The `备注：` footer (R13), applying to the whole file - shown once here rather
+   *  than repeated inside every block, even though every shipment this file creates
+   *  stores it in its own `notes` column. Null when the file states none. */
+  footer_note: SupplierDocumentTextItem | null;
+}
+
+export interface SupplierDocumentPriceMatch {
+  container_no: string;
+  pi_number: string | null;
+  matched_lines: number;
+  unmatched_lines: number;
+}
+
+export interface SupplierDocumentsPreview {
+  files: SupplierDocumentFilePreview[];
+  price_matches: SupplierDocumentPriceMatch[];
+}
+
+export interface SupplierDocumentsApplyResult {
+  proforma_invoice_ids: string[];
+  shipment_ids: string[];
+  links_written: number;
+  attachment_ids: string[];
+}
+
+/** An edited translation cell, keyed by the ORIGINAL (Chinese) text - `apply` writes
+ *  each as a `manual` row before doing anything else, so a correction made in the
+ *  preview is what a remark or a note is stored with, never the AI's unedited guess. */
+export interface SupplierDocumentTranslation {
+  source_text: string;
+  target_text: string;
+}
+
+function supplierDocumentsForm(
+  files: File[],
+  opts: {
+    supplierId?: string | null;
+    currency?: string | null;
+    translations?: SupplierDocumentTranslation[];
+  },
+): FormData {
+  const body = new FormData();
+  for (const file of files) body.append('files', file);
+  if (opts.supplierId) body.append('supplier_id', opts.supplierId);
+  if (opts.currency) body.append('currency', opts.currency);
+  if (opts.translations?.length) body.append('translations', JSON.stringify(opts.translations));
+  return body;
+}
+
+export async function previewSupplierDocuments(
+  files: File[],
+  opts: { supplierId?: string | null; currency?: string | null } = {},
+): Promise<SupplierDocumentsPreview> {
+  const res = await apiFetch('/api/v1/scm/supplier-documents/preview', {
+    method: 'POST',
+    body: supplierDocumentsForm(files, opts),
+  });
+  return readJson<SupplierDocumentsPreview>(res, 'Failed to read the supplier documents');
+}
+
+export async function applySupplierDocuments(
+  files: File[],
+  opts: {
+    supplierId?: string | null;
+    currency?: string | null;
+    translations?: SupplierDocumentTranslation[];
+  } = {},
+): Promise<SupplierDocumentsApplyResult> {
+  const res = await apiFetch('/api/v1/scm/supplier-documents/apply', {
+    method: 'POST',
+    body: supplierDocumentsForm(files, opts),
+  });
+  return readJson<SupplierDocumentsApplyResult>(res, 'Failed to import the supplier documents');
 }
 
 export async function getAllocationSuggestion(shipmentId: string): Promise<AllocationSuggestion> {
@@ -1304,6 +1531,55 @@ export async function downloadPackingListExport(
 }
 
 /**
+ * Supplier photos on a shipment line (R25/R26, purchasing consolidation batch 6 Sep
+ * 2026, section 12, lane C, slice C3).
+ *
+ * ── BACKEND CONTRACT (app/api/v1/scm/fulfilment.py) ─────────────────────────
+ *  GET    /api/v1/scm/inbound-shipments/{id}/line-photos
+ *         -> 200 { [line_id]: ShipmentLinePhoto[] }
+ *  POST   /api/v1/scm/inbound-shipments/{id}/lines/{lineId}/photos   multipart files[]
+ *         -> 200 ShipmentLinePhoto[] (the line's full list, after the upload)
+ *  DELETE goes through the deferred-action mechanism (D7), never a plain call from
+ *         this file - `shipment_line_photo.delete` (see `ShipmentLinePhotosCell.tsx`'s
+ *         `useDeferredRowAction`), same as every other list delete in this codebase.
+ *  Auth: `scm.dashboard.view` (GET), `scm.reorder.run` (POST) - the same pair every
+ *  other inbound-shipments route in this file already uses.
+ *
+ * No photo cap per line (Q5, ruled 6 Sep 2026).
+ */
+export interface ShipmentLinePhoto {
+  id: string;
+  attachment_id: string;
+  sort_order: number | null;
+  thumbnail_url: string | null;
+  url: string | null;
+  filename: string | null;
+}
+
+export type ShipmentLinePhotosByLine = Record<string, ShipmentLinePhoto[]>;
+
+export async function getShipmentLinePhotos(
+  shipmentId: string,
+): Promise<ShipmentLinePhotosByLine> {
+  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/line-photos`);
+  return readJson<ShipmentLinePhotosByLine>(res, 'Failed to load shipment line photos');
+}
+
+export async function uploadShipmentLinePhotos(
+  shipmentId: string,
+  lineId: string,
+  files: File[],
+): Promise<ShipmentLinePhoto[]> {
+  const form = new FormData();
+  for (const file of files) form.append('files', file);
+  const res = await apiFetch(
+    `/api/v1/scm/inbound-shipments/${shipmentId}/lines/${lineId}/photos`,
+    { method: 'POST', body: form },
+  );
+  return readJson<ShipmentLinePhoto[]>(res, 'Failed to upload photos');
+}
+
+/**
  * "Create SPO" - a shipment line's PACKED quantity (`quantity_shipped`, never the PI's
  * invoiced one) becomes a real CRM purchase order line, PULLED from open PO line(s)
  * (`PLAN-scm-proforma-to-spo.md`'s Amendment, second decision: "Separate button after
@@ -1365,6 +1641,22 @@ export async function downloadPackingListExport(
  *  GET  /api/v1/scm/inbound-shipments/{id}/spo-worksheet/export -> 200 .xlsx bytes. The
  *       AutoCount handoff - what to key, per supplier, across every SPO ever created off
  *       this shipment. 404 until "Create SPO" has run at all.
+ *  GET  /api/v1/scm/inbound-shipments/{id}/spo/{purchase_order_id}/planner-state -> 200
+ *       SpoPlannerState (R24, AC-K1). What the planner has to show to EDIT an SPO that
+ *       already exists: this SPO's own lines only, each carrying both the suggestion shape
+ *       above (so the PO-takes and SO-covered lightboxes work unchanged) and the persisted
+ *       state to seed the row with (`spo_qty`, `location_splits`, `po_take_ids`,
+ *       `so_takes`, `received_qty`). Auth: `scm.dashboard.view`. 404 when the id does not
+ *       name one of THIS shipment's own SPOs; 409 when it names a purchase order Create
+ *       SPO did not mint.
+ *  PUT  /api/v1/scm/inbound-shipments/{id}/spo/{purchase_order_id} -> 200 SpoReviseResult.
+ *       Body: `{ lines: SpoConfirmLine[] }` - the SAME shape Create SPO posts, so one
+ *       screen builds one payload for both actions. Only lines currently ON this SPO may
+ *       appear; a line left out, or sent `include: false`, is unwound for that line alone
+ *       (AC-K4). Every guard `create` applies is re-applied here, plus one of its own: a
+ *       quantity below what an allocation has already RECEIVED is refused (422) naming the
+ *       product and warehouse, and nothing is written (AC-K3). The SPO number and its
+ *       header row are never touched. Auth: `scm.reorder.run`.
  *
  * One SPO per SUPPLIER represented on the shipment - a container is routinely several
  * factories, and AutoCount POs are per supplier too. A line with no supplier recorded (the
@@ -1596,6 +1888,13 @@ export interface SpoLocationSplit {
   qty: number;
 }
 
+/** One SO covered take (R19, AC-I2/AC-I3): `key` is a `SpoCoverageLine.key`, `qty` is what
+ *  the operator typed for it (or the cascade default, when she never touched the row). */
+export interface SpoTakeItem {
+  key: string;
+  qty: number;
+}
+
 export interface SpoConfirmLine {
   shipment_line_id: string;
   qty: number;
@@ -1606,9 +1905,16 @@ export interface SpoConfirmLine {
   /** Which PO takes to draw from (AC-G1). Absent means every take the server re-derives;
    *  present means ONLY these, and the SPO quantity falls to what they cover (AC-G2). */
   po_take_ids?: string[];
-  /** Which demand this SPO is being pointed at - `SpoCoverageLine.key`s (AC-G3). Drives the
-   *  location split on screen, and the link rows the create writes for the project half. */
-  so_line_ids?: string[];
+  /**
+   * Which demand this SPO is being pointed at, AND how much of it (R19, replaces the plain
+   * `so_line_ids: string[]` array a picker-only tick list used to send). A PROJECT key
+   * (`project:<row id>`) writes `qty` onto `order_inquiry_links` outright; a RETAIL key
+   * (`retail:<so line id>`) writes `qty` onto `scm.order_link_claim` (`source: 'planner'`) -
+   * see `spo_conversion_service.create`'s own docstring. The server re-validates every qty
+   * against that row's own outstanding and against this line's own SPO qty (422 either way),
+   * never trusting the FE's own cascade.
+   */
+  so_takes?: SpoTakeItem[];
 }
 
 export interface CreatedSpo extends SpoRef {
@@ -1686,6 +1992,95 @@ export async function deleteSpo(
     method: 'DELETE',
   });
   return readJson<SpoDeleteResult>(res, 'Failed to delete the SPO');
+}
+
+/** One destination an EXISTING SPO already writes for a line, read back off its own
+ *  `spo_allocations` row. `warehouse_code` travels with it so the split editor can name the
+ *  warehouse even on the rare row whose location is no longer a ranked candidate. */
+export interface SpoPlannerStateSplit {
+  warehouse_id: string;
+  warehouse_code: string | null;
+  qty: number;
+}
+
+/**
+ * One line of an existing SPO, as the planner re-opens it (R24, AC-K1).
+ *
+ * It IS a `SpoSuggestionLine` - same `po_takes`, same `so_coverage`, same
+ * `location_options` - so every cell, every lightbox and every walk in `SpoPlannerTable`
+ * reads it exactly as it reads a create-mode line, with no second rendering path. What the
+ * extra fields add is the STATE to seed the row with, read off what was persisted:
+ *
+ *   * `spo_qty` - this SPO line's own `purchase_order_lines.qty_ordered`.
+ *   * `location_splits` - its `spo_allocations` rows, one per warehouse.
+ *   * `po_take_ids` - the open PO line(s) it pulled from.
+ *   * `so_takes` - the demand it was pointed at, keyed exactly as `so_coverage` keys it.
+ *   * `received_qty` - what those allocations have already RECEIVED. The one figure the
+ *     screen cannot let the operator type below (AC-K3); the server refuses it too.
+ *
+ * The candidate lists come back with THIS SPO's own claims taken back out of them - its PO
+ * pulls are open again, its ticked demand outstanding again - because otherwise the state
+ * being edited would read as taken by somebody else and could not be re-ticked.
+ */
+export interface SpoPlannerStateLine extends SpoSuggestionLine {
+  spo_qty: number;
+  location_splits: SpoPlannerStateSplit[];
+  po_take_ids: string[];
+  so_takes: SpoTakeItem[];
+  received_qty: number;
+}
+
+export interface SpoPlannerState {
+  shipment_id: string;
+  shipment_number: string | null;
+  purchase_order_id: string;
+  po_number: string | null;
+  supplier_name: string | null;
+  lines: SpoPlannerStateLine[];
+}
+
+/** What `PUT .../spo/{purchase_order_id}` answers with - the same vocabulary the create and
+ *  delete results use, so one toast helper can read any of the three. */
+export interface SpoReviseResult {
+  shipment_id: string;
+  shipment_number: string | null;
+  purchase_order_id: string;
+  po_number: string | null;
+  /** Lines still on the SPO after the save, and what they now carry. */
+  updated_line_count: number;
+  /** Lines unwound because they were dropped or sent at 0 (AC-K4). */
+  removed_line_count: number;
+  allocations: SpoAllocationWritten[];
+  removed_allocation_count: number;
+  /** Source PO lines whose `qty_received` advance was re-dealt to the new take set. */
+  restored_po_line_count: number;
+  demand_links: SpoDemandLink[];
+}
+
+export async function getSpoPlannerState(
+  shipmentId: string,
+  purchaseOrderId: string,
+): Promise<SpoPlannerState> {
+  const res = await apiFetch(
+    `/api/v1/scm/inbound-shipments/${shipmentId}/spo/${encodeURIComponent(purchaseOrderId)}/planner-state`,
+  );
+  return readJson<SpoPlannerState>(res, 'Failed to open this SPO in the planner');
+}
+
+export async function reviseSpo(
+  shipmentId: string,
+  purchaseOrderId: string,
+  lines: SpoConfirmLine[],
+): Promise<SpoReviseResult> {
+  const res = await apiFetch(
+    `/api/v1/scm/inbound-shipments/${shipmentId}/spo/${encodeURIComponent(purchaseOrderId)}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lines }),
+    },
+  );
+  return readJson<SpoReviseResult>(res, 'Failed to save the changes to this SPO');
 }
 
 export async function downloadSpoWorksheet(

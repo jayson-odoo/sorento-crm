@@ -40,7 +40,7 @@ import type {
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
 import { defaultPolygonPoints } from '@/lib/dealer-kit/polygon-path';
-import { priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
+import { priceBadgeInsets, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import { isDynamic } from '@/lib/dealer-kit/product-block';
 import { tagColours } from '@/lib/dealer-kit/colour';
 import { ColorPicker } from './ColorPicker';
@@ -114,6 +114,7 @@ const FIELD_KEY_OPTIONS = [
 const IMAGE_FIT_OPTIONS = [
   { value: 'cover', label: 'Cover' },
   { value: 'contain', label: 'Contain' },
+  { value: 'stretch', label: 'Stretch' },
 ];
 
 const MASK_SHAPE_OPTIONS = [
@@ -555,6 +556,54 @@ function TextInspector({
 /** Every side at 0mm - an absent `padding` reads as this (S3). */
 const ZERO_PADDING: LayerPadding = { top: 0, right: 0, bottom: 0, left: 0 };
 
+/**
+ * Top/Right/Bottom/Left, one `NumberInput` each (S3, S3b).
+ *
+ * Shared by the Padding row every layer that has one shows, and the Margin
+ * row a price badge shows above it (S3b, AC-6) - the same four fields either
+ * way, only which `LayerPadding` they read and write differs.
+ */
+function SidesInput({
+  value,
+  onChange,
+}: {
+  value: LayerPadding;
+  onChange: (value: LayerPadding) => void;
+}) {
+  return (
+    <div className="grid grid-cols-4 gap-2">
+      <NumberInput
+        label="Top"
+        value={value.top}
+        onChange={(v) => onChange({ ...value, top: v })}
+        step={0.5}
+        min={0}
+      />
+      <NumberInput
+        label="Right"
+        value={value.right}
+        onChange={(v) => onChange({ ...value, right: v })}
+        step={0.5}
+        min={0}
+      />
+      <NumberInput
+        label="Bottom"
+        value={value.bottom}
+        onChange={(v) => onChange({ ...value, bottom: v })}
+        step={0.5}
+        min={0}
+      />
+      <NumberInput
+        label="Left"
+        value={value.left}
+        onChange={(v) => onChange({ ...value, left: v })}
+        step={0.5}
+        min={0}
+      />
+    </div>
+  );
+}
+
 /** What the controls SHOW. Null = the layer has not named one. */
 interface TypographyValues {
   fontFamily: string;
@@ -597,6 +646,8 @@ function TypographyControls({
   usedColours,
   fontOptions,
   onUploadFont,
+  margin,
+  onMarginChange,
 }: {
   values: TypographyValues;
   onChange: (changes: TypographyChanges) => void;
@@ -606,6 +657,13 @@ function TypographyControls({
   usedColours: string[];
   fontOptions: SearchableSelectOption[];
   onUploadFont?: () => void;
+  /**
+   * Present only for a price badge (S3b, AC-6): drawn as its own `Margin
+   * (mm)` group ABOVE Padding. Absent renders no Margin row at all - a text
+   * layer keeps Padding only (AC-11).
+   */
+  margin?: LayerPadding;
+  onMarginChange?: (margin: LayerPadding) => void;
 }) {
   return (
     <>
@@ -620,7 +678,7 @@ function TypographyControls({
               className="h-6 px-1.5 text-[10px]"
               onClick={onUploadFont}
             >
-              Upload font
+              Manage fonts
             </Button>
           )}
         </div>
@@ -730,38 +788,18 @@ function TypographyControls({
           step={0.1}
         />
       </div>
+      {margin && onMarginChange && (
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs text-muted-foreground">Margin (mm)</Label>
+          <SidesInput value={margin} onChange={onMarginChange} />
+        </div>
+      )}
       <div className="flex flex-col gap-1">
         <Label className="text-xs text-muted-foreground">Padding (mm)</Label>
-        <div className="grid grid-cols-4 gap-2">
-          <NumberInput
-            label="Top"
-            value={values.padding.top}
-            onChange={(v) => onChange({ padding: { ...values.padding, top: v } })}
-            step={0.5}
-            min={0}
-          />
-          <NumberInput
-            label="Right"
-            value={values.padding.right}
-            onChange={(v) => onChange({ padding: { ...values.padding, right: v } })}
-            step={0.5}
-            min={0}
-          />
-          <NumberInput
-            label="Bottom"
-            value={values.padding.bottom}
-            onChange={(v) => onChange({ padding: { ...values.padding, bottom: v } })}
-            step={0.5}
-            min={0}
-          />
-          <NumberInput
-            label="Left"
-            value={values.padding.left}
-            onChange={(v) => onChange({ padding: { ...values.padding, left: v } })}
-            step={0.5}
-            min={0}
-          />
-        </div>
+        <SidesInput
+          value={values.padding}
+          onChange={(padding) => onChange({ padding })}
+        />
       </div>
     </>
   );
@@ -934,6 +972,34 @@ function PriceBadgeInspector({
   onUploadFont?: () => void;
 }) {
   const typo = priceBadgeTypography(props);
+  const insets = priceBadgeInsets(props);
+  const hasMargin = props.margin != null;
+
+  /**
+   * Write a Margin edit (S3b, AC-6/10).
+   *
+   * The FIRST edit on a legacy badge (one with no `margin` yet) is what moves
+   * it onto the new semantics: `padding` used to double as the callout's own
+   * inset, so it resets to zero in the SAME update that writes `margin` - the
+   * value the SidesInput just edited already carries the legacy padding on
+   * every side it did not touch (it started from `insets.margin`), so the
+   * callout does not jump (AC-10).
+   */
+  const writeMargin = (margin: LayerPadding) => {
+    onChange(hasMargin ? { ...props, margin } : { ...props, margin, padding: ZERO_PADDING });
+  };
+
+  /**
+   * Write a Padding edit (S3b, AC-6/10). Same first-edit rule as Margin: a
+   * legacy badge seeds `margin` from whatever `padding` used to be, so the
+   * callout stays put while the figure inset restarts at the value just typed.
+   */
+  const writePadding = (padding: LayerPadding) => {
+    onChange(
+      hasMargin ? { ...props, padding } : { ...props, margin: props.padding ?? ZERO_PADDING, padding },
+    );
+  };
+
   return (
     <section>
       <h4 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
@@ -982,6 +1048,16 @@ function PriceBadgeInspector({
           />
           Show NETT
         </label>
+        {/* Off, the figure and the promo lines drop `RM` (S3c, AC-13/14). On
+            by default so a badge saved before this reads exactly as it did
+            (AC-15). */}
+        <label className="flex items-center gap-1.5 text-xs">
+          <Checkbox
+            checked={props.showCurrency ?? true}
+            onCheckedChange={(v) => onChange({ ...props, showCurrency: !!v })}
+          />
+          Show currency
+        </label>
         {/* The figure is text, and a designer sets text the same way wherever
             it is (S6b, AC-S6-4). An empty box means the badge has not named
             that field, so it keeps drawing the way it always did. */}
@@ -998,9 +1074,17 @@ function PriceBadgeInspector({
             align: typo.align,
             lineHeight: typo.lineHeight,
             letterSpacing: typo.letterSpacing,
-            padding: props.padding ?? ZERO_PADDING,
+            padding: insets.padding,
           }}
-          onChange={(changes) => onChange({ ...props, ...changes })}
+          onChange={(changes) => {
+            if (changes.padding) {
+              writePadding(changes.padding);
+              return;
+            }
+            onChange({ ...props, ...changes });
+          }}
+          margin={insets.margin}
+          onMarginChange={writeMargin}
           colour={props.textColor}
           colourLabel="Text Colour"
           onColourChange={(v) => onChange({ ...props, textColor: v })}

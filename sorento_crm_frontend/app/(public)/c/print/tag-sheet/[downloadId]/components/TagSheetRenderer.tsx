@@ -31,7 +31,7 @@ import {
   resolveSlotText,
   slotImageAttachmentId,
 } from '@/lib/dealer-kit/product-block';
-import { priceBadgeParts, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
+import { priceBadgeInsets, priceBadgeParts, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import {
   polygonPoints,
   roundedPolygonPath,
@@ -311,7 +311,8 @@ function renderImageLayer(
           style={{
             width: '100%',
             height: '100%',
-            objectFit: props.fit === 'cover' ? 'cover' : 'contain',
+            objectFit:
+              props.fit === 'cover' ? 'cover' : props.fit === 'stretch' ? 'fill' : 'contain',
           }}
         />
       )}
@@ -338,10 +339,10 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
   const typo = priceBadgeTypography(props);
 
   // The un-padded box, at the layer's own position and rotation - unchanged
-  // by padding, so a padded badge rotates around the same point it always
-  // did. `padded`, below, is the SMALLER box padding leaves inside it (S3,
-  // AC-S3-2): the figure's own container, sized in millimetres so the SVG
-  // callout's viewBox agrees with what CSS actually draws it at.
+  // by margin or padding, so a padded badge rotates around the same point it
+  // always did. `padded`, below, is the SMALLER box `margin` leaves inside it
+  // (S3b, AC-7/8): the callout's own container, sized in millimetres so the
+  // SVG's viewBox agrees with what CSS actually draws it at.
   const frame: CSSProperties = {
     position: 'absolute',
     left: `${layer.x_mm}mm`,
@@ -352,12 +353,14 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
     transformOrigin: layer.rotation_deg ? '0 0' : undefined,
     overflow: 'hidden',
   };
-  const padded = paddedBox(layer.width_mm, layer.height_mm, props.padding);
+  const insets = priceBadgeInsets(props);
+  const padded = paddedBox(layer.width_mm, layer.height_mm, insets.margin);
 
-  // The badge's own text container (S3): `padding` + `box-sizing: border-box`
+  // The badge's own text container (S3b): `margin` + `box-sizing: border-box`
   // shrink its CONTENT box by the same amount `padded` computes, so a 100%
   // child - the polygon callout below - fills exactly that shrunk area with
-  // no separate position math of its own.
+  // no separate position math of its own. `padding` insets the FIGURE inside
+  // that, a separate and smaller inset applied to the figure element itself.
   const content: CSSProperties = {
     position: 'relative',
     width: '100%',
@@ -366,7 +369,7 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
     display: 'flex',
     flexDirection: 'column',
     justifyContent: 'center',
-    padding: paddingCss(props.padding),
+    padding: paddingCss(insets.margin),
     boxSizing: 'border-box',
   };
 
@@ -388,6 +391,13 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
     letterSpacing: typo.letterSpacing ? `${typo.letterSpacing}px` : undefined,
   });
 
+  // The figure's own inset from the callout's edge (S3b, AC-7), independent
+  // of `content`'s margin above.
+  const figureInset: CSSProperties = {
+    padding: paddingCss(insets.padding),
+    boxSizing: 'border-box',
+  };
+
   if (!parts.boxed) {
     return (
       <div style={frame}>
@@ -395,6 +405,7 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
           <span
             style={{
               ...figureStyle(13, 700),
+              ...figureInset,
               color: parts.amountText ? '#000000' : '#999999',
             }}
           >
@@ -411,8 +422,8 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
   // that prints. Positioned in mm off `frame`, NOT sized 100% inside
   // `content`: an absolutely positioned child resolves against its nearest
   // positioned ancestor's PADDING box, so a 100%-wide SVG nested inside
-  // `content` (which padding shrinks) drew at the full unpadded size while
-  // its viewBox stated the padded one - the callout printed off-centre from
+  // `content` (which margin shrinks) drew at the full unshrunk size while
+  // its viewBox stated the smaller one - the callout printed off-centre from
   // the figure it surrounds. `padded.x`/`padded.y`/`padded.width`/
   // `padded.height` are the same box the Konva canvas insets its Group to.
   if (parts.polygonBox) {
@@ -441,6 +452,7 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
           <span
             style={{
               ...figureStyle(13, 700),
+              ...figureInset,
               position: 'relative',
               color: props.textColor,
             }}
@@ -482,7 +494,13 @@ function renderPriceBadgeLayer(layer: TagLayer, resolved: ResolvedLineData | nul
             alignItems: 'center',
             justifyContent: 'center',
             gap: '1mm',
-            padding: '0.5mm 1mm',
+            // The SP/figure/NETT row's own inset from the filled box's edge
+            // (S3b, AC-7), added on top of the fixed label gap this row has
+            // always kept - `insets.padding` is zero for a badge saved
+            // before `margin` existed, so that badge keeps this exact gap.
+            padding: `${0.5 + insets.padding.top}mm ${1 + insets.padding.right}mm ${
+              0.5 + insets.padding.bottom
+            }mm ${1 + insets.padding.left}mm`,
           }}
         >
           {parts.spLabel && (

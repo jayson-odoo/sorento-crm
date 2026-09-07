@@ -172,6 +172,10 @@ export interface KitLibrary {
   reload: () => Promise<void>;
   /** Called after an upload, so a new asset is usable without a round trip. */
   remember: (asset: KitAsset) => void;
+  /** Called after a successful rename, so the dropdown's label updates in place. */
+  rename: (id: string, name: string) => void;
+  /** Called after a successful delete, so the dropdown drops the option. */
+  forget: (id: string) => void;
 }
 
 export function useKitLibrary(): KitLibrary {
@@ -241,6 +245,18 @@ export function useKitLibrary(): KitLibrary {
     }
   }, []);
 
+  /** The row's name changed on the server; carry it here without a round trip. */
+  const rename = useCallback((id: string, name: string) => {
+    setAssets((prev) => prev.map((a) => (a.id === id ? { ...a, name } : a)));
+    setFonts((prev) => prev.map((a) => (a.id === id ? { ...a, name } : a)));
+  }, []);
+
+  /** The row was deleted on the server; drop it from every list it was in. */
+  const forget = useCallback((id: string) => {
+    setAssets((prev) => prev.filter((a) => a.id !== id));
+    setFonts((prev) => prev.filter((a) => a.id !== id));
+  }, []);
+
   const assetUrls = useMemo(() => {
     const map: Record<string, string> = {};
     for (const asset of assets) {
@@ -259,5 +275,5 @@ export function useKitLibrary(): KitLibrary {
     return [...brand, ...STATIC_FONT_OPTIONS.filter((o) => !known.has(o.value))];
   }, [fonts]);
 
-  return { assetUrls, fonts, specKeys, fontOptions, reload, remember };
+  return { assetUrls, fonts, specKeys, fontOptions, reload, remember, rename, forget };
 }
