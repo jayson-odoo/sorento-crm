@@ -12,6 +12,9 @@ properties that only hold for the live text, so a future edit that reintroduces 
 The full live file is not vendored into this repo: it is 46 KB of prompt that already
 exists once, as the constant. What IS pinned is its hash and the two mechanical edits that
 derive the constant from it, so the derivation is reproducible by anyone holding the file.
+A third, content-only edit (migration `487_chatbot_warehouse_cue`) sits inside the
+requested-attributes block and is deliberately excluded from that reproducibility check -
+see `test_the_constant_is_reproducible_from_the_live_file`'s own docstring.
 """
 from __future__ import annotations
 
@@ -31,13 +34,16 @@ DATE_EXPR = "{{ $now.toUTC(8*60).format('cccc, dd MMMM yyyy') }}"
 
 LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # 46906 after dropping `=` and swapping the date expression; +63 chars from migration
-# 482_chatbot_warehouse_cue (owner report, 7 Sep 2026), which gave `warehouse_arrival_date`
+# 487_chatbot_warehouse_cue (owner report, 7 Sep 2026), which gave `warehouse_arrival_date`
 # its own warehouse/CJK/Malay cue and narrowed `estimated_arrival_date` so it no longer owns
 # the bare word "arrival"; +513 chars from a follow-up to the same migration (7 Sep 2026),
 # which added a WORKED EXAMPLES paragraph because the cue alone did not resolve zh/ms
-# phrasings against the FULL TIMELINE sentinel. All three edits are intentional content,
-# not drift from this guard.
-CONSTANT_CHARS = 47482
+# phrasings against the FULL TIMELINE sentinel; +262 chars from a review pass on the same
+# migration (F1, 7 Sep 2026), which rewrote that paragraph so a bare container/shipment ask
+# ("incoming TIIU6323920") reads as the full timeline and an explicit ETA ask about a
+# container ("ETA of X") still resolves to `estimated_arrival_date` alone. All four edits
+# are intentional content, not drift from this guard.
+CONSTANT_CHARS = 47744
 
 
 def test_the_constant_has_the_live_size_not_the_export_size() -> None:
@@ -77,12 +83,39 @@ def _live_file() -> Path | None:
     return path if path.is_file() else None
 
 
+def _requested_attributes_block(text: str) -> tuple[int, int]:
+    """The span from the `estimated_arrival_date` vocabulary line through the end of the
+    WORKED EXAMPLES paragraph.
+
+    F5 (review, 7 Sep 2026): migration `487_chatbot_warehouse_cue` put NEW prompt content
+    inside this span - it is not a transform of the live text, so it is not byte-for-byte
+    reproducible from it. `test_the_constant_is_reproducible_from_the_live_file` slices this
+    one block out of both sides before comparing; everything outside it must still match.
+    """
+    start = text.find('"estimated_arrival_date"')
+    assert start != -1, '"estimated_arrival_date" not found in prompt'
+    worked = text.find("WORKED EXAMPLES", start)
+    assert worked != -1, "WORKED EXAMPLES paragraph not found after estimated_arrival_date"
+    end = text.find("FULL TIMELINE", worked)
+    assert end != -1, "FULL TIMELINE paragraph not found after WORKED EXAMPLES"
+    return start, end
+
+
 def test_the_constant_is_reproducible_from_the_live_file() -> None:
     """The derivation itself, when the fetched file is available.
 
     Opt-in via ``CHATBOT_LIVE_SYSTEM_MESSAGE`` because the file is not committed. The
-    tests above hold everywhere; this one proves the two edits and nothing more, and it is
-    what to run after any re-fetch.
+    tests above hold everywhere; this one proves the two MECHANICAL edits and nothing
+    more, and it is what to run after any re-fetch.
+
+    F5: the constant also carries a THIRD, content-only edit inside the REQUESTED
+    ATTRIBUTES block (the warehouse-arrival vocabulary + its WORKED EXAMPLES paragraph),
+    which by construction cannot come out of the live file by a mechanical transform - it
+    is new text the owner asked for, published as its own prompt version rather than
+    promoted straight to production. So this test derives the constant from the live file
+    the same two-edit way as before, then asserts it against `SEMANTIC_PARSER_PROMPT` with
+    that one block cut out of BOTH sides, rather than expecting the two to be byte-equal
+    end to end.
     """
     path = _live_file()
     if path is None:
@@ -98,4 +131,15 @@ def test_the_constant_is_reproducible_from_the_live_file() -> None:
     assert len(raw) == LIVE_CHARS
     assert raw.startswith("=")
     assert raw.count(DATE_EXPR) == 1
-    assert raw[1:].replace(DATE_EXPR, "{{current_date}}") == SEMANTIC_PARSER_PROMPT
+    derived = raw[1:].replace(DATE_EXPR, "{{current_date}}")
+
+    d_start, d_end = _requested_attributes_block(derived)
+    c_start, c_end = _requested_attributes_block(SEMANTIC_PARSER_PROMPT)
+    assert derived[:d_start] == SEMANTIC_PARSER_PROMPT[:c_start], (
+        "everything BEFORE the requested-attributes block must still be a pure mechanical "
+        "derivation of the live file"
+    )
+    assert derived[d_end:] == SEMANTIC_PARSER_PROMPT[c_end:], (
+        "everything AFTER the requested-attributes block must still be a pure mechanical "
+        "derivation of the live file"
+    )

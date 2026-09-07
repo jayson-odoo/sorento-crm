@@ -1,4 +1,4 @@
-"""Migration `482_chatbot_warehouse_cue` publishes the warehouse-arrival-cue FULL and SLIM
+"""Migration `487_chatbot_warehouse_cue` publishes the warehouse-arrival-cue FULL and SLIM
 prompts as NEW, unlabelled `chatbot_semantic_parser` versions each.
 
 The filename starts with a digit, so it is imported via `importlib` from its file path (the
@@ -12,15 +12,15 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-from app.models.ai_prompt import AIPromptVersion
+from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 from tests._pg_fixture import blank_session
 
-MIGRATION_FILE = "482_chatbot_warehouse_cue.py"
+MIGRATION_FILE = "487_chatbot_warehouse_cue.py"
 
 
 def _load_migration():
     path = Path(__file__).resolve().parent.parent / "alembic" / "versions" / MIGRATION_FILE
-    spec = importlib.util.spec_from_file_location("migration_under_test_482", path)
+    spec = importlib.util.spec_from_file_location("migration_under_test_487", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -76,6 +76,122 @@ def test_publish_is_idempotent_one_new_version_each_then_none() -> None:
         assert first["slim"] in versions
         assert len([v for v in versions if v == first["full"]]) == 1
         assert len([v for v in versions if v == first["slim"]]) == 1
+
+        # F2 (review, 7 Sep 2026): publish() must never move a label. Prod's own
+        # `production` label sits on v1 (the stale FULL text); it must stay there, not
+        # jump to either of the two new unlabelled versions publish() just created.
+        production_label = (
+            session.query(AIPromptLabel)
+            .filter(
+                AIPromptLabel.name == "chatbot_semantic_parser",
+                AIPromptLabel.label == "production",
+            )
+            .first()
+        )
+        v1 = (
+            session.query(AIPromptVersion)
+            .filter(
+                AIPromptVersion.name == "chatbot_semantic_parser",
+                AIPromptVersion.version == 1,
+            )
+            .first()
+        )
+        assert production_label is not None
+        assert production_label.version_id == v1.id, (
+            "the production label must stay on v1 after publish() - promoting is a "
+            "deliberate, separate action in the admin UI, never a migration side effect"
+        )
+
+
+def test_downgrade_preserves_a_promoted_label_and_only_deletes_the_unlabelled_version() -> None:
+    """F2 (review, 7 Sep 2026): `AIPromptLabel.version_id` is `ondelete=CASCADE`
+    (`app/models/ai_prompt.py`). If the owner promotes `production` onto the FULL version
+    this migration published, a later `alembic downgrade` must not cascade-delete that
+    label along with the version row - it must exclude any labelled version from the
+    delete and leave the label pointing at it. The unlabelled SLIM version this migration
+    also published carries no such protection and must still be dropped.
+    """
+    module = _load_migration()
+    with blank_session() as session:
+        from unittest.mock import patch
+
+        from app.services.ai_prompt_registry import PROMPT_KEYS
+        from app.services.ai_prompt_seed import seed_prompt_registry
+
+        spec = PROMPT_KEYS["chatbot_semantic_parser"]
+        session.add(
+            AIPromptVersion(
+                name="chatbot_semantic_parser",
+                version=1,
+                type="text",
+                template="STALE FULL PROMPT TEXT (pre warehouse-cue fix)",
+                variables=list(spec.variables),
+            )
+        )
+        session.commit()
+        seed_prompt_registry(session.get_bind())  # v1 already exists; only adds the label
+
+        with patch("alembic.op.get_bind", return_value=session.get_bind()):
+            module.upgrade()
+
+        full_version = (
+            session.query(AIPromptVersion)
+            .filter(
+                AIPromptVersion.name == "chatbot_semantic_parser",
+                AIPromptVersion.template == module._full_text(),
+            )
+            .one()
+        )
+        slim_version_id = (
+            session.query(AIPromptVersion.id)
+            .filter(
+                AIPromptVersion.name == "chatbot_semantic_parser",
+                AIPromptVersion.template == module._slim_text(),
+            )
+            .scalar()
+        )
+
+        # The owner promotes `production` onto the new FULL version in the admin UI.
+        production_label = (
+            session.query(AIPromptLabel)
+            .filter(
+                AIPromptLabel.name == "chatbot_semantic_parser",
+                AIPromptLabel.label == "production",
+            )
+            .one()
+        )
+        production_label.version_id = full_version.id
+        session.commit()
+
+        with patch("alembic.op.get_bind", return_value=session.get_bind()):
+            module.downgrade()
+
+        production_label = (
+            session.query(AIPromptLabel)
+            .filter(
+                AIPromptLabel.name == "chatbot_semantic_parser",
+                AIPromptLabel.label == "production",
+            )
+            .first()
+        )
+        assert production_label is not None, (
+            "downgrade() must never cascade-delete a label - the FK is ondelete=CASCADE, "
+            "so deleting the labelled version silently takes the label row with it"
+        )
+        assert production_label.version_id == full_version.id, (
+            "the label must still point at the FULL version the owner promoted"
+        )
+
+        remaining_ids = {
+            row[0]
+            for row in session.query(AIPromptVersion.id)
+            .filter(AIPromptVersion.name == "chatbot_semantic_parser")
+            .all()
+        }
+        assert full_version.id in remaining_ids, "the labelled FULL version must survive downgrade()"
+        assert slim_version_id not in remaining_ids, (
+            "the unlabelled SLIM version carries no label and must still be deleted"
+        )
 
 
 def test_upgrade_seeds_a_fresh_database_and_publishes() -> None:

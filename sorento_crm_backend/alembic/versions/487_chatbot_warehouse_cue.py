@@ -25,7 +25,7 @@ each publish is skipped when a version already carries that template.
 The insert logic lives in module-level ``publish(session)`` so it can be called outside
 alembic (e.g. to publish against the shared dev database without an ``alembic upgrade``).
 
-Revision ID: 482_chatbot_warehouse_cue
+Revision ID: 487_chatbot_warehouse_cue
 Revises: 486_scm_claim_qty_planner
 """
 import logging
@@ -33,11 +33,11 @@ import logging
 from alembic import op
 from sqlalchemy.orm import Session
 
-from app.models.ai_prompt import AIPromptVersion
+from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 from app.services.ai_prompt_registry import PROMPT_KEYS
 from app.services.ai_prompt_seed import seed_prompt_registry
 
-revision = "482_chatbot_warehouse_cue"
+revision = "487_chatbot_warehouse_cue"
 down_revision = "486_scm_claim_qty_planner"
 branch_labels = None
 depends_on = None
@@ -131,20 +131,35 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop the unlabelled warehouse-cue versions (FULL and SLIM). The labelled one is
-    never touched."""
+    """Drop the unlabelled warehouse-cue versions (FULL and SLIM).
+
+    A version this migration published can stop being unlabelled: the owner may have since
+    moved a label (e.g. `production`) onto it in the admin UI. `AIPromptLabel.version_id` is
+    `ondelete="CASCADE"` (`app/models/ai_prompt.py`), so deleting a labelled version would
+    silently delete the label row with it - a downgrade must never do that. Any version this
+    migration published that now carries a label is therefore excluded from the delete; the
+    label keeps pointing at it.
+    """
     bind = op.get_bind()
     templates = [_full_text(), _slim_text()]
     session = Session(bind=bind)
     try:
-        (
-            session.query(AIPromptVersion)
-            .filter(
-                AIPromptVersion.name == PROMPT_NAME,
-                AIPromptVersion.template.in_(templates),
+        labelled_version_ids = {
+            row[0]
+            for row in (
+                session.query(AIPromptLabel.version_id)
+                .join(AIPromptVersion, AIPromptVersion.id == AIPromptLabel.version_id)
+                .filter(AIPromptVersion.name == PROMPT_NAME)
+                .all()
             )
-            .delete(synchronize_session=False)
+        }
+        query = session.query(AIPromptVersion).filter(
+            AIPromptVersion.name == PROMPT_NAME,
+            AIPromptVersion.template.in_(templates),
         )
+        if labelled_version_ids:
+            query = query.filter(AIPromptVersion.id.notin_(labelled_version_ids))
+        query.delete(synchronize_session=False)
         session.commit()
     except Exception:
         session.rollback()

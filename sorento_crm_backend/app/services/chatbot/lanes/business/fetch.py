@@ -92,14 +92,6 @@ def _label(tool: Any) -> str:
     return jsc.nullish_str(jsc.get(tool, "name"))
 
 
-# The incoming family collapses to ONE tool (evidence turn 147d6888-d313-4612-a32f-364cec119ec4,
-# `tool_filter` below): every other `crm_incoming_stock_*` tool returns a header with no
-# clearance checkpoints and no `field_access` block, so only the list tool can ever render the
-# container timeline, and it is the only one the n8n spine this engine replaced ever called.
-_INCOMING_TOOL_PREFIX = "crm_incoming_stock_"
-_INCOMING_LIST_TOOL = "crm_incoming_stock_list"
-
-
 def tool_filter(candidates: Any, *, has_product: bool | None) -> ToolPick:
     """ONE tool per turn: highest `similarity`, tiebreak `name` ASC.
 
@@ -110,6 +102,11 @@ def tool_filter(candidates: Any, *, has_product: bool | None) -> ToolPick:
     Emitting exactly one item is structural, not incidental: the per-tool fan-out that used
     to sit downstream is deleted, so two items here would run the whole fetch, compile and
     send chain twice - two WhatsApp messages to one customer.
+
+    F4 (review, 7 Sep 2026): the incoming-shipments-to-list collapse used to live here. It
+    moved to `services._tool_search` (the CRM-policy seam next to the read-only filter) so
+    this function stays a byte-for-byte ported node with no CRM-specific rule grafted onto
+    it - by the time a candidate list reaches this function it is already final.
     """
     raw_tools = jsc.array(candidates)
     # `sort((a,b) => cmp(score(b), score(a)) || cmp(label(a), label(b)))`, and Python's
@@ -121,18 +118,6 @@ def tool_filter(candidates: Any, *, has_product: bool | None) -> ToolPick:
         return ToolPick(items=[], outcome="not_found")
     best = ordered[0]
     picked_name = _label(best)
-    collapsed_from: str | None = None
-    if picked_name.startswith(_INCOMING_TOOL_PREFIX) and picked_name != _INCOMING_LIST_TOOL:
-        # Evidence turn 147d6888-d313-4612-a32f-364cec119ec4: "incoming TIIU6323920" picked
-        # crm_incoming_stock_shipments (similarity 0.4675) over crm_incoming_stock_list
-        # (0.4537). The shipments tool's header carries no clearance checkpoints and no
-        # `field_access` block, so the container timeline can never render from it -
-        # `apply_field_access` (`app/api/v1/incoming_stock.py` `/list`) is the only place
-        # clearance gating is wired, and the n8n spine this engine replaced called only the
-        # list tool. Every incoming-family winner collapses to it, same score, with the
-        # original name kept on the trace.
-        collapsed_from = picked_name
-        picked_name = _INCOMING_LIST_TOOL
     return ToolPick(
         items=[
             {
@@ -146,7 +131,6 @@ def tool_filter(candidates: Any, *, has_product: bool | None) -> ToolPick:
                         ],
                         "count": len(raw_tools),
                         "has_product": has_product,
-                        **({"collapsed_from": collapsed_from} if collapsed_from else {}),
                     },
                 }
             }
@@ -208,20 +192,16 @@ def select_tool(db: Any, *, query: str, domain: str | None, services: Any) -> li
     session existed - while this function itself holds none across the embedding call
     (the plan's capacity rule).
 
-    **A domain filter must not zero the search** (evidence turn
-    b5b19cec-dccc-4eda-b766-1aeb1362957b): the parser tagged `domain_hint: "purchasing"` for
-    "IBWB248什么时候会到仓库？", `search_tool_chunks` filters `source_id LIKE
-    '%purchasing%'`, and every incoming tool's `source_id` is `implemented::crm_incoming_stock_*`
-    - zero candidates came back and the turn ended `not_found`. When the domain-filtered search
-    returns no candidates and a domain was set, this retries with `domain=None` and returns
-    that instead; the trace already logs candidates, so nothing else is recorded here.
+    A `domain` outside the parser's own declared enum must never reach this call in the
+    first place (evidence turn b5b19cec-dccc-4eda-b766-1aeb1362957b: `domain_hint:
+    "purchasing"`, a TEAM name, zeroed `search_tool_chunks`'s `source_id LIKE
+    '%purchasing%'` filter and the turn ended `not_found`) - `output_exchange.py` coerces
+    an out-of-enum hint to `None` before this lane ever sees it (F3), so `domain` here is
+    trusted as-is with no retry.
     """
     _ = db
     embedding = services.embed(query)
-    candidates = services.tool_search(embedding, query=query, domain=domain)
-    if not candidates and domain:
-        candidates = services.tool_search(embedding, query=query, domain=None)
-    return candidates
+    return services.tool_search(embedding, query=query, domain=domain)
 
 
 # --------------------------------------------------------------------------- #

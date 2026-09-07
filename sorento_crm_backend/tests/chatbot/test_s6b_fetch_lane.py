@@ -179,62 +179,80 @@ class TestToolSearch:
             "EmbeddingReadService (H53)"
         )
 
-    def test_select_tool_retries_without_domain_when_domain_filter_finds_nothing(self):
-        """Evidence turn b5b19cec-dccc-4eda-b766-1aeb1362957b: the parser tagged
-        `domain_hint: "purchasing"` for "IBWB248什么时候会到仓库？", `search_tool_chunks`
-        filters `source_id LIKE '%purchasing%'`, and every incoming tool's `source_id` is
-        `implemented::crm_incoming_stock_*` - zero candidates came back and the turn ended
-        `not_found`. `select_tool` must retry with `domain=None` and return THAT result."""
-        fetch = _import_fetch()
-        FetchServices = _import_fetch_services()
+    # ----------------------------------------------------------------------- #
+    # F4 (review, 7 Sep 2026) - the incoming-shipments collapse moved from
+    # `fetch.tool_filter` to `services._tool_search`'s own CRM-policy seam, and
+    # narrowed: only `crm_incoming_stock_shipments` collapses, never `..._by_product`.
+    # ----------------------------------------------------------------------- #
 
-        search_calls: list[dict[str, Any]] = []
-        candidate = [{"name": "crm_incoming_stock_list", "similarity": 0.4537}]
+    def test_shipments_candidate_is_renamed_with_collapsed_from(self):
+        """Evidence turn 147d6888-d313-4612-a32f-364cec119ec4: the shipments tool's header
+        carries no clearance checkpoints and no `field_access` block, so it can never render
+        the container timeline - only the list tool can."""
+        from app.services.chatbot.lanes.business.services import _collapse_incoming_shipments
 
-        def fake_tool_search(embedding: list[float], *, query: str, domain: str | None):
-            search_calls.append({"domain": domain})
-            return [] if domain == "purchasing" else candidate
-
-        services = FetchServices(
-            embed=lambda query: [0.1, 0.2, 0.3],
-            tool_search=fake_tool_search,
-            mcp_call=lambda *a, **k: pytest.fail("mcp_call must not be reached by select_tool"),
+        result = _collapse_incoming_shipments(
+            [{"name": "crm_incoming_stock_shipments", "similarity": 0.4675}]
         )
 
-        result = fetch.select_tool(
-            db=None, query="IBWB248什么时候会到仓库？", domain="purchasing", services=services
+        assert result == [
+            {
+                "name": "crm_incoming_stock_list",
+                "similarity": 0.4675,
+                "collapsed_from": "crm_incoming_stock_shipments",
+            }
+        ]
+
+    def test_by_product_candidate_is_untouched(self):
+        """`crm_incoming_stock_by_product` renders batch numbers and the catalog routes
+        product asks to it on purpose - it is a real answer, not a stand-in for the list."""
+        from app.services.chatbot.lanes.business.services import _collapse_incoming_shipments
+
+        result = _collapse_incoming_shipments(
+            [{"name": "crm_incoming_stock_by_product", "similarity": 0.51}]
         )
 
-        assert result == candidate
-        assert search_calls == [{"domain": "purchasing"}, {"domain": None}], (
-            "must call tool_search twice: domain-filtered first, then domain=None"
+        assert result == [{"name": "crm_incoming_stock_by_product", "similarity": 0.51}]
+
+    def test_list_candidate_is_untouched(self):
+        from app.services.chatbot.lanes.business.services import _collapse_incoming_shipments
+
+        result = _collapse_incoming_shipments(
+            [{"name": "crm_incoming_stock_list", "similarity": 0.9}]
         )
 
-    def test_select_tool_does_not_retry_when_domain_filter_finds_candidates(self):
-        """The retry is ONLY for a zero-candidate domain-filtered search - a domain search
-        that already found something must call `tool_search` exactly once."""
-        fetch = _import_fetch()
-        FetchServices = _import_fetch_services()
+        assert result == [{"name": "crm_incoming_stock_list", "similarity": 0.9}]
 
-        search_calls: list[dict[str, Any]] = []
-        candidate = [{"name": "crm_marketing_promotions_list", "similarity": 0.7}]
+    def test_shipments_and_list_both_present_keeps_higher_similarity_under_list_name(self):
+        """When BOTH the shipments and list tools are candidates the same turn, the
+        collapsed name must never appear twice - the higher-similarity one wins under the
+        list name and the other is dropped."""
+        from app.services.chatbot.lanes.business.services import _collapse_incoming_shipments
 
-        def fake_tool_search(embedding: list[float], *, query: str, domain: str | None):
-            search_calls.append({"domain": domain})
-            return candidate
-
-        services = FetchServices(
-            embed=lambda query: [0.1, 0.2, 0.3],
-            tool_search=fake_tool_search,
-            mcp_call=lambda *a, **k: pytest.fail("mcp_call must not be reached by select_tool"),
+        result = _collapse_incoming_shipments(
+            [
+                {"name": "crm_incoming_stock_shipments", "similarity": 0.4675},
+                {"name": "crm_incoming_stock_list", "similarity": 0.4537},
+            ]
         )
 
-        result = fetch.select_tool(
-            db=None, query="promo", domain="promotion", services=services
-        )
+        assert result == [
+            {
+                "name": "crm_incoming_stock_list",
+                "similarity": 0.4675,
+                "collapsed_from": "crm_incoming_stock_shipments",
+            }
+        ]
 
-        assert result == candidate
-        assert search_calls == [{"domain": "promotion"}]
+        # And the reverse: the list tool already has the higher similarity, so it keeps
+        # its OWN row untouched (no `collapsed_from`) rather than the shipments row.
+        result_reversed = _collapse_incoming_shipments(
+            [
+                {"name": "crm_incoming_stock_shipments", "similarity": 0.30},
+                {"name": "crm_incoming_stock_list", "similarity": 0.9},
+            ]
+        )
+        assert result_reversed == [{"name": "crm_incoming_stock_list", "similarity": 0.9}]
 
     def test_tool_filter_picks_max_similarity_tiebreak_name(self):
         """AC-604: max `similarity` wins; an exact tie breaks on `name` ASC (deterministic)."""
@@ -258,69 +276,6 @@ class TestToolSearch:
         assert picked["_tool_pick"]["has_product"] is True
         rejected_names = {r["name"] for r in picked["_tool_pick"]["rejected"]}
         assert rejected_names == {"crm_marketing_promotions_list", "crm_master_products_list"}
-
-    def test_incoming_shipments_winner_collapses_to_list(self):
-        """Evidence turn 147d6888-d313-4612-a32f-364cec119ec4: "incoming TIIU6323920" picked
-        `crm_incoming_stock_shipments` (0.4675) over `crm_incoming_stock_list` (0.4537). The
-        shipments tool's header carries no clearance checkpoints and no `field_access` block,
-        so the container timeline can never render from it - the list tool is the only one
-        wired for clearance gating, and the n8n spine this engine replaced called only it."""
-        fetch = _import_fetch()
-
-        candidates = [
-            {"name": "crm_incoming_stock_shipments", "similarity": 0.4675},
-            {"name": "crm_incoming_stock_list", "similarity": 0.4537},
-        ]
-        result = fetch.tool_filter(candidates, has_product=None)
-
-        assert result.outcome == "picked"
-        picked = result.items[0]["json"]
-        assert picked["name"] == "crm_incoming_stock_list"
-        assert picked["similarity"] == 0.4675, "same similarity as the original winner"
-        assert picked["_tool_pick"]["chosen"] == "crm_incoming_stock_list"
-        assert picked["_tool_pick"]["collapsed_from"] == "crm_incoming_stock_shipments"
-
-    def test_incoming_by_product_winner_collapses_to_list(self):
-        fetch = _import_fetch()
-
-        candidates = [
-            {"name": "crm_incoming_stock_by_product", "similarity": 0.51},
-            {"name": "crm_master_products_list", "similarity": 0.30},
-        ]
-        result = fetch.tool_filter(candidates, has_product=True)
-
-        assert result.outcome == "picked"
-        picked = result.items[0]["json"]
-        assert picked["name"] == "crm_incoming_stock_list"
-        assert picked["_tool_pick"]["collapsed_from"] == "crm_incoming_stock_by_product"
-
-    def test_incoming_list_winner_is_unchanged(self):
-        """The list tool already IS the winner - no collapse, no `collapsed_from` key."""
-        fetch = _import_fetch()
-
-        candidates = [
-            {"name": "crm_incoming_stock_list", "similarity": 0.9},
-            {"name": "crm_master_products_list", "similarity": 0.1},
-        ]
-        result = fetch.tool_filter(candidates, has_product=None)
-
-        picked = result.items[0]["json"]
-        assert picked["name"] == "crm_incoming_stock_list"
-        assert "collapsed_from" not in picked["_tool_pick"]
-
-    def test_non_incoming_winner_is_unchanged(self):
-        """A winner outside the incoming family is never touched by the collapse rule."""
-        fetch = _import_fetch()
-
-        candidates = [
-            {"name": "crm_order_management_orders_list", "similarity": 0.8},
-            {"name": "crm_master_products_list", "similarity": 0.2},
-        ]
-        result = fetch.tool_filter(candidates, has_product=None)
-
-        picked = result.items[0]["json"]
-        assert picked["name"] == "crm_order_management_orders_list"
-        assert "collapsed_from" not in picked["_tool_pick"]
 
     def test_zero_tools_is_not_found_outcome(self):
         """H11: zero candidates is a DISTINGUISHABLE outcome, never a silent empty turn.
@@ -960,6 +915,42 @@ class TestOutputStructurer:
         )
         assert "informed_collection_date" not in kept
         assert "collection_date" not in kept
+
+    def test_bare_container_ask_falls_back_to_parser_hint(self):
+        """`_names_a_shipment` checks the RESOLVED entity list first and only falls back to
+        the parser's own raw `hint` when the resolved list carries no type at all - this
+        pins that fallback branch directly rather than only through a resolved entity."""
+        fetch = _import_fetch()
+
+        timeline_envelope = self._checkpoint_envelope()
+        timeline_ctx = {
+            "semantic_input": {
+                "requested_attributes": [],
+                "entities": [{"raw": "TIIU6323920", "hint": "inbound_shipment"}],
+            },
+            "entities": [],
+        }
+        timeline_out = fetch.output_structurer(timeline_envelope, timeline_ctx)
+        timeline_kept = [f["key"] for f in timeline_out["answers"][0]["fields"] if f["key"] != "product_code"]
+        assert timeline_kept == list(fetch.CLEARANCE_CHECKPOINT_ORDER), (
+            "the raw parser hint 'inbound_shipment' must widen to the full timeline, "
+            "exactly as a resolved entity_type does"
+        )
+
+        eta_envelope = self._checkpoint_envelope()
+        eta_ctx = {
+            "semantic_input": {
+                "requested_attributes": [],
+                "entities": [{"raw": "SRTWB7096", "hint": "product"}],
+            },
+            "entities": [],
+        }
+        eta_out = fetch.output_structurer(eta_envelope, eta_ctx)
+        eta_kept = {f["key"] for f in eta_out["answers"][0]["fields"]}
+        assert eta_kept == {"product_code", "estimated_arrival_date"}, (
+            "a raw parser hint of 'product' must NOT widen into a timeline - only "
+            "identity + the always-kept ETA survive"
+        )
 
 
 def test_clearance_checkpoint_order_has_no_duplicates_and_matches_parser_vocabulary():

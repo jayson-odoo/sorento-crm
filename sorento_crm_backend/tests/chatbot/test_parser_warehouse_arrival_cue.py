@@ -64,7 +64,13 @@ class TestWarehouseArrivalCue:
 class TestWorkedExamplesParagraph:
     """The cue alone did not resolve zh/ms phrasings against the FULL TIMELINE sentinel
     (owner evidence, 7 Sep 2026): a WORKED EXAMPLES paragraph pins the three example
-    phrasings the owner tested against, in both prompts."""
+    phrasings the owner tested against, in both prompts.
+
+    F1 (review, 7 Sep 2026): a bare container/shipment ask with no checkpoint named
+    ("incoming TIIU6323920") must read as the full timeline, and an EXPLICIT ETA ask about
+    a container ("ETA of X") must still resolve to `estimated_arrival_date` alone - both
+    now have their own worked line so the parser does not have to infer either from the
+    three original examples."""
 
     def test_full_prompt_worked_examples_has_all_three_phrases(self) -> None:
         paragraph = _worked_examples(SEMANTIC_PARSER_PROMPT)
@@ -77,3 +83,13 @@ class TestWorkedExamplesParagraph:
         assert "什么时候会到仓库" in paragraph
         assert "sampai gudang" in paragraph
         assert "arrive at the warehouse" in paragraph
+
+    def test_full_prompt_worked_examples_covers_bare_container_and_eta_ask(self) -> None:
+        paragraph = _worked_examples(SEMANTIC_PARSER_PROMPT)
+        assert "incoming TIIU6323920" in paragraph
+        assert "ETA of X" in paragraph
+
+    def test_slim_prompt_worked_examples_covers_bare_container_and_eta_ask(self) -> None:
+        paragraph = _worked_examples(SEMANTIC_PARSER_PROMPT_SLIM)
+        assert "incoming TIIU6323920" in paragraph
+        assert "ETA of X" in paragraph
