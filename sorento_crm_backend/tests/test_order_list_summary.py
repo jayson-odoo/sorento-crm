@@ -353,6 +353,32 @@ def test_query_matches_line_product_code(db):
     assert {o.id for o in by_number["data"]} == {without_match.id}
 
 
+def test_quick_search_via_list_query_matches_line_product_code(db):
+    """AC1.3: `POST /api/v1/list-query/search` resource `orders` with a
+    `quick_search` on a line's product code returns the same match as the plain
+    `query` param above. `ListQuerySearchService._search_orders` forwards
+    `quick_search` straight into `OrderService.list_orders(query=...)` (see
+    `app/services/list_query_search_service.py` ~line 62) - this pins that wiring
+    directly rather than through `.search()`, which needs a DB-seeded
+    `list_query_resources` row this blank scratch schema does not carry."""
+    from app.schemas.list_query import ListSearchRequest
+    from app.services.list_query_search_service import ListQuerySearchService
+
+    cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ACME SDN BHD")
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID)
+    matching_prod = product(db, company_id=DEFAULT_COMPANY_ID, code="SRTWC8518-SH")
+    other_prod = product(db, company_id=DEFAULT_COMPANY_ID, code="SRTWC0001-XX")
+    with_match = _do(db, cust=cust, prod=matching_prod, wh=wh, qty=1, status_code="NEW", delivered_on=None)
+    _do(db, cust=cust, prod=other_prod, wh=wh, qty=1, status_code="NEW", delivered_on=None)
+    db.commit()
+
+    req = ListSearchRequest(resource="orders", quick_search="srtwc8518")
+    svc = ListQuerySearchService(db)
+    result = svc._search_orders(req, clause=None, sort_field="created_at", sort_dir="asc")
+
+    assert {row.id for row in result["data"]} == {with_match.id}
+
+
 def test_query_product_code_match_respects_company_scope(db):
     """AC1.4: a product-code match on another company's DO must not leak in."""
     cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ACME SDN BHD")

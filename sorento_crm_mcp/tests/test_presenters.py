@@ -509,6 +509,19 @@ def test_incoming_list_render_has_no_shipment_number():
         assert "Shipment" not in labels
 
 
+def test_incoming_list_raw_payload_still_carries_shipment_number():
+    """AC3.2: `view=render` is opt-in (module docstring) - a caller who does not ask
+    for it gets the tool's raw data shape unchanged, `shipment_number` included. The
+    render dropping the field (above) must not come from the presenter popping it
+    off the row on the way through; it must stay a read via `.get()`."""
+    from sorento_crm_mcp.presenters import _Builder, _incoming_list
+
+    row = _incoming_row()
+    _incoming_list([row], _Builder())
+
+    assert row["shipment_number"] == "SHP-1"
+
+
 def test_render_carries_the_denial_reason_through():
     """Without it the agent cannot tell "you may not see this" from "it has not
     happened yet", so it guesses - and it guesses the second one out loud."""
@@ -1114,7 +1127,7 @@ def test_qs_m1_single_customer_single_product_is_one_item_in_the_item_shape():
         ("customer", "Customer", "ECO WORLD SDN BHD"),
         ("product_code", "Product Code", "SRTWC8605"),
         ("order_count", "DOs", 5),
-        ("order_date", "DO Date", "01/03/2026 – 20/07/2026"),
+        ("order_date", "DO Date", "01/03/2026 \u2013 20/07/2026"),
         ("delivered_quantity", "Delivered Qty", 48),
         ("pending_quantity", "Pending Qty", 17),
         ("delivered_between", "Delivered", "02/03/2026 – 15/07/2026"),

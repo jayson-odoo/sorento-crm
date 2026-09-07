@@ -1,6 +1,6 @@
 # PLAN: DO list product-code search, delivered-status backfill, MCP incoming/summary feedback (7 Sep 2026)
 
-Status: IN PROGRESS (Phase 2, backend + MCP, test-first)
+Status: REVIEWED (Phase 3 done, PR pending)
 Branch: `fix/do-search-and-mcp-feedback-7sep` (one lane, one PR)
 UAC: `do-search-and-mcp-feedback-7sep-acceptance-criteria.md`
 
@@ -34,6 +34,14 @@ Rule: `order_status = NEW AND actual_delivery_date IS NOT NULL AND deleted_at IS
 `--apply` to write, prints count before/after. Only NEW is touched: CANCELLED/PENDING etc. with
 a date are not the reported defect and stay as they are. Prod run needs the owner's go.
 No permanent reconciler: the writer that caused it is already fixed.
+
+What the owner is saying go to: the 4,833 rows move to status code DELIVERED, whose display
+name on prod is `Picked Up / In Transit` - the same label the 18,585 rows the tracking import
+already set carry today. They leave the outstanding bucket in every list, summary and chatbot
+answer (DELIVERED is the canonical "delivered" predicate everywhere it is checked). Embedding
+rows keep whatever status they last carried in their vector metadata - that is inert: the
+resolver joins back to the live `orders` table for status, so a stale embedded status is never
+read.
 
 ## 3. `crm_incoming_stock_list` render: drop the Shipment line
 

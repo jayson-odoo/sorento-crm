@@ -20,7 +20,7 @@
 ## AC4 Summary card DO date
 - AC4.1 With include_summary=true, every `summary.groups[]` and `summary.products[]` row carries `order_date_from` and `order_date_to` (ISO date) when any DO in the row has an order_date; both absent otherwise.
 - AC4.2 The span covers ALL DOs in the row, delivered or not.
-- AC4.3 Render card lists `{"key":"order_date","label":"DO Date","value":"21/07/2026"}` for one date, `"21/07/2026 - 03/08/2026"` for a span, directly after the DOs field; omitted when the backend sent none.
+- AC4.3 Render card lists `{"key":"order_date","label":"DO Date","value":"21/07/2026"}` for one date; for a span both dates render joined by the presenter's existing range separator (the same one `delivered_between` already uses), directly after the DOs field; omitted when the backend sent none.
 - AC4.4 Existing summary tests and the recorded qs6 envelopes still pass.
 
 ## AC5 Checkpoint ask expands backwards

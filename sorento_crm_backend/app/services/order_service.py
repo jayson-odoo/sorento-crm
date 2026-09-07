@@ -628,11 +628,11 @@ class OrderService:
             # Product-code match: the DO grid free-text search box should also
             # find orders by a line's product code (product name/description
             # stays reserved for the advanced product_query filter below).
-            product_ids = self.db.query(Order.id).filter(
+            line_product_ids = self.db.query(Order.id).filter(
                 Order.lines.any(OrderLine.product.has(Product.product_code.ilike(term)))
             )
             query_filter = Order.id.in_(
-                direct_ids.union(customer_ids).union(transporter_ids).union(product_ids)
+                direct_ids.union(customer_ids).union(transporter_ids).union(line_product_ids)
             )
         if customer_query and (customer_query := (customer_query or "").strip()):
             customer_clause, _ = resolve_via_embedding_then_ilike(

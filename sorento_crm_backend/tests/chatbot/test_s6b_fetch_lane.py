@@ -53,6 +53,7 @@ choice, made explicit so the coder can push back on it rather than silently drif
 """
 from __future__ import annotations
 
+import importlib.util
 import re
 from pathlib import Path
 from typing import Any
@@ -96,6 +97,22 @@ def _import_fetch_services():
     from app.services.chatbot.lanes.business.services import FetchServices
 
     return FetchServices
+
+
+def _import_migration_312():
+    """`312_container_status_checkpoints` starts with a digit, so it cannot be a
+    normal dotted import - load it straight off its path, same pattern as
+    `tests/test_container_status_checkpoints.py`."""
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "alembic"
+        / "versions"
+        / "312_container_status_checkpoints.py"
+    )
+    spec = importlib.util.spec_from_file_location("_mig_312", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)  # type: ignore[union-attr]
+    return module
 
 
 # --------------------------------------------------------------------------- #
@@ -661,7 +678,12 @@ def test_clearance_checkpoint_order_has_no_duplicates_and_matches_parser_vocabul
     """The tuple is hardcoded (output_structurer is a pure function with no session) and
     must mirror the same vocabulary the semantic parser already hardcodes - a checkpoint
     the parser cannot name can never appear in `requested_attributes` in the first place,
-    and a duplicate would double-count in the expansion index lookup."""
+    and a duplicate would double-count in the expansion index lookup.
+
+    Also pinned against the migration's own `CHECKPOINTS` list (the seed for the real
+    `statuses` rows this timeline reads): a later migration that adds a checkpoint must
+    extend `CLEARANCE_CHECKPOINT_ORDER` in the same change, or the new checkpoint is seeded
+    but the fetch lane can never expand it."""
     fetch = _import_fetch()
     order = fetch.CLEARANCE_CHECKPOINT_ORDER
     assert len(order) == len(set(order)), "CLEARANCE_CHECKPOINT_ORDER has a duplicate"
@@ -672,6 +694,13 @@ def test_clearance_checkpoint_order_has_no_duplicates_and_matches_parser_vocabul
         assert f'"{key}"' in SEMANTIC_PARSER_PROMPT or f"'{key}'" in SEMANTIC_PARSER_PROMPT, (
             f"{key} is in CLEARANCE_CHECKPOINT_ORDER but not quoted in the parser prompt"
         )
+
+    migration = _import_migration_312()
+    assert order == tuple(key for key, *_ in migration.CHECKPOINTS), (
+        "CLEARANCE_CHECKPOINT_ORDER has drifted from the seeded checkpoints in "
+        "312_container_status_checkpoints.py - a migration adding a checkpoint must "
+        "extend this tuple too"
+    )
 
 
 # --------------------------------------------------------------------------- #
