@@ -76,6 +76,13 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor',
     return (
       <div data-testid="canvas-editor">
         canvas: {layers.length} layers
+        {/* R2 (#726): the canvas's own INTERNAL state (never reset by a
+            new `doc` prop unless the component actually remounts) is what
+            the user sees - a test checking "did the move survive" has to
+            read THIS, not the `doc` prop RequestTagDesigner seeds it with,
+            which is frozen at whatever it was on mount/remount and stays
+            stale by design once the canvas takes over. */}
+        first layer x={layers[0]?.x_mm} y={layers[0]?.y_mm}
         {leftRail}
         <div data-testid="toolbar-trailing">
           {toolbarTrailing?.map((action) =>
@@ -123,6 +130,22 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor',
           }}
         >
           Type into every layer
+        </button>
+        {/* R2 (#726): moves the FIRST layer's own x/y, the same shape a real
+            drag produces on the canvas - onLayersChange fires immediately
+            (no debounce of its own), the same as it does for the buttons
+            above. */}
+        <button
+          type="button"
+          onClick={() => {
+            const next = layers.map((l, i) =>
+              i === 0 ? { ...l, x_mm: 17.45, y_mm: 20.71 } : l,
+            );
+            setLayers(next);
+            onLayersChange?.(next);
+          }}
+        >
+          Move first layer
         </button>
       </div>
     );
@@ -459,6 +482,45 @@ describe('RequestTagDesigner - Update template strips bound text_override (B1)',
 
     expect(bound?.text_override).toBeNull();
     expect(unbound?.text_override).toBe('typed value');
+  });
+});
+
+describe('RequestTagDesigner - Update template reads the live layers, never re-applies to the source line (R2, #726)', () => {
+  it('a moved layer reaches the PUT payload, and the source line is neither reverted nor duplicated after publish', async () => {
+    await mountBothOnSameTemplate();
+
+    // Move the layer on line A (the source, currently selected) - the same
+    // shape a real canvas drag produces via onLayersChange.
+    fireEvent.click(screen.getByRole('button', { name: 'Move first layer' }));
+
+    openUpdateDialog();
+    // Checkbox defaults ON - there IS a sibling (line-b), so
+    // applyDesignToSiblings runs too (S6, AC-S6-4); the source line must
+    // stay untouched by it (r2, suspect b).
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Publish' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalled());
+    const [, payload] = mockUpdateTemplate.mock.calls[0];
+    expect(payload.layers[0].x_mm).toBe(17.45);
+    expect(payload.layers[0].y_mm).toBe(20.71);
+
+    await waitFor(() => expect(mockPublishTemplate).toHaveBeenCalled());
+    // Publish is awaited before the dialog closes, so waiting for the
+    // dialog to unmount is the same "everything since has settled" signal
+    // `RequestTagDesignerShell.test.tsx` and this file's own Cancel test
+    // already use.
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    // Line A - still selected throughout - shows the SAME layer count
+    // (no duplicate) at the MOVED position (not reverted). Reads the
+    // canvas's own rendered state, not `canvasDocs`/the `doc` prop
+    // RequestTagDesigner seeds it with - that seed is frozen at mount and
+    // never reflects a live edit, by design, so asserting against it would
+    // catch a REMOUNT but say nothing about whether an ALREADY-MOUNTED
+    // canvas's own edit survived, which is what actually happened on screen
+    // in the browser repro.
+    expect(screen.getByText(/canvas: 1 layers/)).toBeInTheDocument();
+    expect(screen.getByText(/first layer x=17\.45 y=20\.71/)).toBeInTheDocument();
   });
 });
 
