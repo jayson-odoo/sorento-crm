@@ -144,8 +144,9 @@ shipping_orders` with one record whose lines carry `source_ref` (DtlKey), `produ
   NULL-source (n8n / CRM) row for Q at M (open, 5, with a `storage_zone_id` and an
   `order_inquiry_links` placement); a push names (P, L) qty 10 and an unrelated (R, S) qty 5.
   After the push the Q row still describes product Q at M with its zone and placement, the (R, S)
-  line is a new row, and `lines.adopted` is absent. Positional adoption never runs in a push that
-  superseded a group.
+  line is a new row, and `lines.adopted` is absent or 0 (the verdict keeps the fixed key set the
+  sales / purchase order verdict has). Positional adoption never runs in a push that superseded a
+  group.
 
 - **AC-X30 [BE][T]** `ShippingOrderIngestService(may_delete=...)` defaults to False: constructing
   the service without the flag and pushing AC-X1's shape closes the xlsx row (`superseded_closed_only`)

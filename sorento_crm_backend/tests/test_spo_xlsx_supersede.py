@@ -822,7 +822,9 @@ class TestAcX11XlsxThenGrnThenPushMatchesPushThenGrn:
             xlsx_row.receipt_status = "fully_received"
             db.flush()
 
-            svc_a = ShippingOrderIngestService(db, integration_id=None, company_id=DEFAULT_COMPANY_ID)
+            svc_a = ShippingOrderIngestService(
+                db, integration_id=None, company_id=DEFAULT_COMPANY_ID, may_delete=True
+            )
             result_a = svc_a.ingest(
                 "shipping_orders",
                 [
@@ -1951,7 +1953,7 @@ class TestAcX29PositionalAdoptionNeverRunsAfterASupersede:
         supersede target - and an UNRELATED (R, S) qty 5. After the push
         the Q row must still describe product Q at location M, keep its
         zone and its placement, the (R, S) line must be a NEW row, and
-        `lines.adopted` must be absent.
+        `lines.adopted` must be absent or 0.
 
         RED today: once P's group is superseded, Q's NULL-source row (not
         a supersede candidate under D25a, so it sits in the ordinary
@@ -2013,7 +2015,7 @@ class TestAcX29PositionalAdoptionNeverRunsAfterASupersede:
 
         assert res.status_code == 200, res.text
         entry = res.json()["records"][0]
-        assert "adopted" not in (entry.get("lines") or {}), entry
+        assert (entry.get("lines") or {}).get("adopted", 0) == 0, entry
 
         q_after = env.db.execute(
             text(

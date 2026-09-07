@@ -289,12 +289,11 @@ class ShippingOrderIngestService(MasterRefResolver):
                 # cannot name one.
                 entity_id=None,
                 warnings=verdict.warnings,
-                # Only the counts that actually happened (D9's own rule for
-                # `lines.dropped`, applied to every key): a zero says nothing
-                # the absence of the key does not, and `adopted: 0` beside a
-                # supersede reads as if adoption had been consulted at all
-                # (AC-X29 asserts on the key, not the value).
-                lines={key: value for key, value in verdict.line_counts.items() if value},
+                # Same shape as the sales / purchase order verdict: the fixed
+                # keys are always present (zero included) so an ESB reading
+                # `lines.created` never meets a missing key; only the optional
+                # `superseded` count appears when a supersede happened (D27).
+                lines=verdict.line_counts,
             )
         except MissingReference as exc:
             savepoint.rollback()
