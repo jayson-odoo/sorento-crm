@@ -26,7 +26,9 @@ PRESENTERS_PATH = Path(__file__).resolve().parent.parent / "sorento_crm_mcp" / "
 # field on a tool not listed here is still caught by the reverse-direction test below,
 # which needs no such mapping and would fail loudly asking for this one to be extended.
 _PRESENTER_FUNCTIONS_BY_TOOL = {
-    "crm_inventory_stock_balance_list": ("_stock",),
+    # the Open SO / Available block (and its restrict call) lives in `_open_so_block`,
+    # shared by the detailed and compact stock presenters (review round 2, S2)
+    "crm_inventory_stock_balance_list": ("_stock", "_open_so_block"),
     "crm_procurement_purchase_orders_placed_list": ("_purchase_orders_placed",),
 }
 

@@ -20,18 +20,19 @@ SAME shape with `kind = "spo"` (PO rows say `kind = "po"`): `po_number` is the S
 number, `po_date` its `issue_date`, `expected_date` its promised arrival,
 `outstanding_qty` the unreceived remainder, `supplier` from `supplier_id`.
 
-NO DOUBLE COUNT: an allocation whose `po_line_id` points at a PO line that is itself
-open with quantity outstanding is that PO line's shipment plan, not more supply, and is
-excluded (`_open_po_line_ids`). An allocation whose parent line is closed or absent is
-its own on-order fact and stays. The dedupe reads the open PO book under the same
-product scope, never the date window, so a windowed read cannot resurrect a child row
-whose parent merely falls outside the window.
+NO `po_line_id` DEDUPE (review round 2, S3): measured 0 of 80,468 `spo_allocations`
+carry `po_line_id`, so a "child of an open PO line" cannot exist today and the extra
+column-only, unscoped SELECT it needed could only ever suppress an in-scope row on
+another company's PO line. Re-add the dedupe (an allocation whose `po_line_id` points
+at an open PO line already in the rows is that line's shipment plan, not more supply)
+the day `spo_allocations.po_line_id` is populated - the trigger is named in the PLAN's
+as-built section.
 """
 from __future__ import annotations
 
 from typing import Any, Optional
 
-from sqlalchemy import func, or_
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation, Supplier
@@ -189,20 +190,10 @@ def _spo_delta():
     return SPOAllocation.allocated_quantity - SPOAllocation.quantity_received
 
 
-def _open_po_line_ids(db: Session, *, product_ids: Optional[list[str]]):
-    """PO lines that ARE in the PO rows (open, quantity outstanding, same product scope) -
-    an SPO allocation pointing at one of these is that line's shipment plan, not supply."""
-    delta = PurchaseOrderLine.qty_ordered - PurchaseOrderLine.qty_received
-    q = db.query(PurchaseOrderLine.id).filter(PurchaseOrderLine.line_status == "open", delta > 0)
-    if product_ids:
-        q = q.filter(PurchaseOrderLine.product_id.in_(product_ids))
-    return q
-
-
 def _unshipped_spo_query(db: Session, *, product_ids: Optional[list[str]]):
     """`(SPOAllocation, Product, Supplier)` for every allocation still on order from the
-    supplier: pending, not yet on a shipment, quantity unreceived, and not the shipment
-    plan of an open PO line (see the module docstring)."""
+    supplier: pending, not yet on a shipment, quantity unreceived (see the module
+    docstring for the `po_line_id` dedupe that is deliberately NOT here)."""
     q = (
         db.query(SPOAllocation, Product, Supplier)
         .join(Product, Product.id == SPOAllocation.product_id)
@@ -211,10 +202,6 @@ def _unshipped_spo_query(db: Session, *, product_ids: Optional[list[str]]):
             SPOAllocation.receipt_status == "pending",
             SPOAllocation.inbound_shipment_id.is_(None),
             _spo_delta() > 0,
-            or_(
-                SPOAllocation.po_line_id.is_(None),
-                SPOAllocation.po_line_id.not_in(_open_po_line_ids(db, product_ids=product_ids)),
-            ),
         )
     )
     if product_ids:
@@ -294,9 +281,9 @@ def purchase_orders_placed_summary(
         q = q.filter(PurchaseOrderLine.product_id.in_(product_ids))
     q = _apply_expected_date_window(q, expected_date_from, expected_date_to)
     qty, count = q.one()
-    # Item 5: the unshipped SPO allocations count too, under the same scope, window and
-    # dedupe the rows take - a summary that counts fewer rows than the list under it is
-    # the one failure mode a summary has.
+    # Item 5: the unshipped SPO allocations count too, under the same scope and window the
+    # rows take - a summary that counts fewer rows than the list under it is the one
+    # failure mode a summary has.
     spo_q = _unshipped_spo_query(db, product_ids=product_ids).with_entities(
         func.sum(_spo_delta()), func.count(SPOAllocation.id)
     )

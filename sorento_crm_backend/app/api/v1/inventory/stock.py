@@ -126,6 +126,31 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
         pid = str(entry.get("product_id") or "")
         if pid:
             _attach(entry, open_so_total.get(pid, 0), entry.get("total_on_hand"))
+    # DETAILED mode carries a per-product summary too (review round 2, S2): the chatbot's
+    # "Open SO n, Available n" line reads the product TOTAL from here, never a sum over
+    # the page of rows, which is short of the truth for a product held in more warehouses
+    # than the page limit. `total_on_hand` is summed over every warehouse row of the
+    # product (`on_hand_total_by_product`), not over `data`. Only under `include_sellable`
+    # (this function), so a caller that never asked is byte-identical.
+    if not body.get("stock_summary") and rows:
+        on_hand_total = service.on_hand_total_by_product(list(product_ids))
+        summary: list[dict] = []
+        seen: set[str] = set()
+        for serialized, row in zip(body.get("data") or [], rows):
+            pid = str(getattr(row, "product_id", "") or "")
+            if not pid or pid in seen:
+                continue
+            seen.add(pid)
+            product = serialized.get("product") if isinstance(serialized.get("product"), dict) else {}
+            entry = {
+                "product_id": pid,
+                "product_code": product.get("product_code") or serialized.get("product_code"),
+                "product_name": product.get("product_name") or serialized.get("product_name"),
+                "total_on_hand": on_hand_total.get(pid, 0),
+            }
+            _attach(entry, open_so_total.get(pid, 0), entry["total_on_hand"])
+            summary.append(entry)
+        body["stock_summary"] = summary
     return JSONResponse(content=body)
 
 

@@ -437,9 +437,11 @@ def test_mixed_rows_sort_together_by_the_effective_expected_date(db):
     assert [r["po_number"] for r in by_qty] == ["PO-SEP", "SPO-AUG", "SPO-NODATE", "PO-NODATE"]
 
 
-def test_an_spo_allocated_against_an_open_po_line_is_not_counted_twice(db):
-    """`po_line_id` set and pointing at an open PO line already in the PO rows: the PO row
-    is the on-order truth and the allocation is its shipment plan, not more supply."""
+def test_an_spo_row_pointing_at_a_po_line_is_its_own_on_order_fact(db):
+    """Review round 2, S3: no `po_line_id` dedupe - 0 of 80,468 allocations carry one, and
+    the SELECT it took was column-only and unscoped. A row that points at a PO line counts
+    like any other pending, unshipped allocation; the trigger for re-adding the dedupe is
+    named in the PLAN's as-built section."""
     prod = product(db, company_id=DEFAULT_COMPANY_ID)
     _po_line(db, product_id=prod.id, ordered=10, received=0, po_number="PO-PARENT")
     _spo(db, product_id=prod.id, allocated=10, number="SPO-CHILD", po_line_id=_po_line_id(db, "PO-PARENT"))
@@ -447,10 +449,8 @@ def test_an_spo_allocated_against_an_open_po_line_is_not_counted_twice(db):
     _spo(db, product_id=prod.id, allocated=4, number="SPO-ORPHAN", po_line_id=_po_line_id(db, "PO-CLOSED-PARENT"))
     db.commit()
     rows = purchase_orders_placed_rows(db, product_ids=[prod.id])
-    assert sorted(r["po_number"] for r in rows) == ["PO-PARENT", "SPO-ORPHAN"]
-    summary = purchase_orders_placed_summary(db, product_ids=[prod.id])
-    assert summary == {"po_placed_qty": 14, "po_placed_count": 2}
-
+    assert sorted(r["po_number"] for r in rows) == ["PO-PARENT", "SPO-CHILD", "SPO-ORPHAN"]
+    assert purchase_orders_placed_summary(db, product_ids=[prod.id]) == {"po_placed_qty": 24, "po_placed_count": 3}
 
 def test_spo_rows_take_the_same_product_scope_and_window(db):
     prod = product(db, company_id=DEFAULT_COMPANY_ID)

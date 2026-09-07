@@ -539,7 +539,10 @@ def entity_ids_transformer(
         # MCP server is shared with n8n, and n8n's own quantity-ask workflow already
         # sends `include_summary=true` today. The CRM asks for the three-line pipeline
         # by name; a caller that only asks `include_summary` gets the summary shape it
-        # got before this plan.
+        # got before this plan. Both `ORDER_TOOLS` members declare the param on their
+        # ToolSpec (`catalog.py`: orders_list and orders_by_product_list), which is what
+        # keeps the MCP from stripping it - pinned by
+        # `test_growth_fix_opt_in_envelope_fields.py`.
         out["include_pipeline"] = True
 
     # A1/A2 (chatbot-growth-r1), opt-in from THIS caller (fix, 7 Sep 2026): these two
@@ -1084,20 +1087,28 @@ def _normalize_spec_word(v: Any) -> str:
 #: "list price of X" -> `["price"]` used to drop the presenter's own "List Price" line
 #: (the projection kept identity fields + matched SPEC keys only) and answer "no price
 #: recorded". Matched by whole word or containment on the normalised ask, in this order.
+#: Review round 2 (S5/S6): a single-token entry matches the whole ask EXACTLY; only a
+#: multi-token entry may be contained in a longer ask. The first cut also matched a token
+#: inside the ask, and on the live registry "brand name" reached Product Name (0 spec hits,
+#: no miss line, the brand never mentioned) and "seat size" reached Dimensions (the carton,
+#: not the seat). The Product Name row went with it: no measured turn asks for the name
+#: alone. "cost" -> List Price is right for a CUSTOMER (the list price is what it costs
+#: them); an internal cost price is not a customer-facing field.
 _BASE_FIELD_BY_ASK: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("List Price", ("price", "list price", "harga", "cost")),
     ("Dimensions", ("dimension", "dimensions", "size", "measurement", "ukuran", "saiz")),
     ("Description", ("description", "desc", "details")),
-    ("Product Name", ("name",)),
 )
 _MISS_CODES_CAP = 5
 
 
 def _base_label_for(norm: str) -> str | None:
-    tokens = norm.split()
+    """The FIRST matching base label. A merged entry ("price and size") keeps only the
+    first; the prompt asks the model to emit one attribute per entry, and a split
+    emission renders both (pinned in the projection tests)."""
     for label, words in _BASE_FIELD_BY_ASK:
         for w in words:
-            if norm == w or (" " in w and w in norm) or w in tokens:
+            if norm == w or (" " in w and w in norm):
                 return label
     return None
 
@@ -1122,8 +1133,8 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
     With requested_attributes (item 8, 8 Sep 2026, turns 0682154e and "list price of
     X"), per asked word, in this order:
       1. BASE FIELDS FIRST - a word naming a presenter base field (`_BASE_FIELD_BY_ASK`:
-         price / dimensions / description / name, whole word or containment) keeps that
-         field on every item; a base hit is a hit.
+         price / dimensions / description; a single-token entry exactly, a multi-token
+         entry by containment) keeps that field on every item; a base hit is a hit.
       2. SPEC KEYS BY TOKEN CONTAINMENT - exact match on the normalised key or label
          first, else every key whose key OR label tokens contain every asked token
          ("material" reaches both `material` and `seat_material` via "Seat cover

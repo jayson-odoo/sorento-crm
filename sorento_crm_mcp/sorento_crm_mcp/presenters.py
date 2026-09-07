@@ -1132,21 +1132,41 @@ def _resource_attachments(rows: list[dict], b: _Builder) -> None:
         b.attach(no_type)
 
 
-def _stock(rows: list[dict], b: _Builder) -> None:
+def _open_so_block(entries: Any, b: _Builder) -> None:
+    """A2 (amended 8 Sep 2026, owner: "I just need to know the outstanding qty, that's
+    it"): ONE line per PRODUCT after the stock rows - `Open SO n, Available n` - read
+    from the backend's per-product `stock_summary` (`total_on_hand` over EVERY warehouse
+    row of the product, `open_so_qty` the product total), never summed over the returned
+    page (review round 2, S2: a product held in more warehouses than the page limit
+    printed a short "Available"). Only entries that carry `sellable` count - the backend
+    attaches it under `include_sellable` alone, so an older or unasked envelope renders
+    no line at all. `Open SO: none` when nothing is on order for any product; the raw
+    signed number otherwise, never clamped. Shared by the detailed and compact policies:
+    the owner's ruling is one block per product for a stock answer, whatever the policy."""
+    lines: list[tuple[str, int, int]] = []
+    for entry in entries if isinstance(entries, list) else []:
+        if not isinstance(entry, dict) or entry.get("sellable") is None:
+            continue
+        code = entry.get("product_code")
+        if not _filled(code):
+            continue
+        lines.append((str(code), _as_int(entry.get("total_on_hand")), _as_int(entry.get("open_so_qty"))))
+    if not lines:
+        return
+    b.restrict("open_so_avail", "inventory.sellable")
+    if any(open_so > 0 for _code, _oh, open_so in lines):
+        for code, on_hand, open_so in lines:
+            b.add_summary_item(code, f"Open SO {open_so:,}, Available {on_hand - open_so:,}", key="open_so_avail")
+    else:
+        b.add_summary_item("Open SO", "none", key="open_so_avail")
+
+
+def _stock(rows: list[dict], b: _Builder, payload: dict | None = None) -> None:
     def _as_dict(v):
         return v if isinstance(v, dict) else {}
 
     def _as_str(v):
         return v if isinstance(v, str) and v.strip() else None
-
-    # A2 (amended 8 Sep 2026, owner: "I just need to know the outstanding qty, that's
-    # it"): per-row Open SO / Sellable was noise across many warehouse rows. Replaced
-    # with ONE line per PRODUCT after all the stock rows: `on_hand` and `open_so_qty`
-    # summed across every row of that product code (the 0.8% of open SO lines with no
-    # warehouse are a product-level total already, so this grain loses nothing that
-    # mattered), never re-derived per row again.
-    by_product: dict[str, dict[str, Any]] = {}
-    saw_sellable_data = False
 
     for s in rows:
         # Row shape varies by backend vocab:
@@ -1199,26 +1219,9 @@ def _stock(rows: list[dict], b: _Builder) -> None:
             ],
             discontinued=is_discontinued,
         )
-        if s.get("sellable") is not None and _filled(product_code):
-            saw_sellable_data = True
-            agg = by_product.setdefault(str(product_code), {"on_hand": 0, "open_so": 0})
-            agg["on_hand"] += _as_int(qoh)
-            agg["open_so"] += _as_int(s.get("open_so_qty"))
 
-    if saw_sellable_data:
-        b.restrict("open_so_avail", "inventory.sellable")
-        any_open_so = any(agg["open_so"] > 0 for agg in by_product.values())
-        if any_open_so:
-            for code in by_product:
-                agg = by_product[code]
-                available = agg["on_hand"] - agg["open_so"]
-                b.add_summary_item(
-                    code,
-                    f"Open SO {agg['open_so']:,}, Available {available:,}",
-                    key="open_so_avail",
-                )
-        else:
-            b.add_summary_item("Open SO", "none", key="open_so_avail")
+    # The per-product block reads the payload's `stock_summary` (S2), never the rows.
+    _open_so_block((payload or {}).get("stock_summary"), b)
 
 
 def _as_int(v: Any) -> int:
@@ -1244,19 +1247,6 @@ def _stock_int(v: Any) -> Any:
         return v
 
 
-def _sellable_value(v: Any) -> Any:
-    """`sellable` (A2, AC-904): a negative number reads "0 (oversold by N)",
-    never a bare negative - the backend leaves the raw signed number so this
-    presenter owns the wording, same split as `_money`/`_stock_int`."""
-    if v is None:
-        return v
-    try:
-        n = int(Decimal(str(v)))
-    except (InvalidOperation, TypeError, ValueError):
-        return v
-    return f"0 (oversold by {-n})" if n < 0 else n
-
-
 def _stock_compact(payload: dict, b: _Builder) -> None:
     """`compact`: one item per product, Product Code, Total, then the allowed locations.
 
@@ -1275,22 +1265,8 @@ def _stock_compact(payload: dict, b: _Builder) -> None:
         if _filled(code_field):
             fields.append({"key": "product_code", "label": "Product Code", "value": code_field})
         fields.append({"label": "Total", "value": _stock_int(entry.get("total_on_hand"))})
-        # A2 (AC-903/AC-904): same pair as the detailed row, RESTRICTED behind
-        # `inventory.sellable` (see `_stock`). Keyed, unlike the location pairs
-        # below, so `output_structurer`'s restricted-drop can match on them.
-        if entry.get("sellable") is not None:
-            fields.append(
-                {"key": "open_so_qty", "label": "Open SO", "value": _stock_int(entry.get("open_so_qty"))}
-            )
-            fields.append(
-                {
-                    "key": "sellable",
-                    "label": "Sellable (on hand minus open SO)",
-                    "value": _sellable_value(entry.get("sellable")),
-                }
-            )
-            b.restrict("open_so_qty", "inventory.sellable")
-            b.restrict("sellable", "inventory.sellable")
+        # A2: no per-entry Open SO / Sellable pair any more (review round 2, S2) - the
+        # per-product block after the entries is the one shape for every policy.
         for loc in entry.get("locations") or []:
             if not isinstance(loc, dict):
                 continue
@@ -1307,6 +1283,8 @@ def _stock_compact(payload: dict, b: _Builder) -> None:
         # allowed to see), not a CRM field name a consumer could match on.
         b.raw_item(entry.get("product_code"), fields, dict(entry.get("flags") or {}))
 
+
+    _open_so_block(payload.get("stock_summary"), b)
 
 def _stock_availability(payload: dict, b: _Builder) -> None:
     """`availability`: yes / no / ask, and nothing else.
@@ -1499,6 +1477,8 @@ def present_response(tool_name: str, raw: str) -> str:
         _stock_availability(data, b)
     elif so_outstanding:
         _orders_so_outstanding(rows, b)
+    elif tool_name == _STOCK_TOOL:
+        _stock(rows, b, payload=data)  # the per-product block reads `stock_summary` (S2)
     else:
         row_builder(rows, b)
 

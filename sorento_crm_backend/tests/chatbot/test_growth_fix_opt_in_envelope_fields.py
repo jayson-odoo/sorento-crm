@@ -141,3 +141,15 @@ def test_include_pipeline_absent_on_a_plain_do_list():
     out = fetch.entity_ids_transformer(trigger)
     assert "include_summary" not in out
     assert "include_pipeline" not in out
+
+
+def test_every_order_tool_declares_include_pipeline_on_its_toolspec():
+    """Review round 2, nit 1: `fetch.py` sets `include_pipeline` for every `ORDER_TOOLS`
+    member; the MCP strips a param the ToolSpec does not declare, so each member must
+    declare it (both do - orders_list and orders_by_product_list)."""
+    from app.services.chatbot.lanes.business.fetch import ORDER_TOOLS
+    from app.services.mcp_tool_capability_service import _load_catalog_specs
+
+    specs = {spec.name: spec for spec in _load_catalog_specs()}
+    for name in ORDER_TOOLS:
+        assert "include_pipeline" in tuple(specs[name].query_params), name

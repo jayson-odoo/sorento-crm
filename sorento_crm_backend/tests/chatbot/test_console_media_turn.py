@@ -312,6 +312,25 @@ class TestConsoleMediaTurnPendingThenDonePoll:
         resp = client.get(f"/api/v1/system/chatbot/console/media/{uuid.uuid4()}")
         assert resp.status_code == 404, resp.text
 
+    def test_a_real_customers_job_is_a_404_too(self, client, session_factory, stub_console_and_media_seams):
+        """Review round 2, nit 2: the poll is scoped to console jobs (`message_id LIKE
+        'console-media-%'`), so a job from a real WhatsApp message cannot be read here."""
+        from app.models.media import ContactMediaUsage, MediaExtractionJob
+
+        db = session_factory()
+        usage = ContactMediaUsage(
+            id=str(uuid.uuid4()), respond_io_id="437264483", modality="image",
+            message_id="wamid.REAL-CUSTOMER-MESSAGE", media_ordinal=0, period_key="2026-09",
+            outcome="extract",
+        )
+        db.add(usage)
+        db.flush()
+        job = MediaExtractionJob(id=str(uuid.uuid4()), usage_id=usage.id, status="done", modality="image")
+        db.add(job)
+        db.commit()
+        resp = client.get(f"/api/v1/system/chatbot/console/media/{job.id}")
+        assert resp.status_code == 404, resp.text
+
 
 class TestConsoleMediaPermissionGate:
     def test_media_status_needs_the_view_permission(self, client):

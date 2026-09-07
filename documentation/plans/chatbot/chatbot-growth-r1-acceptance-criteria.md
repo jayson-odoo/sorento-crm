@@ -273,3 +273,35 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
   tools. Evidence: existing CI assertion extended.
 - AC-982 Dry-run turns (`is_test`) write zero rows to `contact_field_reveals`,
   `chat_histories` and `respond_contacts.session_vars`. Evidence: existing D14 test extended.
+
+## I. Owner console follow-ups, 8 Sep 2026 (graded by `tests/chatbot/console_cases/2026-09-07-growth-r1.yaml`)
+
+- AC-993 `[BE][MCP][T]` **SO outstanding reaches the by-product answer, per row.** "how many did
+  heng seng hardware take of srtwc286" (turn 98912914) answers per customer x product with
+  "SO outstanding (not yet DO)" on each row; never a top-level number on the by-product
+  summary. Case: `A3 how many did the customer take - by-product tool carries the SO line per row`.
+  Evidence: `tests/test_order_by_product_so_outstanding.py`, `sorento_crm_mcp/tests/test_presenters.py`.
+- AC-994 `[BE][T]` **A delivery word beside a name is an order ask, never a help request.**
+  "delivery to hanlim" after an escalate offer (turns 2d903c96 / 17d38019) is business_query /
+  order / check_order and answers the DO list. Case: `owner 8 Sep - a delivery word plus a
+  name over an escalate offer is an order ask`. Evidence:
+  `tests/chatbot/test_growth_r1_review_fixes.py::TestOwner8SepADeliveryWordPlusANameIsAnOrderAsk`,
+  `TestReviewRound2B2TheRetypeIsTheMeasuredArmOnly`.
+- AC-995 `[BE][T]` **The escalate offer is said once.** The PO rung and the first probe write
+  no offer; `crossdomain_compose` is the one writer (turns 0184d84d / 5f73ddb0 / 90a1637a
+  carried it twice). The rung needs `purchase_orders.placed`. Cases: the A7 zero-stock
+  ladder cases. Evidence: `tests/chatbot/test_crossdomain_ladder.py`,
+  `tests/chatbot/test_foundre_rung_end_to_end.py::TestOwner8SepTheRungIsPerContactAndOffersOnce`.
+- AC-996 `[BE][MCP][T]` **Nothing on order.** Unshipped SPO allocations count as on order from
+  the supplier; the three-way miss reads "No stock, no incoming and nothing on order for X."
+  Case: `A7 nothing on any rung says so and offers to escalate`. Evidence:
+  `tests/test_purchase_orders_placed.py`, `tests/chatbot/test_crossdomain_ladder.py::TestItem5UnshippedSPOIsOnOrderFromTheSupplier`.
+- AC-997 `[BE][T]` **List price reaches the base field.** "list price of SRTWC286-SH" answers
+  `*List Price:* MYR 1260.00` with no miss line. Case: `item 8 - list price of a product
+  reaches the base List Price field`. Evidence: `tests/chatbot/test_product_spec_projection.py::TestBaseFieldsFirst`.
+- AC-998 `[BE][T]` **Seat cover material reaches the key that contains it, and a miss is said
+  once.** "seat cover material of srtwc286" (turn 0682154e) answers `*Seat cover material:*`
+  per item and at most ONE "not recorded for ..." line for the codes without a value. Case:
+  `item 8 - seat cover material reaches the key that contains it`. Evidence:
+  `tests/chatbot/test_product_spec_projection.py::TestSpecKeysByTokenContainment`,
+  `TestOneMissLinePerAskedWord`.

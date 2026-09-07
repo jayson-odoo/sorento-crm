@@ -447,7 +447,8 @@ def test_spo_last_receipt_fallback_label_when_no_shipment_date():
 
 
 def test_stock_omits_sellable_when_backend_did_not_send_it():
-    """AC-903: byte-identical when the backend answered with no `sellable` at all."""
+    """AC-903: byte-identical when the backend answered with no `sellable` at all - no
+    `stock_summary`, no line, no restricted_fields."""
     out = env("crm_inventory_stock_balance_list", {
         "data": [{"product_code": "SRTWT107", "quantity_on_hand": 36}],
     })
@@ -455,17 +456,23 @@ def test_stock_omits_sellable_when_backend_did_not_send_it():
     assert "Open SO" not in labels
     assert "Sellable (on hand minus open SO)" not in labels
     assert "restricted_fields" not in out
+    assert "summary_items" not in out
+
+
+def _stock_env(rows: list[dict], summary: list[dict]) -> dict:
+    return {"data": rows, "stock_summary": summary}
 
 
 def test_stock_carries_one_open_so_and_available_line_per_product_restricted():
     """AC-904 (amended 8 Sep 2026, owner: "I just need to know the outstanding qty"):
-    no per-row fields any more - ONE summary line per product code, restricted the
-    same way the per-row pair used to be, so `output_structurer` still drops it per
-    contact and the MCP itself stays unfiltered."""
-    out = env("crm_inventory_stock_balance_list", {
-        "data": [{"product_code": "SRTWT107", "quantity_on_hand": 36,
-                  "open_so_qty": 10, "sellable": 26}],
-    })
+    no per-row fields any more - ONE summary line per product code, read from the
+    backend's per-product `stock_summary` (review round 2, S2), restricted the same way
+    the per-row pair used to be, so `output_structurer` still drops it per contact and
+    the MCP itself stays unfiltered."""
+    out = env("crm_inventory_stock_balance_list", _stock_env(
+        [{"product_code": "SRTWT107", "quantity_on_hand": 36, "open_so_qty": 10, "sellable": 26}],
+        [{"product_id": "p1", "product_code": "SRTWT107", "total_on_hand": 36, "open_so_qty": 10, "sellable": 26}],
+    ))
     labels = {x["label"] for x in out["items"][0]["fields"]}
     assert "Open SO" not in labels
     assert "Sellable (on hand minus open SO)" not in labels
@@ -478,36 +485,41 @@ def test_stock_carries_one_open_so_and_available_line_per_product_restricted():
 def test_stock_available_prints_the_raw_negative_when_open_so_exceeds_on_hand():
     """Owner ruling, 8 Sep 2026: no clamping, no "oversold by N" wording - the signed
     number as-is."""
-    out = env("crm_inventory_stock_balance_list", {
-        "data": [{"product_code": "SRTWT107", "quantity_on_hand": 5,
-                  "open_so_qty": 8, "sellable": -3}],
-    })
+    out = env("crm_inventory_stock_balance_list", _stock_env(
+        [{"product_code": "SRTWT107", "quantity_on_hand": 5, "open_so_qty": 8, "sellable": -3}],
+        [{"product_id": "p1", "product_code": "SRTWT107", "total_on_hand": 5, "open_so_qty": 8, "sellable": -3}],
+    ))
     field = out["summary_items"][0]["fields"][0]
     assert field["value"] == "Open SO 8, Available -3"
 
 
-def test_stock_open_so_summed_across_a_products_own_warehouse_rows():
-    """The product-level grain the owner asked for: two rows of the SAME product sum
-    their on_hand and open_so_qty into ONE line, not two."""
-    out = env("crm_inventory_stock_balance_list", {
-        "data": [
-            {"product_code": "SRTWT107", "warehouse": "A", "quantity_on_hand": 10,
-             "open_so_qty": 6, "sellable": 4},
-            {"product_code": "SRTWT107", "warehouse": "B", "quantity_on_hand": 20,
-             "open_so_qty": 0, "sellable": 20},
-        ],
-    })
+def test_stock_available_reads_the_product_total_never_the_page():
+    """Review round 2, S2: the page holds ONE of the product's three warehouse rows; the
+    line reads the backend's per-product total (60), never the page sum (10)."""
+    out = env("crm_inventory_stock_balance_list", _stock_env(
+        [{"product_code": "SRTWT107", "warehouse": "A", "quantity_on_hand": 10, "open_so_qty": 6, "sellable": 4}],
+        [{"product_id": "p1", "product_code": "SRTWT107", "total_on_hand": 60, "open_so_qty": 8, "sellable": 52}],
+    ))
     assert len(out["summary_items"]) == 1
     field = out["summary_items"][0]["fields"][0]
     assert field["label"] == "SRTWT107"
-    assert field["value"] == "Open SO 6, Available 24"
+    assert field["value"] == "Open SO 8, Available 52"
+
+
+def test_stock_rows_with_sellable_but_no_summary_render_no_line():
+    """Never a page sum: without `stock_summary` there is nothing honest to print."""
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [{"product_code": "SRTWT107", "quantity_on_hand": 10, "open_so_qty": 6, "sellable": 4}],
+    })
+    assert "summary_items" not in out
+    assert "restricted_fields" not in out
 
 
 def test_stock_open_so_none_when_every_product_has_zero():
-    out = env("crm_inventory_stock_balance_list", {
-        "data": [{"product_code": "SRTWT107", "quantity_on_hand": 36,
-                  "open_so_qty": 0, "sellable": 36}],
-    })
+    out = env("crm_inventory_stock_balance_list", _stock_env(
+        [{"product_code": "SRTWT107", "quantity_on_hand": 36, "open_so_qty": 0, "sellable": 36}],
+        [{"product_id": "p1", "product_code": "SRTWT107", "total_on_hand": 36, "open_so_qty": 0, "sellable": 36}],
+    ))
     assert len(out["summary_items"]) == 1
     field = out["summary_items"][0]["fields"][0]
     assert field["label"] == "Open SO"
@@ -517,17 +529,19 @@ def test_stock_open_so_none_when_every_product_has_zero():
 def test_stock_every_product_gets_a_line_once_any_product_has_open_so():
     """Two products, only one with open SO - both get their own line (per the owner's
     wording: "products with zero open SO still get their line" once any does)."""
-    out = env("crm_inventory_stock_balance_list", {
-        "data": [
-            {"product_code": "A1", "quantity_on_hand": 10, "open_so_qty": 5, "sellable": 5},
-            {"product_code": "A2", "quantity_on_hand": 8, "open_so_qty": 0, "sellable": 8},
-        ],
-    })
+    out = env("crm_inventory_stock_balance_list", _stock_env(
+        [{"product_code": "A1", "quantity_on_hand": 10, "open_so_qty": 5, "sellable": 5},
+         {"product_code": "A2", "quantity_on_hand": 8, "open_so_qty": 0, "sellable": 8}],
+        [{"product_id": "p1", "product_code": "A1", "total_on_hand": 10, "open_so_qty": 5, "sellable": 5},
+         {"product_id": "p2", "product_code": "A2", "total_on_hand": 8, "open_so_qty": 0, "sellable": 8}],
+    ))
     lines = {f["label"]: f["value"] for entry in out["summary_items"] for f in entry["fields"]}
     assert lines == {"A1": "Open SO 5, Available 5", "A2": "Open SO 0, Available 8"}
 
 
-def test_stock_compact_carries_open_so_and_sellable_restricted():
+def test_stock_compact_renders_the_same_per_product_block_and_no_per_entry_pair():
+    """Review round 2, S2: the compact policy renders the owner's one-line-per-product
+    block too and drops its old per-entry Open SO / Sellable pair."""
     out = env("crm_inventory_stock_balance_list", {
         "data": [],
         "stock_visibility": {"mode": "compact", "source": "access_type"},
@@ -538,14 +552,12 @@ def test_stock_compact_carries_open_so_and_sellable_restricted():
             "flags": {},
         }],
     })
-    f = {x.get("label"): x["value"] for x in out["items"][0]["fields"]}
-    assert f["Open SO"] == 4
-    assert f["Sellable (on hand minus open SO)"] == 8
-    assert out["restricted_fields"] == {
-        "open_so_qty": "inventory.sellable",
-        "sellable": "inventory.sellable",
-    }
-
+    labels = [f["label"] for f in out["items"][0]["fields"]]
+    assert "Open SO" not in labels and "Sellable (on hand minus open SO)" not in labels
+    assert labels[:2] == ["Product Code", "Total"]
+    field = out["summary_items"][0]["fields"][0]
+    assert field["label"] == "SRTWT107" and field["value"] == "Open SO 4, Available 8"
+    assert out["restricted_fields"] == {"open_so_avail": "inventory.sellable"}
 
 def test_forms_minimal_name_only():
     out = env("crm_forms_management_forms_list", {"data": [{"name": "Renovation Form", "attachment_id": "x"}]})

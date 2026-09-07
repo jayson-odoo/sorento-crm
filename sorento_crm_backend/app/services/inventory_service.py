@@ -1012,6 +1012,25 @@ class StockService:
                 payload["relaxed_axis"] = "entity"
         return payload
 
+    def on_hand_total_by_product(self, product_ids: list[str]) -> dict[str, int]:
+        """`quantity_on_hand` summed over EVERY warehouse row of each product (review round
+        2, S2): the per-product "Available" line must never be a sum over the returned
+        PAGE, which is short of the truth for a product held in more warehouses than the
+        page limit. Company scope ANDed in by hand - a column-only aggregate is where the
+        session listener's scope is lost (`order_service.stamp_order_summary`)."""
+        from app.services.company_scope import build_company_predicate, get_company_scope
+
+        ids = [str(pid) for pid in product_ids if pid]
+        if not ids:
+            return {}
+        q = self.db.query(Stock.product_id, func.sum(Stock.quantity_on_hand)).filter(
+            Stock.product_id.in_(ids)
+        )
+        pred = build_company_predicate(Stock, get_company_scope(self.db))
+        if pred is not None:
+            q = q.filter(pred)
+        return {str(pid): int(qty or 0) for pid, qty in q.group_by(Stock.product_id).all()}
+
     def open_so_qty_by_product(self, product_ids: list[str]) -> dict[str, int]:
         """Open (not-yet-DO'd) SO quantity per PRODUCT, across every warehouse (A2).
 

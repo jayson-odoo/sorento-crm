@@ -173,17 +173,37 @@ class TestBaseFieldsFirst:
     def test_the_whole_phrase_and_the_other_languages_reach_the_same_field(self):
         for word, label in (("list price", "List Price"), ("harga", "List Price"), ("cost", "List Price"),
                             ("dimension", "Dimensions"), ("size", "Dimensions"), ("ukuran", "Dimensions"),
-                            ("description", "Description"), ("desc", "Description"), ("name", "Product Name")):
+                            ("description", "Description"), ("desc", "Description")):
             out = fetch.output_structurer(
                 _family_envelope([_item("SRTWC286-SH", specs=[_SEAT], description="Wall hung closet")], _MATERIAL_VOCAB),
                 {"semantic_input": {"requested_attributes": [word]}},
             )
             assert _labels(out) == ["Company", "Product Code", label], word
 
-    def test_a_base_word_inside_a_longer_phrase_still_hits(self):
+    def test_a_single_token_entry_matches_the_whole_ask_only(self):
+        """Review round 2 (S5/S6): "brand name" must not reach Product Name and "seat size"
+        must not reach Dimensions - a token inside a longer ask is not the base field. The
+        ask falls through to the spec pass and gets its miss line on a miss."""
+        for word in ("brand name", "seat size", "selling price"):
+            out = fetch.output_structurer(_family_envelope([_item("SRTWC286-SH", specs=[_SEAT])], _MATERIAL_VOCAB),
+                                          {"semantic_input": {"requested_attributes": [word]}})
+            assert _labels(out) == ["Company", "Product Code"], word
+            assert f"*{word}:* not recorded for SRTWC286-SH" in out["response"], word
+            assert out["response"].count("recorded for") == 1
+
+    def test_a_multi_token_entry_is_still_found_inside_a_longer_ask(self):
         out = fetch.output_structurer(_family_envelope([_item("SRTWC286-SH")], {}),
-                                      {"semantic_input": {"requested_attributes": ["selling price"]}})
+                                      {"semantic_input": {"requested_attributes": ["the list price please"]}})
         assert _labels(out) == ["Company", "Product Code", "List Price"]
+
+    def test_a_split_emission_renders_both_base_fields(self):
+        """`_base_label_for` returns the first label only, so a merged entry "price and
+        size" would keep List Price and silence size; the prompt asks the model to split,
+        and a split emission renders both."""
+        out = fetch.output_structurer(_family_envelope([_item("SRTWC286-SH")], {}),
+                                      {"semantic_input": {"requested_attributes": ["price", "size"]}})
+        assert _labels(out) == ["Company", "Product Code", "List Price", "Dimensions"]
+        assert "recorded for" not in out["response"]
 
 
 class TestSpecKeysByTokenContainment:

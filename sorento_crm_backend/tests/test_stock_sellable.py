@@ -284,3 +284,49 @@ def test_the_summary_row_still_carries_the_product_total(db):
     entry = body["stock_summary"][0]
     assert entry["open_so_qty"] == 35
     assert entry["sellable"] == 65
+
+
+def test_with_sellable_adds_a_product_total_summary_to_detailed_rows_beyond_the_page(db):
+    """Review round 2, S2: the detailed payload now carries `stock_summary` per product,
+    with `total_on_hand` summed over EVERY warehouse row - the rows may be one page of
+    many. The presenter reads the line from here, never from a page sum."""
+    prod_id = _product(db, "SRTWC286-SH")
+    wh_a, wh_b, wh_c = _warehouse(db), _warehouse(db), _warehouse(db)
+    _stock(db, prod_id, wh_a, 10)
+    _stock(db, prod_id, wh_b, 20)
+    _stock(db, prod_id, wh_c, 30)
+    _so_line(db, prod_id, wh_a, ordered=8, delivered=0)  # open SO 8
+    db.commit()
+
+    full = StockService(db).list_stock(product_ids=[prod_id], page=1, limit=50)
+    page = StockService(db).list_stock(product_ids=[prod_id], page=1, limit=1)  # ONE warehouse row
+    assert len(page["data"]) == 1
+    body = _with_sellable(StockService(db), page).body
+    import json
+
+    body = json.loads(body)
+    assert len(body["data"]) == 1
+    assert body["stock_summary"] == [{
+        "product_id": prod_id, "product_code": "SRTWC286-SH",
+        "product_name": body["stock_summary"][0]["product_name"],
+        "total_on_hand": 60, "open_so_qty": 8, "sellable": 52,
+    }]
+    assert json.loads(_with_sellable(StockService(db), full).body)["stock_summary"][0]["total_on_hand"] == 60
+
+
+def test_on_hand_total_by_product_is_company_scoped(db):
+    from app.models.base import set_company_scope
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from tests._mc_lookup_seed import MOCHA_ID, seed_mocha
+
+    seed_mocha(db)
+    prod_id = _product(db, "SRTWC286-SCOPE")
+    wh = _warehouse(db)
+    _stock(db, prod_id, wh, 10)
+    other = _stock(db, prod_id, _warehouse(db), 90)
+    other.company_id = MOCHA_ID
+    db.commit()
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    assert StockService(db).on_hand_total_by_product([prod_id]) == {prod_id: 10}
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+    assert StockService(db).on_hand_total_by_product([prod_id]) == {prod_id: 100}

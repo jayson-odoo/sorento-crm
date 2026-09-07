@@ -286,9 +286,35 @@ def stamp_so_outstanding_rows(
         for p in products:
             if isinstance(p, dict) and p.get("product_code"):
                 p["so_outstanding_qty"] = per_product.get(p["product_code"], 0)
+        # Review round 2, S1: a 0 is written ONLY where it is a fact. The SO side keys on
+        # `Customer.customer_name`, the DO side on `debtor_name` (coalesced to the customer
+        # name), and 322 of 30,920 orders on the copy spell the two differently - a 0 on
+        # such a group was printed as "SO outstanding: 0" for a customer who may well have
+        # open SO. So: a group the SO side matched gets its quantity; a group whose name
+        # the customer master KNOWS (same scope, same customer filter) but has no open SO
+        # gets 0, which is true; a name the master does not know gets no key at all, and
+        # the presenter prints nothing for it. The product row above always carries the
+        # product total.
+        group_names = {
+            g.get("customer") for g in groups if isinstance(g, dict) and isinstance(g.get("customer"), str)
+        }
+        known_names: set[str] = set()
+        if group_names:
+            kq = db.query(func.btrim(Customer.customer_name)).filter(
+                func.btrim(Customer.customer_name).in_(list(group_names))
+            )
+            if customer_ids:
+                kq = kq.filter(Customer.id.in_([str(c) for c in customer_ids]))
+            kq = _scoped(kq, _p_cust)
+            known_names = {row[0] for row in kq.all() if row[0]}
         for g in groups:
-            if isinstance(g, dict) and g.get("product_code"):
-                g["so_outstanding_qty"] = per_group.get((g.get("customer"), g["product_code"]), 0)
+            if not isinstance(g, dict) or not g.get("product_code"):
+                continue
+            key = (g.get("customer"), g["product_code"])
+            if key in per_group:
+                g["so_outstanding_qty"] = per_group[key]
+            elif g.get("customer") in known_names:
+                g["so_outstanding_qty"] = 0
     except Exception as exc:  # pragma: no cover - best-effort by contract
         logger.warning("stamp_so_outstanding_rows skipped: %s", exc)
 

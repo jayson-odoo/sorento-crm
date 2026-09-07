@@ -727,10 +727,22 @@ def get_console_media_status(db: Session, media_id: str) -> dict[str, Any]:
     """`GET /console/media/{media_id}` - the poll the FE falls back to once a media
     turn's synchronous wait timed out. Safe to call repeatedly; no side effects.
     """
-    from app.models.media import MediaExtractionJob
+    from app.models.media import ContactMediaUsage, MediaExtractionJob
 
     try:
-        row = db.query(MediaExtractionJob).filter(MediaExtractionJob.id == media_id).first()
+        # Scoped to CONSOLE jobs (review round 2, nit 2): the console stamps its usage
+        # rows `message_id = "console-media-<hex>"` (`_run_console_media_turn`), so a
+        # chat-history viewer holding this permission cannot poll a real customer's
+        # extraction by guessing a job id. A real job is a 404 here, the same as none.
+        row = (
+            db.query(MediaExtractionJob)
+            .join(ContactMediaUsage, ContactMediaUsage.id == MediaExtractionJob.usage_id)
+            .filter(
+                MediaExtractionJob.id == media_id,
+                ContactMediaUsage.message_id.like("console-media-%"),
+            )
+            .first()
+        )
     except Exception:  # noqa: BLE001 - a malformed id is a miss, not a 500
         db.rollback()
         row = None

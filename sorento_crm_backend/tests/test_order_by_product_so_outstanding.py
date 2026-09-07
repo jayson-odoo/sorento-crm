@@ -189,8 +189,12 @@ def test_a_row_with_no_open_so_says_zero(db, scenario):
     s = OrderService(db).list_orders_by_product(
         product_ids=[prod.id], include_summary=True, include_pipeline=True
     )["summary"]
-    by_cust = {g["customer"]: g["so_outstanding_qty"] for g in s["groups"]}
+    # Review round 2, S1: QUIET is a customer the master knows with no open SO, so its 0
+    # is a fact and stays; only a name the master does not know (the debtor-name gap
+    # test below) omits the key.
+    by_cust = {g["customer"]: g.get("so_outstanding_qty", "absent") for g in s["groups"]}
     assert by_cust == {"HENG SENG HARDWARE SDN BHD": 7, "QUIET SDN BHD": 0}
+    assert s["products"][0]["so_outstanding_qty"] == 7
 
 
 def test_company_scope_applies_to_the_so_rows_too(db, scenario):
@@ -214,7 +218,7 @@ def test_known_gap_a_do_debtor_name_that_differs_from_the_customer_name(db, scen
     `customer_id`, so the SO side is keyed on `Customer.customer_name`. A DO whose
     debtor_name was typed differently from its customer's name lands in a group the SO
     lookup cannot match: the product total still carries the SO quantity, that group
-    reads 0. Both importers write debtor_name from the same customer master in
+    carries no key (S1: never a 0 printed as fact). Both importers write debtor_name from the same customer master in
     practice, so this is rare; if it shows up in a real answer, the fix is to key both
     sides on customer_id."""
     cust, prod, wh = scenario
@@ -224,8 +228,10 @@ def test_known_gap_a_do_debtor_name_that_differs_from_the_customer_name(db, scen
         product_ids=[prod.id], customer_ids=[cust.id], include_summary=True, include_pipeline=True
     )["summary"]
     assert s["products"][0]["so_outstanding_qty"] == 7
-    by_cust = {g["customer"]: g["so_outstanding_qty"] for g in s["groups"]}
-    assert by_cust == {"HENG SENG HARDWARE SDN BHD": 7, "HENG SENG HARDWARE (KL)": 0}
+    by_cust = {g["customer"]: g.get("so_outstanding_qty", "absent") for g in s["groups"]}
+    # the unmatchable group carries NO key (review round 2, S1): the presenter prints
+    # nothing for it rather than "SO outstanding: 0" as fact
+    assert by_cust == {"HENG SENG HARDWARE SDN BHD": 7, "HENG SENG HARDWARE (KL)": "absent"}
 
 
 # -------------------------------------------------------------------- route
