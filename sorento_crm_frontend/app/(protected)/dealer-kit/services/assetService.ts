@@ -13,9 +13,22 @@
  *   201 { id, name, kind, tags[], url, mime_type }
  *   422 when the extension does not match the kind (a font must be
  *       .woff2/.ttf/.otf; artwork must be .png/.jpg/.webp/.svg).
+ *
+ * PATCH /api/v1/dealer-kit/assets/{id}       { name }
+ *   200 { id, name, kind, tags[], url, mime_type }
+ *   409 FONT_NAME_TAKEN - another font already carries that name.
+ *   Renaming a font also rewrites every layer that named the old family;
+ *   anything else changes only the row.
+ *
+ * DELETE /api/v1/dealer-kit/assets/{id}
+ *   204, or 409 FONT_IN_USE / ASSET_IN_USE naming what still uses it. No
+ *   service function here for it: delete is a deferred action (D7) parked
+ *   through `pendingActionService.createPendingAction` with
+ *   `actionKey: 'dealer_kit_asset.delete'` - this route is only the
+ *   immediate one the record action executes, for API/non-UI callers.
  * ```
  *
- * Both endpoints are gated on `dealer_kit.library.manage`.
+ * All four endpoints are gated on `dealer_kit.library.manage`.
  */
 
 import { apiFetch } from '@/lib/api';
@@ -80,6 +93,24 @@ export async function uploadAsset(input: {
 /** The company's brand fonts, for the inspector list and `@font-face`. */
 export async function listFontAssets(): Promise<KitAsset[]> {
   return listAssets({ kind: 'font', limit: 100 });
+}
+
+/**
+ * Rename a library asset. For a font this also rewrites every layer that
+ * named the old family, in the same backend transaction - nothing further
+ * to do here beyond telling the caller the old name, so it can rewrite the
+ * OPEN document's layers too (see `TagCanvasEditor`'s `onRenamed`).
+ */
+export async function renameAsset(id: string, name: string): Promise<KitAsset> {
+  const response = await apiFetch(`${BASE}/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to rename the asset'));
+  }
+  return response.json();
 }
 
 /**

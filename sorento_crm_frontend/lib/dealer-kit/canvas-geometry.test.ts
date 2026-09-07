@@ -10,12 +10,17 @@
 import { describe, expect, it } from 'vitest';
 
 import type { TagLayer } from './tag-template-types';
-import { defaultShapeProps, defaultTextProps } from './tag-template-types';
+import {
+  defaultPriceBadgeProps,
+  defaultShapeProps,
+  defaultTextProps,
+} from './tag-template-types';
 import {
   ancestorsOf,
   bandBetween,
   panelDropTarget,
   panelRows,
+  renameFontFamilyInLayers,
   reparentLayer,
   cloneLayers,
   descendantsOf,
@@ -860,5 +865,99 @@ describe('reparentLayer', () => {
     const layers = panelDoc();
 
     expect(reparentLayer(layers, 'nope', { parentId: 'G', beforeId: null })).toBe(layers);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// renameFontFamilyInLayers (PLAN-brand-font-manage.md, AC-5)
+// ---------------------------------------------------------------------------
+
+describe('renameFontFamilyInLayers', () => {
+  function textBox(spec: BoxSpec, fontFamily: string): TagLayer {
+    return { ...box(spec), type: 'text', props: { ...defaultTextProps(), fontFamily } };
+  }
+
+  function badgeBox(spec: BoxSpec, fontFamily: string | undefined): TagLayer {
+    return {
+      ...box(spec),
+      type: 'price_badge',
+      props: { ...defaultPriceBadgeProps(), fontFamily },
+    };
+  }
+
+  it('rewrites a text layer naming the old family', () => {
+    const layers = [textBox({ id: 't1', x: 0, y: 0, w: 10, h: 10 }, 'Sorento Display')];
+
+    const out = renameFontFamilyInLayers(layers, 'Sorento Display', 'Sorento Display Pro');
+
+    expect((byId(out, 't1').props as { fontFamily: string }).fontFamily).toBe(
+      'Sorento Display Pro',
+    );
+  });
+
+  it("rewrites a price badge's figure font the same way", () => {
+    const layers = [badgeBox({ id: 'b1', x: 0, y: 0, w: 10, h: 10 }, 'Sorento Display')];
+
+    const out = renameFontFamilyInLayers(layers, 'Sorento Display', 'Sorento Display Pro');
+
+    expect((byId(out, 'b1').props as { fontFamily?: string }).fontFamily).toBe(
+      'Sorento Display Pro',
+    );
+  });
+
+  it('leaves a layer set in a DIFFERENT family untouched', () => {
+    const layers = [textBox({ id: 't1', x: 0, y: 0, w: 10, h: 10 }, 'DM Sans')];
+
+    const out = renameFontFamilyInLayers(layers, 'Sorento Display', 'Sorento Display Pro');
+
+    expect(out).toBe(layers);
+    expect((byId(out, 't1').props as { fontFamily: string }).fontFamily).toBe('DM Sans');
+  });
+
+  it('leaves a shape or group layer untouched - neither carries a font', () => {
+    const layers = [
+      box({ id: 's1', x: 0, y: 0, w: 10, h: 10 }),
+      group({ id: 'g1', x: 0, y: 0, w: 10, h: 10, children: ['s1'] }),
+    ];
+
+    const out = renameFontFamilyInLayers(layers, 'Sorento Display', 'Sorento Display Pro');
+
+    expect(out).toBe(layers);
+  });
+
+  it('rewrites every matching layer, mixed with layers that do not match', () => {
+    const layers = [
+      textBox({ id: 't1', x: 0, y: 0, w: 10, h: 10 }, 'Sorento Display'),
+      textBox({ id: 't2', x: 0, y: 0, w: 10, h: 10 }, 'DM Sans'),
+      badgeBox({ id: 'b1', x: 0, y: 0, w: 10, h: 10 }, 'Sorento Display'),
+      badgeBox({ id: 'b2', x: 0, y: 0, w: 10, h: 10 }, undefined),
+    ];
+
+    const out = renameFontFamilyInLayers(layers, 'Sorento Display', 'Sorento Display Pro');
+
+    expect((byId(out, 't1').props as { fontFamily: string }).fontFamily).toBe(
+      'Sorento Display Pro',
+    );
+    expect((byId(out, 't2').props as { fontFamily: string }).fontFamily).toBe('DM Sans');
+    expect((byId(out, 'b1').props as { fontFamily?: string }).fontFamily).toBe(
+      'Sorento Display Pro',
+    );
+    expect((byId(out, 'b2').props as { fontFamily?: string }).fontFamily).toBeUndefined();
+  });
+
+  it('is a no-op (same array reference) when the old and new names match', () => {
+    const layers = [textBox({ id: 't1', x: 0, y: 0, w: 10, h: 10 }, 'Sorento Display')];
+
+    expect(renameFontFamilyInLayers(layers, 'Sorento Display', 'Sorento Display')).toBe(
+      layers,
+    );
+  });
+
+  it('is a no-op (same array reference) when nothing matches', () => {
+    const layers = [textBox({ id: 't1', x: 0, y: 0, w: 10, h: 10 }, 'DM Sans')];
+
+    expect(renameFontFamilyInLayers(layers, 'Sorento Display', 'Sorento Display Pro')).toBe(
+      layers,
+    );
   });
 });

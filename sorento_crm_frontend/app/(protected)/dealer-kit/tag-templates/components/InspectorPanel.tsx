@@ -620,7 +620,7 @@ function TypographyControls({
               className="h-6 px-1.5 text-[10px]"
               onClick={onUploadFont}
             >
-              Upload font
+              Manage fonts
             </Button>
           )}
         </div>
