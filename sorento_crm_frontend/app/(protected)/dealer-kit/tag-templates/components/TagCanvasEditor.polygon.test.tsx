@@ -473,7 +473,9 @@ describe('select mode - single click (S5, AC-S5-1)', () => {
     selectShape();
     expect(lastAnchors()).toEqual(FULL_ANCHORS);
 
-    const before = polygonPoints(shapeLayer('sh1', 'polygon').props);
+    const freshShapeProps = shapeLayer('sh1', 'polygon').props;
+    const before =
+      freshShapeProps.kind === 'shape' ? polygonPoints(freshShapeProps) : [];
 
     // A corner-anchor drag: Konva reports it as a `scale` on the node the
     // Transformer is attached to, not a new width/height directly.
