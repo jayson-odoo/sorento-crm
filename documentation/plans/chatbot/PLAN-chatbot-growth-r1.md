@@ -322,3 +322,93 @@ elsewhere (see `project_do_search_mcp_feedback_7sep`).
 Learning levels B-E; L2 episodic retrieval; agent strategy; flow builder; removing the
 `pending` / `dym_offer` mirrors from `SessionVars` (follow-up after corpus re-derivation);
 MCP-side field filtering for the in-app assistant.
+
+## Evidence run - `feat/chatbot-growth-trace-ui` (AC-963, AC-965, AC-972, AC-973, AC-992), 7 Sep 2026
+
+Agent-browser (isolated session `tester-chatbot-trace-ui`), FE `http://localhost:3080` (dev,
+HMR), BE `http://localhost:8080`. Screenshots: `documentation/evidence/chatbot-growth-trace-ui-7sep/`.
+
+**Data prerequisite.** The dev Postgres had zero LIVE (`is_test=false`) `chatbot.turns` rows
+tied to a real `chat_histories` message - the only three non-test rows in the DB belonged to a
+contact with no `chat_histories`/`respond_contacts` row at all, so nothing surfaced in the UI
+(the FE never requests `include_test=true`, by design - H57/D14). To exercise the drawer against
+real data rather than mocks, one real turn was posted for the existing dev contact "Jayson
+Jayson" (`respond_io_id 437264483`) via the legitimate ingress contract: `POST
+/api/v1/external/chat/turn` (X-API-Key, envelope borrowed from that contact's most recent
+console-check envelope, `is_test: false`, message "stock for SRTWC8517-SH-UF") followed by
+`POST /api/v1/external/chat-history/messages` (the same contract n8n uses to log the incoming
+message) so `chat_histories.message_id` matched `chatbot.turns.message_id` and `TurnPanel` had
+something to key off. Turn id `e2c0334d-8a81-4e33-82c8-455fd2f5e48b`, status `delegated` (the
+business lane is not CRM-completed on this lane's backend, so the turn routes and stops - it
+never reaches `failed`). This is now real data in the shared local dev Postgres for that one
+contact/message; nothing was written directly to the database.
+
+**Step 1 - Chat History drawer (AC-972, AC-973).** Sidebar: System > Messaging > Chat History
+(`/system-management/chat-history`). Widened the Filters date range (default is 1 day) via the
+native `datetime-local` inputs. Opened the "Jayson Jayson (+60166753328)" thread, searched
+"SRTWC8517-SH-UF", found the injected incoming message with its `TurnPanel` ("In progress /
+Business query / 7.1 s / #e2c0"), clicked the "Open full trace" icon button. `TurnDetailDrawer`
+opened titled "Turn #e2c0" with all nine sections **in order**: Stages, Parse, Decay, Open
+question, Focus, Tool, Cross-domain, Field reveals, Session - matching AC-970/972's contract
+(`reveals` renders as "Field reveals", `session` diff as "Session"). Stages was expanded by
+default (4 rows: received/understood/access/routed, all `ok`); every other section was
+collapsed. Expanded each one by one:
+  - Parse: monospace JSON in a `<pre>`, confirmed via `getComputedStyle` - `overflow-y: auto`,
+    `scrollHeight 776 > clientHeight 418` (scrolls inside its own container, not the page).
+  - Decay: "Nothing decayed this turn."
+  - Open question: "No open question this turn."
+  - Focus: "No focus rule fired this turn."
+  - Tool: "No tool call recorded."
+  - Cross-domain: "No cross-domain probe this turn."
+  - Field reveals: "No restricted field was on this answer."
+  - Session: "Lost: none / Gained: none".
+  At 375x812 (`set viewport 375 812`): `document.documentElement.scrollWidth` = 375,
+  `window.innerWidth` = 375 - **no horizontal page scroll**. Screenshot
+  `01-turn-detail-drawer-1280.png` (collapsed, 1280) and `02-turn-detail-drawer-375.png` (375).
+  **AC-973 (failed turn first) not exercised live**: no naturally-occurring LIVE failed turn
+  existed to open (the only failed rows in this DB are `is_test=true` console-check runs, which
+  the FE never fetches, or on a contact with no chat row), and producing one would need
+  flipping `chatbot_business_lane_enabled` / `chatbot_completed_lanes` for the whole lane
+  backend - out of scope for a read-only verification pass. Covered instead by
+  `TurnDetailDrawer.test.tsx::'a failed turn shows the failing stage first'` - ran green
+  (`npx vitest run ".../TurnDetailDrawer.test.tsx"`, 4/4 passed).
+
+**Step 2 - Contacts > Access > Field reveals (AC-963, AC-965).** No sidebar entry for
+`/user-management/contacts` exists (by design - `apps-dropdown-menu.tsx` names it the ONLY nav
+path). Reached via the topbar grid icon (mislabeled `aria-label="Switch layout"`, an existing
+bug) > "Internal Users / Respond contacts" > any contact row > Access tab. The "Field reveals"
+card renders under Access Agents: **"No restricted field exists yet - nothing here needs a
+grant."** - correct, since `GET /field-reveal-keys` returns `[]` (no presenter has declared a
+`restricted=` key yet). No UUIDs on screen, no explanatory/feature-education copy beyond that
+one factual sentence. At 375x812 the card itself measured `left 16, right 359, width 343px` -
+entirely inside the 375px viewport, not clipped. **However** `document.documentElement.scrollWidth`
+= 439 at 375px viewport (> 375) - the page DOES have horizontal scroll, traced via
+`el.scrollWidth` walk to the pre-existing "Access Agents" DataGrid/table (`scrollWidth 1090`,
+its own `overflow-x-auto` wrapper) whose containing Card is 422-439px wide instead of
+constraining to the viewport - a flex/`min-w-0` gap in a component this PR did not touch. Not a
+regression from the Field reveals card (measured separately, entirely in-bounds); flagged as a
+pre-existing defect, not filed as a new backlog item by this run.
+
+**Step 3 - Backend spot checks (curl, `http://localhost:8080`, JWT from `POST
+/api/v1/auth/login` - the `/system/chatbot/*` routes are `require_permission`, JWT only, no
+X-API-Key path):**
+  - `GET /api/v1/system/chatbot/field-reveal-keys` -> **200**, `{"items":[]}` (no restricted
+    keys declared yet - expected, matches Step 2).
+  - `GET /api/v1/system/chatbot/turns/e2c0334d-8a81-4e33-82c8-455fd2f5e48b` -> **200**,
+    `trace_detail` present with exactly the nine keys: `stages, parse, decay, open_question,
+    focus, tool, crossdomain, reveals, session`.
+  - `PUT /api/v1/system/chatbot/contacts/96f2e854-acbe-40e5-89ad-6efb29aa3c4d/field-reveals`
+    with `{"granted": ["bogus.key"]}` -> **422**,
+    `"Unknown field reveal key(s): bogus.key. Allowed keys: none."`.
+
+**Step 4 - Console.** Chat History / drawer pages: one pre-existing `Each child in a list
+should have a unique "key" prop` warning traced to `Demo1Layout` (the shared shell, not this
+PR's components). A batch of "Maximum update depth exceeded" errors also showed up in
+`errors --json` - traced to the synthetic `dispatchEvent(new Event('input'/'change'))` calls
+this run used to drive the native `datetime-local` Filters inputs (CDP has no native way to
+type into the two-part date/time spinner), not to real user interaction; not treated as a
+product defect. No other console errors on either page.
+
+**Overall: PASS** on AC-963, AC-965 (with the pre-existing Access Agents overflow noted, not
+this PR's regression), AC-972, AC-992. AC-973 verified via vitest, not browser (no reachable
+live failed turn in this dev environment without altering shared settings).
