@@ -206,3 +206,10 @@ removed copy, for whoever restores a UI for them:
   `shipment_line_spo_link.inbound_shipment_line_id`, the chain `_own_state` already walks)
   rather than on the product, and check every reader of the column. |
   `plans/scm/PLAN-scm-purchasing-consolidation-6sep.md` | Medium | Open |
+- **BL-063** (2026-09-07, r6 browser pass): request designer LINES rail on a request with three
+  or more lines shows only the first row; rows 2 and 3 exist in the DOM at the right offsets but
+  sit under the TAG SIZE panel, and the rail has no scroll affordance, so a designer cannot click
+  them (the tester had to click through the DOM). Pre-existing from the r3 resizable-panel split
+  (rail / layers vertical group), not changed by r6. **Trigger:** any request with 3+ lines on a
+  laptop-height viewport. Fix: give the rail its own `overflow-y-auto` with a min height, or
+  size the rail panel from the line count. | `plans/dealer-kit/PLAN-price-tag-r6.md` | Medium | Open |

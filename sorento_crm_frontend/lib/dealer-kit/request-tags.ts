@@ -315,6 +315,20 @@ export function resizeAllTags(
   return next;
 }
 
+/**
+ * A template document's `print_size` mirror (S1): `doc.width_mm/height_mm`
+ * and the template's own top-level `print_size` are two copies of the same
+ * fact, and this is the ONE place either the create or the update path
+ * reads it from - a doc resized without going through this could leave the
+ * two disagreeing forever, since nothing else compares them.
+ */
+export function printSizeOf(doc: {
+  width_mm: number;
+  height_mm: number;
+}): { width_mm: number; height_mm: number } {
+  return { width_mm: doc.width_mm, height_mm: doc.height_mm };
+}
+
 /** The floor every tag size control clamps up to (S9 review S3). */
 export const MIN_TAG_SIZE_MM = 10;
 
@@ -395,6 +409,32 @@ export function resolveTagSize(
  * with no tag yet gets one too (AC-S5-5), so it never later clones from the
  * request's default template and quietly undoes the bulk apply.
  */
+/**
+ * A layer array, fresh ids throughout (group `children` remapped alongside)
+ * so no two lines' tags ever share one - the cloning step both
+ * `applyDesignToAllLines` and `applyDesignToSiblings` (S6) need, pulled out
+ * once they were the same nine lines twice.
+ */
+function cloneLayersWithFreshIds(layers: TagLayer[], newId: () => string): TagLayer[] {
+  const idMap = new Map<string, string>();
+  for (const layer of layers) idMap.set(layer.id, newId());
+  return layers.map((layer) => {
+    const clone: TagLayer = {
+      ...structuredClone(layer),
+      id: idMap.get(layer.id) as string,
+    };
+    if (clone.props.kind === 'group') {
+      clone.props = {
+        ...clone.props,
+        children: clone.props.children
+          .map((childId) => idMap.get(childId))
+          .filter((childId): childId is string => Boolean(childId)),
+      };
+    }
+    return clone;
+  });
+}
+
 export function applyDesignToAllLines(
   tags: Record<string, PlacedTag>,
   lines: TagRequestLine[],
@@ -408,24 +448,7 @@ export function applyDesignToAllLines(
   for (const line of lines) {
     if (line.id === sourceLineId) continue;
 
-    const idMap = new Map<string, string>();
-    for (const layer of source.layers) idMap.set(layer.id, newId());
-    const layers: TagLayer[] = source.layers.map((layer) => {
-      const clone: TagLayer = {
-        ...structuredClone(layer),
-        id: idMap.get(layer.id) as string,
-      };
-      if (clone.props.kind === 'group') {
-        clone.props = {
-          ...clone.props,
-          children: clone.props.children
-            .map((childId) => idMap.get(childId))
-            .filter((childId): childId is string => Boolean(childId)),
-        };
-      }
-      return clone;
-    });
-
+    const layers = cloneLayersWithFreshIds(source.layers, newId);
     const existing = next[line.id];
     next[line.id] = {
       id: newId(),
@@ -437,6 +460,49 @@ export function applyDesignToAllLines(
       height_mm: source.height_mm,
       layers: bindTemplateLayers(layers, bindingForLine(line)),
       pinned: existing?.pinned,
+    };
+  }
+  return next;
+}
+
+/**
+ * "Update <template>" with its sibling checkbox on (S6, AC-S6-4): the
+ * SOURCE line's current tag - design AND size - cloned onto every OTHER
+ * line whose CURRENT tag's `template_id` matches the same template. Unlike
+ * `applyDesignToAllLines`, a line NOT already on this template (a different
+ * template, or no tag at all) is left untouched rather than switched onto
+ * it - Update republishes T for whoever is already using it, it does not
+ * make more lines use it.
+ */
+export function applyDesignToSiblings(
+  tags: Record<string, PlacedTag>,
+  lines: TagRequestLine[],
+  sourceLineId: string,
+  templateId: string,
+  newId: () => string,
+): Record<string, PlacedTag> {
+  const source = tags[sourceLineId];
+  if (!source) return tags;
+
+  const next: Record<string, PlacedTag> = { ...tags };
+  for (const line of lines) {
+    if (line.id === sourceLineId) continue;
+    const existing = next[line.id];
+    if (!existing || existing.template_id !== templateId) continue;
+
+    next[line.id] = {
+      id: newId(),
+      template_id: source.template_id,
+      request_line_id: line.id,
+      x_mm: existing.x_mm,
+      y_mm: existing.y_mm,
+      width_mm: source.width_mm,
+      height_mm: source.height_mm,
+      layers: bindTemplateLayers(
+        cloneLayersWithFreshIds(source.layers, newId),
+        bindingForLine(line),
+      ),
+      pinned: existing.pinned,
     };
   }
   return next;

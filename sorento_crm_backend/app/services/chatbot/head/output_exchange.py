@@ -1362,8 +1362,18 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             # broaden_axis "date" = the user explicitly asked to drop the window. Such a
             # turn names no date, so the carry below would silently restore the PREVIOUS
             # window and answer the opposite of what was asked.
+            #
+            # Owner console pass 5, item B1 (7 Sep 2026, H79/AC-828): `broaden_axis == "date"`
+            # is the PARSER's read of the turn's SHAPE, not proof the turn named no date -
+            # captures e4381b0d / 98526b81 ("last month") set `broaden_axis: "date"` AND a
+            # concrete `date_filter_start` / `date_filter_end` in the SAME parser output
+            # (`user_goal: "trying to specify the date range as last month"`). Wiping the
+            # window unconditionally on `all_time` answered "all dates" to a turn that had
+            # just given one. `has_current_date` (computed above) is exactly the signal
+            # that already distinguishes the two shapes; the wipe now only fires when the
+            # turn ALSO supplied no date of its own.
             all_time = jsc.lower_or_empty(o.get("broaden_axis")) == "date"
-            if all_time:
+            if all_time and not has_current_date:
                 o["date_filter_start"] = None
                 o["date_filter_end"] = None
                 o["date_mode"] = None
@@ -2841,6 +2851,17 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
                     o["entities"] = carried
                     o["entity_op"] = "reuse"
                     o["member_offer_scope_reused"] = True  # diagnostic
+
+            # Owner console pass 5, item B2 (7 Sep 2026, H80/AC-829): a BARE reply the
+            # parser extracted NOTHING from ("rpacc", turn 6ea9fd1a - `entities: []`)
+            # has nothing here for THIS arm to narrow with - the carried pair rides
+            # through unchanged, deliberately. Narrowing it is
+            # `resolve_gate.resolve_bare_reply_under_member_offer`'s job, downstream,
+            # where the RESOLVER exists to ask (review round 1, B3: the first cut's
+            # roster-code-segment reader here invented a shape - "SRTWC286-SH-RPACC" -
+            # no production capture's `routing_companies` carries; production's real
+            # shape is a product coded literally RPACC, which only the resolver can
+            # tell apart from junk text).
             o["member_offer_filter_modification"] = True  # diagnostic
         elif is_new_query:
             # Tier 3b - NEW QUERY: abandon the offer. Touch nothing.

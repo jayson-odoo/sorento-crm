@@ -10,7 +10,7 @@
  * ready. Its test's `PendingImage` stub is the pattern this borrows.
  */
 import { Suspense } from 'react';
-import { act, render } from '@testing-library/react';
+import { act, fireEvent, render } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ensureFontsLoaded } from '@/lib/dealer-kit/fonts';
@@ -49,6 +49,9 @@ function payload(media: {
   assets?: Record<string, string>;
   images?: Record<string, string>;
   fonts?: { name: string; family: string; url: string }[];
+  /** One real image layer bound to `media.assets['asset-1']` (S3 review) -
+   *  absent renders no tags at all, same payload as before that round. */
+  withImageLayer?: boolean;
 }) {
   return {
     doc: {
@@ -60,7 +63,46 @@ function payload(media: {
         bleed_mm: 0,
         gutter_mm: 0,
       },
-      sheets: [{ id: 'sheet-1', tags: [] }],
+      sheets: [
+        {
+          id: 'sheet-1',
+          tags: media.withImageLayer
+            ? [
+                {
+                  id: 't1',
+                  template_id: 'tpl-1',
+                  request_line_id: 'line-1',
+                  x_mm: 5,
+                  y_mm: 5,
+                  width_mm: 95,
+                  height_mm: 130,
+                  layers: [
+                    {
+                      id: 'img1',
+                      type: 'image',
+                      x_mm: 0,
+                      y_mm: 0,
+                      width_mm: 40,
+                      height_mm: 20,
+                      rotation_deg: 0,
+                      z_index: 1,
+                      locked: false,
+                      visible: true,
+                      slot_binding: null,
+                      text_override: null,
+                      props: {
+                        kind: 'image',
+                        source: { type: 'asset', assetId: 'asset-1' },
+                        fit: 'contain',
+                        maskShape: 'none',
+                      },
+                    },
+                  ],
+                },
+              ]
+            : [],
+        },
+      ],
     },
     resolvedData: {},
     assets: media.assets ?? {},
@@ -75,6 +117,7 @@ function stub(media: {
   assets?: Record<string, string>;
   images?: Record<string, string>;
   fonts?: { name: string; family: string; url: string }[];
+  withImageLayer?: boolean;
 }) {
   PendingImage.created = [];
   vi.stubGlobal('Image', PendingImage);
@@ -131,6 +174,36 @@ describe('the tag sheet print page reports ready', () => {
 
     expect(PendingImage.created).toHaveLength(0);
     expect(main.dataset.dkPrintReady).toBe('true');
+  });
+
+  it('counts exactly one <img> per image layer, never a second one appearing later (S3 review)', async () => {
+    // `CroppedImage` used to swap in a SECOND `<img>` once the first one's
+    // own load settled this page's `document.images` snapshot - taken once,
+    // synchronously, on mount - so the second, actually-styled element was
+    // never counted and `data-dk-print-ready` could flip true before it had
+    // painted. One real image layer, bound to `asset-1`.
+    stub({ assets: { 'asset-1': PHOTO }, withImageLayer: true });
+
+    const { container } = await renderPage();
+    const main = container.querySelector('main[data-dk-print-ready]') as HTMLElement;
+
+    const domImages = () => Array.from(container.querySelectorAll('img'));
+    expect(domImages()).toHaveLength(1);
+    expect(main.dataset.dkPrintReady).toBe('false');
+
+    await act(async () => {
+      // The readiness effect's OWN preload for `asset-1` (a `PendingImage`,
+      // separate from the DOM `<img>` TagSheetRenderer mounted for it).
+      PendingImage.created.forEach((image) => image.fire('load'));
+      // The real DOM `<img>` the layer itself rendered - `document.images`
+      // tracks it directly, unrelated to the stubbed `Image` constructor.
+      fireEvent.load(domImages()[0]);
+    });
+
+    expect(main.dataset.dkPrintReady).toBe('true');
+    // Still exactly one - never a second element appearing once natural
+    // size resolved.
+    expect(domImages()).toHaveLength(1);
   });
 
   it('even when a picture is broken, rather than never', async () => {

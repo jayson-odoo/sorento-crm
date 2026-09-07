@@ -849,15 +849,13 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     # its NAME as text and that sprays siblings (exec 13212841). Fails open: applied only
     # when every pinned uuid survived resolution.
     if not require_specific:
-        pins = [
-            e
-            for e in jsc.array(parser.get("entities"))
-            if jsc.truthy(e) and jsc.get(e, "current_message") is True and jsc.truthy(jsc.get(e, "uuid"))
-        ]
-        pin_uuids = {jsc.js_string(jsc.get(e, "uuid")) for e in pins}
         # Gate entry on CARRIED pins too (exec 13705266): a customer picked two turns ago
         # comes back with current_message:false, and keying entry on this-turn pins alone
-        # skipped both the re-seat and the family widening.
+        # skipped both the re-seat and the family widening. #715 (H77/AC-825) finished
+        # the job: every reader below was widened from a this-turn-only `pins` /
+        # `pin_uuids` (now removed - dead once `pin_types`, `pin_bases`, `pin_codes` and
+        # `_keep`'s own uuid check all moved to `pins_all` / `pin_uuids_all`) to the
+        # same carried-or-current set the entry gate already used.
         pins_all = [
             e for e in jsc.array(parser.get("entities")) if jsc.truthy(e) and jsc.truthy(jsc.get(e, "uuid"))
         ]
@@ -886,7 +884,19 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                 label = label if jsc.truthy(label) else None
                 compatible_entities = [*compatible_entities, {"uuid": u, "entity_type": t, "code": label}]
 
-            pin_types = {t for t in (jsc.lower_or_empty(jsc.get(e, "hint")) for e in pins) if t}
+            # Issue #715 (H77/AC-825, 7 Sep 2026): built from `pins_all`, not `pins`. A
+            # customer picked on an EARLIER turn re-enters this whole block on its
+            # CARRIED pin alone (the `pin_uuids_all` entry gate above, exec 13705266's
+            # own fix) - but `pin_types` stayed scoped to THIS-turn pins, so a carried
+            # pick left it EMPTY, and `_keep` below (`t not in pin_types: return True`)
+            # then kept every type "untouched", including every one of the resolver's
+            # own re-resolved customer rows. The re-seat half of this mechanism (using
+            # `pins_all` already) stopped the "which company" ASK; this is the half that
+            # was supposed to stop the ANSWER widening and did not - production debtor
+            # code 301-C001 is shared by 99 customer rows, the resolver returns up to
+            # its own limit (15) of them for a bare re-resolved text search, and a
+            # customer who had already picked ONE of them got orders from all 15.
+            pin_types = {t for t in (jsc.lower_or_empty(jsc.get(e, "hint")) for e in pins_all) if t}
             # Gated on ALL pins: the re-seat loop above already put every pinned uuid back,
             # so checking the wider set just confirms it did its job before the family widens.
             all_present = all(
@@ -942,11 +952,17 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                     for m in flat
                     if jsc.truthy(m) and jsc.truthy(jsc.get(m, "uuid"))
                 }
+                # #715: `pin_uuids_all`, not `pin_uuids` - see the `pin_types` note above.
+                # A carried pin's own row is usually ABSENT from `row_by_uuid` (the
+                # resolver's bare-text re-search does not happen to return it among its
+                # limit), so this stays empty for exactly the shape #715 is about - which
+                # is right: no OTHER base to widen to, so only the pinned uuid itself
+                # (re-seated above) survives `_keep` below.
                 pin_bases = {
                     b
                     for b in (
                         _cust_base(row_by_uuid.get(u))
-                        for u in pin_uuids
+                        for u in pin_uuids_all
                         if jsc.truthy(row_by_uuid.get(u))
                         and jsc.js_string(jsc.get(row_by_uuid.get(u), "entity_type")).lower()
                         == "customer"
@@ -962,7 +978,7 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                     c
                     for c in (
                         jsc.js_string(jsc.get(row_by_uuid.get(u), "canonical_code") or "").upper()
-                        for u in pin_uuids
+                        for u in pin_uuids_all
                         if jsc.truthy(row_by_uuid.get(u))
                         and jsc.js_string(jsc.get(row_by_uuid.get(u), "entity_type")).lower()
                         != "customer"
@@ -974,8 +990,8 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                     t = jsc.js_string(jsc.get(c, "entity_type")).lower()
                     if t not in pin_types:
                         return True  # other types untouched
-                    if jsc.js_string(jsc.get(c, "uuid")) in pin_uuids:
-                        return True  # the pinned row itself
+                    if jsc.js_string(jsc.get(c, "uuid")) in pin_uuids_all:
+                        return True  # the pinned row itself, this turn or carried
                     if jsc.js_string(jsc.get(c, "uuid")) in fam_added:
                         return True  # remembered family of the pick
                     if t != "customer":  # FIX C: same-code twins survive

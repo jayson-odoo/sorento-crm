@@ -2,9 +2,10 @@
  * M6-04 - the one toast standard.
  *
  * `lib/toast.ts` wraps sonner so a success clears itself (4000ms) and an error
- * waits for the reader to dismiss it (`duration: Infinity` + a close button).
- * The wrapper only holds that promise while it is the ONLY door to sonner: a
- * file that imports `toast` straight from `'sonner'` gets neither default, and
+ * clears itself a little slower (5000ms) with a close button for an early
+ * dismiss. The wrapper only holds that promise while it is the ONLY door to
+ * sonner: a file that imports `toast` straight from `'sonner'` gets neither
+ * default, and
  * the mistake is invisible until someone notices a toast vanished mid-read.
  *
  * `components/ui/sonner.tsx` is the one legitimate direct importer - it is

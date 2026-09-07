@@ -13,7 +13,7 @@ from datetime import date
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Optional
 
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import exists, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
@@ -23,7 +23,16 @@ from app.models.lookup import LookupOption
 from app.models.order import Customer, Order, OrderLine, SalesOrder, SalesOrderLine
 from app.models.planning_change import PLANNING_CHANGE_SOURCE_SO_MANUAL_EDIT
 from app.models.product import Product, UnitOfMeasure
-from app.models.project_so import ProjectSalesOrder, ProjectSalesOrderLine
+from app.models.project_so import (
+    SO_STATUS_ADOPTED,
+    AllocationClaim,
+    OrderInquiryRow,
+    ProjectSalesOrder,
+    ProjectSalesOrderLine,
+    ProjectSODivergenceLine,
+    SODraftFinding,
+    SOLineAllocation,
+)
 from app.models.sales_agent import SalesAgent
 from app.models.scm import OrderLinkClaim
 from app.services.error_handler import AppException
@@ -1409,10 +1418,19 @@ class SalesOrderService:
         Matched by `id` when the payload carries one (the FE does not send it today, but a
         future caller - or n8n - might); otherwise by SKU, first-unmatched-row-wins when a
         SKU repeats within the order. A payload line that matches nothing existing is a new
-        line. An existing line that nothing in the payload claims is removed - unless it is
-        still referenced by a project sales-order line's reconciled core link or an
-        SO<->PO `OrderLinkClaim`, in which case the whole update is refused with a 409 rather
-        than silently orphaning that link.
+        line. An existing line that nothing in the payload claims is removed - unless doing
+        so would orphan an SO<->PO `OrderLinkClaim`, or a project sales-order line that
+        reconciled to it is either AUTHORED (a project SO with `project_id` set, or a status
+        other than `adopted` - its lines are its own record of what was committed) or has a
+        dependent row of its own (an allocation, a claim, an Order Inquiry row, a draft
+        finding, a divergence line - proof that planning already happened on it), in which
+        case the whole update is refused with a 409 rather than silently orphaning that link.
+        A reconciled mirror line that is neither of those - an ADOPTION mirror
+        (`project_id` NULL, `status = 'adopted'`) with nothing hanging off it, i.e. an
+        addressing shim nobody has used yet - is pruned in the same transaction instead:
+        see `app.services.project_so_adoption_service` module docstring for why the mirror
+        carries no facts of its own, and `mirror_missing_lines` there re-adds a pruned line
+        on the next re-sync.
 
         `warehouse_code` / `required_date` / `uom` / `unit_price` / `discount` are applied via
         `model_fields_set`, not a plain `is not None` check: a key the caller never sent must
@@ -1502,21 +1520,54 @@ class SalesOrderService:
         removed = [l for l in existing_lines if l.id not in matched_ids]
         if removed:
             removed_ids = [l.id for l in removed]
-            linked = (
-                self.db.query(ProjectSalesOrder.provisional_ref)
+            # One query for every referencing mirror line, not N+1: the dependent check is
+            # five EXISTS subqueries (one per FK onto `projects.sales_order_lines.id` in
+            # `app/models/project_so.py`) folded into the same SELECT as the referrer's own
+            # `ProjectSalesOrder` header, rather than a round trip per removed line.
+            has_dependents = or_(
+                exists().where(SODraftFinding.line_id == ProjectSalesOrderLine.id),
+                exists().where(OrderInquiryRow.so_line_id == ProjectSalesOrderLine.id),
+                exists().where(SOLineAllocation.so_line_id == ProjectSalesOrderLine.id),
+                exists().where(AllocationClaim.so_line_id == ProjectSalesOrderLine.id),
+                exists().where(ProjectSODivergenceLine.so_line_id == ProjectSalesOrderLine.id),
+            )
+            referrers = (
+                self.db.query(
+                    ProjectSalesOrderLine.id,
+                    ProjectSalesOrder.project_id,
+                    ProjectSalesOrder.status,
+                    ProjectSalesOrder.provisional_ref,
+                    has_dependents.label("has_dependents"),
+                )
                 .join(
-                    ProjectSalesOrderLine,
+                    ProjectSalesOrder,
                     ProjectSalesOrderLine.project_sales_order_id == ProjectSalesOrder.id,
                 )
                 .filter(ProjectSalesOrderLine.core_sales_order_line_id.in_(removed_ids))
-                .first()
+                .all()
             )
-            if linked:
-                raise AppException(
-                    409,
-                    f"Cannot remove a line reconciled to project sales order {linked[0]}",
-                    code="SO_LINE_LINKED_TO_PROJECT",
+            prunable_mirror_line_ids: list[str] = []
+            for referrer in referrers:
+                is_authored = (
+                    referrer.project_id is not None or referrer.status != SO_STATUS_ADOPTED
                 )
+                if is_authored:
+                    raise AppException(
+                        409,
+                        f"Cannot remove a line reconciled to project sales order "
+                        f"{referrer.provisional_ref}",
+                        code="SO_LINE_LINKED_TO_PROJECT",
+                    )
+                if referrer.has_dependents:
+                    raise AppException(
+                        409,
+                        "Cannot remove a line that fulfilment planning has already "
+                        f"allocated (project sales order {referrer.provisional_ref})",
+                        code="SO_LINE_LINKED_TO_PROJECT",
+                    )
+                # Adopted, project_id NULL, nothing hanging off it - an addressing shim
+                # nobody has used, pruned rather than blocking the removal.
+                prunable_mirror_line_ids.append(referrer.id)
             claim = (
                 self.db.query(OrderLinkClaim)
                 .filter(OrderLinkClaim.so_line_id.in_(removed_ids))
@@ -1527,6 +1578,23 @@ class SalesOrderService:
                     409,
                     f"Cannot remove a line claimed by purchase order {claim.po_number}",
                     code="SO_LINE_LINKED_TO_CLAIM",
+                )
+            if prunable_mirror_line_ids:
+                # ORM `delete()` per row, not a bulk `Query.delete()`: the latter bypasses
+                # the identity map, so an object already loaded this session (as `referrers`
+                # above may have warmed) reads back as "expired, row missing" instead of
+                # cleanly gone the next time something touches it.
+                mirror_lines = (
+                    self.db.query(ProjectSalesOrderLine)
+                    .filter(ProjectSalesOrderLine.id.in_(prunable_mirror_line_ids))
+                    .all()
+                )
+                for mirror_line in mirror_lines:
+                    self.db.delete(mirror_line)
+                logger.info(
+                    "Pruned %d empty adoption mirror line(s) %s for removed core "
+                    "sales-order line(s) %s",
+                    len(prunable_mirror_line_ids), prunable_mirror_line_ids, removed_ids,
                 )
             for l in removed:
                 self.db.delete(l)

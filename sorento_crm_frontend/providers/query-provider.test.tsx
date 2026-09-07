@@ -1,13 +1,14 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { render } from '@testing-library/react';
 
-// Capture the onError callback that QueryProvider passes to QueryCache.
-let capturedOnError:
-  | ((
-      error: Error,
-      query: { meta?: Record<string, unknown>; queryKey: readonly unknown[] },
-    ) => void)
-  | null = null;
+// Capture the onError/onSuccess callbacks that QueryProvider passes to QueryCache.
+type CapturedQuery = {
+  meta?: Record<string, unknown>;
+  queryKey: readonly unknown[];
+  queryHash: string;
+};
+let capturedOnError: ((error: Error, query: CapturedQuery) => void) | null = null;
+let capturedOnSuccess: ((data: unknown, query: CapturedQuery) => void) | null = null;
 
 // Capture the options QueryProvider constructs its ONE QueryClient with
 // (M4-04): defaultOptions is the shared substitute for 176 per-hook repeats.
@@ -19,8 +20,12 @@ vi.mock('@tanstack/react-query', () => {
   return {
     ...actual,
     QueryCache: class {
-      constructor(opts?: { onError?: typeof capturedOnError }) {
+      constructor(opts?: {
+        onError?: typeof capturedOnError;
+        onSuccess?: typeof capturedOnSuccess;
+      }) {
         capturedOnError = opts?.onError ?? null;
+        capturedOnSuccess = opts?.onSuccess ?? null;
       }
     },
     QueryClient: class {
@@ -82,14 +87,24 @@ function fireOnError(
   message: string,
   meta?: Record<string, unknown>,
   queryKey: readonly unknown[] = ['something'],
+  queryHash: string = JSON.stringify(queryKey),
 ) {
   if (!capturedOnError) throw new Error('onError not captured - render QueryProvider first');
-  capturedOnError(new Error(message), { meta, queryKey });
+  capturedOnError(new Error(message), { meta, queryKey, queryHash });
+}
+
+function fireOnSuccess(
+  queryKey: readonly unknown[] = ['something'],
+  queryHash: string = JSON.stringify(queryKey),
+) {
+  if (!capturedOnSuccess) throw new Error('onSuccess not captured - render QueryProvider first');
+  capturedOnSuccess({}, { queryKey, queryHash });
 }
 
 describe('QueryProvider toast deduplication', () => {
   beforeEach(() => {
     capturedOnError = null;
+    capturedOnSuccess = null;
     toastCustom.mockClear();
     pendingEntityStore.reset();
     render(
@@ -99,17 +114,17 @@ describe('QueryProvider toast deduplication', () => {
     );
   });
 
-  it('collapses three concurrent permission-denied 403s into one toast', () => {
-    fireOnError('Permission required: scm.dashboard.view');
-    fireOnError('Permission required: scm.reorder.run');
-    fireOnError('Permission required: scm.policy.manage');
+  it('collapses three concurrent permission-denied 403s (three different queries) into one visible toast', () => {
+    fireOnError('Permission required: scm.dashboard.view', undefined, ['dashboard']);
+    fireOnError('Permission required: scm.reorder.run', undefined, ['reorder']);
+    fireOnError('Permission required: scm.policy.manage', undefined, ['policy']);
 
     // All three should produce calls, but they share the same id so sonner
     // deduplicates them into one visible toast. We verify the id is set.
     expect(toastCustom).toHaveBeenCalledTimes(3);
     for (const call of toastCustom.mock.calls) {
       expect(call[1]).toEqual(
-        expect.objectContaining({ id: 'permission-denied' }),
+        expect.objectContaining({ id: 'permission-denied', duration: 5000 }),
       );
     }
   });
@@ -119,35 +134,30 @@ describe('QueryProvider toast deduplication', () => {
 
     expect(toastCustom).toHaveBeenCalledTimes(1);
     expect(toastCustom.mock.calls[0][1]).toEqual(
-      expect.objectContaining({ id: 'permission-denied' }),
+      expect.objectContaining({ id: 'permission-denied', duration: 5000 }),
     );
   });
 
-  it('passes a 500 error through with no id (no dedup) but sticky until dismissed', () => {
+  it('passes a 500 error through, deduped by message, auto-dismissing at 5000ms', () => {
     fireOnError('Internal server error');
 
     expect(toastCustom).toHaveBeenCalledTimes(1);
-    // M6-04: the Toaster is mounted once at top-center, so an ungrouped toast
-    // carries no dedup `id`, but it still waits for the reader to close it -
-    // the fixed `toast.custom` lifetime read as "nothing happened" otherwise.
     const opts = toastCustom.mock.calls[0][1];
-    expect(opts?.id).toBeUndefined();
-    expect(opts).toEqual(expect.objectContaining({ duration: Infinity }));
+    expect(opts).toEqual(
+      expect.objectContaining({ id: 'query-error:Internal server error', duration: 5000 }),
+    );
   });
 
   it('keeps permission toast and regular toast separate', () => {
-    fireOnError('Permission required: scm.dashboard.view');
-    fireOnError('Internal server error');
+    fireOnError('Permission required: scm.dashboard.view', undefined, ['dashboard']);
+    fireOnError('Internal server error', undefined, ['orders']);
 
     expect(toastCustom).toHaveBeenCalledTimes(2);
-    // First call: permission-denied id
     expect(toastCustom.mock.calls[0][1]).toEqual(
-      expect.objectContaining({ id: 'permission-denied', duration: Infinity }),
+      expect.objectContaining({ id: 'permission-denied', duration: 5000 }),
     );
-    // Second call: no id, still sticky
-    expect(toastCustom.mock.calls[1][1]?.id).toBeUndefined();
     expect(toastCustom.mock.calls[1][1]).toEqual(
-      expect.objectContaining({ duration: Infinity }),
+      expect.objectContaining({ id: 'query-error:Internal server error', duration: 5000 }),
     );
   });
 
@@ -155,6 +165,37 @@ describe('QueryProvider toast deduplication', () => {
     fireOnError('Permission required: scm.dashboard.view', { silent: true });
 
     expect(toastCustom).not.toHaveBeenCalled();
+  });
+
+  // The owner complaint this fixes: a query that keeps failing on every
+  // background refetch (window focus, polling, an invalidation) used to
+  // re-raise the same toast every cycle, which read as one toast that never
+  // left the screen.
+  it('toasts the first failure of a query once, with a 5000ms duration', () => {
+    fireOnError('Stock levels unavailable', undefined, ['stock', 'sku-1']);
+
+    expect(toastCustom).toHaveBeenCalledTimes(1);
+    expect(toastCustom.mock.calls[0][1]).toEqual(
+      expect.objectContaining({ duration: 5000 }),
+    );
+  });
+
+  it('does not re-toast a second failure of the same query', () => {
+    fireOnError('Stock levels unavailable', undefined, ['stock', 'sku-1']);
+    fireOnError('Stock levels unavailable', undefined, ['stock', 'sku-1']);
+    fireOnError('Stock levels unavailable', undefined, ['stock', 'sku-1']);
+
+    expect(toastCustom).toHaveBeenCalledTimes(1);
+  });
+
+  it('toasts again once the query succeeds and then fails again', () => {
+    fireOnError('Stock levels unavailable', undefined, ['stock', 'sku-1']);
+    expect(toastCustom).toHaveBeenCalledTimes(1);
+
+    fireOnSuccess(['stock', 'sku-1']);
+    fireOnError('Stock levels unavailable', undefined, ['stock', 'sku-1']);
+
+    expect(toastCustom).toHaveBeenCalledTimes(2);
   });
 
   // S6 feedback C: a record the user watched a delete commit on is gone on

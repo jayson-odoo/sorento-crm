@@ -20,7 +20,13 @@ import pytest
 from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Product, ProductCategory, UnitOfMeasure
-from app.models.project_so import SO_STATUS_DRAFT, ProjectSalesOrder, ProjectSalesOrderLine
+from app.models.project_so import (
+    SO_STATUS_ADOPTED,
+    SO_STATUS_DRAFT,
+    ProjectSalesOrder,
+    ProjectSalesOrderLine,
+    SOLineAllocation,
+)
 from app.models.scm import OrderLinkClaim
 from app.schemas.scm_orders import SalesOrderUpdate
 from app.services.error_handler import AppException
@@ -237,6 +243,94 @@ def test_dropping_a_line_claimed_by_a_purchase_order_is_refused(db, world):
 
     db.expire_all()
     assert db.get(SalesOrderLine, second.id) is not None
+
+
+# --------------------------------------------------------------------------- #
+# a removed line reconciled only to an empty adoption mirror is not blocked -
+# the mirror line is an addressing shim nobody has used, so it is pruned instead
+# --------------------------------------------------------------------------- #
+
+def _adopted_mirror(db, so, *, project_id=None, status=SO_STATUS_ADOPTED):
+    project_so = ProjectSalesOrder(
+        id=_u(), project_id=project_id, provisional_ref=unique_code(MARKER),
+        status=status, so_id=so.id,
+    )
+    db.add(project_so)
+    db.flush()
+    return project_so
+
+
+def test_dropping_a_line_mirrored_by_an_empty_adoption_record_prunes_the_mirror_line(db, world):
+    so, line = _uploaded_order(db, world)
+    second = SalesOrderLine(
+        id=_u(), sales_order_id=so.id, product_id=world["product_b"].id,
+        qty_ordered=5, qty_delivered=0, line_status="open",
+    )
+    db.add(second)
+    db.flush()
+    project_so = _adopted_mirror(db, so)
+    mirror_kept = ProjectSalesOrderLine(
+        id=_u(), project_sales_order_id=project_so.id, core_sales_order_line_id=line.id,
+        line_no=1, product_id=world["product_a"].id, qty=10,
+    )
+    mirror_removed = ProjectSalesOrderLine(
+        id=_u(), project_sales_order_id=project_so.id, core_sales_order_line_id=second.id,
+        line_no=2, product_id=world["product_b"].id, qty=5,
+    )
+    db.add_all([mirror_kept, mirror_removed])
+    db.flush()
+
+    out = SalesOrderService(db).update(
+        so.id,
+        SalesOrderUpdate(lines=[{"sku": world["product_a"].product_code, "qty_ordered": 10, "uom": ""}]),
+        user_id=None,
+    )
+
+    assert len(out["lines"]) == 1
+
+    db.expire_all()
+    assert db.get(SalesOrderLine, second.id) is None, "the removed core line must go"
+    assert db.get(ProjectSalesOrderLine, mirror_removed.id) is None, "its empty mirror line must go too"
+    assert db.get(ProjectSalesOrder, project_so.id) is not None, "the mirror header stays"
+    assert db.get(ProjectSalesOrderLine, mirror_kept.id) is not None, "a sibling mirror line is untouched"
+
+
+def test_dropping_a_line_mirrored_by_an_allocated_adoption_line_is_refused(db, world):
+    """The mirror line is empty in NAME only once real planning happened on it - a
+    `SOLineAllocation` counts as planning, so this is still a 409, not a prune."""
+    so, line = _uploaded_order(db, world)
+    second = SalesOrderLine(
+        id=_u(), sales_order_id=so.id, product_id=world["product_b"].id,
+        qty_ordered=5, qty_delivered=0, line_status="open",
+    )
+    db.add(second)
+    db.flush()
+    project_so = _adopted_mirror(db, so)
+    mirror_line = ProjectSalesOrderLine(
+        id=_u(), project_sales_order_id=project_so.id, core_sales_order_line_id=second.id,
+        line_no=1, product_id=world["product_b"].id, qty=5,
+    )
+    db.add(mirror_line)
+    db.flush()
+    allocation = SOLineAllocation(
+        id=_u(), so_line_id=mirror_line.id, source_type="order", qty=5,
+    )
+    db.add(allocation)
+    db.flush()
+
+    with pytest.raises(AppException) as exc:
+        SalesOrderService(db).update(
+            so.id,
+            SalesOrderUpdate(lines=[{"sku": world["product_a"].product_code, "qty_ordered": 10, "uom": ""}]),
+            user_id=None,
+        )
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "SO_LINE_LINKED_TO_PROJECT"
+    assert project_so.provisional_ref in exc.value.detail["message"]
+
+    db.expire_all()
+    assert db.get(SalesOrderLine, second.id) is not None, "refused entirely - nothing half-committed"
+    assert db.get(ProjectSalesOrderLine, mirror_line.id) is not None
 
 
 # --------------------------------------------------------------------------- #

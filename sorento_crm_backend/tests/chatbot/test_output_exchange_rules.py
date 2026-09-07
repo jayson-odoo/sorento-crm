@@ -418,6 +418,35 @@ def test_a_filter_reply_keeps_the_window_and_the_carried_domain_at_the_seam() ->
     assert out["date_filter_end"] == "2026-08-31"
 
 
+def test_a_date_bearing_reply_takes_the_filter_arm_under_either_message_type() -> None:
+    """Owner rule (help-crm, console pass 5, item B, restated at the top of
+    `test_pass5_item2_member_offer_business_query_filter_route.py`): under an open
+    `member_offer`, a turn that carries a date filter is a filter modification
+    REGARDLESS of `message_type` - `casual` vs `business_query` is LLM variance the
+    route must not use to decide the branch. `has_filter_signal`'s own `fm_dates` read
+    already does not test `message_type` at all (gate.py:2656's neighbour in this file);
+    this pins that fact directly, driving the SAME date-bearing parser output through
+    the arm under both message types rather than trusting it by inspection."""
+    for message_type in ("casual", "business_query"):
+        out = run(
+            parser_output(
+                message_type=message_type,
+                domain_hint=None,
+                intent_hint=None,
+                date_filter_start="2026-08-01",
+                date_filter_end="2026-08-31",
+                entities=[],
+            ),
+            message="last month",
+            state=_pending_member_offer_state(domain_hint="order", intent_hint="check_order"),
+        )
+        assert out.get("member_offer_filter_modification") is True, (
+            f"message_type={message_type!r} must still take the filter arm: {out!r}"
+        )
+        assert out["date_filter_start"] == "2026-08-01", (message_type, out)
+        assert out["date_filter_end"] == "2026-08-31", (message_type, out)
+
+
 def test_a_product_code_reply_on_a_pending_offer_is_a_filter_not_an_abandon() -> None:
     """"rpacc" mid-offer, the case the red pass measured as passing for the WRONG reason.
 
