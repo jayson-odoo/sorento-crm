@@ -180,6 +180,35 @@ def test_only_the_asked_row_is_highlighted(monkeypatch):
             assert untouched_cell.font.color is None
 
 
+def test_the_highlight_skips_merged_family_cells_on_a_middle_row(monkeypatch):
+    # R10 feedback (captain, purchasing consolidation, 7 Sep): `A23:A25` / `H23:H25` /
+    # `I23:I25` merge a THREE-row family on 序号/体积/总体积; `CWC8154-RL-250` (row 24) is the
+    # MIDDLE row of it. Asking for it alone must not paint the merged range - only its own
+    # single-row cells - or the whole family reads as asked for one line.
+    with pg_session() as db:
+        _world(db)
+        sheet = _sheet_model(db, [_line("CWC8154-RL-250", 40)], monkeypatch=monkeypatch)
+
+        out = _open(svc.render(sheet))
+        row = next(
+            r
+            for r in range(FIRST_DATA_ROW, LAST_DATA_ROW + 1)
+            if out.cell(row=r, column=2).value == "CWC8154-RL-250"
+        )
+        assert row == 24
+
+        # its own single-row cells: 商标(3), 规格(4), 品名(5), 包装好库存(6), 备注(10), our
+        # qty(11) and our remark(12).
+        for c in (3, 4, 5, 6, 10, QTY_COL, REMARK_COL):
+            assert out.cell(row=row, column=c).fill.fgColor.rgb == "FFFFF2CC", c
+
+        # 序号(1), 空瓷(7), 体积(8), 总体积(9): the family's merged cells, never painted -
+        # 7 is this row's OWN anchor of a separate `G24:G25` merge, 1/8/9 are covered by the
+        # family anchored at row 23.
+        for c in (1, 7, 8, 9):
+            assert out.cell(row=row, column=c).fill.fill_type is None, c
+
+
 def test_their_merges_widths_and_row_heights_survive(monkeypatch):
     # AC-D1. A family is one 序号 and one volume across nine rows (`A3:A11`, `I3:I11`);
     # unmerging it would print the volume nine times, which reads as nine times the volume.

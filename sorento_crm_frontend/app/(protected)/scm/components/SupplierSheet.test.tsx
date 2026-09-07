@@ -70,6 +70,32 @@ describe('SupplierSheet', () => {
     expect(highlighted).toHaveLength(3);
   });
 
+  it('never paints the highlight on a rowSpan cell, even when fill is highlight (R10 feedback)', () => {
+    // A family's shared cell (序号/体积/总体积) sits at `rowspan > 1` on the row that anchors
+    // it. The backend already withholds `fill` from one of these, but a `sheet_json` frozen
+    // before that fix can still send `fill: 'highlight'` on it - this is the second guard.
+    const sheet = sheetWith({
+      rows: [
+        {
+          cells: [
+            { value: 'A100', rowspan: 3, colspan: 1, covered: false, fill: 'highlight', red: false },
+            { value: 40, rowspan: 1, colspan: 1, covered: false, fill: 'highlight', red: false },
+            { value: null, rowspan: 1, colspan: 1, covered: false, fill: 'highlight', red: false },
+          ],
+          family_span: 3,
+          appended: false,
+          row_key: 'row-a',
+        },
+      ],
+    });
+
+    const { container } = render(<SupplierSheet sheet={sheet} />);
+
+    const highlighted = container.querySelectorAll('td.bg-\\[\\#fff2cc\\]');
+    // Only the qty and remark cells (rowspan 1) - not the rowspan-3 family cell.
+    expect(highlighted).toHaveLength(2);
+  });
+
   it('renders a legacy yellow fill as its own colour, never as our highlight', () => {
     const { container } = render(<SupplierSheet sheet={sheetWith()} />);
 

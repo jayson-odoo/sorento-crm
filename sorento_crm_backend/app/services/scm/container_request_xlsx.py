@@ -191,10 +191,20 @@ def _with_qty_to_load(model: SheetModel) -> bytes:
         _copy_style(ws.cell(row=row.source_row, column=like_col), remark_cell)
         remark_cell.value = row.cells[-1].value
         # R10: their own mark on this data row - yellow fill, red figure or plain - is
-        # cleared and replaced by ours only when there is something asked of it.
+        # cleared and replaced by ours only when there is something asked of it. R10
+        # feedback (7 Sep): a family merges some of these columns down several rows
+        # (`row.cells[pos - 1].rowspan > 1` on the row that anchors the merge, `.covered`
+        # on every other row it spans) - painting either one paints the whole merged block
+        # at this row's height, so the ask on ONE row reads as the whole family being
+        # asked. Those positions are never painted with the highlight; they still lose
+        # whatever mark they came in with, same as an unasked row.
         for pos in range(1, remark_col + 1):
             data_cell = ws.cell(row=row.source_row, column=pos)
-            data_cell.fill = highlight if lit else no_fill
+            model_cell = row.cells[pos - 1] if pos - 1 < len(row.cells) else None
+            spans_or_covered = model_cell is not None and (
+                model_cell.rowspan > 1 or model_cell.covered
+            )
+            data_cell.fill = highlight if (lit and not spans_or_covered) else no_fill
             _clear_red(data_cell)
 
     for offset, row in enumerate(appended):
@@ -376,7 +386,11 @@ def _fresh(model: SheetModel) -> bytes:
             )
             cell.alignment = centre
             cell.border = border
-            if source.fill:
+            # R10 feedback (7 Sep): the fresh workbook draws no merges of its own (AC-D6),
+            # but a `render` fallback can still hand this a model built off THEIR sheet (see
+            # `render`'s `except` branch) - so a family cell's `rowspan`/`covered` is still
+            # checked here rather than trusted to already be unset.
+            if source.fill and not (source.rowspan > 1 or source.covered):
                 cell.fill = highlight_fill
         ws.row_dimensions[r].height = DATA_HEIGHT
 

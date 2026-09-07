@@ -80,6 +80,13 @@ TOTALS_PREFIX = "合计"
 #: own file had (`_apply_highlight`, called once by `build` regardless of which branch built
 #: the model). `YELLOW` survives as a value only because a notice sent BEFORE this batch
 #: still carries it in its frozen `sheet_json` - nothing new ever emits it.
+#:
+#: R10 feedback (captain, purchasing consolidation, 7 Sep): "every cell of a row" excludes a
+#: cell that is not this row's own - a family merges 序号/体积/总体积 (sometimes 空瓷) down
+#: several rows, so painting a middle row's copy of one of those cells paints the WHOLE
+#: merged block, and a single asked line reads as the entire family being asked. A cell with
+#: `rowspan > 1` or `covered` is never this row's own single-row cell, whichever row it is
+#: read off, so `_apply_highlight` leaves it alone regardless of the row's own qty.
 YELLOW = "yellow"
 HIGHLIGHT = "highlight"
 
@@ -271,13 +278,18 @@ def _apply_highlight(model: SheetModel) -> None:
     every cell of a row whose qty to load is > 0; every other row is left plain. The title and
     header are untouched (they are not `Row` objects at all); the totals row is untouched too
     (it is a sum, not an ask, and keeps whatever style it already draws with).
+
+    A cell with `rowspan > 1` or `covered` never carries the fill, whatever the row's own qty
+    is: it is a family's shared cell, not this row's own, and painting it paints every row the
+    merge spans (see the constant's own comment above).
     """
     qty_at = model.qty_index
     for row in model.rows:
         qty = row.cells[qty_at].value if qty_at < len(row.cells) else None
         lit = isinstance(qty, (int, float)) and not isinstance(qty, bool) and qty > 0
         for cell in row.cells:
-            cell.fill = HIGHLIGHT if lit else None
+            spans_or_covered = cell.rowspan > 1 or cell.covered
+            cell.fill = HIGHLIGHT if (lit and not spans_or_covered) else None
             cell.red = False
 
 

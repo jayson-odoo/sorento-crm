@@ -26,6 +26,13 @@
  * load is > 0 - AC-E3) or the legacy `'yellow'` a notice sent before this batch still carries
  * in its frozen `sheet_json`. Both are supported so an old sent document does not lose the
  * marks it went out with; every NEW document the backend builds only ever emits `'highlight'`.
+ *
+ * R10 feedback (captain, 7 Sep): a `rowSpan` cell never draws the highlight class even when
+ * the backend sent one on it - the backend model already withholds `fill` from a family's
+ * shared cells (`supplier_document_model._apply_highlight`), but this stays a second guard
+ * against a `sheet_json` frozen before that fix, same reason `container_request_xlsx` checks
+ * the cell's own span rather than trusting the model to have done it upstream. A `covered`
+ * cell needs no guard of its own - `cell()` below returns before `fillClass` ever runs on one.
  */
 
 import { cn } from '@/lib/utils';
@@ -78,8 +85,11 @@ function cellText(value: string | number | null): string {
   return typeof value === 'number' ? fmtInt(value) : value;
 }
 
-function fillClass(fill: SupplierSheetCell['fill']): string | undefined {
-  if (fill === 'highlight') return 'bg-[#fff2cc]';
+/** `spansRows` is `rowCell.rowspan > 1`: this row's own highlight never paints a family's
+ *  shared cell (R10 feedback, 7 Sep) - a legacy `'yellow'` mark is theirs, not ours, and is
+ *  drawn regardless, same as it always was. */
+function fillClass(fill: SupplierSheetCell['fill'], spansRows: boolean): string | undefined {
+  if (fill === 'highlight') return spansRows ? undefined : 'bg-[#fff2cc]';
   if (fill === 'yellow') return 'bg-[#ffff00] text-black';
   return undefined;
 }
@@ -125,7 +135,7 @@ export function SupplierSheet({
         colSpan={rowCell.colspan > 1 ? rowCell.colspan : undefined}
         className={cn(
           'border border-border px-2 py-1.5 align-middle',
-          fillClass(rowCell.fill),
+          fillClass(rowCell.fill, rowCell.rowspan > 1),
           rowCell.red && 'text-red-600',
         )}
       >

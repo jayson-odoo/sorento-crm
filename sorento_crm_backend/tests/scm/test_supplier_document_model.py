@@ -117,24 +117,72 @@ def test_a_family_becomes_a_rowspan_on_their_merged_columns(monkeypatch):
 def test_our_highlight_replaces_their_fills_and_red_figures(monkeypatch):
     # R10 (purchasing consolidation, 6 Sep), revising AC-D5: the renderer no longer replays
     # the supplier's own yellow fields or red figures - a row with nothing asked of it is
-    # plain, whatever their file marked, and a row WITH an ask is highlighted uniformly
-    # (every cell, not just the ones they coloured).
+    # plain, whatever their file marked, and a row WITH an ask is highlighted on its own
+    # single-row cells (every cell they coloured that is this row's own - a family's shared
+    # cell never carries it, see `test_the_highlight_skips_merged_family_cells_on_a_middle_row`).
     #
     # `SRTWC286-SH-150NEW` (fixture row 3) is the meaningful check for "not theirs any more":
     # their own file paints it yellow across the row AND marks its packed figure red. Asking
     # for it would only prove our highlight beats theirs, which is unsurprising; leaving it
     # UNASKED and still finding no fill and no red is what proves the source marks do not
-    # survive at all (review round 1, S7). `SRTWC8355-RL-250` (row 27) carries none of their
-    # own marks, so it is the row asked for here instead.
+    # survive at all (review round 1, S7). `SRTWC8355-RL-250` (row 27, the LAST row of the
+    # `A26:A27`/`H26:H27`/`I26:I27` family) carries none of their own marks, so it is the row
+    # asked for here instead - and its own three family-shared cells (序号/体积/总体积) prove
+    # the "skip a merged cell" half even on the simple path this test already covers.
     with pg_session() as db:
         _world(db)
         sheet = _built(db, [_line("SRTWC8355-RL-250", 40)], monkeypatch=monkeypatch)
 
         asked = _row_for(sheet, "SRTWC8355-RL-250")
-        assert all(c.fill == "highlight" and c.red is False for c in asked.cells)
+        own = [c for c in asked.cells if c.rowspan <= 1 and not c.covered]
+        merged = [c for c in asked.cells if c.rowspan > 1 or c.covered]
+        assert own and all(c.fill == "highlight" and c.red is False for c in own)
+        assert merged and all(c.fill is None for c in merged)
 
         untouched = _row_for(sheet, "SRTWC286-SH-150NEW")
         assert all(c.fill is None and c.red is False for c in untouched.cells)
+
+
+def test_the_highlight_skips_merged_family_cells_on_a_middle_row(monkeypatch):
+    # R10 feedback (captain, purchasing consolidation, 7 Sep): `A23:A25` / `H23:H25` /
+    # `I23:I25` is a THREE-row family (序号/体积/总体积), and asking for its MIDDLE row
+    # (`CWC8154-RL-250`, row 24) must not paint those merged cells - only its own single-row
+    # cells. Row 24 is also, separately, the anchor of its own `G24:G25` merge on 空瓷 - a
+    # cell that is this row's OWN (not `covered`) but still spans another row, which is why
+    # the rule is `rowspan > 1 OR covered`, not `covered` alone.
+    with pg_session() as db:
+        _world(db)
+        sheet = _built(db, [_line("CWC8154-RL-250", 40)], monkeypatch=monkeypatch)
+
+        asked = _row_for(sheet, "CWC8154-RL-250")
+        assert asked.cells[sheet.qty_index].value == 40
+
+        serial, brand, spec, name, packed, unfinished, per_unit, total_cbm, remark = (
+            asked.cells[0],
+            asked.cells[2],
+            asked.cells[3],
+            asked.cells[4],
+            asked.cells[5],
+            asked.cells[6],
+            asked.cells[7],
+            asked.cells[8],
+            asked.cells[9],
+        )
+
+        # the family's shared cells - never filled, whatever this row's own qty is.
+        assert serial.covered is True and serial.fill is None
+        assert per_unit.covered is True and per_unit.fill is None  # 体积(cbm), H
+        assert total_cbm.covered is True and total_cbm.fill is None  # 总体积(cbm), I
+        assert unfinished.rowspan == 2 and unfinished.fill is None  # 空瓷, this row's own anchor
+
+        # this row's own single-row cells - filled, same as any other asked row.
+        assert brand.fill == "highlight"
+        assert spec.fill == "highlight"
+        assert name.fill == "highlight"
+        assert packed.fill == "highlight"
+        assert remark.fill == "highlight"
+        assert asked.cells[sheet.qty_index].fill == "highlight"
+        assert asked.cells[-1].fill == "highlight"  # line_remark
 
 
 def test_the_ask_lands_on_their_row_by_their_own_code(monkeypatch):
