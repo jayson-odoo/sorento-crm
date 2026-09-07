@@ -103,6 +103,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from app.models.resources import Attachment, AttachmentType
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.lanes.business.services import FetchServices
@@ -329,9 +331,23 @@ class TestPass5Item1PhotoAliasAgainstTheRealMigrationSeededData:
             f"candidate the DB happened to return first: {compatible_codes!r}"
         )
 
-    def test_product_resolves_exact_and_send_attachments_is_reached(
+    def test_product_resolves_exact_and_the_would_be_fetch_args_are_correct(
         self, session_factory, stub_parser, stub_access, system_settings_row, monkeypatch
     ) -> None:
+        """The FIX, at this item's actual measured scope: the resolver-level domain
+        scoping (`entity_resolver._product_attachment_type_ids`) makes "photo" resolve
+        to the product exactly and the attachment_type deterministically - no
+        did-you-mean (test above), no wrong silent pick. Asserted here on the args the
+        turn WOULD hand `crm_master_product_attachments_list`, built the exact same way
+        `run_fetch` builds them (`entity_ids_transformer`), rather than on
+        `send_attachments` actually firing - this harness cannot drive the real MCP
+        call (no `OPENAI_API_KEY`), and whether `product_attachment` has ANY
+        deterministic path to `send_attachments` that skips MCP entirely is a separate,
+        larger, security-relevant gap (duplicating/rerouting the access-level /
+        company-scope logic `/api/v1/master-data/product-attachments` already carries)
+        that this item's brief never asked for. See the xfail test below and
+        https://github.com/jayson-odoo/sorento-crm/issues/727.
+        """
         result = _run_turn_seeded(
             session_factory,
             stub_parser,
@@ -341,11 +357,6 @@ class TestPass5Item1PhotoAliasAgainstTheRealMigrationSeededData:
             contact_id="ZZT-contact-photo-alias-2",
         )
 
-        # THE RED ASSERTION (2), per the captain's own fallback: this harness cannot
-        # drive a real MCP tool call without OPENAI_API_KEY, so `send_attachments` is
-        # asserted on the RESOLVED ENTITIES the turn would have handed the tool, not on
-        # the action list itself - the product resolved by its own exact code, still
-        # discontinued, still company-scoped correctly.
         db = session_factory()
         from app.models.chatbot_turn import ChatbotTurn
 
@@ -359,6 +370,43 @@ class TestPass5Item1PhotoAliasAgainstTheRealMigrationSeededData:
             f"the exact product code must resolve: {product_entities!r}"
         )
 
+        from app.services.chatbot.lanes.business import fetch as fetch_mod
+
+        trigger = {
+            "tool": "crm_master_product_attachments_list",
+            "entities": gate.get("compatible_entities", []),
+            "semantic_input": {},
+        }
+        would_be_args = fetch_mod.entity_ids_transformer(trigger)
+        product_uuid = next(e["uuid"] for e in product_entities if e.get("code") == PRODUCT_CODE)
+        assert would_be_args.get("product_ids") == [product_uuid], would_be_args
+        assert would_be_args.get("attachment_type_ids") == [PRODUCT_PHOTOS_UUID], would_be_args
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "product_attachment has no deterministic zero-tool fetch path - it needs "
+            "the MCP tool-search-then-call pipeline (run_fetch), which needs "
+            "OPENAI_API_KEY to pick a tool, and this harness has none. A domain-known "
+            "tool-name shortcut would still call mcp_call, which this harness makes a "
+            "hard failure on purpose. Tracked as issue #727, not fixed here - it is a "
+            "materially larger, security-relevant change (duplicating or rerouting the "
+            "access-level / company-scope logic /api/v1/master-data/product-attachments "
+            "already carries) than the attachment-type ambiguity this item's brief "
+            "scoped."
+        ),
+    )
+    def test_send_attachments_is_reached(
+        self, session_factory, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        result = _run_turn_seeded(
+            session_factory,
+            stub_parser,
+            stub_access,
+            system_settings_row,
+            monkeypatch,
+            contact_id="ZZT-contact-photo-alias-3",
+        )
         kinds = [a["kind"] for a in result.actions]
         assert "send_attachments" in kinds, (
             "product_attachment has no deterministic zero-tool fetch path today, so a "
@@ -371,8 +419,23 @@ class TestPass5Item1IsolatedMechanismCheckSingleAttachmentType:
     investigation used before the real migration-seeded ambiguity (above) was found.
     Kept only to isolate the `send_attachments`-gap finding from the ambiguity finding:
     even with the ambiguity removed entirely, `send_attachments` still never fires,
-    because there is no AC-604-style zero-tool deterministic fetch for this domain."""
+    because there is no AC-604-style zero-tool deterministic fetch for this domain -
+    tracked as its own issue (#727), out of THIS item's scope. See the class-level
+    docstring on `TestPass5Item1PhotoAliasAgainstTheRealMigrationSeededData`'s
+    `test_send_attachments_is_reached` for the full reasoning; this is the same xfail,
+    proven again on the unrealistic single-type seed so the ambiguity finding and the
+    fetch-gap finding stay provably independent."""
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "product_attachment has no deterministic zero-tool fetch path - see "
+            "TestPass5Item1PhotoAliasAgainstTheRealMigrationSeededData."
+            "test_send_attachments_is_reached and issue #727. Not fixed here: a "
+            "materially larger, security-relevant change than the attachment-type "
+            "ambiguity this item's brief scoped."
+        ),
+    )
     def test_single_attachment_type_still_never_reaches_send_attachments(
         self, session_factory, stub_parser, stub_access, system_settings_row, monkeypatch
     ) -> None:
