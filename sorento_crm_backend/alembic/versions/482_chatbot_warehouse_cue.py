@@ -26,7 +26,7 @@ The insert logic lives in module-level ``publish(session)`` so it can be called 
 alembic (e.g. to publish against the shared dev database without an ``alembic upgrade``).
 
 Revision ID: 482_chatbot_warehouse_cue
-Revises: 477_spo_alloc_container_number
+Revises: 486_scm_claim_qty_planner
 """
 import logging
 
@@ -38,7 +38,7 @@ from app.services.ai_prompt_registry import PROMPT_KEYS
 from app.services.ai_prompt_seed import seed_prompt_registry
 
 revision = "482_chatbot_warehouse_cue"
-down_revision = "477_spo_alloc_container_number"
+down_revision = "486_scm_claim_qty_planner"
 branch_labels = None
 depends_on = None
 
