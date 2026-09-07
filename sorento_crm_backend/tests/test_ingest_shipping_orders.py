@@ -123,14 +123,20 @@ def _seed_legacy_row(
     allocated_quantity: int = 10,
     quantity_received: int = 0,
     line_status: str = "open",
+    inbound_shipment_id: str | None = None,
+    source_system: str | None = "scm_upload",
 ) -> SPOAllocation:
-    """An xlsx-era row: `source_system='scm_upload'`, no ref columns.
+    """An xlsx-era row: `source_system='scm_upload'` BY DEFAULT, no ref columns.
 
-    `source_ref` / `source_doc_ref` are NOT set here on purpose - the columns do
-    not exist on `SPOAllocation` yet (plan section 2.4's migration is still
-    ahead of this test), and a ref-less row is exactly what the xlsx upload
-    always wrote, so this is the correct shape for the fixture as well as the
-    only one the current model accepts.
+    `source_ref` / `source_doc_ref` are left NULL on purpose - a ref-less row
+    is exactly what the xlsx upload always wrote, and that shape is what the
+    S4/D25 adoption-vs-supersede rules key off. `inbound_shipment_id`
+    (spo-xlsx-supersede AC-X6) is the one column callers may want stamped on
+    the seed itself, since it is what `spo-xlsx-supersede`'s D26 carries
+    forward onto every line of a superseded group. `source_system` defaults
+    to `'scm_upload'` (every existing caller's assumption) but AC-X13
+    (D25a) needs a ref-less row the CRM UI / n8n packing-list route wrote
+    instead - `source_system=None` - which is NEVER a supersede candidate.
     """
     product_id = env.refs.resolve(
         entity_type="products", source_ref=product_ref or env.product_ref
@@ -145,7 +151,8 @@ def _seed_legacy_row(
         quantity_received=quantity_received,
         receipt_status="pending" if allocated_quantity > quantity_received else "fully_received",
         line_status=line_status,
-        source_system="scm_upload",
+        source_system=source_system,
+        inbound_shipment_id=inbound_shipment_id,
     )
     env.db.add(row)
     env.db.flush()
@@ -273,6 +280,17 @@ class TestShippingOrderRePush:
 # ============================================================ adoption (AC-V3-4)
 class TestShippingOrderAdoption:
     def test_xlsx_era_rows_are_matched_by_product_and_location_and_adopted(self, env):
+        """AC-V3-4, revised 2026-09-07 under D25 (PLAN-spo-xlsx-supersede);
+        the id-survival assertion moved to AC-X4's ref-row case.
+
+        This SPO holds only ref-less rows, so D25's first-push supersede
+        rule applies rather than the old "adopt in place" ladder: the
+        MATCHED (product, location) group is superseded by the incoming
+        line - the row's id does NOT survive (deleted, a new row is written
+        for the pushed line, carrying the group's received quantity). The
+        STRAY row (product2, an unmatched location) has no incoming
+        counterpart, so it is kept and closed exactly as before.
+        """
         wh_id = env.refs.resolve(entity_type="warehouses", source_ref=env.warehouse_ref)
         wh_code = env.db.execute(
             text("SELECT warehouse_code FROM warehouses WHERE id = :id"), {"id": wh_id}
@@ -302,12 +320,19 @@ class TestShippingOrderAdoption:
         res = env.post(INGEST_SPO, [record])
 
         assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        assert entry.get("lines", {}).get("superseded") == 1, entry
+
         rows = {str(r["id"]): r for r in _spo_rows(env, number)}
-        adopted = rows[str(matched.id)]
-        assert adopted["source_ref"] == line["source_ref"]
-        assert adopted["source_system"] == "autocount"
-        # Adoption keeps the id AND the number the xlsx era already assigned.
-        assert adopted["spo_line_number"] == matched.spo_line_number
+        assert str(matched.id) not in rows, (
+            "the matched group's xlsx row must be superseded (deleted), not adopted in place"
+        )
+        by_ref = {r["source_ref"]: r for r in rows.values() if r["source_ref"]}
+        new_row = by_ref[line["source_ref"]]
+        assert new_row["source_system"] == "autocount"
+        assert new_row["allocated_quantity"] == 10
+        # Carried receipt from the superseded group (matched's own quantity_received, 0).
+        assert new_row["quantity_received"] == 0
 
         stray_row = rows[str(stray.id)]
         assert stray_row["source_ref"] is None
