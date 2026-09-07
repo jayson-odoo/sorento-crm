@@ -60,3 +60,51 @@ shipping_orders` with one record whose lines carry `source_ref` (DtlKey), `produ
   compared on `allocated_quantity`, `quantity_received`, `line_status`, `inbound_shipment_id`.
 
 - **AC-X12 [BE]** `GET /api/v1/external/contract` warning/verdict note lists `lines.superseded`.
+
+## Security-review round (captain rulings 2026-09-07, PLAN D25a / D26a / D28a / D30)
+
+- **AC-X13 [BE][T]** (D25a) Given a ref-less row for product P on SPO N written with
+  `source_system` NULL (CRM UI / n8n packing-list shape) and a first push naming P; the row is
+  NOT deleted: it is adopted or left per the pre-existing rules, and `lines.superseded` is absent.
+  Only `source_system = 'scm_upload'` rows are ever superseded.
+
+- **AC-X14 [BE][T]** (D25a, per-group) Given xlsx rows for products P and Q on SPO N; push 1
+  names P only (Q kept, closed); push 2 names Q at qty 20 / received 0 while Q's xlsx row carried
+  received 20; after push 2 the Q group holds exactly one row, ref set, received 20, closed, and
+  the xlsx Q row is gone (`lines.superseded 1` on push 2). No open Q row exists.
+
+- **AC-X15 [BE][T]** (D26a guard) Given the AC-X1 xlsx row (allocated 47, received 47) and a
+  first push with one line for P at L, `qty_ordered 1`, `qty_received 0`; the xlsx row is NOT
+  deleted (still present, closed), a new open row of 1 is created, the record warns
+  `received_locked`, and no row on N has a lower receipt than before.
+
+- **AC-X16 [BE][T]** (D26a shipments) Given two xlsx rows for P at L on SPO N linked to two
+  different inbound shipments A and B; after a first push naming P at L with two lines, every
+  new line carries shipment A, the record warns `shipment_merged`, and the INFO log names B.
+
+- **AC-X17 [BE][T]** (D30) Given the calling principal holds `scm.shipping_orders.edit` but not
+  `scm.shipping_orders.delete`; the AC-X1 push carries receipts and moves links exactly as AC-X1
+  and AC-X2, but the xlsx row is CLOSED not deleted, its `allocation_notes` reads
+  `superseded by <DocKey>`, and the record warns `superseded_closed_only`. With `.delete` held,
+  AC-X1 behaviour (deleted). Both pushes log at INFO the affected row ids with allocated / received.
+
+- **AC-X18 [BE][T]** (D28a) After the AC-X1 supersede (line 1 = 29, line 2 = 18, one picking line
+  of 47 repointed to line 1), running `sync_received_for_spo_number(N)` and
+  `sync_grn_received_to_spo(<that header>)` leaves line 1 at 29 and line 2 at 18 (group total 47
+  distributed in Seq order), never 47 on line 1. A `scm_upload` or NULL-source sibling with its own
+  picking line of 5 still recomputes to 5.
+
+- **AC-X19 [BE][T]** (S4) Given the xlsx row's `order_link_claim` and `order_inquiry_links`
+  dependants carry `company_id` NULL; after the supersede both point at line 1 (not NULL).
+
+- **AC-X20 [S][T]** (D29 amended) Given SPO N holds an old DocKey's closed ref rows (retired) and
+  a newer DocKey's ref rows plus one xlsx row; the dedupe repoints and carries onto the NEWER
+  DocKey's first row only; the retired rows are untouched. `--since '2026-09-07 05:15'` (naive) is
+  accepted; `--since '2026-09-07T05:15:00Z'` is rejected with a clear message before any write.
+
+- **AC-X21 [S][T]** (S10) The dedupe test seeds a picking line, an order_link_claim and an
+  order_inquiry_link on the xlsx row and asserts all three point at the first ref row after
+  `--apply`, and that a company-B xlsx row on the same `spo_number` is untouched.
+
+- **AC-X22 [BE][T]** (S9) `sync_received_for_spo_number(N)` called under company A's scope never
+  writes a company-B allocation sharing `spo_number` N.
