@@ -40,6 +40,23 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
   column used. Evidence: pytest on seeded allocations with `warehouse_arrival_date` and
   without (fallback). Phase 2 records the measured populated ratio on the prod copy in this
   file.
+
+  **Measured 7 Sep 2026 on the local prod copy** (`sorento_ai_automation`, read-only
+  SELECTs): `spo_allocations.receipt_status` has NO `'received'` value in its check
+  constraint or its data (`pending | partial_received | fully_received | rejected`; only
+  `pending` (721 rows) and `fully_received` (79,747 rows) are in use today) - "received" in
+  this UAC and the plan means `receipt_status = 'fully_received'`. `inbound_shipments.
+  warehouse_arrival_date` DOES exist as a column (an earlier draft of this note said it did
+  not - corrected). Among the 79,747 `fully_received` rows, joined to their shipment:
+  `warehouse_arrival_date` is populated on 1 row (0.0%); `actual_arrival_date` is populated
+  on 0 rows (0.0%); `spo_allocations.updated_at` is populated on 0 rows (0.0%, the column is
+  never written by the receiving flow); `spo_allocations.created_at` is populated on all
+  79,747 rows (100%). **Deviation from the plan's fallback order**
+  (`warehouse_arrival_date` -> `actual_arrival_date` -> `updated_at`): A6 keeps
+  `warehouse_arrival_date` (label "Arrived") and `actual_arrival_date` (label "Arrived
+  (port)") as the first two rungs for when either is backfilled, but replaces `updated_at`
+  with `spo_allocations.created_at` (label "Received (recorded)") as the final,
+  currently-always-hit rung, since `updated_at` is never populated on this table.
 - AC-909 Every list tool in the plan (orders, PO placed, SPO last receipt) accepts `group_by`,
   `include_summary`, `sort`, `dir`, `limit`; an unknown `group_by` value returns 422 naming
   the allowed axes. Evidence: pytest parametrised over the three tools.
@@ -114,6 +131,14 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
 
 - AC-904b Sellable subtracts open SO only; an open DO (created, not delivered) does not
   reduce sellable a second time. Evidence: pytest with one open SO line and one open DO.
+
+  **Measured 7 Sep 2026 on the local prod copy**: among 18,484 open `sales_order_lines`
+  (`line_status='open'`, `qty_ordered - qty_delivered > 0`), 148 (0.8%) have `warehouse_id`
+  null. Small enough share that the plan's fallback (add a null-warehouse line into the
+  product-level total row rather than any per-warehouse row) is not a data-quality blocker.
+  Also measured for A5/A6: among 2,833 open `purchase_order_lines`
+  (`line_status='open'`, `qty_ordered - qty_received > 0`), 2,832 carry a line-level
+  `expected_date`, 0 rely on header-only `purchase_orders.expected_date`, 1 has neither.
 - AC-960 `contact_field_reveals` exists (migration chained on main head); unique on
   (contact, key); default absent = hidden. Evidence: migration test.
 - AC-961 `check_access` returns `attributes` = the contact's granted keys and
