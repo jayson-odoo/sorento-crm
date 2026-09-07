@@ -55,7 +55,10 @@ def _prev_variables(ctx: dict) -> dict:
 # AC-304: what `is_unsupported_domain` tests when no configured list is supplied. The two
 # literals the JS carries, in one place, so the column's default and the code's fallback
 # cannot drift into two different answers.
-DEFAULT_UNSUPPORTED_DOMAINS: tuple[str, ...] = ("goods_receive", "spo_allocation")
+#: A6 (chatbot-growth-r1, AC-911): `spo_allocation` was unblocked here -
+#: `crm_procurement_spo_last_receipt_list` answers "last in" now. `goods_receive`
+#: stays unsupported; nothing added this plan reads GRN data.
+DEFAULT_UNSUPPORTED_DOMAINS: tuple[str, ...] = ("goods_receive",)
 
 
 def decide(

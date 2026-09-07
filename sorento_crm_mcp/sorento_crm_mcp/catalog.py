@@ -1012,6 +1012,26 @@ CATALOG: tuple[ToolSpec, ...] = (
         related_tools=("crm_procurement_spo_last_receipt_list",),
         escalation_team="procurement",
     ),
+    # --- procurement: SPO last receipt (A6, chatbot-growth-r1) ---
+    ToolSpec(
+        "crm_procurement_spo_last_receipt_list",
+        (
+            "Most recently RECEIVED SPO allocation(s) for a product - 'last in for X', "
+            "'last incoming qty', '上次进货', 'last 3 in'. Each row carries spo_number, "
+            "product_code, quantity_received, date (the most recent one actually recorded - "
+            "see date_label), date_label (which column answered: 'Arrived' = warehouse "
+            "arrival, 'Arrived (port)' = the shipment's port arrival, 'Received (recorded)' = "
+            "no shipment date at all, just when the receipt was recorded), and warehouse.\n\n"
+            "FILTER BY UUID: `product_ids`, `warehouse_ids` (canonical UUIDs, csv / JSON / "
+            "repeated), both optional. `top_n` (default 1) - 'last 3 in' -> top_n=3."
+        ),
+        "/api/v1/procurement/spo-allocations/last-receipt",
+        (),
+        ("product_ids", "warehouse_ids", "top_n"),
+        domain="spo_allocation",
+        related_tools=("crm_procurement_purchase_orders_placed_list", "crm_incoming_stock_by_product"),
+        escalation_team="procurement",
+    ),
     # --- project sales (read-only; AC-K1 / AC-K2) ---
     ToolSpec(
         "crm_projects_list",

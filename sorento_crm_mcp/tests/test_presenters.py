@@ -397,6 +397,31 @@ def test_purchase_orders_placed_group_by_supplier():
     assert {g["key"] for g in out["groups"]} == {"Acme", "Beta"}
 
 
+def test_spo_last_receipt_renders_date_label_as_the_field_label():
+    out = env("crm_procurement_spo_last_receipt_list", {
+        "data": [{
+            "spo_number": "SPO-2026-01", "product_code": "SRTWC8517",
+            "quantity_received": 30, "date": "2026-06-10", "date_label": "Arrived",
+            "warehouse": "BRW",
+        }],
+    })
+    f = {x["label"]: x["value"] for x in out["items"][0]["fields"]}
+    assert f["Arrived"] == "2026-06-10"
+    assert f["Quantity Received"] == "30"
+    assert f["Warehouse"] == "BRW"
+
+
+def test_spo_last_receipt_fallback_label_when_no_shipment_date():
+    out = env("crm_procurement_spo_last_receipt_list", {
+        "data": [{
+            "spo_number": "SPO-2026-02", "product_code": "P1",
+            "quantity_received": 5, "date": "2026-06-01", "date_label": "Received (recorded)",
+        }],
+    })
+    f = {x["label"]: x["value"] for x in out["items"][0]["fields"]}
+    assert f["Received (recorded)"] == "2026-06-01"
+
+
 def test_stock_omits_sellable_when_backend_did_not_send_it():
     """AC-903: byte-identical when the backend answered with no `sellable` at all."""
     out = env("crm_inventory_stock_balance_list", {

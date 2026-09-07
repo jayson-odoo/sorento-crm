@@ -52,6 +52,7 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_forms_management_forms_list",
         "crm_portal_link_get",
         "crm_procurement_purchase_orders_placed_list",
+        "crm_procurement_spo_last_receipt_list",
     }
 )
 
@@ -73,6 +74,7 @@ _DEFAULT_INTRO = {
     "crm_forms_management_forms_list": "Here are the forms I found.",
     "crm_portal_link_get": "Here is the link you requested.",
     "crm_procurement_purchase_orders_placed_list": "Here is the PO placed I found.",
+    "crm_procurement_spo_last_receipt_list": "Here is the last receipt I found.",
 }
 
 _RESULT_TYPE = {
@@ -91,6 +93,7 @@ _RESULT_TYPE = {
     "crm_forms_management_forms_list": "forms",
     "crm_portal_link_get": "portal_link",
     "crm_procurement_purchase_orders_placed_list": "purchase_orders_placed",
+    "crm_procurement_spo_last_receipt_list": "spo_last_receipt",
 }
 
 _STOCK_TOOL = "crm_inventory_stock_balance_list"
@@ -421,6 +424,24 @@ def _purchase_orders_placed(rows: list[dict], b: _Builder) -> None:
             ],
         )
     b.restrict("supplier", "purchase_orders.supplier")
+
+
+def _spo_last_receipt(rows: list[dict], b: _Builder) -> None:
+    """A6 (AC-908): `date_label` names WHICH column answered - never claim
+    "Arrived" when the row is really a bare receipt-recorded timestamp."""
+    for r in rows:
+        date_label = r.get("date_label") or "Date"
+        b.item(
+            r.get("spo_number"),
+            [
+                ("company_name", "Company", r.get("company_name")),
+                ("spo_number", "SPO Number", r.get("spo_number")),
+                ("product_code", "Product Code", r.get("product_code")),
+                ("quantity_received", "Quantity Received", _qty(r.get("quantity_received"))),
+                ("date", str(date_label), r.get("date")),
+                ("warehouse", "Warehouse", r.get("warehouse")),
+            ],
+        )
 
 
 def _orders_by_product(rows: list[dict], b: _Builder) -> None:
@@ -1286,6 +1307,7 @@ _BUILDERS = {
     "crm_inventory_stock_balance_list": _stock,
     "crm_forms_management_forms_list": _forms,
     "crm_procurement_purchase_orders_placed_list": _purchase_orders_placed,
+    "crm_procurement_spo_last_receipt_list": _spo_last_receipt,
 }
 
 

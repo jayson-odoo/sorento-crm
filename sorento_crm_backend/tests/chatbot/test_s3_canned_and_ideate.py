@@ -798,7 +798,9 @@ class TestUnsupportedDomainsSetting:
         db.add(row)
         db.commit()
         db.refresh(row)
-        assert row.chatbot_unsupported_domains == ["goods_receive", "spo_allocation"]
+        # A6 (chatbot-growth-r1, AC-911, migration 488): `spo_allocation` was
+        # removed from the shipped default.
+        assert row.chatbot_unsupported_domains == ["goods_receive"]
 
     def test_settings_update_schema_accepts_the_field(self):
         from app.api.v1.user_management.settings import SystemSettingUpdate

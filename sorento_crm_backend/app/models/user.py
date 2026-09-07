@@ -528,12 +528,13 @@ class SystemSetting(Base):
     chatbot_stock_denial_enabled = Column(Boolean, nullable=False, server_default="false", default=False)
     # AC-304 (D5): the ONE list the owner has actually changed, so it is a column and not
     # a table. `not_supported` is decided against this instead of the two literals the JS
-    # carries, and the default IS those two literals.
+    # carries. A6 (chatbot-growth-r1, AC-911, migration 488) removed `spo_allocation` from
+    # the shipped default - `crm_procurement_spo_last_receipt_list` answers it now.
     chatbot_unsupported_domains = Column(
         JSONB,
         nullable=False,
-        server_default='["goods_receive", "spo_allocation"]',
-        default=lambda: ["goods_receive", "spo_allocation"],
+        server_default='["goods_receive"]',
+        default=lambda: ["goods_receive"],
     )
     # Which lanes the CRM is allowed to FINISH, by `branch_kind`, one at a time.
     #
