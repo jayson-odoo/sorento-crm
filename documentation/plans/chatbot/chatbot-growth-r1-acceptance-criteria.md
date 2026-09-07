@@ -71,7 +71,7 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
   What is graded instead, by
   `tests/chatbot/test_parser_growth_r1_reachability.py`, is every link a customer's
   sentence travels between the prompt and the tool's own arguments: the addendum teaches
-  each cue in `documentation/plans/chatbot/samples/parser-growth-r1-phrases.json`, the
+  each cue in `sorento_crm_backend/tests/chatbot/fixtures/parser_growth_r1_phrases.json`, the
   strict schema requires `group_by` / `top_n` so the provider must emit them, the
   post-processor exempts both from its required-key check so all 481 captured emissions
   still grade (`test_replay.py` stays green, no new divergence), `_fetch_semantic_input`

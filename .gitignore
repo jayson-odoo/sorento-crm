@@ -15,6 +15,11 @@ sorento_crm_backend/.next/*
 .env.development.local
 .env.test.local
 .env.production.local
+# Per-slot backend envs (`.env.slot3080`, `.env.slot8080`, ...). A lane stack copies the
+# real `.env` per port slot, so these carry the same live secrets `.env` does and must
+# never be committed - PR #735 had a push REJECTED by the secret-scanning rule after a
+# `git add -A` swept one in. The exact-name entries above do not cover the shape.
+.env.slot*
 
 # Playwright MCP scratch (console logs, page snapshots)
 .playwright-mcp/

@@ -41,9 +41,19 @@ from app.services.chatbot_parser_prompt import (
     SEMANTIC_PARSER_PROMPT_SLIM,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-SAMPLES = REPO_ROOT / "documentation" / "plans" / "chatbot" / "samples"
-PHRASES_FILE = SAMPLES / "parser-growth-r1-phrases.json"
+#: The corpus lives INSIDE the test package, and that is not tidiness (CI, 8 Sep 2026).
+#: The backend image's build context is `./sorento_crm_backend` only, so nothing under the
+#: repo's `documentation/` exists in it - and `parents[3]` from `tests/chatbot/` is one
+#: level ABOVE the backend root, which inside the image resolves to `/`. The file read
+#: below runs at COLLECTION (it feeds `@pytest.mark.parametrize`), so the in-image
+#: `pytest --collect-only` gate died with
+#: `FileNotFoundError: '/documentation/plans/chatbot/samples/parser-growth-r1-phrases.json'`
+#: and exit code 2 before a single test ran. `Path(__file__).parent` cannot escape the
+#: package, so it is right in the image, in a worktree and in a checkout alike.
+#:
+#: `documentation/plans/chatbot/samples/README.md` POINTS here rather than holding a second
+#: copy: a corpus in two places is a corpus that disagrees with itself.
+PHRASES_FILE = Path(__file__).parent / "fixtures" / "parser_growth_r1_phrases.json"
 
 PO_TOOL = "crm_procurement_purchase_orders_placed_list"
 SPO_TOOL = "crm_procurement_spo_allocations_last_receipt_list"
