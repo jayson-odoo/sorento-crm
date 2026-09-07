@@ -2837,8 +2837,10 @@ class SPOAllocationService:
         # and the group recompute both branch on this column, so a client that could
         # post `autocount` or clear a stamp would decide which rows get replaced and
         # which receipts get pooled. The two SCM writers that raise one allocation per
-        # purchase-order line pass `crm_spo`; the screen, the n8n packing-list route and
-        # the Excel import pass nothing, and their rows are aggregates.
+        # purchase-order line pass `crm_spo`; the n8n packing-list route and the Excel
+        # import pass nothing, and their rows are aggregates. The screen passes nothing
+        # too, so a hand-created row stays a first-push supersede candidate: a named
+        # residual (PLAN D25c), with no such row among the measured production set.
         allocation_dict["source_system"] = source_system
         # Section 7 currency gap (S3): absent on every SPO xlsx row today -
         # filled the same way the PO side already is, so parity has one less
