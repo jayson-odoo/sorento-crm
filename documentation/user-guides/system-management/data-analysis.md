@@ -169,7 +169,10 @@ AutoCount pushes).
 * On a product: the **Discontinued** flag, a **remark** (kept separate from the description, not
   merged into it), and a **brand**.
 * On a customer: its **market segment** and **region**.
-* On a shipping order (SPO): the **container number**.
+* On a shipping order (SPO): the **container number**, taken from AutoCount's purchase-order
+  header `Ref` field (the field the Excel export labels **Loading Date**). Sent as typed, for
+  example `WHSU6476731 (MOCHA)`; Sorento keeps the container token and links the allocation to
+  the inbound shipment carrying it, exactly as the SPO upload does from the same cell.
 
 **Absent vs. null, on every field the integration can send:** a field the push simply does not
 mention leaves that column exactly as it was; a field sent as an explicit empty value (null, or a
