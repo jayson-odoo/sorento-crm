@@ -757,7 +757,12 @@ def _person_routing(
     # the customer's own team word verbatim when it names a team the catalogue does not
     # hold exactly, and stays null only when the customer named no team at all. H64's turn
     # therefore arrives with `"marketing"` and is narrowed above; mt-r2's arrives null and
-    # falls through to here, where the routing table's default is exactly right.
+    # falls through to here, where the ROUTING CHAIN'S OWN RESULT is exactly right - the
+    # carried team when a previous turn had one, else the table's default. Not the default
+    # unconditionally: a product browse routes to purchasing by the owner's own table, and
+    # "talk to a human" straight after it inherits that, which is the pre-#706 chain and
+    # live parity (review of #713, blocker B3; both shapes are pinned in
+    # `test_pass4_item5_no_team_named_keeps_default_routing.py`).
     esc = jsc.get(output, "escalation") or {}
     if jsc.get(esc, "is_escalation_confirmation") is True:
         return None

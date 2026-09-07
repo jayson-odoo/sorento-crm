@@ -196,6 +196,20 @@ class TestANonCatalogueTeamWordIsNeverPersistedOrAssigned:
         assert marker_team is None or marker_team in SUGGESTED_TEAMS, (
             f"nor the pending marker's own team: {marker_team!r}"
         )
+        # The S1 SEAM, graded on a REAL ask turn rather than on a seeded marker: the teams
+        # this ask offered must actually reach `pending.options`, or the tap path in
+        # `output_exchange._team_clarify_pick` has nothing to resolve against and its own
+        # test would be grading a fixture it wrote itself. Blanking the list in
+        # `pending.derive` must redden HERE, on the turn that composes the ask.
+        assert (stored1.get("pending") or {}).get("options"), (
+            "the ask must persist the teams it offered, slug beside label, or a tap on a "
+            f"quick reply resolves to nothing: {stored1.get('pending')!r}"
+        )
+        assert {o["team"] for o in stored1["pending"]["options"]} == {
+            "marketing_product",
+            "marketing_form",
+            "marketing_promotion",
+        }, stored1["pending"]["options"]
 
         # -- turn 2: the customer gives up on the menu and asks for anyone ------------ #
         # Parser team null, so the routing chain falls back to what turn 1 carried. That

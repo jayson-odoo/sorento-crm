@@ -41,10 +41,16 @@ unguarded` (`test_s5_escalation_lane.py`) is green today but does NOT cover this
 DEFAULT_SUGGESTED_TEAM` never evaluates true there. This file's `prev_team="purchasing"` (a
 real, non-default carried team from an unrelated turn) is the shape that regresses.
 
-Expected: a request naming no team keeps the default/derived routing - `out_of_scope` ->
-human-intervention, `Team: customer_service` (or whatever the routing table derives) - never
-the eight-team clarify. The clarify exists for a request that itself names an AMBIGUOUS or
-DIFFERENT team (item 1b's `marketing`), not for one that names nothing at all.
+Expected: a request naming no team is ASSIGNED - `out_of_scope` -> human-intervention -
+never the eight-team clarify. The clarify exists for a request that itself names an
+AMBIGUOUS or DIFFERENT team (item 1b's `marketing`), not for one that names nothing at all.
+
+WHICH team it is assigned to is the routing chain's own result, and the two shapes are
+pinned separately below (review of #713, blocker B3, captain's ruling): the CARRIED team
+when a previous turn had one - `Team: purchasing` on this dump's shape, because the chain
+is `llm_team if req_help -> derived -> prior_routing -> DEFAULT` and a product browse
+routes to purchasing by the owner's own table - and the hard default,
+`Team: customer_service`, only on a truly cold session with nothing to inherit.
 """
 from __future__ import annotations
 

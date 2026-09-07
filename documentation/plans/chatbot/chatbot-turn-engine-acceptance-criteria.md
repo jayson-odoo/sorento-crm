@@ -1660,6 +1660,19 @@ contact inside the synchronous request. Different contacts run in parallel.
   `business_query`, or any turn with a domain hint), **then** it is ANSWERED, however many
   team words it carries - "which promotions is marketing running" is a question, not an
   answer to "which team".
+
+  **What one turn costs, stated rather than discovered.** Ask on turn 1, ANY turn that does
+  not answer it on turn 2, and the answer on turn 3: the marker is already gone, so
+  "marketing product" arrives as a bare noun phrase the parser stamps `casual` with no
+  domain, and `route.decide`'s `is_low_signal` arm answers it with the canned greeting -
+  the exact failure AC-822 exists to fix, one turn later. That is an ACCEPTED trade, not an
+  oversight. The alternative is re-arming the marker across turns, which is what blocker B1
+  measured going wrong: the label was carried indefinitely, every later turn whose parser
+  named a team was retyped into an escalation, and the marker masked real `member_offer` /
+  `escalation_offer` markers made afterwards. A question the customer walked away from
+  costing them one re-ask is cheaper than a question that never closes. The condition that
+  would change this ruling: repeated console turns where a customer answers a team clarify
+  a turn or more late. None are recorded today.
   Evidence: `tests/chatbot/test_pass4_item1a_team_clarify_consumed.py`,
   `tests/chatbot/test_s5_escalation_lane.py::TestAnAcceptanceIsNeverAskedWhichTeam::test_an_open_offer_for_the_default_team_still_asks`
   (the marker's options). (H74)

@@ -57,9 +57,13 @@ two messages to tell them apart, so the discriminator has to be produced here. T
 The LIVE body above is NOT amended: it is version 1, it carries the `production` label, and
 its sha is pinned by `tests/chatbot/test_parser_prompt_is_live.py`. So this contract reaches
 production only when the owner moves the label onto the slim version that
-`480_chatbot_parser_team_word.py` (revision `480_chatbot_team_word`) publishes. Until then production parses "escalate to
-marketing" to a null team and the lane assigns the routing table's default, which is the
-pre-#706 behaviour and not the #706 regression.
+`480_chatbot_parser_team_word.py` (revision `480_chatbot_team_word`) publishes.
+
+Until then production parses "escalate to marketing" to a NULL team, and the lane assigns
+whatever the routing chain resolves - which after a product browse is the CARRIED team,
+`purchasing`. That is the H64 complaint verbatim, and it stays that way until the label
+moves. What the lane half removes under either prompt is the eight-team menu on a request
+that names no team at all, which is the #706 regression.
 """
 
 # sha256 of the LIVE file EXACTLY as fetched, leading `=` included. The test asserts that
