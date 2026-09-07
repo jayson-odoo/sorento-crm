@@ -220,3 +220,10 @@ or a supersede / dedupe carry declared for an `autocount` line; NULL reads as 0.
   recompute L1 still reads 0 closed and L2 reads 40 (the whole picking total, remainder on the last
   LIVE line). A member that is closed with `receipt_status != fully_received` (retired by absence,
   or `cancelled`) takes no share; a member closed BY receipt still does (and may reopen, AC-X35).
+
+- **AC-X42 [BE][T]** (D28c, security round 4) A retired member's own GRN is not redistributed. L1
+  (Seq 1, allocated 29, retired by absence: closed, `receipt_status pending`, received 10, stated
+  10) holds one approved picking line of 10; L2 (Seq 2, allocated 18, open, 0). After
+  `sync_grn_received_to_spo(<L1's header>)` and after `sync_received_for_spo_number(N)`: L1 still
+  reads 10 closed, L2 still reads 0 open. The live lines share only the picking total drawn
+  against LIVE members; a receipt a retired line reports is never counted twice.
