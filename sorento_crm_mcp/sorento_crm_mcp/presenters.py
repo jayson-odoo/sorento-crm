@@ -230,12 +230,28 @@ class _Builder:
         # that must show the compact "Specs:" line rather than have every keyed
         # field stripped down to none.
         self.spec_vocabulary: dict[str, str] = {}
+        # A2 (amended 8 Sep 2026): a presenter-computed summary block, rendered after
+        # the rows and before any trailing miss note - the SAME shape `present_response`
+        # already merges in for a tool whose BACKEND sends a `summary` dict (orders), but
+        # populated here for a tool (stock) whose aggregate is computed FROM THE ROWS the
+        # presenter already has, with no backend change needed.
+        self.summary_items: list[dict[str, Any]] = []
 
     def restrict(self, key: str, permission: str) -> None:
         self.restricted_fields[key] = permission
 
     def note_spec(self, key: str, label: str) -> None:
         self.spec_vocabulary[key] = label
+
+    def add_summary_item(self, label: Any, value: Any, *, key: str | None = None) -> None:
+        """One `*label:* value` line in the summary block. `key` is what a restricted
+        field is dropped by (see `restrict`); omitted, the line is never gated."""
+        if not _filled(value):
+            return
+        field: dict[str, Any] = {"label": label, "value": value}
+        if key is not None:
+            field["key"] = key
+        self.summary_items.append({"title": None, "fields": [field]})
 
     def item(
         self,
@@ -1114,6 +1130,15 @@ def _stock(rows: list[dict], b: _Builder) -> None:
     def _as_str(v):
         return v if isinstance(v, str) and v.strip() else None
 
+    # A2 (amended 8 Sep 2026, owner: "I just need to know the outstanding qty, that's
+    # it"): per-row Open SO / Sellable was noise across many warehouse rows. Replaced
+    # with ONE line per PRODUCT after all the stock rows: `on_hand` and `open_so_qty`
+    # summed across every row of that product code (the 0.8% of open SO lines with no
+    # warehouse are a product-level total already, so this grain loses nothing that
+    # mattered), never re-derived per row again.
+    by_product: dict[str, dict[str, Any]] = {}
+    saw_sellable_data = False
+
     for s in rows:
         # Row shape varies by backend vocab:
         #   • legacy: s["warehouse"] = {warehouse_code, warehouse_name, location}
@@ -1162,19 +1187,41 @@ def _stock(rows: list[dict], b: _Builder) -> None:
                 ("warehouse", "Warehouse", wh_name if _filled(wh_name) else "-"),
                 ("system_location", "System Location", sysloc if _filled(sysloc) else "-"),
                 ("quantity_on_hand", "Quantity On Hand", qoh if qoh is not None else "-"),
-                # A2 (AC-903/AC-904): present only when the backend was asked
-                # (`include_sellable=true`, the default for this tool). RESTRICTED
-                # below - `output_structurer` drops both unless the contact holds
-                # `inventory.sellable`, which is how a caller with no grant reads a
-                # byte-identical answer to before this pair existed (AC-903).
-                ("open_so_qty", "Open SO", _stock_int(s.get("open_so_qty"))),
-                ("sellable", "Sellable (on hand minus open SO)", _sellable_value(s.get("sellable"))),
             ],
             discontinued=is_discontinued,
         )
-    if any(s.get("sellable") is not None for s in rows):
-        b.restrict("open_so_qty", "inventory.sellable")
-        b.restrict("sellable", "inventory.sellable")
+        if s.get("sellable") is not None and _filled(product_code):
+            saw_sellable_data = True
+            agg = by_product.setdefault(str(product_code), {"on_hand": 0, "open_so": 0})
+            agg["on_hand"] += _as_int(qoh)
+            agg["open_so"] += _as_int(s.get("open_so_qty"))
+
+    if saw_sellable_data:
+        b.restrict("open_so_avail", "inventory.sellable")
+        any_open_so = any(agg["open_so"] > 0 for agg in by_product.values())
+        if any_open_so:
+            for code in by_product:
+                agg = by_product[code]
+                available = agg["on_hand"] - agg["open_so"]
+                b.add_summary_item(
+                    code,
+                    f"Open SO {agg['open_so']:,}, Available {available:,}",
+                    key="open_so_avail",
+                )
+        else:
+            b.add_summary_item("Open SO", "none", key="open_so_avail")
+
+
+def _as_int(v: Any) -> int:
+    """A quantity as a plain int for ARITHMETIC (product-level summing), 0 for
+    anything unreadable - never `None`, so `+=` never raises. Distinct from
+    `_stock_int` (display formatting, which passes `None` through unchanged)."""
+    if v is None:
+        return 0
+    try:
+        return int(Decimal(str(v)))
+    except (InvalidOperation, TypeError, ValueError):
+        return 0
 
 
 def _stock_int(v: Any) -> Any:
@@ -1514,6 +1561,11 @@ def present_response(tool_name: str, raw: str) -> str:
             envelope["summary_items"] = _sitems
             if _sintro:
                 envelope["intro"] = _sintro
+    # A2 (amended 8 Sep 2026): the presenter-computed block (stock's Open SO / Available
+    # lines) - independent of the `data.get("summary")` gate above, because this tool's
+    # backend sends no `summary` dict at all; everything it needs is already in `rows`.
+    if b.summary_items:
+        envelope["summary_items"] = b.summary_items + envelope.get("summary_items", [])
     if b.restricted_fields:
         envelope["restricted_fields"] = dict(b.restricted_fields)
     if b.spec_vocabulary:

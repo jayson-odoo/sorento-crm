@@ -457,29 +457,74 @@ def test_stock_omits_sellable_when_backend_did_not_send_it():
     assert "restricted_fields" not in out
 
 
-def test_stock_carries_open_so_and_sellable_restricted():
-    """AC-904: both fields present, and marked restricted so `output_structurer`
-    (the actual gate) can drop them per contact - the MCP itself stays unfiltered."""
+def test_stock_carries_one_open_so_and_available_line_per_product_restricted():
+    """AC-904 (amended 8 Sep 2026, owner: "I just need to know the outstanding qty"):
+    no per-row fields any more - ONE summary line per product code, restricted the
+    same way the per-row pair used to be, so `output_structurer` still drops it per
+    contact and the MCP itself stays unfiltered."""
     out = env("crm_inventory_stock_balance_list", {
         "data": [{"product_code": "SRTWT107", "quantity_on_hand": 36,
                   "open_so_qty": 10, "sellable": 26}],
     })
-    f = {x["label"]: x["value"] for x in out["items"][0]["fields"]}
-    assert f["Open SO"] == 10
-    assert f["Sellable (on hand minus open SO)"] == 26
-    assert out["restricted_fields"] == {
-        "open_so_qty": "inventory.sellable",
-        "sellable": "inventory.sellable",
-    }
+    labels = {x["label"] for x in out["items"][0]["fields"]}
+    assert "Open SO" not in labels
+    assert "Sellable (on hand minus open SO)" not in labels
+    items = {x["label"]: x for x in out["summary_items"][0]["fields"]}
+    assert items["SRTWT107"]["value"] == "Open SO 10, Available 26"
+    assert items["SRTWT107"]["key"] == "open_so_avail"
+    assert out["restricted_fields"] == {"open_so_avail": "inventory.sellable"}
 
 
-def test_stock_sellable_negative_renders_oversold_wording():
+def test_stock_available_prints_the_raw_negative_when_open_so_exceeds_on_hand():
+    """Owner ruling, 8 Sep 2026: no clamping, no "oversold by N" wording - the signed
+    number as-is."""
     out = env("crm_inventory_stock_balance_list", {
         "data": [{"product_code": "SRTWT107", "quantity_on_hand": 5,
                   "open_so_qty": 8, "sellable": -3}],
     })
-    f = {x["label"]: x["value"] for x in out["items"][0]["fields"]}
-    assert f["Sellable (on hand minus open SO)"] == "0 (oversold by 3)"
+    field = out["summary_items"][0]["fields"][0]
+    assert field["value"] == "Open SO 8, Available -3"
+
+
+def test_stock_open_so_summed_across_a_products_own_warehouse_rows():
+    """The product-level grain the owner asked for: two rows of the SAME product sum
+    their on_hand and open_so_qty into ONE line, not two."""
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [
+            {"product_code": "SRTWT107", "warehouse": "A", "quantity_on_hand": 10,
+             "open_so_qty": 6, "sellable": 4},
+            {"product_code": "SRTWT107", "warehouse": "B", "quantity_on_hand": 20,
+             "open_so_qty": 0, "sellable": 20},
+        ],
+    })
+    assert len(out["summary_items"]) == 1
+    field = out["summary_items"][0]["fields"][0]
+    assert field["label"] == "SRTWT107"
+    assert field["value"] == "Open SO 6, Available 24"
+
+
+def test_stock_open_so_none_when_every_product_has_zero():
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [{"product_code": "SRTWT107", "quantity_on_hand": 36,
+                  "open_so_qty": 0, "sellable": 36}],
+    })
+    assert len(out["summary_items"]) == 1
+    field = out["summary_items"][0]["fields"][0]
+    assert field["label"] == "Open SO"
+    assert field["value"] == "none"
+
+
+def test_stock_every_product_gets_a_line_once_any_product_has_open_so():
+    """Two products, only one with open SO - both get their own line (per the owner's
+    wording: "products with zero open SO still get their line" once any does)."""
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [
+            {"product_code": "A1", "quantity_on_hand": 10, "open_so_qty": 5, "sellable": 5},
+            {"product_code": "A2", "quantity_on_hand": 8, "open_so_qty": 0, "sellable": 8},
+        ],
+    })
+    lines = {f["label"]: f["value"] for entry in out["summary_items"] for f in entry["fields"]}
+    assert lines == {"A1": "Open SO 5, Available 5", "A2": "Open SO 0, Available 8"}
 
 
 def test_stock_compact_carries_open_so_and_sellable_restricted():
