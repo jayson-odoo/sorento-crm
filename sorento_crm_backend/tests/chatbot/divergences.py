@@ -36,17 +36,22 @@ class Divergence:
 # above it - a per-fixture entry wins the `find` lookup, so it has to carry the strip
 # itself or the fixture is compared on a key it could not have.
 #
-# `pending` is the R3 marker (AC-202). `focus` is growth r1 slice B3: what the
-# conversation is about, per axis, each axis ageing on its own. The JS has no equivalent
-# of either, so no capture can show one, and requiring one would be requiring the corpus
-# to have been recorded after the code that writes it. Everything else in the session
-# patch is still compared byte for byte, `entities` and `domain_hint` included - which is
-# the point, because those are what slice B3 must NOT have moved.
+# `pending` is the R3 marker (AC-202). `focus` is growth r1 slice B3 (what the
+# conversation is about, per axis, each axis ageing on its own) and `open_question` is
+# slice B4 (the ONE thing the bot is waiting for, with its options frozen). The JS has no
+# equivalent of any of the three, so no capture can show one, and requiring one would be
+# requiring the corpus to have been recorded after the code that writes it. Everything
+# else in the session patch is still compared byte for byte - `entities`, `domain_hint`,
+# `selection_context`, `last_result_set`, `dym_offer` and `pending` included - which is
+# the point: `open_question` is DERIVED from those, so any drift between them would show
+# up as one of them moving.
 _PORT_ONLY_SESSION_KEYS: tuple[tuple[str, ...], ...] = (
     ("reply", "session_patch", "variables", "pending"),  # the shipping seal
     ("variables", "pending"),  # a pre-RS-3 capture, unwrapped by the runner
     ("reply", "session_patch", "variables", "focus"),
     ("variables", "focus"),
+    ("reply", "session_patch", "variables", "open_question"),
+    ("variables", "open_question"),
 )
 
 
@@ -161,12 +166,14 @@ DIVERGENCES: list[Divergence] = [
         fixture=None,
         hazard="H13/H14 (R3) + growth r1 slice B3 (AC-951)",
         reason=(
-            "the port writes two session keys the JS had no equivalent of. `pending` is "
+            "the port writes three session keys the JS had no equivalent of. `pending` is "
             "the R3 marker, so the next turn can ask 'is an escalation offer open?' of "
             "state instead of of the bot's own previous words (D11). `focus` is what the "
             "conversation is about, per axis, each axis ageing on its own turn counter "
-            "(growth r1 slice B, owner decision D6/D11) - no capture predates the code "
-            "that writes it and none ever can. Field-scoped: every other byte of the "
+            "(growth r1 slice B, owner decision D6/D11), and `open_question` is the ONE "
+            "thing the bot is waiting for, with the rows the customer was shown frozen "
+            "onto it (D7) - no capture predates the code that writes any of the three, "
+            "and none ever can. Field-scoped: every other byte of the "
             "session patch is still compared, `entities` and `domain_hint` included, "
             "which is what proves slice B3 moved the carry rules without changing them. "
             "AC-203's own test asserts the marker and "

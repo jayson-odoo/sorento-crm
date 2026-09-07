@@ -124,6 +124,11 @@ class Turn:
     # `reuse_domain_entityless` already ran, inside the entity executor. See that
     # function for why it cannot wait for `apply`.
     entityless_domain_reused: bool = False
+    # This turn's entities came from ANSWERING an open question, so the slot they set is
+    # sourced `pick`. An operator reading the trace can then tell "the customer typed it"
+    # from "the customer chose it from rows we showed them", which is a different kind of
+    # certainty and the reason `confident=false` is allowed through a picker (AC-953).
+    answered_by_pick: bool = False
 
 
 @dataclass
@@ -235,14 +240,15 @@ def replace_same_axis(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
     if not current:
         return
 
+    source = "pick" if turn.answered_by_pick else "current_message"
     products = [e for e in current if jsc.lower_or_empty(jsc.get(e, "hint")) == "product"]
     if products and _may_replace(focus, "products", products, turn):
-        _set(focus, "products", products, turn, out, rule="replace_same_axis")
+        _set(focus, "products", products, turn, out, rule="replace_same_axis", source=source)
 
     for hint, name in _SLOT_BY_HINT.items():
         named = next((e for e in current if jsc.lower_or_empty(jsc.get(e, "hint")) == hint), None)
         if named is not None and _may_replace(focus, name, [named], turn):
-            _set(focus, name, named, turn, out, rule="replace_same_axis")
+            _set(focus, name, named, turn, out, rule="replace_same_axis", source=source)
 
 
 def _may_replace(focus: dict[str, Any], name: str, entities: list, turn: Turn) -> bool:

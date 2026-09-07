@@ -36,7 +36,7 @@ CHAINS = worlds_mod.multi_turn_worlds(WORLDS)
 WORLD_FLOOR = 100
 
 # See `_graded_variables`.
-_PORT_ONLY_KEYS = frozenset({"pending", "focus"})
+_PORT_ONLY_KEYS = frozenset({"pending", "focus", "open_question"})
 
 
 @pytest.fixture()
@@ -100,8 +100,9 @@ def _graded_variables(world: worlds_mod.World, actual: dict) -> tuple[dict, dict
 
     `pending` is the R3 marker the JS had no equivalent of (the same field-scoped
     divergence the node replay registers), `focus` is growth r1 slice B3's dialogue state
-    (registered the same way, for the same reason: no capture predates the code that
-    writes it), and `dym_offer.id` is `$execution.id` becoming the CRM turn id. Nothing
+    and `open_question` is slice B4's (both registered the same way, for the same reason:
+    no capture predates the code that writes them), and `dym_offer.id` is `$execution.id`
+    becoming the CRM turn id. Nothing
     else is excused: a world that differs anywhere else is either a defect or a NAMED body
     difference, and a body difference SKIPS the world rather than quietly ignoring the key.
 

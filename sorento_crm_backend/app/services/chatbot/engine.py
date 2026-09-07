@@ -1341,8 +1341,13 @@ def _run_stages(  # noqa: PLR0915
     # the emission does not (`tail/compile_state._picker_carry` reads that one).
     dialogue_out = parent_input.pop("_dialogue_out", None) or {}
     parse_block["_focus"] = dialogue_out.get("focus") or {}
+    # The tail needs the counter to date the question it arms this turn, and it only has
+    # `ctx`. Same channel as `_focus`, for the same reason.
+    parse_block["_turn_no"] = turn_no
     for entry in dialogue_out.get("trace") or []:
         turn_trace.add("focus", entry)
+    if dialogue_out.get("open_question"):
+        turn_trace.add("open_question", dialogue_out["open_question"])
 
     turn_trace.record(
         "understood",

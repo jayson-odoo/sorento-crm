@@ -31,6 +31,7 @@ from typing import Any
 
 from app.services.chatbot import jsc, topic
 from app.services.chatbot.dialogue import focus as focus_rules
+from app.services.chatbot.dialogue import open_question as open_question_mod
 from app.services.chatbot.contracts import (
     DEFAULT_SUGGESTED_TEAM,
     ENTITY_HINTS,
@@ -940,6 +941,53 @@ def post_process(output: dict, json_item: dict, parent_input: dict) -> dict:
         raise ParserOutputError(
             f"parser emission could not be post-processed ({type(exc).__name__}: {exc})"
         ) from exc
+
+
+def _apply_open_question(o: dict, question: dict, outcome: Any) -> None:
+    """The handler's outcome, written into the emission the rest of the turn reads.
+
+    ONE place, so the seven handlers stay pure and only this function knows the `qf`
+    vocabulary. Nothing here is reached until prompt v3 is promoted (see the call site).
+    """
+    if not outcome.resolved:
+        return
+    products = outcome.focus.get("products")
+    customer = outcome.focus.get("customer")
+    entities = [*(products or []), *([customer] if customer else [])]
+    if entities:
+        # "replace", not "replace_combine": the picks ARE the scope (owner ruling B,
+        # console pass 3). `outcome.keep` has already folded in the siblings issue #708
+        # says must survive, so asking the executor to combine again could only put the
+        # replaced token back.
+        o["entities"] = entities
+        o["entity_op"] = "replace"
+        o["scope_exclusive"] = False
+        o["message_type"] = "business_query"
+        # CONSUMED. The positions were an answer to OUR question, so they must not also
+        # mint entities off whatever roster happens to be in `last_result_set`.
+        o["reference_positions"] = []
+        o["reference_target"] = None
+        domain = jsc.get(question.get("payload"), "domain")
+        if not jsc.truthy(o.get("domain_hint")) and jsc.truthy(domain):
+            o["domain_hint"] = domain
+    if outcome.tiers:
+        o["access_levels"] = list(outcome.tiers)
+        o["domain_hint"] = "promotion"
+        o["message_type"] = "business_query"
+        o["reference_positions"] = []
+        o["reference_target"] = None
+    if outcome.escalate:
+        o["message_type"] = "request_for_help"
+        escalation = o.get("escalation") if isinstance(o.get("escalation"), dict) else {}
+        o["escalation"] = {**escalation, "is_escalation_confirmation": True}
+        if outcome.routing:
+            routing = o.get("routing") if isinstance(o.get("routing"), dict) else {}
+            o["routing"] = {**routing, **{k: v for k, v in outcome.routing.items() if v}}
+    if outcome.declined:
+        o["is_affirmative"] = False
+        escalation = o.get("escalation") if isinstance(o.get("escalation"), dict) else {}
+        o["escalation"] = {**escalation, "is_escalation_confirmation": False}
+    o["open_question_answered"] = outcome.handler
 
 
 def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  # noqa: C901, PLR0912, PLR0915
@@ -1942,6 +1990,57 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             # was added.
             o["bare_entity_under_offer"] = True
 
+    # -- ANSWERED (growth r1 slice B4): the open question, resolved before the focus ----- #
+    # INERT under prompt v1 and v2. `answers_open_question.resolved` is what arms it, and
+    # neither of those prompts has an instruction that mentions the key - so the whole
+    # block is skipped on every one of the 1,875 captured emissions and on production
+    # until the owner moves the label (AC-952).
+    #
+    # It runs HERE, immediately before the focus rules, because a pick IS this turn's
+    # scope: the focus rules must see the picked entities as the current message's own.
+    # The plan calls this an `answered` STAGE; it is a trace ENTRY instead, and the plan's
+    # own slice-D shape agrees (`open_question: {before, answer, after, handler,
+    # outcome}` is listed among the entries, not among the stages). `TURN_STAGES` is a
+    # closed vocabulary of eight that the timeline renders, `chatbot.turns.stage` stores
+    # and 1,875 fixtures carry; a ninth for a deterministic, instantaneous step would be a
+    # wire change for no reader's benefit.
+    turn_signals = v3_signals(parser_raw_snapshot)
+    answered_entry = None
+    open_question = open_question_mod.from_state(
+        prev_state, asked_at_turn=int(jsc.js_number(parent_input.get("turn_no")) or 1) - 1
+    )
+    if open_question and turn_signals["answers_open_question"]["resolved"]:
+        # AC-947: a QUOTED reply resolves against THAT message's frozen options, not the
+        # alive question's. Same precedence the positional block above already applies, and
+        # for the same reason: the rows the customer is looking at are the ones they quoted.
+        quoted_rows = jsc.array(parent_input.get("referenced_result_set"))
+        options = quoted_rows if len(quoted_rows) > 0 else open_question.get("options")
+        outcome = open_question_mod.resolve(
+            open_question["kind"],
+            turn_signals["answers_open_question"],
+            options,
+            open_question.get("payload"),
+        )
+        before_entities = jsc.array(o.get("entities"))
+        _apply_open_question(o, open_question, outcome)
+        answered_entry = {
+            "before": {
+                "kind": open_question["kind"],
+                "expects": open_question["expects"],
+                "options": len(options or []),
+                "quoted": len(quoted_rows) > 0,
+            },
+            "answer": turn_signals["answers_open_question"],
+            "after": {
+                "entities": len(jsc.array(o.get("entities"))),
+                "entities_before": len(before_entities),
+                "escalate": outcome.escalate,
+                "declined": outcome.declined,
+            },
+            "handler": outcome.handler,
+            "outcome": outcome.outcome,
+        }
+
     # -- THE FOCUS RULES (growth r1 slice B3) -------------------------------------------- #
     # ONE call, in the position the two blocks it replaces occupied: after every writer of
     # `o["entities"]` (the did-you-mean pick, the numbered multi-select, the positional
@@ -1967,14 +2066,18 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         switch_domain=switch_domain,
         is_carried=ce_is_carried,
         date_widened=bool(date_widen),
-        signals=v3_signals(parser_raw_snapshot),
+        signals=turn_signals,
         parser_raw=parser_raw_snapshot if isinstance(parser_raw_snapshot, dict) else {},
         latest_user_message=parent_input.get("latest_user_message"),
         # An open question is alive when the previous turn armed a roster the customer can
         # still see. `selection_context` is that marker today and stays the reader for one
         # release (AC-951); slice B4 replaces it with `open_question` and this line with it.
-        has_picker=bool(jsc.truthy(prev_state.get("selection_context"))),
+        has_picker=open_question is not None,
         entityless_domain_reused=entityless_domain_reused,
+        # A pick is the customer choosing from rows we showed them, so the slot it sets is
+        # sourced `pick` rather than `current_message` - which is what the trace has to say
+        # for an operator to tell "they typed it" from "they chose it".
+        answered_by_pick=answered_entry is not None,
     )
     focus_out = focus_rules.apply(
         focus_rules.from_session(prev_state, turn_no=focus_turn.turn_no), focus_turn
@@ -1989,6 +2092,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     parent_input["_dialogue_out"] = {
         "focus": focus_out.focus,
         "trace": focus_out.entries,
+        "open_question": answered_entry,
     }
 
     # -- B2' POST-MERGE ENTITY RECONCILIATION -------------------------------------------- #

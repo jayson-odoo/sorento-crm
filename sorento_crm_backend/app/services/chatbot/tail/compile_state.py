@@ -34,6 +34,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from app.services.chatbot import jsc, topic
+from app.services.chatbot.dialogue import open_question as pending_open_question
 from app.services.chatbot.tail import pending as pending_marker
 
 UNDEFINED = jsc.UNDEFINED
@@ -956,6 +957,24 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         # The teams a team-clarify ask offered THIS turn (AC-822). Empty on every other
         # turn, which is what `derive` reads as "no list to resolve against".
         team_clarify_options=turn_state.get("team_clarify_options"),
+    )
+
+    # ---- the ONE open question, mirrored off the keys above (slice B4) ---- #
+    # LAST, deliberately: `selection_context`, `last_result_set`, `dym_offer` and
+    # `pending` are all final by this line - `_picker_carry`, `_miss_company_routing` and
+    # `_offer_carry` have each had their say - and the mirror must describe what the
+    # customer was actually left looking at.
+    #
+    # Derived FROM those keys rather than the other way round, which is the plan's stated
+    # direction inverted. The reason is in the code that would have to move: the
+    # did-you-mean lifecycle above is a faithful port whose eight-rule order is graded
+    # against captures, thirteen registered divergences pin it, and `topic.py` says in as
+    # many words that rewriting it to call a shared function would be a behaviour change
+    # smuggled in as a tidy-up. AC-951's purpose - every existing world still grades - is
+    # met either way. `dialogue/open_question.py` carries the full note.
+    variables["open_question"] = pending_open_question.from_state(
+        variables,
+        asked_at_turn=int(jsc.js_number(jsc.get(jsc.get(ctx, "parse"), "_turn_no")) or 0),
     )
 
     sanitize_em_dash(output)

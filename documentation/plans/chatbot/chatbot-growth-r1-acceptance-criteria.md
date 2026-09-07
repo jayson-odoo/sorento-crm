@@ -101,9 +101,18 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
   `_query_brands_carried`, `_tier_carried`, or the date / attribute / `is_active` carry arms;
   each has a named function in `dialogue/focus.py` with its own test. Evidence: grep in
   review + test names.
-- AC-951 `SessionVars` still carries `pending`, `dym_offer`, `selection_context`,
-  `picker_*` as mirrors derived from `open_question`, so every existing world grades.
-  Evidence: `test_worlds.py` green or each divergence registered with a reason.
+- AC-951 `SessionVars` still carries `pending`, `dym_offer`, `selection_context` and
+  `picker_*`, so every existing world grades. **Amended 7 Sep 2026 during slice B4: the
+  mirror runs the other way.** `open_question` is DERIVED from those keys
+  (`dialogue/open_question.from_state`) rather than them from it, because making
+  `open_question` authoritative means porting the eight-rule did-you-mean lifecycle,
+  `_offer_carry` and `_picker_carry` onto one TTL - a behaviour change on the lane that
+  already changes reply semantics, against a corpus that cannot grade it until it is
+  re-derived. The criterion's purpose is unchanged and met: every existing world grades.
+  Inverting the mirror is the named follow-up. Evidence: `test_worlds.py` green (87 graded,
+  126 skipped, identical to before the slice) plus the three field-scoped divergences
+  (`pending`, `focus`, `open_question`) registered with their reason in
+  `tests/chatbot/divergences.py`.
 - AC-952 Parser v3 is a new registry version, promoted only after a 3 to 7 day shadow window
   with branch parity 99%+ and reply parity 97%+ on turns with no open question. Evidence:
   shadow report attached to the PR.
