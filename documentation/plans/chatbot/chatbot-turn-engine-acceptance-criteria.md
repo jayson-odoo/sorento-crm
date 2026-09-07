@@ -1153,9 +1153,16 @@ contact inside the synchronous request. Different contacts run in parallel.
   matches, case-insensitively, then the turn routes to THAT member's team with that member as
   the assignee and no round-robin draw happens (a named person is a direct pick; the SLA clock
   still starts). Given no match or more than one, then the lane CLARIFIES, naming the teams,
-  and assigns nobody. Given no person, no team, and a previous turn that HAD one, then the
-  lane clarifies rather than inheriting it; given nothing to inherit, the lane behaves exactly
-  as it does today, so live's own unguarded null-team path and the B-TEAM-1' xfail both stand.
+  and assigns nobody. ~~Given no person, no team, and a previous turn that HAD one, then the
+  lane clarifies rather than inheriting it~~ - **SUPERSEDED by AC-821 (owner rules R-a /
+  R-c, 7 Sep 2026).** That inheritance premise could not tell "escalate to marketing" from
+  "I want to talk to a human" (both reach the lane with a null parser team over the same
+  carried team, and D11 forbids reading the two messages apart), so it fired on the second
+  and answered a request that named no team with the eight-team menu - production turns
+  1f0428cb / 9089ef88. It is deleted; the discriminator is the parser's own word now, and a
+  turn with nothing to inherit still behaves exactly as it did. Given nothing to inherit,
+  the lane behaves exactly as it does today, so live's own unguarded null-team path and the
+  B-TEAM-1' xfail both stand.
   The roster read is `users` x `team_members` x `agent_teams` on the turn's own
   company-scoped session, one hit per person per team, and it compares `users.status` as a
   literal (the column is a native enum in production, where `lower()` does not exist for it).
@@ -1542,3 +1549,225 @@ contact inside the synchronous request. Different contacts run in parallel.
   Evidence: `tests/chatbot/test_s6c_answer_lane.py::TestAZeroStockCodeIsNamedBeforeTheIncomingBlock`
   (four cases, two of them guards). Console case: "a code with no stock is named before the
   incoming block". (H72)
+- AC-821 `[BE][T]` **The team menu fires only when the customer's OWN request names an
+  ambiguous team, and it lists only the teams that word names.** Owner rules R-a, R-b and
+  R-c (help-crm, 7 Sep 2026), from a production regression #706 introduced: turns 1f0428cb
+  and 9089ef88 (n8n execs 15501799 / 15502378, `turns-lane3` round 12) said "I want to talk
+  to a human" after an unrelated product browse and were answered "Which team should I pass
+  this to - purchasing, purchasing certification, customer service, marketing product,
+  marketing form, warehouse, marketing promotion or it admin?" instead of being assigned to
+  anybody.
+
+  The cause is that AC-815's own premise could not tell its case from that one. Both
+  arrived at the lane with `routing.suggested_team` null and a non-default team carried
+  from an earlier turn: "escalate to marketing" (must ask) and "I want to talk to a human"
+  (must assign) were IDENTICAL in structured state, and D11 forbids the lane reading the
+  two messages to tell them apart. So the discriminator moves to the PARSER, where reading
+  the message is the job.
+
+  * **Parser contract.** `routing.suggested_team` carries the customer's own team word
+    verbatim and lowercased when that word names several catalogue teams or none
+    ("marketing", "sales"); an enum member when it names exactly one ("warehouse", "CS");
+    and null ONLY when the customer named no team at all. Amended in
+    `SEMANTIC_PARSER_PROMPT_SLIM`'s ROUTING section and stated on the wire schema
+    (`head/parser._build_json_schema`), which stays `string_or_null` for that reason.
+  * **Given** a turn whose parser team is null, **then** the lane assigns and never
+    clarifies, whatever an earlier turn carried (R-a). It assigns **the routing chain's own
+    result: the CARRIED team when a previous turn had one, else the table default** -
+    `llm_team if req_help -> derived -> prior_routing -> DEFAULT_SUGGESTED_TEAM`. Corrected
+    after the review of #713 (blocker B3), which measured the code assigning `purchasing`
+    on the mt-r2 turn where this AC had said `customer_service`. **The CODE is what stands**
+    (captain's ruling, 7 Sep 2026): the carried team is the pre-#706 chain and live parity,
+    a product browse routes to purchasing by the owner's own table and "talk to a human"
+    straight after it inherits that, and the owner's complaint was the eight-team MENU, not
+    the team. Both shapes are pinned in the tests: `Team: purchasing` on the dump shape and
+    `Team: customer_service` on a truly cold one. The D1 open-offer premise and the
+    `is_escalation_confirmation` short-circuit both stand.
+  * **Given** a parser team that is an exact catalogue member, **then** the lane assigns
+    THAT team, never an unrelated carried one (R-c).
+  * **Given** a parser team that names several catalogue members ("marketing" - the three
+    `marketing_*` teams), **then** the lane asks over exactly those members: the sentence,
+    the quick replies and the persisted marker are built from one list, so a tap can never
+    name a team the ask did not offer. A word that names none asks over the whole
+    vocabulary, which is the only honest list when nothing matched.
+  * **Given** an answer to that ask, **then** the escalation resolves to the team named
+    (R-b) - see AC-822.
+
+  The word-to-catalogue test (`escalation._catalogue_teams`) is D11-clean and inventoried
+  in the plan's text-sniffing table: its input is a parser output field and it is matched
+  against `SUGGESTED_TEAMS`, our own eight-slug routing vocabulary. Nothing reads `ctx.text`
+  or a previous reply.
+
+  **What the owner is signing up for when they move the label.** After the promotion, any
+  team word the model returns that matches NO catalogue member yields the eight-team menu:
+  `_catalogue_teams` returns `[]` for "human", "support" and "sales" alike, and the honest
+  list when nothing matched is the whole vocabulary. A word matching several (the three
+  `marketing_*` teams) yields those three, and a word matching exactly one is assigned.
+
+  **How it reaches production.** The prompt registry, not the fallback file: version 1 (the
+  live 46,906-character body) carries the `production` label, so migration
+  `480_chatbot_parser_team_word` publishes the amended slim text as a new UNLABELLED
+  version and the owner promotes it with one label move. Until then production parses
+  "escalate to marketing" to a null team and the lane assigns the default - the pre-#706
+  behaviour, not the #706 regression, which the lane half removes under either prompt.
+  Evidence: `tests/chatbot/test_pass4_item5_no_team_named_keeps_default_routing.py`,
+  `tests/chatbot/test_pass4_item1b_marketing_ambiguous_clarify.py`,
+  `tests/chatbot/test_s5_escalation_lane.py::TestAnAcceptanceIsNeverAskedWhichTeam`. (H73)
+- AC-822 `[BE][T]` **An answer to a team clarify resolves the escalation to that team.**
+  Owner rule R-b (help-crm, 7 Sep 2026). Turns 08e74db8 -> 0d7d5a23 (n8n execs 15500464 /
+  15500487, `turns-lane3`): "escalate to marketing" was asked which team, the customer
+  answered "marketing product", and the answer was never consumed. The parser had it right
+  (`_parser_raw.routing.suggested_team: marketing_product`) but stamped `message_type:
+  casual` for the bare noun phrase, and `output_exchange`'s routing chain only reads the
+  parser's team when `message_type == "request_for_help"` - so the team was discarded, the
+  chain fell to the STALE `purchasing` carried from before the escalation was asked for,
+  and `route.decide`'s `is_low_signal` answered "Hi! How can I help you today?". The marker
+  was WRITTEN (`compile_state`) and read by nobody: `grep '"team_clarify"'` found one
+  writer and no reader.
+
+  * **Given** an open `team_clarify` and a turn whose parser named a team, **then** that
+    team wins over the carried routing WHATEVER the `message_type` - an answer to a
+    question we asked is a continuation of the escalation, not a new turn to classify -
+    and the turn re-enters the escalation lane (`message_type` is promoted to
+    `request_for_help`, which is `route.decide`'s own escalation arm).
+  * **Given** an open `team_clarify` whose parser named NO team, and a reply that equals
+    (`strip()` + `casefold()`, exact) one of the quick replies the ask offered, **then**
+    it resolves to that team. The ask's teams are persisted on the marker as
+    `{team, label}` (`pending.options`, the third `PendingKind` written), so the tap
+    resolves against OUR OWN strings and can never name a team the ask did not offer.
+  * **Then** the turn takes the human-intervention arm with `Team: <that team>`, sends a
+    non-empty reply, and the clarify marker is cleared.
+  * **Given** an open clarify and a reply that answers something else, **then** nothing
+    resolves and the turn routes normally.
+
+  **Lifetime: one turn, enforced by an explicit exclusion in `_offer_carry`.** The first
+  cut of this AC claimed the life was one turn for free, because `_offer_carry` needs a
+  non-empty `last_result_set` and "a team clarify has no roster". The review of #713
+  (blocker B1) measured that FALSE: the clarify arm carries the PREVIOUS turn's roster
+  forward (`compile_state` ~:2075) before it stamps the marker, so production dump
+  0d7d5a23 arrives `team_clarify` with fifteen rows behind it, `topic.changed` returns
+  False whenever either domain is falsy and a clarify turn's domain is null by
+  construction, and the ttl branch is `member_offer` only - so the label was carried
+  indefinitely, retyping every later team-naming turn into an escalation and re-emitting a
+  marker that outranks `member_offer` and `escalation_offer` and would mask a real offer.
+  `_offer_carry` now excludes the kind outright. The member offer's 3-turn TTL is still not
+  copied, and now for a reason that holds: a roster stays on the customer's screen, a
+  question does not. `offer_is_open` is deliberately not taught this kind either, because
+  it is what turns a bare "yes" into an acceptance and "yes" is not an answer to "which
+  team".
+
+  **Given** an open clarify and a turn that brings its OWN business question (a
+  `business_query`, or any turn with a domain hint), **then** it is ANSWERED, however many
+  team words it carries - "which promotions is marketing running" is a question, not an
+  answer to "which team".
+
+  **What one turn costs, stated rather than discovered.** Ask on turn 1, ANY turn that does
+  not answer it on turn 2, and the answer on turn 3: the marker is already gone, so
+  "marketing product" arrives as a bare noun phrase the parser stamps `casual` with no
+  domain, and `route.decide`'s `is_low_signal` arm answers it with the canned greeting -
+  the exact failure AC-822 exists to fix, one turn later. That is an ACCEPTED trade, not an
+  oversight. The alternative is re-arming the marker across turns, which is what blocker B1
+  measured going wrong: the label was carried indefinitely, every later turn whose parser
+  named a team was retyped into an escalation, and the marker masked real `member_offer` /
+  `escalation_offer` markers made afterwards. A question the customer walked away from
+  costing them one re-ask is cheaper than a question that never closes. The condition that
+  would change this ruling: repeated console turns where a customer answers a team clarify
+  a turn or more late. None are recorded today.
+  Evidence: `tests/chatbot/test_pass4_item1a_team_clarify_consumed.py`,
+  `tests/chatbot/test_s5_escalation_lane.py::TestAnAcceptanceIsNeverAskedWhichTeam::test_an_open_offer_for_the_default_team_still_asks`
+  (the marker's options). (H74)
+- AC-823 `[BE][T]` **A date-only narrowing of an open member offer keeps the offer's own
+  scope.** Owner console pass 4, item 3 (E residue), turns 0eef1cc3 -> 48ee6081, and the
+  same shape on live chain 15503158 -> 15503189 where the dropped entity was the CUSTOMER.
+  "delivery to hanlim, product srtwc286" matched no order and opened a member offer; "last
+  month" then came back "That would search every delivery order we have - I need at least
+  one filter to narrow it down", though AC-818's own fix had landed.
+
+  Both of the other candidate causes were measured FINE on the capture and are asserted in
+  the test so a future regression there is caught rather than re-attributed: the window IS
+  derived (`2026-08-01` / `2026-08-31`, surviving into `output`), and
+  `member_offer_filter_modification` IS stamped with `route.decide` already yielding to it.
+
+  **Given** an open member offer and a reply that carries only a date window, **then** the
+  narrowed query runs with the offer's own scope (`hanlim` + `srtwc286`) PLUS the window,
+  and never the "need at least one filter" refusal.
+
+  The entities are not dropped by the filter-modification arm, which is where the comment
+  promising "the window and the ENTITY are kept" sits: the entity-op executor keeps them
+  correctly, and `if message_type == "casual" and not engages_offer: entities = []`
+  (`output_exchange` ~:2172) wipes them 400 lines ABOVE that arm. That line is right about
+  a bare "hi" and wrong about "last month", and it cannot tell the two apart because "is
+  this a filter modification of an open offer" is decided downstream of it. So the restore
+  is done in the arm that knows the answer, and only when the turn brought no scope of its
+  own - a modification that DID name an entity already carries the executor's merge, and
+  re-adding the prior set would put back the axis the customer just narrowed.
+  Evidence: `tests/chatbot/test_pass4_item3_last_month_under_member_offer.py`. (H75)
+- AC-824 `[BE][T]` **A numbered pick over a partial-miss roster keeps the code that already
+  resolved.** Issue #708, owner console pass 4 item 4. "SRTKS6091 and SRTKS8091 got stock":
+  the first code resolves, the second misses and gets a sibling did-you-mean. On this lane
+  the partial miss is claimed by the answer half's `build-suggest-offer` before the tail
+  runs, so the turn persists `selection_context: suggest_offer` and `_partial_dym_block`
+  never writes `dym_last_result_set` - which is exactly what the numbered did-you-mean
+  handler keys on. So "2" fell through to the generic positional arm, whose contract is
+  REPLACEMENT, and the turn answered about the pick alone with SRTKS6091 dropped. The
+  reviewer measured `reference_target` of null, `"result"` and `"dym"` all doing it, which
+  is the tell: the discriminator was which roster happened to be in state, not the parser's
+  own tag.
+
+  **Given** an open `suggest_offer` whose `dym_offer.candidates` carry the `for_raw` /
+  `for_canonical` linkage, and a numbered pick against that roster, **then** the pick
+  replaces the token it was offered FOR, in place, and every other prior entity survives -
+  so the scope is the already-resolved code PLUS the pick, and the answer names both.
+
+  `apply_dym_pick` stays keyed on the roster it is handed (no widening of the numbered
+  handler's `dym_last_result_set` guard, and no second merge implementation): the positional
+  arm hands it the OTHER roster. Two gates, both measured before any pick is applied and
+  both over the whole pick set, because threading is what makes a multi-pick accumulate:
+
+  * the linkage must LAND on a prior entity (without it there is nothing that says which
+    token the pick answers, and `apply_dym_pick` would prepend, leaving the unresolved miss
+    in scope beside its own answer). Capture `parser-15157067` is this shape with a prior
+    `SRTWT165-FT` against a `for_raw` of `SRTWT165FT`, so nothing ties and nothing changes;
+  * the prior scope must hold something that is NOT a source token. A FULL miss has no
+    resolved sibling, so the merge would preserve nothing and the plain replacement is both
+    correct and what the corpus records.
+
+  Together they leave every capture byte-equal; one new diagnostic key
+  (`suggest_offer_pick_merged`) is registered field-scoped with its class. Closes #708.
+  Evidence: `tests/chatbot/test_pass4_item4_issue708_partial_pick_scope.py`. (H76)
+- AC-825 `[BE][T]` **A customer the customer already PICKED is not re-resolved from a debtor
+  code other accounts share.** Owner console pass 4, item 2. Turns 5bb0426e ("3" ->
+  L.A.W. Transport (K.L.) Sdn. Bhd. (SRT)) then cc0075ae / 0d9332a0 ("last month"): the
+  reply header names L.A.W. and the rows are SILK CABINETS SDN BHD and a dozen other
+  accounts.
+
+  **Measured against the local prod-copy database** (throwaway harness, 7 Sep 2026: the
+  dump's own `request_item` through `run_turn` with its `_parser_raw` as the parse and the
+  MCP call captured). Both first-pass hypotheses are WRONG and are recorded so nobody
+  re-runs them: the date window is NOT dropped (`2026-08-01` / `2026-08-31` survive the
+  post-processor, `ctx.parse.output` and `semantic_input`, and every wrong row IS inside
+  it), and the resolver mis-ranks nothing - `gate_passed: true`, `require_specific: false`,
+  `gate_reason: "ok"`, `unresolved_tokens: []`, full coverage, so `REQUIRE_SPECIFIC_DOMAINS`
+  is not involved either.
+
+  What happens: `resolve_entity_body` sends `tokens: ["301-C001"]`, the carried entity's
+  `canonical_code`, and OMITS `entity_pins` because the resolver route refuses a pin in AND
+  mode by design (`references.py` ~:1652; PR #456's contract is OR-mode only). The uuid the
+  pick is made of (`bec07281-...`) is therefore discarded and a debtor code that **99 rows
+  share in production** is re-resolved from scratch. The resolver returns 15 of the 99 (its
+  own limit) without the picked row, and the gate passes the lot: `cust_pinned` is true, so
+  the "which company do you mean" ask is suppressed - the pin stops the QUESTION without
+  constraining the ANSWER.
+
+  **NOT fixed in this lane, deliberately.** The fix is AND-mode entity pins in
+  `resolve_references`, a change to that route's own contract rather than a chatbot-lane
+  change - and NOT a lane waiting to merge: PR #456 is MERGED (9f04a3205) and it is what
+  AUTHORED the refusal (`references.py:1650-1655`), deliberately and for two stated
+  reasons (an AND-mode intersection has no per-token view to narrow, and a zero-intersection
+  AND request retries under `force_mode="or"`, where a pin would suddenly start applying).
+  Closing the gap means ruling on how a pin behaves in both, which is **issue #715**. The unit that proves the gap
+  is committed `xfail(strict=True)` so the day that lands, it announces itself - the same
+  mechanism the unpromoted B-HB-1 / B-TEAM-1' gates use. The end-to-end guard beside it is
+  green and stays green: at any scale a test can seed, `301-C001` names one customer, so
+  the code resolves correctly and the defect cannot be reproduced below production scale.
+  Evidence: `tests/chatbot/test_pass4_item2_last_month_keeps_customer_scope.py`. (H77)

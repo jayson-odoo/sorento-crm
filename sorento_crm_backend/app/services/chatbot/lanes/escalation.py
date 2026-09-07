@@ -44,7 +44,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 
 from app.services.chatbot import jsc
-from app.services.chatbot.contracts import DEFAULT_SUGGESTED_TEAM, PREVIEW
+from app.services.chatbot.contracts import PREVIEW
 
 logger = logging.getLogger(__name__)
 
@@ -509,13 +509,21 @@ def run(
             ctx, context_item, team, services, session_factory
         )
         if routed is not None and routed["kind"] == "clarify":
-            clarify = {**context_item, "clarify_team": True, "clarify_text": routed["text"]}
+            clarify = {
+                **context_item,
+                "clarify_team": True,
+                "clarify_text": routed["text"],
+                "clarify_team_options": routed.get("option_pairs") or [],
+            }
             return {
                 **escalation_result(clarify_team=clarify),
                 "actions": _clarify_actions(
                     routed["text"], options=routed.get("options") or [], dry_run=True
                 ),
-                "pending": {"kind": "team_clarify"},
+                "pending": {
+                    "kind": "team_clarify",
+                    "options": routed.get("option_pairs") or [],
+                },
             }
         if routed is not None and routed["kind"] == "assign":
             team = routed["team"]
@@ -561,7 +569,15 @@ def _human_intervention(
         # The tail keys on `clarify_text` (`compile_state`'s clarify arm), the same field
         # `clarify-company-reply` writes; the item carries the context so the trace shows
         # what was asked and why.
-        clarify = {**context_item, "clarify_team": True, "clarify_text": routed["text"]}
+        clarify = {
+            **context_item,
+            "clarify_team": True,
+            "clarify_text": routed["text"],
+            # The teams the ask OFFERED, slug beside label. `compile_state` puts them on
+            # the persisted marker so the next turn can resolve a tap against the exact
+            # string this ask composed (AC-822).
+            "clarify_team_options": routed.get("option_pairs") or [],
+        }
         return {
             **escalation_result(clarify_team=clarify),
             # `dry_run=False` is a fact here, not a default: `run()` returns from its own
@@ -569,7 +585,10 @@ def _human_intervention(
             "actions": _clarify_actions(
                 routed["text"], options=routed.get("options") or [], dry_run=False
             ),
-            "pending": {"kind": "team_clarify"},
+            "pending": {
+                "kind": "team_clarify",
+                "options": routed.get("option_pairs") or [],
+            },
         }
     if routed is not None and routed["kind"] == "assign":
         actions = _assign(
@@ -656,13 +675,14 @@ def _person_routing(
       `output_exchange`. Gating on the derived team would make this gate inert on exactly
       the turn it was written for, which is what the first console run showed. With no
       `_parser_raw` (a mocked parse, an injected ctx) the derived team stands in.
-    * No person, no parser team, and not an acceptance: ask when an escalation offer is
-      OPEN (D1 - the stale offer the owner saw consumed), or when the team this turn would
-      assign to is INHERITED from a previous turn (H64 / AC-815 - the stale routing the
-      owner saw assigned), where "inherited" means the domain derives none and the previous
-      routing is not the chain's own carried default. An acceptance
-      (`is_escalation_confirmation`) is assigned to the offered team; with neither premise
-      there is nothing to be wrong about, so the lane carries on exactly as it does today
+    * A parser team that is NOT an exact catalogue member is NARROWED against the
+      catalogue before it is used (owner rule R-a, console pass 4, 7 Sep 2026). One
+      member matches - assign it; several - ask over exactly those; none - ask over the
+      whole vocabulary. See `_catalogue_teams`.
+    * No person, no parser team, and not an acceptance: ask ONLY when an escalation offer
+      is OPEN (D1 - the stale offer the owner saw consumed). An acceptance
+      (`is_escalation_confirmation`) is assigned to the offered team; with no offer there
+      is nothing to be wrong about, so the lane carries on exactly as it does today
       (`test_no_team_clarify_on_live_team_flows_through_unguarded`).
 
     Returns `None` for "nothing to do here", which is every turn that names nobody and
@@ -695,11 +715,7 @@ def _person_routing(
             }
         if jsc.truthy(_parser_team(ctx, team)):
             return None  # the parser itself named a team: the mention was in passing
-        return {
-            "kind": "clarify",
-            "text": _team_clarify_text(person, hits),
-            "options": _team_clarify_options(hits),
-        }
+        return _clarify_over(_team_clarify_pairs(hits), person=person, hits=hits)
 
     # The PARSER's own team, never the derived one - the same distinction the person arm
     # above makes, and for the same measured reason (owner ruling D1, console pass 3,
@@ -724,67 +740,150 @@ def _person_routing(
     #   read through the same function the post-processor uses so the two ends of the
     #   turn cannot disagree about it (an expired member offer is not open, AC-816).
     #
-    # ... and AC-815 (H64) keeps its own premise beside D1's, because the two rulings are
-    # about two different stale teams. H64's turn had NO offer open: "escalate to
-    # marketing" arrived with a null parser routing while the derived routing had inherited
-    # `purchasing` from the previous turn, and the customer was assigned there. So the
-    # second premise is INHERITANCE - this turn named no team, its domain derives none, and
-    # the team it would assign to is the previous turn's - bounded by one fact the review
-    # measured: the previous routing is never absent, because the chain's own hard default
-    # is persisted too. A carried `DEFAULT_SUGGESTED_TEAM` is not a previous turn's
-    # decision, it is what a cold turn gets anyway, so it is assigned, not asked about.
-    # `derive_routing` is the SAME function the chain uses, imported so the lane's idea of
-    # "this domain routes somewhere" cannot drift from the head's.
+    # H64 / AC-815 USED to keep a second premise here - INHERITANCE, "this turn named no
+    # team, its domain derives none, and the team it would assign to is the previous
+    # turn's". It is DELETED (owner rules R-a / R-b, console pass 4, 7 Sep 2026), because
+    # it could not tell its own case apart from the one it broke:
+    #
+    #   * H64:   "escalate to marketing",         parser routing null, prev `purchasing`
+    #   * mt-r2: "I want to talk to a human",     parser routing null, prev `purchasing`
+    #
+    # IDENTICAL at this lane, and D11 forbids reading the two messages to tell them apart.
+    # So the premise fired on both and the second one is the regression production showed
+    # (turns 1f0428cb / 9089ef88, execs 15501799 / 15502378): a request that named NO team
+    # was answered with the eight-team menu instead of being assigned. The discriminator
+    # has to come from the PARSER, and now does: under the amended contract (this lane's
+    # `_catalogue_teams`, the prompt's ROUTING section) `routing.suggested_team` carries
+    # the customer's own team word verbatim when it names a team the catalogue does not
+    # hold exactly, and stays null only when the customer named no team at all. H64's turn
+    # therefore arrives with `"marketing"` and is narrowed above; mt-r2's arrives null and
+    # falls through to here, where the ROUTING CHAIN'S OWN RESULT is exactly right - the
+    # carried team when a previous turn had one, else the table's default. Not the default
+    # unconditionally: a product browse routes to purchasing by the owner's own table, and
+    # "talk to a human" straight after it inherits that, which is the pre-#706 chain and
+    # live parity (review of #713, blocker B3; both shapes are pinned in
+    # `test_pass4_item5_no_team_named_keeps_default_routing.py`).
     esc = jsc.get(output, "escalation") or {}
     if jsc.get(esc, "is_escalation_confirmation") is True:
         return None
-    if jsc.truthy(_parser_team(ctx, team)):
-        return None
-    from app.services.chatbot.head.output_exchange import offer_is_open, derive_routing
+    raw_team = _parser_team(ctx, team)
+    if jsc.truthy(raw_team):
+        # The parser named SOMETHING. Which catalogue members does that word name?
+        matched = _catalogue_teams(raw_team)
+        if len(matched) == 1:
+            if matched[0] == jsc.nullish_str(team).strip().lower():
+                return None  # already the team the chain resolved: nothing to correct
+            # R-c / AC-815's real complaint: the customer's own word decides, never an
+            # unrelated team carried in from an earlier turn. No assignee - a named TEAM
+            # is a rotation draw, unlike a named person.
+            return {"kind": "assign", "team": matched[0], "assignee": None}
+        return _clarify_over(
+            [{"team": t, "label": _pretty_team(t)} for t in matched]
+            if matched
+            else _team_clarify_pairs([])
+        )
+    from app.services.chatbot.head.output_exchange import offer_is_open
 
-    prev = _prev_variables(ctx)
-    clarify = {
-        "kind": "clarify",
-        "text": _team_clarify_text(None, []),
-        "options": _team_clarify_options([]),
-    }
-    if offer_is_open(prev):
-        return clarify
-    derived_team = (
-        jsc.get(derive_routing(output), "suggested_team")
-        if jsc.truthy(jsc.get(output, "domain_hint"))
-        else None
-    )
-    prior_team = jsc.nullish_str(jsc.get(jsc.get(prev, "routing"), "suggested_team")).strip().lower()
-    if derived_team is None and prior_team and prior_team != DEFAULT_SUGGESTED_TEAM:
-        return clarify
+    if offer_is_open(_prev_variables(ctx)):
+        return _clarify_over(_team_clarify_pairs([]))
     return None
 
 
-def _team_clarify_options(hits: list) -> list[str]:
-    """The teams this clarify offers, in printed order.
+def _catalogue_teams(word: Any) -> list[str]:
+    """The catalogue members the parser's own team WORD names, in catalogue order.
 
-    Extracted for the same reason as the company half: the sentence and the quick replies
-    that answer it are built from ONE list, so a tap can never name a team the ask did not.
+    D11-clean, and worth saying why rather than leaving it to be re-argued: the input is
+    `routing.suggested_team`, which the PARSER produced, and the thing it is matched
+    against is `SUGGESTED_TEAMS` - OUR OWN routing vocabulary. Nothing here reads the
+    customer's message. The D11 rule forbids a regex or substring match over `ctx.text` or
+    over a previous reply; a membership test over a fixed catalogue of eight slugs is the
+    opposite of that, and it is the ONLY way an ambiguous word can be answered without
+    asking the model to guess for us.
+
+    Three outcomes, and every caller wants a different thing from each:
+
+    * exactly one member - the word IS that team ("warehouse", "marketing product",
+      "certification" -> `purchasing_certification`);
+    * several - the word names a family, not a team ("marketing" -> the three
+      `marketing_*` teams). That is the ambiguity owner rule R-a wants ASKED about, over
+      those members only, never over the whole catalogue;
+    * none - the model sent a word we have no team for. The caller asks over everything,
+      which is the only honest list when nothing matched.
+
+    An exact member always wins outright: `purchasing` is a team in its own right and
+    must not be read as the family `purchasing_certification` also belongs to.
     """
     from app.services.chatbot.contracts import SUGGESTED_TEAMS
 
-    names: list[str] = []
+    token = jsc.nullish_str(word).strip().lower().replace(" ", "_").replace("-", "_")
+    if not token:
+        return []
+    if token in SUGGESTED_TEAMS:
+        return [token]
+    return [t for t in SUGGESTED_TEAMS if token in t.split("_")]
+
+
+def _clarify_over(
+    pairs: list[dict[str, Any]], *, person: Any = None, hits: list | None = None
+) -> dict[str, Any]:
+    """One clarify decision, built from ONE list of `{team, label}` pairs.
+
+    The sentence, the quick replies and the marker the next turn resolves against all come
+    from `pairs`, so a tap can never name a team the ask did not offer and the marker can
+    never hold a team the customer never saw. `options` stays a list of LABELS because that
+    is what `_clarify_actions` puts on the wire as quick replies; `option_pairs` is the same
+    list with the slug the router acts on beside each label, and it is what the tail
+    persists (AC-822).
+    """
+    options = [jsc.js_string(jsc.get(p, "label")) for p in pairs]
+    return {
+        "kind": "clarify",
+        "text": _team_clarify_text(person, hits or [], options=options),
+        "options": options,
+        "option_pairs": pairs,
+    }
+
+
+def _team_clarify_pairs(hits: list) -> list[dict[str, Any]]:
+    """The teams this clarify offers, in printed order, as `{team, label}`.
+
+    Extracted for the same reason as the company half: the sentence, the quick replies that
+    answer it and the marker that resolves the answer are built from ONE list, so a tap can
+    never name a team the ask did not.
+
+    A staff hit's own `team_name` is preferred for the LABEL, because that is the name the
+    install gave the team and the customer is being asked to recognise it; `team` is always
+    the slug, which is the only string routing can act on. De-duplicated by label, which is
+    what the printed list can distinguish.
+    """
+    from app.services.chatbot.contracts import SUGGESTED_TEAMS
+
+    pairs: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for hit in hits:
-        name = jsc.get(hit, "team_name") or _pretty_team(jsc.get(hit, "team_code"))
-        if jsc.truthy(name) and name not in names:
-            names.append(name)
-    return names or [_pretty_team(t) for t in SUGGESTED_TEAMS]
+        code = jsc.get(hit, "team_code")
+        label = jsc.get(hit, "team_name") or _pretty_team(code)
+        if jsc.truthy(label) and label not in seen:
+            seen.add(label)
+            pairs.append({"team": code, "label": label})
+    return pairs or [{"team": t, "label": _pretty_team(t)} for t in SUGGESTED_TEAMS]
 
 
-def _team_clarify_text(person: Any, hits: list) -> str:
+def _team_clarify_options(hits: list) -> list[str]:
+    """The printed labels alone. Kept for `_team_clarify_text`'s no-options fallback."""
+    return [jsc.js_string(jsc.get(p, "label")) for p in _team_clarify_pairs(hits)]
+
+
+def _team_clarify_text(person: Any, hits: list, *, options: list[str] | None = None) -> str:
     """The ask. Names the teams the customer can choose between, and nothing else.
 
     With hits it is the teams THOSE people are on (that is the whole ambiguity); without,
-    it is the routing vocabulary, which is the exact set the router can act on - inventing
-    a shorter list would invite a reply nothing could resolve.
+    it is the set the caller narrowed to - the members the customer's own word named
+    (R-a), or the whole routing vocabulary when nothing narrowed it, which is the exact
+    set the router can act on. Inventing a shorter list would invite a reply nothing
+    could resolve; printing all eight when the word named three is the defect R-a names.
     """
-    names = _team_clarify_options(hits)
+    names = options if options else _team_clarify_options(hits)
     listed = f"{', '.join(names[:-1])} or {names[-1]}" if len(names) > 1 else names[0]
     if person and hits:
         people = {jsc.js_string(jsc.get(h, "user_id")) for h in hits}

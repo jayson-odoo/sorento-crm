@@ -669,6 +669,99 @@ def offer_is_open(state: Any) -> bool:
     )
 
 
+def _is_catalogue_team(team: Any) -> bool:
+    """Is this one of the eight teams the router can actually act on?
+
+    The parser may now answer with the customer's OWN team word when it maps to several
+    catalogue teams or to none (AC-821 / owner rule R-a), which is what lets the escalation
+    lane tell "escalate to marketing" from "I want to talk to a human". That word is for
+    the LANE to narrow (`escalation._catalogue_teams`); it must never be what this body
+    PERSISTS, because `variables.routing.suggested_team` is what the NEXT turn inherits and
+    what `escalation.run` assigns when that turn names no team of its own. Review of #713,
+    blocker B2: "escalate to marketing" then "I need a human" called `next_assignee` with
+    `team_code: "marketing"` and commented "Team: marketing".
+    """
+    from app.services.chatbot.contracts import SUGGESTED_TEAMS
+
+    return jsc.nullish_str(team).strip().lower() in SUGGESTED_TEAMS
+
+
+def _team_clarify_pick(state: Any, o: Any, llm_team_n: Any, parent_input: Any) -> Any:
+    """The team an OPEN `team_clarify` was just answered with, or None (owner rule R-b).
+
+    `None` when no clarify is open, or when this turn does not answer it - and "does not
+    answer it" has to stay reachable, or every turn after an unanswered ask would be
+    dragged back into the escalation lane.
+
+    Two sources, in order, and BOTH are structured reads (D11):
+
+    1. **The parser's own team for this turn.** An ask is a question; the answer to it is a
+       team word, and reading a team word out of a message is the parser's job. The ONLY
+       thing this rule overrides is the `message_type` gate below, which discards that team
+       when the parser also stamped `casual` - and a bare "marketing product" is precisely
+       what it stamps `casual`.
+    2. **An exact match against the quick replies WE persisted for that ask.** OUR OWN
+       strings, compared with `strip()` + `casefold()` EQUALITY, never a substring or a
+       regex, and never against anything the customer authored. It is the tap: the customer
+       pressed a button whose text this codebase composed, and the parser is free to come
+       back null for it (it did emit the team on the captured turn, but a tap is not a
+       sentence and nothing guarantees the next one parses). Inventoried under D11 in the
+       plan beside `escalation._catalogue_teams`, which is the same class of read.
+
+    A `pending` marker with no options is still a valid open clarify - a session written
+    before this shipped, or by n8n, which has no marker at all - so source 1 stands alone
+    there rather than the whole rule going dark.
+
+    **Lifetime: ONE turn, enforced in `_offer_carry` by an explicit exclusion.** The first
+    cut of this claimed the life was one turn for free, because `_offer_carry` needs a
+    non-empty `last_result_set` and "a clarify has no roster". That was WRONG and the
+    review of #713 measured it: the clarify arm carries the PREVIOUS turn's roster forward
+    (`compile_state` ~:2075) before it stamps the marker, so production dump 0d7d5a23
+    arrives `team_clarify` with fifteen rows behind it, `topic.changed` returns False on a
+    null domain, and the label was carried forever - retyping every later team-naming turn
+    into an escalation and masking any real offer made afterwards. `_offer_carry` now
+    excludes the kind outright, which is what "one question, answered next turn or not at
+    all" actually requires. The member offer's 3-turn ttl is still not copied: a roster
+    stays on the customer's screen, a question does not.
+
+    `offer_is_open` is deliberately not taught this kind either: it answers "is an
+    escalation OFFER open", which is what turns a bare "yes" into an acceptance, and a
+    team clarify is not a yes/no question - a "yes" to it means nothing and must not
+    assign anybody.
+    """
+    pending = jsc.get(state, "pending")
+    if jsc.get(pending, "kind") != "team_clarify" and (
+        jsc.get(state, "selection_context") != "team_clarify"
+    ):
+        return None
+    # A turn that brings its OWN business question is not an answer to "which team",
+    # however many team words it happens to carry (review of #713, B1's sibling). "Which
+    # promotions is marketing running" names a team and asks a question; source 1 alone
+    # would retype it `request_for_help` and escalate the turn the customer wanted
+    # answered. Both signals are the parser's own and neither reads the message: a
+    # `business_query`, or a domain hint, means there is a question here to answer.
+    own_question = jsc.js_string(jsc.get(o, "message_type")) == "business_query" or jsc.truthy(
+        jsc.norm(jsc.get(o, "domain_hint"))
+    )
+    if jsc.truthy(llm_team_n) and not own_question:
+        return llm_team_n
+    reply = _split_reply_to(
+        jsc.get(parent_input, "latest_user_message")
+        if jsc.truthy(jsc.get(parent_input, "latest_user_message"))
+        else jsc.get(parent_input, "user_message")
+    ).strip().casefold()
+    if not reply:
+        return None
+    for option in jsc.array(jsc.get(pending, "options")):
+        team = jsc.norm(jsc.get(option, "team"))
+        label = jsc.nullish_str(jsc.get(option, "label")).strip().casefold()
+        if not jsc.truthy(team):
+            continue
+        if reply == label or reply == team.casefold():
+            return team
+    return None
+
+
 def _offered_team(state: Any, prior_routing: Any) -> Any:
     """The team the OPEN offer was made for, normalised, or None.
 
@@ -862,6 +955,35 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     llm_agent_raw = jsc.get(o.get("routing"), "suggested_agent")
     llm_team_n = norm(llm_team_raw)
     llm_agent_n = norm(llm_agent_raw)
+    # (a2) OWNER RULE R-b (console pass 4, 7 Sep 2026): while a `team_clarify` is OPEN,
+    # this turn's own team wins whatever `message_type` the parser stamped, and the turn
+    # goes back to the escalation lane.
+    #
+    # Turns 08e74db8 -> 0d7d5a23 (execs 15500464 / 15500487): "escalate to marketing" was
+    # asked which team, the customer answered "marketing product", and NOTHING consumed it.
+    # The parser had the answer right (`_parser_raw.routing.suggested_team:
+    # marketing_product`) but stamped `casual` for the bare noun phrase, which is exactly
+    # what a direct answer to "which team" looks like - so the `req_help` ternary below
+    # discarded the team, the chain fell to the STALE `purchasing` carried from before the
+    # escalation was even asked for, and `route.decide`'s `is_low_signal` answered
+    # "Hi! How can I help you today?". The marker was WRITTEN (`compile_state`) and read by
+    # nobody.
+    #
+    # `message_type` is the wrong question here, and that is the whole of the rule: an
+    # answer to a question WE asked is a continuation of the escalation we asked it about,
+    # not a new turn to be classified. Two structured signals, no text classification:
+    # the marker says an ask is open, and the parser's own team (or the customer's tap on a
+    # reply WE composed) says which team answers it. See `_team_clarify_pick`.
+    team_clarify_pick = _team_clarify_pick(
+        parent_input.get("previous_conversation_state"), o, llm_team_n, parent_input
+    )
+    if team_clarify_pick is not None:
+        llm_team_n = team_clarify_pick
+        req_help = True
+        # `route.decide`'s `wants_escalation_or_help` arm is what sends this back to the
+        # lane. `llm_msg_type_raw` is deliberately NOT touched: the retarget intent above
+        # is documented as immune to every downstream mutation, and this is one.
+        o["message_type"] = "request_for_help"
     # (b) The LLM occasionally emits the LITERAL STRING "null" for a hint. That is truthy,
     #     so it mis-fires the domain->business_query clobber. Coerce to real null here.
     o["domain_hint"] = norm(o.get("domain_hint"))
@@ -1607,6 +1729,117 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             )
 
         o["entities"] = [*resolved]
+
+        # -- ISSUE #708: a numbered pick over a PARTIAL-MISS roster keeps what resolved -- #
+        # "SRTKS6091 and SRTKS8091 got stock": the first code resolves, the second misses
+        # and gets a sibling did-you-mean. On THIS lane the partial miss is claimed by the
+        # answer half's `build-suggest-offer` before the tail runs, so the turn persists
+        # `selection_context: suggest_offer` and `_partial_dym_block` never writes
+        # `dym_last_result_set` - which is what `dym_numbered_multi_select` above keys on.
+        # So "2" fell through to the code just above, whose contract is REPLACEMENT, and
+        # the already-resolved SRTKS6091 was dropped: the turn answered about the pick
+        # alone. The reviewer measured `reference_target` of null, "result" and "dym" all
+        # doing it, which is the tell - the discriminator was which roster happened to be
+        # in state, not the parser's own tag.
+        #
+        # `apply_dym_pick` stays keyed on the roster it is given (no widening of the dym
+        # block's guard, and no second merge implementation): what this does is HAND it the
+        # other roster. The linkage it needs is already persisted - `dym_offer.candidates`
+        # carries `for_raw` / `for_hint` / `for_canonical` per candidate on exactly these
+        # turns - so the pick replaces the token it was offered FOR, in place, and every
+        # other prior entity survives. A picked row with no candidate record is left to the
+        # replacement above rather than guessed at: without the linkage there is nothing
+        # that says which token it answers.
+        #
+        # And the linkage has to LAND, not merely exist. `apply_dym_pick` with slot
+        # matching off ties the pick to a prior entity by `for_raw` / `for_canonical` and
+        # PREPENDS when neither matches (`dym_replace_unmatched`) - which would leave the
+        # miss token that was never resolved sitting in scope beside its own answer. So the
+        # tie is tested first, here, with the same two keys; a pick that cannot be tied
+        # falls through to the replacement above, which is what n8n does with it. That is
+        # also what keeps the corpus byte-equal: capture `parser-15157067` is this exact
+        # shape with a prior `SRTWT165-FT` against a `for_raw` of `SRTWT165FT` (the
+        # separator differs), so nothing ties and nothing changes.
+        sug_offer = (
+            prev_state.get("dym_offer")
+            if prev_state.get("selection_context") == "suggest_offer"
+            and isinstance(prev_state.get("dym_offer"), dict)
+            else None
+        )
+        if resolved and sug_offer is not None:
+            def _code_key(value: Any) -> str:
+                return jsc.nullish_str(value).strip().lower()
+
+            by_code = {}
+            for cand in jsc.array(sug_offer.get("candidates")):
+                key = _code_key(jsc.get(cand, "code"))
+                if key and key not in by_code:
+                    by_code[key] = cand
+            base = jsc.array(prev_state.get("entities"))
+            picked_cands = [
+                c
+                for c in (
+                    by_code.get(_code_key(p.get("canonical_code") or p.get("raw")))
+                    for p in resolved
+                )
+                if c is not None
+            ]
+            prior_keys = {_code_key(jsc.get(e, "raw")) for e in base} | {
+                _code_key(jsc.get(e, "canonical_code")) for e in base
+            }
+            source_keys: set[str] = set()
+            for c in picked_cands:
+                source_keys |= {
+                    _code_key(jsc.get(c, "for_raw")),
+                    _code_key(jsc.get(c, "for_canonical")),
+                }
+            source_keys -= {""}
+            # TWO gates, both measured against the scope as it stands BEFORE any pick is
+            # applied, and both over the whole pick set rather than per pick: threading is
+            # what makes a multi-pick accumulate ("all of them" replaces the source token
+            # with the first candidate and PREPENDS the rest), so re-testing after each
+            # pick would stop at the first and answer for one code out of three.
+            #
+            # (i) THE LINKAGE LANDS. Without a `for_raw` / `for_canonical` that names a
+            #     prior entity there is nothing that says which token the pick answers.
+            # (ii) THERE IS SOMETHING TO KEEP. #708 is a PARTIAL miss - a code resolved
+            #     beside the one that did not - and the merge exists to save that code. A
+            #     FULL miss has no resolved sibling, so the prior scope is the miss token
+            #     alone, the merge would preserve nothing, and the plain replacement above
+            #     is both correct and what the corpus records
+            #     (`test_r3_pending_end_to_end.py::TestAllOfThemOverADidYouMeanOffer...`
+            #     grades that arm's `entity_op: reuse`).
+            merges = bool(source_keys & prior_keys) and any(
+                _code_key(jsc.get(e, "raw")) not in source_keys
+                and _code_key(jsc.get(e, "canonical_code")) not in source_keys
+                for e in base
+            )
+            applied = False
+            for picked_ent in resolved if merges else []:
+                code = picked_ent.get("canonical_code") or picked_ent.get("raw")
+                cand = by_code.get(_code_key(code))
+                if cand is None:
+                    continue
+                base = apply_dym_pick(
+                    {
+                        "code": jsc.get(cand, "code"),
+                        "uuid": jsc.get(cand, "uuid") if jsc.truthy(jsc.get(cand, "uuid")) else None,
+                        "entity_type": jsc.get(cand, "entity_type")
+                        if jsc.truthy(jsc.get(cand, "entity_type"))
+                        else None,
+                        "for_raw": jsc.get(cand, "for_raw"),
+                        "for_hint": jsc.get(cand, "for_hint"),
+                        "for_canonical": jsc.get(cand, "for_canonical"),
+                    },
+                    sug_offer,
+                    base,
+                    False,  # slot matching OFF, as the numbered handler does: ADD-BOTH
+                )
+                applied = True
+            if applied:
+                o["entities"] = base
+                o["suggest_offer_pick_merged"] = True  # diagnostic
+
         # match_mode: 'or' only when MULTIPLE positions were picked
         # `r.ordinal !== undefined` is a PRESENCE test: a row carrying an explicit
         # `ordinal: null` counts, and `.get(...) is not None` would have dropped it.
@@ -2146,6 +2379,20 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # normalise a legacy suffixed promotion team to the single base team
     if _PROMO_TEAM_RE.match(jsc.lower_or_empty(o["routing"].get("suggested_team")) or ""):
         o["routing"]["suggested_team"] = "marketing_promotion"
+    # ... and NOTHING outside the catalogue is persisted (review of #713, B2). AFTER the
+    # promotion normalisation, so a legacy suffixed promo team is judged by what it
+    # becomes. The chain is simply re-run without the term that failed: a word the router
+    # cannot act on is no answer at all, so it must not outrank the domain's own routing,
+    # and a prior routing written before this shipped is held to the same test rather than
+    # trusted. The parser's raw word is untouched - `_parser_raw` is the frozen snapshot
+    # the lane narrows, and that is the whole discriminator R-a exists for.
+    if not _is_catalogue_team(o["routing"]["suggested_team"]):
+        prior_team_n = norm(jsc.get(prior_routing, "suggested_team"))
+        o["routing"]["suggested_team"] = _nullish(
+            norm(derived.get("suggested_team")),
+            prior_team_n if _is_catalogue_team(prior_team_n) else None,
+            DEFAULT_SUGGESTED_TEAM,
+        )
 
     # -- miss-company-routing: company-pick resolver ------------------------------------- #
     # The offer names companies; a SHORT reply that word-boundary-matches exactly ONE
@@ -2410,15 +2657,25 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         )
         has_filter_signal = fm_dates or fm_entities
 
-        if req_help and jsc.truthy(llm_team_n) and llm_team_n != prior_team:
+        # The catalogue member the parser's word names, or None when it names several or
+        # none (B2). Tier 1 DIRECT-ASSIGNS, so it may only fire on a word the router can
+        # act on; an ambiguous one falls through the ladder and reaches the escalation lane
+        # still typed `request_for_help`, where `_catalogue_teams` asks which of the members
+        # it named (R-a). Promotion normalisation first, as at the chain above.
+        retarget_promo = (
+            "marketing_promotion"
+            if _PROMO_TEAM_RE.match(jsc.js_string(llm_team_n) if llm_team_n is not None else "")
+            else None
+        )
+        retarget_team = retarget_promo or (llm_team_n if _is_catalogue_team(llm_team_n) else None)
+
+        if req_help and jsc.truthy(retarget_team) and retarget_team != prior_team:
             # Tier 1 - RETARGET: the LLM named a DIFFERENT team mid-offer -> abandon the CS
             # roster and direct-assign it.
             o["routing"] = {
-                "suggested_team": llm_team_n,
+                "suggested_team": retarget_team,
                 "suggested_agent": norm(llm_agent_raw) or "general_enquiries",
             }
-            if _PROMO_TEAM_RE.match(jsc.js_string(llm_team_n)):
-                o["routing"]["suggested_team"] = "marketing_promotion"
             o["escalation"] = {"is_escalation_confirmation": True, "retarget_team": True}
             o["message_type"] = "request_for_help"
             o["selection_context"] = None
@@ -2530,6 +2787,39 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
                 o["domain_hint"] = prior_domain
                 if not jsc.truthy(o.get("intent_hint")) and jsc.truthy(prior_intent):
                     o["intent_hint"] = prior_intent
+            # ... and THE OFFER'S OWN SCOPE, which the comment above has promised since
+            # rule 3 landed and no line delivered (owner console pass 4, item 3, 7 Sep
+            # 2026; turns 0eef1cc3 -> 48ee6081, and the same shape on chain 15503158 ->
+            # 15503189 where the CUSTOMER was the entity dropped).
+            #
+            # Measured, because the arm is not where the entities die: the executor keeps
+            # them correctly (`replace_combine` with no current entity keeps every prior
+            # axis, so `hanlim` + `srtwc286` are both still here at line ~1370), and then
+            # `if o["message_type"] == "casual" and not engages_offer: o["entities"] = []`
+            # (~:2172) wipes the scope 400 lines above this arm. That line is right about
+            # a bare "hi" and wrong about "last month", and it cannot tell them apart
+            # because "is this a filter modification of an open offer" is decided HERE,
+            # downstream of it. So the restore belongs here, where the answer exists.
+            #
+            # Only when this turn has no scope of its own: a filter modification that DID
+            # name an entity already carries the executor's own merge, and re-adding the
+            # prior set over it would put back the axis the customer just narrowed.
+            # `current_message: False` and `entity_op: reuse` are the promo-pick sibling's
+            # shape 400 lines up, and for its reason - the scope is CARRIED, not named
+            # this turn, and a reader that believed otherwise would treat the offer's
+            # customer as a new subject.
+            if not jsc.array(o.get("entities")) and jsc.is_array(
+                jsc.get(prior_state, "entities")
+            ):
+                carried = [
+                    {**e, "current_message": False}
+                    for e in jsc.array(jsc.get(prior_state, "entities"))
+                    if jsc.truthy(e)
+                ]
+                if carried:
+                    o["entities"] = carried
+                    o["entity_op"] = "reuse"
+                    o["member_offer_scope_reused"] = True  # diagnostic
             o["member_offer_filter_modification"] = True  # diagnostic
         elif is_new_query:
             # Tier 3b - NEW QUERY: abandon the offer. Touch nothing.

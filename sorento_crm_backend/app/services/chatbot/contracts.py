@@ -333,6 +333,13 @@ class Pending(BaseModel):
     # (AC-816 rule 1, `tail/pending.MEMBER_OFFER_TTL`). Absent on every other kind, and on
     # a marker written by n8n, which has no clock - the reader treats absence as "open".
     ttl: int | None = None
+    # `team_clarify` only (AC-821 / AC-822): the teams the ask actually OFFERED, as
+    # `{team, label}` - the slug the router acts on beside the exact string the customer
+    # saw on the quick reply. One list, so a tap can never resolve to a team the ask did
+    # not name, and `output_exchange._team_clarify_pick` can compare the reply against OUR
+    # OWN string by equality instead of trying to understand it. Absent on a marker written
+    # before this shipped, which is why that reader treats absence as "parser answer only".
+    options: list[dict[str, Any]] | None = None
 
 
 class SessionVars(BaseModel):

@@ -878,7 +878,11 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     )
 
     # ---- miss-company routing: result-aware escalation scoping ------------ #
-    turn_state: dict[str, Any] = {"answered_domain": answered_domain, "offer_open": False}
+    turn_state: dict[str, Any] = {
+        "answered_domain": answered_domain,
+        "offer_open": False,
+        "team_clarify_options": [],
+    }
     _miss_company_routing(
         output,
         qf=qf,
@@ -938,6 +942,9 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         # `None` when the offer was made THIS turn (the clock starts at 3) and the
         # decremented value when it was carried.
         member_offer_ttl=carried_member_ttl,
+        # The teams a team-clarify ask offered THIS turn (AC-822). Empty on every other
+        # turn, which is what `derive` reads as "no list to resolve against".
+        team_clarify_options=turn_state.get("team_clarify_options"),
     )
 
     sanitize_em_dash(output)
@@ -1908,6 +1915,22 @@ def _offer_carry(
     prev_set = jsc.get(prev, "last_result_set")
     if not jsc.truthy(prev_ctx) or not jsc.is_array(prev_set) or len(prev_set) == 0:
         return None
+    if prev_ctx == "team_clarify":
+        # THE ONE LABEL THAT IS NEVER CARRIED (review of #713, blocker B1). Every other
+        # kind here is a ROSTER the customer can still see, and the carry exists so a
+        # second pick against it still resolves. A team clarify is a QUESTION - "which
+        # team?" - answered on the very next turn or not at all, and it has no roster of
+        # its own: the `last_result_set` a clarify turn persists is whatever an EARLIER,
+        # unrelated turn left behind (production dump 0d7d5a23 carries fifteen customer
+        # rows under its `team_clarify` label), so the length test above is not the guard
+        # it looks like and the label was carried indefinitely. Two things then went
+        # wrong, and both are why this is an exclusion rather than a ttl: every later turn
+        # whose parser named a team was retyped `request_for_help` and escalated, and
+        # `pending.derive` kept re-emitting a `team_clarify` marker, which outranks
+        # `member_offer` and `escalation_offer` and would mask a real offer made later.
+        # `topic.changed` cannot bound it either - it returns False whenever either domain
+        # is falsy, and a clarify turn's domain is null by construction.
+        return None
     # A tier menu is a promotion-thread artifact by construction, so it reads its own
     # domain even when the session recorded none (same rule as `tm_domain_ok` above).
     prev_domain = jsc.get(prev, "domain_hint") or ("promotion" if prev_ctx == "tier_offer" else None)
@@ -2072,6 +2095,13 @@ def _miss_company_routing(  # noqa: PLR0912, PLR0915 - one ported block, kept wh
             # every other turn falls through to the ladder above, so clearing is
             # automatic rather than a second line to remember.
             variables["selection_context"] = "team_clarify"
+            # The teams THIS ask offered, carried to `pending.derive` below (AC-822).
+            # On `turn_state` rather than on `variables`, because it is not a session key
+            # of its own: it belongs to the marker, and a second key could disagree with
+            # the marker about what the customer was shown.
+            turn_state["team_clarify_options"] = jsc.array(
+                jsc.get(clar, "clarify_team_options")
+            )
         elif fresh_gate:
             variables["selection_context"] = None
         elif jsc.truthy(jsc.get(prev, "selection_context")):
