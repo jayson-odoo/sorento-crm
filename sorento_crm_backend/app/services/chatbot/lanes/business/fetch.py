@@ -378,6 +378,7 @@ DATE_PARAMS: dict[str, tuple[str, str]] = {
     "crm_resource_attachments_list": ("uploaded_at_from", "uploaded_at_to"),
     "crm_resource_attachments_catalogue": ("uploaded_at_from", "uploaded_at_to"),
     "crm_sla_conversation_event_logs_list": ("date_from", "date_to"),
+    "crm_procurement_purchase_orders_placed_list": ("expected_date_from", "expected_date_to"),
 }
 
 ORDER_TOOLS: frozenset[str] = frozenset(
@@ -649,6 +650,7 @@ CHATBOT_READ_ONLY_TOOLS: frozenset[str] = frozenset(
         "crm_order_management_orders_by_product_list",
         "crm_order_management_orders_list",
         "crm_portal_link_get",
+        "crm_procurement_purchase_orders_placed_list",
         "crm_project_detail",
         "crm_project_forecast",
         "crm_project_quotations_list",

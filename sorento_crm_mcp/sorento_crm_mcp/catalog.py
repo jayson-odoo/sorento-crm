@@ -982,6 +982,36 @@ CATALOG: tuple[ToolSpec, ...] = (
         external=True,
         domain="procurement",
     ),
+    # --- procurement: purchase orders placed (A5, chatbot-growth-r1) ---
+    ToolSpec(
+        "crm_procurement_purchase_orders_placed_list",
+        (
+            "List PURCHASE ORDER lines PLACED but not yet fully received (qty_ordered - "
+            "qty_received > 0, line open) - 'PO for X', 'PO placed, not yet shipped', 'what did "
+            "we order from the supplier'. Each row carries po_number, product_code, "
+            "outstanding_qty, expected_date (the line's, else the header's), and supplier "
+            "(RESTRICTED - a dealer never sees it, only a contact holding "
+            "purchase_orders.supplier).\n\n"
+            "NEVER NETTED against incoming: `spo_allocations.po_line_id` is NULL on every row, "
+            "so this tool NEVER subtracts what has already arrived - for that use "
+            "crm_procurement_spo_last_receipt_list, and for Foundre's rule ('no stock, no "
+            "incoming, but a PO is placed') the CRM probes this tool itself.\n\n"
+            "FILTER BY UUID: `product_ids` (canonical product UUIDs, csv / JSON / repeated). "
+            "Date window: expected_date_from / expected_date_to.\n\n"
+            "GROUPING: `group_by` = product | supplier | date renders headed sections. "
+            "`include_summary=true` adds `summary` (po_placed_qty/po_placed_count over the "
+            "filtered lines)."
+        ),
+        "/api/v1/procurement/purchase-orders/placed",
+        (),
+        (
+            "limit", "product_ids", "expected_date_from", "expected_date_to",
+            "group_by", "include_summary", "sort", "dir",
+        ),
+        domain="purchase_order",
+        related_tools=("crm_procurement_spo_last_receipt_list",),
+        escalation_team="procurement",
+    ),
     # --- project sales (read-only; AC-K1 / AC-K2) ---
     ToolSpec(
         "crm_projects_list",

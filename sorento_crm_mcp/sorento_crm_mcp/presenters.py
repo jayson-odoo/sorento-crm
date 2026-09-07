@@ -51,6 +51,7 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_inventory_stock_balance_list",
         "crm_forms_management_forms_list",
         "crm_portal_link_get",
+        "crm_procurement_purchase_orders_placed_list",
     }
 )
 
@@ -71,6 +72,7 @@ _DEFAULT_INTRO = {
     "crm_inventory_stock_balance_list": "Stock details found for the requested products.",
     "crm_forms_management_forms_list": "Here are the forms I found.",
     "crm_portal_link_get": "Here is the link you requested.",
+    "crm_procurement_purchase_orders_placed_list": "Here is the PO placed I found.",
 }
 
 _RESULT_TYPE = {
@@ -88,6 +90,7 @@ _RESULT_TYPE = {
     "crm_inventory_stock_balance_list": "stock",
     "crm_forms_management_forms_list": "forms",
     "crm_portal_link_get": "portal_link",
+    "crm_procurement_purchase_orders_placed_list": "purchase_orders_placed",
 }
 
 _STOCK_TOOL = "crm_inventory_stock_balance_list"
@@ -398,6 +401,26 @@ def _orders_so_outstanding(rows: list[dict], b: _Builder) -> None:
                 ),
             ],
         )
+
+
+def _purchase_orders_placed(rows: list[dict], b: _Builder) -> None:
+    """A5 (AC-907): PO placed, never netted against incoming. `supplier` is
+    RESTRICTED - a dealer never sees it, only a contact holding
+    `purchase_orders.supplier` (the actual gate is `output_structurer`, not
+    here - the MCP stays unfiltered)."""
+    for r in rows:
+        b.item(
+            r.get("po_number"),
+            [
+                ("company_name", "Company", r.get("company_name")),
+                ("po_number", "PO Number", r.get("po_number")),
+                ("product_code", "Product Code", r.get("product_code")),
+                ("outstanding_qty", "Outstanding Qty", _qty(r.get("outstanding_qty"))),
+                ("expected_date", "Expected Date", r.get("expected_date")),
+                ("supplier", "Supplier", r.get("supplier")),
+            ],
+        )
+    b.restrict("supplier", "purchase_orders.supplier")
 
 
 def _orders_by_product(rows: list[dict], b: _Builder) -> None:
@@ -1262,6 +1285,7 @@ _BUILDERS = {
     "crm_resource_attachments_list": _resource_attachments,
     "crm_inventory_stock_balance_list": _stock,
     "crm_forms_management_forms_list": _forms,
+    "crm_procurement_purchase_orders_placed_list": _purchase_orders_placed,
 }
 
 

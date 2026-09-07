@@ -368,6 +368,35 @@ def test_pipeline_summary_absent_on_so_outstanding_bucket_own_summary():
     assert "summary_items" not in out
 
 
+def test_purchase_orders_placed_renders_fields_and_restricts_supplier():
+    out = env("crm_procurement_purchase_orders_placed_list", {
+        "data": [{
+            "po_number": "PO-1001", "product_code": "SRTWC8517",
+            "outstanding_qty": 50, "expected_date": "2026-07-01",
+            "supplier": "Acme Supplies",
+        }],
+    })
+    assert out["result_type"] == "purchase_orders_placed"
+    f = {x["label"]: x["value"] for x in out["items"][0]["fields"]}
+    assert f["PO Number"] == "PO-1001"
+    assert f["Outstanding Qty"] == "50"
+    assert f["Supplier"] == "Acme Supplies"
+    assert out["restricted_fields"] == {"supplier": "purchase_orders.supplier"}
+
+
+def test_purchase_orders_placed_group_by_supplier():
+    row_a = {"po_number": "PO-1", "product_code": "P1", "supplier": "Acme"}
+    row_b = {"po_number": "PO-2", "product_code": "P2", "supplier": "Beta"}
+    out = env("crm_procurement_purchase_orders_placed_list", {
+        "data": [row_a, row_b],
+        "groups": [
+            {"key": "Acme", "label": "Acme", "rows": [row_a]},
+            {"key": "Beta", "label": "Beta", "rows": [row_b]},
+        ],
+    })
+    assert {g["key"] for g in out["groups"]} == {"Acme", "Beta"}
+
+
 def test_stock_omits_sellable_when_backend_did_not_send_it():
     """AC-903: byte-identical when the backend answered with no `sellable` at all."""
     out = env("crm_inventory_stock_balance_list", {
