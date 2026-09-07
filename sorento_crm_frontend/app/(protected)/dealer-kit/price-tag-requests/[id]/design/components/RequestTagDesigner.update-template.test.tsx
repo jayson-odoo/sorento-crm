@@ -18,7 +18,7 @@
  */
 
 import React from 'react';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ToolbarButton,
@@ -50,6 +50,10 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings', 
 type TagSheetDocCapture = { lineId: string; doc: TagTemplateDoc };
 const canvasDocs: TagSheetDocCapture[] = [];
 let currentLineId = '';
+
+/** Where the browser repro dragged the barcode to before hitting Update. */
+const MOVED_X_MM = 24.76;
+const MOVED_Y_MM = 20.71;
 
 vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor', () => ({
   TagCanvasEditor: ({
@@ -134,12 +138,13 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor',
         {/* R2 (#726): moves the FIRST layer's own x/y, the same shape a real
             drag produces on the canvas - onLayersChange fires immediately
             (no debounce of its own), the same as it does for the buttons
-            above. */}
+            above. The numbers are the ones measured in the browser repro
+            (barcode dragged to 24.76 / 20.71). */}
         <button
           type="button"
           onClick={() => {
             const next = layers.map((l, i) =>
-              i === 0 ? { ...l, x_mm: 17.45, y_mm: 20.71 } : l,
+              i === 0 ? { ...l, x_mm: MOVED_X_MM, y_mm: MOVED_Y_MM } : l,
             );
             setLayers(next);
             onLayersChange?.(next);
@@ -187,6 +192,7 @@ import type {
 import type {
   LineTagData,
   TagLayer,
+  TagSheetDoc,
   TagTemplate,
   TagTemplateDoc,
 } from '@/lib/dealer-kit/tag-template-types';
@@ -366,12 +372,14 @@ async function mountBothOnSameTemplate() {
     lineTagData({ line_id: 'line-b', code: 'BBB-2', name: 'Basin' }),
   ]);
 
+  const onSave = vi.fn<(doc: TagSheetDoc) => Promise<void>>(async () => {});
+  const onAutosave = vi.fn<(doc: TagSheetDoc) => Promise<void>>(async () => {});
   render(
     <RequestTagDesigner
       request={request()}
       initialDoc={null}
-      onSave={vi.fn(async () => {})}
-      onAutosave={vi.fn(async () => {})}
+      onSave={onSave}
+      onAutosave={onAutosave}
     />,
   );
   await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
@@ -380,6 +388,7 @@ async function mountBothOnSameTemplate() {
   await waitFor(() => expect(screen.getByText(/canvas: 1 layers/)).toBeInTheDocument());
   fireEvent.click(screen.getByText('Kitchen Sink'));
   await waitFor(() => expect(screen.getByText(/canvas: 1 layers/)).toBeInTheDocument());
+  return { onSave, onAutosave };
 }
 
 /** Radix opens its DropdownMenu on pointerdown, not click. */
@@ -501,8 +510,8 @@ describe('RequestTagDesigner - Update template reads the live layers, never re-a
 
     await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalled());
     const [, payload] = mockUpdateTemplate.mock.calls[0];
-    expect(payload.layers[0].x_mm).toBe(17.45);
-    expect(payload.layers[0].y_mm).toBe(20.71);
+    expect(payload.layers[0].x_mm).toBe(MOVED_X_MM);
+    expect(payload.layers[0].y_mm).toBe(MOVED_Y_MM);
 
     await waitFor(() => expect(mockPublishTemplate).toHaveBeenCalled());
     // Publish is awaited before the dialog closes, so waiting for the
@@ -520,7 +529,102 @@ describe('RequestTagDesigner - Update template reads the live layers, never re-a
     // canvas's own edit survived, which is what actually happened on screen
     // in the browser repro.
     expect(screen.getByText(/canvas: 1 layers/)).toBeInTheDocument();
-    expect(screen.getByText(/first layer x=17\.45 y=20\.71/)).toBeInTheDocument();
+    expect(screen.getByText(/first layer x=24\.76 y=20\.71/)).toBeInTheDocument();
+  });
+});
+
+/**
+ * The wire trace measured in the browser, twice (R2, #726):
+ *
+ *   1. PUT .../design/draft   barcode at 24.76 / 20.71   (the autosave BEFORE
+ *      Update - correct)
+ *   2. PUT tag-templates/{id} layers at 24.76 / 20.71    (correct)
+ *   3. POST tag-templates/{id}/publish -> v4             (correct)
+ *   4. GET tag-templates?published=1                     (the refresh)
+ *   5. PUT .../design/draft   barcode BACK at 8.87 / 5   (stale - and this is
+ *      what the server keeps, so the Inspector reads 8.87 / 5 afterwards)
+ *
+ * The step the older guard above was missing is 4 taking any TIME. With
+ * `mockResolvedValue` the refetch settles inside the same microtask drain, so
+ * React never renders the "Loading templates..." gate and the canvas is never
+ * torn down. A real network round trip does render it: the editor unmounts,
+ * comes back, and re-seeds its layers from the `doc` prop, which is step 5's
+ * payload. So the refetch here resolves on the test's own schedule.
+ */
+describe('RequestTagDesigner - a templates refresh never reverts the design (R2, #726)', () => {
+  it('the canvas is not torn down by the refresh, and keeps the moved layer', async () => {
+    const { onSave } = await mountBothOnSameTemplate();
+    const canvasBefore = screen.getByTestId('canvas-editor');
+
+    // The refresh `handleUpdateTemplate` fires after publish, held open until
+    // this test releases it.
+    let releaseRefresh: (rows: TagTemplate[]) => void = () => {};
+    mockListTemplates.mockImplementationOnce(
+      () =>
+        new Promise<TagTemplate[]>((resolve) => {
+          releaseRefresh = resolve;
+        }),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Move first layer' }));
+    expect(screen.getByText(/first layer x=24\.76 y=20\.71/)).toBeInTheDocument();
+
+    openUpdateDialog();
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Publish' }));
+    await waitFor(() => expect(mockPublishTemplate).toHaveBeenCalled());
+    await waitFor(() => expect(mockListTemplates).toHaveBeenCalledTimes(2));
+
+    // The published list comes back a version later, exactly as it does after
+    // a real publish.
+    await act(async () => {
+      releaseRefresh([realTemplate({ published_version_no: 2 })]);
+    });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    // The barcode is where the user left it, not back at its template
+    // position. This is the assertion that went red on the browser repro.
+    expect(screen.getByText(/canvas: 1 layers/)).toBeInTheDocument();
+    expect(screen.getByText(/first layer x=24\.76 y=20\.71/)).toBeInTheDocument();
+    // Same DOM node: a refresh mid-session is a data refresh, not a remount.
+    // A remount is what loses the selection, the zoom and the undo history,
+    // and it is where the stale re-seed came from.
+    expect(screen.getByTestId('canvas-editor')).toBe(canvasBefore);
+
+    // And what a save would send is the moved layer too - the autosave that
+    // fired at step 5 reads the same `tags` state this does (`flush` +
+    // `onSave` is the synchronous way to read it without waiting out the
+    // autosave debounce).
+    fireEvent.click(
+      within(screen.getByTestId('toolbar-trailing')).getByRole('button', { name: 'Save' }),
+    );
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    const saved = onSave.mock.calls[0][0];
+    const savedTag = saved.sheets
+      .flatMap((sheet) => sheet.tags)
+      .find((tag) => tag.request_line_id === 'line-a');
+    expect(savedTag?.layers[0].x_mm).toBe(MOVED_X_MM);
+    expect(savedTag?.layers[0].y_mm).toBe(MOVED_Y_MM);
+  });
+
+  it('a refresh that FAILS keeps the canvas and the list already on screen', async () => {
+    await mountBothOnSameTemplate();
+    const canvasBefore = screen.getByTestId('canvas-editor');
+
+    mockListTemplates.mockRejectedValueOnce(new Error('network'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Move first layer' }));
+    openUpdateDialog();
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Publish' }));
+
+    await waitFor(() => expect(mockListTemplates).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    expect(screen.getByTestId('canvas-editor')).toBe(canvasBefore);
+    expect(screen.getByText(/first layer x=24\.76 y=20\.71/)).toBeInTheDocument();
+    // The template the tag came from is still resolvable, so the Template
+    // menu still offers Update rather than collapsing to "Save as new".
+    openTemplateMenu();
+    expect(screen.getByRole('menuitem', { name: 'Update "DIY Tag"' })).toBeInTheDocument();
   });
 });
 

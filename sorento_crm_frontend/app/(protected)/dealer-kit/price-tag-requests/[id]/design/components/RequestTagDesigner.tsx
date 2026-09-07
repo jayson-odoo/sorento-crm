@@ -219,14 +219,27 @@ export function RequestTagDesigner({
   // A failed fetch gets an explicit, stays-put error state with Retry (AC-S3-3)
   // rather than a toast that vanishes and leaves the canvas silent. Only
   // PUBLISHED templates are eligible for request design (AC-S5-2).
+  //
+  // The loading and error states gate the canvas, so only the FIRST read may
+  // use them (R2, #726). A later re-read - after "Save as new template", after
+  // S6's Update - refreshes the list in place: swapping the canvas out for
+  // "Loading templates..." mid-session unmounts the editor, and a canvas that
+  // comes back is a canvas that has lost its selection, its zoom and its undo
+  // history, and that re-seeds its layers from the `doc` prop. A refresh that
+  // fails keeps the list already on screen rather than replacing a working
+  // canvas with a Retry button.
+  const templatesLoadedOnceRef = useRef(false);
   const loadTemplates = useCallback(() => {
-    setTemplatesStatus('loading');
+    if (!templatesLoadedOnceRef.current) setTemplatesStatus('loading');
     listPublishedTemplates()
       .then((rows) => {
+        templatesLoadedOnceRef.current = true;
         setTemplates(rows);
         setTemplatesStatus('loaded');
       })
-      .catch(() => setTemplatesStatus('error'));
+      .catch(() => {
+        if (!templatesLoadedOnceRef.current) setTemplatesStatus('error');
+      });
   }, []);
 
   useEffect(() => {
@@ -373,44 +386,39 @@ export function RequestTagDesigner({
   const selectedTag = selectedLineId ? tags[selectedLineId] ?? null : null;
 
   /**
-   * The LAYERS the canvas opens on, rebuilt only when the tag's IDENTITY
-   * changes (its id - a template swap or a line switch). The editor reads
-   * its document once, on mount, and keeps the layers in its own state from
-   * then on, so this has to be the tag's layers AS THEY STAND when the
-   * canvas mounts on it - a fresh object per keystroke would be ignored, and
-   * a snapshot taken when the tag was first created would throw every edit
-   * away the moment somebody looked at another line and came back. That is
-   * exactly what it did until this was measured on the lane.
+   * The document the canvas opens on: ALWAYS the tag as `tags` holds it right
+   * now, never a snapshot (R2, #726).
    *
-   * Width/height are deliberately NOT part of this identity (S9 review B1):
-   * a resize must reach the on-screen artboard WITHOUT remounting the
-   * editor, because the editor reads `doc.width_mm`/`height_mm` straight off
-   * its `doc` PROP on every render (only `layers` is frozen into local
-   * state) - `selectedDoc` below always takes the tag's CURRENT size, and a
-   * key on tag id alone means resizing never unmounts a focused input in
-   * the Tag Size control (B1's actual bug: keying on size remounted
-   * `TagSizeControl`, and with it whatever input the designer was mid-typing
-   * into).
+   * The editor reads `doc.layers` once, on mount, into its own state, and
+   * ignores the prop from then on - so what this hands over only matters at
+   * the moment the canvas mounts, and at that moment the only right answer is
+   * the tag's LIVE layers. This used to be a ref frozen at the tag's id, on
+   * the assumption that "mounts" and "the tag id changes" were the same
+   * event. They are not: the ternary below swaps the editor out for a
+   * message whenever Arrange is showing, or the templates or the prices are
+   * loading, or either errored, and swaps it back in afterwards - same tag,
+   * same id, a real unmount and remount. The frozen ref then handed the
+   * canvas the layers as they stood when the line was FIRST selected, the
+   * canvas came back holding them, and its own `onLayersChange` wrote them
+   * over the live ones, so the next autosave persisted a design the user had
+   * already moved on from. Measured on the lane: drag a barcode, Update
+   * template, and the refetch that follows the publish put the barcode back
+   * where it started (the ref carried an explicit exception for the Arrange
+   * switch, which is why only the loading paths still bit).
+   *
+   * Width/height were never part of that identity (S9 review B1) and still
+   * are not: the editor reads `doc.width_mm`/`height_mm` straight off the
+   * prop on every render, so a resize reaches the artboard WITHOUT a remount,
+   * and the key on tag id alone means it never unmounts a focused input in
+   * the Tag Size control.
    */
-  const docRef = useRef<{ key: string; layers: TagLayer[] } | null>(null);
-  // The editor is unmounted whenever Arrange is showing (the mode ternary
-  // below), so a snapshot taken before that switch is stale by the time
-  // Design remounts it - dropping the ref here forces a rebuild off the
-  // live `tags` state instead of replaying the layers as they stood before
-  // the switch and losing whatever Arrange-side or since-mount edits
-  // happened in between.
-  if (mode !== 'design') docRef.current = null;
-  if (selectedTag && docRef.current?.key !== selectedTag.id) {
-    docRef.current = { key: selectedTag.id, layers: selectedTag.layers };
-  }
-  const selectedDoc: TagTemplateDoc | null =
-    selectedTag && docRef.current
-      ? {
-          layers: docRef.current.layers,
-          width_mm: selectedTag.width_mm,
-          height_mm: selectedTag.height_mm,
-        }
-      : null;
+  const selectedDoc: TagTemplateDoc | null = selectedTag
+    ? {
+        layers: selectedTag.layers,
+        width_mm: selectedTag.width_mm,
+        height_mm: selectedTag.height_mm,
+      }
+    : null;
 
   /** What the canvas draws against: the LINE, with its marketing override. */
   const boundData: TagBindingData | null = useMemo(() => {
