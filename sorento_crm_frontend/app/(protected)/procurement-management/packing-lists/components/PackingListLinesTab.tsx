@@ -266,6 +266,17 @@ export function PackingListLinesTab() {
   const footerTotalsRef = useRef(footerTotals);
   footerTotalsRef.current = footerTotals;
 
+  /** Read by the Photos cell INSTEAD of `linePhotos.data` directly, for the same reason
+   *  `footerTotalsRef` exists (S7's S3-class defect, reintroduced here by C3): a query's
+   *  `data` is a fresh reference on every fetch (and, worse, some test doubles return a
+   *  fresh literal on every CALL, so every keystroke's re-render sees a "changed" value
+   *  even though nothing was fetched). Listing `linePhotos.data` as a `columns` dependency
+   *  rebuilt every column - with brand-new cell renderers - on every keystroke, which
+   *  remounted every `<Input>` on the grid and dropped focus after one character. The ref
+   *  lets the Photos cell read the CURRENT map without `columns` needing to change. */
+  const linePhotosRef = useRef(linePhotos.data);
+  linePhotosRef.current = linePhotos.data;
+
   /** Server-searched, so any of the 10k+ products is reachable rather than a first page. */
   const fetchProducts = async (query: string, pageIndex: number) => {
     const res = await getProducts({
@@ -877,7 +888,7 @@ export function PackingListLinesTab() {
               shipmentId={packingListId as string}
               lineId={line.id ?? null}
               productLabel={line.product_code || 'this line'}
-              photos={line.id ? (linePhotos.data?.[line.id] ?? []) : []}
+              photos={line.id ? (linePhotosRef.current?.[line.id] ?? []) : []}
             />
           );
         },
@@ -911,13 +922,15 @@ export function PackingListLinesTab() {
     }
 
     return cols;
-    // `footerTotals` deliberately absent: it is a fresh object on every keystroke and the
-    // footer cells read it through `footerTotalsRef` instead, precisely so this memo does
-    // NOT rebuild while somebody is typing (AC-J1, see `footerTotalsRef`'s own comment).
+    // `footerTotals` and `linePhotos.data` deliberately absent: both are fresh references on
+    // every render for reasons that have nothing to do with an edit (a query result, and in
+    // at least one test double, a fresh object literal per call) - the footer and Photos
+    // cells read them through `footerTotalsRef` / `linePhotosRef` instead, precisely so this
+    // memo does NOT rebuild while somebody is typing (AC-J1, see those refs' own comments).
     // `setLineField` and `removeLine` are stable (`useCallback`, empty deps, in
     // `packing-list-context.tsx`) so they cost nothing as dependencies here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editing, suppliers, supplierNameById, setLineField, removeLine, packingListId, linePhotos.data]);
+  }, [editing, suppliers, supplierNameById, setLineField, removeLine, packingListId]);
 
   const table = useReactTable({
     data: rows,

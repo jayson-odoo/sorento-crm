@@ -5,9 +5,10 @@ unreleased migration - see `PLAN-scm-purchasing-consolidation-6sep.md`'s
 
 `pg_session` (real database, rolled back on teardown) - the same substrate
 `test_migration_454_tag_template_versions.py` uses - because the whole point under
-test is idempotency against the SHARED dev DB's own real "Packing List" row (admin
-data that predates this migration), which a scratch `blank_session` schema does not
-carry.
+test is idempotency against a real, pre-existing "Packing List" attachment-type row
+(admin data that predates this migration), which a scratch `blank_session` schema
+does not carry. CI's database has none of that data (standing lesson), so the one
+test that cares seeds its own row rather than assuming one is already there.
 """
 from __future__ import annotations
 
@@ -81,11 +82,14 @@ def test_upgrade_seeds_all_three_types(db):
 
 
 def test_the_existing_packing_list_row_only_gets_its_code_set(db):
-    """The shared dev DB already carries a real "Packing List" attachment type (admin
-    data, R4's own note) - this migration must not touch its OTHER columns, in
-    particular `triggers_n8n_webhook`, which an admin may have turned on. `pg_session`
-    is the real database (rolled back on teardown), so the row already there is used
-    directly rather than faked with a marker-prefixed duplicate.
+    """A local, prod-copy dev DB already carries a real "Packing List" attachment type
+    (admin data, R4's own note) - this migration must not touch its OTHER columns, in
+    particular `triggers_n8n_webhook`, which an admin may have turned on. CI's database
+    carries no data at all (standing lesson), so this test cannot assume the row is
+    already there - it seeds one itself, inside `pg_session`'s own rolled-back
+    transaction, ONLY when one is not already present, with values (`max_file_size_mb`,
+    `triggers_n8n_webhook`) deliberately unlike anything the migration itself would
+    write, so the "left alone" assertion below is meaningful either way.
     """
     before = db.execute(
         text(
@@ -93,7 +97,21 @@ def test_the_existing_packing_list_row_only_gets_its_code_set(db):
             "WHERE type_name = 'Packing List'"
         )
     ).mappings().first()
-    assert before is not None, "the shared dev DB is expected to already carry this row"
+    if before is None:
+        db.execute(
+            text(
+                "INSERT INTO attachment_types "
+                "(id, code, type_name, allowed_extensions, max_file_size_mb, "
+                "triggers_n8n_webhook, created_at) "
+                "VALUES (gen_random_uuid(), NULL, 'Packing List', 'pdf', 25, true, now())"
+            )
+        )
+        before = db.execute(
+            text(
+                "SELECT max_file_size_mb, triggers_n8n_webhook FROM attachment_types "
+                "WHERE type_name = 'Packing List'"
+            )
+        ).mappings().one()
 
     _run(db)
 
