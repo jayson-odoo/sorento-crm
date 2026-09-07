@@ -4171,7 +4171,12 @@ class PickingHeaderService:
         released_ids = released & set(member_ids)
         has_approved_line = (
             self.db.query(PickingLine.id)
-            .filter(PickingLine.spo_allocation_id.in_(member_ids))  # KILLTEST
+            .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
+            .filter(
+                PickingLine.spo_allocation_id.in_(member_ids),
+                PickingHeader.picking_type == "goods_received",
+                PickingHeader.picking_status == "approved",
+            )
             .first()
             is not None
         )
