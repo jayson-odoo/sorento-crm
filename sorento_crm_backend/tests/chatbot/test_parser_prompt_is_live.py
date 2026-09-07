@@ -30,7 +30,14 @@ from app.services.chatbot_parser_prompt import (
 DATE_EXPR = "{{ $now.toUTC(8*60).format('cccc, dd MMMM yyyy') }}"
 
 LIVE_CHARS = 46942  # the fetched file, leading `=` included
-CONSTANT_CHARS = 46906  # after dropping `=` and swapping the date expression
+# 46906 after dropping `=` and swapping the date expression; +63 chars from migration
+# 482_chatbot_warehouse_cue (owner report, 7 Sep 2026), which gave `warehouse_arrival_date`
+# its own warehouse/CJK/Malay cue and narrowed `estimated_arrival_date` so it no longer owns
+# the bare word "arrival"; +513 chars from a follow-up to the same migration (7 Sep 2026),
+# which added a WORKED EXAMPLES paragraph because the cue alone did not resolve zh/ms
+# phrasings against the FULL TIMELINE sentinel. All three edits are intentional content,
+# not drift from this guard.
+CONSTANT_CHARS = 47482
 
 
 def test_the_constant_has_the_live_size_not_the_export_size() -> None:

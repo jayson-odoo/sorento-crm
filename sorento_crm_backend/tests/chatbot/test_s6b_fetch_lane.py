@@ -179,6 +179,63 @@ class TestToolSearch:
             "EmbeddingReadService (H53)"
         )
 
+    def test_select_tool_retries_without_domain_when_domain_filter_finds_nothing(self):
+        """Evidence turn b5b19cec-dccc-4eda-b766-1aeb1362957b: the parser tagged
+        `domain_hint: "purchasing"` for "IBWB248什么时候会到仓库？", `search_tool_chunks`
+        filters `source_id LIKE '%purchasing%'`, and every incoming tool's `source_id` is
+        `implemented::crm_incoming_stock_*` - zero candidates came back and the turn ended
+        `not_found`. `select_tool` must retry with `domain=None` and return THAT result."""
+        fetch = _import_fetch()
+        FetchServices = _import_fetch_services()
+
+        search_calls: list[dict[str, Any]] = []
+        candidate = [{"name": "crm_incoming_stock_list", "similarity": 0.4537}]
+
+        def fake_tool_search(embedding: list[float], *, query: str, domain: str | None):
+            search_calls.append({"domain": domain})
+            return [] if domain == "purchasing" else candidate
+
+        services = FetchServices(
+            embed=lambda query: [0.1, 0.2, 0.3],
+            tool_search=fake_tool_search,
+            mcp_call=lambda *a, **k: pytest.fail("mcp_call must not be reached by select_tool"),
+        )
+
+        result = fetch.select_tool(
+            db=None, query="IBWB248什么时候会到仓库？", domain="purchasing", services=services
+        )
+
+        assert result == candidate
+        assert search_calls == [{"domain": "purchasing"}, {"domain": None}], (
+            "must call tool_search twice: domain-filtered first, then domain=None"
+        )
+
+    def test_select_tool_does_not_retry_when_domain_filter_finds_candidates(self):
+        """The retry is ONLY for a zero-candidate domain-filtered search - a domain search
+        that already found something must call `tool_search` exactly once."""
+        fetch = _import_fetch()
+        FetchServices = _import_fetch_services()
+
+        search_calls: list[dict[str, Any]] = []
+        candidate = [{"name": "crm_marketing_promotions_list", "similarity": 0.7}]
+
+        def fake_tool_search(embedding: list[float], *, query: str, domain: str | None):
+            search_calls.append({"domain": domain})
+            return candidate
+
+        services = FetchServices(
+            embed=lambda query: [0.1, 0.2, 0.3],
+            tool_search=fake_tool_search,
+            mcp_call=lambda *a, **k: pytest.fail("mcp_call must not be reached by select_tool"),
+        )
+
+        result = fetch.select_tool(
+            db=None, query="promo", domain="promotion", services=services
+        )
+
+        assert result == candidate
+        assert search_calls == [{"domain": "promotion"}]
+
     def test_tool_filter_picks_max_similarity_tiebreak_name(self):
         """AC-604: max `similarity` wins; an exact tie breaks on `name` ASC (deterministic)."""
         fetch = _import_fetch()
@@ -201,6 +258,69 @@ class TestToolSearch:
         assert picked["_tool_pick"]["has_product"] is True
         rejected_names = {r["name"] for r in picked["_tool_pick"]["rejected"]}
         assert rejected_names == {"crm_marketing_promotions_list", "crm_master_products_list"}
+
+    def test_incoming_shipments_winner_collapses_to_list(self):
+        """Evidence turn 147d6888-d313-4612-a32f-364cec119ec4: "incoming TIIU6323920" picked
+        `crm_incoming_stock_shipments` (0.4675) over `crm_incoming_stock_list` (0.4537). The
+        shipments tool's header carries no clearance checkpoints and no `field_access` block,
+        so the container timeline can never render from it - the list tool is the only one
+        wired for clearance gating, and the n8n spine this engine replaced called only it."""
+        fetch = _import_fetch()
+
+        candidates = [
+            {"name": "crm_incoming_stock_shipments", "similarity": 0.4675},
+            {"name": "crm_incoming_stock_list", "similarity": 0.4537},
+        ]
+        result = fetch.tool_filter(candidates, has_product=None)
+
+        assert result.outcome == "picked"
+        picked = result.items[0]["json"]
+        assert picked["name"] == "crm_incoming_stock_list"
+        assert picked["similarity"] == 0.4675, "same similarity as the original winner"
+        assert picked["_tool_pick"]["chosen"] == "crm_incoming_stock_list"
+        assert picked["_tool_pick"]["collapsed_from"] == "crm_incoming_stock_shipments"
+
+    def test_incoming_by_product_winner_collapses_to_list(self):
+        fetch = _import_fetch()
+
+        candidates = [
+            {"name": "crm_incoming_stock_by_product", "similarity": 0.51},
+            {"name": "crm_master_products_list", "similarity": 0.30},
+        ]
+        result = fetch.tool_filter(candidates, has_product=True)
+
+        assert result.outcome == "picked"
+        picked = result.items[0]["json"]
+        assert picked["name"] == "crm_incoming_stock_list"
+        assert picked["_tool_pick"]["collapsed_from"] == "crm_incoming_stock_by_product"
+
+    def test_incoming_list_winner_is_unchanged(self):
+        """The list tool already IS the winner - no collapse, no `collapsed_from` key."""
+        fetch = _import_fetch()
+
+        candidates = [
+            {"name": "crm_incoming_stock_list", "similarity": 0.9},
+            {"name": "crm_master_products_list", "similarity": 0.1},
+        ]
+        result = fetch.tool_filter(candidates, has_product=None)
+
+        picked = result.items[0]["json"]
+        assert picked["name"] == "crm_incoming_stock_list"
+        assert "collapsed_from" not in picked["_tool_pick"]
+
+    def test_non_incoming_winner_is_unchanged(self):
+        """A winner outside the incoming family is never touched by the collapse rule."""
+        fetch = _import_fetch()
+
+        candidates = [
+            {"name": "crm_order_management_orders_list", "similarity": 0.8},
+            {"name": "crm_master_products_list", "similarity": 0.2},
+        ]
+        result = fetch.tool_filter(candidates, has_product=None)
+
+        picked = result.items[0]["json"]
+        assert picked["name"] == "crm_order_management_orders_list"
+        assert "collapsed_from" not in picked["_tool_pick"]
 
     def test_zero_tools_is_not_found_outcome(self):
         """H11: zero candidates is a DISTINGUISHABLE outcome, never a silent empty turn.
@@ -732,6 +852,114 @@ class TestOutputStructurer:
 
         out_keys = [f["key"] for f in out["answers"][0]["fields"]]
         assert out_keys.index("estimated_arrival_date") == 1
+
+    # ----------------------------------------------------------------------- #
+    # A bare container ask ("incoming TIIU6323920") is a timeline ask
+    # (live turn f07632b6-d56d-4036-944c-8200462caac3)
+    # ----------------------------------------------------------------------- #
+
+    def test_bare_container_ask_is_a_timeline(self):
+        """No `requested_attributes` at all, but the resolved entity is an
+        `inbound_shipment` - every recorded checkpoint comes out, chronologically, the
+        same as the `__all__` sentinel does."""
+        fetch = _import_fetch()
+        fields = [
+            {"key": "product_code", "label": "Product Code", "value": "SRTWB7096"},
+            {"key": "estimated_arrival_date", "label": "estimated_arrival_date", "value": "2026-01-04"},
+            {"key": "loading_date", "label": "loading_date", "value": "2026-01-01"},
+            {"key": "gatepass_date", "label": "gatepass_date", "value": "2026-01-08"},
+            {"key": "etc_date", "label": "etc_date", "value": "2026-01-02"},
+            {"key": "collection_date", "label": "collection_date", "value": "2026-01-11"},
+            {"key": "etd_date", "label": "etd_date", "value": "2026-01-03"},
+            {"key": "warehouse_arrival_date", "label": "warehouse_arrival_date", "value": "2026-01-09"},
+            {"key": "eta_delay_date", "label": "eta_delay_date", "value": "2026-01-05"},
+            {"key": "informed_collection_date", "label": "informed_collection_date", "value": "2026-01-10"},
+            {"key": "inspection_date", "label": "inspection_date", "value": "2026-01-06"},
+            {"key": "approval_date", "label": "approval_date", "value": "2026-01-07"},
+        ]
+        envelope = {
+            "result_type": "incoming_stock",
+            "intro": "Here is what I found.",
+            "items": [{"title": "row", "fields": fields}],
+            "has_result": True,
+            "field_access": None,
+        }
+        ctx = {
+            "semantic_input": {"requested_attributes": []},
+            "entities": [
+                {
+                    "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                    "entity_type": "inbound_shipment",
+                    "code": "TIIU6323920",
+                }
+            ],
+        }
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        out_fields = out["answers"][0]["fields"]
+        kept = [f["key"] for f in out_fields if f["key"] != "product_code"]
+        assert kept == list(fetch.CLEARANCE_CHECKPOINT_ORDER), (
+            "every checkpoint must be kept, in chronological order, exactly as the "
+            "'__all__' sentinel behaves"
+        )
+        assert out["requested_attributes"] == [], "the echoed ask itself is untouched"
+
+    def test_bare_product_ask_stays_eta_only(self):
+        """No `requested_attributes`, and the resolved entity is a `product` - a bare
+        product ask must NOT be widened into a timeline; only identity + ETA survive."""
+        fetch = _import_fetch()
+        envelope = self._checkpoint_envelope({"liner_code": "CMA"})
+        ctx = {
+            "semantic_input": {"requested_attributes": []},
+            "entities": [
+                {
+                    "uuid": "7136ea6b-1699-46ec-8e8e-f60c8bb64311",
+                    "entity_type": "product",
+                    "code": "SRTWB7096",
+                }
+            ],
+        }
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        kept = {f["key"] for f in out["answers"][0]["fields"]}
+        assert kept == {"product_code", "estimated_arrival_date"}, (
+            "a bare product ask keeps only identity + the always-kept ETA, never "
+            "widens into a full checkpoint timeline"
+        )
+
+    def test_container_ask_with_an_attribute_is_not_widened(self):
+        """An EXPLICIT attribute ask (`gatepass_date`) alongside an `inbound_shipment`
+        entity must still take the backward-expansion path, not the full timeline - the
+        new bare-container rule only fires when `requested_attributes` is empty."""
+        fetch = _import_fetch()
+        envelope = self._checkpoint_envelope({"liner_code": "CMA"})
+        ctx = {
+            "semantic_input": {"requested_attributes": ["gatepass_date"]},
+            "entities": [
+                {
+                    "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                    "entity_type": "inbound_shipment",
+                    "code": "TIIU6323920",
+                }
+            ],
+        }
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        kept = {f["key"] for f in out["answers"][0]["fields"]}
+        for k in (
+            "loading_date", "etc_date", "etd_date", "estimated_arrival_date",
+            "eta_delay_date", "inspection_date", "approval_date", "gatepass_date",
+        ):
+            assert k in kept, f"{k} should be kept (earlier than or equal to gatepass)"
+        assert "warehouse_arrival_date" not in kept, (
+            "an explicit attribute ask must not be overridden into the full timeline "
+            "just because the entity is an inbound_shipment"
+        )
+        assert "informed_collection_date" not in kept
+        assert "collection_date" not in kept
 
 
 def test_clearance_checkpoint_order_has_no_duplicates_and_matches_parser_vocabulary():

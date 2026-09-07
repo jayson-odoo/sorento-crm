@@ -92,6 +92,14 @@ def _label(tool: Any) -> str:
     return jsc.nullish_str(jsc.get(tool, "name"))
 
 
+# The incoming family collapses to ONE tool (evidence turn 147d6888-d313-4612-a32f-364cec119ec4,
+# `tool_filter` below): every other `crm_incoming_stock_*` tool returns a header with no
+# clearance checkpoints and no `field_access` block, so only the list tool can ever render the
+# container timeline, and it is the only one the n8n spine this engine replaced ever called.
+_INCOMING_TOOL_PREFIX = "crm_incoming_stock_"
+_INCOMING_LIST_TOOL = "crm_incoming_stock_list"
+
+
 def tool_filter(candidates: Any, *, has_product: bool | None) -> ToolPick:
     """ONE tool per turn: highest `similarity`, tiebreak `name` ASC.
 
@@ -112,18 +120,33 @@ def tool_filter(candidates: Any, *, has_product: bool | None) -> ToolPick:
         # the difference visible (H11); the item list stays empty for parity.
         return ToolPick(items=[], outcome="not_found")
     best = ordered[0]
+    picked_name = _label(best)
+    collapsed_from: str | None = None
+    if picked_name.startswith(_INCOMING_TOOL_PREFIX) and picked_name != _INCOMING_LIST_TOOL:
+        # Evidence turn 147d6888-d313-4612-a32f-364cec119ec4: "incoming TIIU6323920" picked
+        # crm_incoming_stock_shipments (similarity 0.4675) over crm_incoming_stock_list
+        # (0.4537). The shipments tool's header carries no clearance checkpoints and no
+        # `field_access` block, so the container timeline can never render from it -
+        # `apply_field_access` (`app/api/v1/incoming_stock.py` `/list`) is the only place
+        # clearance gating is wired, and the n8n spine this engine replaced called only the
+        # list tool. Every incoming-family winner collapses to it, same score, with the
+        # original name kept on the trace.
+        collapsed_from = picked_name
+        picked_name = _INCOMING_LIST_TOOL
     return ToolPick(
         items=[
             {
                 "json": {
                     **(best if isinstance(best, dict) else {}),
+                    "name": picked_name,
                     "_tool_pick": {
-                        "chosen": _label(best),
+                        "chosen": picked_name,
                         "rejected": [
                             {"name": _label(t), "similarity": _score(t)} for t in ordered[1:]
                         ],
                         "count": len(raw_tools),
                         "has_product": has_product,
+                        **({"collapsed_from": collapsed_from} if collapsed_from else {}),
                     },
                 }
             }
@@ -184,10 +207,21 @@ def select_tool(db: Any, *, query: str, domain: str | None, services: Any) -> li
     `services.py`, and taking the parameter keeps the call site honest about the fact that a
     session existed - while this function itself holds none across the embedding call
     (the plan's capacity rule).
+
+    **A domain filter must not zero the search** (evidence turn
+    b5b19cec-dccc-4eda-b766-1aeb1362957b): the parser tagged `domain_hint: "purchasing"` for
+    "IBWB248什么时候会到仓库？", `search_tool_chunks` filters `source_id LIKE
+    '%purchasing%'`, and every incoming tool's `source_id` is `implemented::crm_incoming_stock_*`
+    - zero candidates came back and the turn ended `not_found`. When the domain-filtered search
+    returns no candidates and a domain was set, this retries with `domain=None` and returns
+    that instead; the trace already logs candidates, so nothing else is recorded here.
     """
     _ = db
     embedding = services.embed(query)
-    return services.tool_search(embedding, query=query, domain=domain)
+    candidates = services.tool_search(embedding, query=query, domain=domain)
+    if not candidates and domain:
+        candidates = services.tool_search(embedding, query=query, domain=None)
+    return candidates
 
 
 # --------------------------------------------------------------------------- #
@@ -943,6 +977,38 @@ def _date_window_phrase(semantic_input: Any) -> str:
     return ""
 
 
+def _names_a_shipment(ctx: dict[str, Any]) -> bool:
+    """A bare container ask ("incoming TIIU6323920") is a timeline ask, not an ETA-only one.
+
+    Evidence: live turn f07632b6-d56d-4036-944c-8200462caac3 - "incoming TIIU6323920" parses
+    to `requested_attributes: []` with entity `{"raw": "TIIU6323920", "hint":
+    "inbound_shipment", "confident": true}`. A question that names a specific container and
+    asks for no particular attribute is a timeline ask: every recorded checkpoint comes out,
+    chronologically, exactly as the `__all__` sentinel does today.
+
+    Checked against the RESOLVED entity list first - `entity_type` is the field
+    `gate.run_gate` stamps and `entity_ids_transformer`'s `TYPE_TO_PARAM` keys on - and only
+    falls back to the parser's own `hint` when the resolved list carries no type at all (the
+    gate ran empty, so there is nothing else to check).
+    """
+    entities = ctx.get("entities") if isinstance(ctx.get("entities"), list) else []
+    typed = [e for e in entities if jsc.truthy(e) and jsc.truthy(jsc.get(e, "entity_type"))]
+    if typed:
+        return any(
+            jsc.js_string(jsc.get(e, "entity_type")).strip() == "inbound_shipment" for e in typed
+        )
+    semantic_input = ctx.get("semantic_input")
+    if isinstance(semantic_input, str):
+        semantic_input = _safe_json(semantic_input)
+    parsed_entities = (
+        jsc.get(semantic_input, "entities") if isinstance(semantic_input, dict) else None
+    )
+    return any(
+        jsc.truthy(e) and jsc.js_string(jsc.get(e, "hint")).strip() == "inbound_shipment"
+        for e in jsc.array(parsed_entities)
+    )
+
+
 def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
     """The MCP render envelope becomes a WhatsApp message. Deterministic, no LLM (H7).
 
@@ -970,7 +1036,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # H46: CONTAINS the sentinel, not IS it. `contracts.is_timeline` is the one declaration
     # (S6a put it there for exactly this consumer); re-deriving it here is what let a
     # mutation test "prove" the `not timeline` guard below was redundant.
-    timeline = is_timeline(req_attrs)
+    timeline = is_timeline(req_attrs) or (not req_attrs and _names_a_shipment(ctx))
     keep_keys = set(ALWAYS_KEPT_KEYS)
     for k in req_attrs:
         kk = jsc.nullish_str(k).strip()
