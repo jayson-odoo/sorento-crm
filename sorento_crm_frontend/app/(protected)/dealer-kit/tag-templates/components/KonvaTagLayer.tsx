@@ -75,6 +75,16 @@ interface KonvaTagLayerProps {
    * as every layer before this.
    */
   opacity?: number;
+  /**
+   * The id reported to `onSelect`/`onDoubleClick`/`onDragStart`/`onDragMove`/
+   * `onDragEnd`/`onHoverChange` (S4 fix, #720). The GHOST pass renders with a
+   * Konva `id` distinct from the real layer's (`${id}-ghost`, so `stage.
+   * findOne` and a test's `getByTestId` never collide with the clipped
+   * copy's own node) - but selecting or dragging the GHOST must still act on
+   * the REAL layer, which is what this carries. Absent means `layer.id`,
+   * the ordinary single-copy case.
+   */
+  interactionId?: string;
 }
 
 /** Convert mm to canvas pixels. */
@@ -100,6 +110,7 @@ export function KonvaTagLayer({
   onDragEnd,
   onHoverChange,
   opacity,
+  interactionId,
 }: KonvaTagLayerProps) {
   if (!layer.visible) return null;
 
@@ -107,6 +118,10 @@ export function KonvaTagLayer({
   const y = mm2px(layer.y_mm, scale);
   const w = mm2px(layer.width_mm, scale);
   const h = mm2px(layer.height_mm, scale);
+  // The GHOST pass's own Konva id is `${id}-ghost` (S4 fix, #720), but every
+  // callback below still has to report the REAL layer it draws - that is
+  // what makes clicking or dragging the ghost act on the actual layer.
+  const reportId = interactionId ?? layer.id;
 
   // Selecting on mousedown rather than click, because a drag never produces a
   // click: without it, dragging an unselected layer moved a layer the inspector
@@ -118,28 +133,28 @@ export function KonvaTagLayer({
     if ('button' in e.evt && e.evt.button !== 0) return;
     e.cancelBubble = true;
     const shiftKey = 'shiftKey' in e.evt ? e.evt.shiftKey : false;
-    onSelect?.(layer.id, shiftKey);
+    onSelect?.(reportId, shiftKey);
   };
 
   const handleDoubleClick = (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
     e.cancelBubble = true;
-    onDoubleClick?.(layer.id);
+    onDoubleClick?.(reportId);
   };
 
   const handleDragStart = () => {
-    onDragStart?.(layer.id);
+    onDragStart?.(reportId);
   };
 
   const handleDragMove = (e: Konva.KonvaEventObject<DragEvent>) => {
     const node = e.target;
-    onDragMove?.(layer.id, px2mm(node.x(), scale), px2mm(node.y(), scale));
+    onDragMove?.(reportId, px2mm(node.x(), scale), px2mm(node.y(), scale));
   };
 
   const handleDragEnd = (e: Konva.KonvaEventObject<DragEvent>) => {
     const node = e.target;
     // Snap to final position.
-    onDragMove?.(layer.id, px2mm(node.x(), scale), px2mm(node.y(), scale));
-    onDragEnd?.(layer.id);
+    onDragMove?.(reportId, px2mm(node.x(), scale), px2mm(node.y(), scale));
+    onDragEnd?.(reportId);
   };
 
   return (
@@ -160,8 +175,8 @@ export function KonvaTagLayer({
       onDragStart={handleDragStart}
       onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}
-      onMouseEnter={() => onHoverChange?.(layer.id, true)}
-      onMouseLeave={() => onHoverChange?.(layer.id, false)}
+      onMouseEnter={() => onHoverChange?.(reportId, true)}
+      onMouseLeave={() => onHoverChange?.(reportId, false)}
     >
       <LayerContent props={layer.props} w={w} h={h} scale={scale} display={display} />
     </Group>

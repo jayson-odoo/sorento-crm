@@ -3386,16 +3386,22 @@ export function TagCanvasEditor({
                       strokeWidth={1}
                     />
 
-                    {/* Ghost pass (S4): a layer a resize left partly or
-                        wholly past the artboard edge, drawn again here
-                        UNCLIPPED at 30% opacity so its outside part stays
-                        visible instead of vanishing behind the clip below.
-                        Purely decorative (`listening={false}`, and a Konva
-                        id distinct from the real layer's) - the clipped copy
-                        below is the ONE interactive node for this layer,
-                        completely unchanged by this slice, so a click still
-                        finds it exactly as before wherever the clip leaves it
-                        visible (its "inside" part, for a partial overflow). */}
+                    {/* Ghost pass (S4, fixed #720): a layer a resize left
+                        partly or wholly past the artboard edge, drawn again
+                        here UNCLIPPED at 30% opacity so its outside part
+                        stays visible instead of vanishing behind the clip
+                        below - fully interactive (AC-S4-1: clicked, dragged
+                        back inside, transformed), not decorative. Its Konva
+                        id stays distinct from the real layer's (`${id}-
+                        ghost`, so `stage.findOne`/a test's `getByTestId`
+                        never collide with the clipped copy below), but
+                        `interactionId` routes every callback to the REAL
+                        layer, so selecting or dragging the ghost acts on it.
+                        The Transformer still attaches to the clipped copy's
+                        own node either way (real id, unaffected by any of
+                        this) - it renders outside any clip in the JSX tree
+                        regardless of which node it is attached to, so its
+                        handles draw correctly past the artboard edge. */}
                     {sortedLayers
                       .filter((layer) => overflowingIds.has(layer.id))
                       .map((layer) => (
@@ -3404,9 +3410,19 @@ export function TagCanvasEditor({
                           layer={{ ...withPolygonPreview(layer), id: `${layer.id}-ghost` }}
                           scale={scale}
                           display={layerDisplay(layer, dataOf(layer), library.assetUrls)}
-                          draggable={false}
-                          listening={false}
+                          draggable={!handMode}
+                          listening={
+                            !handMode &&
+                            !(layer.props.kind === 'group' && entered.has(layer.id))
+                          }
                           opacity={0.3}
+                          interactionId={layer.id}
+                          onSelect={handleCanvasSelect}
+                          onDoubleClick={handleLayerDoubleClick}
+                          onDragStart={handleDragStart}
+                          onDragMove={handleDragMove}
+                          onDragEnd={handleDragEnd}
+                          onHoverChange={handleLayerHoverChange}
                         />
                       ))}
 
@@ -3416,9 +3432,10 @@ export function TagCanvasEditor({
                         `overflow: hidden` clips it on the printed sheet -
                         WYSIWYG after a shrink, not a canvas that still shows
                         what the PDF will not. The ghost pass above adds back
-                        the outside part at reduced opacity for an overflowing
-                        layer; this copy is unchanged and stays the one
-                        interactive node. */}
+                        the outside part at reduced opacity for an
+                        overflowing layer, ALSO interactive (#720); this copy
+                        is unchanged, keeps the real Konva id, and is what
+                        the Transformer attaches to either way. */}
                     <Group
                       clipFunc={(ctx) => {
                         ctx.rect(0, 0, canvasWidthPx, canvasHeightPx);
