@@ -2809,6 +2809,7 @@ class SPOAllocationService:
         *,
         forward_match: bool = True,
         commit: bool = True,
+        source_system: Optional[str] = None,
     ):
         """Create a new SPO allocation.
 
@@ -2831,6 +2832,16 @@ class SPOAllocationService:
             allocation_dict.get("receipt_status")
         )
         allocation_dict["created_by"] = created_by
+        # WHO raised the row (spo-xlsx-supersede D25c, security round 6). A SERVICE
+        # argument, never a request field (security round 7): the first-push supersede
+        # and the group recompute both branch on this column, so a client that could
+        # post `autocount` or clear a stamp would decide which rows get replaced and
+        # which receipts get pooled. The two SCM writers that raise one allocation per
+        # purchase-order line pass `crm_spo`; the n8n packing-list route and the Excel
+        # import pass nothing, and their rows are aggregates. The screen passes nothing
+        # too, so a hand-created row stays a first-push supersede candidate: a named
+        # residual (PLAN D25c), with no such row among the measured production set.
+        allocation_dict["source_system"] = source_system
         # Section 7 currency gap (S3): absent on every SPO xlsx row today -
         # filled the same way the PO side already is, so parity has one less
         # excluded column.
@@ -3026,14 +3037,17 @@ class SPOAllocationService:
                 SPOAllocation.product_id == allocation_data.product_id,
                 SPOAllocation.warehouse_id == allocation_data.warehouse_id,
                 # D11 (S3): one shipping-order writer identity. NULL is this
-                # service's own unstamped rows; `SPO_UPLOAD_SOURCE` is the
-                # outstanding book's own SPO write path; `ESB_SOURCE_SYSTEM`
-                # ("autocount") is `ShippingOrderIngestService`'s. All three
-                # are xlsx/ESB-era rows this upload may legitimately correct
-                # a quantity on - only `scm_po_history`/`scm_spo_history`
-                # (closed history, a different feed entirely) stay excluded.
+                # service's own unstamped rows; `CRM_SPO_SOURCE_SYSTEM` is the
+                # same thing stamped, by the two SCM writers that raise one
+                # allocation per purchase-order line (security round 7);
+                # `SPO_UPLOAD_SOURCE` is the outstanding book's own SPO write
+                # path; `ESB_SOURCE_SYSTEM` ("autocount") is
+                # `ShippingOrderIngestService`'s. All of them are rows this
+                # upload may legitimately correct a quantity on - only
+                # `scm_po_history`/`scm_spo_history` (closed history, a
+                # different feed entirely) stay excluded.
                 or_(
-                    SPOAllocation.source_system.is_(None),
+                    shipping_order_rules.crm_raised(SPOAllocation.source_system),
                     SPOAllocation.source_system.in_([SPO_UPLOAD_SOURCE, ESB_SOURCE_SYSTEM]),
                 ),
             ).order_by(SPOAllocation.spo_line_number).first()
@@ -3062,7 +3076,15 @@ class SPOAllocationService:
         # unstamped) row through THIS channel makes it this channel's row
         # again, the same way `ShippingOrderIngestService._write_row`'s own
         # blind setattr already re-stamps an xlsx-era row it adopts.
-        existing.source_system = None
+        #
+        # EXCEPT a `crm_spo` row (security round 7). That stamp is not a
+        # writer's claim on the row, it is the marker that says this
+        # allocation belongs to a purchase-order line, and clearing it would
+        # quietly hand the row back to the supersede sweep (D25c reads an
+        # unstamped ref-less row as Excel-era). A quantity correction is not a
+        # change of what the row IS.
+        if existing.source_system != shipping_order_rules.CRM_SPO_SOURCE_SYSTEM:
+            existing.source_system = None
         existing.allocated_quantity = new_qty
         existing.updated_at = datetime.utcnow()
         self.db.commit()
@@ -3165,8 +3187,12 @@ class SPOAllocationService:
     #: (spo-xlsx-supersede D28 / D28a / D28b):
     #:
     #: 1. READ path (this predicate, used by the listings and availability readers
-    #:    below): a stamped row's stored figure is trusted as stated, and only a row this
-    #:    system raised itself (no `source_system`) is measured from its GRN lines.
+    #:    below): an IMPORTED row's stored figure is trusted as stated, and a row this
+    #:    system raised itself is measured from its GRN lines. "Raised itself" is no
+    #:    stamp at all OR `crm_spo` (D25c, security round 6): the two SCM writers now
+    #:    stamp the rows they create so the supersede leaves them alone, and without
+    #:    naming that stamp here every SCM-raised allocation would stop reporting the
+    #:    receipt its own approved GRN lines prove.
     #: 2. WRITE path, per allocation (`_sync_received_for_allocations` for a
     #:    `source_system` NULL or `scm_upload` row): recomputed from its OWN picking
     #:    lines, and skipped entirely when nothing picks against it and nobody is
@@ -3181,7 +3207,9 @@ class SPOAllocationService:
     #:    say whether it was stated or derived, which is what D28b got wrong.
     @staticmethod
     def _receipt_is_computed(allocation) -> bool:
-        return getattr(allocation, "source_system", None) is None
+        return (
+            getattr(allocation, "source_system", None) or None
+        ) in shipping_order_rules.COMPUTED_RECEIPT_SOURCE_SYSTEMS
 
     def get_computed_received_map(self, allocation_ids: list[str]) -> dict[str, int]:
         """Bulk: for each allocation id, return computed quantity_received (the sum

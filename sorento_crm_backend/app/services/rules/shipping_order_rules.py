@@ -200,16 +200,19 @@ def received_guard(
 # group) cannot drift.
 # ---------------------------------------------------------------------------
 
-#: `(product_id, upper(location_code))` - the pair the xlsx upload itself
-#: dedups on (`outstanding_import_service._spo_line_plans`), and therefore the
-#: only pair that can pair an xlsx AGGREGATE row with the N AutoCount lines it
-#: stands for.
+#: `(product_id, warehouse-or-location)` - the destination an aggregate row and
+#: the N AutoCount lines it stands for must agree on. `warehouse_id` first
+#: (D25c): every AutoCount row carries one, and so do both Excel writers, while
+#: `location_code` is NULL on the Procurement / n8n shape and free text ("brw")
+#: on the SCM one. Measured on the lane database: all 68,537 AutoCount rows have
+#: a warehouse, and its `warehouse_code` equals `upper(location_code)` on every
+#: one of them, so keying on the id is the same grouping plus the rows the code
+#: could not reach. The side is tagged (`wh:` / `loc:`) so an id can never
+#: collide with a code.
 SupersedeKey = tuple[Optional[str], Optional[str]]
 
-#: D25a: the ONLY `source_system` a supersede candidate may carry. A ref-less
-#: row written by the CRM UI or the n8n packing-list route carries NULL and is
-#: never an xlsx-era aggregate, so it keeps the adoption path and is never
-#: removed.
+#: The `source_system` the SCM outstanding upload writes. D25c: it is no longer
+#: the ONLY candidate marker - see `is_xlsx_era_row`, which also takes NULL.
 XLSX_SOURCE_SYSTEM = "scm_upload"
 
 #: D28a: the `source_system` whose rows are recomputed as a GROUP rather than
@@ -217,6 +220,45 @@ XLSX_SOURCE_SYSTEM = "scm_upload"
 #: what used to be a single aggregated row, so the group's receipt is the only
 #: figure a GRN draw against any of them measures.
 AUTOCOUNT_SOURCE_SYSTEM = "autocount"
+
+#: The CRM-raised marker (D25c, security round 6). Stamped by the two SCM
+#: writers that raise ONE allocation per purchase-order line
+#: (`scm.spo_conversion_service`, which re-exports this as its own
+#: `SOURCE_SYSTEM` for the PO side too, and
+#: `scm.allocation_suggestion_service`). Declared HERE so the supersede
+#: predicate, the receipt-ownership predicate and the writers cannot drift on
+#: the spelling of one string.
+CRM_SPO_SOURCE_SYSTEM = "crm_spo"
+
+#: `source_system` values whose allocation states no receipt of its own, so a
+#: reader computes it from the approved GRN lines instead (the READ-path rule
+#: in `procurement_service._receipt_is_computed`): a row this system raised
+#: itself, whether it carries no stamp at all or the `crm_spo` one the SCM
+#: writers now add. An imported row (`scm_upload`, `scm_spo_history`,
+#: `scm_po_history`) and an `autocount` line state their own.
+COMPUTED_RECEIPT_SOURCE_SYSTEMS = frozenset({None, CRM_SPO_SOURCE_SYSTEM})
+
+def crm_raised(column):
+    """SQL for "a row THIS system raised", on an `spo_allocations.source_system`.
+
+    The ownership question every writer of that table asks before it matches an
+    existing row, and all three spelled it `source_system IS NULL` until the SCM
+    writers began stamping `crm_spo` (security round 7): an unstamped row and a
+    `crm_spo` row are the same kind of row, asked about differently. The three
+    callers are `api/v1/external/grn.py` (allocation resolution by spo_number +
+    product + warehouse), `api/v1/external/spo_allocations.py` (the n8n
+    bulk-create duplicate check) and `procurement_service.upsert_allocation`
+    (which ORs the upload-era source values on top of this).
+
+    A function rather than a value set because `IN (NULL, 'crm_spo')` never
+    matches a NULL row in SQL, so the NULL arm has to be spelled out - and
+    spelling it out at each site is what let the three drift.
+
+    Distinct from `COMPUTED_RECEIPT_SOURCE_SYSTEMS`, whose members coincide
+    today: that one answers who states a row's RECEIPT, this one who raised the
+    row, and a future value could join one without joining the other.
+    """
+    return or_(column.is_(None), column == CRM_SPO_SOURCE_SYSTEM)
 
 
 @dataclass(frozen=True)
@@ -231,6 +273,13 @@ class SupersedeLinePlan:
     index: int
     carried_received: int
     inbound_shipment_id: Optional[str]
+    #: D25c: carried like `inbound_shipment_id` - the group's first non-null
+    #: zone, onto a line that resolved none of its own. A bin the upload
+    #: recorded is the only record of where the goods actually went.
+    storage_zone_id: Optional[str] = None
+    #: D25c (security round 6): same rule for the unit the upload stated. The
+    #: ESB states none, and a line with no UoM reads as bare numbers.
+    uom_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -248,6 +297,14 @@ class SupersedeGroupPlan:
     lines: tuple[SupersedeLinePlan, ...]
     superseded_row_ids: tuple[str, ...]
     dropped_shipment_ids: tuple[str, ...] = ()
+    #: D25c (security round 6), the group's own facts, which belong to the
+    #: group rather than to any one line and so land on its FIRST line (the
+    #: same row the links are repointed to): the rejected quantity SUMMED
+    #: over the superseded rows, and their notes. A rejection and a note are
+    #: statements somebody made about this delivery, and deleting the row
+    #: they were written on is what would lose them.
+    rejected_total: int = 0
+    notes: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -295,22 +352,88 @@ class SupersedePlan:
         return len(self.kept_groups) + len(self.locked_groups)
 
 
-def supersede_group_key(product_id, location_code: Optional[str]) -> SupersedeKey:
-    """The D26 grouping pair, normalised the same way `_adopt_lines` normalises
-    its own coarse key - a location is compared upper-cased and a blank one is
-    `None`, never `''`."""
-    location = (location_code or "").strip().upper() or None
-    return (str(product_id) if product_id else None, location)
+def supersede_group_key(
+    product_id, warehouse_id=None, location_code: Optional[str] = None
+) -> SupersedeKey:
+    """The D26/D25c grouping pair: the product, plus the warehouse when the
+    side carries one and its location code otherwise.
+
+    `warehouse_id` wins because it is the only destination BOTH sides always
+    carry: the Procurement Upload SPO and the n8n packing-list writers set it
+    and leave `location_code` NULL, the SCM outstanding upload sets both (with
+    a free-text code like "brw"), and every AutoCount line resolves one. The
+    location fallback keeps the pre-D25c behaviour for a row or a line whose
+    warehouse this system holds no row for; it is upper-cased and a blank one
+    is `None`, never `''`. Both halves are tagged so an id can never be
+    compared against a code.
+    """
+    product = str(product_id) if product_id else None
+    if warehouse_id:
+        return (product, f"wh:{warehouse_id}")
+    location = (location_code or "").strip().upper()
+    return (product, f"loc:{location}" if location else None)
+
+
+def supersede_match_keys(
+    product_id, warehouse_id=None, location_code: Optional[str] = None
+) -> tuple[SupersedeKey, ...]:
+    """EVERY identity a side answers to - its warehouse key and its location
+    key, in that order, skipping the ones it does not carry.
+
+    Needed because the two sides of a supersede do not always name the
+    destination the same way (D25c). An AutoCount line always resolves BOTH:
+    `_line_values` keeps `warehouse_id` and writes `location_code` from the
+    sent code or the resolved warehouse's own. An Excel row carries whichever
+    its writer wrote - `warehouse_id` alone (Procurement Upload SPO, n8n
+    packing list), or both with a free-text code (SCM outstanding upload).
+    Indexing the side that knows both under both is what lets a row keyed
+    either way find it, with no lookup in this pure function.
+    """
+    # The side's OWN preferred key always comes first, and it is always
+    # present: a row carrying neither a warehouse nor a location still groups
+    # on its product alone, exactly as it did before D25c.
+    keys: list[SupersedeKey] = [
+        supersede_group_key(product_id, warehouse_id, location_code)
+    ]
+    if warehouse_id:
+        location_key = supersede_group_key(product_id, None, location_code)
+        if location_key[1] is not None and location_key not in keys:
+            keys.append(location_key)
+    return tuple(keys)
 
 
 def is_xlsx_era_row(row) -> bool:
-    """D25a: whether `row` is an xlsx-era supersede candidate at all.
+    """D25c: whether `row` is an Excel-era supersede candidate at all.
 
-    A ref-less row alone is not enough: `source_system` NULL is the CRM UI /
-    n8n packing-list shape, which states ONE line for one real line and has
-    no aggregate to unpack, so it keeps the adoption path.
+    A ref-less row whose `source_system` is `scm_upload` OR NULL. D25a had
+    NULL excluded on the premise that it meant a hand-written CRM row stating
+    one line for one real line; the production dedupe disproved it. Only the
+    SCM outstanding upload writes `scm_upload`; the OTHER two writers of these
+    rows - the Procurement page's Upload SPO (`import_tasks.process_spo_import`)
+    and the n8n packing-list route (`api/v1/external/spo_allocations.py`) -
+    write no `source_system` at all, and both load an Excel AGGREGATE. That is
+    why SPO-2026/09-0028, the incident document itself, was the one thing the
+    dedupe skipped.
+
+    A row carrying `po_line_id` is NEVER a candidate, whatever its
+    `source_system` (security round 6): the OTHER two writers of ref-less
+    rows - `scm.spo_conversion_service._write_allocations` and
+    `scm.allocation_suggestion_service` - raise exactly ONE row per PURCHASE
+    ORDER LINE, which is the opposite of an aggregate, and the ESB push
+    carries no `po_line_id` at all. Superseding one would sever the
+    PO -> SPO -> GRN chain silently, taking the incoming cost's currency and
+    the ordered-cost comparison with it. Those writers now stamp `crm_spo`
+    (which this predicate already refuses), and the `po_line_id` test is what
+    protects the rows they wrote before that stamp existed.
+
+    An `autocount` row is never a candidate (it carries a `source_ref`
+    anyway), and S4 still holds one level up: once the SPO's own
+    `(product, warehouse)` group carries a DtlKey, nothing there is
+    superseded.
     """
-    return not row.source_ref and (row.source_system or "") == XLSX_SOURCE_SYSTEM
+    if getattr(row, "po_line_id", None):
+        return False
+    return not row.source_ref and (row.source_system or "") in ("", XLSX_SOURCE_SYSTEM)
 
 
 def distribute_received(total: int, allocated: list[int]) -> list[int]:
@@ -355,10 +478,11 @@ def plan_xlsx_supersede(incoming, refless_rows) -> SupersedePlan:
     """Plan D26/D26a/D27 for ONE document. Pure: reads, decides, writes nothing.
 
     `incoming` is a sequence of mappings carrying `product_id`,
-    `location_code`, `allocated_quantity` and an optional `line_number`
-    (AutoCount's Seq). `refless_rows` are the document's xlsx-era rows -
-    already filtered to `is_xlsx_era_row` and to groups D25a still counts as
-    xlsx-era by the caller, since only the caller can see which groups
+    `warehouse_id`, `location_code`, `allocated_quantity` and an optional
+    `line_number` (AutoCount's Seq) - the same keys `_line_values` already
+    builds for `_write_row`. `refless_rows` are the document's Excel-era rows,
+    already filtered to `is_xlsx_era_row` and to the groups D25a still counts
+    as Excel-era by the caller, since only the caller can see which groups
     already hold a ref row.
     """
     ordered_rows = sorted(
@@ -376,24 +500,42 @@ def plan_xlsx_supersede(incoming, refless_rows) -> SupersedePlan:
         line.get("line_number") is not None for line in incoming
     )
 
+    # An incoming line is indexed under EVERY identity it answers to (D25c):
+    # it always knows its resolved warehouse AND its location code, while the
+    # Excel row it replaces may carry only one of the two.
     lines_by_key: dict[SupersedeKey, list[int]] = {}
     for index, values in enumerate(incoming):
-        key = supersede_group_key(values.get("product_id"), values.get("location_code"))
-        lines_by_key.setdefault(key, []).append(index)
+        for key in supersede_match_keys(
+            values.get("product_id"),
+            values.get("warehouse_id"),
+            values.get("location_code"),
+        ):
+            lines_by_key.setdefault(key, []).append(index)
     for indexes in lines_by_key.values():
         indexes.sort(key=lambda i: incoming[i]["line_number"] if all_have_seq else i)
 
     rows_by_key: dict[SupersedeKey, list] = {}
     for row in ordered_rows:
-        key = supersede_group_key(row.product_id, row.location_code)
+        key = supersede_group_key(row.product_id, row.warehouse_id, row.location_code)
         rows_by_key.setdefault(key, []).append(row)
 
     groups: list[SupersedeGroupPlan] = []
     kept: list[SupersedeKeptGroup] = []
     locked: list[SupersedeKeptGroup] = []
-    for key, rows in rows_by_key.items():
+    # A line answers to two keys, so two row groups naming the same
+    # destination differently could otherwise both claim it and it would be
+    # created twice. Warehouse-keyed groups are considered first (the id is
+    # the exact statement, the code is the fallback) and a claimed line is
+    # never offered again.
+    claimed_lines: set[int] = set()
+    ordered_keys = sorted(
+        rows_by_key,
+        key=lambda k: (0 if (k[1] or "").startswith("wh:") else 1, str(k[0]), str(k[1])),
+    )
+    for key in ordered_keys:
+        rows = rows_by_key[key]
         row_ids = tuple(str(row.id) for row in rows)
-        indexes = lines_by_key.get(key)
+        indexes = [i for i in lines_by_key.get(key, ()) if i not in claimed_lines]
         if not indexes:
             # D27: AutoCount lists no line for this product + location, so
             # there is nothing to supersede it WITH. Kept, links untouched.
@@ -435,13 +577,30 @@ def plan_xlsx_supersede(incoming, refless_rows) -> SupersedePlan:
                 if value not in shipment_ids:
                     shipment_ids.append(value)
         group_shipment = shipment_ids[0] if shipment_ids else None
+        # D25c: the same "first non-null wins" rule as the shipment, for the
+        # bin and the unit the upload recorded.
+        group_zone = next(
+            (str(row.storage_zone_id) for row in rows if row.storage_zone_id), None
+        )
+        group_uom = next((str(row.uom_id) for row in rows if row.uom_id), None)
+        rejected_total = sum(int(row.quantity_rejected or 0) for row in rows)
+        group_notes = "; ".join(
+            note
+            for note in ((row.allocation_notes or "").strip() for row in rows)
+            if note
+        ) or None
         shares = distribute_received(group_received, incoming_allocated)
         line_plans = tuple(
             SupersedeLinePlan(
-                index=index, carried_received=share, inbound_shipment_id=group_shipment
+                index=index,
+                carried_received=share,
+                inbound_shipment_id=group_shipment,
+                storage_zone_id=group_zone,
+                uom_id=group_uom,
             )
             for index, share in zip(indexes, shares)
         )
+        claimed_lines.update(indexes)
         groups.append(
             SupersedeGroupPlan(
                 key=key,
@@ -451,11 +610,39 @@ def plan_xlsx_supersede(incoming, refless_rows) -> SupersedePlan:
                 # is the point - a group whose rows named two containers
                 # cannot keep both on one line.
                 dropped_shipment_ids=tuple(shipment_ids[1:]),
+                rejected_total=rejected_total,
+                notes=group_notes,
             )
         )
     return SupersedePlan(
         groups=tuple(groups), kept_groups=tuple(kept), locked_groups=tuple(locked)
     )
+
+
+def append_note(existing: Optional[str], note: Optional[str]) -> Optional[str]:
+    """`existing` with `note`'s fragments appended after a `"; "`, never
+    overwritten and never duplicated.
+
+    One helper because two callers need exactly this: the D30 closed-only
+    branch stamping `superseded by <DocKey>`, and the D25c carry moving a
+    superseded group's own notes onto the line that replaces it. Whatever an
+    uploader or a planner wrote is the only record of why the row exists.
+
+    Fragment-wise, and that is the point (security round 6): after a
+    close-only supersede the Excel rows SURVIVE, so the dedupe re-selects the
+    document and the carry runs a second time. Splitting the addition on the
+    same `"; "` it joins with means the second run adds nothing rather than a
+    second copy of the same sentence.
+    """
+    existing_text = (existing or "").strip()
+    fragments = [part.strip() for part in (note or "").split(";") if part.strip()]
+    if not fragments:
+        return existing or None
+    present = [part.strip() for part in existing_text.split(";") if part.strip()]
+    for fragment in fragments:
+        if fragment not in present:
+            present.append(fragment)
+    return "; ".join(present) or None
 
 
 def repoint_allocation_dependants(

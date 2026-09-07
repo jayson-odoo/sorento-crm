@@ -63,6 +63,8 @@ from typing import Any, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from sqlalchemy import or_
+
 from app.database import SessionLocal
 from app.models.base import company_scope
 from app.models.company import Company
@@ -71,6 +73,7 @@ from app.services.company_scope import register_company_scope_listeners
 from app.services.procurement_service import InboundShipmentService
 from app.services.rules import shipping_order_rules
 from app.services.rules.shipping_order_rules import (
+    append_note,
     carried_received,
     plan_xlsx_supersede,
     repoint_allocation_dependants,
@@ -100,9 +103,23 @@ def _document_numbers(db, company_id: str, after: Optional[str]) -> list[str]:
             SPOAllocation.company_id == company_id,
             SPOAllocation.spo_number.isnot(None),
             SPOAllocation.source_ref.is_(None),
-            # D25a: an xlsx-era row is the only candidate, so a number that
-            # holds only CRM/n8n-written ref-less rows never enters the sweep.
-            SPOAllocation.source_system == shipping_order_rules.XLSX_SOURCE_SYSTEM,
+            # D25c: an Excel-era row is the only candidate, and all three
+            # writers of one qualify - the SCM outstanding upload stamps
+            # `scm_upload`, the Procurement page's Upload SPO and the n8n
+            # packing-list route stamp nothing. Keying on `scm_upload` alone
+            # is what made the production sweep skip SPO-2026/09-0028, the
+            # incident document itself.
+            or_(
+                SPOAllocation.source_system == shipping_order_rules.XLSX_SOURCE_SYSTEM,
+                SPOAllocation.source_system.is_(None),
+            ),
+            # Security round 6: a row drawn against a PURCHASE ORDER LINE is
+            # one row for one real line (the two SCM writers), never an
+            # aggregate, and the ESB carries no `po_line_id` to hand on -
+            # superseding one would sever the PO linkage. Mirrors
+            # `is_xlsx_era_row`'s own guard, in SQL so such a number never
+            # enters the sweep at all.
+            SPOAllocation.po_line_id.is_(None),
         )
         .distinct()
     )
@@ -242,9 +259,8 @@ def _apply_document(
         .order_by(SPOAllocation.spo_line_number, SPOAllocation.id)
         .all()
     )
-    # D25a: only an xlsx-era row is a candidate. A ref-less row the CRM UI or
-    # the n8n packing-list route wrote (`source_system` NULL) states one real
-    # line, not an aggregate, and is never removed by this sweep either.
+    # D25c: an Excel-era row is a ref-less row whose `source_system` is
+    # `scm_upload` or NULL - every writer of these rows loads an aggregate.
     refless = [row for row in rows if shipping_order_rules.is_xlsx_era_row(row)]
     refs = [row for row in rows if row.source_ref]
     if not refless or not refs:
@@ -307,6 +323,13 @@ def _apply_document(
                 row.receipt_status = RECEIPT_FULLY_RECEIVED if closed else RECEIPT_PENDING
                 if not row.inbound_shipment_id and line_plan.inbound_shipment_id:
                     row.inbound_shipment_id = line_plan.inbound_shipment_id
+                # D25c: the bin and the unit carry the same way as the
+                # shipment - the ESB states neither, so the upload's are the
+                # only ones there are.
+                if not row.storage_zone_id and line_plan.storage_zone_id:
+                    row.storage_zone_id = line_plan.storage_zone_id
+                if not row.uom_id and line_plan.uom_id:
+                    row.uom_id = line_plan.uom_id
             if row.inbound_shipment_id or line_plan.inbound_shipment_id:
                 counts["shipment_ids"].add(
                     str(row.inbound_shipment_id or line_plan.inbound_shipment_id)
@@ -314,6 +337,17 @@ def _apply_document(
             counts["lines_touched"] += 1
             if target is None:
                 target = row
+                # D25c (security round 6): the group's own facts onto its
+                # FIRST line - same rule as the ingest's own supersede, and
+                # the same reason for `max` rather than a sum: this sweep can
+                # see the same document twice (a close-only supersede leaves
+                # the Excel rows standing), and a rejection must not double.
+                if not dry_run and group.rejected_total:
+                    row.quantity_rejected = max(
+                        int(row.quantity_rejected or 0), group.rejected_total
+                    )
+                if not dry_run and group.notes:
+                    row.allocation_notes = append_note(row.allocation_notes, group.notes)
         removing = [by_id[row_id] for row_id in group.superseded_row_ids if row_id in by_id]
         for row in removing:
             if row.inbound_shipment_id:

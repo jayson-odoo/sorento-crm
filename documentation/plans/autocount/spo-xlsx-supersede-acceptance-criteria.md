@@ -259,3 +259,100 @@ re-created under a new DocKey (the old DocKey's rows). Cleared when a push names
 - **AC-X48 [BE]** `_is_live_group_member` is false for a retired row; the leftover sweep, the
   DocKey-change path and the dedupe script's older-DocKey pass are the only setters of
   `retired_at`; `_write_row` on a named row is the only clearer.
+
+## Round 6 (production dedupe finding, 2026-09-08, PLAN D25c)
+
+Production fact: the dedupe applied to 3,150 documents but skipped SPO-2026/09-0028, the incident
+example, because its 16 Excel rows carry `source_system` NULL, `location_code` NULL, `warehouse_id`
+set. Both the Procurement page's Upload SPO (`process_spo_import`) and the n8n packing-list route
+write that shape; only the SCM outstanding upload writes `scm_upload`. D25a's premise that a
+NULL-source row "states one line for one real line" was wrong: both NULL-source writers load an
+Excel aggregate.
+
+- **AC-X13 (revised) [BE][T]** (D25c) A ref-less row with `source_system` NULL for product P,
+  `warehouse_id` W and no `location_code`, closed with received 47, on an SPO with no ref row; a
+  first push names P at the warehouse whose code resolves to W with two lines 29 / 18. The row is
+  superseded exactly as AC-X1 (deleted, receipt carried 29 / 18, links moved, `lines.superseded 1`).
+
+- **AC-X49 [BE][T]** (D25c grouping) Grouping is by `(product_id, warehouse_id)` when both sides
+  carry a warehouse, falling back to `(product_id, upper(location_code))` only when one side has no
+  warehouse. A `scm_upload` row with `location_code 'brw'` and `warehouse_id` W and an incoming
+  line resolving to W group together; a row for W beside a row for W2 of the same product form two
+  groups, each carried onto its own lines.
+
+- **AC-X50 [BE][T]** (D26 carry) The superseded row's `storage_zone_id`, like its
+  `inbound_shipment_id`, is carried onto every new line of the group that has none.
+
+- **AC-X51 [S][T]** (D29) The dedupe applies the same predicate: a document holding NULL-source
+  ref-less closed rows beside `autocount` rows (the SPO-0028 shape, keyed by warehouse) is
+  deduplicated; a second run reports 0.
+
+- **AC-X29 (unchanged)** a NULL-source row for a product the push does not name is a kept group,
+  closed, links and zone untouched.
+
+## Round 7 (security round 6, 2026-09-08, PLAN D25c amended)
+
+Five writers produce ref-less rows. Two load an Excel aggregate with `source_system` NULL (Procurement
+Upload SPO, n8n packing list); one writes `scm_upload`; two SCM writers raise ONE row per PO line
+with `po_line_id` set and `source_system` NULL (`spo_conversion_service._write_allocations`,
+`allocation_suggestion_service`). The last two are not aggregates and must never be superseded.
+
+- **AC-X52 [BE][T]** (D25c guard) A ref-less NULL-source row carrying `po_line_id` is never a
+  supersede candidate: on a first push naming its product and warehouse it keeps its id and its
+  `po_line_id` (adopted in place per the pre-existing rules), and `lines.superseded` is absent.
+  The dedupe leaves such a row alone too.
+
+- **AC-X53 [BE][T]** (writers stamp) `spo_conversion_service._write_allocations` and
+  `allocation_suggestion_service`'s accept path write `source_system = 'crm_spo'` on the rows they
+  create (`SPOAllocationCreate` gains an optional `source_system`); a row so stamped is not a
+  candidate regardless of `po_line_id`.
+
+- **AC-X54 [BE][T]** (D26 carry, packing-list columns) The superseded group's `uom_id` (first
+  non-null) lands on every new line without one; `quantity_rejected` (group sum) and
+  `allocation_notes` (group notes joined with "; ") land on the group's FIRST line, notes appended
+  never overwritten. Same in the dedupe.
+
+- **AC-X53a [BE][T]** (read path) `_receipt_is_computed` treats `crm_spo` exactly like NULL: an
+  SCM-raised allocation stamped `crm_spo` with one approved GRN of 5 lists `quantity_received 5` on
+  the SPO allocations read path, not its stored 0.
+
+- **AC-X54a [BE][T]** (idempotent carry) Running the dedupe twice over a document whose Excel rows
+  were closed (not deleted) by a close-only supersede leaves `quantity_rejected` at the group sum
+  (max rule, never added twice) and `allocation_notes` without duplicated fragments.
+
+- **Named residual (D25c):** an accepted allocation suggestion with no PO line writes a NULL-source,
+  NULL-`po_line_id` row and stays a candidate until stamped `crm_spo`; on a first push it would be
+  superseded with links, shipment, zone, uom, rejected and notes carried, losing only its row id
+  and `created_by`. Accepted.
+
+- **AC-X55 [BE][T]** (reviewer KV, mixed-writer document) Row A keyed by warehouse W (NULL source, no
+  location, 10 / 10 closed) and row B keyed by location code equal to W's code (`scm_upload`,
+  5 / 5 closed) for the same product on one SPO; a first push with ONE line for W qty 15. Exactly
+  one new line is created (carrying 10 from A), B is kept and closed, the verdict is `created`
+  with `lines.superseded 1`, and no `uq_spo_allocations_company_source_ref` conflict occurs.
+  Removing the claimed-line guard must turn this red.
+
+- **Named residual (D25c, reviewer):** rows are indexed under one key, lines under both, so an
+  incoming line whose warehouse code resolves to no warehouse cannot match a warehouse-keyed row
+  (unreachable on measured data: every AutoCount row carries a warehouse). Symmetrising would
+  reintroduce two groups claiming one row. Accepted.
+
+## Round 8 (security round 7, 2026-09-08): `crm_spo` at every "CRM-raised" predicate
+
+`CRM_RAISED_SOURCE_SYSTEMS = {None, 'crm_spo'}` in `shipping_order_rules`; every predicate that read
+`source_system IS NULL` as "a row this system raised" uses it.
+
+- **AC-X56 [BE][T]** External GRN ingest (`app/api/v1/external/grn.py`) resolves a `crm_spo`
+  allocation by `(spo_number, product_id, warehouse_id)` exactly as it resolves a NULL-source one.
+
+- **AC-X57 [BE][T]** n8n packing-list bulk create (`app/api/v1/external/spo_allocations.py`) refuses
+  a duplicate `(spo_number, product_id, warehouse_id)` against an existing `crm_spo` row exactly as
+  against a NULL-source one.
+
+- **AC-X58 [BE][T]** `upsert_allocation` (Upload SPO path) matches an existing `crm_spo` row and
+  corrects its quantity instead of appending; after the correction the row still reads
+  `source_system 'crm_spo'` (the "last writer wins" clearing applies only to `scm_upload` /
+  AutoCount stamps, never to `crm_spo`).
+
+- **AC-X59 [BE]** No `SPOAllocation.source_system.is_(None)` predicate remains outside the named
+  set (grep-clean in `app/`).

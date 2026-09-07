@@ -43,6 +43,7 @@ TransferedQty lags until the transfer is keyed there). The received guard alread
 | D30 | **Supersede needs `.delete`** (B1). Removing rows through the ingest is a deletion act: the supersede deletes only when the calling principal holds `DELETE_PERMISSIONS["shipping_orders"]` (`scm.shipping_orders.delete`, the same slug the deletions endpoint demands). Without it the superseded rows are CLOSED, receipts and links still carried, `allocation_notes` set to `superseded by <DocKey>`, and the record warns `superseded_closed_only`. Every supersede logs at INFO the removed or closed row ids with their `(allocated_quantity, quantity_received)` (S7). |
 | D27a | **Shipment statuses refreshed** (reviewer S2). Every supersede, ingest or dedupe, calls `InboundShipmentService.refresh_shipment_line_statuses` once per distinct `inbound_shipment_id` it touched (superseded rows' and new lines'), like every other writer of allocations. |
 | D28b | **Group floor** (delta security review, blocker 1). The group-aware recompute never lowers a group below what its non-released members already hold: `group_total = max(sum(approved picking lines), sum(stored quantity_received of members not being released))`. A released member (its GRN unlinked or deleted) contributes nothing to the floor, so its receipt still drops to what remaining picking lines prove. |
+| D25c | **Every non-AutoCount ref-less row is Excel-era; group by warehouse** (production dedupe, 2026-09-08). D25a is revised: the candidate set is a ref-less row whose `source_system` is `scm_upload` OR NULL. Evidence: SPO-2026/09-0028 (the incident example) was skipped by the dedupe because its rows came from the Procurement Upload SPO / n8n packing-list writers, which set `warehouse_id` and `inbound_shipment_id` but neither `source_system` nor `location_code`. Both are Excel aggregates, not "one line for one real line". The D26 group key becomes `(product_id, warehouse_id)` whenever both sides carry a warehouse (measured: every AutoCount row has one, and its warehouse code equals its location code on all 68,537 rows), with `(product_id, upper(location_code))` as the fallback. `storage_zone_id` carries like `inbound_shipment_id`. The security S3 concern (deleting CRM-written rows) is answered by the same evidence: the CRM UI writes no SPO allocations in practice; every NULL-source row on a pushed document is an upload. The S4 rule (no supersede once the SPO has a ref row) and the received guard still apply. **Amended (security round 6):** a ref-less row carrying `po_line_id` is never a candidate, and rows with any `source_system` other than `scm_upload` / NULL are never candidates; the two SCM writers that raise one row per PO line (`spo_conversion_service`, `allocation_suggestion_service`) stamp `crm_spo`. The carry also covers `uom_id`, `quantity_rejected` (group sum, first line) and `allocation_notes` (appended, first line). |
 | D25b | **No positional adoption in a supersede push** (delta security review, blocker 2). Adoption passes 1 and 2 (keyed on product + location) still run beside a supersede; pass 3 (position alone, counts agree) is skipped in any push that superseded a group, so a NULL-source CRM / n8n row can never be rewritten as an unrelated product's line. |
 | D30a | **Delete is opt-in.** `ShippingOrderIngestService(..., may_delete=False)` is the default; the route passes the resolved `.delete` grant, the dedupe script passes True explicitly. `repoint_allocation_dependants` takes `company_id` as a required keyword and flushes outside the disabled-scope read block. |
 | D28c | **Stated receipt is the floor** (reviewer round 3, MB1 / MB2). `quantity_received` alone cannot tell an ESB-stated receipt from a GRN-derived share, so a GRN delete either destroyed AutoCount's TransferedQty on the released line (MB1) or left a redistributed share stranded on a sibling with no GRN behind it, closed, invisible to reorder planning (MB2). New column `spo_allocations.stated_received` (nullable integer, NULL reads 0), written ONLY by the declarers of an AutoCount line's receipt: the ESB push (max rule), the supersede carry and the dedupe carry. The group recompute distributes the approved picking total across the non-released members in Seq order and writes each line `max(stated, share)`; a released member is written `max(stated, its own remaining picking lines)`. This replaces the D28b stored-sum floor (the stored sum was the thing that could not be trusted). The recompute reopens a line it had closed by receipt (`receipt_status fully_received`) when its receipt falls below its allocation; a `cancelled` line or one closed by the leftover sweep is never touched. Migration 488 backfills `stated_received = quantity_received` on `autocount` rows (on production those hold ESB values only: no GRN has ever pointed at an AutoCount line, they all point at the xlsx rows). |
@@ -239,6 +240,114 @@ once; then the dedupe runs on production by the captain with `--dry-run` first.
     it already holds (`_spo_allocation_group_key`, one definition shared with the visit-once
     set), and passes that as the gate's third way in. Nothing else about the retired row changes:
     it takes no share and is never written.
+- Round 6 as-built, D25c (2026-09-08, coder on Opus): `is_xlsx_era_row` takes `source_system` in
+  (`scm_upload`, NULL); the dedupe's own page query takes the same pair in SQL
+  (`or_(source_system == 'scm_upload', source_system IS NULL)`), which is the line that had made
+  the production sweep skip SPO-2026/09-0028. `supersede_group_key(product_id, warehouse_id,
+  location_code)` returns `(product, 'wh:<id>')` when the side carries a warehouse and
+  `(product, 'loc:<UPPER CODE>')` otherwise, tagged so an id can never be compared against a code,
+  and `(product, None)` when the side carries neither (the pre-D25c product-only grouping, which
+  several documents still rely on).
+  - ADDED beyond the ruling, and required by it: `supersede_match_keys(...)`, the tuple of EVERY
+    identity a side answers to. A per-side key alone does not group the two sides when they name
+    the destination differently, and that is the common case, not the corner: an AutoCount line
+    always resolves both halves, while the Procurement / n8n rows carry a warehouse and no
+    location and the SCM upload carries both with a free-text code ("brw"). So the INCOMING lines
+    are indexed under both of their identities and each Excel row under its own one, with
+    warehouse-keyed row groups considered first and a claimed line never offered twice (otherwise
+    two row groups naming one destination differently would both create it). `_esb_group_keys`
+    uses the same function, so S4's "no supersede once the group carries a DtlKey" holds whichever
+    way the Excel row beside it is keyed. Measured basis for preferring the id: all 68,537
+    AutoCount rows on the lane database carry a warehouse whose `warehouse_code` equals
+    `upper(location_code)`.
+  - `storage_zone_id` carries exactly like `inbound_shipment_id` (group's first non-null, onto a
+    line that resolved none), in the ingest and in the dedupe.
+  - `_adopt_lines`' own coarse key is deliberately untouched (product + location): adoption is a
+    different rule with a different failure mode, and D25b already stops its positional pass in a
+    supersede push.
+  - Named residual, key asymmetry (reviewer round 6, accepted): the two sides are indexed
+    asymmetrically on purpose. Incoming lines go in under every identity they answer to, each
+    Excel row under its one preferred identity. So an incoming line whose `location_code`
+    resolves to no warehouse row cannot match a warehouse-keyed Excel row: the line offers only
+    `loc:` and the row asks only for `wh:`. That combination is unreachable on measured data (all
+    68,537 AutoCount rows on the lane database resolve a warehouse whose code equals
+    `upper(location_code)`), and symmetrising the row side is the worse trade, because a row
+    indexed under both keys can be claimed by two different groups that name one destination
+    differently. The consequence of the residual is a skipped supersede (rows stay, the push
+    appends, the dedupe or a re-push corrects it), never a wrong merge.
+  - Retirement and the receipt freeze are unchanged: both only ever touch `autocount` rows.
+- Round 7 as-built, D25c amended plus security round 6 (2026-09-08, coder on Opus): a row carrying
+  a `po_line_id` is never a supersede candidate. `is_xlsx_era_row` returns False for it before any
+  other test, and the dedupe's page query adds `po_line_id IS NULL` in SQL. Reason measured by the
+  security reviewer: of the five writers that produce ref-less rows, two are not aggregates but one
+  row per PO line - `app/services/scm/spo_conversion_service.py::_write_allocations` and
+  `app/services/scm/allocation_suggestion_service.py` - and the ingest never carries `po_line_id`,
+  so superseding one of those rows would sever the PO linkage silently.
+  - Second guard, so the first does not have to hold alone: `SPOAllocationCreate` gained
+    `source_system`, and both SCM writers stamp `crm_spo` (one constant,
+    `shipping_order_rules.CRM_SPO_SOURCE_SYSTEM`, re-exported as `spo_conversion_service.
+    SOURCE_SYSTEM`). A stamped row fails `is_xlsx_era_row` on the source test as well as the
+    `po_line_id` test.
+  - `_receipt_is_computed` therefore accepts `crm_spo` alongside NULL
+    (`shipping_order_rules.COMPUTED_RECEIPT_SOURCE_SYSTEMS`): a `crm_spo` row is still a CRM-raised
+    allocation whose receipt is computed from approved picking lines, and the four call sites that
+    gate on it would otherwise stop showing its approved-GRN receipt on the read path the moment we
+    started stamping it.
+  - Carry completed: `uom_id` joins `inbound_shipment_id` and `storage_zone_id` (group's first
+    non-null onto a line that resolved none), and the group's own statements - `quantity_rejected`
+    and `allocation_notes` - land on the group's FIRST line, the row the links move to.
+  - Both carries are idempotent, because they can run twice: a close-only supersede (no
+    `scm.shipping_orders.delete`, D30) leaves the Excel rows standing, so the dedupe re-selects the
+    same document later. `quantity_rejected` is `max(existing, group total)`, never a sum, and
+    `append_note` appends only the fragments not already present (splitting the addition on ";").
+  - Named residual: an accepted allocation suggestion that produced no PO line stays a supersede
+    candidate until it is stamped. Both guards miss it only for rows written before this change;
+    superseding one loses nothing but its id and `created_by`, since the receipt, shipment, zone,
+    uom, rejection and notes all carry.
+- Round 8 as-built, security round 7 (2026-09-08, coder on Opus): the `crm_spo` stamp round 7
+  introduced falsified every predicate that spelled "a row this system raised" as
+  `source_system IS NULL`. `CRM_RAISED_SOURCE_SYSTEMS` now names that concept in
+  `shipping_order_rules`: `crm_raised(column)`, the SQL form of the question, called at all
+  three sites. A function and not a value set because `IN (NULL, 'crm_spo')` never matches a
+  NULL row in SQL, so the NULL arm must be spelled out - and spelling it out per site is what
+  let the three drift in the first place. Distinct from `COMPUTED_RECEIPT_SOURCE_SYSTEMS`
+  (whose members coincide today) because one answers who raised a row and the other who states
+  its receipt, and a future value could join one without joining the other.
+  - `app/api/v1/external/grn.py` (allocation resolution by spo_number + product + warehouse):
+    without the second arm every SCM-raised allocation became invisible to an incoming GRN, which
+    would have fallen through to the number-plus-capacity path or to no match at all.
+  - `app/api/v1/external/spo_allocations.py` (n8n bulk-create duplicate check): without it the
+    endpoint stops seeing a `crm_spo` row and creates a SECOND allocation beside it, the same
+    duplicate-supply shape this whole lane exists to remove.
+  - `app/services/procurement_service.py::upsert_allocation`: `crm_spo` joins the match `or_`
+    (NULL, `crm_spo`, `scm_upload`, `autocount`), and the "last writer wins" line right below it
+    now clears the stamp only when it is NOT `crm_spo`. That stamp is not a writer's claim on the
+    row, it is the marker that the allocation belongs to a purchase-order line, and clearing it
+    would hand the row straight back to the supersede sweep, which reads an unstamped ref-less row
+    as Excel-era (D25c). A quantity correction does not change what the row IS.
+  - The stamp is a SERVICE argument, not a request field (reviewer nit, same round).
+    `source_system` came off `SPOAllocationCreate` and `create_allocation` gained a
+    keyword-only `source_system: Optional[str] = None` that only the two SCM writers pass.
+    As a request field it was settable through `POST /api/v1/procurement/spo-allocations` by
+    any authenticated user, and this column decides which rows the first-push supersede
+    replaces and whose receipts the group recompute pools: posting `autocount` would have
+    joined a hand-made row to a document's group receipt, and posting nothing on a row that
+    should carry `crm_spo` would have offered it to the sweep. `create_allocation` now writes
+    the column itself, so the screen, the n8n packing-list route and the Excel import get NULL
+    by construction rather than by trust.
+  - `allocation_suggestion_service` imports `CRM_SPO_SOURCE_SYSTEM` from the rules module
+    directly instead of through `spo_conversion_service`'s re-export (reviewer nit): it has no
+    other reason to depend on that module, and the stamp is a shipping-order rule.
+  - AC-X59 audit, every other `source_system` read on `SPOAllocation` in `app/`, all left alone
+    with the reason: `shipping_order_ingest_service.py:625`, `procurement_service.py:4195`, `:4354`
+    and `:4359` test `== autocount` (retirement and the group recompute), which `crm_spo` must not
+    join; `scm/outstanding_import_service.py:1607` tests
+    `in_([scm_upload, autocount])`, the upload channel's own writer set, which already excluded
+    NULL and must keep excluding `crm_spo`; `rules/shipping_order_rules.py:414`
+    (`is_xlsx_era_row`) excludes `crm_spo` on purpose, that is round 7's guard. The other
+    `source_system IS NULL` predicates in `app/` are on different tables (`SalesOrder`,
+    `PurchaseOrderLine`, project order inquiries) and no writer stamps `crm_spo` on those. No raw
+    SQL reads `spo_allocations.source_system`.
 - Scope note on D28 / D28c, documented boundary: the floor only ever over-states, never
   under-states. A carried floor on a NON-RELEASED sibling is not clawed back when the GRN behind
   the original xlsx receipt is later deleted - the carry was a statement about that line at

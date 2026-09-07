@@ -765,3 +765,197 @@ class TestAcX27DedupeReportsGroupsAndDryRunRollsBack:
         run(db, DEFAULT_COMPANY_ID, dry_run=True)
 
         assert calls, "a dry run must call db.rollback() before returning"
+
+
+class TestAcX51DedupeAppliesTheSpo0028Shape:
+    def test_a_null_source_warehouse_only_row_beside_autocount_refs_is_deduplicated(self, db):
+        """AC-X51 (D25c, D29). The SPO-2026/09-0028 shape: a NULL-source
+        CLOSED ref-less row with `warehouse_id` set and NO `location_code`
+        (the Procurement Upload SPO / n8n packing-list writers), beside
+        `autocount` ref rows whose `location_code` equals that warehouse's
+        own code (and which also carry `warehouse_id`, matching production:
+        "every AutoCount row has one"). `--apply` (`run(..., dry_run=False)`)
+        must remove the ref-less row, carry its receipt onto the ref rows,
+        move its dependants; a second run reports 0 documents.
+
+        RED today: `is_xlsx_era_row` still excludes `source_system IS
+        NULL` - this row is never gathered as a supersede candidate at
+        all, so the document is skipped exactly as SPO-2026/09-0028 was in
+        production, and `rows_after_apply` still holds 3 rows (the
+        NULL-source row untouched) instead of 2.
+        """
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        product = _seed_product(db)
+        warehouse = _seed_warehouse(db)
+        spo_number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+
+        null_source_row = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=DEFAULT_COMPANY_ID, spo_number=spo_number,
+            spo_line_number=1, product_id=product.id, location_code=None,
+            warehouse_id=warehouse.id, allocated_quantity=47, quantity_received=47,
+            line_status="closed", receipt_status="fully_received", source_system=None,
+        )
+        db.add(null_source_row)
+        db.flush()
+
+        doc_ref = f"{MARKER}:SPO0028:{uuid.uuid4().hex[:8]}"
+        ref_17 = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=DEFAULT_COMPANY_ID, spo_number=spo_number,
+            spo_line_number=17, product_id=product.id, warehouse_id=warehouse.id,
+            location_code=warehouse.warehouse_code, allocated_quantity=29,
+            quantity_received=0, line_status="open", receipt_status="pending",
+            source_system="autocount", source_ref=f"{MARKER}:SPOL17:{uuid.uuid4().hex[:8]}",
+            source_doc_ref=doc_ref,
+        )
+        ref_18 = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=DEFAULT_COMPANY_ID, spo_number=spo_number,
+            spo_line_number=18, product_id=product.id, warehouse_id=warehouse.id,
+            location_code=warehouse.warehouse_code, allocated_quantity=18,
+            quantity_received=0, line_status="open", receipt_status="pending",
+            source_system="autocount", source_ref=f"{MARKER}:SPOL18:{uuid.uuid4().hex[:8]}",
+            source_doc_ref=doc_ref,
+        )
+        db.add_all([ref_17, ref_18])
+        db.flush()
+        db.commit()
+
+        from scripts.dedupe_spo_xlsx_superseded import run
+
+        run(db, DEFAULT_COMPANY_ID, dry_run=True)
+
+        db.expire_all()
+        rows_after_dry = (
+            db.execute(
+                text(
+                    "SELECT id FROM spo_allocations WHERE spo_number = :n ORDER BY spo_line_number"
+                ),
+                {"n": spo_number},
+            )
+            .mappings()
+            .all()
+        )
+        assert len(rows_after_dry) == 3, "a dry run must write nothing"
+        assert str(null_source_row.id) in {str(r["id"]) for r in rows_after_dry}
+
+        run(db, DEFAULT_COMPANY_ID, dry_run=False)
+
+        db.expire_all()
+        rows_after_apply = (
+            db.execute(
+                text(
+                    "SELECT id, allocated_quantity, quantity_received, line_status "
+                    "FROM spo_allocations WHERE spo_number = :n ORDER BY allocated_quantity"
+                ),
+                {"n": spo_number},
+            )
+            .mappings()
+            .all()
+        )
+        assert len(rows_after_apply) == 2, (
+            "the NULL-source row (SPO-0028 shape) must be removed by --apply", rows_after_apply
+        )
+        assert str(null_source_row.id) not in {str(r["id"]) for r in rows_after_apply}
+        by_qty = {r["allocated_quantity"]: r for r in rows_after_apply}
+        assert by_qty[29]["quantity_received"] == 29, by_qty
+        assert by_qty[29]["line_status"] == "closed", by_qty
+        assert by_qty[18]["quantity_received"] == 18, by_qty
+        assert by_qty[18]["line_status"] == "closed", by_qty
+
+        summary_second_run = run(db, DEFAULT_COMPANY_ID, dry_run=False)
+        assert summary_second_run.get("documents") == 0, (
+            "a second run over the same company must be idempotent - a "
+            f"no-op reporting zero documents - got {summary_second_run}"
+        )
+
+
+class TestAcX54aIdempotentCarryNeverDoublesRejectedOrNotes:
+    def test_running_the_dedupe_twice_never_doubles_quantity_rejected_or_duplicates_notes(
+        self, db
+    ):
+        """AC-X54a (idempotent carry, D26 packing-list columns). A document
+        whose Excel row already carries `quantity_rejected 2` and
+        `allocation_notes 'damaged carton'`, beside `autocount` ref rows
+        whose FIRST line ALREADY carries `quantity_rejected 2` and notes
+        containing `'damaged carton'` (the SAME carry, as if already
+        applied once). Running `run(..., dry_run=False)` TWICE must leave
+        the first line at `quantity_rejected 2` (never 4) and `'damaged
+        carton'` appearing exactly ONCE in its notes; the second run is a
+        no-op (the Excel row is gone after the first).
+
+        RED today: the writer does `row.quantity_rejected = int(row.
+        quantity_rejected or 0) + group.rejected_total` - a PLAIN
+        addition, never a max rule - so the very first run already
+        doubles an already-carried rejected total to 4 (2 already on the
+        ref row's own line, plus 2 more from the still-present Excel
+        row's own total).
+        """
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        product = _seed_product(db)
+        warehouse = _seed_warehouse(db)
+        spo_number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        doc_ref = f"{MARKER}:DOC:{uuid.uuid4().hex[:8]}"
+
+        xlsx_row = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=DEFAULT_COMPANY_ID, spo_number=spo_number,
+            spo_line_number=1, product_id=product.id, warehouse_id=warehouse.id,
+            location_code=warehouse.warehouse_code, allocated_quantity=47,
+            quantity_received=47, quantity_rejected=2, line_status="closed",
+            receipt_status="fully_received", source_system="scm_upload",
+            allocation_notes="damaged carton",
+        )
+        db.add(xlsx_row)
+        db.flush()
+
+        ref_17 = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=DEFAULT_COMPANY_ID, spo_number=spo_number,
+            spo_line_number=17, product_id=product.id, warehouse_id=warehouse.id,
+            location_code=warehouse.warehouse_code, allocated_quantity=29,
+            quantity_received=29, quantity_rejected=2, line_status="closed",
+            receipt_status="fully_received", source_system="autocount",
+            source_ref=f"{MARKER}:REF17:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+            allocation_notes="damaged carton",
+        )
+        ref_18 = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=DEFAULT_COMPANY_ID, spo_number=spo_number,
+            spo_line_number=18, product_id=product.id, warehouse_id=warehouse.id,
+            location_code=warehouse.warehouse_code, allocated_quantity=18,
+            quantity_received=18, quantity_rejected=0, line_status="closed",
+            receipt_status="fully_received", source_system="autocount",
+            source_ref=f"{MARKER}:REF18:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+        )
+        db.add_all([ref_17, ref_18])
+        db.flush()
+        db.commit()
+
+        from scripts.dedupe_spo_xlsx_superseded import run
+
+        run(db, DEFAULT_COMPANY_ID, dry_run=False)
+
+        db.expire_all()
+        first_line = db.execute(
+            text(
+                "SELECT quantity_rejected, allocation_notes FROM spo_allocations "
+                "WHERE id = :id"
+            ),
+            {"id": ref_17.id},
+        ).mappings().first()
+        assert first_line["quantity_rejected"] == 2, (
+            f"a group already carrying 2 must never be doubled to 4 - got {first_line}"
+        )
+        assert (first_line["allocation_notes"] or "").count("damaged carton") == 1, first_line
+
+        summary_second_run = run(db, DEFAULT_COMPANY_ID, dry_run=False)
+
+        db.expire_all()
+        first_line_again = db.execute(
+            text(
+                "SELECT quantity_rejected, allocation_notes FROM spo_allocations "
+                "WHERE id = :id"
+            ),
+            {"id": ref_17.id},
+        ).mappings().first()
+        assert first_line_again["quantity_rejected"] == 2, first_line_again
+        assert (first_line_again["allocation_notes"] or "").count("damaged carton") == 1, (
+            first_line_again
+        )
+        assert summary_second_run.get("documents") == 0, summary_second_run
