@@ -758,6 +758,45 @@ describe('image crop on the print page (S8, AC-S8-4)', () => {
     expect(wrapper).toHaveStyle({ overflow: 'hidden', aspectRatio: '150 / 150' });
   });
 
+  it('centers the CONTAIN window in its own box, the same way Konva centers it (S3 review)', () => {
+    // A wider-than-tall crop (0.5 wide, full height) inside a 60x20mm box:
+    // `contain` sizes the window to the box's own height and leaves it
+    // narrower than the box - a block layout would pin that auto-sized
+    // window to the left edge instead of centering it the way Konva's
+    // `x={(w - drawW) / 2}` (`KonvaTagLayer.tsx`) always does.
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'img',
+            type: 'image',
+            width_mm: 60,
+            height_mm: 20,
+            props: {
+              kind: 'image',
+              source: { type: 'asset', assetId: 'a1' },
+              fit: 'contain',
+              cropRect: { x: 0.25, y: 0, width: 0.5, height: 1 },
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+        assets={{ a1: 'https://cdn.test/photo.png' }}
+      />,
+    );
+
+    fireImageLoad(container.querySelector('img')!, { width: 300, height: 150 });
+
+    const cropped = container.querySelector('img')!;
+    const windowWrapper = cropped.parentElement!;
+    const outerWrapper = windowWrapper.parentElement!;
+    expect(outerWrapper).toHaveStyle({
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+    });
+  });
+
   it('works the same for stretch and cover fits, not just contain (AC-S8-4)', () => {
     const { container } = render(
       <TagSheetRenderer

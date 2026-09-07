@@ -396,7 +396,24 @@ function CroppedImage({
           };
 
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
+    // `display: flex` + centered content (S3 review) so the CONTAIN branch's
+    // auto-sized window - `width/height: auto` against `aspectRatio`, no
+    // positioning of its own - lands centered like Konva does explicitly
+    // (`x={(w - drawW) / 2}`, `KonvaTagLayer.tsx`), not pinned to the
+    // wrapper's top-left the way a plain block layout would leave it.
+    // `cover`'s own child already centers itself (absolute + translate,
+    // untouched by flex alignment); `stretch` fills 100% either way.
+    <div
+      style={{
+        position: 'relative',
+        width: '100%',
+        height: '100%',
+        overflow: 'hidden',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
       <div style={windowStyle}>
         <img
           src={url}
