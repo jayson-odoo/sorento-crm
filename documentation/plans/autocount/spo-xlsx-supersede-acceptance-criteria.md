@@ -256,6 +256,6 @@ re-created under a new DocKey (the old DocKey's rows). Cleared when a push names
 - **AC-X47 [BE]** (reviewer KH) `_autocount_group_members` compares `product_id` in Python as well
   as in SQL, and excludes `retired_at IS NOT NULL` rows in SQL.
 
-- **AC-X48 [BE]** `_is_live_group_member` is false for a retired row; the leftover sweep and the
-  DocKey-change path are the only setters of `retired_at`; `_write_row` on a named row is the only
-  clearer.
+- **AC-X48 [BE]** `_is_live_group_member` is false for a retired row; the leftover sweep, the
+  DocKey-change path and the dedupe script's older-DocKey pass are the only setters of
+  `retired_at`; `_write_row` on a named row is the only clearer.
