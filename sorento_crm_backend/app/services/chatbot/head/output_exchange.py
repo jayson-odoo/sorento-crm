@@ -664,7 +664,7 @@ def offer_is_open(state: Any) -> bool:
     )
 
 
-def _team_clarify_pick(state: Any, llm_team_n: Any, parent_input: Any) -> Any:
+def _team_clarify_pick(state: Any, o: Any, llm_team_n: Any, parent_input: Any) -> Any:
     """The team an OPEN `team_clarify` was just answered with, or None (owner rule R-b).
 
     `None` when no clarify is open, or when this turn does not answer it - and "does not
@@ -690,13 +690,17 @@ def _team_clarify_pick(state: Any, llm_team_n: Any, parent_input: Any) -> Any:
     before this shipped, or by n8n, which has no marker at all - so source 1 stands alone
     there rather than the whole rule going dark.
 
-    **Lifetime: ONE turn, and it needs no clock.** Measured rather than assumed, because
-    the brief asked whether the member offer's 3-turn TTL had to be copied here. It does
-    not. `compile_state`'s clarify arm stamps `selection_context: team_clarify` on the ask
-    turn only, and the carry that keeps a label alive across turns (`_offer_carry`) needs a
-    NON-EMPTY `last_result_set` - a team clarify has no roster, so nothing carries and the
-    marker is gone on the turn after the ask whatever the customer says. That is stricter
-    than 3 turns, so copying the TTL would only ever have made the ask live LONGER.
+    **Lifetime: ONE turn, enforced in `_offer_carry` by an explicit exclusion.** The first
+    cut of this claimed the life was one turn for free, because `_offer_carry` needs a
+    non-empty `last_result_set` and "a clarify has no roster". That was WRONG and the
+    review of #713 measured it: the clarify arm carries the PREVIOUS turn's roster forward
+    (`compile_state` ~:2075) before it stamps the marker, so production dump 0d7d5a23
+    arrives `team_clarify` with fifteen rows behind it, `topic.changed` returns False on a
+    null domain, and the label was carried forever - retyping every later team-naming turn
+    into an escalation and masking any real offer made afterwards. `_offer_carry` now
+    excludes the kind outright, which is what "one question, answered next turn or not at
+    all" actually requires. The member offer's 3-turn ttl is still not copied: a roster
+    stays on the customer's screen, a question does not.
 
     `offer_is_open` is deliberately not taught this kind either: it answers "is an
     escalation OFFER open", which is what turns a bare "yes" into an acceptance, and a
@@ -708,7 +712,16 @@ def _team_clarify_pick(state: Any, llm_team_n: Any, parent_input: Any) -> Any:
         jsc.get(state, "selection_context") != "team_clarify"
     ):
         return None
-    if jsc.truthy(llm_team_n):
+    # A turn that brings its OWN business question is not an answer to "which team",
+    # however many team words it happens to carry (review of #713, B1's sibling). "Which
+    # promotions is marketing running" names a team and asks a question; source 1 alone
+    # would retype it `request_for_help` and escalate the turn the customer wanted
+    # answered. Both signals are the parser's own and neither reads the message: a
+    # `business_query`, or a domain hint, means there is a question here to answer.
+    own_question = jsc.js_string(jsc.get(o, "message_type")) == "business_query" or jsc.truthy(
+        jsc.norm(jsc.get(o, "domain_hint"))
+    )
+    if jsc.truthy(llm_team_n) and not own_question:
         return llm_team_n
     reply = _split_reply_to(
         jsc.get(parent_input, "latest_user_message")
@@ -940,7 +953,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # the marker says an ask is open, and the parser's own team (or the customer's tap on a
     # reply WE composed) says which team answers it. See `_team_clarify_pick`.
     team_clarify_pick = _team_clarify_pick(
-        parent_input.get("previous_conversation_state"), llm_team_n, parent_input
+        parent_input.get("previous_conversation_state"), o, llm_team_n, parent_input
     )
     if team_clarify_pick is not None:
         llm_team_n = team_clarify_pick

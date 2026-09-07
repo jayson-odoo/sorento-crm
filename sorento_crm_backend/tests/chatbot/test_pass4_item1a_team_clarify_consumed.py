@@ -209,3 +209,197 @@ class TestATeamClarifyAnswerIsConsumedAndResolvesTheEscalation:
         assert stored2.get("selection_context") != "team_clarify", (
             f"the clarify marker must be cleared once the pick resolves: {stored2!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Opus review of #713, blocker B1. The docstrings, AC-822 and the PR body all
+# claimed the clarify expires after one turn because `_offer_carry` needs a
+# roster and a clarify has none. MEASURED FALSE: the clarify arm carries the
+# PREVIOUS turn's roster forward (`tail/compile_state.py` ~:2075) BEFORE it
+# stamps the marker (~:2081), and production dump 0d7d5a23's own
+# `previous_conversation_state` is `team_clarify` with a `last_result_set` of
+# FIFTEEN rows (the mt-r2 dumps carry ten). `topic.changed` returns False
+# whenever either domain is falsy and a clarify turn's `domain_hint` is None, and
+# the ttl branch is `member_offer` only - so the label was carried indefinitely.
+# --------------------------------------------------------------------------- #
+
+CLARIFY_OPTIONS = [
+    {"team": "marketing_product", "label": "marketing product"},
+    {"team": "marketing_form", "label": "marketing form"},
+    {"team": "marketing_promotion", "label": "marketing promotion"},
+]
+
+# The roster the production dump carries under its `team_clarify` label: rows left
+# over from an EARLIER, unrelated customer picker. Non-empty is the whole point -
+# an empty one cannot tell the fixed carry from the broken one.
+STALE_ROSTER = [
+    {"idx": i, "uuid": f"ZZT-stale-{i}", "label": f"ZZT Stale Row {i}", "entity_type": "customer"}
+    for i in range(1, 16)
+]
+
+
+def _seed_open_team_clarify(session_factory, *, roster=None) -> None:
+    """The state a team-clarify ask persists, in the shape production writes it."""
+    db = session_factory()
+    db.execute(
+        text("UPDATE respond_contacts SET session_vars = CAST(:sv AS jsonb) WHERE respond_io_id = :cid"),
+        {
+            "cid": CONTACT_ID,
+            "sv": json.dumps(
+                {
+                    "variables": {
+                        "message_type": "request_for_help",
+                        "intent_hint": None,
+                        "domain_hint": None,
+                        "entities": [],
+                        "routing": {
+                            "suggested_team": "customer_service",
+                            "suggested_agent": "general_enquiries",
+                        },
+                        "escalation": {"is_escalation_confirmation": False},
+                        "response": (
+                            "Which team should I pass this to - marketing product, "
+                            "marketing form or marketing promotion?"
+                        ),
+                        "selection_context": "team_clarify",
+                        "last_result_set": STALE_ROSTER if roster is None else roster,
+                        "pending": {
+                            "kind": "team_clarify",
+                            "team": "customer_service",
+                            "domain": None,
+                            "options": CLARIFY_OPTIONS,
+                        },
+                    }
+                }
+            ),
+        },
+    )
+    db.commit()
+
+
+def _run(session_factory, monkeypatch, *, qf, text_body, msg_id):
+    _stub_parser(monkeypatch, qf)
+    envelope = _envelope(is_test=False)
+    envelope.contact["phone"] = "+60000000009"
+    envelope.message["contact"]["phone"] = "+60000000009"
+    envelope.message["message"]["messageId"] = msg_id
+    envelope.message["message"]["message"]["text"] = text_body
+    return engine_mod.run_turn(envelope, session_factory=session_factory)
+
+
+class TestTheTeamClarifyHasABoundedLifetime:
+    """B1. One turn, and now for real: `_offer_carry` must not re-arm the label."""
+
+    def test_an_unanswered_clarify_is_gone_the_next_turn_even_with_a_stale_roster(
+        self, seeded, session_factory, monkeypatch, stub_assignment_seams
+    ):
+        _seed_open_team_clarify(session_factory)
+
+        # The mt-r2 shape: a request for help that answers nothing and names no team.
+        head = _run(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="request_for_help",
+                intent_hint=None,
+                domain_hint=None,
+                entities=[],
+                is_affirmative=None,
+                user_goal="trying to talk to a human",
+                routing={"suggested_team": None, "suggested_agent": None},
+                escalation={"is_escalation_confirmation": False, "company_pick": None},
+            ),
+            text_body="I want to talk to a human",
+            msg_id="ZZT-clarify-ttl-1",
+        )
+        assert head.branch_kind == "out_of_scope", (head.branch_kind, head.error)
+
+        stored = _session_of(session_factory)["variables"]
+        assert stored.get("selection_context") != "team_clarify", (
+            "an unanswered team clarify must not survive the turn after it, whatever "
+            f"roster an earlier turn left behind: {stored.get('selection_context')!r}"
+        )
+        assert (stored.get("pending") or {}).get("kind") != "team_clarify", (
+            "the marker must not be re-armed either - it outranks member_offer and "
+            f"escalation_offer in `pending.derive` and would mask a real one: {stored.get('pending')!r}"
+        )
+
+
+class TestABusinessQuestionIsNotReadAsAClarifyAnswer:
+    """B1's sibling: the clarify is open, and the customer asks something else that
+    happens to carry a team. That is a QUESTION, not an answer to "which team", and
+    retyping it `request_for_help` would escalate a turn the customer wanted answered."""
+
+    def test_a_business_query_naming_a_team_is_answered_not_escalated(
+        self, seeded, session_factory, monkeypatch, stub_assignment_seams
+    ):
+        _seed_open_team_clarify(session_factory)
+
+        head = _run(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="business_query",
+                intent_hint="check_stock",
+                domain_hint="inventory",
+                entities=[
+                    {
+                        "raw": "SRTWC287",
+                        "hint": "product",
+                        "canonical_code": None,
+                        "current_message": True,
+                        "confident": True,
+                    }
+                ],
+                routing={"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
+                escalation={"is_escalation_confirmation": False, "company_pick": None},
+            ),
+            text_body="SRTWC287 got stock",
+            msg_id="ZZT-clarify-bq",
+        )
+        assert head.branch_kind != "out_of_scope", (
+            "a business question that names a team must be ANSWERED while a clarify is "
+            f"open, never retyped into an escalation: {head.branch_kind!r}"
+        )
+        assert head.ctx["parse"]["output"]["message_type"] == "business_query", (
+            f"the message type must not be rewritten: {head.ctx['parse']['output']['message_type']!r}"
+        )
+
+
+class TestATapOnAPersistedQuickReplyResolvesTheClarify:
+    """S1. The second source of `_team_clarify_pick` had no test at all: blanking
+    `pending.options` reddened nothing. This is the TAP - the customer pressed a button
+    whose text this codebase composed, and the parser came back with no team for it."""
+
+    def test_a_reply_equal_to_a_persisted_option_label_assigns_that_team(
+        self, seeded, session_factory, monkeypatch, stub_assignment_seams
+    ):
+        _seed_open_team_clarify(session_factory)
+
+        head = _run(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="casual",
+                intent_hint=None,
+                domain_hint=None,
+                entities=[],
+                is_affirmative=None,
+                user_goal="trying to answer which team",
+                # The parser named NO team for the tap. Source 1 cannot help here, so
+                # only the persisted quick-reply match can resolve it.
+                routing={"suggested_team": None, "suggested_agent": None},
+                escalation={"is_escalation_confirmation": False, "company_pick": None},
+            ),
+            # Our own label, as the button carried it, with the casing and padding a tap
+            # can arrive with. Matched by strip + casefold EQUALITY, never a substring.
+            text_body="  Marketing Form ",
+            msg_id="ZZT-clarify-tap",
+        )
+        assert head.branch_kind == "out_of_scope", (head.branch_kind, head.error)
+        comments = [a for a in (head.actions or []) if a.get("kind") == "add_comment"]
+        assert any("Team: marketing_form" in (a.get("text") or "") for a in comments), (
+            f"a tap on a quick reply WE persisted must resolve to that team: {comments!r}"
+        )
+        stored = _session_of(session_factory)["variables"]
+        assert stored.get("selection_context") != "team_clarify", stored.get("selection_context")
