@@ -2410,15 +2410,22 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         }
     # And the arm that catches 2d903c96 itself, where the model said NO confirmation and
     # simply mis-typed the ask: a `request_for_help` that names no team (`llm_team_n` is
-    # None - a named team is a real request for a person and stays one) and IS a business
-    # ask by the test above is retyped `business_query`. The hints the model left null are
-    # filled from the table the switch word came from - `DOMAIN_SPEC[domain].intents[0]`
-    # is that domain's one decisive intent - so `route.decide` sends it to the business
-    # lane and the lane runs it as the order ask it was. Gated on all three, so every
-    # other turn is byte-identical. Turn 17d38019 (no entity emitted at all) is not
-    # catchable structurally; the parser prompt's own request_for_help definition now
-    # says what that turn should have emitted.
-    if req_help and llm_team_n is None and business_ask_now:
+    # None - a named team is a real request for a person and stays one) and carries a
+    # SWITCH WORD of one domain beside an entity named this turn is retyped
+    # `business_query`. The MEASURED arm only (review round 2, B2): the decisive-intent
+    # half of `business_ask_now` stays with the said-yes backstop above, because a request
+    # for a PERSON that happens to parse with a decisive intent and a name ("I need
+    # someone to look into HANLIM" -> check_order + HANLIM) is a help request, and
+    # retyping it answered a DO list instead of a human - and clearing `req_help` disarmed
+    # `team_unresolved` for that shape over an open offer. The hints the model left null
+    # are filled from the table the switch word came from - `DOMAIN_SPEC[domain].
+    # intents[0]` is that domain's one decisive intent - so `route.decide` sends it to
+    # the business lane and the lane runs it as the order ask it was. A turn with no
+    # switch word, or with a named team, or with no current entity, is untouched here;
+    # a help request that DOES carry a switch word and a name is this shape by
+    # construction and is the prompt's to classify (owner ruling, 8 Sep 2026). Turn
+    # 17d38019 (no entity emitted at all) is not catchable structurally either.
+    if req_help and llm_team_n is None and entity_named_now and switch_word_domain_now is not None:
         o["message_type"] = "business_query"
         req_help = False
         if not jsc.truthy(o.get("domain_hint")) and switch_word_domain_now is not None:

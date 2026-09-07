@@ -739,6 +739,76 @@ class TestOwner8SepADeliveryWordPlusANameIsAnOrderAsk:
         assert "switch_word_retyped" not in out
 
 
+class TestReviewRound2B2TheRetypeIsTheMeasuredArmOnly:
+    """Review round 2, B2: the retype used to fire on `business_ask_now`, whose
+    decisive-intent half caught a request for a PERSON that happened to carry a decisive
+    intent and a name ("I need someone to look into HANLIM" parsed check_order): it was
+    answered with a DO list instead of a human, and clearing `req_help` disarmed
+    `team_unresolved` over an open offer. The retype is now gated on the measured 2d903c96
+    arm only - a switch word of one domain beside an entity named this turn.
+
+    The reviewer's own sentence, "I need someone to check my order for HANLIM", carries
+    the switch word "order" and is therefore the same structural shape as "delivery to
+    hanlim"; by the owner's ruling (no widening for a domain-derived team, the prompt owns
+    that shape) it is the parser's to classify, not this gate's."""
+
+    _OFFERED = {
+        "response": "Would you like me to escalate to Sorento customer service team?",
+        "pending": {"kind": "member_offer", "team": "customer_service", "domain": "order"},
+    }
+
+    def _person_ask(self, **over):
+        return _emission(
+            message_type="request_for_help",
+            intent_hint="check_order",
+            domain_hint="order",
+            entities=[{"raw": "HANLIM", "hint": "customer", "confident": True, "current_message": True}],
+            **over,
+        )
+
+    def test_a_decisive_intent_plus_a_name_with_no_switch_word_stays_a_help_request(self) -> None:
+        out = _post(self._person_ask(), previous={}, latest="I need someone to look into HANLIM")
+        assert out["message_type"] == "request_for_help"
+        assert "switch_word_retyped" not in out
+
+    def test_the_same_shape_over_an_open_offer_still_asks_which_team(self) -> None:
+        out = _post(self._person_ask(), previous=self._OFFERED, latest="I need someone to look into HANLIM")
+        assert out["message_type"] == "request_for_help"
+        assert out["escalation"].get("team_unresolved") is True
+        assert out["escalation"]["is_escalation_confirmation"] is False
+
+    def test_the_2d903c96_shape_is_still_retyped(self) -> None:
+        out = _post(
+            _emission(
+                message_type="request_for_help",
+                intent_hint=None,
+                domain_hint=None,
+                entities=[{"raw": "hanlim", "hint": "customer", "confident": True, "current_message": True}],
+            ),
+            previous=self._OFFERED,
+            latest="delivery to hanlim",
+        )
+        assert out["message_type"] == "business_query"
+        assert out["switch_word_retyped"] == "order"
+
+    def test_the_confirm_suppression_backstop_still_reads_the_decisive_intent(self) -> None:
+        """`business_ask_now` keeps both halves for the said-yes arm: a decisive ask that
+        names a product over an open offer is not a confirmation (owner report 8 Sep)."""
+        out = _post(
+            _emission(
+                message_type="request_for_help",
+                intent_hint="check_po",
+                domain_hint="purchase_order",
+                entities=[{"raw": "SRTWC8517", "hint": "product", "current_message": True}],
+                escalation={"is_escalation_confirmation": True, "company_pick": None},
+            ),
+            previous={"response": "Would you like me to escalate to Mocha warehouse team?",
+                      "pending": {"kind": "escalation_offer", "team": "warehouse"}},
+            latest="PO for SRTWC8517",
+        )
+        assert out["escalation"]["is_escalation_confirmation"] is False
+
+
 class TestSwitchWordDomainOfThisMessage:
     """`_switch_word_domain`: the single domain whose switch word appears among the
     message's content tokens (`_TOKEN_RE` minus `SWITCH_FILLER`, the #6 consumer's own
