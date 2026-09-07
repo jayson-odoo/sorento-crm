@@ -79,6 +79,19 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor',
         >
           Add layer
         </button>
+        {/* B1: types a value into EVERY current layer's text_override,
+            bound or not - the PUT map is what is supposed to tell them
+            apart, not this button. */}
+        <button
+          type="button"
+          onClick={() => {
+            const next = layers.map((l) => ({ ...l, text_override: 'typed value' }));
+            setLayers(next);
+            onLayersChange?.(next);
+          }}
+        >
+          Type into every layer
+        </button>
       </div>
     );
   },
@@ -375,6 +388,45 @@ describe('RequestTagDesigner - Update template (S6, AC-S6-1/2/3)', () => {
     // Radix's own close animation unmounts the dialog a tick after the
     // click, not synchronously with it.
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+  });
+});
+
+describe('RequestTagDesigner - Update template strips bound text_override (B1)', () => {
+  it('a bound layer\'s text_override is null in the PUT payload, an unbound layer keeps its text', async () => {
+    mockListTemplates.mockResolvedValue([realTemplate()]);
+    mockResolveRequestLines.mockResolvedValue([
+      lineTagData({ line_id: 'line-a', code: 'AAA-1', name: 'Kitchen Sink' }),
+    ]);
+
+    render(
+      <RequestTagDesigner
+        request={request({ lines: [line({ id: 'line-a' })], line_count: 1 })}
+        initialDoc={null}
+        onSave={vi.fn(async () => {})}
+        onAutosave={vi.fn(async () => {})}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId('canvas-editor')).toBeInTheDocument());
+
+    // The mocked canvas starts on the template's own single bound ("code")
+    // layer; add an unbound one, then type a value into EVERY layer's
+    // text_override - a real editor session typing a line-specific price or
+    // name would leave the SAME shape (both bound and unbound layers
+    // carrying a value), so this is what the PUT map has to tell apart.
+    fireEvent.click(screen.getByRole('button', { name: 'Add layer' }));
+    expect(screen.getByText(/canvas: 2 layers/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Type into every layer' }));
+
+    openUpdateDialog();
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Publish' }));
+
+    await waitFor(() => expect(mockUpdateTemplate).toHaveBeenCalled());
+    const [, payload] = mockUpdateTemplate.mock.calls[0];
+    const bound = payload.layers.find((l: TagLayer) => l.slot_binding === 'code');
+    const unbound = payload.layers.find((l: TagLayer) => l.id === 'added-1');
+
+    expect(bound?.text_override).toBeNull();
+    expect(unbound?.text_override).toBe('typed value');
   });
 });
 

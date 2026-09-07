@@ -851,9 +851,16 @@ export function RequestTagDesigner({
       setUpdatingTemplate(true);
       try {
         // Existing PUT (S1's updateTemplate carries print_size too now) then
-        // the existing publish route - no new backend for this slice.
+        // the existing publish route - no new backend for this slice. Bound
+        // layers lose their `text_override` here too - same rule
+        // `templateFromTag` applies for "Save as new template": a value
+        // typed for THIS line (a price, a name) is not the shared template's
+        // to keep, only the slot binding is.
         await updateTagTemplate(updateEligibleTemplate.id, {
-          layers: selectedTag.layers,
+          layers: selectedTag.layers.map((layer) => ({
+            ...layer,
+            text_override: layer.slot_binding ? null : layer.text_override,
+          })),
           width_mm: selectedTag.width_mm,
           height_mm: selectedTag.height_mm,
         });
