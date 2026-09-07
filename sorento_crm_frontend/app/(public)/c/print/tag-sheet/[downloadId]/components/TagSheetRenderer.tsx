@@ -334,8 +334,21 @@ function renderImageLayer(
  * `contain` behaviour out of a div that has no image of its own. The crop
  * fraction's own W:H only equals the source's real pixel ratio when the
  * source happens to be square, so this needs the REAL natural size first -
- * `onLoad` measures it; until then it falls back to the plain (uncropped)
- * fit so there is always something reasonable on screen, never a blank box.
+ * `onLoad` measures it; until then the fallback style below shows the plain
+ * (uncropped) fit so there is always something reasonable on screen, never
+ * a blank box.
+ *
+ * ONE `<img>` element for the whole life of the component (S3 review), not
+ * a second one swapped in once `natural` resolves: the tree shape (outer
+ * flex wrapper > window div > img) never changes, only the STYLE objects
+ * do, so React never unmounts/remounts the element. The print page's own
+ * readiness effect (`page.tsx`) snapshots `document.images` ONCE,
+ * synchronously, the moment the payload arrives - a second `<img>` that
+ * only appeared later (after the first one's own `load` had already
+ * settled that snapshot) was never in it, so `data-dk-print-ready` could
+ * flip true before that second, actually-cropped element had painted -
+ * Chromium's own `page.pdf()` could capture the first (uncropped) picture
+ * instead of the crop the layer actually asks for.
  */
 function CroppedImage({
   url,
@@ -347,31 +360,12 @@ function CroppedImage({
   fit: 'cover' | 'contain' | 'stretch';
 }) {
   const [natural, setNatural] = useState<{ width: number; height: number } | null>(null);
+  const layout = natural ? cropWindowStyle(cropRect, natural) : null;
 
-  if (!natural) {
-    return (
-      <img
-        src={url}
-        alt=""
-        onLoad={(e) =>
-          setNatural({
-            width: e.currentTarget.naturalWidth,
-            height: e.currentTarget.naturalHeight,
-          })
-        }
-        style={{
-          width: '100%',
-          height: '100%',
-          objectFit: fit === 'cover' ? 'cover' : fit === 'stretch' ? 'fill' : 'contain',
-        }}
-      />
-    );
-  }
-
-  const layout = cropWindowStyle(cropRect, natural);
   const base: CSSProperties = { position: 'relative', overflow: 'hidden' };
-  const windowStyle: CSSProperties =
-    fit === 'stretch'
+  const windowStyle: CSSProperties = !layout
+    ? { ...base, width: '100%', height: '100%' }
+    : fit === 'stretch'
       ? { ...base, width: '100%', height: '100%' }
       : fit === 'cover'
         ? {
@@ -394,6 +388,20 @@ function CroppedImage({
             height: 'auto',
             aspectRatio: layout.aspectRatio,
           };
+
+  const imgStyle: CSSProperties = layout
+    ? {
+        position: 'absolute',
+        width: layout.img.width,
+        height: layout.img.height,
+        left: layout.img.left,
+        top: layout.img.top,
+      }
+    : {
+        width: '100%',
+        height: '100%',
+        objectFit: fit === 'cover' ? 'cover' : fit === 'stretch' ? 'fill' : 'contain',
+      };
 
   return (
     // `display: flex` + centered content (S3 review) so the CONTAIN branch's
@@ -418,13 +426,13 @@ function CroppedImage({
         <img
           src={url}
           alt=""
-          style={{
-            position: 'absolute',
-            width: layout.img.width,
-            height: layout.img.height,
-            left: layout.img.left,
-            top: layout.img.top,
-          }}
+          onLoad={(e) =>
+            setNatural({
+              width: e.currentTarget.naturalWidth,
+              height: e.currentTarget.naturalHeight,
+            })
+          }
+          style={imgStyle}
         />
       </div>
     </div>

@@ -758,6 +758,47 @@ describe('image crop on the print page (S8, AC-S8-4)', () => {
     expect(wrapper).toHaveStyle({ overflow: 'hidden', aspectRatio: '150 / 150' });
   });
 
+  it('never swaps in a second <img> once the natural size loads (S3 review)', () => {
+    // The print page's own readiness effect snapshots `document.images`
+    // ONCE, synchronously - a second `<img>` appearing only after the
+    // FIRST one's own `load` had already settled that snapshot would never
+    // be in it, so `data-dk-print-ready` could flip true before the
+    // actually-cropped element had painted and Chromium could capture the
+    // uncropped picture instead.
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'img',
+            type: 'image',
+            width_mm: 60,
+            height_mm: 20,
+            props: {
+              kind: 'image',
+              source: { type: 'asset', assetId: 'a1' },
+              fit: 'contain',
+              cropRect: { x: 0.25, y: 0, width: 0.5, height: 1 },
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+        assets={{ a1: 'https://cdn.test/photo.png' }}
+      />,
+    );
+
+    const before = container.querySelectorAll('img');
+    expect(before).toHaveLength(1);
+    const node = before[0];
+
+    fireImageLoad(node, { width: 300, height: 150 });
+
+    const after = container.querySelectorAll('img');
+    expect(after).toHaveLength(1);
+    // The SAME DOM node, not a different one at the same query position -
+    // this is what actually rules out an unmount/remount.
+    expect(after[0]).toBe(node);
+  });
+
   it('centers the CONTAIN window in its own box, the same way Konva centers it (S3 review)', () => {
     // A wider-than-tall crop (0.5 wide, full height) inside a 60x20mm box:
     // `contain` sizes the window to the box's own height and leaves it
