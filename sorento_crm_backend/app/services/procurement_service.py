@@ -3107,14 +3107,22 @@ class SPOAllocationService:
     #: purchases as outstanding. A row this system raised itself carries no stamp, and for
     #: those the GRN lines ARE the record.
     #:
-    #: TWO receipt-ownership rules, one per direction, and they are deliberately
-    #: different (spo-xlsx-supersede D28/D28a): this one governs the READ path (the
-    #: listings and availability readers below), where a stamped row's stored figure is
-    #: trusted as stated. The WRITE path - `_sync_received_for_allocations` - instead asks
-    #: whether anything actually picks against the row (D28) and, for
-    #: `source_system='autocount'` rows, recomputes the whole `(spo_number, product,
-    #: location)` GROUP (D28a): a pushed line-set that replaced one aggregated row shares
-    #: one receipt, so its own stored value is no longer a per-row statement to preserve.
+    #: THREE receipt-ownership rules, and they are deliberately different
+    #: (spo-xlsx-supersede D28 / D28a / D28b):
+    #:
+    #: 1. READ path (this predicate, used by the listings and availability readers
+    #:    below): a stamped row's stored figure is trusted as stated, and only a row this
+    #:    system raised itself (no `source_system`) is measured from its GRN lines.
+    #: 2. WRITE path, per allocation (`_sync_received_for_allocations` for a
+    #:    `source_system` NULL or `scm_upload` row): recomputed from its OWN picking
+    #:    lines, and skipped entirely when nothing picks against it and nobody is
+    #:    releasing it - that stored value was stated or carried, not computed here.
+    #: 3. WRITE path, per GROUP (`_sync_group_received` for an `autocount` row): the
+    #:    group's approved picking total redistributed over its lines (D28a), but never
+    #:    below the stored sum of its non-released members (D28b's floor) - a pushed
+    #:    line-set that replaced one aggregated row shares one receipt, and a partial
+    #:    Sorento pick against one of its lines is not evidence that the rest never
+    #:    arrived.
     @staticmethod
     def _receipt_is_computed(allocation) -> bool:
         return getattr(allocation, "source_system", None) is None
@@ -4061,14 +4069,21 @@ class PickingHeaderService:
     def _write_received(self, alloc: SPOAllocation, total: int) -> None:
         """The one place a recompute writes a receipt onto an allocation.
 
-        `receipt_status` is derived from the same number in the same
-        expression, so the two can never end up disagreeing on different
-        paths (per-allocation, group-aware, released).
+        `receipt_status` AND `line_status` both come off the same test
+        (AC-X33), so no path can leave the pair contradicting itself:
+
+        - receipt reaches the allocation -> `closed` + `fully_received`;
+        - receipt below it, row currently open -> stays `open` + `pending`;
+        - receipt below it, row already CLOSED -> stays closed. A recompute
+          is not the event that revives retired demand: that row was closed
+          by the leftover sweep, a cancelled document or a full receipt, and
+          only a real restatement of the document reopens it.
         """
         alloc.quantity_received = total
-        alloc.receipt_status = (
-            "fully_received" if total >= (alloc.allocated_quantity or 0) else "pending"
-        )
+        fully_received = total >= (alloc.allocated_quantity or 0)
+        alloc.receipt_status = "fully_received" if fully_received else "pending"
+        if fully_received:
+            alloc.line_status = "closed"
 
     def _autocount_group_members(self, alloc: SPOAllocation) -> list[SPOAllocation]:
         """The AutoCount lines sharing this allocation's `(spo_number, product,
@@ -4091,9 +4106,18 @@ class PickingHeaderService:
             self.db.query(SPOAllocation)
             .filter(
                 SPOAllocation.company_id == alloc.company_id,
+                # AC-X34: `spo_number` and `product_id` are BOTH predicates in
+                # SQL (`ix_spo_allocations_spo_product_warehouse` leads on
+                # exactly that pair), so a product carried by hundreds of
+                # shipping orders costs one index probe rather than a load of
+                # every SPO it ever appeared on. The equality is safe for this
+                # group: an AutoCount row's number is the one AutoCount stated,
+                # never a variant spelling - only xlsx-era rows carry those,
+                # and they are excluded by `source_system` below. The
+                # `_spo_match_key` comparison stays as the authority.
+                SPOAllocation.spo_number == alloc.spo_number,
                 SPOAllocation.product_id == alloc.product_id,
                 SPOAllocation.source_system == shipping_order_rules.AUTOCOUNT_SOURCE_SYSTEM,
-                SPOAllocation.spo_number.isnot(None),
             )
             .all()
         )
@@ -4126,24 +4150,54 @@ class PickingHeaderService:
         that line alone, which is what a repointed GRN draw (D27) would
         otherwise make of a 47-unit receipt against a 29 + 18 line pair.
 
-        D28's ownership rule still governs, at GROUP level: if nothing picks
-        against ANY member and none is being released, the stored values were
-        stated (ESB) or carried (D26) rather than computed here, and are left
-        alone.
+        D28's ownership rule still governs, at GROUP level: if nothing
+        APPROVED picks against any member and none is being released, the
+        stored values were stated (ESB) or carried (D26) rather than computed
+        here, and are left alone. A draft GRN's line does not open the group
+        for rewrite - it proves nothing has been received yet, and the
+        approval is the event that does.
+
+        D28b, the FLOOR: the group is never lowered below what its
+        non-released members already hold. The redistribution runs only when
+        the approved picking sum EXCEEDS that stored sum, which is the only
+        case where the GRNs know something the stored figures do not; short of
+        that the stored figures already account for the whole picking sum
+        (they were stated by the ESB or carried by a supersede) and are left
+        exactly as they are. A RELEASED member is outside the floor and is
+        recomputed from its own remaining picking lines, so a GRN delete still
+        gives its receipt back.
         """
         member_ids = [str(member.id) for member in members]
-        has_picking_line = (
+        released_ids = released & set(member_ids)
+        has_approved_line = (
             self.db.query(PickingLine.id)
-            .filter(PickingLine.spo_allocation_id.in_(member_ids))
+            .join(PickingHeader, PickingLine.picking_header_id == PickingHeader.id)
+            .filter(
+                PickingLine.spo_allocation_id.in_(member_ids),
+                PickingHeader.picking_type == "goods_received",
+                PickingHeader.picking_status == "approved",
+            )
             .first()
             is not None
         )
-        if not has_picking_line and not (released & set(member_ids)):
+        if not has_approved_line and not released_ids:
             return
         computed = self.get_computed_received_map(member_ids)
-        group_total = sum(computed.values())
+        picking_total = sum(computed.values())
+        floor = sum(
+            int(member.quantity_received or 0)
+            for member in members
+            if str(member.id) not in released_ids
+        )
+        if picking_total <= floor:
+            # The floor holds. Only a member being released moves, and it
+            # moves to what its OWN remaining picking lines prove.
+            for member in members:
+                if str(member.id) in released_ids:
+                    self._write_received(member, computed.get(str(member.id), 0))
+            return
         shares = shipping_order_rules.distribute_received(
-            group_total, [int(member.allocated_quantity or 0) for member in members]
+            picking_total, [int(member.allocated_quantity or 0) for member in members]
         )
         for member, share in zip(members, shares):
             self._write_received(member, share)

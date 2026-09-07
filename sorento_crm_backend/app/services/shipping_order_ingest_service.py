@@ -174,7 +174,7 @@ class ShippingOrderIngestService(MasterRefResolver):
         integration_id: Optional[str],
         *,
         company_id: str,
-        may_delete: bool = True,
+        may_delete: bool = False,
     ):
         super().__init__(db, integration_id, company_id=company_id)
         # D30: whether the calling principal holds
@@ -182,11 +182,11 @@ class ShippingOrderIngestService(MasterRefResolver):
         # A BOOLEAN, resolved by the route (`app.api.v1.external.ingest`,
         # `_principal_may_delete`) through the same `UserPermissionService`
         # every other guard on that surface uses - the service must not import
-        # FastAPI or re-derive a principal of its own. EVERY HTTP caller has
-        # its answer computed there; the default of True is for the callers
-        # that have no principal to check at all (a maintenance script, a
-        # test), which is the same trust every other in-process service call
-        # in this codebase already carries.
+        # FastAPI or re-derive a principal of its own. D30a: the default is
+        # FALSE - a caller with no opinion at all gets the safe half (rows
+        # closed and annotated, never removed), and a caller entitled to
+        # delete says so explicitly (the route passes the resolved grant, the
+        # dedupe script passes True).
         self.may_delete = may_delete
         # D7 (S3): SPO numbers this batch touched, read by the route's
         # post-write forward-match hook (`app.api.v1.external.ingest
@@ -289,7 +289,12 @@ class ShippingOrderIngestService(MasterRefResolver):
                 # cannot name one.
                 entity_id=None,
                 warnings=verdict.warnings,
-                lines=verdict.line_counts,
+                # Only the counts that actually happened (D9's own rule for
+                # `lines.dropped`, applied to every key): a zero says nothing
+                # the absence of the key does not, and `adopted: 0` beside a
+                # supersede reads as if adoption had been consulted at all
+                # (AC-X29 asserts on the key, not the value).
+                lines={key: value for key, value in verdict.line_counts.items() if value},
             )
         except MissingReference as exc:
             savepoint.rollback()
@@ -447,11 +452,20 @@ class ShippingOrderIngestService(MasterRefResolver):
             # D25a: `pool` now holds only rows the supersede is not entitled
             # to touch - a ref-less row from the CRM UI / n8n (source_system
             # NULL) or an open one in a group that already carries a DtlKey -
-            # so adoption still runs for them, unchanged, and can run in the
-            # SAME push as a supersede of a different group.
+            # so adoption still runs for them and can run in the SAME push as
+            # a supersede of a different group.
+            #
+            # D25b: passes 1 and 2 only, in that case. Both key on
+            # (product, location), so they cannot mistake one product's row
+            # for another's; pass 3 keys on POSITION alone and fires whenever
+            # "the remaining counts agree" - and after a supersede has
+            # consumed its own lines, the counts that remain are whatever is
+            # left over, so an unrelated CRM / n8n row is exactly what it
+            # would pair the leftover line with (AC-X29).
             self._adopt_lines(
                 unmatched, pool, counts, force_closed,
                 container_number=container_number, warnings=warnings,
+                allow_positional="superseded" not in counts,
             )
 
         # S1 review fix: the NEXT number is the highest across every row this
@@ -915,9 +929,18 @@ class ShippingOrderIngestService(MasterRefResolver):
                 # D30: no `.delete` grant, so the rows stay - closed, so they
                 # no longer read as outstanding supply, and annotated so the
                 # next reader can see which document replaced them.
+                note = f"superseded by {payload.source_ref}"
                 for row in removing:
                     row.line_status = LINE_CLOSED
-                    row.allocation_notes = f"superseded by {payload.source_ref}"
+                    # APPENDED, never overwritten: whatever the uploader or a
+                    # planner wrote on this row is the only record of why it
+                    # exists, and the row is being kept precisely so that
+                    # record survives.
+                    existing = (row.allocation_notes or "").strip()
+                    if not existing:
+                        row.allocation_notes = note
+                    elif note not in existing:
+                        row.allocation_notes = f"{existing}; {note}"
                 action = "closed"
                 if warnings is not None:
                     warnings.append(WARN_SUPERSEDED_CLOSED_ONLY)
@@ -955,6 +978,7 @@ class ShippingOrderIngestService(MasterRefResolver):
         *,
         container_number: Optional[str] = None,
         warnings: Optional[list[str]] = None,
+        allow_positional: bool = True,
     ) -> None:
         """D11: claim ref-less POOL rows for ref-less UNMATCHED incoming lines.
 
@@ -971,7 +995,12 @@ class ShippingOrderIngestService(MasterRefResolver):
         2. `(product_id, location)` alone, only where exactly one pool row
            remains for it;
         3. position alone (incoming `line_number` order against the rows' own
-           `spo_line_number` order), only where the remaining counts agree.
+           `spo_line_number` order), only where the remaining counts agree -
+           and only when `allow_positional` (D25b): a push that superseded a
+           group has already consumed its own lines, so "the counts agree" no
+           longer says the two sides describe the same document, and the pool
+           it is left with is exactly the rows the supersede was not entitled
+           to touch.
         """
         all_have_line_number = all(v.get("line_number") is not None for v in unmatched)
 
@@ -1088,7 +1117,7 @@ class ShippingOrderIngestService(MasterRefResolver):
         # ---- pass 3: position alone, only when the remaining counts agree ----
         remaining_indices = [i for i in range(len(unmatched)) if i not in claimed_lines]
         remaining_pool = [r for r in pool if id(r) not in claimed_rows]
-        if remaining_indices and len(remaining_indices) == len(remaining_pool):
+        if allow_positional and remaining_indices and len(remaining_indices) == len(remaining_pool):
             remaining_indices.sort(key=lambda i: _position(i, unmatched[i]))
             remaining_pool.sort(key=_row_position)
             for idx, row in zip(remaining_indices, remaining_pool):

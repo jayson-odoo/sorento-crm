@@ -317,11 +317,13 @@ def distribute_received(total: int, allocated: list[int]) -> list[int]:
     """Spread `total` across lines in order: each up to its own allocated
     quantity, any remainder onto the LAST line (D26, reused by D28a).
 
-    The remainder rule is deliberate and shared by both callers: a stale
+    The remainder rule is deliberate and shared by every caller: a stale
     upload can state a smaller line-set than AutoCount does, and a GRN can
     draw more than the lines it drew against are ordered for - a receipt that
     physically arrived may not be dropped just because no line has room left
-    for it.
+    for it. So with `total` ABOVE `sum(allocated)` the excess lands on the
+    LAST line and nothing is lost (AC-X32): 50 over `[29, 18]` is `[29, 21]`,
+    on the supersede's carry and on D28a's group recompute alike.
     """
     remaining = max(int(total or 0), 0)
     shares: list[int] = []
@@ -401,16 +403,26 @@ def plan_xlsx_supersede(incoming, refless_rows) -> SupersedePlan:
             continue
 
         group_received = sum(int(row.quantity_received or 0) for row in rows)
+        group_allocated = sum(int(row.allocated_quantity or 0) for row in rows)
         incoming_allocated = [
             int(incoming[index].get("allocated_quantity") or 0) for index in indexes
         ]
-        if sum(incoming_allocated) < group_received:
-            # D26a: the whole incoming line-set is smaller than what this
-            # group already received. Replacing the rows with it would leave
-            # the document reporting less than physically arrived, so the
-            # group is refused and the caller warns `received_locked` - the
-            # same verdict the by-ref and adoption paths already raise for
-            # the same reason (`received_guard`).
+        if sum(incoming_allocated) < min(group_received, group_allocated):
+            # D26a: the incoming line-set is too small to HOLD a receipt this
+            # group's own allocation could hold, which is the one case where
+            # the supersede would newly report goods as received but never
+            # ordered (AC-X15: one line of 1 replacing 47 ordered and 47
+            # received). Refused, and the caller warns `received_locked` - the
+            # same verdict the by-ref and adoption paths raise for the same
+            # reason (`received_guard`).
+            #
+            # `min` and not the carried receipt alone (AC-X32): a receipt the
+            # xlsx row ALREADY carried above its own allocation (50 received
+            # against 47 ordered) is not made worse by a line-set that covers
+            # the order in full, and `distribute_received` puts the excess on
+            # the last line rather than losing it. Refusing there would leave
+            # exactly the duplicate open supply this whole change exists to
+            # remove.
             locked.append(
                 SupersedeKeptGroup(key=key, row_ids=row_ids, reason=KEPT_RECEIVED_LOCKED)
             )
@@ -451,7 +463,7 @@ def repoint_allocation_dependants(
     from_ids,
     to_id: str,
     *,
-    company_id: Optional[str] = None,
+    company_id: str,
     dry_run: bool = False,
 ) -> int:
     """Move every row pointing at `from_ids` onto `to_id` (D27), and say how many.
@@ -474,6 +486,11 @@ def repoint_allocation_dependants(
     its two targets to be set, so the FK's own `SET NULL` on the delete
     violates the CHECK and fails the whole push.
 
+    `company_id` is REQUIRED (AC-X31, D30a): the whole point of the widened
+    read is that the ambient filter is switched off for it, so the caller's
+    own anchor is the ONLY thing left narrowing the write. A default would
+    make "every company" reachable by forgetting one keyword.
+
     `dry_run` counts what WOULD move without touching a row - the dedupe
     script's preview needs the same enumeration, and a second copy of it is
     how the two would come to disagree.
@@ -488,20 +505,24 @@ def repoint_allocation_dependants(
         return 0
     moved = 0
     with company_scope(db, None):
+        # Scope disabled for the READ only, and for exactly as long as the
+        # read takes (D30a): a flush inside this block would emit whatever
+        # else the session happens to hold dirty with the scope switched
+        # off, and an autoflush on the next query would do the same.
         for model in (PickingLine, OrderLinkClaim, OrderInquiryLink):
-            query = db.query(model).filter(model.spo_allocation_id.in_(ids))
-            if company_id:
-                query = query.filter(
-                    or_(model.company_id == company_id, model.company_id.is_(None))
-                )
+            query = (
+                db.query(model)
+                .filter(model.spo_allocation_id.in_(ids))
+                .filter(or_(model.company_id == company_id, model.company_id.is_(None)))
+            )
             rows = query.all()
             for row in rows:
                 if not dry_run:
                     row.spo_allocation_id = to_id
                 moved += 1
-        if moved and not dry_run:
-            # Flushed HERE, before the caller deletes the superseded rows: the
-            # UPDATE has to reach the database ahead of the DELETE or the FK's
-            # `SET NULL` wins the race and the pairing is lost anyway.
-            db.flush()
+    if moved and not dry_run:
+        # Flushed HERE, before the caller deletes the superseded rows: the
+        # UPDATE has to reach the database ahead of the DELETE or the FK's
+        # `SET NULL` wins the race and the pairing is lost anyway.
+        db.flush()
     return moved
