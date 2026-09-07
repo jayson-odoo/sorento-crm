@@ -1654,3 +1654,36 @@ contact inside the synchronous request. Different contacts run in parallel.
   own - a modification that DID name an entity already carries the executor's merge, and
   re-adding the prior set would put back the axis the customer just narrowed.
   Evidence: `tests/chatbot/test_pass4_item3_last_month_under_member_offer.py`. (H75)
+- AC-824 `[BE][T]` **A numbered pick over a partial-miss roster keeps the code that already
+  resolved.** Issue #708, owner console pass 4 item 4. "SRTKS6091 and SRTKS8091 got stock":
+  the first code resolves, the second misses and gets a sibling did-you-mean. On this lane
+  the partial miss is claimed by the answer half's `build-suggest-offer` before the tail
+  runs, so the turn persists `selection_context: suggest_offer` and `_partial_dym_block`
+  never writes `dym_last_result_set` - which is exactly what the numbered did-you-mean
+  handler keys on. So "2" fell through to the generic positional arm, whose contract is
+  REPLACEMENT, and the turn answered about the pick alone with SRTKS6091 dropped. The
+  reviewer measured `reference_target` of null, `"result"` and `"dym"` all doing it, which
+  is the tell: the discriminator was which roster happened to be in state, not the parser's
+  own tag.
+
+  **Given** an open `suggest_offer` whose `dym_offer.candidates` carry the `for_raw` /
+  `for_canonical` linkage, and a numbered pick against that roster, **then** the pick
+  replaces the token it was offered FOR, in place, and every other prior entity survives -
+  so the scope is the already-resolved code PLUS the pick, and the answer names both.
+
+  `apply_dym_pick` stays keyed on the roster it is handed (no widening of the numbered
+  handler's `dym_last_result_set` guard, and no second merge implementation): the positional
+  arm hands it the OTHER roster. Two gates, both measured before any pick is applied and
+  both over the whole pick set, because threading is what makes a multi-pick accumulate:
+
+  * the linkage must LAND on a prior entity (without it there is nothing that says which
+    token the pick answers, and `apply_dym_pick` would prepend, leaving the unresolved miss
+    in scope beside its own answer). Capture `parser-15157067` is this shape with a prior
+    `SRTWT165-FT` against a `for_raw` of `SRTWT165FT`, so nothing ties and nothing changes;
+  * the prior scope must hold something that is NOT a source token. A FULL miss has no
+    resolved sibling, so the merge would preserve nothing and the plain replacement is both
+    correct and what the corpus records.
+
+  Together they leave every capture byte-equal; one new diagnostic key
+  (`suggest_offer_pick_merged`) is registered field-scoped with its class. Closes #708.
+  Evidence: `tests/chatbot/test_pass4_item4_issue708_partial_pick_scope.py`. (H76)

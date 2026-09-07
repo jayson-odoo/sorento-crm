@@ -1687,6 +1687,117 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             )
 
         o["entities"] = [*resolved]
+
+        # -- ISSUE #708: a numbered pick over a PARTIAL-MISS roster keeps what resolved -- #
+        # "SRTKS6091 and SRTKS8091 got stock": the first code resolves, the second misses
+        # and gets a sibling did-you-mean. On THIS lane the partial miss is claimed by the
+        # answer half's `build-suggest-offer` before the tail runs, so the turn persists
+        # `selection_context: suggest_offer` and `_partial_dym_block` never writes
+        # `dym_last_result_set` - which is what `dym_numbered_multi_select` above keys on.
+        # So "2" fell through to the code just above, whose contract is REPLACEMENT, and
+        # the already-resolved SRTKS6091 was dropped: the turn answered about the pick
+        # alone. The reviewer measured `reference_target` of null, "result" and "dym" all
+        # doing it, which is the tell - the discriminator was which roster happened to be
+        # in state, not the parser's own tag.
+        #
+        # `apply_dym_pick` stays keyed on the roster it is given (no widening of the dym
+        # block's guard, and no second merge implementation): what this does is HAND it the
+        # other roster. The linkage it needs is already persisted - `dym_offer.candidates`
+        # carries `for_raw` / `for_hint` / `for_canonical` per candidate on exactly these
+        # turns - so the pick replaces the token it was offered FOR, in place, and every
+        # other prior entity survives. A picked row with no candidate record is left to the
+        # replacement above rather than guessed at: without the linkage there is nothing
+        # that says which token it answers.
+        #
+        # And the linkage has to LAND, not merely exist. `apply_dym_pick` with slot
+        # matching off ties the pick to a prior entity by `for_raw` / `for_canonical` and
+        # PREPENDS when neither matches (`dym_replace_unmatched`) - which would leave the
+        # miss token that was never resolved sitting in scope beside its own answer. So the
+        # tie is tested first, here, with the same two keys; a pick that cannot be tied
+        # falls through to the replacement above, which is what n8n does with it. That is
+        # also what keeps the corpus byte-equal: capture `parser-15157067` is this exact
+        # shape with a prior `SRTWT165-FT` against a `for_raw` of `SRTWT165FT` (the
+        # separator differs), so nothing ties and nothing changes.
+        sug_offer = (
+            prev_state.get("dym_offer")
+            if prev_state.get("selection_context") == "suggest_offer"
+            and isinstance(prev_state.get("dym_offer"), dict)
+            else None
+        )
+        if resolved and sug_offer is not None:
+            def _code_key(value: Any) -> str:
+                return jsc.nullish_str(value).strip().lower()
+
+            by_code = {}
+            for cand in jsc.array(sug_offer.get("candidates")):
+                key = _code_key(jsc.get(cand, "code"))
+                if key and key not in by_code:
+                    by_code[key] = cand
+            base = jsc.array(prev_state.get("entities"))
+            picked_cands = [
+                c
+                for c in (
+                    by_code.get(_code_key(p.get("canonical_code") or p.get("raw")))
+                    for p in resolved
+                )
+                if c is not None
+            ]
+            prior_keys = {_code_key(jsc.get(e, "raw")) for e in base} | {
+                _code_key(jsc.get(e, "canonical_code")) for e in base
+            }
+            source_keys: set[str] = set()
+            for c in picked_cands:
+                source_keys |= {
+                    _code_key(jsc.get(c, "for_raw")),
+                    _code_key(jsc.get(c, "for_canonical")),
+                }
+            source_keys -= {""}
+            # TWO gates, both measured against the scope as it stands BEFORE any pick is
+            # applied, and both over the whole pick set rather than per pick: threading is
+            # what makes a multi-pick accumulate ("all of them" replaces the source token
+            # with the first candidate and PREPENDS the rest), so re-testing after each
+            # pick would stop at the first and answer for one code out of three.
+            #
+            # (i) THE LINKAGE LANDS. Without a `for_raw` / `for_canonical` that names a
+            #     prior entity there is nothing that says which token the pick answers.
+            # (ii) THERE IS SOMETHING TO KEEP. #708 is a PARTIAL miss - a code resolved
+            #     beside the one that did not - and the merge exists to save that code. A
+            #     FULL miss has no resolved sibling, so the prior scope is the miss token
+            #     alone, the merge would preserve nothing, and the plain replacement above
+            #     is both correct and what the corpus records
+            #     (`test_r3_pending_end_to_end.py::TestAllOfThemOverADidYouMeanOffer...`
+            #     grades that arm's `entity_op: reuse`).
+            merges = bool(source_keys & prior_keys) and any(
+                _code_key(jsc.get(e, "raw")) not in source_keys
+                and _code_key(jsc.get(e, "canonical_code")) not in source_keys
+                for e in base
+            )
+            applied = False
+            for picked_ent in resolved if merges else []:
+                code = picked_ent.get("canonical_code") or picked_ent.get("raw")
+                cand = by_code.get(_code_key(code))
+                if cand is None:
+                    continue
+                base = apply_dym_pick(
+                    {
+                        "code": jsc.get(cand, "code"),
+                        "uuid": jsc.get(cand, "uuid") if jsc.truthy(jsc.get(cand, "uuid")) else None,
+                        "entity_type": jsc.get(cand, "entity_type")
+                        if jsc.truthy(jsc.get(cand, "entity_type"))
+                        else None,
+                        "for_raw": jsc.get(cand, "for_raw"),
+                        "for_hint": jsc.get(cand, "for_hint"),
+                        "for_canonical": jsc.get(cand, "for_canonical"),
+                    },
+                    sug_offer,
+                    base,
+                    False,  # slot matching OFF, as the numbered handler does: ADD-BOTH
+                )
+                applied = True
+            if applied:
+                o["entities"] = base
+                o["suggest_offer_pick_merged"] = True  # diagnostic
+
         # match_mode: 'or' only when MULTIPLE positions were picked
         # `r.ordinal !== undefined` is a PRESENCE test: a row carrying an explicit
         # `ordinal: null` counts, and `.get(...) is not None` would have dropped it.

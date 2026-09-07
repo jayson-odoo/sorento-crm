@@ -542,6 +542,10 @@ DIVERGENCES: list[Divergence] = [
             # filter-modification arm stamps when it puts the offer's own scope back. n8n
             # has no such arm, so no capture can carry the key.
             ("output", "member_offer_scope_reused"),
+            # Console pass 4, item 4 / issue #708 (AC-824): stamped when a numbered pick
+            # over a `suggest_offer` roster is merged through `apply_dym_pick` instead of
+            # replacing the scope. n8n has no such arm either.
+            ("output", "suggest_offer_pick_merged"),
         ),
     ),
 ]
