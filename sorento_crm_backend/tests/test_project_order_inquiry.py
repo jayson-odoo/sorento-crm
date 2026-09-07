@@ -228,7 +228,8 @@ def seeded():
 # ------------------------------------------------------------------ derivation
 
 def _confirmed_inquiry(db, order, *, actor_user_id, buy=None):
-    """The Buy-only handoff, written the way Stage 1C writes it.
+    """The Buy-only handoff, written the way Stage 1C writes it - returning just the
+    header, which is what most of the cases below want.
 
     `derive_for_sales_order` is gone: the SO path no longer nets anything, and the only
     creator of a standard demand row is `refresh_for_decision`, inside the atomic
@@ -240,66 +241,26 @@ def _confirmed_inquiry(db, order, *, actor_user_id, buy=None):
     ``buy`` defaults to each line's full quantity, which is what a line nothing covers
     resolves to and what these cases were originally written against.
 
+    A thin wrapper over `_confirm`, which does the actual writing and returns the whole
+    result dict - the empty-header gate's own cases (fix/oi-empty-header) need `created`
+    and `exceptions` too, which is why that one exists alongside this one rather than the
+    other way round.
+    """
+    return _confirm(db, order, actor_user_id=actor_user_id, buy=buy)["inquiry"]
+
+
+def _confirm(db, order, *, actor_user_id, buy=None):
+    """The Buy-only handoff, written the way Stage 1C writes it - returning the WHOLE
+    result dict. `_confirmed_inquiry` is a thin wrapper over this that keeps only
+    `result["inquiry"]`, for the cases that just need the header; the empty-header
+    gate's own cases (fix/oi-empty-header) need `created` and `exceptions` too, which is
+    why this one exists.
+
     ``stock_location`` is read straight off ``line.stock_location`` - exactly what
     ``ProjectSupplyService._write_decision`` does after ``_restamp_stock_location`` has
     stamped it (AC-H5, single location, never a component join). Tests that want a
     location on the row set ``line.stock_location`` themselves rather than going through
     a real confirmation.
-    """
-    from app.models.project_so import SOSupplyDecision
-
-    service = ProjectOrderInquiryService(db)
-    lines = (
-        db.query(ProjectSalesOrderLine)
-        .filter(ProjectSalesOrderLine.project_sales_order_id == order.id)
-        .order_by(ProjectSalesOrderLine.line_no.asc())
-        .all()
-    )
-    revision = (
-        db.query(SOSupplyDecision)
-        .filter(SOSupplyDecision.project_sales_order_id == order.id)
-        .count()
-        + 1
-    )
-    decision = SOSupplyDecision(
-        id=str(uuid.uuid4()),
-        company_id=order.company_id,
-        project_sales_order_id=order.id,
-        revision_no=revision,
-        # Only the first is active: two active revisions on one order is exactly what the
-        # partial unique index refuses, and a fixture may not pretend otherwise.
-        state="active" if revision == 1 else "superseded",
-        line_snapshots=[{"line_no": line.line_no} for line in lines],
-        confirmed_by=actor_user_id,
-        confirmed_at=datetime.utcnow(),
-    )
-    db.add(decision)
-    db.flush()
-    result = service.refresh_for_decision(
-        order,
-        decision,
-        [
-            {
-                "line": line,
-                "line_no": line.line_no,
-                "item_code": service._product_code(line.product_id),
-                "buy_qty": Decimal(str(buy)) if buy is not None else Decimal(str(line.qty)),
-                "required_date": line.delivery_date,
-                "stock_location": line.stock_location,
-            }
-            for line in lines
-        ],
-        actor_user_id=actor_user_id,
-    )
-    return result["inquiry"]
-
-
-def _confirm(db, order, *, actor_user_id, buy=None):
-    """Same handoff as `_confirmed_inquiry`, returning the WHOLE result dict.
-
-    `_confirmed_inquiry` throws away everything but `result["inquiry"]`, which is exactly
-    the field the empty-header gate (fix/oi-empty-header) needs to see is `None` rather
-    than a header with nothing on it - so the cases below call this instead.
     """
     from app.models.project_so import SOSupplyDecision
 
