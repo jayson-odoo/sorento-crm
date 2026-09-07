@@ -227,3 +227,35 @@ or a supersede / dedupe carry declared for an `autocount` line; NULL reads as 0.
   `sync_grn_received_to_spo(<L1's header>)` and after `sync_received_for_spo_number(N)`: L1 still
   reads 10 closed, L2 still reads 0 open. The live lines share only the picking total drawn
   against LIVE members; a receipt a retired line reports is never counted twice.
+
+## Round 5 (reviewer kill-test round, 2026-09-07, PLAN D28d retirement marker)
+
+Vocabulary: "retired" = `spo_allocations.retired_at IS NOT NULL`, set when the ESB stops naming a
+line: by absence in a re-push of the same DocKey (the leftover sweep) or by the document being
+re-created under a new DocKey (the old DocKey's rows). Cleared when a push names the row again.
+
+- **AC-X43 [BE][T]** (D28d DocKey change) DocKey A's line L1 (P at L, allocated 29, received 29 by a
+  Sorento GRN only, stated NULL, closed fully_received); a push under fresh DocKey B names P at L
+  qty 29 received 0. After push B: L1 carries `retired_at` set and `stated_received 29`; M1 (B's
+  row) is open 0 / 29. After `delete_grn` of L1's GRN: L1 still closed at 29, M1 unchanged; open
+  outstanding on the SPO is 29, never 58.
+
+- **AC-X44 [BE][T]** (D28d membership) A retired row is not a group member: with L1 from AC-X43
+  retired and an approved GRN of 29 against M1, the recompute writes M1 29 closed and leaves L1
+  untouched (a retired, fully received line takes no share). Same for a same-DocKey row retired by
+  absence at full receipt (the AC-X40 shape) beside a live sibling with a GRN of 40: the sibling
+  reads 40, the retired row is untouched.
+
+- **AC-X45 [BE][T]** (D28d unretire) A row retired by absence that a later push of the same DocKey
+  names again has `retired_at` NULL after that push and rejoins the group.
+
+- **AC-X46 [BE][T]** (reviewer KM) `tests/test_migration_488_spo_alloc_stated_received.py` proves the
+  backfill: `revert(bind)`, raw-insert an `autocount` row with `quantity_received 25` and a
+  `scm_upload` row beside it, `apply(bind)`, assert stated 25 and NULL; `retired_at` column present.
+
+- **AC-X47 [BE]** (reviewer KH) `_autocount_group_members` compares `product_id` in Python as well
+  as in SQL, and excludes `retired_at IS NOT NULL` rows in SQL.
+
+- **AC-X48 [BE]** `_is_live_group_member` is false for a retired row; the leftover sweep and the
+  DocKey-change path are the only setters of `retired_at`; `_write_row` on a named row is the only
+  clearer.
