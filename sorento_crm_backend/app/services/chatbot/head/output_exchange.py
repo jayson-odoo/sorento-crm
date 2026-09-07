@@ -664,6 +664,69 @@ def offer_is_open(state: Any) -> bool:
     )
 
 
+def _team_clarify_pick(state: Any, llm_team_n: Any, parent_input: Any) -> Any:
+    """The team an OPEN `team_clarify` was just answered with, or None (owner rule R-b).
+
+    `None` when no clarify is open, or when this turn does not answer it - and "does not
+    answer it" has to stay reachable, or every turn after an unanswered ask would be
+    dragged back into the escalation lane.
+
+    Two sources, in order, and BOTH are structured reads (D11):
+
+    1. **The parser's own team for this turn.** An ask is a question; the answer to it is a
+       team word, and reading a team word out of a message is the parser's job. The ONLY
+       thing this rule overrides is the `message_type` gate below, which discards that team
+       when the parser also stamped `casual` - and a bare "marketing product" is precisely
+       what it stamps `casual`.
+    2. **An exact match against the quick replies WE persisted for that ask.** OUR OWN
+       strings, compared with `strip()` + `casefold()` EQUALITY, never a substring or a
+       regex, and never against anything the customer authored. It is the tap: the customer
+       pressed a button whose text this codebase composed, and the parser is free to come
+       back null for it (it did emit the team on the captured turn, but a tap is not a
+       sentence and nothing guarantees the next one parses). Inventoried under D11 in the
+       plan beside `escalation._catalogue_teams`, which is the same class of read.
+
+    A `pending` marker with no options is still a valid open clarify - a session written
+    before this shipped, or by n8n, which has no marker at all - so source 1 stands alone
+    there rather than the whole rule going dark.
+
+    **Lifetime: ONE turn, and it needs no clock.** Measured rather than assumed, because
+    the brief asked whether the member offer's 3-turn TTL had to be copied here. It does
+    not. `compile_state`'s clarify arm stamps `selection_context: team_clarify` on the ask
+    turn only, and the carry that keeps a label alive across turns (`_offer_carry`) needs a
+    NON-EMPTY `last_result_set` - a team clarify has no roster, so nothing carries and the
+    marker is gone on the turn after the ask whatever the customer says. That is stricter
+    than 3 turns, so copying the TTL would only ever have made the ask live LONGER.
+
+    `offer_is_open` is deliberately not taught this kind either: it answers "is an
+    escalation OFFER open", which is what turns a bare "yes" into an acceptance, and a
+    team clarify is not a yes/no question - a "yes" to it means nothing and must not
+    assign anybody.
+    """
+    pending = jsc.get(state, "pending")
+    if jsc.get(pending, "kind") != "team_clarify" and (
+        jsc.get(state, "selection_context") != "team_clarify"
+    ):
+        return None
+    if jsc.truthy(llm_team_n):
+        return llm_team_n
+    reply = _split_reply_to(
+        jsc.get(parent_input, "latest_user_message")
+        if jsc.truthy(jsc.get(parent_input, "latest_user_message"))
+        else jsc.get(parent_input, "user_message")
+    ).strip().casefold()
+    if not reply:
+        return None
+    for option in jsc.array(jsc.get(pending, "options")):
+        team = jsc.norm(jsc.get(option, "team"))
+        label = jsc.nullish_str(jsc.get(option, "label")).strip().casefold()
+        if not jsc.truthy(team):
+            continue
+        if reply == label or reply == team.casefold():
+            return team
+    return None
+
+
 def _offered_team(state: Any, prior_routing: Any) -> Any:
     """The team the OPEN offer was made for, normalised, or None.
 
@@ -857,6 +920,35 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     llm_agent_raw = jsc.get(o.get("routing"), "suggested_agent")
     llm_team_n = norm(llm_team_raw)
     llm_agent_n = norm(llm_agent_raw)
+    # (a2) OWNER RULE R-b (console pass 4, 7 Sep 2026): while a `team_clarify` is OPEN,
+    # this turn's own team wins whatever `message_type` the parser stamped, and the turn
+    # goes back to the escalation lane.
+    #
+    # Turns 08e74db8 -> 0d7d5a23 (execs 15500464 / 15500487): "escalate to marketing" was
+    # asked which team, the customer answered "marketing product", and NOTHING consumed it.
+    # The parser had the answer right (`_parser_raw.routing.suggested_team:
+    # marketing_product`) but stamped `casual` for the bare noun phrase, which is exactly
+    # what a direct answer to "which team" looks like - so the `req_help` ternary below
+    # discarded the team, the chain fell to the STALE `purchasing` carried from before the
+    # escalation was even asked for, and `route.decide`'s `is_low_signal` answered
+    # "Hi! How can I help you today?". The marker was WRITTEN (`compile_state`) and read by
+    # nobody.
+    #
+    # `message_type` is the wrong question here, and that is the whole of the rule: an
+    # answer to a question WE asked is a continuation of the escalation we asked it about,
+    # not a new turn to be classified. Two structured signals, no text classification:
+    # the marker says an ask is open, and the parser's own team (or the customer's tap on a
+    # reply WE composed) says which team answers it. See `_team_clarify_pick`.
+    team_clarify_pick = _team_clarify_pick(
+        parent_input.get("previous_conversation_state"), llm_team_n, parent_input
+    )
+    if team_clarify_pick is not None:
+        llm_team_n = team_clarify_pick
+        req_help = True
+        # `route.decide`'s `wants_escalation_or_help` arm is what sends this back to the
+        # lane. `llm_msg_type_raw` is deliberately NOT touched: the retarget intent above
+        # is documented as immune to every downstream mutation, and this is one.
+        o["message_type"] = "request_for_help"
     # (b) The LLM occasionally emits the LITERAL STRING "null" for a hint. That is truthy,
     #     so it mis-fires the domain->business_query clobber. Coerce to real null here.
     o["domain_hint"] = norm(o.get("domain_hint"))

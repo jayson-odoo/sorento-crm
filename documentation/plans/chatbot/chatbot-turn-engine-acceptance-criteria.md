@@ -1591,3 +1591,40 @@ contact inside the synchronous request. Different contacts run in parallel.
   Evidence: `tests/chatbot/test_pass4_item5_no_team_named_keeps_default_routing.py`,
   `tests/chatbot/test_pass4_item1b_marketing_ambiguous_clarify.py`,
   `tests/chatbot/test_s5_escalation_lane.py::TestAnAcceptanceIsNeverAskedWhichTeam`. (H73)
+- AC-822 `[BE][T]` **An answer to a team clarify resolves the escalation to that team.**
+  Owner rule R-b (help-crm, 7 Sep 2026). Turns 08e74db8 -> 0d7d5a23 (n8n execs 15500464 /
+  15500487, `turns-lane3`): "escalate to marketing" was asked which team, the customer
+  answered "marketing product", and the answer was never consumed. The parser had it right
+  (`_parser_raw.routing.suggested_team: marketing_product`) but stamped `message_type:
+  casual` for the bare noun phrase, and `output_exchange`'s routing chain only reads the
+  parser's team when `message_type == "request_for_help"` - so the team was discarded, the
+  chain fell to the STALE `purchasing` carried from before the escalation was asked for,
+  and `route.decide`'s `is_low_signal` answered "Hi! How can I help you today?". The marker
+  was WRITTEN (`compile_state`) and read by nobody: `grep '"team_clarify"'` found one
+  writer and no reader.
+
+  * **Given** an open `team_clarify` and a turn whose parser named a team, **then** that
+    team wins over the carried routing WHATEVER the `message_type` - an answer to a
+    question we asked is a continuation of the escalation, not a new turn to classify -
+    and the turn re-enters the escalation lane (`message_type` is promoted to
+    `request_for_help`, which is `route.decide`'s own escalation arm).
+  * **Given** an open `team_clarify` whose parser named NO team, and a reply that equals
+    (`strip()` + `casefold()`, exact) one of the quick replies the ask offered, **then**
+    it resolves to that team. The ask's teams are persisted on the marker as
+    `{team, label}` (`pending.options`, the third `PendingKind` written), so the tap
+    resolves against OUR OWN strings and can never name a team the ask did not offer.
+  * **Then** the turn takes the human-intervention arm with `Team: <that team>`, sends a
+    non-empty reply, and the clarify marker is cleared.
+  * **Given** an open clarify and a reply that answers something else, **then** nothing
+    resolves and the turn routes normally.
+
+  **Lifetime: one turn, and no clock is added.** `compile_state`'s clarify arm stamps
+  `selection_context` on the ask turn only, and `_offer_carry` (the block that keeps a
+  label alive) needs a non-empty `last_result_set`, which a team clarify has none of - so
+  the ask expires on the very next turn whatever the customer says. The member offer's
+  3-turn TTL is deliberately NOT copied: it would only make the ask live longer.
+  `offer_is_open` is deliberately not taught this kind either, because it is what turns a
+  bare "yes" into an acceptance and "yes" is not an answer to "which team".
+  Evidence: `tests/chatbot/test_pass4_item1a_team_clarify_consumed.py`,
+  `tests/chatbot/test_s5_escalation_lane.py::TestAnAcceptanceIsNeverAskedWhichTeam::test_an_open_offer_for_the_default_team_still_asks`
+  (the marker's options). (H74)

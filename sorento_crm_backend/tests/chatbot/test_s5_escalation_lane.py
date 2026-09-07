@@ -108,6 +108,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from app.services.chatbot.contracts import SUGGESTED_TEAMS
 from tests.chatbot import _corpus
 
 # --------------------------------------------------------------------------- #
@@ -2023,7 +2024,13 @@ class TestAnAcceptanceIsNeverAskedWhichTeam:
         assert result["arm"] == "clarify", (
             f"an open offer is a premise on its own, whatever team it is for: {result['arm']!r}"
         )
-        assert result["pending"] == {"kind": "team_clarify"}, result["pending"]
+        assert result["pending"]["kind"] == "team_clarify", result["pending"]
+        # AC-822: the marker carries the teams the ask OFFERED, slug beside label, so the
+        # answer has something to resolve against. Nothing narrowed this one, so it is the
+        # whole vocabulary.
+        assert result["pending"]["options"] == [
+            {"team": t, "label": t.replace("_", " ")} for t in SUGGESTED_TEAMS
+        ], result["pending"]["options"]
         services.next_assignee.assert_not_called()
 
     def test_an_ambiguous_team_word_with_no_offer_still_asks(self) -> None:

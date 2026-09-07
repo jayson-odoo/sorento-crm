@@ -42,6 +42,25 @@ from app.services.chatbot import engine as engine_mod
 from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output
 from tests.chatbot.test_r3_pending_end_to_end import _session_of, _stub_parser
+from tests.chatbot.test_s5_escalation_lane import _services
+
+
+@pytest.fixture()
+def stub_assignment_seams(monkeypatch):
+    """The round-robin draw and the SLA write, stubbed. Nothing else.
+
+    Both turns here run LIVE (`is_test=False`), because a dry run is isolated from the
+    session (AC-812) and the "the marker is cleared" assertion below reads the session -
+    with `is_test=True` it would read turn 1's state back and could never be false.
+
+    A live assignment needs an `sla_policies` row with code `NORMAL`, a team, its members
+    and a round-robin cursor, none of which exist on a blank test schema and none of which
+    this file is about. `escalation_services.build` is the seam the lane already has for
+    exactly this, so the LANE runs for real - the clarify decision, the catalogue
+    narrowing, the tail, the session write - and only the two writes are stood in for."""
+    from app.services.chatbot.lanes import escalation_services
+
+    monkeypatch.setattr(escalation_services, "build", lambda db: _services())
 
 
 @pytest.fixture()
@@ -96,7 +115,7 @@ class TestATeamClarifyAnswerIsConsumedAndResolvesTheEscalation:
     """AC-501/AC-505, D1. Turn 08e74db8 (cold ask) then 0d7d5a23 (the answer)."""
 
     def test_marketing_product_after_a_team_clarify_ask_assigns_to_marketing_product(
-        self, seeded, session_factory, monkeypatch
+        self, seeded, session_factory, monkeypatch, stub_assignment_seams
     ):
         # -- turn 1: "escalate to marketing", no pending offer, prior team `purchasing` ---- #
         # `out_of_scope` completes IN-PROCESS (`engine.py:1875` -> `_run_escalation_arm`),
@@ -109,11 +128,21 @@ class TestATeamClarifyAnswerIsConsumedAndResolvesTheEscalation:
             entities=[],
             is_affirmative=True,
             user_goal="trying to escalate to marketing",
-            routing={"suggested_team": None, "suggested_agent": None},
+            # The parser's own word for this message under the amended contract (AC-821 /
+            # owner rule R-a, landed with item 5 of this same lane): "marketing" is not one
+            # of the eight catalogue teams, so the model returns the customer's word
+            # verbatim rather than picking one of the three marketing teams for them. Null
+            # here would now mean "named no team", which is a DIFFERENT turn (mt-r2) and is
+            # assigned rather than asked about.
+            routing={"suggested_team": "marketing", "suggested_agent": None},
             escalation={"is_escalation_confirmation": False, "company_pick": None},
         )
         _stub_parser(monkeypatch, turn1_qf)
         envelope1 = _envelope(is_test=False)
+        # The seeded row's phone. The escalation lane's assignee / SLA seams read it off
+        # the envelope, not off the row, and a live (non `is_test`) turn reaches them.
+        envelope1.contact["phone"] = "+60000000009"
+        envelope1.message["contact"]["phone"] = "+60000000009"
         envelope1.message["message"]["messageId"] = "ZZT-team-clarify-t1"
         envelope1.message["message"]["message"]["text"] = "escalate to marketing"
 
@@ -142,7 +171,12 @@ class TestATeamClarifyAnswerIsConsumedAndResolvesTheEscalation:
             escalation={"is_escalation_confirmation": False, "company_pick": None},
         )
         _stub_parser(monkeypatch, turn2_qf)
-        envelope2 = _envelope(is_test=True)
+        # LIVE, like turn 1. A dry run is isolated from the session on purpose (AC-812),
+        # so `is_test=True` here would leave `_session_of` reading turn 1's state back and
+        # the "marker is cleared" assertion below could never be false.
+        envelope2 = _envelope(is_test=False)
+        envelope2.contact["phone"] = "+60000000009"
+        envelope2.message["contact"]["phone"] = "+60000000009"
         envelope2.message["message"]["messageId"] = "ZZT-team-clarify-t2"
         envelope2.message["message"]["message"]["text"] = "marketing product"
 

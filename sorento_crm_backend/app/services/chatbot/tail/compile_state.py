@@ -878,7 +878,11 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     )
 
     # ---- miss-company routing: result-aware escalation scoping ------------ #
-    turn_state: dict[str, Any] = {"answered_domain": answered_domain, "offer_open": False}
+    turn_state: dict[str, Any] = {
+        "answered_domain": answered_domain,
+        "offer_open": False,
+        "team_clarify_options": [],
+    }
     _miss_company_routing(
         output,
         qf=qf,
@@ -938,6 +942,9 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         # `None` when the offer was made THIS turn (the clock starts at 3) and the
         # decremented value when it was carried.
         member_offer_ttl=carried_member_ttl,
+        # The teams a team-clarify ask offered THIS turn (AC-822). Empty on every other
+        # turn, which is what `derive` reads as "no list to resolve against".
+        team_clarify_options=turn_state.get("team_clarify_options"),
     )
 
     sanitize_em_dash(output)
@@ -2072,6 +2079,13 @@ def _miss_company_routing(  # noqa: PLR0912, PLR0915 - one ported block, kept wh
             # every other turn falls through to the ladder above, so clearing is
             # automatic rather than a second line to remember.
             variables["selection_context"] = "team_clarify"
+            # The teams THIS ask offered, carried to `pending.derive` below (AC-822).
+            # On `turn_state` rather than on `variables`, because it is not a session key
+            # of its own: it belongs to the marker, and a second key could disagree with
+            # the marker about what the customer was shown.
+            turn_state["team_clarify_options"] = jsc.array(
+                jsc.get(clar, "clarify_team_options")
+            )
         elif fresh_gate:
             variables["selection_context"] = None
         elif jsc.truthy(jsc.get(prev, "selection_context")):

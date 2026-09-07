@@ -509,13 +509,21 @@ def run(
             ctx, context_item, team, services, session_factory
         )
         if routed is not None and routed["kind"] == "clarify":
-            clarify = {**context_item, "clarify_team": True, "clarify_text": routed["text"]}
+            clarify = {
+                **context_item,
+                "clarify_team": True,
+                "clarify_text": routed["text"],
+                "clarify_team_options": routed.get("option_pairs") or [],
+            }
             return {
                 **escalation_result(clarify_team=clarify),
                 "actions": _clarify_actions(
                     routed["text"], options=routed.get("options") or [], dry_run=True
                 ),
-                "pending": {"kind": "team_clarify"},
+                "pending": {
+                    "kind": "team_clarify",
+                    "options": routed.get("option_pairs") or [],
+                },
             }
         if routed is not None and routed["kind"] == "assign":
             team = routed["team"]
@@ -561,7 +569,15 @@ def _human_intervention(
         # The tail keys on `clarify_text` (`compile_state`'s clarify arm), the same field
         # `clarify-company-reply` writes; the item carries the context so the trace shows
         # what was asked and why.
-        clarify = {**context_item, "clarify_team": True, "clarify_text": routed["text"]}
+        clarify = {
+            **context_item,
+            "clarify_team": True,
+            "clarify_text": routed["text"],
+            # The teams the ask OFFERED, slug beside label. `compile_state` puts them on
+            # the persisted marker so the next turn can resolve a tap against the exact
+            # string this ask composed (AC-822).
+            "clarify_team_options": routed.get("option_pairs") or [],
+        }
         return {
             **escalation_result(clarify_team=clarify),
             # `dry_run=False` is a fact here, not a default: `run()` returns from its own
@@ -569,7 +585,10 @@ def _human_intervention(
             "actions": _clarify_actions(
                 routed["text"], options=routed.get("options") or [], dry_run=False
             ),
-            "pending": {"kind": "team_clarify"},
+            "pending": {
+                "kind": "team_clarify",
+                "options": routed.get("option_pairs") or [],
+            },
         }
     if routed is not None and routed["kind"] == "assign":
         actions = _assign(
@@ -696,7 +715,7 @@ def _person_routing(
             }
         if jsc.truthy(_parser_team(ctx, team)):
             return None  # the parser itself named a team: the mention was in passing
-        return _clarify_over(_team_clarify_options(hits), person=person, hits=hits)
+        return _clarify_over(_team_clarify_pairs(hits), person=person, hits=hits)
 
     # The PARSER's own team, never the derived one - the same distinction the person arm
     # above makes, and for the same measured reason (owner ruling D1, console pass 3,
@@ -754,12 +773,14 @@ def _person_routing(
             # is a rotation draw, unlike a named person.
             return {"kind": "assign", "team": matched[0], "assignee": None}
         return _clarify_over(
-            [_pretty_team(t) for t in matched] if matched else _team_clarify_options([])
+            [{"team": t, "label": _pretty_team(t)} for t in matched]
+            if matched
+            else _team_clarify_pairs([])
         )
     from app.services.chatbot.head.output_exchange import offer_is_open
 
     if offer_is_open(_prev_variables(ctx)):
-        return _clarify_over(_team_clarify_options([]))
+        return _clarify_over(_team_clarify_pairs([]))
     return None
 
 
@@ -798,35 +819,54 @@ def _catalogue_teams(word: Any) -> list[str]:
 
 
 def _clarify_over(
-    options: list[str], *, person: Any = None, hits: list | None = None
+    pairs: list[dict[str, Any]], *, person: Any = None, hits: list | None = None
 ) -> dict[str, Any]:
-    """One clarify decision, built from ONE list of team labels.
+    """One clarify decision, built from ONE list of `{team, label}` pairs.
 
     The sentence, the quick replies and the marker the next turn resolves against all come
-    from `options`, so a tap can never name a team the ask did not offer and the marker can
-    never hold a team the customer never saw.
+    from `pairs`, so a tap can never name a team the ask did not offer and the marker can
+    never hold a team the customer never saw. `options` stays a list of LABELS because that
+    is what `_clarify_actions` puts on the wire as quick replies; `option_pairs` is the same
+    list with the slug the router acts on beside each label, and it is what the tail
+    persists (AC-822).
     """
+    options = [jsc.js_string(jsc.get(p, "label")) for p in pairs]
     return {
         "kind": "clarify",
         "text": _team_clarify_text(person, hits or [], options=options),
         "options": options,
+        "option_pairs": pairs,
     }
 
 
-def _team_clarify_options(hits: list) -> list[str]:
-    """The teams this clarify offers, in printed order.
+def _team_clarify_pairs(hits: list) -> list[dict[str, Any]]:
+    """The teams this clarify offers, in printed order, as `{team, label}`.
 
-    Extracted for the same reason as the company half: the sentence and the quick replies
-    that answer it are built from ONE list, so a tap can never name a team the ask did not.
+    Extracted for the same reason as the company half: the sentence, the quick replies that
+    answer it and the marker that resolves the answer are built from ONE list, so a tap can
+    never name a team the ask did not.
+
+    A staff hit's own `team_name` is preferred for the LABEL, because that is the name the
+    install gave the team and the customer is being asked to recognise it; `team` is always
+    the slug, which is the only string routing can act on. De-duplicated by label, which is
+    what the printed list can distinguish.
     """
     from app.services.chatbot.contracts import SUGGESTED_TEAMS
 
-    names: list[str] = []
+    pairs: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for hit in hits:
-        name = jsc.get(hit, "team_name") or _pretty_team(jsc.get(hit, "team_code"))
-        if jsc.truthy(name) and name not in names:
-            names.append(name)
-    return names or [_pretty_team(t) for t in SUGGESTED_TEAMS]
+        code = jsc.get(hit, "team_code")
+        label = jsc.get(hit, "team_name") or _pretty_team(code)
+        if jsc.truthy(label) and label not in seen:
+            seen.add(label)
+            pairs.append({"team": code, "label": label})
+    return pairs or [{"team": t, "label": _pretty_team(t)} for t in SUGGESTED_TEAMS]
+
+
+def _team_clarify_options(hits: list) -> list[str]:
+    """The printed labels alone. Kept for `_team_clarify_text`'s no-options fallback."""
+    return [jsc.js_string(jsc.get(p, "label")) for p in _team_clarify_pairs(hits)]
 
 
 def _team_clarify_text(person: Any, hits: list, *, options: list[str] | None = None) -> str:
