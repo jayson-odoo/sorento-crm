@@ -126,9 +126,10 @@ export default function TagTemplateEditorPage() {
 
   // -- Tag size control (S1, AC-S1-1) ------------------------------------------
 
-  // The SAME "Template sizes" (every OTHER published template's own print
-  // size) + "Saved sizes" grouping the request designer's own control shows
-  // - the whole point of AC-S1-1 is that this is not a lesser copy of it.
+  // The SAME "Template sizes" (every published template's own print size,
+  // this one included) + "Saved sizes" grouping the request designer's own
+  // control shows - the whole point of AC-S1-1 is that this is not a
+  // lesser copy of it.
   const [sizePresetTemplates, setSizePresetTemplates] = useState<TagTemplate[]>([]);
   useEffect(() => {
     listPublishedTemplates()
