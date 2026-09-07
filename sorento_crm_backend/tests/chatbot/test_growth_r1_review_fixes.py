@@ -385,7 +385,7 @@ class TestNit10ABlankRequestedAttributeDoesNotShiftTheLabel:
         )
         response = out["response"]
         assert "304" in response
-        assert "no flange width recorded for SRTKT73SS" in response
+        assert "*flange width:* not recorded for SRTKT73SS" in response
         assert "no steel grade recorded" not in response
 
 

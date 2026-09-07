@@ -91,6 +91,34 @@ cases:
       reply_contains: ["SRTKT73SS", "304"]
       no_uuid: true
 
+  # Item 8 (8 Sep 2026). "list price of X" -> requested_attributes ["price"]: the
+  # projection kept identity fields + matched SPEC keys only, so the presenter's own
+  # "List Price" line was dropped and the answer said "no price recorded". Base fields
+  # now come first. SELECT list_price FROM products WHERE product_code='SRTWC286-SH' -> 1260.
+  - name: item 8 - list price of a product reaches the base List Price field  # NEW VOCABULARY
+    text: "list price of SRTWC286-SH"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["SRTWC286-SH", "List Price"]
+      reply_not_contains: ["recorded for"]
+      no_uuid: true
+
+  # Owner turn 0682154e: "seat cover material of srtwc286" -> ["material"]; the registry
+  # has seat_material "Seat cover material" AND material "Material", equality matched
+  # neither, and seven items each said "no material recorded". Token containment reaches
+  # every key that contains the word, and a miss is said once, after the items, for the
+  # codes without a value ("*Material:* not recorded for ..."). The one-line rule is
+  # pinned in pytest (test_product_spec_projection.py); yaml can only say it appears.
+  - name: item 8 - seat cover material reaches the key that contains it  # NEW VOCABULARY
+    text: "seat cover material of srtwc286"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["Seat cover material"]
+      reply_not_contains: ["no material recorded"]
+      no_uuid: true
+
   # ======================================================================================
   # A2 - stock, and the field-reveal gate (AC-903). `check_access` returns
   # `attributes: None` until Slice C, so EVERY restricted field is hidden by construction

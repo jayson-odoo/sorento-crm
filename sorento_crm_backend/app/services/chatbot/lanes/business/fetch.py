@@ -1080,6 +1080,32 @@ def _normalize_spec_word(v: Any) -> str:
     return re.sub(r"[_\-]+", " ", jsc.nullish_str(v).strip().lower()).strip()
 
 
+#: Item 8 (8 Sep 2026): an asked word that names one of the presenter's BASE fields.
+#: "list price of X" -> `["price"]` used to drop the presenter's own "List Price" line
+#: (the projection kept identity fields + matched SPEC keys only) and answer "no price
+#: recorded". Matched by whole word or containment on the normalised ask, in this order.
+_BASE_FIELD_BY_ASK: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("List Price", ("price", "list price", "harga", "cost")),
+    ("Dimensions", ("dimension", "dimensions", "size", "measurement", "ukuran", "saiz")),
+    ("Description", ("description", "desc", "details")),
+    ("Product Name", ("name",)),
+)
+_MISS_CODES_CAP = 5
+
+
+def _base_label_for(norm: str) -> str | None:
+    tokens = norm.split()
+    for label, words in _BASE_FIELD_BY_ASK:
+        for w in words:
+            if norm == w or (" " in w and w in norm) or w in tokens:
+                return label
+    return None
+
+
+def _tokens(norm: str) -> set[str]:
+    return set(norm.split())
+
+
 def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
     """A1 (AC-901/AC-902): the product spec projection, product envelopes ONLY.
 
@@ -1091,24 +1117,45 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
 
     No requested_attributes: every item keeps its base fields, plus ONE synthetic
     "Specs:" field summarising up to `_SPEC_SUMMARY_CAP` populated keys ("and N
-    more" beyond that).
+    more" beyond that). Byte-identical to before item 8.
 
-    With requested_attributes: only the matched spec key(s) survive per item
-    (identity fields kept, everything else - name/description/price/dimensions/
-    other specs - dropped); an asked word that matches no spec on THIS item
-    (whether or not the registry has it at all) renders "no <label> recorded for
-    <code>", using the vocabulary's label when the word matches a KNOWN registry
-    key/label, else the asked word itself.
+    With requested_attributes (item 8, 8 Sep 2026, turns 0682154e and "list price of
+    X"), per asked word, in this order:
+      1. BASE FIELDS FIRST - a word naming a presenter base field (`_BASE_FIELD_BY_ASK`:
+         price / dimensions / description / name, whole word or containment) keeps that
+         field on every item; a base hit is a hit.
+      2. SPEC KEYS BY TOKEN CONTAINMENT - exact match on the normalised key or label
+         first, else every key whose key OR label tokens contain every asked token
+         ("material" reaches both `material` and `seat_material` via "Seat cover
+         material"; "seat cover material" reaches `seat_material` only), rendered in
+         registry order (the order the presenter emitted them).
+      3. ONE MISS LINE PER ASKED WORD, not per item: the codes with no hit for that word
+         go into ONE `spec_misses` entry, rendered once AFTER the items by
+         `output_structurer` - "*<label>:* not recorded for A, B, C (+N more)", label
+         from the registry when the word matches a known key/label, else the asked
+         word; codes capped at `_MISS_CODES_CAP`. (Not `summary_items`: that slot is the
+         quantity-summary mode and suppresses the item rows, fetch.py's items loop.)
+    An item with no hit for any asked word keeps its identity fields only.
     """
     vocab_raw = e.get("spec_vocabulary")
     vocab: dict[str, str] = vocab_raw if isinstance(vocab_raw, dict) else {}
-    # word -> label, keyed by the NORMALIZED form of both the spec_key and the
-    # label - a customer asking "wattage" or "power rating" both have to reach
-    # the same registry row when the label itself is "Wattage".
-    vocab_by_norm: dict[str, tuple[str, str]] = {}  # normalized word -> (spec_key, label)
-    for key, label in vocab.items():
-        vocab_by_norm[_normalize_spec_word(key)] = (key, label)
-        vocab_by_norm[_normalize_spec_word(label)] = (key, label)
+    # (spec_key, label, norm_key, norm_label) per registry row, registry order kept
+    vocab_rows: list[tuple[str, str, str, str]] = [
+        (str(key), str(label), _normalize_spec_word(key), _normalize_spec_word(label))
+        for key, label in vocab.items()
+    ]
+
+    def vocab_label_for(norm: str) -> str | None:
+        """The registry label a miss line names: exact match first, else the one row
+        whose key or label contains every asked token (several -> the first)."""
+        for _k, label, nk, nl in vocab_rows:
+            if norm in (nk, nl):
+                return label
+        toks = _tokens(norm)
+        for _k, label, nk, nl in vocab_rows:
+            if toks and (toks <= _tokens(nk) or toks <= _tokens(nl)):
+                return label
+        return None
 
     # The normalised word AND the word the customer actually typed, PAIRED (review, nit
     # 10). Two parallel lists went out of step the moment `req_attrs` carried a blank or a
@@ -1116,14 +1163,17 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
     # DIFFERENT attribute in the "no X recorded" sentence, and it only shows on the one
     # phrasing that has a blank in it.
     asked: list[tuple[str, str]] = []
+    seen_norms: set[str] = set()
     for raw in req_attrs:
         text = jsc.nullish_str(raw).strip()
         if not text:
             continue
         norm = _normalize_spec_word(text)
-        if norm:
+        if norm and norm not in seen_norms:
             asked.append((norm, text))
-    asked_norms = [norm for norm, _ in asked]
+            seen_norms.add(norm)
+
+    missed_codes: dict[str, list[str]] = {norm: [] for norm, _ in asked}
 
     for it in e.get("items") or []:
         if not jsc.truthy(it) or not isinstance(jsc.get(it, "fields"), list):
@@ -1145,7 +1195,7 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
             if isinstance(f, dict) and jsc.js_string(f.get("key") or "").startswith(_SPEC_KEY_PREFIX)
         ]
 
-        if not asked_norms:
+        if not asked:
             # No attribute asked: base fields untouched, plus the compact summary.
             if spec_fields:
                 shown = spec_fields[:_SPEC_SUMMARY_CAP]
@@ -1156,38 +1206,58 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
                 it["fields"] = base + [{"key": "specs_summary", "label": "Specs", "value": summary}]
             continue
 
-        # An attribute was asked: identity fields + ONLY the matched spec keys.
+        # An attribute was asked: identity fields + the base fields + the spec keys it names.
         kept_base = [
             f for f in base if isinstance(f, dict) and f.get("label") in _PRODUCT_IDENTITY_LABELS
         ]
-        spec_by_norm_key: dict[str, dict[str, Any]] = {}
+        base_by_label = {f.get("label"): f for f in base if isinstance(f, dict)}
+        spec_norms: list[tuple[dict[str, Any], str, str]] = []  # (field, norm_key, norm_label)
         for f in spec_fields:
             raw_key = jsc.js_string(f.get("key") or "")[len(_SPEC_KEY_PREFIX):]
-            spec_by_norm_key[_normalize_spec_word(raw_key)] = f
-            spec_by_norm_key[_normalize_spec_word(f.get("label"))] = f
+            spec_norms.append((f, _normalize_spec_word(raw_key), _normalize_spec_word(f.get("label"))))
 
         matched: list[dict[str, Any]] = []
-        misses: list[dict[str, Any]] = []
-        seen_field_ids: set[int] = set()
-        for norm, asked_word in asked:
-            hit = spec_by_norm_key.get(norm)
-            if hit is not None:
-                if id(hit) not in seen_field_ids:
-                    matched.append(hit)
-                    seen_field_ids.add(id(hit))
-                continue
-            # Not on THIS product - name it with the registry label when the word
-            # matches a known key/label, else the asked word itself.
-            vocab_hit = vocab_by_norm.get(norm)
-            label = vocab_hit[1] if vocab_hit else asked_word
-            misses.append(
-                {
-                    "key": f"spec_miss:{norm}",
-                    "label": label,
-                    "value": f"no {label.lower()} recorded for {jsc.js_string(code)}",
-                }
-            )
-        it["fields"] = kept_base + matched + misses
+        seen_field_ids: set[int] = {id(f) for f in kept_base}
+        for norm, _asked_word in asked:
+            hit = False
+            # 1. base fields first
+            base_label = _base_label_for(norm)
+            base_field = base_by_label.get(base_label) if base_label else None
+            if base_field is not None:
+                hit = True
+                if id(base_field) not in seen_field_ids:
+                    kept_base.append(base_field)
+                    seen_field_ids.add(id(base_field))
+            # 2. spec keys: an exact key/label match AND every key whose key or label
+            #    tokens contain every asked token - ALL of them, in registry order
+            toks = _tokens(norm)
+            contained = [
+                f
+                for f, nk, nl in spec_norms
+                if norm in (nk, nl) or (toks and (toks <= _tokens(nk) or toks <= _tokens(nl)))
+            ]
+            for f in contained:
+                hit = True
+                if id(f) not in seen_field_ids:
+                    matched.append(f)
+                    seen_field_ids.add(id(f))
+            if not hit:
+                missed_codes[norm].append(jsc.js_string(code))
+        it["fields"] = kept_base + matched
+
+    # 3. one miss line per asked word, rendered ONCE after the items
+    misses: list[dict[str, Any]] = []
+    for norm, asked_word in asked:
+        codes = missed_codes.get(norm) or []
+        if not codes:
+            continue
+        label = vocab_label_for(norm) or asked_word
+        listed = ", ".join(codes[:_MISS_CODES_CAP])
+        extra = len(codes) - _MISS_CODES_CAP
+        value = f"not recorded for {listed}" + (f" (+{extra} more)" if extra > 0 else "")
+        misses.append({"key": f"spec_miss:{norm}", "label": label, "value": value})
+    if misses:
+        e["spec_misses"] = misses
 
 
 def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
@@ -1546,6 +1616,11 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # multi-company note reads `e.items` for attribution and must keep seeing the real rows.
     for i, it in enumerate([] if (qs_render or groups_render) else (e.get("items") or [])):
         msg += _item_line(i + 1, it) + "\n\n"
+    # Item 8: the product projection's miss lines, one per asked word, AFTER the items
+    # (`_project_product_specs`). Byte-inert when the key is absent.
+    for miss in e.get("spec_misses") or []:
+        if isinstance(miss, dict):
+            msg += f"*{jsc.js_string(miss.get('label', jsc.UNDEFINED))}:* {_fmt_value(miss.get('value'))}\n\n"
 
     # -- multi-company: name the companies that came back EMPTY --------------- #
     # A FOUND row already says which company it belongs to. What the customer cannot see is

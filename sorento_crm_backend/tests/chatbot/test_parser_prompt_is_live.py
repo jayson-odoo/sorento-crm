@@ -54,7 +54,9 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # the request_for_help definition inside the MESSAGE TYPE block - a request_for_help is
 # ONLY a request for a human; a customer or product beside a delivery word is an order ask.
 # Intentional content, woven in where the definition lives, not drift.
-CONSTANT_CHARS = 48111
+# +197 chars (item 8, 8 Sep 2026): one line in REQUESTED ATTRIBUTES - the customer's
+# attribute phrase is emitted whole, and a base property is a requested attribute too.
+CONSTANT_CHARS = 48308
 
 
 def _without_growth_r1_addendum(text: str) -> str:
