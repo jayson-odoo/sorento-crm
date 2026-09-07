@@ -152,7 +152,16 @@ DOMAIN_SPEC: dict[str, DomainSpec] = {
         tools=(
             "crm_order_management_orders_list",
             "crm_order_management_orders_by_product_list",
-            "crm_order_analytics",
+            # `crm_order_analytics` is OUT of the pool (8 Sep 2026). Measured on the graded
+            # console file: it won the pick on plain quantity asks ("how many did KENWEALTH
+            # TRADING take of C-FH14", turns 87694182 / 0b10a4c0 at 0.4195 against the
+            # order list's 0.4161; "delivery to hanlim", turn 11932963 at 0.497) and
+            # answered EMPTY every time, because its `metric` query param is required and
+            # the fetch lane never maps one from the parser - so the customer got "no order
+            # matched" and an escalate offer for a question the order list answers. Re-add
+            # it the day the lane maps a `metric` (count / total_value / avg_delivery_days)
+            # off the parser's emission; until then a tool that cannot be called correctly
+            # must not be retrievable.
             # The customer master is claimed HERE and not by `master_products`: a
             # customer is only ever looked up to narrow an order question.
             "crm_master_customers_list",

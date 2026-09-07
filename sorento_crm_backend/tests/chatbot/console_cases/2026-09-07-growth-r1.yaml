@@ -405,16 +405,18 @@ cases:
   #     WHERE c.customer_name ILIKE '%hanlim%' GROUP BY 1,2 ORDER BY 3 DESC;
   #   -> HANLIM TRADING SDN BHD [A/C I] 121 DOs (Sorento), and a Mocha ledger with rows too.
   #
-  # MEASURED RED for a reason this lane does not own (run console-check-1788803384, turn
-  # 11932963, pinned to v18): the parser now emits business_query / order / check_order on
-  # its own and the guard has nothing left to do, but `_tool_pick` chose
-  # `crm_order_analytics` (0.497) over `..._orders_by_product_list` (0.485) and
-  # `..._orders_list` (0.466). The analytics tool needs a `metric` the fetch lane never
-  # sends, answers empty, and the lane offers escalation - the same drift that turned the
-  # KENWEALTH pipeline case red on 8 Sep (3a). Remove the marker when that pick is fixed.
+  # MEASURED RED for a reason this lane does not own. Run console-check-1788803384 (turn
+  # 11932963, pinned to v18): the parser emits business_query / order / check_order on its
+  # own, but `_tool_pick` chose `crm_order_analytics` (0.497), which can never be answered
+  # (3b took it out of the pool). Run console-check-1788803959 (turn 1cd826a0, after 3b):
+  # the pick is now `..._orders_by_product_list` (0.485) over `..._orders_list` (0.466)
+  # with `has_product: false` - the by-product tool REQUIRES a product narrower and
+  # answers an empty page without one, so the lane still says "no order matched" and
+  # offers escalation. Remove the marker when a customer-only order ask reaches the
+  # orders list.
   - name: owner 8 Sep - a delivery word plus a name over an escalate offer is an order ask
     cold: true
-    expected_red_until: crm_order_analytics never picked for a plain DO ask (3a, 8 Sep 2026)
+    expected_red_until: by-product tool never picked without a product narrower (3b follow-up, 8 Sep 2026)
     turns:
       - text: "check stock C-FH14"
         expect:

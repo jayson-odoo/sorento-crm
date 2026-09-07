@@ -140,7 +140,7 @@ CHATBOT_READ_ONLY_TOOLS_BEFORE = frozenset(
         "crm_master_product_categories_list",
         "crm_master_products_list",
         "crm_master_units_of_measure_list",
-        "crm_order_analytics",
+        # `crm_order_analytics` left the pool on 8 Sep 2026 (see the `order` row).
         "crm_order_management_orders_by_product_list",
         "crm_order_management_orders_list",
         "crm_portal_link_get",

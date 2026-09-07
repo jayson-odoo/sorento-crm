@@ -58,6 +58,17 @@ READ_ONLY_POST_TOOLS = (
 )
 
 
+# Catalogue READS the chatbot deliberately does NOT hold, with the reason. A read tool
+# that cannot be called correctly is worse than none: it wins the semantic pick on the
+# phrasing it was written for and then answers empty. Each row names the condition for
+# putting it back.
+UNCALLABLE_READS = {
+    # 8 Sep 2026 (turns 87694182 / 0b10a4c0 / 11932963): `metric` is a required query
+    # param and the fetch lane never maps one from the parser. Back in when it does.
+    "crm_order_analytics": "requires `metric`; the lane never sends it",
+}
+
+
 def _catalog_by_name() -> dict[str, Any]:
     return {spec.name: spec for spec in _load_catalog_specs()}
 
@@ -78,8 +89,11 @@ def test_the_allow_list_equals_the_catalogues_own_answer() -> None:
     set but no longer a read in the catalogue is a WRITE the chatbot would still call.
     """
     catalog_reads = {s.name for s in _load_catalog_specs() if _reads(s)}
+    for name in UNCALLABLE_READS:
+        assert name in catalog_reads, f"{name} is no longer a catalogue read; drop its UNCALLABLE_READS row"
+        assert name not in CHATBOT_READ_ONLY_TOOLS, f"{name} is back in the pool; drop its UNCALLABLE_READS row"
 
-    missing = sorted(catalog_reads - CHATBOT_READ_ONLY_TOOLS)
+    missing = sorted(catalog_reads - CHATBOT_READ_ONLY_TOOLS - set(UNCALLABLE_READS))
     extra = sorted(CHATBOT_READ_ONLY_TOOLS - catalog_reads)
 
     assert not missing, (
