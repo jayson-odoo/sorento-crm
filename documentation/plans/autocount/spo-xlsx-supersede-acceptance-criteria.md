@@ -289,3 +289,25 @@ Excel aggregate.
 
 - **AC-X29 (unchanged)** a NULL-source row for a product the push does not name is a kept group,
   closed, links and zone untouched.
+
+## Round 7 (security round 6, 2026-09-08, PLAN D25c amended)
+
+Five writers produce ref-less rows. Two load an Excel aggregate with `source_system` NULL (Procurement
+Upload SPO, n8n packing list); one writes `scm_upload`; two SCM writers raise ONE row per PO line
+with `po_line_id` set and `source_system` NULL (`spo_conversion_service._write_allocations`,
+`allocation_suggestion_service`). The last two are not aggregates and must never be superseded.
+
+- **AC-X52 [BE][T]** (D25c guard) A ref-less NULL-source row carrying `po_line_id` is never a
+  supersede candidate: on a first push naming its product and warehouse it keeps its id and its
+  `po_line_id` (adopted in place per the pre-existing rules), and `lines.superseded` is absent.
+  The dedupe leaves such a row alone too.
+
+- **AC-X53 [BE][T]** (writers stamp) `spo_conversion_service._write_allocations` and
+  `allocation_suggestion_service`'s accept path write `source_system = 'crm_spo'` on the rows they
+  create (`SPOAllocationCreate` gains an optional `source_system`); a row so stamped is not a
+  candidate regardless of `po_line_id`.
+
+- **AC-X54 [BE][T]** (D26 carry, packing-list columns) The superseded group's `uom_id` (first
+  non-null) lands on every new line without one; `quantity_rejected` (group sum) and
+  `allocation_notes` (group notes joined with "; ") land on the group's FIRST line, notes appended
+  never overwritten. Same in the dedupe.
