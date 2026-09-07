@@ -171,3 +171,38 @@ shipping_orders` with one record whose lines carry `source_ref` (DtlKey), `produ
 
 - **AC-X34 [BE]** `_autocount_group_members` filters `spo_number` in SQL (the query carries
   company, spo_number, product); a product present on many SPOs does not load them all.
+
+## Round 4 (reviewer MB1 / MB2, 2026-09-07, PLAN D28c)
+
+Fixture vocabulary: "stated" = `spo_allocations.stated_received`, the receipt the ESB (TransferedQty)
+or a supersede / dedupe carry declared for an `autocount` line; NULL reads as 0.
+
+- **AC-X28 (amended) [BE][T]** (D28c, MB1) The release case ends with line 1 back at its STATED 25,
+  not 0: deleting the only GRN against an `autocount` line whose ESB-stated receipt is 25 returns
+  the line to 25 (the seed sets `stated_received` 25 / 18). Line 2 keeps 18.
+
+- **AC-X35 [BE][T]** (D28c, MB2) Two `autocount` lines allocated 29 / 18, stated 0 / 0, stored 0,
+  one approved GRN of 47 against line 1: after `sync_grn_received_to_spo` the lines read 29 / 18
+  closed. After `delete_grn` BOTH read 0, `line_status open`, `receipt_status pending`: the share
+  that landed on line 2 leaves with the GRN that produced it, and a line closed by a receipt that
+  is gone reopens. The same through `bulk_delete_grns`.
+
+- **AC-X36 [BE][T]** (D28c) A line whose stated receipt is 29 (closed) never drops below 29 and never
+  reopens when a sibling's GRN is deleted; `_write_received` reopens ONLY a line closed by a
+  receipt (`receipt_status fully_received`) whose new receipt is below its allocation, never a
+  `cancelled` line, and the per-allocation (`scm_upload` / NULL source) path is unchanged.
+
+- **AC-X37 [BE][T]** (D28b draft gate, reviewer KB) With the AC-X28 seed and the picking line on a
+  DRAFT `goods_received` header, neither `sync_grn_received_to_spo` nor
+  `sync_received_for_spo_number` writes either line (25 / 18 unchanged, `updated_at` unchanged).
+  Approving the header is what makes the recompute run.
+
+- **AC-X38 [BE][T]** (D28c writers) `stated_received` is written by every declarer of an AutoCount
+  line's receipt: the ESB push (`qty_received` of each line, max rule like `quantity_received`),
+  the first-push supersede carry (each line's carried share) and the dedupe carry; the GRN
+  recompute never writes it. After AC-X1 the two lines carry stated 29 / 18; after AC-X9's
+  second push with `qty_received 0` they still carry 29 / 18.
+
+- **AC-X39 [BE]** Migration `488_spo_alloc_stated_received` adds the nullable integer column and
+  backfills `stated_received = quantity_received` for `source_system = 'autocount'` rows only;
+  `alembic heads` stays single; the migration id is under 32 characters.
