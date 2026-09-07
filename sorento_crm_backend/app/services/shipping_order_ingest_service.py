@@ -108,6 +108,11 @@ STATUS_WORDS = frozenset({"open", "partial", "fulfilled", "closed", "cancelled"}
 # `master_ref_resolver`'s `WARN_*` constants.
 WARN_CONTAINER_UNRESOLVED = "container_unresolved"
 WARN_RECEIVED_LOCKED = "received_locked"
+# D26a/D30 (spo-xlsx-supersede, review round): a first-push supersede that had
+# to merge two containers into one line-set, and one that could not remove the
+# rows it superseded because the calling principal holds no `.delete` grant.
+WARN_SHIPMENT_MERGED = "shipment_merged"
+WARN_SUPERSEDED_CLOSED_ONLY = "superseded_closed_only"
 
 
 def _round_qty(value: Optional[Decimal]) -> int:
@@ -163,13 +168,39 @@ class ShippingOrderIngestService(MasterRefResolver):
     shared with `DocumentIngestService` rather than duplicated.
     """
 
-    def __init__(self, db: Session, integration_id: Optional[str], *, company_id: str):
+    def __init__(
+        self,
+        db: Session,
+        integration_id: Optional[str],
+        *,
+        company_id: str,
+        may_delete: bool = True,
+    ):
         super().__init__(db, integration_id, company_id=company_id)
+        # D30: whether the calling principal holds
+        # `DELETE_PERMISSIONS["shipping_orders"]` (`scm.shipping_orders.delete`).
+        # A BOOLEAN, resolved by the route (`app.api.v1.external.ingest`,
+        # `_principal_may_delete`) through the same `UserPermissionService`
+        # every other guard on that surface uses - the service must not import
+        # FastAPI or re-derive a principal of its own. EVERY HTTP caller has
+        # its answer computed there; the default of True is for the callers
+        # that have no principal to check at all (a maintenance script, a
+        # test), which is the same trust every other in-process service call
+        # in this codebase already carries.
+        self.may_delete = may_delete
         # D7 (S3): SPO numbers this batch touched, read by the route's
         # post-write forward-match hook (`app.api.v1.external.ingest
         # ._run_document_hooks`) after commit - same role
         # `DocumentIngestService.so_numbers` plays for its own hook.
         self.spo_numbers_touched: set[str] = set()
+        # D27a: shipments whose allocations this batch changed, read by the
+        # route's post-commit hook (`_run_shipping_order_shipment_refresh_hook`)
+        # so `InboundShipmentService.refresh_shipment_line_statuses` runs the
+        # way it does for every other writer of allocations. NOT called inside
+        # `_apply_scoped`: that method runs in a per-record SAVEPOINT and the
+        # refresh commits, which would land half a batch and defeat the dry-run
+        # rollback.
+        self.shipment_ids_touched: set[str] = set()
 
     # --------------------------------------------------------------- the batch
     def ingest(
@@ -353,17 +384,21 @@ class ShippingOrderIngestService(MasterRefResolver):
         ]
 
         rows = self._existing_rows(payload)
-        # D25: a document whose number carries no DtlKey anywhere yet is on
-        # its FIRST push, however many xlsx-era rows it already holds - and
-        # the verdict says `created`, because what lands is the AutoCount
-        # line-set, not an update of the rows the upload left behind (which
-        # are superseded below).
-        first_push = not self._has_ref_row(payload)
+        # D25a: eligibility is decided per `(product_id, upper(location_code))`
+        # GROUP, not per document - a group that already holds a DtlKey is
+        # ESB-era (S4 applies there), one that holds none is still xlsx-era
+        # whichever push first names it. An EMPTY key set means no DtlKey
+        # exists on this number at all, which is also the D25 first-push test
+        # the verdict reads: what lands then is the AutoCount line-set, not an
+        # update of the rows the upload left behind.
+        esb_group_keys = self._esb_group_keys(payload)
         outcome = (
-            IngestOutcome.CREATED if first_push or not rows else IngestOutcome.UPDATED
+            IngestOutcome.CREATED
+            if not esb_group_keys or not rows
+            else IngestOutcome.UPDATED
         )
         by_ref, pool, already_closed, supersede_pool = self._split_rows(
-            rows, first_push=first_push
+            rows, esb_group_keys=esb_group_keys
         )
 
         counts = {"adopted": 0, "created": 0, "updated": 0, "deleted": 0, "cancelled": 0}
@@ -392,23 +427,28 @@ class ShippingOrderIngestService(MasterRefResolver):
                 unmatched.append(values)
 
         if supersede_pool:
-            # D25/D26/D27, before adoption and instead of it: on a first push
-            # the ref-less set is REPLACED by the pushed line-set, its
-            # receipts carried per `(product, location)` group and its links
-            # moved. What comes back is the groups AutoCount named no line
-            # for, which stay ref-less and fall through to the leftover sweep
-            # below (kept, closed, links untouched).
-            pool.extend(
+            # D25/D25a/D26/D26a/D27, before adoption: an xlsx-era group is
+            # REPLACED by the pushed line-set, its receipt carried across the
+            # group and its links moved. What comes back is the rows the plan
+            # left alone - a group AutoCount named no line for (D27), or one
+            # whose incoming total undercuts its receipt (D26a) - handed to
+            # `already_closed`, the bucket that reaches the leftover sweep
+            # WITHOUT becoming an adoption candidate: the supersede has
+            # already ruled on those rows, and pass 3 (position only) would
+            # otherwise claim one for an unrelated product's line.
+            already_closed.extend(
                 self._supersede_xlsx_rows(
                     payload, unmatched, supersede_pool, counts, force_closed,
                     container_number=container_number, warnings=warnings,
                 )
             )
-        elif unmatched and pool:
-            # Adoption is the ESB-era path only (D25): a `pool` here means
-            # this number already carries a DtlKey, so its ref-less rows are
-            # single lines an earlier push has not claimed yet - not the
-            # aggregates a first push supersedes.
+
+        if unmatched and pool:
+            # D25a: `pool` now holds only rows the supersede is not entitled
+            # to touch - a ref-less row from the CRM UI / n8n (source_system
+            # NULL) or an open one in a group that already carries a DtlKey -
+            # so adoption still runs for them, unchanged, and can run in the
+            # SAME push as a supersede of a different group.
             self._adopt_lines(
                 unmatched, pool, counts, force_closed,
                 container_number=container_number, warnings=warnings,
@@ -550,29 +590,38 @@ class ShippingOrderIngestService(MasterRefResolver):
             or 0
         )
 
-    def _has_ref_row(self, payload: CanonicalShippingOrder) -> bool:
-        """Whether this `spo_number` already carries ANY row with a DtlKey (D25).
+    def _esb_group_keys(
+        self, payload: CanonicalShippingOrder
+    ) -> set[shipping_order_rules.SupersedeKey]:
+        """The `(product, location)` groups of this `spo_number` that already
+        carry a DtlKey (D25a).
 
-        The first-push test is about the NUMBER's whole history in this
-        company, not about the rows `_existing_rows` matched: a ref row left
-        by a since-retired DocKey is deliberately excluded from that query
-        (S1/S2), and it is exactly the evidence that this document is no
-        longer xlsx-era. Asked as its own query for that reason rather than
-        read off `rows`.
+        Asked as its own query rather than read off `_existing_rows`: that
+        query deliberately excludes another DocKey's rows (S1/S2), and a ref
+        row left by a since-retired DocKey is exactly the evidence that its
+        group is no longer xlsx-era. An empty result also answers D25's own
+        document-level question (no DtlKey anywhere on this number yet), which
+        is what the verdict's `created` reads.
         """
-        return (
-            self.db.query(SPOAllocation.id)
+        rows = (
+            self.db.query(SPOAllocation.product_id, SPOAllocation.location_code)
             .filter(
                 SPOAllocation.company_id == self.company_id,
                 SPOAllocation.spo_number == payload.spo_number,
                 SPOAllocation.source_ref.isnot(None),
             )
-            .first()
-            is not None
+            .all()
         )
+        return {
+            shipping_order_rules.supersede_group_key(product_id, location_code)
+            for product_id, location_code in rows
+        }
 
     def _split_rows(
-        self, rows: list[SPOAllocation], *, first_push: bool = False
+        self,
+        rows: list[SPOAllocation],
+        *,
+        esb_group_keys: Optional[set] = None,
     ) -> tuple[
         dict[str, SPOAllocation],
         list[SPOAllocation],
@@ -591,16 +640,22 @@ class ShippingOrderIngestService(MasterRefResolver):
         it would resurrect demand that was correctly retired. It still flows
         into `_apply`'s final leftover sweep unchanged.
 
-        `supersede_pool` (D25): on a FIRST push - this `spo_number` holds no
-        ref row at all, so every row it has is the xlsx-era representation of
-        the document - the whole ref-less set, open AND closed, is superseded
-        by the AutoCount line-set instead. `pool` and `already_closed` are
-        empty for that document: neither adoption (which pairs ONE row with
-        ONE line, and an xlsx row is an AGGREGATE of N lines) nor S4's
-        exclusion can express what has to happen there. S4 still holds
-        everywhere else, which is where it was earned: once a ref row exists,
-        a closed ref-less row beside it was retired on purpose.
+        `supersede_pool` (D25/D25a): an xlsx-era row - ref-less AND
+        `source_system = 'scm_upload'` - whose `(product_id,
+        upper(location_code))` group carries no DtlKey yet, open OR closed.
+        Those rows are the xlsx-era representation of that group and are
+        superseded by the AutoCount line-set instead of adopted: adoption
+        pairs ONE row with ONE line, and an xlsx row is an AGGREGATE of N
+        lines, which neither adoption nor S4's exclusion can express.
+
+        Everything else keeps the pre-D25 buckets, and D25a is what draws the
+        line: a ref-less row the CRM UI or the n8n packing-list route wrote
+        (`source_system` NULL) states one real line, not an aggregate, so it
+        stays an adoption candidate and is never removed; and once a group
+        carries a DtlKey it is ESB-era, where S4 was earned - a closed
+        ref-less row beside a ref row was retired on purpose.
         """
+        keys = esb_group_keys or set()
         by_ref: dict[str, SPOAllocation] = {}
         pool: list[SPOAllocation] = []
         already_closed: list[SPOAllocation] = []
@@ -608,7 +663,11 @@ class ShippingOrderIngestService(MasterRefResolver):
         for row in rows:
             if row.source_ref:
                 by_ref[row.source_ref] = row
-            elif first_push:
+                continue
+            group_key = shipping_order_rules.supersede_group_key(
+                row.product_id, row.location_code
+            )
+            if shipping_order_rules.is_xlsx_era_row(row) and group_key not in keys:
                 supersede_pool.append(row)
             elif row.line_status == LINE_CLOSED:
                 already_closed.append(row)
@@ -748,16 +807,18 @@ class ShippingOrderIngestService(MasterRefResolver):
         container_number: Optional[str] = None,
         warnings: Optional[list[str]] = None,
     ) -> list[SPOAllocation]:
-        """D25/D26/D27: the xlsx-era row set REPLACED by the pushed line-set.
+        """D25a/D26/D26a/D27/D30: an xlsx-era group REPLACED by the pushed lines.
 
         Grouped by `(product_id, upper(location_code))` - the pair the upload
         itself dedups on, and the only pair that can pair an xlsx AGGREGATE
-        row with the N AutoCount lines it stands for. Per group with an
-        incoming counterpart: the lines are created as new rows in Seq order,
-        the group's received quantity is carried across them (each up to its
-        own allocated quantity, remainder onto the last), whatever pointed at
-        the superseded rows is repointed onto the group's FIRST line, and the
-        superseded rows are then deleted.
+        row with the N AutoCount lines it stands for. Per group the plan
+        allows: the lines are created as new rows in Seq order, the group's
+        received quantity is carried across them (each up to its own
+        allocated quantity, remainder onto the last), whatever pointed at the
+        superseded rows is repointed onto the group's FIRST line, and the
+        superseded rows are then removed - or, when the calling principal
+        holds no `.delete` grant (D30), CLOSED and annotated instead, which
+        keeps every carry and every link and only leaves the old rows behind.
 
         The plan itself is `shipping_order_rules.plan_xlsx_supersede` - the
         ONE algorithm, shared with `scripts/dedupe_spo_xlsx_superseded.py`,
@@ -765,19 +826,29 @@ class ShippingOrderIngestService(MasterRefResolver):
         appended. Only the writing differs: created rows here, updated rows
         there.
 
-        Returns the ref-less rows NO incoming line named, for the caller to
-        hand to the ordinary leftover sweep (kept and closed, links intact).
+        Returns the ref-less rows the plan left alone (no incoming
+        counterpart, or refused by D26a's group-total guard) for the caller to
+        hand to the ordinary leftover sweep.
         """
         plan = shipping_order_rules.plan_xlsx_supersede(unmatched, supersede_pool)
         by_id = {str(row.id): row for row in supersede_pool}
+        kept = [by_id[row_id] for row_id in plan.kept_row_ids if row_id in by_id]
+
+        if plan.locked_groups and warnings is not None:
+            # D26a: the same word the by-ref and adoption paths raise when a
+            # push would shrink a receipt - the reason is identical, so the
+            # ESB must not have to learn a second one.
+            warnings.append(WARN_RECEIVED_LOCKED)
         if not plan.groups:
-            return [by_id[row_id] for row_id in plan.kept_row_ids if row_id in by_id]
+            return kept
 
         next_number = self._max_line_number(payload)
         consumed: set[int] = set()
         superseded = 0
 
         for group in plan.groups:
+            if group.dropped_shipment_ids and warnings is not None:
+                warnings.append(WARN_SHIPMENT_MERGED)
             target: Optional[SPOAllocation] = None
             for line_plan in group.lines:
                 values = dict(unmatched[line_plan.index])
@@ -809,6 +880,8 @@ class ShippingOrderIngestService(MasterRefResolver):
                     # booked against, which is the only record of it left
                     # once that row is gone.
                     row.inbound_shipment_id = line_plan.inbound_shipment_id
+                if row.inbound_shipment_id:
+                    self.shipment_ids_touched.add(str(row.inbound_shipment_id))
                 counts["created"] += 1
                 consumed.add(line_plan.index)
                 if target is None:
@@ -817,6 +890,9 @@ class ShippingOrderIngestService(MasterRefResolver):
             removing = [
                 by_id[row_id] for row_id in group.superseded_row_ids if row_id in by_id
             ]
+            for row in removing:
+                if row.inbound_shipment_id:
+                    self.shipment_ids_touched.add(str(row.inbound_shipment_id))
             if target is not None:
                 shipping_order_rules.repoint_allocation_dependants(
                     self.db,
@@ -824,21 +900,51 @@ class ShippingOrderIngestService(MasterRefResolver):
                     str(target.id),
                     company_id=self.company_id,
                 )
-            for row in removing:
-                self.db.delete(row)
+            # S7 (D30): read BEFORE the rows go, so the trail names what was
+            # actually taken out of the picture and with which quantities.
+            trail = "; ".join(
+                f"{row.id}(allocated={row.allocated_quantity},"
+                f"received={row.quantity_received})"
+                for row in removing
+            )
+            if self.may_delete:
+                for row in removing:
+                    self.db.delete(row)
+                action = "deleted"
+            else:
+                # D30: no `.delete` grant, so the rows stay - closed, so they
+                # no longer read as outstanding supply, and annotated so the
+                # next reader can see which document replaced them.
+                for row in removing:
+                    row.line_status = LINE_CLOSED
+                    row.allocation_notes = f"superseded by {payload.source_ref}"
+                action = "closed"
+                if warnings is not None:
+                    warnings.append(WARN_SUPERSEDED_CLOSED_ONLY)
             superseded += len(removing)
+            logger.info(
+                "ingest.spo_supersede spo_number=%s doc_ref=%s group=%s action=%s "
+                "target=%s rows=[%s] dropped_shipments=%s",
+                payload.spo_number,
+                payload.source_ref,
+                group.key,
+                action,
+                target.id if target is not None else None,
+                trail,
+                ",".join(group.dropped_shipment_ids) or "-",
+            )
 
         self.db.flush()
-        if superseded:
-            # Absent when zero, same rule `lines.dropped` follows on a
-            # document verdict - a re-push that supersedes nothing must not
-            # report the key at all (AC-X9).
-            counts["superseded"] = counts.get("superseded", 0) + superseded
+        # `plan.groups` is non-empty by the early return above, and every
+        # group of it removes or closes at least one row, so this key is set
+        # exactly when a supersede happened - absent otherwise, the rule
+        # `lines.dropped` already follows on a document verdict (AC-X9).
+        counts["superseded"] = counts.get("superseded", 0) + superseded
         for index in sorted(consumed, reverse=True):
             # Consumed here, so the ordinary create loop cannot write the
             # same line a second time.
             del unmatched[index]
-        return [by_id[row_id] for row_id in plan.kept_row_ids if row_id in by_id]
+        return kept
 
     def _adopt_lines(
         self,
