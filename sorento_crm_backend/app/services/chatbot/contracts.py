@@ -278,6 +278,132 @@ PENDING_KINDS = (
 PendingKind = Literal[PENDING_KINDS]  # type: ignore[valid-type]
 
 # --------------------------------------------------------------------------- #
+# Dialogue state (growth r1, slice B: ONE focus object, ONE open question)
+# --------------------------------------------------------------------------- #
+
+# The nine axes the conversation can hold a value on, and the ONLY keys `focus` may
+# carry. Named here rather than inferred from whatever a rule happened to write,
+# because `Focus` forbids extras and the decay pass walks this tuple: a tenth axis has
+# to be added deliberately, in one place, or it does not exist.
+#
+# `products` is plural and every other axis is singular, which is not an inconsistency:
+# a question can be about several products at once ("SRTWC8517 and SRTKS6091 stock")
+# and never about two customers at once. The plural axis therefore holds a LIST of
+# entities and the singular ones hold one.
+FOCUS_SLOTS = (
+    "domain",
+    "products",
+    "customer",
+    "transporter",
+    "warehouse",
+    "date_window",
+    "attributes",
+    "tier",
+    "brands",
+)
+FocusSlotName = Literal[FOCUS_SLOTS]  # type: ignore[valid-type]
+
+# What SET a slot, recorded rather than inferred. `current_message` is the customer's
+# own words this turn, `reuse` is a rule carrying an alive slot forward, `pick` is an
+# answer to an open question and `quoted` is a reply to an older message. The trace
+# renders it verbatim, so an operator reading "why is this scoped to ABC" gets the
+# answer without reading any code.
+FOCUS_SOURCES = ("current_message", "reuse", "pick", "quoted")
+FocusSource = Literal[FOCUS_SOURCES]  # type: ignore[valid-type]
+
+# The seven kinds of question the bot can leave open, each with ONE handler in
+# `dialogue/open_question.py`. They replace the five `pending` kinds, the eight-rule
+# `dym_offer` ladder, `selection_context` and the `picker_*` keys: those were each
+# hand-added and none of them aged, which is defect 3 of the growth plan.
+OPEN_QUESTION_KINDS = (
+    "product_pick",
+    "customer_pick",
+    "escalate_yes_no",
+    "team_pick",
+    "company_pick",
+    "tier_pick",
+    "member_offer",
+)
+OpenQuestionKind = Literal[OPEN_QUESTION_KINDS]  # type: ignore[valid-type]
+
+# What KIND of answer resolves the question. A pick resolves against the frozen
+# `options` rows by position; a yes/no resolves against `answers_open_question.yes_no`;
+# `free` takes the customer's own words through `free_text`.
+OPEN_QUESTION_EXPECTS = ("pick", "yes_no", "free")
+OpenQuestionExpects = Literal[OPEN_QUESTION_EXPECTS]  # type: ignore[valid-type]
+
+
+class FocusSlot(BaseModel):
+    """One axis of what the conversation is currently about.
+
+    `set_at_turn` is the CONTACT's turn number (`engine._turn_no`), which is what the
+    decay pass counts in - owner decision D11, turns only, no wall-clock TTL. `set_at`
+    is kept for the trace alone: an operator reading a decay line wants to know it
+    happened twenty minutes ago as well as three turns ago, and neither number is
+    allowed to decide anything.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    value: Any = None
+    set_at_turn: int = 0
+    set_at: str | None = None
+    source: FocusSource = "current_message"
+
+
+class Focus(BaseModel):
+    """What the conversation is about, per axis, each axis ageing on its own.
+
+    ONE writer (`dialogue/focus.py`), against the two the growth plan measured: the
+    parser prompt's "always continue the previous turn" plus ten deterministic rules in
+    `head/output_exchange.py`. A slot the customer has not restated for
+    `system_settings.chatbot_focus_ttl_turns` turns is dropped at intake, before the
+    parser is asked anything, and the drop is traced.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    domain: FocusSlot | None = None
+    products: FocusSlot | None = None
+    customer: FocusSlot | None = None
+    transporter: FocusSlot | None = None
+    warehouse: FocusSlot | None = None
+    date_window: FocusSlot | None = None
+    attributes: FocusSlot | None = None
+    tier: FocusSlot | None = None
+    brands: FocusSlot | None = None
+
+
+class OpenQuestion(BaseModel):
+    """The ONE question the bot is waiting for an answer to (D7).
+
+    `options` are FROZEN rows: the uuid, the code and the label the customer was
+    actually shown, carried verbatim into the next turn and never re-resolved. That is
+    the whole point of freezing them - "2" must mean the second row the customer read,
+    not the second row a fresh lookup would return today.
+
+    `ttl_turns` rides on the question rather than on a settings column because the kinds
+    do not agree: a member offer is on screen for 3 turns (AC-816 rule 1) and a team
+    clarify is answered on the very next turn or not at all.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: OpenQuestionKind
+    options: list[dict[str, Any]] = Field(default_factory=list)
+    expects: OpenQuestionExpects
+    asked_at_turn: int = 0
+    asked_at: str | None = None
+    ttl_turns: int = 1
+    # Everything the handler needs and nothing the reader has to guess at: the offering
+    # domain, the team an escalation names, issue #708's `keep` list of siblings that
+    # already resolved. Free-form because the seven handlers need seven different
+    # things, and a model per kind would be seven classes to keep in step with one
+    # dispatcher.
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+# --------------------------------------------------------------------------- #
 # Session state (R2: every key compile-current-state writes, nothing dropped)
 # --------------------------------------------------------------------------- #
 
@@ -318,6 +444,12 @@ SESSION_VAR_KEYS = (
     "routing_companies",
     # R3: the persisted marker that replaces the frozen-string reads.
     "pending",
+    # Growth r1 slice B: the dialogue state, ONE writer per layer (D6/D7). `pending`,
+    # `dym_offer`, `selection_context` and the `picker_*` keys above stay for one
+    # release as MIRRORS derived from `open_question` (AC-951), so every existing world
+    # still grades while the corpus is re-derived.
+    "focus",
+    "open_question",
 )
 
 
@@ -388,6 +520,8 @@ class SessionVars(BaseModel):
     routing_company: Any = None
     routing_companies: Any = None
     pending: Pending | None = None
+    focus: Focus | None = None
+    open_question: OpenQuestion | None = None
 
 
 # The widths the `chatbot.turns` columns actually have. Validated on the way IN so an

@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterator, Mapping
 
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -35,6 +36,7 @@ from app.config import settings
 from app.models.base import set_company_scope
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import dispatch, jsc, trace as trace_mod
+from app.services.chatbot.dialogue import decay as decay_mod
 from app.services.chatbot.contracts import (
     BUSINESS_BRANCH_KINDS,
     SELF_CLOSING_BRANCH_KINDS,
@@ -93,6 +95,12 @@ GENERIC_ERROR_REPLY = parser.PARSER_ERROR_REPLY
 # AC-703. The queue the offloaded turn runs on, classified `fast` in `worker.QUEUES`: a
 # customer is watching "typing...", so it must never queue behind a 39-minute import.
 CHAT_QUEUE = "chat"
+
+# Growth r1 D11. The same 3 as `SystemSetting.chatbot_focus_ttl_turns`'s own default,
+# declared here as well because a build with no settings row still has to age its memory,
+# and because `_focus_ttl_turns` needs a value to fall back to when the column holds
+# operator nonsense.
+DEFAULT_FOCUS_TTL_TURNS = 3
 
 # How often the waiting request looks at the job. Same order as `/external/media`'s own
 # poll: short enough not to pad a fast turn, long enough not to spin.
@@ -411,6 +419,34 @@ def _pending_kind(variables: dict[str, Any]) -> str | None:
 # --------------------------------------------------------------------------- #
 # Reads (session-bound, short)
 # --------------------------------------------------------------------------- #
+
+
+def _turn_no(db: Session, *, contact_respond_id: str, is_test: bool) -> int:
+    """WHICH turn of this conversation this is - the counter focus decay ages in (D11).
+
+    Derived from the turn ROWS rather than stored on the session, and the choice is worth
+    stating because both were available. A session key would have to be written by
+    `compile_state` on every lane, would appear in every world's expected variables (so
+    every capture in the corpus would diverge on it), and would be wrong the moment a lane
+    answered without writing a session. The rows are already the record of "how many
+    messages has this contact sent", they are written before any stage runs, and reading
+    them writes nothing - which is what a dry run needs (AC-982).
+
+    Counted PER WORLD (`is_test`), for the same reason the dedup index carries that column
+    (H57): a console dry run against a real contact must not age that customer's live
+    conversation, and the world corpus replays chains of test turns that have to age like
+    a real chain. The current turn's own row is already inserted when this runs, so the
+    first turn of a contact is turn 1 and `age_turns` on a slot that turn writes is 0.
+    """
+    return int(
+        db.query(func.count(ChatbotTurn.id))
+        .filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.is_test.is_(bool(is_test)),
+        )
+        .scalar()
+        or 1
+    )
 
 
 def _read_session_vars(db: Session, *, respond_io_id: str, reply_to_id: str | None) -> dict:
@@ -1171,6 +1207,28 @@ def _run_stages(  # noqa: PLR0915
             jsc.get(session_block, "session_vars"), "referenced_result_set"
         )
         latest_user_message = build_latest_user_message(envelope, session_block)
+        # -- decay, BEFORE the parser is asked anything (AC-940, AC-941) -------- #
+        # A slot the customer has not restated inside the TTL is dropped here, where the
+        # stored state enters the turn, so it can neither reach the model as context nor
+        # be carried by a rule downstream. `turn_no` is read on this same session; the
+        # row for THIS turn already exists, so a contact's first turn is turn 1.
+        turn_no = _turn_no(
+            db, contact_respond_id=contact_respond_id, is_test=envelope.dry_run
+        )
+        decayed = decay_mod.apply(
+            variables,
+            turn_no=turn_no,
+            ttl_turns=switches.chatbot_focus_ttl_turns,
+            trace=turn_trace,
+        )
+        # The stored blob is what every downstream reader holds (`parent_input`, `ctx`),
+        # so the drop has to land THERE and not only in a local copy - the same reason
+        # `_drop_unknown_carried_domain` mutates in place. A turn whose focus decayed and
+        # whose `variables.focus` still held the dead slot would write it back out.
+        if "focus" in variables or decayed.focus:
+            variables["focus"] = decayed.focus
+        if "open_question" in variables or decayed.open_question is not None:
+            variables["open_question"] = decayed.open_question
         parser_config = parser.resolve_config(
             db,
             current_date=_current_date_directive(),
@@ -1189,6 +1247,13 @@ def _run_stages(  # noqa: PLR0915
             # ALWAYS present, empty list included: a reader must never have to tell
             # "no harness keys" from "this build does not report them".
             "harness_keys_ignored": harness_ignored,
+            # D11's counter and what it cost this turn. Always present for the same
+            # reason: "nothing decayed" and "this build does not decay" must not read
+            # the same on the trace screen.
+            "turn_no": turn_no,
+            "focus_ttl_turns": switches.chatbot_focus_ttl_turns,
+            "focus_slots_alive": sorted(decayed.focus),
+            "focus_slots_decayed": [d["slot"] for d in decayed.dropped],
         },
         raw={"session_vars": session_block},
     )
@@ -1205,6 +1270,12 @@ def _run_stages(  # noqa: PLR0915
         previous_response=variables.get("response"),
         latest_user_message=latest_user_message,
         pending_kind=_pending_kind(variables),
+        # D6: the parser receives STRUCTURED HINTS about what is still alive, never the
+        # raw previous state and never transcript prose. Both are empty until a turn has
+        # written dialogue state, so a build mid-rollout sends the same bytes it sends
+        # today (`test_parser_user_block_parity.py`).
+        focus_hints=decayed.focus_hints,
+        open_question_hint=decayed.open_question_hint,
     )
     # G6: a dry run may supply the emission instead of paying for it. The mock goes
     # through the SAME `post_process` + `suggest_follow_up` the real parse takes, so a
@@ -2575,6 +2646,11 @@ class _TurnSwitches:
     chatbot_completed_lanes: Any = None
     chatbot_business_lane_enabled: bool = False
     chatbot_ordering_enabled: bool = False
+    # Growth r1 D11: how many turns a focus slot survives without being restated. Read on
+    # the SAME row as everything above, so decay and routing can never disagree about the
+    # settings a turn ran under - and so a dry run reads it without writing anything
+    # (AC-982).
+    chatbot_focus_ttl_turns: int = DEFAULT_FOCUS_TTL_TURNS
 
 
 def _read_switches(db: Session) -> _TurnSwitches:
@@ -2592,7 +2668,22 @@ def _read_switches(db: Session) -> _TurnSwitches:
             getattr(row, "chatbot_business_lane_enabled", False)
         ),
         chatbot_ordering_enabled=bool(getattr(row, "chatbot_ordering_enabled", False)),
+        chatbot_focus_ttl_turns=_focus_ttl_turns(row),
     )
+
+
+def _focus_ttl_turns(row: Any) -> int:
+    """`system_settings.chatbot_focus_ttl_turns`, default 3, never negative.
+
+    A settings column is OPERATOR DATA, so a nonsense value must not take the turn engine
+    down: anything unreadable falls back to the default, and a negative is clamped to 0,
+    which means "this turn only" rather than "every slot is already dead".
+    """
+    try:
+        value = int(getattr(row, "chatbot_focus_ttl_turns", DEFAULT_FOCUS_TTL_TURNS))
+    except (TypeError, ValueError):
+        return DEFAULT_FOCUS_TTL_TURNS
+    return max(0, value)
 
 
 def _stock_denial_enabled(db: Session, row: Any = _UNSET) -> bool:

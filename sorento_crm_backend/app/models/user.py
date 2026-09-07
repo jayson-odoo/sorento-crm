@@ -567,6 +567,15 @@ class SystemSetting(Base):
     chatbot_ordering_enabled = Column(
         Boolean, nullable=False, server_default="false", default=False
     )
+    # Growth r1 D11: how many turns a focus slot survives without being restated.
+    # TURNS, not minutes - the owner ruled that a conversation's memory ages in messages
+    # and never on a wall clock, so a customer who comes back an hour later mid-thread is
+    # still mid-thread. Default 3: set at turn N, alive at N+1 through N+3, dropped at
+    # N+4 with a `decay` trace line naming the slot and its age.
+    #
+    # ONE column rather than a table of per-slot TTLs: there is one number today and the
+    # trigger for a table is a measured slot that genuinely needs a different lifetime.
+    chatbot_focus_ttl_turns = Column(Integer, nullable=False, server_default="3", default=3)
 
 
 class UserQuickAccess(Base):

@@ -56,11 +56,14 @@ export type BranchKind =
  */
 export interface TurnTraceRecord {
   /**
-   * `note` is something that happened TO the turn rather than a step it ran - today, an
-   * operator asking for a retry. Absent on every stage record. The timeline renders notes
-   * as footer lines, because a note drawn as a ninth stage row reads as a bug.
+   * Set on everything in the array that is NOT a step the turn ran, and absent on every
+   * stage record. `note` is something that happened TO the turn (an operator asking for a
+   * retry); the rest are structured DECISIONS the engine took inside a stage - `decay`,
+   * `focus`, `open_question`, `tool`, `crossdomain`, `reveals` - written by
+   * `trace.TurnTrace.add`. None of them has a start, a duration or a status of its own, so
+   * none of them is a timeline row: the timeline is every record with no `kind`.
    */
-  kind?: 'note';
+  kind?: string;
   stage: TurnStage;
   status: TraceStatus;
   started_at: string;

@@ -120,12 +120,37 @@ class TurnTrace:
         )
         self.start()
 
+    def add(self, kind: str, payload: dict[str, Any]) -> None:
+        """One STRUCTURED entry in the same array, for a decision rather than a stage.
+
+        Slice D of the growth plan renders `decay[]`, `focus[]`, `open_question`, `tool`,
+        `crossdomain[]` and `reveals` per turn. Each of those is a decision the engine
+        took INSIDE a stage, so it has no start, no duration and no status of its own -
+        writing it as a stage record would put a second "Received" row on the timeline
+        and lie about what ran. It goes in the SAME array because the turn has exactly one
+        trace and a second column would have to be joined back to it by hand.
+
+        `kind` is what tells the two apart, and there is precedent: `POST
+        /system/chatbot/turns/{id}/retry` already appends a `kind: "note"` record here.
+        The timeline is therefore "every record with no `kind`", which is what
+        `turnPresentation.stageRecords` selects.
+
+        Never raises: a trace that fails must not fail the turn (`_cap` above is written
+        to the same rule).
+        """
+        self._records.append({"kind": kind, "at": _now_iso(), **_cap(payload)})
+
+    def entries(self, kind: str) -> list[dict[str, Any]]:
+        """Every `add`ed entry of one kind, in the order they were written."""
+        return [r for r in self._records if r.get("kind") == kind]
+
     @property
     def records(self) -> list[dict[str, Any]]:
         return self._records
 
     def stages(self) -> list[str]:
-        return [r["stage"] for r in self._records]
+        """The STAGE records' names. `add`ed entries carry a `kind` and are not stages."""
+        return [r["stage"] for r in self._records if "stage" in r]
 
 
 # --------------------------------------------------------------------------- #

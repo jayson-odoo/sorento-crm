@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Mapping
 
 from sqlalchemy.orm import Session
 
@@ -248,7 +248,12 @@ def resolve_config(
 
 
 def build_user_block(
-    *, previous_response: Any, latest_user_message: Any, pending_kind: str | None
+    *,
+    previous_response: Any,
+    latest_user_message: Any,
+    pending_kind: str | None,
+    focus_hints: Mapping[str, Any] | None = None,
+    open_question_hint: Mapping[str, Any] | None = None,
 ) -> str:
     """The user turn, in the same two lines the n8n `AI Agent` node sends.
 
@@ -257,7 +262,20 @@ def build_user_block(
     from the previous reply's wording (R3, D11). The legacy string is still present in
     `previous_response`, so a session written by n8n and one written by the CRM both
     parse the same way during the migration window.
+
+    **Growth r1 slice B adds two more, and both are ABSENT until a turn has written
+    dialogue state.** `Focus:` is the alive slots and `Open question:` is what the bot is
+    waiting for, each as one compact JSON line - structured hints, never transcript prose
+    (D6). Prompt v3 is written against them; v1 and v2 have no instruction that mentions
+    either, so an unpromoted deployment sees exactly the bytes it sees today and
+    `test_parser_user_block_parity.py` still holds.
+
+    The lines are emitted only when there is something to say. An empty `Focus: {}` would
+    be a statement the model has to interpret ("the conversation is about nothing"), and
+    it would change the block on every turn of a build that has not started writing focus
+    yet.
     """
+    import json
     import re
 
     previous = re.sub(
@@ -269,6 +287,13 @@ def build_user_block(
     ]
     if pending_kind:
         lines.append(f"Pending: the assistant is waiting for a {pending_kind} reply.")
+    if focus_hints:
+        lines.append("Focus: " + json.dumps(focus_hints, ensure_ascii=False, sort_keys=True))
+    if open_question_hint:
+        lines.append(
+            "Open question: "
+            + json.dumps(open_question_hint, ensure_ascii=False, sort_keys=True)
+        )
     return "\n".join(lines)
 
 

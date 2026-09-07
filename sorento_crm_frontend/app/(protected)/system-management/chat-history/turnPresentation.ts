@@ -147,9 +147,15 @@ export type TimelineRow =
  * in the timeline it appeared as a second "Sent" row, which reads as a rendering fault
  * rather than as a record of what someone did, so notes come out here and the panel prints
  * them under the timeline instead.
+ *
+ * The engine writes structured DECISIONS into the same array too (`decay`, `focus`,
+ * `open_question`, `tool`, ... - `trace.TurnTrace.add`), and they are not steps either.
+ * So the test is `kind` PRESENT, not `kind === 'note'`: a stage record carries no `kind`
+ * at all, and testing for the one known non-stage value meant every new one arrived in the
+ * timeline as a blank row.
  */
 export function stageRecords(turn: ChatbotTurn): TurnTraceRecord[] {
-  return turn.trace.filter((record) => record.kind !== 'note');
+  return turn.trace.filter((record) => record.kind == null);
 }
 
 /** The notes, oldest first. Rendered as footer lines, never as timeline rows. */
