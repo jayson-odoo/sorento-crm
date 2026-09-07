@@ -221,6 +221,23 @@ XLSX_SOURCE_SYSTEM = "scm_upload"
 #: figure a GRN draw against any of them measures.
 AUTOCOUNT_SOURCE_SYSTEM = "autocount"
 
+#: The CRM-raised marker (D25c, security round 6). Stamped by the two SCM
+#: writers that raise ONE allocation per purchase-order line
+#: (`scm.spo_conversion_service`, which re-exports this as its own
+#: `SOURCE_SYSTEM` for the PO side too, and
+#: `scm.allocation_suggestion_service`). Declared HERE so the supersede
+#: predicate, the receipt-ownership predicate and the writers cannot drift on
+#: the spelling of one string.
+CRM_SPO_SOURCE_SYSTEM = "crm_spo"
+
+#: `source_system` values whose allocation states no receipt of its own, so a
+#: reader computes it from the approved GRN lines instead (the READ-path rule
+#: in `procurement_service._receipt_is_computed`): a row this system raised
+#: itself, whether it carries no stamp at all or the `crm_spo` one the SCM
+#: writers now add. An imported row (`scm_upload`, `scm_spo_history`,
+#: `scm_po_history`) and an `autocount` line state their own.
+COMPUTED_RECEIPT_SOURCE_SYSTEMS = frozenset({None, CRM_SPO_SOURCE_SYSTEM})
+
 
 @dataclass(frozen=True)
 class SupersedeLinePlan:
@@ -238,6 +255,9 @@ class SupersedeLinePlan:
     #: zone, onto a line that resolved none of its own. A bin the upload
     #: recorded is the only record of where the goods actually went.
     storage_zone_id: Optional[str] = None
+    #: D25c (security round 6): same rule for the unit the upload stated. The
+    #: ESB states none, and a line with no UoM reads as bare numbers.
+    uom_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -255,6 +275,14 @@ class SupersedeGroupPlan:
     lines: tuple[SupersedeLinePlan, ...]
     superseded_row_ids: tuple[str, ...]
     dropped_shipment_ids: tuple[str, ...] = ()
+    #: D25c (security round 6), the group's own facts, which belong to the
+    #: group rather than to any one line and so land on its FIRST line (the
+    #: same row the links are repointed to): the rejected quantity SUMMED
+    #: over the superseded rows, and their notes. A rejection and a note are
+    #: statements somebody made about this delivery, and deleting the row
+    #: they were written on is what would lose them.
+    rejected_total: int = 0
+    notes: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -365,11 +393,24 @@ def is_xlsx_era_row(row) -> bool:
     why SPO-2026/09-0028, the incident document itself, was the one thing the
     dedupe skipped.
 
+    A row carrying `po_line_id` is NEVER a candidate, whatever its
+    `source_system` (security round 6): the OTHER two writers of ref-less
+    rows - `scm.spo_conversion_service._write_allocations` and
+    `scm.allocation_suggestion_service` - raise exactly ONE row per PURCHASE
+    ORDER LINE, which is the opposite of an aggregate, and the ESB push
+    carries no `po_line_id` at all. Superseding one would sever the
+    PO -> SPO -> GRN chain silently, taking the incoming cost's currency and
+    the ordered-cost comparison with it. Those writers now stamp `crm_spo`
+    (which this predicate already refuses), and the `po_line_id` test is what
+    protects the rows they wrote before that stamp existed.
+
     An `autocount` row is never a candidate (it carries a `source_ref`
     anyway), and S4 still holds one level up: once the SPO's own
     `(product, warehouse)` group carries a DtlKey, nothing there is
     superseded.
     """
+    if getattr(row, "po_line_id", None):
+        return False
     return not row.source_ref and (row.source_system or "") in ("", XLSX_SOURCE_SYSTEM)
 
 
@@ -515,10 +556,17 @@ def plan_xlsx_supersede(incoming, refless_rows) -> SupersedePlan:
                     shipment_ids.append(value)
         group_shipment = shipment_ids[0] if shipment_ids else None
         # D25c: the same "first non-null wins" rule as the shipment, for the
-        # bin the upload recorded.
+        # bin and the unit the upload recorded.
         group_zone = next(
             (str(row.storage_zone_id) for row in rows if row.storage_zone_id), None
         )
+        group_uom = next((str(row.uom_id) for row in rows if row.uom_id), None)
+        rejected_total = sum(int(row.quantity_rejected or 0) for row in rows)
+        group_notes = "; ".join(
+            note
+            for note in ((row.allocation_notes or "").strip() for row in rows)
+            if note
+        ) or None
         shares = distribute_received(group_received, incoming_allocated)
         line_plans = tuple(
             SupersedeLinePlan(
@@ -526,6 +574,7 @@ def plan_xlsx_supersede(incoming, refless_rows) -> SupersedePlan:
                 carried_received=share,
                 inbound_shipment_id=group_shipment,
                 storage_zone_id=group_zone,
+                uom_id=group_uom,
             )
             for index, share in zip(indexes, shares)
         )
@@ -539,11 +588,39 @@ def plan_xlsx_supersede(incoming, refless_rows) -> SupersedePlan:
                 # is the point - a group whose rows named two containers
                 # cannot keep both on one line.
                 dropped_shipment_ids=tuple(shipment_ids[1:]),
+                rejected_total=rejected_total,
+                notes=group_notes,
             )
         )
     return SupersedePlan(
         groups=tuple(groups), kept_groups=tuple(kept), locked_groups=tuple(locked)
     )
+
+
+def append_note(existing: Optional[str], note: Optional[str]) -> Optional[str]:
+    """`existing` with `note`'s fragments appended after a `"; "`, never
+    overwritten and never duplicated.
+
+    One helper because two callers need exactly this: the D30 closed-only
+    branch stamping `superseded by <DocKey>`, and the D25c carry moving a
+    superseded group's own notes onto the line that replaces it. Whatever an
+    uploader or a planner wrote is the only record of why the row exists.
+
+    Fragment-wise, and that is the point (security round 6): after a
+    close-only supersede the Excel rows SURVIVE, so the dedupe re-selects the
+    document and the carry runs a second time. Splitting the addition on the
+    same `"; "` it joins with means the second run adds nothing rather than a
+    second copy of the same sentence.
+    """
+    existing_text = (existing or "").strip()
+    fragments = [part.strip() for part in (note or "").split(";") if part.strip()]
+    if not fragments:
+        return existing or None
+    present = [part.strip() for part in existing_text.split(";") if part.strip()]
+    for fragment in fragments:
+        if fragment not in present:
+            present.append(fragment)
+    return "; ".join(present) or None
 
 
 def repoint_allocation_dependants(

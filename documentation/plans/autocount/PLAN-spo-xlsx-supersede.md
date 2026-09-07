@@ -265,7 +265,45 @@ once; then the dedupe runs on production by the captain with `--dry-run` first.
   - `_adopt_lines`' own coarse key is deliberately untouched (product + location): adoption is a
     different rule with a different failure mode, and D25b already stops its positional pass in a
     supersede push.
+  - Named residual, key asymmetry (reviewer round 6, accepted): the two sides are indexed
+    asymmetrically on purpose. Incoming lines go in under every identity they answer to, each
+    Excel row under its one preferred identity. So an incoming line whose `location_code`
+    resolves to no warehouse row cannot match a warehouse-keyed Excel row: the line offers only
+    `loc:` and the row asks only for `wh:`. That combination is unreachable on measured data (all
+    68,537 AutoCount rows on the lane database resolve a warehouse whose code equals
+    `upper(location_code)`), and symmetrising the row side is the worse trade, because a row
+    indexed under both keys can be claimed by two different groups that name one destination
+    differently. The consequence of the residual is a skipped supersede (rows stay, the push
+    appends, the dedupe or a re-push corrects it), never a wrong merge.
   - Retirement and the receipt freeze are unchanged: both only ever touch `autocount` rows.
+- Round 7 as-built, D25c amended plus security round 6 (2026-09-08, coder on Opus): a row carrying
+  a `po_line_id` is never a supersede candidate. `is_xlsx_era_row` returns False for it before any
+  other test, and the dedupe's page query adds `po_line_id IS NULL` in SQL. Reason measured by the
+  security reviewer: of the five writers that produce ref-less rows, two are not aggregates but one
+  row per PO line - `app/services/scm/spo_conversion_service.py::_write_allocations` and
+  `app/services/scm/allocation_suggestion_service.py` - and the ingest never carries `po_line_id`,
+  so superseding one of those rows would sever the PO linkage silently.
+  - Second guard, so the first does not have to hold alone: `SPOAllocationCreate` gained
+    `source_system`, and both SCM writers stamp `crm_spo` (one constant,
+    `shipping_order_rules.CRM_SPO_SOURCE_SYSTEM`, re-exported as `spo_conversion_service.
+    SOURCE_SYSTEM`). A stamped row fails `is_xlsx_era_row` on the source test as well as the
+    `po_line_id` test.
+  - `_receipt_is_computed` therefore accepts `crm_spo` alongside NULL
+    (`shipping_order_rules.COMPUTED_RECEIPT_SOURCE_SYSTEMS`): a `crm_spo` row is still a CRM-raised
+    allocation whose receipt is computed from approved picking lines, and the four call sites that
+    gate on it would otherwise stop showing its approved-GRN receipt on the read path the moment we
+    started stamping it.
+  - Carry completed: `uom_id` joins `inbound_shipment_id` and `storage_zone_id` (group's first
+    non-null onto a line that resolved none), and the group's own statements - `quantity_rejected`
+    and `allocation_notes` - land on the group's FIRST line, the row the links move to.
+  - Both carries are idempotent, because they can run twice: a close-only supersede (no
+    `scm.shipping_orders.delete`, D30) leaves the Excel rows standing, so the dedupe re-selects the
+    same document later. `quantity_rejected` is `max(existing, group total)`, never a sum, and
+    `append_note` appends only the fragments not already present (splitting the addition on ";").
+  - Named residual: an accepted allocation suggestion that produced no PO line stays a supersede
+    candidate until it is stamped. Both guards miss it only for rows written before this change;
+    superseding one loses nothing but its id and `created_by`, since the receipt, shipment, zone,
+    uom, rejection and notes all carry.
 - Scope note on D28 / D28c, documented boundary: the floor only ever over-states, never
   under-states. A carried floor on a NON-RELEASED sibling is not clawed back when the GRN behind
   the original xlsx receipt is later deleted - the carry was a statement about that line at

@@ -1017,12 +1017,33 @@ class ShippingOrderIngestService(MasterRefResolver):
                     # all, so the upload's is the only one there has ever
                     # been, and it would be lost with the row.
                     row.storage_zone_id = line_plan.storage_zone_id
+                if not row.uom_id and line_plan.uom_id:
+                    # D25c (security round 6): and for the unit.
+                    row.uom_id = line_plan.uom_id
                 if row.inbound_shipment_id:
                     self.shipment_ids_touched.add(str(row.inbound_shipment_id))
                 counts["created"] += 1
                 consumed.add(line_plan.index)
                 if target is None:
                     target = row
+                    # D25c (security round 6): the group's own facts land on
+                    # its FIRST line, the same row the links move to - a
+                    # rejection and a note are statements somebody made about
+                    # this delivery and would be lost with the row.
+                    #
+                    # MAX, not a sum (security round 6 addendum): a close-only
+                    # supersede leaves the Excel rows in place, so the dedupe
+                    # re-selects the document later and this carry runs again.
+                    # `max` makes the second run a no-op instead of doubling
+                    # the rejected quantity.
+                    if group.rejected_total:
+                        row.quantity_rejected = max(
+                            int(row.quantity_rejected or 0), group.rejected_total
+                        )
+                    if group.notes:
+                        row.allocation_notes = shipping_order_rules.append_note(
+                            row.allocation_notes, group.notes
+                        )
             self.db.flush()
             removing = [
                 by_id[row_id] for row_id in group.superseded_row_ids if row_id in by_id
@@ -1055,15 +1076,14 @@ class ShippingOrderIngestService(MasterRefResolver):
                 note = f"superseded by {payload.source_ref}"
                 for row in removing:
                     row.line_status = LINE_CLOSED
-                    # APPENDED, never overwritten: whatever the uploader or a
-                    # planner wrote on this row is the only record of why it
-                    # exists, and the row is being kept precisely so that
-                    # record survives.
-                    existing = (row.allocation_notes or "").strip()
-                    if not existing:
-                        row.allocation_notes = note
-                    elif note not in existing:
-                        row.allocation_notes = f"{existing}; {note}"
+                    # APPENDED, never overwritten (through the same helper the
+                    # D25c carry uses): whatever the uploader or a planner
+                    # wrote on this row is the only record of why it exists,
+                    # and the row is being kept precisely so that record
+                    # survives.
+                    row.allocation_notes = shipping_order_rules.append_note(
+                        row.allocation_notes, note
+                    )
                 action = "closed"
                 if warnings is not None:
                     warnings.append(WARN_SUPERSEDED_CLOSED_ONLY)

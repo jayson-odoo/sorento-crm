@@ -3165,8 +3165,12 @@ class SPOAllocationService:
     #: (spo-xlsx-supersede D28 / D28a / D28b):
     #:
     #: 1. READ path (this predicate, used by the listings and availability readers
-    #:    below): a stamped row's stored figure is trusted as stated, and only a row this
-    #:    system raised itself (no `source_system`) is measured from its GRN lines.
+    #:    below): an IMPORTED row's stored figure is trusted as stated, and a row this
+    #:    system raised itself is measured from its GRN lines. "Raised itself" is no
+    #:    stamp at all OR `crm_spo` (D25c, security round 6): the two SCM writers now
+    #:    stamp the rows they create so the supersede leaves them alone, and without
+    #:    naming that stamp here every SCM-raised allocation would stop reporting the
+    #:    receipt its own approved GRN lines prove.
     #: 2. WRITE path, per allocation (`_sync_received_for_allocations` for a
     #:    `source_system` NULL or `scm_upload` row): recomputed from its OWN picking
     #:    lines, and skipped entirely when nothing picks against it and nobody is
@@ -3181,7 +3185,9 @@ class SPOAllocationService:
     #:    say whether it was stated or derived, which is what D28b got wrong.
     @staticmethod
     def _receipt_is_computed(allocation) -> bool:
-        return getattr(allocation, "source_system", None) is None
+        return (
+            getattr(allocation, "source_system", None) or None
+        ) in shipping_order_rules.COMPUTED_RECEIPT_SOURCE_SYSTEMS
 
     def get_computed_received_map(self, allocation_ids: list[str]) -> dict[str, int]:
         """Bulk: for each allocation id, return computed quantity_received (the sum

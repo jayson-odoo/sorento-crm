@@ -29,6 +29,9 @@ from app.models.procurement import InboundShipment, InboundShipmentLine, Purchas
 from app.services.error_handler import AppException
 from app.services.scm import priority
 from app.services.scm.cash_ranking import rank_score
+# The CRM-raised marker, owned by `spo_conversion_service` (one declaration, both
+# writers of a per-PO-line allocation) - D25c, security round 6.
+from app.services.scm.spo_conversion_service import SOURCE_SYSTEM as SPO_SOURCE_SYSTEM
 
 #: Why a candidate won. Named rather than implied: "ranked first" is not a reason a person can
 #: check, and this screen exists to be checked.
@@ -361,6 +364,10 @@ def approve(db: Session, shipment_id: str, decisions: list[dict], *,
                     warehouse_id=str(warehouse_id),
                     allocated_quantity=qty,
                     po_line_id=str(po_line_id) if po_line_id else None,
+                    # D25c (security round 6): one row per accepted suggestion
+                    # against one PO line, never an Excel aggregate - stamped
+                    # so the first-push supersede leaves it alone.
+                    source_system=SPO_SOURCE_SYSTEM,
                 ),
                 # `spo_allocations.created_by` is a UUID column holding a USER ID, not the
                 # person's name as the SCM tables use it. An empty string is not a uuid.

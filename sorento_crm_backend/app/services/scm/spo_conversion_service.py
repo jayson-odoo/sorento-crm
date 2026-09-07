@@ -243,6 +243,7 @@ from app.services.numbering_defaults import (
     seed_crm_spo_rule,
 )
 from app.services.numbering_service import NumberingService
+from app.services.rules import shipping_order_rules
 from app.services.scm.demand_class import PROJECT as _DEMAND_CLASS_PROJECT
 from app.services.scm.pool_predicate import ACTIVE_SITE_POOL_SQL
 from app.services.scm.supplier_scope import is_uuid as _is_uuid
@@ -254,8 +255,11 @@ logger = logging.getLogger(__name__)
 #: `scm_spo_history`, `scm_upload`) and from the reorder engine's own draft marker
 #: (`scm_recommendation`) - see the module docstring for every consumer this was checked
 #: against (`po_ordered_v`, `on_order_v`, `purchase_order_service._source_label`,
-#: `outstanding_import_service`'s history guard).
-SOURCE_SYSTEM = "crm_spo"
+#: `outstanding_import_service`'s history guard). Since D25c (security round 6) the SAME
+#: marker also lands on the `spo_allocations` rows this module raises, so the string
+#: itself lives in `shipping_order_rules` beside the other allocation source-system
+#: vocabulary and is re-exported here under the name every existing consumer imports.
+SOURCE_SYSTEM = shipping_order_rules.CRM_SPO_SOURCE_SYSTEM
 
 #: A CRM SPO counts as "ordered" the moment it exists (the module docstring) - so it is
 #: created ACTIVE + OPEN, never a draft a later Confirm step would have to promote. Mirrors
@@ -2251,6 +2255,10 @@ def _write_allocations(
                 warehouse_id=target["warehouse_id"],
                 allocated_quantity=int(round(target["qty"])),
                 po_line_id=target["po_line_id"],
+                # D25c (security round 6): ONE row per PO line, not an Excel
+                # aggregate - stamped so the first-push supersede never
+                # mistakes it for one and severs the PO linkage.
+                source_system=SOURCE_SYSTEM,
             ),
             created_by=actor_user_id,
             forward_match=False,
