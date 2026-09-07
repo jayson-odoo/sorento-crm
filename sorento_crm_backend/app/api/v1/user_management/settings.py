@@ -635,10 +635,15 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     # NULL into a NOT NULL column and the PUT 500s at commit, which reads to the caller as
     # an outage rather than as the clear it asked for. The defaults repeat
     # `SystemSetting`'s own (`app/models/user.py`), which is the source of truth.
+    from app.modules.chatbot.lane_vocabulary import default_unsupported_domains
+
     _CHATBOT_COLUMN_DEFAULTS: dict[str, object] = {
-        # A6 (chatbot-growth-r1, AC-911, migration 488): `spo_allocation` removed -
-        # crm_procurement_spo_allocations_last_receipt_list answers it now.
-        "chatbot_unsupported_domains": ["goods_receive"],
+        # NOT a literal (AC-931): read from the chatbot module's own doorway, which
+        # projects it off `contracts.DOMAIN_SPEC`. This copy is why the doorway exists -
+        # A6 unblocked `spo_allocation` in route.py and in the migration and this third
+        # copy kept refusing it, which no test would have caught. Core may not import
+        # `app/services/chatbot/` (AC-002), so the doorway is the seam.
+        "chatbot_unsupported_domains": default_unsupported_domains(),
         "chatbot_completed_lanes": [],
         "chatbot_stock_denial_enabled": False,
         "chatbot_business_lane_enabled": False,

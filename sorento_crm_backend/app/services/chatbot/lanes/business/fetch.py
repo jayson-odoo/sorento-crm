@@ -50,6 +50,10 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.services.chatbot import jsc
+from app.services.chatbot.contracts import (
+    DOMAIN_CLAIMED_TOOLS,
+    UNDOMAINED_CHATBOT_TOOLS,
+)
 from app.services.chatbot.contracts import is_timeline
 
 logger = logging.getLogger(__name__)
@@ -623,56 +627,18 @@ class ToolNotAllowed(RuntimeError):
 # in the Tool-RAG pool - the in-app AI assistant retrieves them ON PURPOSE and gates each
 # behind a user confirmation and a permission check. The chatbot has no user to confirm
 # with, which is the whole difference.
+#
+# **Where the names live (D9, AC-931).** Still a frozen literal, for every reason above -
+# it is simply no longer a THIRD list. Each name is either claimed by exactly one domain
+# (`contracts.DOMAIN_SPEC[domain].tools`) or named in `contracts.UNDOMAINED_CHATBOT_TOOLS`
+# as claimed by nobody on purpose, and this set is their union. That is what makes "which
+# domain answers from this tool?" a question with an answer, which is what the tool-search
+# reachability guard needs (`search_tool_chunks` narrows on `source_id LIKE '%<domain>%'`
+# over the tool NAME, so a domain whose tools do not contain its own name retrieves
+# nothing). `tests/chatbot/test_tool_pool_is_read_only.py` still pins the whole union
+# against the MCP catalogue's read-only set, unchanged.
 CHATBOT_READ_ONLY_TOOLS: frozenset[str] = frozenset(
-    {
-        "crm_certificates_list",
-        "crm_complaint_analytics",
-        "crm_complaints_list",
-        "crm_forms_management_forms_list",
-        "crm_incoming_stock_by_product",
-        "crm_incoming_stock_list",
-        "crm_incoming_stock_shipments",
-        "crm_inventory_stock_balance_list",
-        "crm_inventory_warehouses_list",
-        # POST, and still a read: the body carries the keyword because it does not fit in
-        # a query string. Same for the two below.
-        "crm_lookup_resolve",
-        "crm_marketing_promotion_attachments_list",
-        "crm_marketing_promotion_products_list",
-        "crm_marketing_promotions_list",
-        "crm_master_brands_list",
-        "crm_master_customers_list",
-        "crm_master_product_attachments_list",
-        "crm_master_product_categories_list",
-        "crm_master_products_list",
-        "crm_master_units_of_measure_list",
-        "crm_order_analytics",
-        "crm_order_management_orders_by_product_list",
-        "crm_order_management_orders_list",
-        "crm_portal_link_get",
-        "crm_procurement_purchase_orders_placed_list",
-        # `..._spo_allocations_...`, not `..._spo_...`, and the extra word is load-bearing
-        # (growth r1, AC-908). `EmbeddingReadService.search_tool_chunks` narrows the tool
-        # pool with `source_id LIKE '%<domain_hint>%'` over `implemented::<tool name>`, so a
-        # `spo_allocation` turn can only ever retrieve a tool whose NAME contains
-        # "spo_allocation". Under the shorter name the domain filter matched nothing and
-        # every "last in for X" ended `not_found` - the same failure mode as the
-        # b5b19cec "purchasing" turn, from the other end. `ToolSpec.domain` in the MCP
-        # catalogue is documentation only; nothing reads it at retrieval time.
-        "crm_procurement_spo_allocations_last_receipt_list",
-        "crm_project_detail",
-        "crm_project_forecast",
-        "crm_project_quotations_list",
-        "crm_projects_list",
-        "crm_resource_attachments_catalogue",
-        "crm_resource_attachments_current_stock_list",
-        "crm_resource_attachments_list",
-        "crm_sla_conversation_event_logs_list",
-        "crm_sla_conversation_tracking_dashboard",
-        "crm_sla_conversation_tracking_list",
-        "crm_system_tool_capabilities_summary",
-        "user_guides_read",
-    }
+    DOMAIN_CLAIMED_TOOLS + UNDOMAINED_CHATBOT_TOOLS
 )
 
 

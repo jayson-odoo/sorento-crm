@@ -258,6 +258,19 @@ class SystemLog(Base):
     )
 
 
+def _default_unsupported_domains() -> list[str]:
+    """`contracts.DEFAULT_UNSUPPORTED_DOMAINS`, via the chatbot module's doorway (AC-931).
+
+    Imported INSIDE the function, not at module scope: this file is imported by nearly
+    everything, and a top-level import would make the chatbot package a hard dependency of
+    the model layer. The doorway (`app/modules/chatbot/lane_vocabulary.py`) is what keeps
+    AC-002's "core never imports the package" true while still leaving one declaration.
+    """
+    from app.modules.chatbot.lane_vocabulary import default_unsupported_domains
+
+    return default_unsupported_domains()
+
+
 class SystemSetting(Base):
     __tablename__ = "system_settings"
     # id as String so UPDATE/WHERE work when DB column is TEXT (avoids "operator does not exist: text = uuid")
@@ -530,11 +543,19 @@ class SystemSetting(Base):
     # a table. `not_supported` is decided against this instead of the two literals the JS
     # carries. A6 (chatbot-growth-r1, AC-911, migration 488) removed `spo_allocation` from
     # the shipped default - `crm_procurement_spo_allocations_last_receipt_list` answers it now.
+    #
+    # AC-931: the Python `default` reads `contracts.DOMAIN_SPEC` through the chatbot
+    # module's doorway (core may not import the package - AC-002), so it cannot drift.
+    # `server_default` stays a DDL STRING because that is what it is - the literal Postgres
+    # writes into the column definition, which must equal what migration 488's
+    # `alter_column` wrote and cannot be computed from a Python value at DDL time. It is
+    # pinned to the derived list by `tests/chatbot/test_domain_spec.py`, which is the same
+    # trade `CHATBOT_READ_ONLY_TOOLS` makes against the MCP catalogue.
     chatbot_unsupported_domains = Column(
         JSONB,
         nullable=False,
         server_default='["goods_receive"]',
-        default=lambda: ["goods_receive"],
+        default=lambda: _default_unsupported_domains(),
     )
     # A7 (chatbot-growth-r1, migration 489): the cross-domain probe ladder, per origin
     # domain. `answer.py::run_crossdomain`'s hard inventory<->incoming pair became the

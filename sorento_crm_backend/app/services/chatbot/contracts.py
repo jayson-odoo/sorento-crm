@@ -12,11 +12,255 @@ with 1,535 captured fixtures.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.services.chatbot import jsc
+
+# --------------------------------------------------------------------------- #
+# DOMAIN_SPEC (D9). One row per domain; five tables are views over it.
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(frozen=True)
+class DomainSpec:
+    """Everything about a domain that is the SAME fact said in several places (D9).
+
+    Evidence, not a hypothetical: adding one domain (`purchase_order`) meant editing six
+    separate literals, and each of the five below is a per-domain fact that was written
+    down independently and could therefore disagree with the others without anything
+    failing. That is H28 - enum drift - with the domain as the enum.
+
+    Deliberately NOT in here, and this is the whole discipline of the table: the tables
+    that carry a per-domain HAZARD rather than a per-domain fact. `AXIS_BY_DOMAIN`,
+    `DOMAIN_SUBJECT_AXIS`, `DOMAIN_SUBJECT_HINT`, `DOMAIN_BLOCKED_HINTS`,
+    `MEMBER_OFFER_FILTER_HINTS` and `DOMAIN_BROADEN_BLOCKED_HINTS` each carry a
+    hand-earned annotation naming the live turn that put a row there (owner rulings K2 to
+    K4, C1, the 2026-08-09 promotion-brand leak). Folding those into a uniform table would
+    lose the reason with the shape, which is the mistake `PRINCIPLES.md` calls "copying a
+    mechanism without the justification that earned it". They stay where they are, in
+    `head/output_exchange.py`, next to their evidence.
+
+    * `intents` - the `intent_hint` values that mean THIS domain. One tuple, flattened into
+      `INTENT_HINTS`; a 1:1 mapping today and the table is what makes that visible.
+    * `bare_entity_type` - owner ruling K rule 4: what a message that is nothing but a code
+      or a name IS under this domain. `None` means the rule does not apply, which is not
+      the same as "product" - see `BARE_ENTITY_TYPE_BY_DOMAIN`'s own note for why a wrong
+      guess is worse than not inheriting.
+    * `switch_words` - the words that SWITCH a conversation into this domain, inverted into
+      `DOMAIN_SWITCH_WORDS` (word -> domain). The inversion is what makes "one word, one
+      domain" a property the guardrail test can check rather than an accident of hand
+      editing.
+    * `tools` - the MCP tools a turn in this domain answers from. Two readers: the
+      chatbot's allow-list (`lanes/business/fetch.CHATBOT_READ_ONLY_TOOLS`), and the
+      reachability guardrail - `EmbeddingReadService.search_tool_chunks` narrows the pool
+      with `source_id LIKE '%<domain>%'` over the tool NAME, so a domain whose tools do not
+      contain its own name can never retrieve one (turn b5b19cec, and A6's own tool before
+      it was renamed).
+    * `escalation_team` - the `SUGGESTED_TEAMS` member a turn in this domain escalates to.
+      Mirrors `output_exchange.derive_routing`'s ladder, which is a REPLAY-GRADED ported
+      node and therefore stays the executable copy; the guardrail test asserts the two
+      agree, which is what stops the pair drifting. `None` where `derive_routing` itself
+      falls through to the null pair.
+    * `default_supported` - False puts the domain in `DEFAULT_UNSUPPORTED_DOMAINS`, i.e.
+      the bot refuses it out of the box. Note that every unsupported domain has an EMPTY
+      `tools` tuple: the refusal is not a policy, it is that nothing can answer.
+    """
+
+    intents: tuple[str, ...]
+    bare_entity_type: str | None
+    switch_words: tuple[str, ...]
+    tools: tuple[str, ...]
+    escalation_team: str | None
+    default_supported: bool = True
+
+
+DOMAIN_SPEC: dict[str, DomainSpec] = {
+    "master_products": DomainSpec(
+        intents=("check_product",),
+        bare_entity_type=None,
+        switch_words=(
+            "catalogue",
+            "catalog",
+            "spec",
+            "specs",
+            "specification",
+            "specifications",
+            "dimension",
+            "dimensions",
+        ),
+        tools=(
+            "crm_master_products_list",
+            "crm_master_brands_list",
+            "crm_master_product_categories_list",
+            "crm_master_units_of_measure_list",
+        ),
+        escalation_team="purchasing",
+    ),
+    "product_attachment": DomainSpec(
+        intents=("check_product_attachment",),
+        bare_entity_type=None,
+        switch_words=(),
+        tools=("crm_master_product_attachments_list", "crm_certificates_list"),
+        # `derive_routing` splits this one on the CERTIFICATE signal
+        # (purchasing_certification when a cert word is present, marketing_product
+        # otherwise), which is a per-turn decision and not a per-domain fact. The
+        # non-cert arm is the one recorded here; the guardrail test asks
+        # `derive_routing` with no cert signal, so the split stays where it is
+        # executable.
+        escalation_team="marketing_product",
+    ),
+    "promotion": DomainSpec(
+        intents=("check_promotion",),
+        bare_entity_type="product",
+        switch_words=("promo", "promos", "promotion", "promotions", "promosi"),
+        tools=(
+            "crm_marketing_promotions_list",
+            "crm_marketing_promotion_attachments_list",
+            "crm_marketing_promotion_products_list",
+        ),
+        escalation_team="marketing_promotion",
+    ),
+    "forms": DomainSpec(
+        intents=("get_forms",),
+        bare_entity_type=None,
+        switch_words=(),
+        tools=("crm_forms_management_forms_list",),
+        escalation_team="marketing_form",
+    ),
+    "inventory": DomainSpec(
+        intents=("check_stock",),
+        bare_entity_type="product",
+        switch_words=("stock", "stocks", "inventory", "stok", "qty", "quantity"),
+        tools=("crm_inventory_stock_balance_list", "crm_inventory_warehouses_list"),
+        escalation_team="warehouse",
+    ),
+    "order": DomainSpec(
+        intents=("check_order",),
+        bare_entity_type="customer",
+        switch_words=("order", "orders", "outstanding", "tempahan"),
+        tools=(
+            "crm_order_management_orders_list",
+            "crm_order_management_orders_by_product_list",
+            "crm_order_analytics",
+            # The customer master is claimed HERE and not by `master_products`: a
+            # customer is only ever looked up to narrow an order question.
+            "crm_master_customers_list",
+        ),
+        escalation_team="customer_service",
+    ),
+    "incoming": DomainSpec(
+        intents=("check_incoming",),
+        bare_entity_type="product",
+        switch_words=(
+            "incoming",
+            "eta",
+            "shipment",
+            "shipments",
+            "arriving",
+            "container",
+            "containers",
+        ),
+        tools=(
+            "crm_incoming_stock_list",
+            "crm_incoming_stock_by_product",
+            "crm_incoming_stock_shipments",
+        ),
+        escalation_team="purchasing",
+    ),
+    "portal_link": DomainSpec(
+        intents=("get_portal_link",),
+        bare_entity_type=None,
+        switch_words=(),
+        tools=("crm_portal_link_get",),
+        escalation_team=None,
+    ),
+    "resource_attachment": DomainSpec(
+        intents=("get_resource_attachment",),
+        bare_entity_type=None,
+        switch_words=(),
+        tools=(
+            "crm_resource_attachments_list",
+            "crm_resource_attachments_catalogue",
+            "crm_resource_attachments_current_stock_list",
+        ),
+        # Unmapped in `derive_routing` ON PURPOSE: the row pairing it with
+        # marketing_product belongs to the unpromoted B-TEAM-1' lane change, and the
+        # live body routes it by the prior-state carry instead.
+        escalation_team=None,
+    ),
+    "goods_receive": DomainSpec(
+        intents=("check_goods_receive",),
+        bare_entity_type=None,
+        switch_words=(),
+        tools=(),
+        escalation_team=None,
+        # Nothing reads GRN data. The refusal is not a policy the owner could relax by
+        # editing `chatbot_unsupported_domains`; it is that there is no tool.
+        default_supported=False,
+    ),
+    "spo_allocation": DomainSpec(
+        intents=("check_spo",),
+        bare_entity_type=None,
+        switch_words=(),
+        # `..._spo_allocations_...` and not `..._spo_...`: `search_tool_chunks` filters
+        # `source_id LIKE '%spo_allocation%'`, so the shorter name was unretrievable
+        # from this domain (growth r1 A6).
+        tools=("crm_procurement_spo_allocations_last_receipt_list",),
+        escalation_team=None,
+    ),
+    "ideate": DomainSpec(
+        intents=("submit_idea",),
+        bare_entity_type=None,
+        switch_words=(),
+        # `crm_ideation_turn` is a WRITE tool and deliberately outside the chatbot's
+        # allow-list; the ideate lane calls it directly rather than retrieving it.
+        tools=(),
+        # No CS team: an idea is captured, never escalated. Its access AGENT
+        # (`ideation`) is `derive_routing`'s own single source of truth.
+        escalation_team=None,
+    ),
+    "purchase_order": DomainSpec(
+        intents=("check_po",),
+        # No row, by owner ruling K rule 4's own trigger: a MEASURED turn where a bare
+        # token under this domain is mis-hinted, and it has answered none yet.
+        bare_entity_type=None,
+        # No switch words yet either. "PO" is two letters that collide with product
+        # codes and with "po" inside other tokens, and `DOMAIN_SWITCH_WORDS` is matched
+        # per WORD against the customer's message with no domain context - a wrong
+        # switch would drag an unrelated turn into this domain. The decisive
+        # `intent_hint` the prompt now teaches is the signal; add a switch word when a
+        # measured turn shows the intent alone is not enough.
+        switch_words=(),
+        tools=("crm_procurement_purchase_orders_placed_list",),
+        escalation_team="purchasing",
+    ),
+}
+
+# Tools the chatbot MAY call that no domain answers FROM. Two kinds, and neither is an
+# oversight: reads for surfaces the chatbot does not route to by domain at all (projects,
+# complaints, SLA), and cross-cutting helpers a lane reaches for by name rather than by
+# cosine search (`crm_lookup_resolve`, `user_guides_read`,
+# `crm_system_tool_capabilities_summary`). Named rather than left implicit so
+# `CHATBOT_READ_ONLY_TOOLS` below is the exact union of "claimed by exactly one domain"
+# and "claimed by nobody, on purpose" - which is what makes the allow-list a derived view
+# instead of a third list to keep in step.
+UNDOMAINED_CHATBOT_TOOLS: tuple[str, ...] = (
+    "crm_complaint_analytics",
+    "crm_complaints_list",
+    "crm_lookup_resolve",
+    "crm_project_detail",
+    "crm_project_forecast",
+    "crm_project_quotations_list",
+    "crm_projects_list",
+    "crm_sla_conversation_event_logs_list",
+    "crm_sla_conversation_tracking_dashboard",
+    "crm_sla_conversation_tracking_list",
+    "crm_system_tool_capabilities_summary",
+    "user_guides_read",
+)
 
 # --------------------------------------------------------------------------- #
 # Parser vocabularies (AC-109). Values are the parser prompt's own OUTPUT block.
@@ -31,44 +275,15 @@ MESSAGE_TYPES = (
 )
 MessageType = Literal[MESSAGE_TYPES]  # type: ignore[valid-type]
 
-INTENT_HINTS = (
-    "check_stock",
-    "check_product",
-    "check_incoming",
-    "check_promotion",
-    "check_order",
-    "get_forms",
-    "check_product_attachment",
-    "get_resource_attachment",
-    "get_portal_link",
-    "check_goods_receive",
-    "check_spo",
-    "submit_idea",
-    # Growth r1 A5 (AC-907): what WE ordered from a supplier. Its own intent rather than a
-    # sense of `check_order`, because the two answer from different tables and route to
-    # different teams - a customer's DO is `customer_service`, a PO is `purchasing`.
-    "check_po",
+# Every declared intent, flattened out of `DOMAIN_SPEC` (D9). One tuple, and the mapping
+# from an intent back to its domain is now a property of the table rather than a fact a
+# reader had to know: `check_po` means `purchase_order` because that is the row it is on.
+INTENT_HINTS: tuple[str, ...] = tuple(
+    intent for spec in DOMAIN_SPEC.values() for intent in spec.intents
 )
 IntentHint = Literal[INTENT_HINTS]  # type: ignore[valid-type]
 
-DOMAIN_HINTS = (
-    "master_products",
-    "product_attachment",
-    "promotion",
-    "forms",
-    "inventory",
-    "order",
-    "incoming",
-    "portal_link",
-    "resource_attachment",
-    "goods_receive",
-    "spo_allocation",
-    "ideate",
-    # Growth r1 A5 (AC-907). Named here so `coerce_domain_hint` stops nulling it (the
-    # b5b19cec class) and so `search_tool_chunks`' `source_id LIKE '%<domain>%'` filter can
-    # retrieve `crm_procurement_purchase_orders_placed_list`, whose name contains it.
-    "purchase_order",
-)
+DOMAIN_HINTS: tuple[str, ...] = tuple(DOMAIN_SPEC)
 DomainHint = Literal[DOMAIN_HINTS]  # type: ignore[valid-type]
 
 
@@ -95,6 +310,47 @@ def coerce_domain_hint(value: Any) -> Any:
     place: every reader downstream, `select_tool` included, is then trusted as-is.
     """
     return value if value in DOMAIN_HINTS else None
+
+# --------------------------------------------------------------------------- #
+# The views over DOMAIN_SPEC (D9, AC-931). Each of these was an independent literal
+# somewhere else in the package; the literal is gone and this is the only copy.
+# --------------------------------------------------------------------------- #
+
+#: Owner ruling K rule 4: what a BARE entity IS under a carried domain. A domain with no
+#: `bare_entity_type` is ABSENT here, not present with a null - the readers test
+#: membership, and "the rule does not apply" is a different answer from "it is a product".
+#: Was a literal in `head/output_exchange.py`.
+BARE_ENTITY_TYPE_BY_DOMAIN: dict[str, str] = {
+    domain: spec.bare_entity_type
+    for domain, spec in DOMAIN_SPEC.items()
+    if spec.bare_entity_type is not None
+}
+
+#: word -> domain, inverted from each row's `switch_words`. The inversion is the point: a
+#: word claimed by two domains is now impossible to write, where the hand-maintained dict
+#: would simply have kept the last one. Was a literal in `head/output_exchange.py`.
+DOMAIN_SWITCH_WORDS: dict[str, str] = {
+    word: domain for domain, spec in DOMAIN_SPEC.items() for word in spec.switch_words
+}
+
+#: What `route.decide`'s `not_supported` arm tests when no configured list is supplied
+#: (AC-304). Was a literal in `head/route.py`, and repeated in TWO core-side places that
+#: cannot import this package (AC-002): `SystemSetting.chatbot_unsupported_domains`'s own
+#: default and `settings.py`'s null-reset table. Those two now read it through
+#: `app/modules/chatbot/lane_vocabulary.py`, the module's existing doorway for exactly this
+#: problem, and the column's `server_default` stays a DDL literal (it has to be) pinned by
+#: `tests/chatbot/test_domain_spec.py`.
+DEFAULT_UNSUPPORTED_DOMAINS: tuple[str, ...] = tuple(
+    domain for domain, spec in DOMAIN_SPEC.items() if not spec.default_supported
+)
+
+#: Every tool claimed by a domain. `lanes/business/fetch.CHATBOT_READ_ONLY_TOOLS` is this
+#: plus `UNDOMAINED_CHATBOT_TOOLS`; see that constant for why the allow-list is derived
+#: rather than a third list.
+DOMAIN_CLAIMED_TOOLS: tuple[str, ...] = tuple(
+    tool for spec in DOMAIN_SPEC.values() for tool in spec.tools
+)
+
 
 SUGGESTED_TEAMS = (
     "purchasing",

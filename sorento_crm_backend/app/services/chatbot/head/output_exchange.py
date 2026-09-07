@@ -31,7 +31,9 @@ from typing import Any
 
 from app.services.chatbot import jsc, topic
 from app.services.chatbot.contracts import (
+    BARE_ENTITY_TYPE_BY_DOMAIN,
     DEFAULT_SUGGESTED_TEAM,
+    DOMAIN_SWITCH_WORDS,
     ENTITY_HINTS,
     INTENT_HINTS,
     coerce_domain_hint,
@@ -290,38 +292,10 @@ MENU_LABELS: dict[str, dict[str, str]] = {
 NON_DECISIVE_INTENTS: frozenset[str] = frozenset()
 DECISIVE_INTENTS = frozenset(INTENT_HINTS) - NON_DECISIVE_INTENTS
 
-DOMAIN_SWITCH_WORDS: dict[str, str] = {
-    "promo": "promotion",
-    "promos": "promotion",
-    "promotion": "promotion",
-    "promotions": "promotion",
-    "promosi": "promotion",
-    "stock": "inventory",
-    "stocks": "inventory",
-    "inventory": "inventory",
-    "stok": "inventory",
-    "qty": "inventory",
-    "quantity": "inventory",
-    "order": "order",
-    "orders": "order",
-    "outstanding": "order",
-    "tempahan": "order",
-    "incoming": "incoming",
-    "eta": "incoming",
-    "shipment": "incoming",
-    "shipments": "incoming",
-    "arriving": "incoming",
-    "container": "incoming",
-    "containers": "incoming",
-    "catalogue": "master_products",
-    "catalog": "master_products",
-    "spec": "master_products",
-    "specs": "master_products",
-    "specification": "master_products",
-    "specifications": "master_products",
-    "dimension": "master_products",
-    "dimensions": "master_products",
-}
+# `DOMAIN_SWITCH_WORDS` (word -> domain) now lives in `contracts.py`, INVERTED out of
+# `DOMAIN_SPEC[domain].switch_words` (D9, AC-931). Imported at the top of this module rather
+# than re-declared; the name and the shape every reader here sees are unchanged.
+
 
 SWITCH_FILLER = frozenset(
     {
@@ -418,17 +392,10 @@ MEMBER_OFFER_FILTER_HINTS: dict[str, frozenset[str]] = {
 # domain with no bare-entity type would inherit and then have the blocklist drop the
 # entity entirely, which is worse than not inheriting. The trigger for a fifth row is a
 # measured turn where a bare token under that domain is mis-hinted - add the row then.
-BARE_ENTITY_TYPE_BY_DOMAIN: dict[str, str] = {
-    "inventory": "product",
-    "incoming": "product",
-    "promotion": "product",
-    "order": "customer",
-    # NO `purchase_order` row (growth r1 A5), by the rule this comment already states: the
-    # trigger for a fifth row is a MEASURED turn where a bare token under that domain is
-    # mis-hinted, and the domain has answered no live turn yet. A bare code under a carried
-    # `purchase_order` therefore keeps the model's own hint, and the resolver decides - which
-    # is the pre-ruling behaviour, not a regression.
-}
+#
+# `BARE_ENTITY_TYPE_BY_DOMAIN` itself now lives in `contracts.py`, projected off
+# `DOMAIN_SPEC[domain].bare_entity_type` (D9, AC-931), and is imported at the top of this
+# module. The ruling's evidence stays here, with the readers it constrains.
 
 # Broaden-only blocked: hints that NARROW the result and therefore contradict an
 # "all / everything" request. Brand/access stay - they are context, not a subset filter.

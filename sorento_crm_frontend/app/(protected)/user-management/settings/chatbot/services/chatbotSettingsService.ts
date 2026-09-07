@@ -47,13 +47,27 @@ export interface ChatbotSettings {
   chatbot_unsupported_domains: string[];
 }
 
-/** What a settings row that predates these columns reads as. */
+/**
+ * What a settings row that predates these columns reads as.
+ *
+ * `chatbot_unsupported_domains` is deliberately EMPTY here rather than a copy of the
+ * backend's shipped default (AC-931). It used to read `['goods_receive', 'spo_allocation']`
+ * and went stale the day A6 unblocked `spo_allocation`, which is the fourth copy of one
+ * default drifting - the backend now derives it once, from `DOMAIN_SPEC`, and a mirror
+ * here could only ever be a fifth.
+ *
+ * Nothing is lost by dropping it. The column is NOT NULL with its own server default, and
+ * `GET /settings` emits the whole `settings` object as `null` only when there is no
+ * settings row at all - the one case this fallback can fire. In that state
+ * `POST /settings/general` answers 404 ("Settings not found"), so the screen cannot save
+ * an empty list over anything either.
+ */
 const FALLBACKS: ChatbotSettings = {
   chatbot_completed_lanes: [],
   chatbot_stock_denial_enabled: false,
   chatbot_business_lane_enabled: false,
   chatbot_ordering_enabled: false,
-  chatbot_unsupported_domains: ['goods_receive', 'spo_allocation'],
+  chatbot_unsupported_domains: [],
 };
 
 function pickChatbotSettings(row: Record<string, unknown> | null | undefined): ChatbotSettings {
