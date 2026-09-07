@@ -496,6 +496,15 @@ def _drop_dead_carried_entities(focus: dict[str, Any], turn: Turn, out: Outputs)
     Inert on the whole captured corpus by construction: those sessions carry no `focus`
     key, so `from_session` projects one FROM these very entities and every slot is alive.
     """
+    if out.drop_carried_entities:
+        # `reset_on_topic` already owns this turn's carried entities, and it cleared every
+        # slot two rules ago - so every carried entity now looks like one whose slot aged
+        # out. Sweeping them here would label the customer's own "something else" as
+        # DECAY (`entities_dropped_on_decay`, rule `reuse_alive`) and leave nothing for
+        # `entities_dropped_on_topic_change` to stamp, so the trace would say the bot
+        # forgot rather than that the customer moved on - and the two have different fixes
+        # when an operator reads them.
+        return
     entities = jsc.array(turn.o.get("entities"))
     if not entities:
         return

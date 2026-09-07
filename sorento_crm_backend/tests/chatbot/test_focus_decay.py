@@ -333,11 +333,12 @@ class TestTheTurnNumberIsTheContactsOwn:
         attempt: int = 1,
         run: str | None = None,
         seconds: int = 0,
+        message_id: str | None = None,
     ) -> ChatbotTurn:
         db = session_factory()
         row = ChatbotTurn(
             contact_respond_id=CONTACT_ID,
-            message_id=None,
+            message_id=message_id,
             ingress="console",
             envelope={},
             is_test=is_test,
@@ -374,7 +375,7 @@ class TestTheTurnNumberIsTheContactsOwn:
 
     def test_rows_written_in_one_transaction_still_order(self, session_factory) -> None:
         """`created_at` is `now()` and every row in one transaction shares it, which is
-        why the order is `(started_at, id)`."""
+        why the anchor is `started_at`."""
         rows = [self._seed(session_factory, seconds=i) for i in range(1, 4)]
         db = session_factory()
 
@@ -382,17 +383,69 @@ class TestTheTurnNumberIsTheContactsOwn:
             engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, row=r) for r in rows
         ] == [1, 2, 3]
 
+    def test_the_id_breaks_a_tie_at_identical_started_at(self, session_factory) -> None:
+        """The other half of the ordering, and the reason it is a ROW comparison.
+
+        `started_at` comes from the Python clock, so two rows written in the same
+        microsecond are possible - and with the anchor alone they would both count the
+        same predecessors and share a number. The id is the total order underneath it, so
+        the three rows below take 1, 2, 3 in id order however they were seeded.
+        """
+        rows = [self._seed(session_factory, seconds=7) for _ in range(3)]
+        assert len({r.started_at for r in rows}) == 1, "the tie is the point of this test"
+        db = session_factory()
+
+        by_id = sorted(rows, key=lambda r: str(r.id))
+        assert [
+            engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, row=r) for r in by_id
+        ] == [1, 2, 3]
+
     def test_a_retry_row_never_ages_the_turns_after_it(self, session_factory) -> None:
         """A retry is the SAME customer message run again (`_insert_turn` writes attempt
         N+1 for it), so counting it would age the conversation by one every time an
         operator pressed Retry."""
-        self._seed(session_factory, seconds=1)
-        self._seed(session_factory, attempt=2, seconds=2)
-        self._seed(session_factory, attempt=3, seconds=3)
-        later = self._seed(session_factory, seconds=4)
+        self._seed(session_factory, seconds=1, message_id="m-1")
+        self._seed(session_factory, attempt=2, seconds=2, message_id="m-1")
+        self._seed(session_factory, attempt=3, seconds=3, message_id="m-1")
+        later = self._seed(session_factory, seconds=4, message_id="m-2")
         db = session_factory()
 
         assert engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, row=later) == 2
+
+    def test_a_retry_reads_the_number_its_original_read(self, session_factory) -> None:
+        """It is re-running ONE customer message, not moving the conversation on.
+
+        `attempt == 1` alone was not enough: the original is an attempt-1 row for the same
+        message and it sorts before the retry, so it counted itself into the retry's number
+        (measured: original 1, retry 2) and the retried turn read a memory the original
+        never saw.
+        """
+        original = self._seed(session_factory, seconds=1, message_id="m-1")
+        retry = self._seed(session_factory, attempt=2, seconds=2, message_id="m-1")
+        third = self._seed(session_factory, attempt=3, seconds=3, message_id="m-1")
+        db = session_factory()
+
+        assert engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, row=original) == 1
+        assert engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, row=retry) == 1
+        assert engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, row=third) == 1
+
+    def test_a_retry_still_counts_every_OTHER_message(self, session_factory) -> None:
+        self._seed(session_factory, seconds=1, message_id="m-1")
+        self._seed(session_factory, seconds=2, message_id="m-2")
+        retry = self._seed(session_factory, attempt=2, seconds=3, message_id="m-2")
+        db = session_factory()
+
+        assert engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, row=retry) == 2
+
+    def test_a_console_turn_with_no_message_id_is_still_counted(self, session_factory) -> None:
+        """`NULL != 'x'` is NULL in SQL, so a naive exclusion would have dropped every
+        preceding console turn out of the count."""
+        self._seed(session_factory, seconds=1, message_id=None)
+        self._seed(session_factory, seconds=2, message_id=None)
+        mine = self._seed(session_factory, seconds=3, message_id="m-9")
+        db = session_factory()
+
+        assert engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, row=mine) == 3
 
     def test_a_dry_run_reads_the_counter_a_live_turn_would(self, session_factory) -> None:
         """AC-206: the two session patches have to be byte-equal, and `set_at_turn` is in

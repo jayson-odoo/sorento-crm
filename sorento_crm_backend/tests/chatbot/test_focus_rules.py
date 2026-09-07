@@ -355,6 +355,58 @@ class TestATopicResetActuallySticks:
         assert turn.o["domain_hint"] == "promotion"
         assert out.topic_reset is False
 
+    def test_a_topic_change_drop_is_never_relabelled_as_decay(self) -> None:
+        """The two drops have different causes and different fixes when an operator reads
+        the trace, so they must not be confused.
+
+        `reset_on_topic` clears every slot, which leaves every carried entity looking like
+        one whose slot aged out - so `_drop_dead_carried_entities` swept them first, wrote
+        `entities_dropped_on_decay` with `rule: reuse_alive`, and left the deferred
+        topic-change drop with nothing to stamp. The trace then said the bot had forgotten
+        the scope rather than that the customer had moved off it.
+        """
+        carried = _entity("M2609-0086", "customer_order", current_message=False)
+        stale_product = _entity("SRTWC8517", current_message=False)
+        o = {
+            "entities": [_entity("SRTKS6091"), carried, stale_product],
+            "domain_hint": "promotion",
+            "message_type": "business_query",
+            "entity_op_applied": "reuse",
+        }
+        turn = _turn(
+            o,
+            prev={"domain_hint": "order"},
+            explicit=True,
+            is_carried=lambda e: e.get("current_message") is not True,
+        )
+
+        out = fr.apply(self._focus(), turn)
+        # `_post_process` performs the deferred half after the domain blocklist; this is
+        # the same two steps in the same order.
+        assert out.drop_carried_entities is True
+        assert "entities_dropped_on_decay" not in o
+        fr.drop_carried_entities_on_topic_change(o, is_carried=turn.is_carried)
+
+        assert o["entities_dropped_on_topic_change"] == [
+            "customer_order:M2609-0086",
+            "product:SRTWC8517",
+        ]
+        assert "entities_dropped_on_decay" not in o
+        assert [e["raw"] for e in o["entities"]] == ["SRTKS6091"]
+        assert not [e for e in out.entries if e["rule"] == "reuse_alive"]
+
+    def test_a_plain_decayed_slot_is_still_labelled_decay(self) -> None:
+        """The other side of the same line: with no reset, the sweep is the right label."""
+        o = {
+            "entities": [_entity("SRTWC8517", current_message=False)],
+            "entity_op_applied": "reuse",
+        }
+
+        fr.apply({}, _turn(o))
+
+        assert o["entities_dropped_on_decay"] == ["product:SRTWC8517"]
+        assert "entities_dropped_on_topic_change" not in o
+
     def test_the_entityless_carry_stands_down_on_a_reset(self) -> None:
         """It runs inside the entity executor, before `reset_on_topic` is evaluated, so it
         takes the signal directly rather than carrying a domain about to be cleared."""

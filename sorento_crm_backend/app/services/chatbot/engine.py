@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterator, Mapping
 
-from sqlalchemy import func as sa_func, or_, tuple_
+from sqlalchemy import func as sa_func, or_, true as sa_true, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -441,10 +441,17 @@ def _turn_no(db: Session, *, contact_respond_id: str, row: ChatbotTurn) -> int:
     the Python clock in `_insert_turn`, and the id breaks a tie that is still possible at
     microsecond resolution. `coalesce` covers a row written before `started_at` was set.
 
-    **Attempt 1 only.** A retry is the SAME turn run again (`_insert_turn` writes attempt
-    N+1 for the same message), so counting it would age the conversation by one every time
-    an operator pressed Retry, and the retried turn would read a memory the original never
-    saw.
+    **Attempt 1 only, and never this message's own earlier attempt.** A retry is the SAME
+    turn run again (`_insert_turn` writes attempt N+1 for the same message), so it has to
+    read the number its ORIGINAL read - it is re-running one customer message, not moving
+    the conversation on. Two filters do that, and both are needed: `attempt == 1` stops a
+    retry row ageing every turn after it, and excluding this row's own `message_id` stops
+    the original ageing the retry (measured: original 1, retry 2, so the retried turn read
+    a memory the original never saw).
+
+    The message-id exclusion is written as "null, or a different id" rather than `!=`,
+    because `NULL != 'x'` is NULL in SQL and a preceding CONSOLE turn - which legitimately
+    has no respond message behind it - would have dropped out of the count.
 
     **Live rows, plus this console run's own.** A dry run must read the counter a LIVE turn
     would read, or AC-206's byte equality fails the moment a contact has any history at
@@ -461,11 +468,17 @@ def _turn_no(db: Session, *, contact_respond_id: str, row: ChatbotTurn) -> int:
     world = ChatbotTurn.is_test.is_(False)
     if row.test_run_id:
         world = or_(world, ChatbotTurn.test_run_id == row.test_run_id)
+    not_this_message = (
+        or_(ChatbotTurn.message_id.is_(None), ChatbotTurn.message_id != row.message_id)
+        if row.message_id is not None
+        else sa_true()
+    )
     return 1 + int(
         db.query(sa_func.count(ChatbotTurn.id))
         .filter(
             ChatbotTurn.contact_respond_id == contact_respond_id,
             ChatbotTurn.attempt == 1,
+            not_this_message,
             world,
             tuple_(anchor, ChatbotTurn.id) < tuple_(*mine),
         )

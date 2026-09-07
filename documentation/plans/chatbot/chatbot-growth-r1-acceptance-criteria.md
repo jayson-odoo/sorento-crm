@@ -77,7 +77,11 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
   the reply asks which product. The same at N+2 carries. Evidence: two multi-turn worlds.
 - AC-941 "that one" (anaphora) with the product slot dead asks which product; the trace holds
   a `decay` line naming the slot, age in turns and reason. No wall-clock TTL exists.
-  Evidence: pytest.
+  **DEVIATION 3: there is no wall clock in the persisted state at all** - the plan calls
+  `set_at` "kept for the trace only", and persisting one would break AC-206 (a dry run's
+  `session_patch` is byte-equal to what a live run persists). `trace.TurnTrace.add` stamps
+  every `decay` and `focus` entry with `at`. Evidence: pytest plus the world
+  `owner-anaphora-past-the-ttl-asks-which-product`.
 - AC-942 "incoming?" after a stock answer keeps the products and switches the domain;
   "what about Y" after that replaces the product and keeps `incoming`. Evidence: world.
 - AC-943 "别的" / "another one" clears product, customer, date and domain, keeps tier and
@@ -86,7 +90,7 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
   the product list would resolve differently today; "2" again after the pick, with no open
   question alive, is treated as a new message, not a pick. Evidence: world
   `owner-pick-then-next-pick`.
-  **Amended 7 Sep 2026 (review deviation 5, owner accepted): a pick does not consume the
+  **DEVIATION 5 (7 Sep 2026 review, owner accepted): a pick does not consume the
   roster.** Owner ruling K rule 1, shipped a month earlier from a production transcript,
   says an offer the customer can still SEE survives being answered - "1", then "2", then
   "3" all resolve against the same list. So the second clause holds only once the question
@@ -107,8 +111,14 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
   replay assertion.
 - AC-950 `output_exchange.py` no longer contains rules K2, K4, the switch-word override,
   `_query_brands_carried`, `_tier_carried`, or the date / attribute / `is_active` carry arms;
-  each has a named function in `dialogue/focus.py` with its own test. Evidence: grep in
-  review + test names.
+  each has a named function in `dialogue/focus.py` with its own test.
+  **DEVIATION 4: `is_active` gets no focus SLOT** (the carry moved, the slot did not). The
+  plan names nine axes and this is not one of them: "discontinued" is a property of the
+  records being asked about rather than of what the conversation is about, so `reuse_alive`
+  carries it from the previous state exactly as the deleted executor arm did. The trigger
+  for giving it a slot is a measured turn where it should have decayed and did not.
+  Evidence: grep in review (`tests/chatbot/test_focus_rules.py::
+  TestTheRulesAreGoneFromOutputExchange`) + one test class per rule.
 - AC-951 `SessionVars` still carries `pending`, `dym_offer`, `selection_context` and
   `picker_*`, so every existing world grades. **Amended 7 Sep 2026 during slice B4: the
   mirror runs the other way.** `open_question` is DERIVED from those keys
@@ -117,10 +127,11 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
   `_offer_carry` and `_picker_carry` onto one TTL - a behaviour change on the lane that
   already changes reply semantics, against a corpus that cannot grade it until it is
   re-derived. The criterion's purpose is unchanged and met: every existing world grades.
-  Inverting the mirror is the named follow-up. Evidence: `test_worlds.py` green (87 graded,
-  126 skipped, identical to before the slice) plus the three field-scoped divergences
-  (`pending`, `focus`, `open_question`) registered with their reason in
-  `tests/chatbot/divergences.py`.
+  Inverting the mirror is the named follow-up. This is DEVIATION 1 of the five listed in
+  the plan. Evidence: `test_worlds.py` green - 99 graded (87 derived from captures, which
+  is the count before this lane, plus 12 authored owner worlds) and 126 skipped - plus the
+  three field-scoped divergences (`pending`, `focus`, `open_question`) registered with
+  their reason in `tests/chatbot/divergences.py`.
 - AC-952 Parser v3 is a new registry version, promoted only after a 3 to 7 day shadow window
   with branch parity 99%+ and reply parity 97%+ on turns with no open question. Evidence:
   shadow report attached to the PR.
@@ -151,8 +162,13 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
   open_question, focus, tool, crossdomain, reveals and session diff; envelope truncated at
   8 KB with a truncation marker. Evidence: pytest on a real turn through the engine.
 - AC-971 Every focus rule that fires writes one `focus` trace entry naming the rule, slot,
-  before and after; every decayed slot writes one `decay` entry. Evidence: pytest asserting
-  the entries for the AC-940 to AC-946 worlds.
+  before and after; every decayed slot writes one `decay` entry.
+  **DEVIATION 2: the `answered` step is a trace ENTRY, not a ninth `TURN_STAGE`.** That
+  vocabulary is closed, the timeline renders it, `chatbot.turns.stage` stores it and 1,875
+  fixtures carry it; this plan's own slice-D shape lists `open_question` among the entries.
+  The step runs in `head/output_exchange` immediately before the focus rules, because a
+  pick IS this turn's scope. Evidence: pytest asserting the entries for the AC-940 to
+  AC-946 worlds.
 - AC-972 The chat-history list opens a `TurnDetailDrawer` per row showing the sections in
   the order above, collapsible, wide JSON scrolling inside its own container, no horizontal
   page scroll at 375px. Evidence: vitest + agent-browser run.

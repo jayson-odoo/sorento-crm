@@ -213,7 +213,12 @@ today, then fall back to the alive `open_question`.
 
 `SessionVars` keeps every existing key for one release so the world corpus still grades.
 
-**Amended 7 Sep 2026, during slice B4, and the direction of the mirror is INVERTED.** The
+### Deviations from this plan, as built
+
+Five, each numbered so the list can be checked off in review. Every one is also recorded
+against the acceptance criterion it moves, in `chatbot-growth-r1-acceptance-criteria.md`.
+
+**DEVIATION 1 (slice B4): the direction of the mirror is INVERTED.** The
 plan above asked for `pending` / `dym_offer` / `selection_context` / `picker_*` to be
 derived FROM `open_question`. They are not: `open_question` is derived from THEM, by
 `dialogue/open_question.from_state`, for this release.
@@ -234,19 +239,25 @@ precedence, issue #708's `payload.keep`, and the trace entry. AC-951's stated pu
 `_offer_carry`, the eight-rule ladder and `pending.derive` with it, is the follow-up, and
 its precondition is the re-derived corpus this plan already names.
 
-**The `answered` step is a trace ENTRY, not a ninth stage.** `TURN_STAGES` is a closed
+**DEVIATION 2: the `answered` step is a trace ENTRY, not a ninth stage.** `TURN_STAGES` is a closed
 vocabulary of eight that the timeline renders, `chatbot.turns.stage` stores and 1,875
 fixtures carry. This plan's own slice-D shape lists `open_question: {before, answer, after,
 handler, outcome}` among the ENTRIES, so the entry is what shipped; the step itself runs in
 `head/output_exchange` immediately before the focus rules, because a pick IS this turn's
 scope and the focus rules must see it as such.
 
-**`FocusSlot` has no `set_at`.** This plan describes it as "kept for the trace only", and
+**DEVIATION 3: `FocusSlot` has no `set_at`.** This plan describes it as "kept for the trace only", and
 persisting a wall clock would break AC-206 (a dry run's `session_patch` is byte-equal to
 what a live run persists). The trace carries it: every `focus` and `decay` entry is stamped
 `at` by `trace.TurnTrace.add`.
 
-**Deviation 5, and it is a BEHAVIOUR reversal the owner accepted (review, 7 Sep 2026).**
+**DEVIATION 4: `is_active` gets no focus slot.** The nine axes above do not include it, and it is not one
+of them: "discontinued" is a property of the records being asked about rather than of what
+the conversation is about. `reuse_alive` carries it from the previous state, exactly as the
+deleted executor arm did. The trigger for giving it a slot is a measured turn where it
+should have decayed on its own and did not.
+
+**DEVIATION 5, a BEHAVIOUR reversal the owner accepted (review, 7 Sep 2026).**
 AC-944's second clause reads: "'2' again after the pick, with no open question alive, is
 treated as a new message, not a pick". It is not, and the reason is owner ruling K rule 1,
 which this plan's predecessor shipped a month earlier: an offer roster the customer can
@@ -260,12 +271,6 @@ made from a production transcript where the second pick had nothing to resolve a
 The clause is therefore read as "once the question is no longer alive", which is exactly
 what `owner-pick-then-next-pick` and the decay worlds grade. The owner accepted this in the
 7 Sep review.
-
-**`is_active` gets no focus slot.** The nine axes above do not include it, and it is not one
-of them: "discontinued" is a property of the records being asked about rather than of what
-the conversation is about. `reuse_alive` carries it from the previous state, exactly as the
-deleted executor arm did. The trigger for giving it a slot is a measured turn where it
-should have decayed on its own and did not.
 
 ### Slice C - Field reveal per contact
 
@@ -336,6 +341,7 @@ container. No feature explanation text on screen.
     cases. This is the lane that changes reply semantics; a fail here blocks promotion of
     parser v3 regardless of the shadow numbers.
   - trace UI lane: no console pass; agent-browser evidence run instead.
+
 
 ## Lanes and PRs
 
