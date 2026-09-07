@@ -1031,33 +1031,64 @@ def _crossdomain_rung_rows(
         rows = by_code.get(code.upper(), [])
         if not rows:
             continue
-        out[code] = [_crossdomain_rung_line(it, field_by_key) for it in rows]
+        out[code] = [_crossdomain_rung_row(it, field_by_key) for it in rows]
     return out
 
 
-def _crossdomain_rung_line(it: Any, field_by_key: Any) -> tuple[str, str]:
-    """One rung row as `(line, kind)`.
-
-    PO line: "{qty} pcs on PO {po_number} dated {po_date}, expected {expected_date}" - the
-    PO DOCUMENT date (owner ruling, 8 Sep 2026; `po_date` = `purchase_orders.issue_date`),
-    then the arrival estimate. Unshipped SPO allocation (item 5): "{qty} pcs on order from
-    supplier (SPO {spo_number} dated {issue_date}), expected {expected_date}". Every part
-    is omitted when its value is null rather than printed as "-".
-    """
+def _crossdomain_rung_row(it: Any, field_by_key: Any) -> dict[str, Any]:
+    """One rung row as `{kind, number, po_date, expected, qty}` - `kind` "po" or "spo"
+    (a row with no Source field is a PO row, today's shape). Rendering is
+    `_crossdomain_rung_text`, which groups the rows by document."""
     kind = "spo" if jsc.js_string(field_by_key(it, "kind") or "").strip().upper() == "SPO" else "po"
-    qty = f"{_fmt_xd_value(field_by_key(it, 'outstanding_qty'))} pcs"
-    number = field_by_key(it, "po_number")
-    po_date = field_by_key(it, "po_date")
-    expected = field_by_key(it, "expected_date")
-    dated = f" dated {_fmt_xd_value(po_date)}" if po_date not in (None, "") else ""
-    if kind == "spo":
-        doc = f" (SPO {_fmt_xd_value(number)}{dated})" if number not in (None, "") else dated
-        line = f"{qty} on order from supplier{doc}"
-    else:
-        line = qty + (f" on PO {_fmt_xd_value(number)}" if number not in (None, "") else "") + dated
-    if expected not in (None, ""):
-        line += f", expected {_fmt_xd_value(expected)}"
-    return line, kind
+    return {
+        "kind": kind,
+        "number": field_by_key(it, "po_number"),
+        "po_date": field_by_key(it, "po_date"),
+        "expected": field_by_key(it, "expected_date"),
+        "qty": field_by_key(it, "outstanding_qty"),
+    }
+
+
+def _crossdomain_rung_text(rows: list[dict[str, Any]]) -> str:
+    """D2 (owner console pass, 8 Sep 2026): one heading per DOCUMENT, then its lines -
+    seven lines each repeating "on PO 202607-S0054 dated 2026-07-17" was the defect.
+
+        PO 202607-S0054 dated 2026-07-17:
+        42 pcs expected 2026-07-13
+        12 pcs expected 2026-07-31
+        SPO SPO-2026/09-0001 dated 2026-08-20 (on order from supplier):
+        7 pcs expected 2026-10-05
+
+    Grouped by (kind, number) in first-seen order (the tool's own sort); the PO document
+    date (`po_date` = `purchase_orders.issue_date`, or the SPO's issue date) on the
+    heading, the arrival estimate on the line. Every part is omitted when null.
+    """
+    order: list[tuple[str, Any]] = []
+    by_doc: dict[tuple[str, Any], list[dict[str, Any]]] = {}
+    for row in rows:
+        key = (row.get("kind") or "po", row.get("number"))
+        if key not in by_doc:
+            by_doc[key] = []
+            order.append(key)
+        by_doc[key].append(row)
+    out: list[str] = []
+    for kind, number in order:
+        docs = by_doc[(kind, number)]
+        po_date = next((r.get("po_date") for r in docs if r.get("po_date") not in (None, "")), None)
+        head = "SPO" if kind == "spo" else "PO"
+        if number not in (None, ""):
+            head += f" {_fmt_xd_value(number)}"
+        if po_date is not None:
+            head += f" dated {_fmt_xd_value(po_date)}"
+        if kind == "spo":
+            head += " (on order from supplier)"
+        out.append(head + ":")
+        for r in docs:
+            line = f"{_fmt_xd_value(r.get('qty'))} pcs"
+            if r.get("expected") not in (None, ""):
+                line += f" expected {_fmt_xd_value(r.get('expected'))}"
+            out.append(line)
+    return "\n".join(out)
 
 
 def _apply_crossdomain_rung(
@@ -1129,14 +1160,14 @@ def _apply_crossdomain_rung(
         still_nothing = [c for c in nothing_codes if c not in lines_by_code]
         parts: list[str] = []
         found_rows = [row for c in found for row in lines_by_code[c]]
-        po_lines = "\n".join(line for line, _kind in found_rows)
-        # The header names what the rows ARE: "a PO is placed" when any row is a PO line,
-        # "stock is on order from the supplier" when every row is an unshipped SPO
-        # allocation (item 5).
+        po_lines = _crossdomain_rung_text(found_rows)
+        # The header names what the rows ARE: "PO is placed" (D2: no article, the owner's
+        # wording) when any row is a PO line, "stock is on order from the supplier" when
+        # every row is an unshipped SPO allocation (item 5).
         header = (
             "but stock is on order from the supplier"
-            if found_rows and all(kind == "spo" for _line, kind in found_rows)
-            else "but a PO is placed"
+            if found_rows and all(r.get("kind") == "spo" for r in found_rows)
+            else "but PO is placed"
         )
         parts.append(f"No stock and no incoming for {', '.join(found)}, {header}:\n{po_lines}")
         if still_nothing:

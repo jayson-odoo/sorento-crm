@@ -306,7 +306,7 @@ class TestBlocker2TheLadderRespectsCanStateAbsence:
         assert PO_TOOL not in calls, "the ladder probed a turn that cannot state absence"
         assert block["nothing_codes"] == []
         assert block["nothing_missing"] == []
-        assert "but a PO is placed" not in (block["block"] or "")
+        assert "but PO is placed" not in (block["block"] or "")
         assert "No stock" not in (block["block"] or "")
 
     def test_a_total_miss_still_reaches_the_rung(self) -> None:
@@ -315,7 +315,7 @@ class TestBlocker2TheLadderRespectsCanStateAbsence:
             validator=TOTAL_MISS, ladder=DEFAULT_LADDER, po_response=PO_ROWS
         )
         assert PO_TOOL in calls
-        assert "but a PO is placed" in result["render"]["_xdBlock"]["block"]
+        assert "but PO is placed" in result["render"]["_xdBlock"]["block"]
 
 
 class TestShouldFix89TheRungSentenceAndTeam:
@@ -336,7 +336,7 @@ class TestShouldFix89TheRungSentenceAndTeam:
             validator=TOTAL_MISS, ladder=DEFAULT_LADDER, po_response=PO_ROWS, parser=parser
         )
         block = result["render"]["_xdBlock"]
-        assert "but a PO is placed" in block["block"]
+        assert "but PO is placed" in block["block"]
         # the offer itself is compose's (8 Sep 2026); the TEAM it will name is the block's
         assert "escalate" not in block["block"].lower()
         assert block["team"] == "purchasing"

@@ -198,7 +198,7 @@ class TestAC921ThePORungReachesTheCustomer:
         )
         assert result.status == "done", result.error
         assert PO_TOOL in probes, "the PO rung never ran on a real turn"
-        assert "but a PO is placed" in said, said
+        assert "but PO is placed" in said, said
         assert CODE in said
         assert "1000" in said and "2026" in said
 
@@ -286,7 +286,7 @@ class TestTheSuffixedCodeShapeReachesTheRung:
         )
         assert result.status == "done", result.error
         assert PO_TOOL in probes, f"{code}: the PO rung never ran"
-        assert "but a PO is placed" in said, said
+        assert "but PO is placed" in said, said
         assert code in said
 
     @pytest.mark.parametrize("code", SUFFIXED_CODES)
@@ -405,7 +405,7 @@ class TestOwner8SepTheRungIsPerContactAndOffersOnce:
         )
         assert result.status == "done", result.error
         assert PO_TOOL in probes
-        assert "27 pcs on PO 202607-S0031 dated 2026-06-30, expected 2027-02-01" in said, said
+        assert "PO 202607-S0031 dated 2026-06-30:\n27 pcs expected 2027-02-01" in said, said
         # `said` joins the reply with every send action's copy of it; the count is on the
         # reply text alone.
         text = (result.reply or {}).get("text") or ""

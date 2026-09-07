@@ -298,12 +298,12 @@ cases:
   # match_tier a hyphen-suffixed code comes back with. That is a resolver question, not a
   # ladder one, and it is worth its own slice: it silently disables Foundre's rule for a
   # whole shape of product code.
-  - name: A7 no stock, no incoming, but a PO is placed
+  - name: A7 no stock, no incoming, but PO is placed
     text: "check stock CB2904"
     cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["CB2904", "but a PO is placed"]
+      reply_contains: ["CB2904", "but PO is placed"]
       reply_not_contains: ["Supplier"]
       no_uuid: true
 
@@ -360,7 +360,7 @@ cases:
     cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["SRTWT7445-LV-NEW", "but a PO is placed"]
+      reply_contains: ["SRTWT7445-LV-NEW", "but PO is placed"]
       no_uuid: true
 
   - name: A7 suffixed code MSK11A-QT reaches the rung
@@ -368,7 +368,7 @@ cases:
     cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["MSK11A-QT", "but a PO is placed"]
+      reply_contains: ["MSK11A-QT", "but PO is placed"]
       no_uuid: true
 
   - name: A7 suffixed code CWCX1009-SH reaches the rung
@@ -376,7 +376,7 @@ cases:
     cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["CWCX1009-SH", "but a PO is placed"]
+      reply_contains: ["CWCX1009-SH", "but PO is placed"]
       no_uuid: true
 
   # WAS `expected_red_until: feat/chatbot-growth-dialogue`, and the marker is GONE because
