@@ -28,9 +28,9 @@ PRESENTERS_PATH = Path(__file__).resolve().parent.parent / "sorento_crm_mcp" / "
 # field on a tool not listed here is still caught by the reverse-direction test below,
 # which needs no such mapping and would fail loudly asking for this one to be extended.
 _PRESENTER_FUNCTIONS_BY_TOOL = {
-    # the Open SO / Available block (and its restrict call) lives in `_open_so_block`,
-    # shared by the detailed and compact stock presenters (review round 2, S2)
-    "crm_inventory_stock_balance_list": ("_stock", "_open_so_block"),
+    # both stock presenters restrict their own fields (D1, 8 Sep 2026): the detailed
+    # row's Outstanding and the compact block's Total / warehouse suffixes
+    "crm_inventory_stock_balance_list": ("_stock", "_stock_compact"),
     "crm_procurement_purchase_orders_placed_list": ("_purchase_orders_placed",),
 }
 
@@ -91,7 +91,7 @@ def test_the_two_growth_r1_keys_are_declared_exactly_where_expected():
     a silent "No restricted field exists yet" on the Contacts screen."""
     specs_by_name = {spec.name: spec for spec in CATALOG}
     assert dict(specs_by_name["crm_inventory_stock_balance_list"].restricted_fields) == {
-        "inventory.sellable": "Open SO and Available on stock answers",
+        "inventory.sellable": "Outstanding SO on stock answers",
     }
     assert dict(specs_by_name["crm_procurement_purchase_orders_placed_list"].restricted_fields) == {
         "purchase_orders.supplier": "PO supplier",

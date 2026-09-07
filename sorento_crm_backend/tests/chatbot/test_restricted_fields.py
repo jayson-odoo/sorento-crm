@@ -120,3 +120,36 @@ def test_a_field_with_no_key_is_never_touched_by_the_restricted_rule():
     }
     out = fetch.output_structurer(envelope, {"semantic_input": {}})
     assert out["answers"][0]["fields"] == [{"label": "BRW-BB", "value": 12}]
+
+
+def _compact_envelope() -> dict:
+    return {
+        "result_type": "stock_compact",
+        "intro": "Stock summary.",
+        "items": [{"title": "SRTWT107", "fields": [
+            {"key": "product_code", "label": "Product Code", "value": "SRTWT107"},
+            {"key": "total_on_hand", "label": "Total", "value": 51, "granted_value": "51 (O/S: 36)"},
+            {"key": "location_on_hand", "label": "BRW", "value": 0, "granted_value": "0 (O/S: 12)"},
+        ], "flags": {}}],
+        "restricted_fields": {"total_on_hand": "inventory.sellable", "location_on_hand": "inventory.sellable"},
+        "has_result": True,
+    }
+
+
+def test_a_granted_value_is_swapped_in_under_the_grant():
+    """D1 (owner console pass, 8 Sep 2026): a restricted field that carries `granted_value`
+    is a plain field with a granted suffix - under the grant the suffix IS the value."""
+    ctx = {"semantic_input": {}, "access": {"allowed": True, "attributes": ["inventory.sellable"]}}
+    out = fetch.output_structurer(_compact_envelope(), ctx)
+    values = {f["label"]: f["value"] for f in out["answers"][0]["fields"]}
+    assert values == {"Product Code": "SRTWT107", "Total": "51 (O/S: 36)", "BRW": "0 (O/S: 12)"}
+    assert "granted_value" not in str(out["answers"])
+    assert "*Total:* 51 (O/S: 36)" in out["response"]
+
+
+def test_a_granted_value_is_stripped_and_the_plain_value_kept_without_the_grant():
+    out = fetch.output_structurer(_compact_envelope(), {"semantic_input": {}})
+    values = {f["label"]: f["value"] for f in out["answers"][0]["fields"]}
+    assert values == {"Product Code": "SRTWT107", "Total": 51, "BRW": 0}
+    assert "O/S" not in out["response"]
+    assert "granted_value" not in str(out["answers"])

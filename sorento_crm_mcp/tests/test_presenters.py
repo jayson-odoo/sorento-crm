@@ -448,117 +448,89 @@ def test_spo_last_receipt_fallback_label_when_no_shipment_date():
 
 def test_stock_omits_sellable_when_backend_did_not_send_it():
     """AC-903: byte-identical when the backend answered with no `sellable` at all - no
-    `stock_summary`, no line, no restricted_fields."""
+    Outstanding field, no restricted_fields, no summary block."""
     out = env("crm_inventory_stock_balance_list", {
         "data": [{"product_code": "SRTWT107", "quantity_on_hand": 36}],
     })
-    labels = {x["label"] for x in out["items"][0]["fields"]}
-    assert "Open SO" not in labels
-    assert "Sellable (on hand minus open SO)" not in labels
+    labels = [x["label"] for x in out["items"][0]["fields"]]
+    assert labels == ["Product Code", "Warehouse", "System Location", "Quantity On Hand"]
     assert "restricted_fields" not in out
     assert "summary_items" not in out
 
 
-def _stock_env(rows: list[dict], summary: list[dict]) -> dict:
-    return {"data": rows, "stock_summary": summary}
-
-
-def test_stock_carries_one_open_so_and_available_line_per_product_restricted():
-    """AC-904 (amended 8 Sep 2026, owner: "I just need to know the outstanding qty"):
-    no per-row fields any more - ONE summary line per product code, read from the
-    backend's per-product `stock_summary` (review round 2, S2), restricted the same way
-    the per-row pair used to be, so `output_structurer` still drops it per contact and
-    the MCP itself stays unfiltered."""
-    out = env("crm_inventory_stock_balance_list", _stock_env(
-        [{"product_code": "SRTWT107", "quantity_on_hand": 36, "open_so_qty": 10, "sellable": 26}],
-        [{"product_id": "p1", "product_code": "SRTWT107", "total_on_hand": 36, "open_so_qty": 10, "sellable": 26}],
-    ))
-    labels = {x["label"] for x in out["items"][0]["fields"]}
-    assert "Open SO" not in labels
-    assert "Sellable (on hand minus open SO)" not in labels
-    items = {x["label"]: x for x in out["summary_items"][0]["fields"]}
-    assert items["SRTWT107"]["value"] == "Open SO 10, Available 26"
-    assert items["SRTWT107"]["key"] == "open_so_avail"
-    assert out["restricted_fields"] == {"open_so_avail": "inventory.sellable"}
-
-
-def test_stock_available_prints_the_raw_negative_when_open_so_exceeds_on_hand():
-    """Owner ruling, 8 Sep 2026: no clamping, no "oversold by N" wording - the signed
-    number as-is."""
-    out = env("crm_inventory_stock_balance_list", _stock_env(
-        [{"product_code": "SRTWT107", "quantity_on_hand": 5, "open_so_qty": 8, "sellable": -3}],
-        [{"product_id": "p1", "product_code": "SRTWT107", "total_on_hand": 5, "open_so_qty": 8, "sellable": -3}],
-    ))
-    field = out["summary_items"][0]["fields"][0]
-    assert field["value"] == "Open SO 8, Available -3"
-
-
-def test_stock_available_reads_the_product_total_never_the_page():
-    """Review round 2, S2: the page holds ONE of the product's three warehouse rows; the
-    line reads the backend's per-product total (60), never the page sum (10)."""
-    out = env("crm_inventory_stock_balance_list", _stock_env(
-        [{"product_code": "SRTWT107", "warehouse": "A", "quantity_on_hand": 10, "open_so_qty": 6, "sellable": 4}],
-        [{"product_id": "p1", "product_code": "SRTWT107", "total_on_hand": 60, "open_so_qty": 8, "sellable": 52}],
-    ))
-    assert len(out["summary_items"]) == 1
-    field = out["summary_items"][0]["fields"][0]
-    assert field["label"] == "SRTWT107"
-    assert field["value"] == "Open SO 8, Available 52"
-
-
-def test_stock_rows_with_sellable_but_no_summary_render_no_line():
-    """Never a page sum: without `stock_summary` there is nothing honest to print."""
+def test_stock_rows_keep_every_location_and_carry_outstanding_when_sellable_is_sent():
+    """D1 (owner console pass, 8 Sep 2026): the grant used to hide the location rows -
+    the Open SO block lived in `summary_items`, which the CRM renders INSTEAD of the rows.
+    Now each row carries `*Outstanding:* N` (its own open SO) after Quantity On Hand,
+    restricted behind `inventory.sellable`, and nothing is written to the summary slot."""
     out = env("crm_inventory_stock_balance_list", {
-        "data": [{"product_code": "SRTWT107", "quantity_on_hand": 10, "open_so_qty": 6, "sellable": 4}],
+        "data": [
+            {"product_code": "SRTWT107", "warehouse": "A", "quantity_on_hand": 10, "open_so_qty": 6, "sellable": 4},
+            {"product_code": "SRTWT107", "warehouse": "B", "quantity_on_hand": 20, "open_so_qty": 0, "sellable": 20},
+            {"product_code": "SRTWT108", "warehouse": "A", "quantity_on_hand": 5, "open_so_qty": 8, "sellable": -3},
+        ],
     })
+    assert len(out["items"]) == 3
+    for item, expected in zip(out["items"], (6, 0, 8)):
+        labels = [f["label"] for f in item["fields"]]
+        assert labels.index("Outstanding") == labels.index("Quantity On Hand") + 1
+        field = next(f for f in item["fields"] if f["key"] == "open_so_qty")
+        assert field["value"] == expected
+    assert out["restricted_fields"] == {"open_so_qty": "inventory.sellable"}
     assert "summary_items" not in out
-    assert "restricted_fields" not in out
 
 
-def test_stock_open_so_none_when_every_product_has_zero():
-    out = env("crm_inventory_stock_balance_list", _stock_env(
-        [{"product_code": "SRTWT107", "quantity_on_hand": 36, "open_so_qty": 0, "sellable": 36}],
-        [{"product_id": "p1", "product_code": "SRTWT107", "total_on_hand": 36, "open_so_qty": 0, "sellable": 36}],
-    ))
-    assert len(out["summary_items"]) == 1
-    field = out["summary_items"][0]["fields"][0]
-    assert field["label"] == "Open SO"
-    assert field["value"] == "none"
+def test_stock_outstanding_is_the_rows_own_number_never_a_product_sum():
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [{"product_code": "SRTWT107", "warehouse": "A", "quantity_on_hand": 10, "open_so_qty": 6, "sellable": 4}],
+        "stock_summary": [{"product_id": "p1", "product_code": "SRTWT107", "total_on_hand": 60, "open_so_qty": 941, "sellable": -881}],
+    })
+    field = next(f for f in out["items"][0]["fields"] if f["key"] == "open_so_qty")
+    assert field["value"] == 6
+    assert "summary_items" not in out
 
 
-def test_stock_every_product_gets_a_line_once_any_product_has_open_so():
-    """Two products, only one with open SO - both get their own line (per the owner's
-    wording: "products with zero open SO still get their line" once any does)."""
-    out = env("crm_inventory_stock_balance_list", _stock_env(
-        [{"product_code": "A1", "quantity_on_hand": 10, "open_so_qty": 5, "sellable": 5},
-         {"product_code": "A2", "quantity_on_hand": 8, "open_so_qty": 0, "sellable": 8}],
-        [{"product_id": "p1", "product_code": "A1", "total_on_hand": 10, "open_so_qty": 5, "sellable": 5},
-         {"product_id": "p2", "product_code": "A2", "total_on_hand": 8, "open_so_qty": 0, "sellable": 8}],
-    ))
-    lines = {f["label"]: f["value"] for entry in out["summary_items"] for f in entry["fields"]}
-    assert lines == {"A1": "Open SO 5, Available 5", "A2": "Open SO 0, Available 8"}
-
-
-def test_stock_compact_renders_the_same_per_product_block_and_no_per_entry_pair():
-    """Review round 2, S2: the compact policy renders the owner's one-line-per-product
-    block too and drops its old per-entry Open SO / Sellable pair."""
+def test_stock_compact_total_and_warehouse_lines_carry_the_os_suffix_as_granted_value():
+    """D1: `*Total:* 51 (O/S: 36)` and `*BRW:* 0 (O/S: 12)` under the grant; the suffix
+    rides as `granted_value` on a keyed restricted field, so the CRM swaps it in when
+    granted and strips it otherwise - the plain number always stays."""
     out = env("crm_inventory_stock_balance_list", {
         "data": [],
         "stock_visibility": {"mode": "compact", "source": "access_type"},
         "stock_summary": [{
             "product_id": "p1", "product_code": "SRTWT107", "product_name": "SRTWT107",
-            "total_on_hand": 12, "open_so_qty": 4, "sellable": 8,
+            "total_on_hand": 51, "open_so_qty": 36, "sellable": 15,
+            "locations": [
+                {"warehouse_code": "BRW", "quantity_on_hand": 0, "open_so_qty": 12},
+                {"warehouse_code": "KLG", "quantity_on_hand": 51, "open_so_qty": 20},
+            ],
+            "flags": {},
+        }],
+    })
+    fields = out["items"][0]["fields"]
+    total = next(f for f in fields if f["label"] == "Total")
+    assert total == {"key": "total_on_hand", "label": "Total", "value": 51, "granted_value": "51 (O/S: 36)"}
+    brw = next(f for f in fields if f["label"] == "BRW")
+    assert brw == {"key": "location_on_hand", "label": "BRW", "value": 0, "granted_value": "0 (O/S: 12)"}
+    assert out["restricted_fields"] == {"total_on_hand": "inventory.sellable", "location_on_hand": "inventory.sellable"}
+    assert "summary_items" not in out
+
+
+def test_stock_compact_without_sellable_is_the_plain_unkeyed_block():
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [],
+        "stock_visibility": {"mode": "compact", "source": "access_type"},
+        "stock_summary": [{
+            "product_id": "p1", "product_code": "SRTWT107", "product_name": "SRTWT107",
+            "total_on_hand": 12,
             "locations": [{"warehouse_code": "BRW", "quantity_on_hand": 12}],
             "flags": {},
         }],
     })
-    labels = [f["label"] for f in out["items"][0]["fields"]]
-    assert "Open SO" not in labels and "Sellable (on hand minus open SO)" not in labels
-    assert labels[:2] == ["Product Code", "Total"]
-    field = out["summary_items"][0]["fields"][0]
-    assert field["label"] == "SRTWT107" and field["value"] == "Open SO 4, Available 8"
-    assert out["restricted_fields"] == {"open_so_avail": "inventory.sellable"}
-
+    fields = out["items"][0]["fields"]
+    assert fields[1] == {"label": "Total", "value": 12}
+    assert fields[2] == {"label": "BRW", "value": 12}
+    assert "restricted_fields" not in out
 def test_forms_minimal_name_only():
     out = env("crm_forms_management_forms_list", {"data": [{"name": "Renovation Form", "attachment_id": "x"}]})
     assert out["items"][0]["fields"] == [{"label": "Form Name", "value": "Renovation Form"}]

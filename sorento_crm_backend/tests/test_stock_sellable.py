@@ -330,3 +330,35 @@ def test_on_hand_total_by_product_is_company_scoped(db):
     assert StockService(db).on_hand_total_by_product([prod_id]) == {prod_id: 10}
     set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
     assert StockService(db).on_hand_total_by_product([prod_id]) == {prod_id: 100}
+
+
+def test_with_sellable_attaches_each_compact_locations_own_open_so(db):
+    """D1: the compact block's warehouse lines carry their own open SO; the product total
+    on the entry keeps the unlocated remainder."""
+    import json
+
+    prod_id = _product(db, "SRTWC286-CMP")
+    wh_a, wh_b = _warehouse(db), _warehouse(db)
+    _stock(db, prod_id, wh_a, 10)
+    _stock(db, prod_id, wh_b, 41)
+    _so_line(db, prod_id, wh_a, ordered=12, delivered=0)   # 12 at A
+    _so_line(db, prod_id, wh_b, ordered=20, delivered=0)   # 20 at B
+    _so_line(db, prod_id, None, ordered=4, delivered=0)    # 4 unlocated -> the Total's O/S only
+    db.commit()
+    from app.models.inventory import Warehouse
+
+    codes = {w.id: w.warehouse_code for w in db.query(Warehouse).filter(Warehouse.id.in_([wh_a, wh_b]))}
+    result = {
+        "data": [],
+        "pagination": {"total": 1, "page": 1, "limit": 50},
+        "stock_summary": [{
+            "product_id": prod_id, "product_code": "SRTWC286-CMP", "product_name": "x", "total_on_hand": 51,
+            "locations": [{"warehouse_code": codes[wh_a], "quantity_on_hand": 10},
+                          {"warehouse_code": codes[wh_b], "quantity_on_hand": 41}],
+            "flags": {},
+        }],
+    }
+    body = json.loads(_with_sellable(StockService(db), result).body)
+    entry = body["stock_summary"][0]
+    assert entry["open_so_qty"] == 36 and entry["sellable"] == 15
+    assert [loc["open_so_qty"] for loc in entry["locations"]] == [12, 20]

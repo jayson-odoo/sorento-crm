@@ -45,7 +45,7 @@ class ToolSpec:
     escalation_team: str = ""  # "sales" | "support" | "warehouse" | "procurement" | "".
     # Field-reveal keys this tool's presenter marks `restricted=<key>` in
     # `field_vocabulary`, one (key, label) pair per gated field - e.g.
-    # `(("inventory.sellable", "Open SO and Available on stock answers"),)`. Static, not read off a live
+    # `(("inventory.sellable", "Outstanding SO on stock answers"),)`. Static, not read off a live
     # response: `mcp_tool_registry_service.sync_catalog` copies this straight into
     # `mcp_tools.restricted_fields` without ever calling the tool. Empty for a tool
     # with nothing restricted (the common case).
@@ -471,11 +471,10 @@ CATALOG: tuple[ToolSpec, ...] = (
             "'50' after being asked how many), pass that number as `requested_qty`. Some contacts are "
             "answered yes/no against it instead of with quantities, and without it the reply can only "
             "ask how many units they need.\n\n"
-            "OPEN SO / AVAILABLE: pass `include_sellable=true` to add ONE line per product code "
-            "AFTER the stock rows - `Open SO <n>, Available <n>` (Available = total on_hand minus "
-            "open SO across every warehouse of that product; printed as-is, including negative, "
-            "when open SO exceeds on hand). `Open SO: none` when nothing is on order for any "
-            "product. Default false. Field-reveal gated downstream, not by this tool.\n\n"
+            "OUTSTANDING SO: pass `include_sellable=true` to add `Outstanding` (that warehouse row's "
+            "own open sales-order quantity, not yet a delivery order) to every stock row, and an "
+            "`(O/S: n)` suffix on the compact block's Total and warehouse lines. Default false. "
+            "Field-reveal gated downstream (`inventory.sellable`), not by this tool.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results. "
             "Pass BOTH or NEITHER: `contact_id` without `space_id` returns no rows."
@@ -495,7 +494,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         # `mcp_tools.restricted_fields`, which is what the Contacts > Access > Field
         # reveals checklist (Slice C) lists and grants against. Without it the checklist
         # has nothing to show and PUT refuses every key as unknown.
-        restricted_fields=(("inventory.sellable", "Open SO and Available on stock answers"),),
+        restricted_fields=(("inventory.sellable", "Outstanding SO on stock answers"),),
     ),
     ToolSpec(
         "crm_inventory_warehouses_list",

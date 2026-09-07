@@ -1012,6 +1012,15 @@ class StockService:
                 payload["relaxed_axis"] = "entity"
         return payload
 
+    def warehouse_ids_by_code(self, codes: list[str]) -> dict[str, str]:
+        """`{warehouse_code: id}` for the codes given (D1): the compact stock block names
+        locations by code, and the per-warehouse open SO is keyed by id."""
+        codes = [str(c) for c in codes if c]
+        if not codes:
+            return {}
+        rows = self.db.query(Warehouse.warehouse_code, Warehouse.id).filter(Warehouse.warehouse_code.in_(codes)).all()
+        return {str(code): str(wid) for code, wid in rows}
+
     def on_hand_total_by_product(self, product_ids: list[str]) -> dict[str, int]:
         """`quantity_on_hand` summed over EVERY warehouse row of each product (review round
         2, S2): the per-product "Available" line must never be a sum over the returned

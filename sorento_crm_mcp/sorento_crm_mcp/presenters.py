@@ -1132,36 +1132,7 @@ def _resource_attachments(rows: list[dict], b: _Builder) -> None:
         b.attach(no_type)
 
 
-def _open_so_block(entries: Any, b: _Builder) -> None:
-    """A2 (amended 8 Sep 2026, owner: "I just need to know the outstanding qty, that's
-    it"): ONE line per PRODUCT after the stock rows - `Open SO n, Available n` - read
-    from the backend's per-product `stock_summary` (`total_on_hand` over EVERY warehouse
-    row of the product, `open_so_qty` the product total), never summed over the returned
-    page (review round 2, S2: a product held in more warehouses than the page limit
-    printed a short "Available"). Only entries that carry `sellable` count - the backend
-    attaches it under `include_sellable` alone, so an older or unasked envelope renders
-    no line at all. `Open SO: none` when nothing is on order for any product; the raw
-    signed number otherwise, never clamped. Shared by the detailed and compact policies:
-    the owner's ruling is one block per product for a stock answer, whatever the policy."""
-    lines: list[tuple[str, int, int]] = []
-    for entry in entries if isinstance(entries, list) else []:
-        if not isinstance(entry, dict) or entry.get("sellable") is None:
-            continue
-        code = entry.get("product_code")
-        if not _filled(code):
-            continue
-        lines.append((str(code), _as_int(entry.get("total_on_hand")), _as_int(entry.get("open_so_qty"))))
-    if not lines:
-        return
-    b.restrict("open_so_avail", "inventory.sellable")
-    if any(open_so > 0 for _code, _oh, open_so in lines):
-        for code, on_hand, open_so in lines:
-            b.add_summary_item(code, f"Open SO {open_so:,}, Available {on_hand - open_so:,}", key="open_so_avail")
-    else:
-        b.add_summary_item("Open SO", "none", key="open_so_avail")
-
-
-def _stock(rows: list[dict], b: _Builder, payload: dict | None = None) -> None:
+def _stock(rows: list[dict], b: _Builder) -> None:
     def _as_dict(v):
         return v if isinstance(v, dict) else {}
 
@@ -1204,24 +1175,27 @@ def _stock(rows: list[dict], b: _Builder, payload: dict | None = None) -> None:
         )
         is_discontinued = (prod.get("is_discontinued") is True) or (s.get("is_discontinued") is True)
         qoh = s.get("quantity_on_hand") if s.get("quantity_on_hand") is not None else s.get("quantity")
+        pairs: list[tuple[Any, ...]] = [
+            ("company_name", "Company", s.get("company_name")),
+            ("product_code", "Product Code", product_code),
+            ("product_name", "Product Name", _distinct_name(product_code, product_name)),
+            ("warehouse", "Warehouse", wh_name if _filled(wh_name) else "-"),
+            ("system_location", "System Location", sysloc if _filled(sysloc) else "-"),
+            ("quantity_on_hand", "Quantity On Hand", qoh if qoh is not None else "-"),
+        ]
+        # D1 (owner console pass, 8 Sep 2026): `*Outstanding:* N` right after the quantity,
+        # N = this (product, warehouse) row's own open SO (`open_so_qty`, attached by the
+        # backend under `include_sellable` only - absent otherwise, so the row is byte-
+        # identical). RESTRICTED behind `inventory.sellable`: the CRM's per-field drop
+        # removes it for a contact without the grant. A field, not a summary line - the
+        # summary slot is the quantity-summary mode and hides the location rows.
+        if s.get("sellable") is not None:
+            pairs.append(("open_so_qty", "Outstanding", _stock_int(s.get("open_so_qty"))))
+            b.restrict("open_so_qty", "inventory.sellable")
         # Warehouse / System Location always render (even when absent) so every
         # stock row has the same shape - a row with no warehouse joined must not
         # silently drop the fields. "-" placeholder keeps the field present.
-        b.item(
-            product_code,
-            [
-                ("company_name", "Company", s.get("company_name")),
-                ("product_code", "Product Code", product_code),
-                ("product_name", "Product Name", _distinct_name(product_code, product_name)),
-                ("warehouse", "Warehouse", wh_name if _filled(wh_name) else "-"),
-                ("system_location", "System Location", sysloc if _filled(sysloc) else "-"),
-                ("quantity_on_hand", "Quantity On Hand", qoh if qoh is not None else "-"),
-            ],
-            discontinued=is_discontinued,
-        )
-
-    # The per-product block reads the payload's `stock_summary` (S2), never the rows.
-    _open_so_block((payload or {}).get("stock_summary"), b)
+        b.item(product_code, pairs, discontinued=is_discontinued)
 
 
 def _as_int(v: Any) -> int:
@@ -1264,9 +1238,23 @@ def _stock_compact(payload: dict, b: _Builder) -> None:
         fields: list[dict[str, Any]] = []
         if _filled(code_field):
             fields.append({"key": "product_code", "label": "Product Code", "value": code_field})
-        fields.append({"label": "Total", "value": _stock_int(entry.get("total_on_hand"))})
-        # A2: no per-entry Open SO / Sellable pair any more (review round 2, S2) - the
-        # per-product block after the entries is the one shape for every policy.
+        total = _stock_int(entry.get("total_on_hand"))
+        # D1 (owner console pass, 8 Sep 2026): with `include_sellable` the Total and every
+        # warehouse line carry an "(O/S: n)" suffix - the product's open SO on the Total
+        # (the unlocated remainder lives there only), the warehouse's own on its line. The
+        # suffix is a `granted_value` on a keyed, RESTRICTED field: the CRM's field drop
+        # swaps it in under `inventory.sellable` and strips it otherwise, so the plain
+        # number is what an ungranted contact reads and nothing is dropped. Without
+        # `sellable` on the entry (no include_sellable) the pair is the old unkeyed one.
+        with_os = entry.get("sellable") is not None
+        if with_os:
+            fields.append({
+                "key": "total_on_hand", "label": "Total", "value": total,
+                "granted_value": f"{total} (O/S: {_stock_int(entry.get('open_so_qty'))})",
+            })
+            b.restrict("total_on_hand", "inventory.sellable")
+        else:
+            fields.append({"label": "Total", "value": total})
         for loc in entry.get("locations") or []:
             if not isinstance(loc, dict):
                 continue
@@ -1276,15 +1264,18 @@ def _stock_compact(payload: dict, b: _Builder) -> None:
             code = loc.get("warehouse_code") or loc.get("system_location")
             if not _filled(code):
                 continue
-            fields.append(
-                {"label": str(code), "value": _stock_int(loc.get("quantity_on_hand"))}
-            )
-        # No `key` on these pairs: the label IS data (the location the contact is
-        # allowed to see), not a CRM field name a consumer could match on.
+            qty = _stock_int(loc.get("quantity_on_hand"))
+            if with_os and loc.get("open_so_qty") is not None:
+                fields.append({
+                    "key": "location_on_hand", "label": str(code), "value": qty,
+                    "granted_value": f"{qty} (O/S: {_stock_int(loc.get('open_so_qty'))})",
+                })
+                b.restrict("location_on_hand", "inventory.sellable")
+            else:
+                # No `key` on the plain pair: the label IS data (the location the contact
+                # is allowed to see), not a CRM field name a consumer could match on.
+                fields.append({"label": str(code), "value": qty})
         b.raw_item(entry.get("product_code"), fields, dict(entry.get("flags") or {}))
-
-
-    _open_so_block(payload.get("stock_summary"), b)
 
 def _stock_availability(payload: dict, b: _Builder) -> None:
     """`availability`: yes / no / ask, and nothing else.
@@ -1477,8 +1468,6 @@ def present_response(tool_name: str, raw: str) -> str:
         _stock_availability(data, b)
     elif so_outstanding:
         _orders_so_outstanding(rows, b)
-    elif tool_name == _STOCK_TOOL:
-        _stock(rows, b, payload=data)  # the per-product block reads `stock_summary` (S2)
     else:
         row_builder(rows, b)
 

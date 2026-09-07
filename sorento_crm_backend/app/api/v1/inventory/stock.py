@@ -122,10 +122,28 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
         # answer it had before, for the one row shape that has no better one.
         open_qty = open_so_by_warehouse.get((pid, wid), 0) if wid else open_so_total.get(pid, 0)
         _attach(serialized, open_qty, getattr(row, "quantity_on_hand", None))
-    for entry in body.get("stock_summary") or []:
+    # COMPACT entries: the product total on the entry (the unlocated remainder lives
+    # here only), and each warehouse line's own open SO on the location (D1, owner
+    # console pass 8 Sep: "*BRW:* 0 (O/S: 12)"). Locations carry a code, not an id, so the
+    # codes are resolved once through the service.
+    summary_entries = [e for e in (body.get("stock_summary") or []) if isinstance(e, dict)]
+    loc_codes = {
+        str(loc.get("warehouse_code"))
+        for e in summary_entries
+        for loc in (e.get("locations") or [])
+        if isinstance(loc, dict) and loc.get("warehouse_code")
+    }
+    wh_id_by_code = service.warehouse_ids_by_code(list(loc_codes)) if loc_codes else {}
+    for entry in summary_entries:
         pid = str(entry.get("product_id") or "")
-        if pid:
-            _attach(entry, open_so_total.get(pid, 0), entry.get("total_on_hand"))
+        if not pid:
+            continue
+        _attach(entry, open_so_total.get(pid, 0), entry.get("total_on_hand"))
+        for loc in entry.get("locations") or []:
+            if not isinstance(loc, dict):
+                continue
+            wid = wh_id_by_code.get(str(loc.get("warehouse_code") or ""))
+            loc["open_so_qty"] = open_so_by_warehouse.get((pid, wid), 0) if wid else 0
     # DETAILED mode carries a per-product summary too (review round 2, S2): the chatbot's
     # "Open SO n, Available n" line reads the product TOTAL from here, never a sum over
     # the page of rows, which is short of the truth for a product held in more warehouses

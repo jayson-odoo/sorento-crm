@@ -1300,10 +1300,25 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         granted = set(granted_raw) if isinstance(granted_raw, list) else set()
 
         def _keep_field(f: Any) -> bool:
+            """Keep, drop, or SWAP. A restricted field that carries `granted_value` is
+            a plain field with a granted suffix (D1, the compact stock block's
+            "*Total:* 51 (O/S: 36)"): under the grant its value becomes the granted one,
+            without it the plain value stays and the suffix never reaches the reader.
+            A restricted field with no `granted_value` is dropped whole, as before."""
             if not _has_key(f):
                 return True
             perm = restricted.get(jsc.js_string(f["key"]))
-            return perm is None or perm in granted
+            if perm is None:
+                return True
+            has_granted_value = isinstance(f, dict) and "granted_value" in f
+            if perm in granted:
+                if has_granted_value:
+                    f["value"] = f.pop("granted_value")
+                return True
+            if has_granted_value:
+                f.pop("granted_value", None)
+                return True
+            return False
 
         def _filter_rows(rows: Any) -> None:
             for row in rows or []:
