@@ -238,19 +238,27 @@ CRM_SPO_SOURCE_SYSTEM = "crm_spo"
 #: `scm_po_history`) and an `autocount` line state their own.
 COMPUTED_RECEIPT_SOURCE_SYSTEMS = frozenset({None, CRM_SPO_SOURCE_SYSTEM})
 
-#: `source_system` values that mean "a row THIS system raised", the ownership
-#: question every writer of `spo_allocations` asks before it matches an
-#: existing row (external GRN triple resolution, the n8n bulk-create duplicate
-#: check, `upsert_allocation`). Historically that question was spelled
-#: `source_system IS NULL`, which stopped being true the moment the SCM writers
-#: began stamping `crm_spo` (security round 7): an unstamped row and a
-#: `crm_spo` row are the same kind of row asked about differently.
-#:
-#: Deliberately a SEPARATE name from `COMPUTED_RECEIPT_SOURCE_SYSTEMS` even
-#: though the members coincide today. One answers "who raised this row", the
-#: other "who states its receipt", and a future value could join one set
-#: without joining the other.
-CRM_RAISED_SOURCE_SYSTEMS = COMPUTED_RECEIPT_SOURCE_SYSTEMS
+def crm_raised(column):
+    """SQL for "a row THIS system raised", on an `spo_allocations.source_system`.
+
+    The ownership question every writer of that table asks before it matches an
+    existing row, and all three spelled it `source_system IS NULL` until the SCM
+    writers began stamping `crm_spo` (security round 7): an unstamped row and a
+    `crm_spo` row are the same kind of row, asked about differently. The three
+    callers are `api/v1/external/grn.py` (allocation resolution by spo_number +
+    product + warehouse), `api/v1/external/spo_allocations.py` (the n8n
+    bulk-create duplicate check) and `procurement_service.upsert_allocation`
+    (which ORs the upload-era source values on top of this).
+
+    A function rather than a value set because `IN (NULL, 'crm_spo')` never
+    matches a NULL row in SQL, so the NULL arm has to be spelled out - and
+    spelling it out at each site is what let the three drift.
+
+    Distinct from `COMPUTED_RECEIPT_SOURCE_SYSTEMS`, whose members coincide
+    today: that one answers who states a row's RECEIPT, this one who raised the
+    row, and a future value could join one without joining the other.
+    """
+    return or_(column.is_(None), column == CRM_SPO_SOURCE_SYSTEM)
 
 
 @dataclass(frozen=True)

@@ -2,7 +2,6 @@
 from collections import defaultdict
 from dataclasses import dataclass
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -237,10 +236,7 @@ def create_spo_allocations(
             # NULL or `crm_spo` (security round 7): the SCM writers stamp the rows they
             # raise per purchase-order line, so a bare NULL test would stop seeing them
             # and this endpoint would happily create a second allocation beside one.
-            or_(
-                SPOAllocation.source_system.is_(None),
-                SPOAllocation.source_system == shipping_order_rules.CRM_SPO_SOURCE_SYSTEM,
-            ),
+            shipping_order_rules.crm_raised(SPOAllocation.source_system),
         ).first()
         if existing:
             first = items[0]

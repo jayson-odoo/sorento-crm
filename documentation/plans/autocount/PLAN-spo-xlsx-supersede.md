@@ -307,11 +307,12 @@ once; then the dedupe runs on production by the captain with `--dry-run` first.
 - Round 8 as-built, security round 7 (2026-09-08, coder on Opus): the `crm_spo` stamp round 7
   introduced falsified every predicate that spelled "a row this system raised" as
   `source_system IS NULL`. `CRM_RAISED_SOURCE_SYSTEMS` now names that concept in
-  `shipping_order_rules`, deliberately a separate name from `COMPUTED_RECEIPT_SOURCE_SYSTEMS`
-  (which it aliases today) because one answers "who raised this row" and the other "who states
-  its receipt", and a future value could join one without joining the other. Each SQL site keeps
-  the two-arm spelling `or_(col.is_(None), col == CRM_SPO_SOURCE_SYSTEM)`, because `IN (NULL,
-  'crm_spo')` never matches a NULL row in SQL.
+  `shipping_order_rules`: `crm_raised(column)`, the SQL form of the question, called at all
+  three sites. A function and not a value set because `IN (NULL, 'crm_spo')` never matches a
+  NULL row in SQL, so the NULL arm must be spelled out - and spelling it out per site is what
+  let the three drift in the first place. Distinct from `COMPUTED_RECEIPT_SOURCE_SYSTEMS`
+  (whose members coincide today) because one answers who raised a row and the other who states
+  its receipt, and a future value could join one without joining the other.
   - `app/api/v1/external/grn.py` (allocation resolution by spo_number + product + warehouse):
     without the second arm every SCM-raised allocation became invisible to an incoming GRN, which
     would have fallen through to the number-plus-capacity path or to no match at all.

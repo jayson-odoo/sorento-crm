@@ -3045,14 +3045,8 @@ class SPOAllocationService:
                 # `scm_po_history`/`scm_spo_history` (closed history, a
                 # different feed entirely) stay excluded.
                 or_(
-                    SPOAllocation.source_system.is_(None),
-                    SPOAllocation.source_system.in_(
-                        [
-                            shipping_order_rules.CRM_SPO_SOURCE_SYSTEM,
-                            SPO_UPLOAD_SOURCE,
-                            ESB_SOURCE_SYSTEM,
-                        ]
-                    ),
+                    shipping_order_rules.crm_raised(SPOAllocation.source_system),
+                    SPOAllocation.source_system.in_([SPO_UPLOAD_SOURCE, ESB_SOURCE_SYSTEM]),
                 ),
             ).order_by(SPOAllocation.spo_line_number).first()
 

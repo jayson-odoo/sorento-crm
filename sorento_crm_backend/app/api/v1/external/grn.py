@@ -130,11 +130,7 @@ def create_grn(
                         # round 7): the two SCM writers stamp the rows they raise per
                         # purchase-order line, and a bare NULL test would make every one
                         # of them invisible to an incoming GRN.
-                        or_(
-                            SPOAllocation.source_system.is_(None),
-                            SPOAllocation.source_system
-                            == shipping_order_rules.CRM_SPO_SOURCE_SYSTEM,
-                        ),
+                        shipping_order_rules.crm_raised(SPOAllocation.source_system),
                     )
                     # The triple stopped being unique at migration 420: one SPO can state
                     # the same product at the same location on two lines, two containers
