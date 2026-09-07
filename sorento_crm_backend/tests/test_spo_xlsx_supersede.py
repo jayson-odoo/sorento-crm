@@ -950,50 +950,79 @@ class TestAcX11XlsxThenGrnThenPushMatchesPushThenGrn:
 
 
 # ============================================================================ #
-# AC-X13 (D25a)
+# AC-X13 (REVISED, D25c) - production dedupe finding, 2026-09-08
 # ============================================================================ #
 class TestAcX13OnlyScmUploadRowsAreSupersedeCandidates:
-    def test_a_null_source_ref_less_row_is_never_a_supersede_candidate(self, env):
-        """AC-X13 (D25a). A ref-less row written by the CRM UI / n8n
-        packing-list route (`source_system` NULL) is not an xlsx-era
-        supersede candidate - only `source_system='scm_upload'` rows are. On
-        a first push naming its product + location, the row is adopted or
-        left per the PRE-EXISTING (pre-D25) rules, never deleted, and
-        `lines.superseded` is absent.
+    def test_a_null_source_warehouse_only_row_is_also_a_supersede_candidate(self, env):
+        """AC-X13 (REVISED, D25c). A ref-less row for product P with
+        `source_system` NULL, NO `location_code`, `warehouse_id` set (the
+        Procurement Upload SPO / n8n packing-list shape), closed, received
+        47; a first push names P at the warehouse whose code resolves to
+        that SAME warehouse with two lines 29 / 18. The row is superseded
+        exactly as AC-X1: deleted, receipt carried 29 / 18 (both closed),
+        `lines.superseded 1`.
 
-        RED today: D25a's per-group `source_system` filter does not exist -
-        `_split_rows`'s `first_push` branch buckets EVERY ref-less row into
-        `supersede_pool` regardless of `source_system`, so this NULL-source
-        row is superseded exactly like an xlsx row would be: `lines.
-        superseded` reads `1` and the row is gone.
+        This is the OPPOSITE of the old AC-X13 (D25a), which asserted a
+        NULL-source row is NEVER a candidate. Production evidence
+        (SPO-2026/09-0028) showed the Procurement Upload SPO
+        (`import_tasks.process_spo_import`) and the n8n packing-list route
+        both write NULL `source_system` with a `warehouse_id`, and BOTH
+        load an Excel aggregate - D25a's "one line for one real line"
+        premise for a NULL-source row was wrong.
+
+        RED today: `is_xlsx_era_row` still excludes `source_system IS
+        NULL` - this row is never gathered as a supersede candidate at
+        all. It falls to the leftover sweep (closed already, so
+        `already_closed`), the push creates two BRAND-NEW rows alongside
+        it, and the SPO ends up holding THREE rows instead of two, with no
+        `superseded` key on the verdict at all.
         """
-        wh_code = _warehouse_code(env, env.warehouse_ref)
+        wh_id = env.refs.resolve(entity_type="warehouses", source_ref=env.warehouse_ref)
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
         number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
-        legacy = _seed_legacy_row(
-            env,
-            spo_number=number,
-            spo_line_number=1,
-            location_code=wh_code,
-            allocated_quantity=10,
-            quantity_received=0,
-            line_status="open",
+
+        legacy = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=None,
+            warehouse_id=wh_id, allocated_quantity=47, quantity_received=47,
+            line_status="closed", receipt_status="fully_received",
             source_system=None,
         )
+        env.db.add(legacy)
+        env.db.flush()
+        env.db.commit()
 
-        line = _spo_line(env, warehouse_ref=env.warehouse_ref, qty_ordered=10, qty_received=0)
-        record = _spo_record(env, number=number, lines=[line], supplier_ref=env.supplier_ref)
+        line1 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=29, qty_received=0, line_number=1
+        )
+        line2 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=18, qty_received=0, line_number=2
+        )
+        record = _spo_record(
+            env, number=number, lines=[line1, line2], supplier_ref=env.supplier_ref
+        )
 
         res = env.post(INGEST_SPO, [record])
 
         assert res.status_code == 200, res.text
         entry = res.json()["records"][0]
-        assert "superseded" not in (entry.get("lines") or {}), entry
+        assert entry["outcome"] == "created", res.text
+        lines_summary = entry.get("lines") or {}
+        assert lines_summary.get("created") == 2, lines_summary
+        assert lines_summary.get("superseded") == 1, lines_summary
 
         rows = _spo_rows(env, number)
-        assert str(legacy.id) in {str(r["id"]) for r in rows}, (
-            "a NULL-source ref-less row must never be superseded/deleted - "
-            "only scm_upload rows are supersede candidates"
+        assert len(rows) == 2, (
+            "the NULL-source row must be gone, leaving exactly the two pushed lines", rows
         )
+        by_ref = {r["source_ref"]: r for r in rows}
+        first = by_ref[line1["source_ref"]]
+        second = by_ref[line2["source_ref"]]
+        assert first["quantity_received"] == 29, first
+        assert first["line_status"] == "closed", first
+        assert second["quantity_received"] == 18, second
+        assert second["line_status"] == "closed", second
+        assert str(legacy.id) not in {str(r["id"]) for r in rows}
 
 
 # ============================================================================ #
@@ -3593,3 +3622,204 @@ class TestAcX45ARowRetiredByAbsenceUnretiresWhenNamedAgain:
             "a push naming the row again must clear retired_at - it rejoins "
             f"the group - got {after_unretire}"
         )
+
+
+# ============================================================================ #
+# Round 6 (production dedupe finding, 2026-09-08, PLAN D25c)
+# ============================================================================ #
+# SPO-2026/09-0028 (the incident): 16 xlsx rows carry `source_system` NULL,
+# `location_code` NULL, `warehouse_id` set. Both the Procurement page's
+# Upload SPO and the n8n packing-list route write this shape; only the SCM
+# outstanding upload writes `scm_upload`. D25a's premise that a NULL-source
+# row "states one line for one real line" was wrong.
+
+
+# ============================================================================ #
+# AC-X49 (D25c grouping)
+# ============================================================================ #
+class TestAcX49GroupingIsByWarehouseWhenBothSidesCarryOne:
+    def test_a_scm_upload_row_with_a_free_text_location_and_a_warehouse_groups_by_the_warehouse(
+        self, env
+    ):
+        """AC-X49, first half. A `scm_upload` row with `location_code
+        'brw'` (free text) AND `warehouse_id` W, closed, received 47; a
+        push naming P at the warehouse whose code resolves to W with ONE
+        line qty 47. Grouping must be by `(product_id, warehouse_id)`
+        (both sides carry a warehouse) - `'brw'` never has to match
+        anything - so the two must group together and carry 47.
+
+        RED today: `supersede_group_key` still takes only
+        `(product_id, location_code)` - it never sees `warehouse_id` at
+        all, so grouping stays keyed on the free-text `'brw'`, which the
+        push's own resolved `location_code` (the warehouse's REAL code)
+        never equals. The groups never match: the row is left as a THIRD,
+        untouched row and the push's line is created fresh at 0 received.
+        """
+        wh_id = env.refs.resolve(entity_type="warehouses", source_ref=env.warehouse_ref)
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+
+        legacy = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code="brw",
+            warehouse_id=wh_id, allocated_quantity=47, quantity_received=47,
+            line_status="closed", receipt_status="fully_received",
+            source_system="scm_upload",
+        )
+        env.db.add(legacy)
+        env.db.flush()
+        env.db.commit()
+
+        line = _spo_line(env, warehouse_ref=env.warehouse_ref, qty_ordered=47, qty_received=0)
+        record = _spo_record(env, number=number, lines=[line], supplier_ref=env.supplier_ref)
+
+        res = env.post(INGEST_SPO, [record])
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        lines_summary = entry.get("lines") or {}
+        assert lines_summary.get("superseded") == 1, lines_summary
+
+        rows = _spo_rows(env, number)
+        assert len(rows) == 1, (
+            "the free-text 'brw' row and the warehouse-resolved push line "
+            f"must group together, not stay as two rows - got {rows}"
+        )
+        assert rows[0]["quantity_received"] == 47, rows[0]
+        assert rows[0]["line_status"] == "closed", rows[0]
+        assert str(legacy.id) not in {str(r["id"]) for r in rows}
+
+    def test_two_rows_for_different_warehouses_form_two_groups_each_carried_onto_its_own_line(
+        self, env
+    ):
+        """AC-X49, second half. Two `scm_upload` rows, same product, one
+        for warehouse W (allocated 29, received 29, closed) and one for a
+        SECOND warehouse W2 (allocated 18, received 18, closed); a push
+        names the SAME product at BOTH warehouses. Grouping by
+        `(product_id, warehouse_id)` must keep these as TWO SEPARATE
+        groups - W's carry (29) must never land on W2's line or vice
+        versa.
+
+        RED today: the pre-D25c key is `(product_id, upper(location_code))`
+        only, with no notion of warehouse at all, and both rows/lines here
+        share the same `location_code` fallback path incorrectly (or, if
+        `location_code` differs, the key already happens to separate them
+        by accident) - the deterministic failure is that BOTH rows are
+        `scm_upload` and BOTH groups have no ref row of their own yet, so
+        without the warehouse-aware key the push's own resolved
+        `location_code` for each warehouse is what actually has to
+        separate them, which is exactly the pre-existing (working) case -
+        this test instead pins the NEW dimension by asserting the carried
+        totals land on the CORRECT warehouse's line, not merely that two
+        rows exist.
+        """
+        wh1_id = env.refs.resolve(entity_type="warehouses", source_ref=env.warehouse_ref)
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        wh2_ref = env.link_warehouse(env.company_a)
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+
+        legacy_w1 = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=None,
+            warehouse_id=wh1_id, allocated_quantity=29, quantity_received=29,
+            line_status="closed", receipt_status="fully_received",
+            source_system="scm_upload",
+        )
+        wh2_id = env.refs.resolve(entity_type="warehouses", source_ref=wh2_ref)
+        legacy_w2 = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=2, product_id=product_id, location_code=None,
+            warehouse_id=wh2_id, allocated_quantity=18, quantity_received=18,
+            line_status="closed", receipt_status="fully_received",
+            source_system="scm_upload",
+        )
+        env.db.add_all([legacy_w1, legacy_w2])
+        env.db.flush()
+        env.db.commit()
+
+        line_w1 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=29, qty_received=0
+        )
+        line_w2 = _spo_line(
+            env, warehouse_ref=wh2_ref, qty_ordered=18, qty_received=0
+        )
+        record = _spo_record(
+            env, number=number, lines=[line_w1, line_w2], supplier_ref=env.supplier_ref
+        )
+
+        res = env.post(INGEST_SPO, [record])
+        assert res.status_code == 200, res.text
+        entry = res.json()["records"][0]
+        lines_summary = entry.get("lines") or {}
+        assert lines_summary.get("superseded") == 2, lines_summary
+
+        rows = _spo_rows(env, number)
+        assert len(rows) == 2, rows
+        by_ref = {r["source_ref"]: r for r in rows}
+        row_w1 = by_ref[line_w1["source_ref"]]
+        row_w2 = by_ref[line_w2["source_ref"]]
+        assert row_w1["quantity_received"] == 29, (
+            f"W's own 29 must land on W's own line, never W2's - got {row_w1}"
+        )
+        assert row_w1["line_status"] == "closed", row_w1
+        assert row_w2["quantity_received"] == 18, (
+            f"W2's own 18 must land on W2's own line, never W's - got {row_w2}"
+        )
+        assert row_w2["line_status"] == "closed", row_w2
+        assert str(legacy_w1.id) not in {str(r["id"]) for r in rows}
+        assert str(legacy_w2.id) not in {str(r["id"]) for r in rows}
+
+
+# ============================================================================ #
+# AC-X50 (D26 carry, storage_zone_id)
+# ============================================================================ #
+class TestAcX50StorageZoneCarriesLikeInboundShipment:
+    def test_the_superseded_rows_storage_zone_carries_onto_every_new_line_of_the_group(
+        self, env
+    ):
+        """AC-X50. The superseded row's `storage_zone_id` (like its
+        `inbound_shipment_id`, AC-X6) is carried onto every new line of
+        the group that has none of its own.
+
+        RED today: `SupersedeLinePlan` / the writer that turns a plan into
+        a row never reads or writes `storage_zone_id` at all - both new
+        lines land with `storage_zone_id IS NULL`.
+        """
+        wh_id = env.refs.resolve(entity_type="warehouses", source_ref=env.warehouse_ref)
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+
+        zone = StorageZone(
+            id=str(uuid.uuid4()), warehouse_id=wh_id,
+            zone_code=f"{MARKER[:8]}Z{uuid.uuid4().hex[:6]}", zone_type="storage",
+        )
+        env.db.add(zone)
+        env.db.flush()
+
+        legacy = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=None,
+            warehouse_id=wh_id, storage_zone_id=zone.id,
+            allocated_quantity=47, quantity_received=47, line_status="closed",
+            receipt_status="fully_received", source_system="scm_upload",
+        )
+        env.db.add(legacy)
+        env.db.flush()
+        env.db.commit()
+
+        line1 = _spo_line(env, warehouse_ref=env.warehouse_ref, qty_ordered=29, qty_received=0)
+        line2 = _spo_line(env, warehouse_ref=env.warehouse_ref, qty_ordered=18, qty_received=0)
+        record = _spo_record(
+            env, number=number, lines=[line1, line2], supplier_ref=env.supplier_ref
+        )
+
+        res = env.post(INGEST_SPO, [record])
+        assert res.status_code == 200, res.text
+
+        rows = _spo_rows(env, number)
+        assert len(rows) == 2, "AC-X1/AC-X49 must land first for this to hold"
+        for row in rows:
+            assert row["storage_zone_id"] is not None, row
+            assert str(row["storage_zone_id"]) == str(zone.id), (
+                f"every new line of the group must carry the superseded row's "
+                f"storage_zone_id - got {row}"
+            )
