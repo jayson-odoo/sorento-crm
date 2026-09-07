@@ -35,6 +35,7 @@ import { CANVAS_PX_PER_MM } from '@/lib/dealer-kit/canvas-geometry';
 const konva = vi.hoisted(() => ({
   positions: [] as { x: number; y: number }[],
   anchors: [] as unknown[],
+  rotateEnabled: [] as unknown[],
   nodesById: new Map<
     string,
     {
@@ -198,10 +199,12 @@ vi.mock('react-konva', async () => {
     Line: passthrough('line'),
     Transformer: function TransformerStandIn(props: {
       enabledAnchors?: unknown[];
+      rotateEnabled?: boolean;
       ref?: React.Ref<unknown>;
       onTransformEnd?: () => void;
     }) {
       konva.anchors.push(props.enabledAnchors);
+      konva.rotateEnabled.push(props.rotateEnabled);
       konva.onTransformEnd = props.onTransformEnd;
       // `konva.transformerNodes` lives on the module-level hoisted object,
       // not a closure local: `TransformerStandIn` is a plain function
@@ -220,7 +223,11 @@ vi.mock('react-konva', async () => {
         (props.ref as { current: unknown }).current = instance;
       }
       return (
-        <div data-konva="transformer" data-anchors={JSON.stringify(props.enabledAnchors)} />
+        <div
+          data-konva="transformer"
+          data-anchors={JSON.stringify(props.enabledAnchors)}
+          data-rotate-enabled={String(props.rotateEnabled)}
+        />
       );
     },
   };
@@ -406,10 +413,15 @@ function lastAnchors() {
   return konva.anchors.at(-1);
 }
 
+function lastRotateEnabled() {
+  return konva.rotateEnabled.at(-1);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   konva.positions.length = 0;
   konva.anchors.length = 0;
+  konva.rotateEnabled.length = 0;
   konva.nodesById.clear();
   konva.transformerNodes = [];
   konva.onTransformEnd = undefined;
@@ -432,6 +444,14 @@ describe('select mode - single click (S5, AC-S5-1)', () => {
     expect(lastAnchors()).toEqual(FULL_ANCHORS);
     expect(queryHandle(container, 'polygon-vertex-0')).toBeNull();
     expect(queryHandle(container, 'polygon-edge-0')).toBeNull();
+  });
+
+  it('keeps the rotate handle in select mode (S5 review)', () => {
+    render(<TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />);
+
+    selectShape();
+
+    expect(lastRotateEnabled()).toBe(true);
   });
 
   it('gives a boxed list-only price badge the same select mode (AC-S5-4)', () => {
@@ -520,6 +540,14 @@ describe('entering edit-points mode (S5, AC-S5-2)', () => {
       expect(handle(container, `polygon-edge-${i}`)).toBeTruthy();
     }
     expect(lastAnchors()).toEqual([]);
+  });
+
+  it('hides the rotate handle too, not just the resize anchors (S5 review)', () => {
+    render(<TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />);
+
+    enterEditPoints();
+
+    expect(lastRotateEnabled()).toBe(false);
   });
 
   it('Enter toggles edit-points mode on the current selection', () => {

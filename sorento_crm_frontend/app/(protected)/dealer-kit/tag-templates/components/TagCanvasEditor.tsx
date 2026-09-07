@@ -3658,7 +3658,13 @@ export function TagCanvasEditor({
                     {/* ONE Transformer, after every layer, for the selection. */}
                     <Transformer
                       ref={transformerRef}
-                      rotateEnabled
+                      // EDIT-POINTS mode (S5 review) hides the WHOLE
+                      // Transformer, rotate handle included - the plan calls
+                      // for the anchors gone while the vertex/edge handles
+                      // are up, and a rotate stalk sitting on top of them
+                      // reads as the Transformer still being "on" rather
+                      // than having handed off to the shape's own points.
+                      rotateEnabled={!editingPoints}
                       // Shift keeps a corner drag's aspect ratio (side
                       // anchors are unaffected by `keepRatio` regardless);
                       // Shift also arms the rotation snap list below (S9).
@@ -3668,12 +3674,12 @@ export function TagCanvasEditor({
                       listening={!handMode}
                       onTransform={handleTransform}
                       onTransformEnd={handleTransformEnd}
-                      // A polygon/boxed badge in EDIT-POINTS mode (S5) keeps
-                      // the ROTATION anchor and nothing else: a resize anchor
-                      // sits exactly where a corner handle sits, and the
-                      // anchor would win every click meant for the corner.
-                      // In SELECT mode `polygonHandles` is null (S5 gates it
-                      // on `editingPoints` too), so the full anchor set below
+                      // A polygon/boxed badge in EDIT-POINTS mode (S5) shows
+                      // no resize anchors at all: a resize anchor sits
+                      // exactly where a corner handle sits, and the anchor
+                      // would win every click meant for the corner. In
+                      // SELECT mode `polygonHandles` is null (S5 gates it on
+                      // `editingPoints` too), so the full anchor set below
                       // shows instead - points stay normalised 0-1, so a box
                       // resize scales the shape with no maths change. Crop
                       // mode (S8) hides every resize anchor the same way -
