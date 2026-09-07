@@ -673,6 +673,66 @@ class TestOutputStructurer:
         assert set(self._ALL_CHECKPOINTS) <= kept
         assert "liner_code" in kept
 
+    def test_expanded_checkpoint_dates_read_chronologically(self):
+        """A checkpoint ask expands `keep_keys` backwards (AC5) without setting the
+        `timeline` sentinel - it is a PARTIAL timeline and must read the same way: the
+        dates chronological sort must fire on `expanded` too, not just on `timeline`, or
+        the kept dates render in the CRM's narrative order (ETA, inspection, approval,
+        gatepass, ... loading, ETC, ETD trailing) instead of by when they happened."""
+        fetch = _import_fetch()
+        fields = [
+            {"key": "product_code", "label": "Product Code", "value": "SRTWB7096"},
+            {"key": "estimated_arrival_date", "label": "estimated_arrival_date", "value": "2026-05-01"},
+            {"key": "inspection_date", "label": "inspection_date", "value": "2026-05-22"},
+            {"key": "approval_date", "label": "approval_date", "value": "2026-05-26"},
+            {"key": "gatepass_date", "label": "gatepass_date", "value": "2026-06-03"},
+            {"key": "warehouse_arrival_date", "label": "warehouse_arrival_date", "value": "2026-06-04"},
+            {"key": "loading_date", "label": "loading_date", "value": "2026-04-15"},
+            {"key": "etd_date", "label": "etd_date", "value": "2026-04-18"},
+        ]
+        envelope = {
+            "result_type": "incoming_stock",
+            "intro": "Here is what I found.",
+            "items": [{"title": "row", "fields": fields}],
+            "has_result": True,
+            "field_access": None,
+        }
+        ctx = {"semantic_input": {"requested_attributes": ["gatepass_date"]}}
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        out_fields = out["answers"][0]["fields"]
+        kept_dates = [f["key"] for f in out_fields if f["key"].endswith("_date")]
+        assert kept_dates == [
+            "loading_date", "etd_date", "estimated_arrival_date",
+            "inspection_date", "approval_date", "gatepass_date",
+        ]
+        assert "warehouse_arrival_date" not in kept_dates
+
+    def test_non_expanding_ask_leaves_single_date_in_place(self):
+        """A plain (non-checkpoint) ask never sets `expanded`, and `timeline` is False too
+        - the chronological sort must not run, so a lone date field stays exactly where the
+        CRM put it."""
+        fetch = _import_fetch()
+        fields = [
+            {"key": "product_code", "label": "Product Code", "value": "SRTWB7096"},
+            {"key": "estimated_arrival_date", "label": "estimated_arrival_date", "value": "2026-05-01"},
+            {"key": "liner_code", "label": "liner_code", "value": "CMA"},
+        ]
+        envelope = {
+            "result_type": "incoming_stock",
+            "intro": "Here is what I found.",
+            "items": [{"title": "row", "fields": fields}],
+            "has_result": True,
+            "field_access": None,
+        }
+        ctx = {"semantic_input": {"requested_attributes": ["liner_code"]}}
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        out_keys = [f["key"] for f in out["answers"][0]["fields"]]
+        assert out_keys.index("estimated_arrival_date") == 1
+
 
 def test_clearance_checkpoint_order_has_no_duplicates_and_matches_parser_vocabulary():
     """The tuple is hardcoded (output_structurer is a pure function with no session) and

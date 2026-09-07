@@ -981,6 +981,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # container's journey - a customer asking about gatepass wants the whole story up to
     # it, not one isolated date. `req_attrs` itself is untouched (echoed back, and drives
     # the "not recorded yet" notes below): only `keep_keys` grows.
+    expanded = False
     if not timeline:
         checkpoint_idx = [
             CLEARANCE_CHECKPOINT_ORDER.index(kk)
@@ -989,6 +990,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         ]
         if checkpoint_idx:
             keep_keys.update(CLEARANCE_CHECKPOINT_ORDER[: max(checkpoint_idx) + 1])
+            expanded = True
 
     # SCOPE GUARD: projection touches the CLEARANCE-gated incoming envelope ONLY. Gate on
     # what the envelope IS, not on whether keys happen to be present - resource attachments
@@ -1043,8 +1045,9 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # value-ordered. Only the SEQUENCE within the date block is this node's business:
     # LAYOUT belongs to the CRM, and an earlier version that re-emitted `[...facts,
     # ...dates]` dragged the ETA below the quantity and undid a merged CRM change.
-    # A field counts as a date by its VALUE, never by its key name.
-    if timeline:
+    # A field counts as a date by its VALUE, never by its key name. An expanded checkpoint
+    # ask is a partial timeline and reads the same way.
+    if timeline or expanded:
 
         def _date_of(f: Any) -> str | None:
             v = jsc.get(f, "value") if jsc.truthy(f) else None
