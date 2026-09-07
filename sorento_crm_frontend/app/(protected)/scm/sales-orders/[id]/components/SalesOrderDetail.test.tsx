@@ -1719,3 +1719,140 @@ describe('SalesOrderDetail - two links to the same SPO line', () => {
     expect(within(screen.getByRole('dialog')).getAllByText('14/09/2026')).toHaveLength(2);
   });
 });
+
+describe('SalesOrderDetail - removing a line', () => {
+  /**
+   * The backend already refuses a removal that would orphan a project sales order or a
+   * purchase order claim (409 `SO_LINE_LINKED_TO_PROJECT` / `SO_LINE_LINKED_TO_CLAIM`) - the
+   * mutation's own error toast covers that, so nothing here re-asserts a 409 path; these
+   * cover the FE half: the control, the confirm, the omission on Save, and the two ways out
+   * (a guard, and Cancel) that must never lose or silently drop a line.
+   */
+  const TWO_LINES: SalesOrderLine[] = [
+    {
+      id: 'l-1', sku: 'CW-BASIN-450', product_name: 'Ceramic Wash Basin 450mm',
+      qty_ordered: 320, qty_delivered: 0, uom: 'PCS', warehouse_code: 'BRW-BB',
+      line_status: 'open', required_date: '2026-08-30', unit_price: '100.00',
+      discount: '15.00', line_total: '31985.00',
+    },
+    {
+      id: 'l-2', sku: 'TAP-CHR-12', product_name: 'Chrome pillar tap',
+      qty_ordered: 45, qty_delivered: 0, uom: 'PCS', warehouse_code: 'KL-01',
+      line_status: 'open', required_date: '2026-09-04', unit_price: '20.00',
+      discount: null, line_total: null,
+    },
+  ];
+
+  function renderTwoLines() {
+    useSalesOrder.mockReturnValue({
+      data: so({ lines: TWO_LINES, line_count: 2, open_line_count: 2 }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+  }
+
+  // The row is found the same way the price/discount tests above find it: by one of its own
+  // inputs, since the Product cell is a select in an edit session and its text is no longer
+  // the bare SKU.
+  const rowFor = (sku: string) =>
+    screen.getByLabelText(`Unit price on ${sku}`).closest('tr') as HTMLElement;
+
+  it('shows no remove control outside an edit session', () => {
+    renderTwoLines();
+    openTab('Lines');
+
+    expect(screen.queryByRole('button', { name: 'Remove line' })).not.toBeInTheDocument();
+  });
+
+  it('asks before removing, then drops the row and the totals follow', async () => {
+    renderTwoLines();
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
+
+    fireEvent.click(within(rowFor('TAP-CHR-12')).getByRole('button', { name: 'Remove line' }));
+
+    // Names the SKU, the qty and the order - not a generic "are you sure".
+    expect(
+      screen.getByText(
+        'Remove TAP-CHR-12 (qty 45) from SO-2026/07-0042? It is deleted when you save.',
+      ),
+    ).toBeInTheDocument();
+    // Nothing removed yet - the row and the qty total both still carry it.
+    expect(screen.getByLabelText('Unit price on TAP-CHR-12')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+
+    // `ConfirmDeleteDialog` runs `onDelete` through a `useMutation`, so the removal lands on
+    // the next tick rather than synchronously with the click.
+    await waitFor(() =>
+      expect(screen.queryByLabelText('Unit price on TAP-CHR-12')).not.toBeInTheDocument(),
+    );
+    expect(screen.getByLabelText('Unit price on CW-BASIN-450')).toBeInTheDocument();
+    // 320 + 45 = 365 before; 320 after the removed line drops out of the footer sum (both
+    // Qty ordered and Outstanding qty read 320 here, since nothing has been delivered).
+    const foot = document.querySelector('tfoot') as HTMLElement;
+    expect(within(foot).getAllByText('320').length).toBeGreaterThan(0);
+    expect(within(foot).queryByText('365')).not.toBeInTheDocument();
+  });
+
+  it('saves the remaining lines only, so the BE deletes the omitted one', async () => {
+    renderTwoLines();
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
+
+    fireEvent.click(within(rowFor('TAP-CHR-12')).getByRole('button', { name: 'Remove line' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await waitFor(() =>
+      expect(screen.queryByLabelText('Unit price on TAP-CHR-12')).not.toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Save sales order' }));
+
+    await screen.findByRole('button', { name: /^Edit$/ });
+    const body = updateSalesOrderMutateAsync.mock.calls[0][0].data;
+    // A removal changes the LINE COUNT, so `lines` is always sent - never omitted the way a
+    // header-only save omits it.
+    expect(body.lines).toHaveLength(1);
+    expect(body.lines.some((l: { id: string }) => l.id === 'l-2')).toBe(false);
+    expect(body.lines[0]).toMatchObject({ id: 'l-1', sku: 'CW-BASIN-450' });
+  });
+
+  it('refuses to remove the last line', () => {
+    // The default fixture carries exactly one line.
+    useSalesOrder.mockReturnValue({ data: so(), isLoading: false, isError: false });
+    renderDetail();
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
+
+    fireEvent.click(
+      within(rowFor('CW-BASIN-450')).getByRole('button', { name: 'Remove line' }),
+    );
+
+    expect(screen.getByText('An order needs at least one line.')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    // Nothing removed - the only line is still on the grid.
+    expect(screen.getByLabelText('Unit price on CW-BASIN-450')).toBeInTheDocument();
+  });
+
+  it('keeps the session open and the row visible again after Cancel', async () => {
+    renderTwoLines();
+    fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+    openTab('Lines');
+
+    fireEvent.click(within(rowFor('TAP-CHR-12')).getByRole('button', { name: 'Remove line' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await waitFor(() =>
+      expect(screen.queryByLabelText('Unit price on TAP-CHR-12')).not.toBeInTheDocument(),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    // Cancel discarded the whole session, including the removal - the read view shows both
+    // lines exactly as loaded.
+    expect(screen.getByRole('button', { name: /^Edit$/ })).toBeInTheDocument();
+    openTab('Lines');
+    expect(screen.getByText('TAP-CHR-12')).toBeInTheDocument();
+    expect(screen.getByText('CW-BASIN-450')).toBeInTheDocument();
+    expect(updateSalesOrderMutateAsync).not.toHaveBeenCalled();
+  });
+});

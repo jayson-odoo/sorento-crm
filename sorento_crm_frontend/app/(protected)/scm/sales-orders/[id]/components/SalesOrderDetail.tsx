@@ -19,10 +19,12 @@ import {
   LoaderCircleIcon,
   Move,
   SquarePen,
+  Trash2,
   Truck,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import {
   Card,
   CardFooter,
@@ -139,6 +141,16 @@ import { useSalesOrderActions } from '../../actions';
  * any line change" rule the SKU/qty columns already followed), each carrying either the
  * draft's edited value or the value the order loaded with, so an untouched line reads back
  * exactly as it was. `line_total` is NOT sent: it is what the source document charged.
+ *
+ * A LINE IS REMOVED BY OMISSION, never a separate endpoint. The trash icon that appears per
+ * row while editing does not delete anything itself - it asks first (`ConfirmDeleteDialog`),
+ * then drops the line from `removedLineIds` and its draft, so the row disappears from the
+ * grid and the totals below it. Nothing is written until Save, at which point the removed
+ * line is simply left out of `lines`: the BE upserts what it is sent and deletes any existing
+ * row that is missing, which is what the class docstring above already describes - a removal
+ * is that same mechanism, carried by absence rather than a new one. The BE refuses with a 409
+ * when the line is still reconciled to a project sales order or claimed by a purchase order,
+ * and the mutation's own error toast is enough - the session stays open either way.
  *
  * MONEY IS A STRING END TO END. The backend sends `Decimal`, which Pydantic serialises as a
  * string, and every sum here goes through `project-sales/_shared/lib/money` - which does the
@@ -399,6 +411,14 @@ export function SalesOrderDetail({ id }: { id: string }) {
   // Which LINE's "Linked" figure was pressed (R5, AC-L4) - one dialog for the whole grid,
   // replacing the inline multi-link text the cell used to render.
   const [linksLineId, setLinksLineId] = useState<string | null>(null);
+  // Lines dropped from THIS session, by id. Nothing is deleted here - the row and its draft
+  // just stop being sent, and the BE reads the omission as a removal on Save (see the class
+  // docstring). Reset on every fresh session and after a save, so a leftover removal from a
+  // prior edit cannot silently carry into the next one.
+  const [removedLineIds, setRemovedLineIds] = useState<Set<string>>(new Set());
+  // Which line's trash icon was pressed - one dialog for the whole grid, the same pattern
+  // `linksLineId` above already uses.
+  const [pendingRemoveLineId, setPendingRemoveLineId] = useState<string | null>(null);
 
   const beginEdit = (so: SalesOrder) => {
     setPlanningChangeBatch(null);
@@ -413,6 +433,8 @@ export function SalesOrderDetail({ id }: { id: string }) {
       drafts[ln.id] = seedDraft(ln);
     }
     setLineDrafts(drafts);
+    setRemovedLineIds(new Set());
+    setPendingRemoveLineId(null);
     originalLineSignatureRef.current = lineSignature(
       so.lines.map((l) => ({
         sku: l.sku,
@@ -431,6 +453,8 @@ export function SalesOrderDetail({ id }: { id: string }) {
   const cancelEdit = () => {
     setIsEditing(false);
     setError(null);
+    setRemovedLineIds(new Set());
+    setPendingRemoveLineId(null);
   };
 
   // `?edit=1` opens the session on arrival - the same entry the list's Pencil action uses -
@@ -444,7 +468,13 @@ export function SalesOrderDetail({ id }: { id: string }) {
     beginEdit(data);
   }, [wantsEdit, data]);
 
-  const lines = useMemo<SalesOrderLine[]>(() => data?.lines ?? [], [data]);
+  // Excludes a removed line the moment it is confirmed, not only on Save - the grid, its
+  // totals footer and the "last line" guard all read this one array, so a row that has been
+  // removed cannot still count toward any of them.
+  const lines = useMemo<SalesOrderLine[]>(
+    () => (data?.lines ?? []).filter((l) => !isEditing || !removedLineIds.has(l.id)),
+    [data, isEditing, removedLineIds],
+  );
   // Sorted and searched here rather than by the API: the lines come embedded in the order
   // read, so there is no second request to spend and no page boundary to work across.
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -514,6 +544,22 @@ export function SalesOrderDetail({ id }: { id: string }) {
       );
     },
     [isEditing, lineDrafts],
+  );
+
+  // The trash icon's click: asks first, unless removing would leave nothing on the order -
+  // in which case there is nothing to confirm, only to say. `lines` already excludes any
+  // line removed earlier in this same session, so its length IS what would remain before
+  // this one too.
+  const handleRequestRemoveLine = useCallback(
+    (row: SalesOrderLine) => {
+      if (lines.length <= 1) {
+        setError('An order needs at least one line.');
+        return;
+      }
+      setError(null);
+      setPendingRemoveLineId(row.id);
+    },
+    [lines],
   );
 
   const qtyOrderedTotal = useMemo(
@@ -1036,6 +1082,33 @@ export function SalesOrderDetail({ id }: { id: string }) {
         size: 110,
         meta: { headerTitle: 'Decision' },
       },
+      // Trailing, EDIT-only: a view-mode row cannot be removed, so the column has nothing to
+      // offer there and does not appear. Empty header - the icon-only button in every cell
+      // says what the column is for.
+      ...(isEditing
+        ? [
+            {
+              id: 'remove',
+              header: () => null,
+              enableSorting: false,
+              enableHiding: false,
+              cell: ({ row }: { row: { original: SalesOrderLine } }) => (
+                <Button
+                  type="button"
+                  mode="icon"
+                  variant="ghost"
+                  size="sm"
+                  aria-label="Remove line"
+                  title="Remove line"
+                  onClick={() => handleRequestRemoveLine(row.original)}
+                >
+                  <Trash2 className="size-4" />
+                </Button>
+              ),
+              size: 56,
+            } as ColumnDef<SalesOrderLine>,
+          ]
+        : []),
     ],
     [
       isEditing,
@@ -1048,6 +1121,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
       qtyDeliveredTotal,
       outstandingTotal,
       amountTotal,
+      handleRequestRemoveLine,
     ],
   );
 
@@ -1109,6 +1183,27 @@ export function SalesOrderDetail({ id }: { id: string }) {
   const so = data;
   const lineCount = so.line_count ?? lines.length;
   const linksLine = linksLineId ? (lines.find((l) => l.id === linksLineId) ?? null) : null;
+  // The line the trash icon was pressed on - still IN `lines` until the dialog is confirmed,
+  // same lifetime `linksLine` above has for its own dialog.
+  const pendingRemoveLine = pendingRemoveLineId
+    ? (lines.find((l) => l.id === pendingRemoveLineId) ?? null)
+    : null;
+
+  const handleConfirmRemoveLine = async () => {
+    const removeId = pendingRemoveLineId;
+    if (!removeId) return;
+    setRemovedLineIds((prev) => {
+      const next = new Set(prev);
+      next.add(removeId);
+      return next;
+    });
+    setLineDrafts((prev) => {
+      const next = { ...prev };
+      delete next[removeId];
+      return next;
+    });
+    setPendingRemoveLineId(null);
+  };
 
   const handleSave = async () => {
     setError(null);
@@ -1119,8 +1214,9 @@ export function SalesOrderDetail({ id }: { id: string }) {
     // `id` is sent so the BE matches this line by id rather than falling back to SKU.
     // Location / delivery date / UoM / price / discount ride the SAME upsert as SKU/qty -
     // see the class docstring - carrying either what the person typed or, for an untouched
-    // line, exactly what the order loaded with.
-    const cleanedLines = so.lines.map((ln) => {
+    // line, exactly what the order loaded with. A removed line is left out here, before the
+    // draft loop even runs - the BE's own upsert deletes whatever `lines` does not name.
+    const cleanedLines = so.lines.filter((ln) => !removedLineIds.has(ln.id)).map((ln) => {
       const draft = lineDrafts[ln.id];
       return {
         id: ln.id,
@@ -1136,6 +1232,9 @@ export function SalesOrderDetail({ id }: { id: string }) {
     if (cleanedLines.some((l) => !l.sku || !(l.qty_ordered > 0))) {
       return setError('Every line needs a product and a quantity above zero.');
     }
+    // A removal carries no field change to compare - it is the LINE COUNT that moves, so a
+    // signature built from one fewer line can never match the original's and `lines` is
+    // sent, same as any other line edit.
     const linesUnchanged =
       originalLineSignatureRef.current !== null &&
       lineSignature(cleanedLines) === originalLineSignatureRef.current;
@@ -1163,6 +1262,7 @@ export function SalesOrderDetail({ id }: { id: string }) {
       });
       setPlanningChangeBatch(result.planning_change_batch ?? null);
       setIsEditing(false);
+      setRemovedLineIds(new Set());
     } catch {
       // The mutation already toasted the reason; leave the session open so nothing typed
       // is lost.
@@ -1670,6 +1770,28 @@ export function SalesOrderDetail({ id }: { id: string }) {
           <SoLineLinksBody links={linksLine.linked_to ?? []} />
         </PlanRowDialog>
       ) : null}
+
+      {/* The remove-line confirm - one dialog for the whole grid, same shape as the Linked
+          lightbox above. Nothing has been written yet, so there is nothing to invalidate and
+          no success toast worth showing - `successMessage` says what actually happened
+          instead of the component's own default "Deleted successfully", which would be a lie
+          until Save. */}
+      <ConfirmDeleteDialog
+        open={!!pendingRemoveLineId}
+        onOpenChange={(next) => {
+          if (!next) setPendingRemoveLineId(null);
+        }}
+        title="Remove line"
+        confirmLabel="Remove"
+        description={
+          pendingRemoveLine
+            ? `Remove ${pendingRemoveLine.sku} (qty ${fmtInt(pendingRemoveLine.qty_ordered)}) ` +
+              `from ${so.so_number}? It is deleted when you save.`
+            : ''
+        }
+        onDelete={handleConfirmRemoveLine}
+        successMessage="Line removed. Save to apply."
+      />
     </div>
   );
 }
