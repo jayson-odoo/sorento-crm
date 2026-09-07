@@ -1,6 +1,6 @@
 # PLAN - Price Tag Designer Round 6 (tag size on templates, nudge, clipboard, ghost layers, polygon modes, update template, one CTA, crop, rotation snap)
 
-Status: PLANNED 7 Sep 2026, grill done 7 Sep (calls 1-3 confirmed, call 4 = menu only, G1-G5 confirmed, toolbar trailing = icon buttons, clipboard per user), ready for tickets
+Status: IMPLEMENTED 7 Sep 2026, all ten slices + review fixes on feat/price-tag-r6; browser evidence in seed-assets/verification/r6-*.png; PR pending
 UAC: `documentation/plans/dealer-kit/price-tag-r6-acceptance-criteria.md`
 Predecessor: `PLAN-price-tag-r5.md` (PR #685)
 
