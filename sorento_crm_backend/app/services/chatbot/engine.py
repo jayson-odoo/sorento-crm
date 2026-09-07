@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Callable, Iterator, Mapping
 
-from sqlalchemy import func
+from sqlalchemy import func as sa_func, or_, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -421,7 +421,7 @@ def _pending_kind(variables: dict[str, Any]) -> str | None:
 # --------------------------------------------------------------------------- #
 
 
-def _turn_no(db: Session, *, contact_respond_id: str, is_test: bool) -> int:
+def _turn_no(db: Session, *, contact_respond_id: str, row: ChatbotTurn) -> int:
     """WHICH turn of this conversation this is - the counter focus decay ages in (D11).
 
     Derived from the turn ROWS rather than stored on the session, and the choice is worth
@@ -432,20 +432,45 @@ def _turn_no(db: Session, *, contact_respond_id: str, is_test: bool) -> int:
     messages has this contact sent", they are written before any stage runs, and reading
     them writes nothing - which is what a dry run needs (AC-982).
 
-    Counted PER WORLD (`is_test`), for the same reason the dedup index carries that column
-    (H57): a console dry run against a real contact must not age that customer's live
-    conversation, and the world corpus replays chains of test turns that have to age like
-    a real chain. The current turn's own row is already inserted when this runs, so the
-    first turn of a contact is turn 1 and `age_turns` on a slot that turn writes is 0.
+    **Counted STRICTLY BEFORE this row, never as a plain total.** Two messages from one
+    dealer arriving together are both inserted before either reaches this line - the row
+    goes in before the ordering ticket is taken - so a `COUNT(*)` gave them the same
+    number and the second turn aged nothing. The order is `(started_at, id)`, a row
+    comparison, because `created_at` is `now()` and every row written inside one
+    transaction shares it (the Postgres-now lesson); `started_at` is stamped per row from
+    the Python clock in `_insert_turn`, and the id breaks a tie that is still possible at
+    microsecond resolution. `coalesce` covers a row written before `started_at` was set.
+
+    **Attempt 1 only.** A retry is the SAME turn run again (`_insert_turn` writes attempt
+    N+1 for the same message), so counting it would age the conversation by one every time
+    an operator pressed Retry, and the retried turn would read a memory the original never
+    saw.
+
+    **Live rows, plus this console run's own.** A dry run must read the counter a LIVE turn
+    would read, or AC-206's byte equality fails the moment a contact has any history at
+    all; and a multi-turn console run still has to advance, or its second turn reads the
+    memory its first turn read and the preview is a lie. `test_run_id` is what tells one
+    console run's turns from every other test turn ever recorded against that contact.
+    Reading live rows writes nothing and ages nothing, so H57 holds: the dry run still
+    cannot touch the live conversation.
+
+    The current turn's own row exists by now, so the first turn of a contact is turn 1.
     """
-    return int(
-        db.query(func.count(ChatbotTurn.id))
+    anchor = sa_func.coalesce(ChatbotTurn.started_at, ChatbotTurn.created_at)
+    mine = (row.started_at or row.created_at, str(row.id))
+    world = ChatbotTurn.is_test.is_(False)
+    if row.test_run_id:
+        world = or_(world, ChatbotTurn.test_run_id == row.test_run_id)
+    return 1 + int(
+        db.query(sa_func.count(ChatbotTurn.id))
         .filter(
             ChatbotTurn.contact_respond_id == contact_respond_id,
-            ChatbotTurn.is_test.is_(bool(is_test)),
+            ChatbotTurn.attempt == 1,
+            world,
+            tuple_(anchor, ChatbotTurn.id) < tuple_(*mine),
         )
         .scalar()
-        or 1
+        or 0
     )
 
 
@@ -593,6 +618,10 @@ def _insert_turn(
         attempt=(retrying.attempt + 1) if retrying is not None else 1,
         trace=[],
         shadow_of=getattr(envelope, "shadow_of", None),
+        # D11's counter needs to tell one console run's own turns from every other test
+        # turn recorded against this contact. Null on a live delivery, which belongs to no
+        # run.
+        test_run_id=getattr(envelope, "test_run_id", None),
         started_at=_now(),
     )
     db.add(row)
@@ -1212,9 +1241,10 @@ def _run_stages(  # noqa: PLR0915
         # stored state enters the turn, so it can neither reach the model as context nor
         # be carried by a rule downstream. `turn_no` is read on this same session; the
         # row for THIS turn already exists, so a contact's first turn is turn 1.
-        turn_no = _turn_no(
-            db, contact_respond_id=contact_respond_id, is_test=envelope.dry_run
-        )
+        # The row this turn IS, re-read on this session: `_turn_no` counts strictly before
+        # it, so it needs the row's own place in the order rather than a plain total.
+        turn_row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).one()
+        turn_no = _turn_no(db, contact_respond_id=contact_respond_id, row=turn_row)
         decayed = decay_mod.apply(
             variables,
             turn_no=turn_no,

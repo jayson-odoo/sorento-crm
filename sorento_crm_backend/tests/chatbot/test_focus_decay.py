@@ -14,6 +14,7 @@ Postgres only, through the blank-schema `session_factory` in `tests/chatbot/conf
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -321,40 +322,123 @@ class TestTheSessionContract:
 
 
 class TestTheTurnNumberIsTheContactsOwn:
-    """`turn_no` is derived from the rows, per world (H57), so a dry run never ages a
-    real customer's conversation."""
+    """`turn_no` is counted STRICTLY BEFORE this row, over live turns plus this console
+    run's own, attempt 1 only. Each clause is a defect the 7 Sep review caught."""
 
-    def _seed_turn(self, session_factory, *, is_test: bool) -> None:
+    def _seed(
+        self,
+        session_factory,
+        *,
+        is_test: bool = False,
+        attempt: int = 1,
+        run: str | None = None,
+        seconds: int = 0,
+    ) -> ChatbotTurn:
         db = session_factory()
-        db.add(
-            ChatbotTurn(
-                contact_respond_id=CONTACT_ID,
-                message_id=None,
-                ingress="console",
-                envelope={},
-                is_test=is_test,
-                status="done",
-                stage="sent",
-                attempt=1,
-                trace=[],
-            )
+        row = ChatbotTurn(
+            contact_respond_id=CONTACT_ID,
+            message_id=None,
+            ingress="console",
+            envelope={},
+            is_test=is_test,
+            test_run_id=run,
+            status="done",
+            stage="sent",
+            attempt=attempt,
+            trace=[],
+            started_at=datetime(2026, 9, 7, 4, 0, seconds, tzinfo=timezone.utc),
         )
+        db.add(row)
         db.commit()
+        return row
 
     def test_the_first_turn_of_a_contact_is_turn_one(self, session_factory) -> None:
-        self._seed_turn(session_factory, is_test=False)
+        row = self._seed(session_factory)
+
+        assert engine_mod._turn_no(
+            session_factory(), contact_respond_id=CONTACT_ID, row=row
+        ) == 1
+
+    def test_two_messages_in_flight_together_get_different_numbers(
+        self, session_factory
+    ) -> None:
+        """The defect: the row goes in BEFORE the ordering ticket is taken, so two
+        messages from one dealer arriving together were both counted by a plain total and
+        the second turn aged nothing."""
+        first = self._seed(session_factory, seconds=1)
+        second = self._seed(session_factory, seconds=2)
         db = session_factory()
 
-        assert engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, is_test=False) == 1
+        assert engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, row=first) == 1
+        assert engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, row=second) == 2
 
-    def test_live_turns_and_test_turns_count_separately(self, session_factory) -> None:
-        self._seed_turn(session_factory, is_test=False)
-        self._seed_turn(session_factory, is_test=False)
-        self._seed_turn(session_factory, is_test=True)
+    def test_rows_written_in_one_transaction_still_order(self, session_factory) -> None:
+        """`created_at` is `now()` and every row in one transaction shares it, which is
+        why the order is `(started_at, id)`."""
+        rows = [self._seed(session_factory, seconds=i) for i in range(1, 4)]
         db = session_factory()
 
-        assert engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, is_test=False) == 2
-        assert engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, is_test=True) == 1
+        assert [
+            engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, row=r) for r in rows
+        ] == [1, 2, 3]
+
+    def test_a_retry_row_never_ages_the_turns_after_it(self, session_factory) -> None:
+        """A retry is the SAME customer message run again (`_insert_turn` writes attempt
+        N+1 for it), so counting it would age the conversation by one every time an
+        operator pressed Retry."""
+        self._seed(session_factory, seconds=1)
+        self._seed(session_factory, attempt=2, seconds=2)
+        self._seed(session_factory, attempt=3, seconds=3)
+        later = self._seed(session_factory, seconds=4)
+        db = session_factory()
+
+        assert engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, row=later) == 2
+
+    def test_a_dry_run_reads_the_counter_a_live_turn_would(self, session_factory) -> None:
+        """AC-206: the two session patches have to be byte-equal, and `set_at_turn` is in
+        them. A console turn that read 1 where live read 41 would differ on every slot."""
+        for i in range(1, 4):
+            self._seed(session_factory, seconds=i)
+        # The shape `test_complete_turn.py` runs: the dry turn first, then the live one
+        # from the SAME starting state. Both must read the same number, or every slot in
+        # the patch differs on `set_at_turn`.
+        console = self._seed(session_factory, is_test=True, run="run-A", seconds=9)
+        live = self._seed(session_factory, seconds=10)
+        db = session_factory()
+
+        assert engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, row=console) == 4
+        assert engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, row=live) == 4, (
+            "the console preview must not have aged the live conversation"
+        )
+
+    def test_a_multi_turn_console_run_still_advances(self, session_factory) -> None:
+        for i in range(1, 4):
+            self._seed(session_factory, seconds=i)
+        first = self._seed(session_factory, is_test=True, run="run-A", seconds=8)
+        second = self._seed(session_factory, is_test=True, run="run-A", seconds=9)
+        db = session_factory()
+
+        assert engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, row=first) == 4
+        assert engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, row=second) == 5
+
+    def test_another_console_run_never_ages_this_one(self, session_factory) -> None:
+        """H57 in the counter: a test turn belongs to its own run and to nothing else."""
+        self._seed(session_factory, seconds=1)
+        self._seed(session_factory, is_test=True, run="run-A", seconds=2)
+        self._seed(session_factory, is_test=True, run="run-A", seconds=3)
+        mine = self._seed(session_factory, is_test=True, run="run-B", seconds=4)
+        db = session_factory()
+
+        assert engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, row=mine) == 2
+
+    def test_a_test_turn_with_no_run_id_reads_the_live_counter(self, session_factory) -> None:
+        """`is_test` with no `test_run_id` is the chat console's single-shot preview."""
+        self._seed(session_factory, seconds=1)
+        self._seed(session_factory, seconds=2)
+        mine = self._seed(session_factory, is_test=True, seconds=3)
+        db = session_factory()
+
+        assert engine_mod._turn_no(db, contact_respond_id=CONTACT_ID, row=mine) == 3
 
 
 class TestTheEngineReadsTheTtlColumn:

@@ -213,6 +213,38 @@ class TestDryRunWritesNothing:
         assert dry_done.session_patch["variables"] == live_patch["variables"]
         assert dry_done.session_patch.get("user_response") == live_patch.get("user_response")
 
+    def test_the_dialogue_state_is_byte_equal_too(self, seeded, stub_parser, session_factory):
+        """Growth r1: `focus` and `open_question` are IN that patch, and `focus` carries
+        `set_at_turn`.
+
+        A counter that read the console preview's own history would give the dry run turn 1
+        where the live turn read 41, and every slot in the two patches would differ on a
+        number no customer will ever see. `engine._turn_no` counts LIVE rows plus this
+        console run's own, which is what keeps this equal without letting a preview age a
+        real conversation.
+        """
+        dry_head = _head(session_factory, is_test=True)
+        dry_done = engine_mod.complete_turn(
+            dry_head.turn_id, _fragments(), session_factory=session_factory
+        )
+
+        from tests.chatbot.test_engine import _envelope as _build_envelope
+
+        live_envelope = _build_envelope(is_test=False)
+        live_envelope.message["message"]["messageId"] = "ZZT-msg-live-dialogue"
+        live_head = engine_mod.run_turn(live_envelope, session_factory=session_factory)
+        engine_mod.complete_turn(
+            live_head.turn_id, _fragments(), session_factory=session_factory
+        )
+
+        dry_vars = dry_done.session_patch["variables"]
+        live_vars = _session_of(session_factory)["variables"]
+        assert dry_vars["focus"] == live_vars["focus"]
+        assert dry_vars["open_question"] == live_vars["open_question"]
+        assert json.dumps(dry_vars["focus"], sort_keys=True) == json.dumps(
+            live_vars["focus"], sort_keys=True
+        )
+
 
 class TestGuards:
     def test_an_unknown_turn_id_is_a_lookup_error_not_a_crash(self, seeded, session_factory):
