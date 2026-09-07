@@ -37,6 +37,8 @@ from app.services.scm.container_capacity import fit as _fit_capacity
 from app.services.scm.container_capacity import line_cbm as _line_cbm
 from app.services.rules.master_rules import clean_supplier_name, resolve_master_by_code
 from app.services.rules import shipping_order_rules
+from app.services.company_scope import build_company_predicate
+from app.models.base import get_company_scope
 from app.services.document_ingest_service import SOURCE_SYSTEM as ESB_SOURCE_SYSTEM
 from app.services.scm.outstanding_import_service import (
     DEFAULT_PO_CURRENCY,
@@ -287,6 +289,17 @@ def _spo_match_key(spo_number: Optional[str]) -> str:
     if not spo_number or not str(spo_number).strip():
         return ""
     return re.sub(r"[^A-Za-z0-9]", "", str(spo_number).strip()).upper()
+
+
+def _spo_group_location(location_code: Optional[str]) -> Optional[str]:
+    """The location half of the `(product, location)` group key (D28a).
+
+    Normalised exactly the way `shipping_order_rules.supersede_group_key`
+    normalises it - upper-cased, blank as `None` - so the group a recompute
+    redistributes over is the same group the first-push supersede carried a
+    receipt across.
+    """
+    return (location_code or "").strip().upper() or None
 
 
 # Separators seen in extracted container numbers (ISO 6346 is 4 letters + 7
@@ -3093,6 +3106,15 @@ class SPOAllocationService:
     #: system returns 0 for all of them, which would show three years of delivered
     #: purchases as outstanding. A row this system raised itself carries no stamp, and for
     #: those the GRN lines ARE the record.
+    #:
+    #: TWO receipt-ownership rules, one per direction, and they are deliberately
+    #: different (spo-xlsx-supersede D28/D28a): this one governs the READ path (the
+    #: listings and availability readers below), where a stamped row's stored figure is
+    #: trusted as stated. The WRITE path - `_sync_received_for_allocations` - instead asks
+    #: whether anything actually picks against the row (D28) and, for
+    #: `source_system='autocount'` rows, recomputes the whole `(spo_number, product,
+    #: location)` GROUP (D28a): a pushed line-set that replaced one aggregated row shares
+    #: one receipt, so its own stored value is no longer a per-row statement to preserve.
     @staticmethod
     def _receipt_is_computed(allocation) -> bool:
         return getattr(allocation, "source_system", None) is None
@@ -4036,28 +4058,165 @@ class PickingHeaderService:
             is not None
         )
 
+    def _write_received(self, alloc: SPOAllocation, total: int) -> None:
+        """The one place a recompute writes a receipt onto an allocation.
+
+        `receipt_status` is derived from the same number in the same
+        expression, so the two can never end up disagreeing on different
+        paths (per-allocation, group-aware, released).
+        """
+        alloc.quantity_received = total
+        alloc.receipt_status = (
+            "fully_received" if total >= (alloc.allocated_quantity or 0) else "pending"
+        )
+
+    def _autocount_group_members(self, alloc: SPOAllocation) -> list[SPOAllocation]:
+        """The AutoCount lines sharing this allocation's `(spo_number, product,
+        location)` group, in `spo_line_number` order (D28a).
+
+        Only `source_system='autocount'` rows join the group: an AutoCount
+        line is one of N lines standing for what the upload held as ONE
+        aggregated row, so a GRN draw against any of them measures the
+        GROUP's receipt. A `scm_upload` or CRM-written row in the same
+        (product, location) keeps its own per-allocation receipt and must not
+        be folded in, or its picking lines would be counted twice.
+
+        Scoped to the allocation's OWN company explicitly, on top of the
+        ambient company filter (S9), so this can never gather another
+        company's lines under a shared SPO number.
+        """
+        target_key = _spo_match_key(alloc.spo_number)
+        location = _spo_group_location(alloc.location_code)
+        rows = (
+            self.db.query(SPOAllocation)
+            .filter(
+                SPOAllocation.company_id == alloc.company_id,
+                SPOAllocation.product_id == alloc.product_id,
+                SPOAllocation.source_system == shipping_order_rules.AUTOCOUNT_SOURCE_SYSTEM,
+                SPOAllocation.spo_number.isnot(None),
+            )
+            .all()
+        )
+        members = [
+            row
+            for row in rows
+            if _spo_match_key(row.spo_number) == target_key
+            and _spo_group_location(row.location_code) == location
+        ]
+        if not members:
+            return [alloc]
+        members.sort(
+            key=lambda r: (
+                r.spo_line_number if r.spo_line_number is not None else 10**9,
+                str(r.id),
+            )
+        )
+        return members
+
+    def _sync_group_received(
+        self, members: list[SPOAllocation], *, released: set
+    ) -> None:
+        """D28a: one AutoCount group's picking total, redistributed over its lines.
+
+        The group total is summed over every member and spread in
+        `spo_line_number` order through the SAME
+        `shipping_order_rules.distribute_received` the first-push supersede
+        carries a receipt with (each line up to its allocated quantity,
+        remainder onto the last) - never one line's own picking total onto
+        that line alone, which is what a repointed GRN draw (D27) would
+        otherwise make of a 47-unit receipt against a 29 + 18 line pair.
+
+        D28's ownership rule still governs, at GROUP level: if nothing picks
+        against ANY member and none is being released, the stored values were
+        stated (ESB) or carried (D26) rather than computed here, and are left
+        alone.
+        """
+        member_ids = [str(member.id) for member in members]
+        has_picking_line = (
+            self.db.query(PickingLine.id)
+            .filter(PickingLine.spo_allocation_id.in_(member_ids))
+            .first()
+            is not None
+        )
+        if not has_picking_line and not (released & set(member_ids)):
+            return
+        computed = self.get_computed_received_map(member_ids)
+        group_total = sum(computed.values())
+        shares = shipping_order_rules.distribute_received(
+            group_total, [int(member.allocated_quantity or 0) for member in members]
+        )
+        for member, share in zip(members, shares):
+            self._write_received(member, share)
+
+    def _sync_received_for_allocations(
+        self, allocations: list[SPOAllocation], *, released: Optional[set] = None
+    ) -> set:
+        """Recompute `quantity_received` for these allocations; returns the
+        shipment ids touched.
+
+        Two rules, decided per row by `source_system` (D28 + D28a): an
+        AutoCount line recomputes as part of its whole `(spo_number, product,
+        location)` group; anything else (`scm_upload`, or the NULL the CRM UI
+        and the n8n packing-list route write) recomputes on its own, which is
+        what its own single picking line measures.
+        """
+        released = {str(value) for value in (released or set())}
+        shipment_ids: set = set()
+        done_groups: set = set()
+        for alloc in allocations:
+            if alloc.inbound_shipment_id:
+                shipment_ids.add(alloc.inbound_shipment_id)
+            if (alloc.source_system or "") == shipping_order_rules.AUTOCOUNT_SOURCE_SYSTEM:
+                key = (
+                    str(alloc.company_id),
+                    _spo_match_key(alloc.spo_number),
+                    str(alloc.product_id),
+                    _spo_group_location(alloc.location_code),
+                )
+                if key in done_groups:
+                    continue
+                done_groups.add(key)
+                members = self._autocount_group_members(alloc)
+                self._sync_group_received(members, released=released)
+                for member in members:
+                    if member.inbound_shipment_id:
+                        shipment_ids.add(member.inbound_shipment_id)
+                continue
+            alloc_id = str(alloc.id)
+            if alloc_id not in released and not self._allocation_has_picking_line(alloc_id):
+                # D28: nothing picks against this row and nobody is releasing
+                # it, so its stored receipt was stated (ESB) or carried (D26),
+                # not computed here.
+                continue
+            self._write_received(alloc, self.compute_received_for_allocation(alloc_id))
+        return shipment_ids
+
     def sync_grn_received_to_spo(self, picking_header_id: str) -> None:
         """After GRN is approved: set quantity_received on each affected SPO allocation (DB field, for legacy/reports).
         From picking lines (spo_allocation_id = allocation, header approved). Idempotent.
-        Also refreshes inbound_shipment_lines.line_status for affected shipments."""
+        Also refreshes inbound_shipment_lines.line_status for affected shipments.
+
+        The allocations come from this header's OWN picking lines, so each of
+        them has at least one by construction - D28's "no picking line, keep
+        the stored value" skip is unreachable here (reviewer cleanup) and is
+        not repeated. What DOES apply is D28a: an AutoCount line recomputes
+        with its whole group, through the shared
+        `_sync_received_for_allocations`.
+        """
         lines = self.db.query(PickingLine).filter(
             PickingLine.picking_header_id == picking_header_id,
             PickingLine.spo_allocation_id.isnot(None),
         ).all()
         allocation_ids = {str(line.spo_allocation_id) for line in lines if line.spo_allocation_id}
-        shipment_ids = set()
-        for alloc_id in allocation_ids:
-            alloc = self.db.query(SPOAllocation).filter(SPOAllocation.id == alloc_id).first()
-            if not alloc:
-                continue
-            shipment_ids.add(alloc.inbound_shipment_id)
-            if not self._allocation_has_picking_line(alloc_id):
-                # D28: nothing picks against this row, so its stored receipt
-                # was stated (ESB) or carried (D26), not computed here.
-                continue
-            total = self.compute_received_for_allocation(alloc_id)
-            alloc.quantity_received = total
-            alloc.receipt_status = "fully_received" if total >= alloc.allocated_quantity else "pending"
+        allocations = [
+            alloc
+            for alloc in (
+                self.db.query(SPOAllocation).filter(SPOAllocation.id == alloc_id).first()
+                for alloc_id in allocation_ids
+            )
+            if alloc is not None
+        ]
+        shipment_ids = self._sync_received_for_allocations(allocations)
         self.db.commit()
         inbound_svc = InboundShipmentService(self.db)
         for sid in shipment_ids:
@@ -4083,30 +4242,26 @@ class PickingHeaderService:
         """
         if not spo_number or not spo_number.strip():
             return
-        released = {str(value) for value in (released_allocation_ids or set())}
         target_key = _spo_match_key(spo_number)
         if not target_key:
             return
-        allocations = self.db.query(SPOAllocation).filter(SPOAllocation.spo_number.isnot(None)).all()
-        shipment_ids = set()
-        for alloc in allocations:
-            if _spo_match_key(alloc.spo_number) != target_key:
-                continue
-            alloc_id = str(alloc.id)
-            if alloc_id not in released and not self._allocation_has_picking_line(alloc_id):
-                # D28: same rule as `sync_grn_received_to_spo` - an allocation
-                # with no picking line keeps its stored value. This sweep runs
-                # over EVERY row of the SPO number, so without it one GRN
-                # approval recomputed the whole document to 0 for every line
-                # nothing had been picked against.
-                if alloc.inbound_shipment_id:
-                    shipment_ids.add(alloc.inbound_shipment_id)
-                continue
-            total = self.compute_received_for_allocation(alloc_id)
-            alloc.quantity_received = total
-            alloc.receipt_status = "fully_received" if total >= alloc.allocated_quantity else "pending"
-            if alloc.inbound_shipment_id:
-                shipment_ids.add(alloc.inbound_shipment_id)
+        query = self.db.query(SPOAllocation).filter(SPOAllocation.spo_number.isnot(None))
+        # S9 (security review): the company filter stated HERE rather than
+        # left entirely to the ambient session scope. An SPO number is not
+        # unique across companies, and this sweep writes every row it reads -
+        # a caller whose session scope was never resolved must not be one
+        # accident away from recomputing another company's document.
+        predicate = build_company_predicate(SPOAllocation, get_company_scope(self.db))
+        if predicate is not None:
+            query = query.filter(predicate)
+        allocations = [
+            alloc
+            for alloc in query.all()
+            if _spo_match_key(alloc.spo_number) == target_key
+        ]
+        shipment_ids = self._sync_received_for_allocations(
+            allocations, released=released_allocation_ids
+        )
         self.db.commit()
         inbound_svc = InboundShipmentService(self.db)
         for sid in shipment_ids:
