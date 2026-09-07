@@ -1736,23 +1736,60 @@ export function TagCanvasEditor({
     [cropFrame],
   );
 
+  /**
+   * Snaps the dragged handle's own Konva node back onto the recomputed
+   * point (S3 review), the same reason the polygon handles' own drag does
+   * it (`polygonPointsFromDrag` above): react-konva only writes a prop back
+   * to the node when its VALUE changed from the last render, so an
+   * edge/middle handle constrained to one axis (top-center moves only y,
+   * middle-left only x) never gets its OTHER axis corrected once Konva's
+   * own free drag has already moved it there on a diagonal pointer move -
+   * it strands off to the side instead of tracking the window.
+   */
+  /**
+   * Takes `anchor` as an explicit argument rather than reading
+   * `cropDragRef.current.anchor` itself: `handleCropDragEnd` below clears
+   * that ref before this runs (its own `cancelled` guard needs the drag
+   * gone from the ref first), so reading it in here landed on the fallback
+   * `{ fx: 0, fy: 0 }` for every drag END and repositioned every handle
+   * onto the window's top-left corner instead of its own anchor.
+   */
+  const positionCropHandle = useCallback(
+    (e: Konva.KonvaEventObject<DragEvent>, rect: CropRect, anchor: { fx: number; fy: number }) => {
+      if (!cropFrame) return;
+      e.target.position({
+        x: cropFrame.x + (rect.x + anchor.fx * rect.width) * cropFrame.width,
+        y: cropFrame.y + (rect.y + anchor.fy * rect.height) * cropFrame.height,
+      });
+    },
+    [cropFrame],
+  );
+
   const handleCropDragMove = useCallback(
     (e: Konva.KonvaEventObject<DragEvent>) => {
+      const anchor = cropDragRef.current?.anchor ?? { fx: 0, fy: 0 };
       const next = cropRectFromEvent(e);
-      if (next) setCropDraft(next);
+      if (next) {
+        setCropDraft(next);
+        positionCropHandle(e, next, anchor);
+      }
     },
-    [cropRectFromEvent],
+    [cropRectFromEvent, positionCropHandle],
   );
 
   const handleCropDragEnd = useCallback(
     (e: Konva.KonvaEventObject<DragEvent>) => {
       const drag = cropDragRef.current;
+      const anchor = drag?.anchor ?? { fx: 0, fy: 0 };
       const next = cropRectFromEvent(e);
       cropDragRef.current = null;
       if (drag?.cancelled) return;
-      if (next) setCropDraft(next);
+      if (next) {
+        setCropDraft(next);
+        positionCropHandle(e, next, anchor);
+      }
     },
-    [cropRectFromEvent],
+    [cropRectFromEvent, positionCropHandle],
   );
 
   // The mode itself is what disappears if the layer stops being eligible

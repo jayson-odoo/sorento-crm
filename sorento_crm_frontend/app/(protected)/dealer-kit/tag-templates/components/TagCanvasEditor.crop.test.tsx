@@ -22,6 +22,23 @@ import { CANVAS_PX_PER_MM } from '@/lib/dealer-kit/canvas-geometry';
 
 vi.mock('konva/lib/Global', () => ({ Konva: { dragButtons: [0, 1] } }));
 
+/**
+ * One persistent fake node per handle NAME, not a fresh object per event
+ * (S3 review): the fix under test calls the node's own `.position()`
+ * imperatively, and a test asserting that has to read `.x()` back off the
+ * SAME node afterwards - the same reason `TagCanvasEditor.polygon.test.tsx`
+ * keys its own fake nodes by id in `konva.nodesById`.
+ */
+interface FakeCropNode {
+  x: (v?: number) => number;
+  y: (v?: number) => number;
+  position: (p: { x: number; y: number }) => void;
+}
+
+const crop = vi.hoisted(() => ({
+  nodes: new Map<string, FakeCropNode>(),
+})) as { nodes: Map<string, FakeCropNode> };
+
 vi.mock('react-konva', async () => {
   const React = await import('react');
 
@@ -33,23 +50,50 @@ vi.mock('react-konva', async () => {
   interface HandleProps {
     name?: string;
     children?: React.ReactNode;
-    onDragStart?: (e: { target: { x: () => number; y: () => number } }) => void;
-    onDragMove?: (e: { target: { x: () => number; y: () => number } }) => void;
-    onDragEnd?: (e: { target: { x: () => number; y: () => number } }) => void;
+    onDragStart?: (e: { target: FakeCropNode }) => void;
+    onDragMove?: (e: { target: FakeCropNode }) => void;
+    onDragEnd?: (e: { target: FakeCropNode }) => void;
   }
 
-  const dragged = (event: { clientX: number; clientY: number }) => ({
-    target: { x: () => event.clientX, y: () => event.clientY },
-  });
+  function nodeFor(name: string) {
+    let node = crop.nodes.get(name);
+    if (!node) {
+      const state = { x: 0, y: 0 };
+      node = {
+        x: (v?: number) => (v === undefined ? state.x : (state.x = v)),
+        y: (v?: number) => (v === undefined ? state.y : (state.y = v)),
+        position: (p: { x: number; y: number }) => {
+          state.x = p.x;
+          state.y = p.y;
+        },
+      };
+      crop.nodes.set(name, node);
+    }
+    return node;
+  }
 
   function DraggableRect(props: HandleProps) {
+    const node = nodeFor(props.name ?? '');
+    const moveTo = (e: { clientX: number; clientY: number }) => {
+      node.x(e.clientX);
+      node.y(e.clientY);
+    };
     return (
       <div
         data-konva="rect"
         data-name={props.name}
-        onMouseDown={(e) => props.onDragStart?.(dragged(e))}
-        onMouseMove={(e) => props.onDragMove?.(dragged(e))}
-        onMouseUp={(e) => props.onDragEnd?.(dragged(e))}
+        onMouseDown={(e) => {
+          moveTo(e);
+          props.onDragStart?.({ target: node });
+        }}
+        onMouseMove={(e) => {
+          moveTo(e);
+          props.onDragMove?.({ target: node });
+        }}
+        onMouseUp={(e) => {
+          moveTo(e);
+          props.onDragEnd?.({ target: node });
+        }}
       >
         {props.children}
       </div>
@@ -153,6 +197,7 @@ class StubImage {
 
 beforeEach(() => {
   vi.stubGlobal('Image', StubImage);
+  crop.nodes.clear();
 });
 
 // 5-25mm x, 5-15mm y -> box 60x30px at CANVAS_PX_PER_MM (3). Source
@@ -303,6 +348,37 @@ describe('TagCanvasEditor crop mode - commit and cancel (S8, AC-S8-3)', () => {
       );
     }
     expect(container.querySelector('[data-name="crop-window"]')).toBeNull();
+  });
+});
+
+describe('TagCanvasEditor crop mode - edge/middle handles do not strand (S3 review)', () => {
+  /**
+   * `cropRectFromDrag` (`lib/dealer-kit/image-crop.ts`) never touches x/width
+   * for a `fx: 0.5` anchor - top-center only moves the top edge (y/height).
+   * Konva's own drag still moves the node freely on BOTH axes following the
+   * raw pointer, and react-konva only rewrites a prop back onto the node
+   * when its VALUE changed from the last render - so a sideways component in
+   * the pointer's move, on an axis the crop math itself never changes,
+   * strands the handle at the raw pointer x instead of the window's own
+   * centre. `handleCropDragMove`/`handleCropDragEnd` now reposition the
+   * node imperatively, the same way the polygon handles' own drag does.
+   */
+  it('a top-center drag with a sideways pointer delta lands the handle on the window centre x, not the raw pointer', async () => {
+    // No cropRect - FULL_CROP - so `cropFrame` fills the 60x30px box with no
+    // letterboxing (see the file header comment): cropFrame = {0, 0, 60, 30},
+    // and the top-center handle starts at its own window centre, x=30.
+    const { container } = await renderReady(docWith(imageLayer()));
+    await enterCropMode(container);
+
+    const handle = cropHandle(container, 'crop-handle-top-center');
+    fireEvent.mouseDown(handle, { clientX: 30, clientY: 0 });
+    // A move that is mostly vertical (0 -> 15px of 30, half the frame) but
+    // ALSO 10px sideways (30 -> 40) - the sideways component is what
+    // `cropRectFromDrag` throws away for this anchor, and what used to
+    // strand the handle.
+    fireEvent.mouseUp(handle, { clientX: 40, clientY: 15 });
+
+    expect(crop.nodes.get('crop-handle-top-center')!.x()).toBe(30);
   });
 });
 
