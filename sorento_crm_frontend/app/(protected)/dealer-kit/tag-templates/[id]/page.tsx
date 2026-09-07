@@ -67,6 +67,7 @@ import type {
 import {
   getTemplate,
   getTemplateVersion,
+  listPublishedTemplates,
   publishTemplate,
   restoreTemplateVersion,
   updateTemplate,
@@ -78,6 +79,8 @@ import { AutosaveIndicator } from '../../components/AutosaveIndicator';
 import { TagSizeControl } from '../../components/TagSizeControl';
 import { ToolbarButton } from '../components/CanvasToolbar';
 import { useAutosave } from '@/hooks/useAutosave';
+import { useDeleteTagSizePreset, useTagSizesQuery } from '../../tag-sizes/hooks/useTagSizes';
+import { SaveAsSizeDialog } from '../../price-tag-requests/[id]/design/components/SaveAsSizeDialog';
 
 const TagCanvasEditor = dynamic(
   () => import('../components/TagCanvasEditor').then((m) => ({ default: m.TagCanvasEditor })),
@@ -121,16 +124,24 @@ export default function TagTemplateEditorPage() {
   /** Full screen (D11, AC-S6-1): the same `FocusShell` the room designer uses. */
   const [focus, setFocus] = useState(false);
 
-  // -- Tag size control (S1) ---------------------------------------------------
+  // -- Tag size control (S1, AC-S1-1) ------------------------------------------
 
-  // No "Template sizes" preset group here (unlike the request designer's own
-  // control): this page's own existing unit test mocks `tagTemplateService`
-  // down to the six calls it already exercises, and a template editor has
-  // no other natural size list to offer beyond the W/H fields themselves -
-  // "Saved sizes" (react-query, see the note on `TagSizeControl` itself) is
-  // the same story. The control still shows W/H mm and the "Custom" dropdown
-  // (AC-S1-1); only the two population sources are absent here.
-  const sizePresets = useMemo(() => tagSizePresets([]), []);
+  // The SAME "Template sizes" (every OTHER published template's own print
+  // size) + "Saved sizes" grouping the request designer's own control shows
+  // - the whole point of AC-S1-1 is that this is not a lesser copy of it.
+  const [sizePresetTemplates, setSizePresetTemplates] = useState<TagTemplate[]>([]);
+  useEffect(() => {
+    listPublishedTemplates()
+      .then(setSizePresetTemplates)
+      .catch(() => setSizePresetTemplates([]));
+  }, []);
+  const sizePresets = useMemo(
+    () => tagSizePresets(sizePresetTemplates),
+    [sizePresetTemplates],
+  );
+  const savedSizesQuery = useTagSizesQuery();
+  const deleteSavedSize = useDeleteTagSizePreset();
+  const [saveSizeOpen, setSaveSizeOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -488,7 +499,11 @@ export default function TagTemplateEditorPage() {
                 width_mm={template.doc.width_mm}
                 height_mm={template.doc.height_mm}
                 presets={sizePresets}
+                savedSizes={savedSizesQuery.data}
                 onResize={handleResizeTemplate}
+                onDeleteSavedSize={(id, name) => deleteSavedSize.run({ id, subject: name })}
+                deletingSavedSizeId={deleteSavedSize.isPending ? deleteSavedSize.targetId : null}
+                onSaveAsSize={() => setSaveSizeOpen(true)}
               />
             }
             toolbarTrailing={toolbarTrailing}
@@ -545,6 +560,13 @@ export default function TagTemplateEditorPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <SaveAsSizeDialog
+        open={saveSizeOpen}
+        onOpenChange={setSaveSizeOpen}
+        width_mm={template.doc.width_mm}
+        height_mm={template.doc.height_mm}
+      />
     </div>
     </FocusShell>
   );
