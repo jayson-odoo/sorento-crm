@@ -538,6 +538,10 @@ DIVERGENCES: list[Divergence] = [
             ("output", "member_offer_filter_modification"),
             ("output", "bare_entity_retyped"),
             ("output", "entities_dropped_on_topic_change"),
+            # Console pass 4, item 3 (AC-823): the same class again - the diagnostic the
+            # filter-modification arm stamps when it puts the offer's own scope back. n8n
+            # has no such arm, so no capture can carry the key.
+            ("output", "member_offer_scope_reused"),
         ),
     ),
 ]

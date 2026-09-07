@@ -1628,3 +1628,29 @@ contact inside the synchronous request. Different contacts run in parallel.
   Evidence: `tests/chatbot/test_pass4_item1a_team_clarify_consumed.py`,
   `tests/chatbot/test_s5_escalation_lane.py::TestAnAcceptanceIsNeverAskedWhichTeam::test_an_open_offer_for_the_default_team_still_asks`
   (the marker's options). (H74)
+- AC-823 `[BE][T]` **A date-only narrowing of an open member offer keeps the offer's own
+  scope.** Owner console pass 4, item 3 (E residue), turns 0eef1cc3 -> 48ee6081, and the
+  same shape on live chain 15503158 -> 15503189 where the dropped entity was the CUSTOMER.
+  "delivery to hanlim, product srtwc286" matched no order and opened a member offer; "last
+  month" then came back "That would search every delivery order we have - I need at least
+  one filter to narrow it down", though AC-818's own fix had landed.
+
+  Both of the other candidate causes were measured FINE on the capture and are asserted in
+  the test so a future regression there is caught rather than re-attributed: the window IS
+  derived (`2026-08-01` / `2026-08-31`, surviving into `output`), and
+  `member_offer_filter_modification` IS stamped with `route.decide` already yielding to it.
+
+  **Given** an open member offer and a reply that carries only a date window, **then** the
+  narrowed query runs with the offer's own scope (`hanlim` + `srtwc286`) PLUS the window,
+  and never the "need at least one filter" refusal.
+
+  The entities are not dropped by the filter-modification arm, which is where the comment
+  promising "the window and the ENTITY are kept" sits: the entity-op executor keeps them
+  correctly, and `if message_type == "casual" and not engages_offer: entities = []`
+  (`output_exchange` ~:2172) wipes them 400 lines ABOVE that arm. That line is right about
+  a bare "hi" and wrong about "last month", and it cannot tell the two apart because "is
+  this a filter modification of an open offer" is decided downstream of it. So the restore
+  is done in the arm that knows the answer, and only when the turn brought no scope of its
+  own - a modification that DID name an entity already carries the executor's merge, and
+  re-adding the prior set would put back the axis the customer just narrowed.
+  Evidence: `tests/chatbot/test_pass4_item3_last_month_under_member_offer.py`. (H75)

@@ -2610,6 +2610,39 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
                 o["domain_hint"] = prior_domain
                 if not jsc.truthy(o.get("intent_hint")) and jsc.truthy(prior_intent):
                     o["intent_hint"] = prior_intent
+            # ... and THE OFFER'S OWN SCOPE, which the comment above has promised since
+            # rule 3 landed and no line delivered (owner console pass 4, item 3, 7 Sep
+            # 2026; turns 0eef1cc3 -> 48ee6081, and the same shape on chain 15503158 ->
+            # 15503189 where the CUSTOMER was the entity dropped).
+            #
+            # Measured, because the arm is not where the entities die: the executor keeps
+            # them correctly (`replace_combine` with no current entity keeps every prior
+            # axis, so `hanlim` + `srtwc286` are both still here at line ~1370), and then
+            # `if o["message_type"] == "casual" and not engages_offer: o["entities"] = []`
+            # (~:2172) wipes the scope 400 lines above this arm. That line is right about
+            # a bare "hi" and wrong about "last month", and it cannot tell them apart
+            # because "is this a filter modification of an open offer" is decided HERE,
+            # downstream of it. So the restore belongs here, where the answer exists.
+            #
+            # Only when this turn has no scope of its own: a filter modification that DID
+            # name an entity already carries the executor's own merge, and re-adding the
+            # prior set over it would put back the axis the customer just narrowed.
+            # `current_message: False` and `entity_op: reuse` are the promo-pick sibling's
+            # shape 400 lines up, and for its reason - the scope is CARRIED, not named
+            # this turn, and a reader that believed otherwise would treat the offer's
+            # customer as a new subject.
+            if not jsc.array(o.get("entities")) and jsc.is_array(
+                jsc.get(prior_state, "entities")
+            ):
+                carried = [
+                    {**e, "current_message": False}
+                    for e in jsc.array(jsc.get(prior_state, "entities"))
+                    if jsc.truthy(e)
+                ]
+                if carried:
+                    o["entities"] = carried
+                    o["entity_op"] = "reuse"
+                    o["member_offer_scope_reused"] = True  # diagnostic
             o["member_offer_filter_modification"] = True  # diagnostic
         elif is_new_query:
             # Tier 3b - NEW QUERY: abandon the offer. Touch nothing.
