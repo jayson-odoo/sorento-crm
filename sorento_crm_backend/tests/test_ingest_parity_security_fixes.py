@@ -127,6 +127,9 @@ class TestSec1AdoptionPathReceivedGuard:
             quantity_received=5,
             receipt_status="pending",
             line_status="open",
+            # D25a: only an xlsx-era row (source_system scm_upload) is a
+            # supersede candidate; a NULL-source row takes the adoption path.
+            source_system="scm_upload",
         )
         db.add(row)
         db.flush()
