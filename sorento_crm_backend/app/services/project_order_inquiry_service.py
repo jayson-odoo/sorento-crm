@@ -473,19 +473,24 @@ class ProjectOrderInquiryService:
         """
         inquiry = self._existing(order.id, None)
         if inquiry is None:
-            inquiry = OrderInquiry(
-                company_id=order.company_id,
-                project_sales_order_id=order.id,
-                amendment_id=None,
-                state=INQUIRY_RAISED,
-                raised_by=actor_user_id,
-                # The number is stamped by the model's own `before_insert` (there is one
-                # minting path, so no writer can forget). Numbered ONCE, on the header this
-                # order keeps: a re-confirm reuses the same inquiry (`_existing` above), so
-                # purchasing keeps quoting one number through every revision.
-            )
-            self.db.add(inquiry)
-            self.db.flush()
+            # A header is raised only when this confirmation actually has something to
+            # buy: a plan covered entirely by Reserve, Borrow or timely SPO cover has no
+            # Buy residual and opened no donor hole, so `buy_lines` and
+            # `borrow_shortfalls` are both empty and the loop below would write zero
+            # rows. Minting the header anyway burns an OI number for nothing and leaves
+            # a dangling "Order inquiries" link on the SO list that the (rows-based) OI
+            # worklist never shows anything for (prod OI-000020, local OI-000007).
+            will_raise = any(
+                _dec(entry.get("buy_qty")) > _ZERO for entry in buy_lines
+            ) or bool(borrow_shortfalls)
+            if not will_raise:
+                return {
+                    "inquiry": None,
+                    "created": 0,
+                    "exceptions": [],
+                    "settled_in_place": [],
+                }
+            inquiry = self.ensure_inquiry(order, actor_user_id=actor_user_id)
         elif actor_user_id:
             # A reconfirm RE-STAMPS the header (PLAN section H, AC-H4). The inquiry is
             # deliberately reused so purchasing keeps quoting one number, which means
@@ -1457,6 +1462,39 @@ class ProjectOrderInquiryService:
             else query.filter(OrderInquiry.amendment_id.is_(None))
         )
         return query.first()
+
+    def ensure_inquiry(
+        self, order: ProjectSalesOrder, *, actor_user_id: Optional[str] = None
+    ) -> OrderInquiry:
+        """Get this order's standard-demand header (`amendment_id IS NULL`), minting it.
+
+        Two callers: `refresh_for_decision`'s own gate, once it has decided a header is
+        actually needed, and `project_supply_service._place_supply_borrows`'s fallback -
+        a step-3 supply borrow's asker-side ORDER_BACK row needs a header to hang off
+        even on a confirmation whose Buy residual and donor holes were both empty (the
+        line was fully covered by borrowing somebody else's already-placed document),
+        which is a case `refresh_for_decision`'s gate cannot see because it never
+        receives the borrow composition, only the confirmed Buy and the donor holes.
+        Callers must not call this unless they are about to write at least one row: an
+        empty header is exactly the defect this method's sibling gate exists to avoid.
+        """
+        existing = self._existing(order.id, None)
+        if existing is not None:
+            return existing
+        inquiry = OrderInquiry(
+            company_id=order.company_id,
+            project_sales_order_id=order.id,
+            amendment_id=None,
+            state=INQUIRY_RAISED,
+            raised_by=actor_user_id,
+            # The number is stamped by the model's own `before_insert` (there is one
+            # minting path, so no writer can forget). Numbered ONCE, on the header this
+            # order keeps: a re-confirm reuses the same inquiry (`_existing` above), so
+            # purchasing keeps quoting one number through every revision.
+        )
+        self.db.add(inquiry)
+        self.db.flush()
+        return inquiry
 
     # ----------------------------------------------------------- covering pools
 
