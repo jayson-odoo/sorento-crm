@@ -41,6 +41,7 @@ TransferedQty lags until the transfer is keyed there). The received guard alread
 | D26a | **Guard on the group total; merged shipments surfaced** (S2, S6). If the incoming lines' `sum(allocated_quantity)` for a group is below the group's carried receipt, the group is NOT superseded: rows stay (closed by the leftover rule), the incoming lines are created as usual and the record warns `received_locked`. If the group's xlsx rows carry more than one distinct `inbound_shipment_id`, the supersede proceeds with the first one and the record warns `shipment_merged`; the dropped shipment ids are logged. |
 | D28a | **Group-aware recompute for AutoCount-owned lines** (S1). For allocations with `source_system = 'autocount'`, `sync_grn_received_to_spo` / `sync_received_for_spo_number` sum the picking lines of the whole `(spo_number, product, location)` group and distribute that total across the group's lines in `spo_line_number` order with the D26 carry rule (each up to allocated, remainder last), never writing one line's picking total onto that line alone. Rows with `source_system` NULL or `scm_upload` keep today's per-allocation recompute. |
 | D30 | **Supersede needs `.delete`** (B1). Removing rows through the ingest is a deletion act: the supersede deletes only when the calling principal holds `DELETE_PERMISSIONS["shipping_orders"]` (`scm.shipping_orders.delete`, the same slug the deletions endpoint demands). Without it the superseded rows are CLOSED, receipts and links still carried, `allocation_notes` set to `superseded by <DocKey>`, and the record warns `superseded_closed_only`. Every supersede logs at INFO the removed or closed row ids with their `(allocated_quantity, quantity_received)` (S7). |
+| D27a | **Shipment statuses refreshed** (reviewer S2). Every supersede, ingest or dedupe, calls `InboundShipmentService.refresh_shipment_line_statuses` once per distinct `inbound_shipment_id` it touched (superseded rows' and new lines'), like every other writer of allocations. |
 | D29 | **Dedupe = the same rule, run once.** `scripts/dedupe_spo_xlsx_superseded.py --company <code> [--since <ts>] --dry-run|--apply`: for every `spo_number` holding BOTH ref-less rows AND ref rows, treat the existing ref rows (in `spo_line_number` order) as the incoming line-set and apply D26 + D27 to the ref-less rows. Per company under `company_scope`, keyset-paged, one commit per document, prints one line per document (spo_number, ref-less rows removed, lines touched, links moved, groups kept). Idempotent: a second `--apply` is a no-op. Shares the algorithm with the ingest through one function in `shipping_order_rules` / the service, never a second copy. Amended (S5, S8, nit 1): the "incoming" side is the ref rows of the NEWEST `source_doc_ref` only (a retired DocKey's rows are never a repoint target); the script calls `register_company_scope_listeners()` before opening `company_scope`; `--since` is parsed as a naive DB-local timestamp. |
 
 ## 2. Design
@@ -116,3 +117,12 @@ once; then the dedupe runs on production by the captain with `--dry-run` first.
 - Shared algorithm: `shipping_order_rules.plan_xlsx_supersede(incoming, refless_rows) ->
   SupersedePlan` (pure), `carried_received`, `repoint_allocation_dependants`; the ingest creates
   rows from the plan, `scripts/dedupe_spo_xlsx_superseded.py` updates existing ref rows from it.
+
+## 6. Reviewer round cleanups (2026-09-07, not decisions)
+
+- `sync_grn_received_to_spo`'s D28 skip is unreachable (its ids come from the header's own picking
+  lines): remove it; D28a's group-aware distribution is what applies there.
+- `if superseded:` after a non-empty plan is always true: drop the guard.
+- Dedupe report: "groups kept" must count groups; dry run ends with `db.rollback()`; the `--since`
+  test runs before the per-document row load.
+- A first push with `force_closed` (cancelled document) still supersedes: intended, closed rows.

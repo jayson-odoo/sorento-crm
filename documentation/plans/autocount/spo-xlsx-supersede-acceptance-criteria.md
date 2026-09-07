@@ -108,3 +108,25 @@ shipping_orders` with one record whose lines carry `source_ref` (DtlKey), `produ
 
 - **AC-X22 [BE][T]** (S9) `sync_received_for_spo_number(N)` called under company A's scope never
   writes a company-B allocation sharing `spo_number` N.
+
+## Reviewer round (kill-test gaps, 2026-09-07)
+
+- **AC-X23 [BE][T]** (D26 Seq order) The AC-X1 push with its two lines sent in REVERSE payload
+  order (line_number 2 first, then 1) still yields line 1 = 29 and line 2 = 18; distribution
+  follows `line_number`, not payload position.
+
+- **AC-X24 [BE][T]** (D26 max rule, AutoCount side) Given the xlsx row received 10 of 47 and a
+  first push whose line 1 states `qty_received 25` and line 2 `qty_received 0`; line 1 reads 25
+  (AutoCount above the carry wins), line 2 reads 0, nothing reads below 10 in total.
+
+- **AC-X25 [BE][T]** (D28 release list) After a GRN with one approved picking line of 5 against an
+  allocation is deleted via `delete_grn`, and separately via `bulk_delete_grns`, that allocation's
+  `quantity_received` drops to 0; a sibling allocation with no picking line keeps its stored value.
+
+- **AC-X26 [BE][T]** (D27a) After the AC-X1 supersede, `inbound_shipment_lines.line_status` for the
+  linked shipment is refreshed (same as every other writer of allocations does through
+  `InboundShipmentService.refresh_shipment_line_statuses`); the dedupe refreshes each touched
+  shipment once per document.
+
+- **AC-X27 [S][T]** The dedupe's operator report prints ref-less GROUPS kept (not rows), and a dry
+  run ends with a rollback so no transaction stays open across the sweep.
