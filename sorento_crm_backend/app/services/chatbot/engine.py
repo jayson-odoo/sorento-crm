@@ -936,7 +936,7 @@ def run_turn(
                     stage=stage[0],
                     branch_kind=None,
                     error=message,
-                    records=turn_trace.records,
+                    records=turn_trace.persisted(),
                 )
             return _failed_result(turn_id, stage[0], message, actions, dry_run)
     finally:
@@ -1086,7 +1086,7 @@ def _worker_failed(
                         stage="queued",
                         branch_kind=None,
                         error=message,
-                        records=trace_mod.TurnTrace.resume(row.trace).records,
+                        records=trace_mod.TurnTrace.resume(row.trace).persisted(),
                         response=row.response if isinstance(row.response, dict) else None,
                     )
     except Exception:  # noqa: BLE001 - the reply matters more than the id
@@ -1149,7 +1149,7 @@ def _run_stages(  # noqa: PLR0915
                 stage="intake",
                 branch_kind=None,
                 error=AUDIO_NOT_PATCHED_ERROR,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
             )
             return _failed_result(turn_id, "intake", AUDIO_NOT_PATCHED_ERROR, actions, dry_run)
 
@@ -1254,7 +1254,7 @@ def _run_stages(  # noqa: PLR0915
                 stage="understood",
                 branch_kind=None,
                 error=message,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
             )
         return _failed_result(turn_id, "understood", message, actions, dry_run)
 
@@ -1657,7 +1657,7 @@ def _run_stages(  # noqa: PLR0915
                 stage="sent",
                 branch_kind=branch_kind,
                 error=None,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
                 response={"ctx": ctx, "item": item, "actions": actions, "reply": reply},
             )
             return TurnResult(
@@ -1720,7 +1720,7 @@ def _run_stages(  # noqa: PLR0915
                 stage="looked_up",
                 branch_kind=branch_kind,
                 error=fetch_failed_hard,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
                 response={
                     "ctx": ctx,
                     "item": item,
@@ -1823,7 +1823,7 @@ def _run_stages(  # noqa: PLR0915
                 stage=stage[0],
                 branch_kind=branch_kind,
                 error=orphan_error,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
                 response={
                     "ctx": ctx,
                     "item": item,
@@ -1863,7 +1863,7 @@ def _run_stages(  # noqa: PLR0915
                 stage="looked_up" if lane_error_text else "routed",
                 branch_kind=branch_kind,
                 error=None,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
                 # S2 / D15: a duplicate delivery replays THIS, so n8n's re-emitters never
                 # see a null `ctx` or `item`. `actions` rides along because the caller must
                 # not execute them twice either - it gets the original list and its own
@@ -1977,7 +1977,7 @@ def _run_business_answer(
         ctx=ctx,
         item=item,
         actions=actions,
-        records=turn_trace.records,
+        records=turn_trace.persisted(),
     )
     try:
         completed = business.complete_answer(
@@ -2019,7 +2019,7 @@ def _run_business_answer(
                 stage="replied",
                 branch_kind=branch_kind,
                 error=failed,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
                 response={"ctx": ctx, "item": item, "actions": answer_actions, "reply": reply},
             )
         return TurnResult(
@@ -2159,7 +2159,7 @@ def _run_casual_lane(
                 stage="casual_llm",
                 branch_kind="low_signal",
                 error=failed,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
                 response={"ctx": ctx, "item": item, "actions": actions, "reply": reply},
             )
         return TurnResult(
@@ -2212,7 +2212,7 @@ def _run_casual_lane(
             stage="routed",
             branch_kind="low_signal",
             error=None,
-            records=turn_trace.records,
+            records=turn_trace.persisted(),
             response={"ctx": ctx, "item": item, "actions": actions},
         )
 
@@ -2290,7 +2290,7 @@ def _run_escalation_arm(
                 stage="looked_up",
                 branch_kind="out_of_scope",
                 error=message,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
                 response={"ctx": ctx, "item": item, "actions": actions},
             )
         return _failed_result(turn_id, "looked_up", message, actions, dry_run)
@@ -2348,7 +2348,7 @@ def _run_escalation_arm(
             stage="routed",
             branch_kind="out_of_scope",
             error=None,
-            records=turn_trace.records,
+            records=turn_trace.persisted(),
             response={"ctx": ctx, "item": item, "actions": all_actions, "pending": pending},
         )
 
@@ -3370,7 +3370,7 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
                 stage="remembered",
                 branch_kind=branch_kind,
                 error=None,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
                 response={
                     **stored_response,
                     "reply": reply,
@@ -3410,7 +3410,7 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
                 stage="remembered",
                 branch_kind=branch_kind,
                 error=message,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
             )
             raise
 

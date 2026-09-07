@@ -3,16 +3,18 @@
 
 `documentation/plans/chatbot/PLAN-chatbot-growth-r1.md` Slice A.
 
-`trace.add`'s entries live on `TurnTrace.events` - a SEPARATE list from `.records`
-(what `record()` writes and what gets persisted to `chatbot.turns.trace`), because
-`tests/chatbot/test_trace_legibility.py::_assert_trace_is_legible` walks EVERY entry
-of that persisted array demanding a plain-language `summary`/`why`/`raw`, and a tool
-call's raw args/envelope is not prose. See `trace.py::TurnTrace.__init__`'s own
-comment for the full reason. Not yet persisted anywhere - Slice D (a later lane) is
-what decides where `events` lives in `chatbot.turns` and exposes it; these tests
-exercise the real production functions (`run_fetch`, `run_crossdomain`) with a real
-`TurnTrace()`, which is as close to "a real turn through the engine" as this slice's
-scope reaches without that Slice D decision.
+`trace.add`'s entries live on `TurnTrace.events` - a separate list from `.records`
+in MEMORY, joined into one array by `persisted()` and written to the same
+`chatbot.turns.trace` column, stage records first and events after. `kind` is what
+tells them apart, flat on the entry: `test_trace_legibility.py` demands a
+plain-language `summary`/`why`/`raw` of every entry WITHOUT a `kind`, and a tool
+call's raw args and envelope are not prose. `trace_detail.py` (the trace-UI lane)
+reads the entries WITH a `kind`. See `trace.py::TurnTrace.__init__`'s own comment.
+
+These tests exercise the real production functions (`run_fetch`, `run_crossdomain`)
+with a real `TurnTrace()`; the persistence half - a real turn through the engine
+landing a `tool` entry in the column - is
+`test_trace_persistence.py`.
 """
 from __future__ import annotations
 
@@ -39,7 +41,7 @@ def test_turn_trace_add_appends_to_events_not_records():
     t.add("tool", {"name": "crm_master_products_list", "args": {}, "ms": 5})
     assert len(t.events) == 1
     assert t.events[0]["kind"] == "tool"
-    assert t.events[0]["payload"]["name"] == "crm_master_products_list"
+    assert t.events[0]["name"] == "crm_master_products_list"
     assert t.records == [], "add() must never touch the persisted stage list"
 
 
@@ -59,7 +61,7 @@ def test_run_fetch_records_a_tool_event():
 
     tool_events = [e for e in t.events if e["kind"] == "tool"]
     assert len(tool_events) == 1
-    ev = tool_events[0]["payload"]
+    ev = tool_events[0]
     assert ev["name"] == "crm_master_products_list"
     assert "args" in ev and "envelope" in ev
     assert isinstance(ev["ms"], int)
@@ -92,7 +94,7 @@ def test_run_fetch_records_a_reveals_event_when_restricted_fields_present():
 
     reveals = [e for e in t.events if e["kind"] == "reveals"]
     assert len(reveals) == 1
-    ev = reveals[0]["payload"]
+    ev = reveals[0]
     assert ev["restricted_fields_seen"] == ["sellable"]
     assert ev["granted"] == []
     assert ev["dropped"] == ["sellable"]
@@ -162,7 +164,7 @@ def test_run_crossdomain_records_a_crossdomain_event():
 
     crossdomain_events = [e for e in t.events if e["kind"] == "crossdomain"]
     assert len(crossdomain_events) == 1
-    ev = crossdomain_events[0]["payload"]
+    ev = crossdomain_events[0]
     assert ev["tool"] == "crm_incoming_stock_list"
     assert "args" in ev
     assert "rendered" in ev
