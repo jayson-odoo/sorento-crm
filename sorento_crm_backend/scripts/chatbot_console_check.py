@@ -33,6 +33,23 @@ that contact has real stored state, so a turn the owner hit cold is not reproduc
 without it. Spell it `cold: true` rather than `previous_conversation_state: {}` - both work
 and the flag is the one that survives a YAML round trip unambiguously.
 
+**`--prompt-version` grades a prompt the tenant has not promoted.** A prompt change ships as
+a new, UNLABELLED `ai_prompt_versions` row (migrations 475 / 480 / 487 / 490 all do this) and
+reaches a customer only when the owner moves the `production` label. That is the right order,
+and it leaves a hole in this check: the "before the PR" run would grade the OLD prompt and
+report green about vocabulary the new one adds. So the flag pins one version FOR THE RUN, by
+putting it on each envelope's `prompt_overrides` harness key - the same key the Prompts
+screen's "Run a turn" uses (AC-807), which the engine honours on a DRY RUN ONLY
+(`engine._prompt_override` returns None on a live turn whatever the envelope says). Nothing
+is promoted and nothing is written; run the file once without the flag and once with it, and
+the pair says what the tenant gets today and what it would get after the label moves.
+
+    # the id of the row to pin, and the body it carries
+    venv/bin/python -c "from app.database import SessionLocal; from app.models.ai_prompt \
+        import AIPromptVersion; db=SessionLocal(); \
+        print([(v.id, v.version, len(v.template)) for v in db.query(AIPromptVersion) \
+        .filter(AIPromptVersion.name=='chatbot_semantic_parser').all()])"
+
 **The runner owns the lane switches.** `chatbot_business_lane_enabled` and
 `chatbot_completed_lanes` decide whether the CRM ANSWERS a turn or delegates it to n8n, and
 a delegated turn comes back with an empty reply - which would grade the handoff, not the
@@ -59,6 +76,10 @@ from urllib.parse import urlparse
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+# The registry key `--prompt-version` pins. One parser, one key; spelled here rather than
+# imported from `head/parser` because this script is core-side tooling and that module is
+# inside the chatbot package (AC-002).
+PARSER_PROMPT_KEY = "chatbot_semantic_parser"
 TURN_PATH = "/api/v1/external/chat/turn"
 UUID_RE = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", re.IGNORECASE
@@ -117,6 +138,7 @@ def _envelope_for(
     run_id: str,
     parser: Any = None,
     previous_state: Any = None,
+    prompt_version: str | None = None,
 ) -> dict[str, Any]:
     """The borrowed envelope with this turn's words in it. Never mutates `base`."""
     envelope = json.loads(json.dumps(base))
@@ -141,6 +163,11 @@ def _envelope_for(
         envelope["previous_conversation_state"] = previous_state
     else:
         envelope.pop("previous_conversation_state", None)
+    if prompt_version:
+        # `engine.HARNESS_KEYS`' own `prompt_overrides`, dry-run only by construction.
+        envelope["prompt_overrides"] = {PARSER_PROMPT_KEY: str(prompt_version)}
+    else:
+        envelope.pop("prompt_overrides", None)
     return envelope
 
 
@@ -369,6 +396,15 @@ def main(argv: list[str] | None = None) -> int:
         help="use each case's own `parser:` block instead of calling the model",
     )
     parser.add_argument(
+        "--prompt-version",
+        default=None,
+        help=(
+            "pin one `ai_prompt_versions.id` of `chatbot_semantic_parser` for this run, so "
+            "an UNPROMOTED version can be graded before the label moves. Dry-run only by "
+            "construction; nothing is promoted and nothing is written."
+        ),
+    )
+    parser.add_argument(
         "--production",
         action="store_true",
         help="acknowledge a production checkout: the lane switches are read, never written",
@@ -417,7 +453,12 @@ def main(argv: list[str] | None = None) -> int:
     session = requests.Session()
     session.trust_env = False
 
-    print(f"{run_id}  {len(cases)} cases against {args.base_url}")
+    pinned = (
+        f"  parser prompt pinned to version {args.prompt_version}"
+        if args.prompt_version
+        else "  parser prompt: whatever the `production` label points at"
+    )
+    print(f"{run_id}  {len(cases)} cases against {args.base_url}{pinned}")
     with _lanes_on(is_production):
         failed = _run_cases(cases, session, url, args, default_contact, run_id)
 
@@ -448,6 +489,7 @@ def _run_cases(cases, session, url, args, default_contact, run_id) -> int:
                 run_id=run_id,
                 parser=(turn.get("parser") or case.get("parser")) if args.mock_parser else None,
                 previous_state=previous_state,
+                prompt_version=args.prompt_version,
             )
             body = _post(session, url, args.api_key, envelope, args.timeout)
             pending = _pending_kind(body.get("turn_id"))

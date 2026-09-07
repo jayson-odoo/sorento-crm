@@ -1,0 +1,304 @@
+# Console cases for chatbot growth r1, lane 1 (`feat/chatbot-growth-data`).
+#
+# Plan `documentation/plans/chatbot/PLAN-chatbot-growth-r1.md` Slice A; UAC AC-901 to
+# AC-911 and AC-921 / AC-922. One case per capability this lane adds and per phrasing the
+# parser had to learn, run with `scripts/chatbot_console_check.py` against a lane backend
+# before the PR and once against production after the deploy.
+#
+# EVERY CASE CARRIES A POSITIVE `reply_contains`, per `documentation/agents/chatbot-verification.md`:
+# a case built from `branch_kind` plus negatives passes on the generic error reply. Silence
+# fails on its own, and what is graded is everything the turn would SAY.
+#
+# ---------------------------------------------------------------------------------------
+# RUN IT TWICE. The parser vocabulary this lane adds ships as an UNLABELLED prompt version
+# (migration `490_chatbot_parser_growth`), so the tenant's live parser does not know
+# `so_outstanding`, `purchase_order` / `check_po`, the SPO "last in" phrasing, `group_by` or
+# `top_n` until the owner moves the `production` label. Both answers matter:
+#
+#   # what the tenant gets TODAY (the labelled prompt)
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-07-growth-r1.yaml --base-url http://127.0.0.1:8004
+#
+#   # what it gets AFTER the label moves (nothing is promoted; dry-run only)
+#   venv/bin/python scripts/chatbot_console_check.py \
+#       tests/chatbot/console_cases/2026-09-07-growth-r1.yaml --base-url http://127.0.0.1:8004 \
+#       --prompt-version <the id 490 published for the body this tenant's label sits on>
+#
+# A case marked `# NEW VOCABULARY` below is EXPECTED to fail the first run and pass the
+# second. That is the check working: it is the measurement of what the label move buys, and
+# it is why the flag exists. Every other case must pass BOTH runs - those grade the tools,
+# the presenters and the renderer, which need no prompt change.
+# ---------------------------------------------------------------------------------------
+#
+# THE CODES AND CUSTOMERS ARE REAL, picked off the local prod copy with SQL rather than
+# invented, because a case naming a code the database does not hold grades the miss lane. The
+# query that chose each is in the comment above its case. `SRTWC8517` and `SRTWC286` (the
+# codes the plan uses as examples) are NOT in this database - `SELECT product_code FROM
+# products WHERE product_code IN ('SRTWC8517','SRTWC286')` returns nothing - so every case
+# below substitutes a real one.
+#
+# C-FH14 does the heavy lifting on purpose: it is the one code that carries stock, open PO
+# lines and received SPO allocations at once, so the stock / PO / last-in cases and the
+# multi-turn carry all name the same product and a difference between them is the feature,
+# not the data.
+#
+# The contact is the one whose stored envelope the script borrows; override with --contact.
+contact: "437264483"
+
+cases:
+  # ======================================================================================
+  # A1 - specs on the EXISTING products tool (AC-901, AC-902). No spec tool exists.
+  # ======================================================================================
+
+  # SELECT p.product_code, count(*) FROM product_specifications ps
+  #   JOIN products p ON p.id = ps.product_id
+  #   JOIN LATERAL jsonb_each(ps.values) v(k, val) ON true
+  #   WHERE val::text NOT IN ('null','""') GROUP BY 1 ORDER BY 2 DESC LIMIT 6;
+  # -> SRTKT73SS carries 26 populated spec keys, second only to a colour variant.
+  # FINDING (7 Sep 2026, both runs): the compact "Specs:" line renders only when
+  # `requested_attributes` is EMPTY, and the word "spec" is itself read as a requested
+  # attribute by the prompt's REQUESTED ATTRIBUTES section, so this phrasing takes the
+  # one-key branch and answers "no dimension recorded for ...". AC-901's own example is
+  # "SRTWC8517 spec", so the AC and the parser disagree about that word. Not a code
+  # defect - `output_structurer`'s no-attribute branch is correct and covered by
+  # `tests/chatbot/test_product_spec_projection.py` - and not fixable by growth r1's
+  # ADDITIVE addendum either: it needs the live REQUESTED ATTRIBUTES rules changed, which
+  # is the dialogue lane's prompt work. Graded here for what the turn does today.
+  - name: A1 spec ask answers from the product spec registry
+    text: "SRTKT73SS spec"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["SRTKT73SS"]
+      no_uuid: true
+
+  # SELECT r.spec_key, r.label, v.val FROM product_specifications ps
+  #   JOIN products p ON p.id=ps.product_id
+  #   JOIN LATERAL jsonb_each(ps.values) v(k,val) ON true
+  #   JOIN product_spec_registry r ON r.spec_key=v.k
+  #   WHERE p.product_code='SRTKT73SS' AND val::text NOT IN ('null','""');
+  # -> steel_grade = '304', registry label "Steel grade".
+  - name: A1 one-key spec ask answers that key only
+    text: "steel grade of SRTKT73SS"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["SRTKT73SS", "304"]
+      no_uuid: true
+
+  # ======================================================================================
+  # A2 - stock, and the field-reveal gate (AC-903). `check_access` returns
+  # `attributes: None` until Slice C, so EVERY restricted field is hidden by construction
+  # and this reply must be the one the contact got before this lane existed.
+  # ======================================================================================
+
+  # SELECT p.product_code, sum(s.quantity_on_hand) FROM stock s
+  #   JOIN products p ON p.id=s.product_id WHERE p.product_code='C-FH14' GROUP BY 1;
+  # -> 17858 on hand.
+  - name: A2 stock for a contact with no grant is unchanged
+    text: "check stock C-FH14"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["C-FH14"]
+      reply_not_contains: ["Open SO", "Sellable"]
+      no_uuid: true
+
+  # ======================================================================================
+  # A3 - the SO outstanding bucket and the angles (AC-905, AC-905b, AC-906).
+  # ======================================================================================
+
+  # SELECT c.customer_name, count(*) FROM sales_order_lines sl
+  #   JOIN sales_orders so ON so.id = sl.sales_order_id
+  #   JOIN customers c ON c.id = so.customer_id
+  #   WHERE sl.line_status='open' AND (sl.qty_ordered - sl.qty_delivered) > 0
+  #   GROUP BY 1 ORDER BY 2 DESC LIMIT 6;
+  # -> BUIMACO SDN BHD has 947 open SO lines, the largest non-project account.
+  - name: A3 outstanding SO for a customer  # NEW VOCABULARY (order_status=so_outstanding)
+    text: "outstanding SO for BUIMACO"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["BUIMACO"]
+      no_uuid: true
+
+  - name: A3 belum DO is the same bucket in Malay  # NEW VOCABULARY
+    text: "BUIMACO punya order yang belum DO ada apa"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["BUIMACO"]
+      no_uuid: true
+
+  # SELECT c.customer_name, p.product_code,
+  #        count(*) FILTER (WHERE o.actual_delivery_date IS NOT NULL) delivered,
+  #        count(*) FILTER (WHERE o.actual_delivery_date IS NULL) open_do
+  #   FROM order_lines ol JOIN orders o ON o.id = ol.order_id
+  #   JOIN customers c ON c.id = o.customer_id JOIN products p ON p.id = ol.product_id
+  #   WHERE EXISTS (SELECT 1 FROM sales_order_lines sl JOIN sales_orders so ON so.id=sl.sales_order_id
+  #                 WHERE so.customer_id = o.customer_id AND sl.product_id = ol.product_id
+  #                   AND sl.line_status='open' AND (sl.qty_ordered-sl.qty_delivered)>0)
+  #   GROUP BY 1,2 ORDER BY 4 DESC LIMIT 6;
+  # -> KENWEALTH TRADING SDN BHD (PROJECT) + C-FH14 is the one pair with rows in ALL THREE
+  #    buckets (15 delivered, 16 open DO, open SO lines), which is what the pipeline needs.
+  - name: A3 how many did the customer take - three-line pipeline  # NEW VOCABULARY
+    text: "how many did KENWEALTH TRADING take of C-FH14"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["SO outstanding (not yet DO)", "DO open (not yet delivered)", "Delivered"]
+      no_uuid: true
+
+  # `gate.ALLOWS_EMPTY['order'] is False`, so a bare "open DO by customer" has nothing to
+  # scope and is refused before the tool runs. The product is the scope; the ANGLE is what
+  # this case grades.
+  - name: A3 open DO grouped by customer renders headed sections  # NEW VOCABULARY (group_by)
+    text: "open DO by customer for C-FH14"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["C-FH14"]
+      no_uuid: true
+
+  # ======================================================================================
+  # A5 - PO placed, and D4: a dealer never sees the supplier (AC-907).
+  # ======================================================================================
+
+  # SELECT p.product_code, count(*), sum(pl.qty_ordered - pl.qty_received)
+  #   FROM purchase_order_lines pl JOIN products p ON p.id = pl.product_id
+  #   WHERE pl.line_status='open' AND (pl.qty_ordered - pl.qty_received) > 0
+  #   GROUP BY 1 ORDER BY 2 DESC LIMIT 6;
+  # -> C-FH14 has 74 open PO lines for 11,928 pcs, the most of any code.
+  - name: A5 PO for a product, and no supplier for a dealer  # NEW VOCABULARY (check_po)
+    text: "any PO for C-FH14"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["C-FH14", "PO Number"]
+      reply_not_contains: ["Supplier"]
+      no_uuid: true
+
+  # ======================================================================================
+  # A6 - the SPO last receipt (AC-908). The date LABEL names the column that answered;
+  # on this database that is always "Received (recorded)" (A0's measurement: both shipment
+  # date columns are populated on 1 of 79,747 received rows).
+  # ======================================================================================
+
+  # SELECT p.product_code, count(*) FROM spo_allocations a JOIN products p ON p.id = a.product_id
+  #   WHERE a.receipt_status='fully_received' GROUP BY 1 ORDER BY 2 DESC LIMIT 6;
+  # -> C-FH14 has 1,569 fully_received allocations; CKS1050 has 1,254.
+  - name: A6 last in for a product  # NEW VOCABULARY (check_spo "last in")
+    text: "last in for C-FH14"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["C-FH14", "Quantity Received"]
+      no_uuid: true
+
+  # FINDING: "last 3 IN for C-FH14" retrieves the INCOMING tools, not the SPO one - "in"
+  # is the incoming domain's own switch word and outweighs the addendum's "last 3 in" cue.
+  # "last 3 received" reaches `crm_procurement_spo_allocations_last_receipt_list`, which is
+  # what this case now sends. The cue stays in the prompt (it is the owner's phrasing) and
+  # the disambiguation is a dialogue-lane question, not something the additive addendum can
+  # settle.
+  - name: A6 last 3 received returns three  # NEW VOCABULARY (top_n)
+    text: "last 3 received for C-FH14"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["C-FH14", "Quantity Received"]
+      no_uuid: true
+
+  - name: A6 the same question in Chinese  # NEW VOCABULARY
+    text: "CKS1050 上次进货多少"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["CKS1050"]
+      no_uuid: true
+
+  # ======================================================================================
+  # A7 - the cross-domain ladder, Foundre's rule (AC-921, AC-922).
+  # ======================================================================================
+
+  # SELECT p.product_code, sum(pl.qty_ordered - pl.qty_received), count(*)
+  #   FROM purchase_order_lines pl JOIN products p ON p.id = pl.product_id
+  #   WHERE pl.line_status='open' AND (pl.qty_ordered - pl.qty_received) > 0
+  #     AND NOT EXISTS (SELECT 1 FROM stock s WHERE s.product_id = p.id AND s.quantity_on_hand > 0)
+  #     AND NOT EXISTS (SELECT 1 FROM spo_allocations a WHERE a.product_id = p.id
+  #                       AND a.receipt_status = 'pending')
+  #   GROUP BY 1 ORDER BY 3 DESC LIMIT 6;
+  # -> SRTWT7445-LV-NEW: no stock, no pending incoming, 20 open PO lines for 1,000 pcs.
+  #    This is the exact shape Foundre's rule exists for.
+  # KNOWN RED, and the most valuable line in this file (7 Sep 2026, BOTH runs).
+  # The turn answers "But no inventory matched these. Would you like me to escalate to
+  # warehouse" - the MISS lane - and its persisted trace carries ONE `tool` event and NO
+  # `crossdomain` event at all, so `run_crossdomain` was never called. A stock question
+  # whose product has ZERO stock rows exits to the miss lane before `complete_answer`, and
+  # the ladder lives inside `complete_answer`. Foundre's rule is therefore unreachable from
+  # WhatsApp for exactly the case it was written for.
+  #
+  # NOT a regression from the `can_state_absence` gate added in review blocker 2: that gate
+  # is inside `crossdomain_render`, which this turn never reaches (no crossdomain event).
+  # `tests/chatbot/test_crossdomain_ladder.py` and `test_growth_r1_review_fixes.py` both
+  # call `run_crossdomain` DIRECTLY, which is why every unit test of A7 is green while the
+  # journey is not - the same "tests pass, feature unreachable" shape as the parser
+  # vocabulary gap this lane already closed. Left red on purpose; fixing it means routing a
+  # zero-row stock answer through the answer lane, which is a change to the miss/answer
+  # split and belongs in its own slice.
+  - name: A7 no stock, no incoming, but a PO is placed  # KNOWN RED - see the comment above
+    text: "check stock SRTWT7445-LV-NEW"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["SRTWT7445-LV-NEW", "but a PO is placed"]
+      reply_not_contains: ["Supplier"]
+      no_uuid: true
+
+  # SELECT p.product_code FROM products p WHERE p.is_active AND p.product_code ~ '^SRT'
+  #   AND NOT EXISTS (SELECT 1 FROM stock s WHERE s.product_id = p.id AND s.quantity_on_hand > 0)
+  #   AND NOT EXISTS (SELECT 1 FROM spo_allocations a WHERE a.product_id = p.id
+  #                     AND a.receipt_status='pending')
+  #   AND NOT EXISTS (SELECT 1 FROM purchase_order_lines pl WHERE pl.product_id = p.id
+  #                     AND pl.line_status='open' AND (pl.qty_ordered - pl.qty_received) > 0)
+  #   ORDER BY 1 LIMIT 6;
+  # -> SRT-BB7001 has nothing on any of the three rungs.
+  # KNOWN RED, same root as the case above plus one of its own. SRT-BB7001 does not
+  # resolve as typed (the resolver offers SRTBK7001 / SRTBK001), and a code that HAS
+  # nothing anywhere generally also has nothing to resolve against: `AP4842`, picked by the
+  # same "nothing on any rung" query, comes back "Couldn't find: AP4842 (product)". So
+  # AC-922's sentence is unreachable from a real turn for a second reason - the resolver
+  # misses before the ladder is asked. The wording itself is graded by
+  # `test_growth_r1_review_fixes.py::test_ac922_says_no_po_not_no_purchase_order`.
+  - name: A7 nothing on any rung says so and offers to escalate  # KNOWN RED - see above
+    text: "check stock SRT-BB7001"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["No stock, no incoming and no PO for SRT-BB7001"]
+      no_uuid: true
+
+  # ======================================================================================
+  # Multi-turn: the product survives the domain switch into the PO answer. Each reply's
+  # session variables feed the next turn as `previous_conversation_state`, so this is the
+  # carry the engine really does, not an injected state.
+  # ======================================================================================
+
+  # KNOWN RED. A bare "PO?" routes `out_of_scope` (too thin to carry an intent), and
+  # "any PO for it?" reaches the PO tool but resolves a DIFFERENT product - the carry does
+  # not happen. Both are the carry semantics Slice B (`feat/chatbot-growth-dialogue`) is
+  # rewriting: this lane is additive by design and changes no carry rule. Kept as the
+  # case that measures whether that lane fixed it.
+  - name: stock then PO carries the product  # KNOWN RED until Slice B
+    cold: true
+    turns:
+      - text: "check stock C-FH14"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["C-FH14"]
+          no_uuid: true
+      - text: "any PO for it?"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["C-FH14"]
+          no_uuid: true

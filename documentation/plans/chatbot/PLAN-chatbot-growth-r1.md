@@ -164,12 +164,57 @@ claimed by exactly one domain. The parser schema enums are generated from the sa
   `server_default` cannot be computed at DDL time and must equal what migration 488 wrote,
   so it stays a string, pinned to the derived list by a test that names the migration a
   change would need. Migration 488's own literal is frozen history and untouched.
+* **`DOMAIN_BROADEN_BLOCKED_HINTS["spo_allocation"]` is UNCHANGED** (still `["spo"]`),
+  while `DOMAIN_BLOCKED_HINTS["spo_allocation"]` lost `product`. The two answer different
+  questions: the always-blocked list decides what may NARROW a read, and `product_ids` is
+  the SPO tool's only narrowing parameter, so blocking it there made "last in for X" answer
+  about everything. The broaden list decides what a customer asking for ALL of something is
+  widening off, and no turn has ever broadened inside this domain - it was refused until A6.
+  The trigger for changing it is a MEASURED broaden turn under `spo_allocation` (something
+  like "last in for everything") where the carried product narrows the answer the customer
+  just asked to widen; add `product` to the broaden list then, and not before.
 * **The FE fallback is deleted, not corrected.** `chatbotSettingsService.FALLBACKS`
   carried a fifth copy, already stale at `['goods_receive', 'spo_allocation']`. It is now
   `[]`: the column is NOT NULL with a server default, `GET /settings` omits the key only
   when there is no settings row at all, and in that state `POST /settings/general` answers
   404, so the screen can neither read a wrong default nor save an empty list over
   anything.
+
+**Console check (`documentation/agents/chatbot-verification.md`), 7 Sep 2026.**
+`sorento_crm_backend/tests/chatbot/console_cases/2026-09-07-growth-r1.yaml`, 14 cases, run
+twice against a lane backend on :8004 (the second run pins the unpromoted prompt version
+migration 490 published, via the new `--prompt-version` flag, so nothing is promoted):
+
+| run | parser prompt | result |
+|---|---|---|
+| 1 | the tenant's `production` label (v1, FULL) | **9 pass / 5 fail** |
+| 2 | pinned to v10 (FULL + growth r1 addendum) | **11 pass / 3 fail** |
+
+The two that move between the runs are the measurement of what the label move buys: "last
+in" and "last 3 received" reach `crm_procurement_spo_allocations_last_receipt_list` only
+under the new vocabulary, and PO placed answers without the domain having to be guessed.
+See the PR for the full output. Three cases stay red under both, each explained in the file:
+
+1. **Foundre's rule is unreachable from a real turn.** A stock question whose product has
+   ZERO stock rows exits to the MISS lane before `complete_answer`, and the ladder lives
+   inside `complete_answer` - the turn's persisted trace carries one `tool` event and NO
+   `crossdomain` event. Every A7 unit test calls `run_crossdomain` directly, which is why
+   they are green while the journey is not: the same "tests pass, feature unreachable"
+   shape as the parser vocabulary gap this lane closed. NOT a regression from the
+   `can_state_absence` gate (that code is never reached). Fixing it means changing where
+   the miss/answer split happens, which is its own slice.
+2. **AC-922's sentence has a second blocker**: a code with nothing on any rung generally
+   has nothing to resolve against either, so the resolver misses before the ladder is
+   asked (`SRT-BB7001` offers `SRTBK7001`; `AP4842`, picked by the same "nothing anywhere"
+   query, comes back "Couldn't find"). The wording itself is unit-tested.
+3. **The multi-turn carry into a PO question does not happen** - a bare "PO?" routes
+   `out_of_scope`, and "any PO for it?" reaches the PO tool but resolves a different
+   product. That is Slice B's carry rewrite; this lane changes no carry rule by design.
+
+One more finding, graded green because the case now grades what the turn does: a bare
+"<code> spec" is read as a requested ATTRIBUTE by the live REQUESTED ATTRIBUTES section, so
+it takes the one-key branch instead of AC-901's compact "Specs:" line. The additive
+addendum cannot settle that; it needs the live section changed.
 
 **Post-deploy, Slice A (mandatory, not optional).** Two steps, in this order, and neither
 happens by itself:
@@ -188,6 +233,11 @@ happens by itself:
    venv/bin/python -m app.scripts.seed_mcp_tool_capabilities \
      --only crm_procurement_spo_allocations_last_receipt_list --drain
    ```
+
+   **`--drain` drains the WHOLE pending queue, not just these two jobs.** Measured 7 Sep
+   2026 on the local prod copy: 41,685 pending rows, and the first command ran past ten
+   minutes. On a database with a backlog, drop `--drain` (the two jobs are then picked up
+   by the RQ worker) or process only these rows.
 
    `--drain` processes the queued jobs in the same run, so no worker is required; drop it
    and the RQ worker picks them up instead. Idempotent - a second run supersedes the prior

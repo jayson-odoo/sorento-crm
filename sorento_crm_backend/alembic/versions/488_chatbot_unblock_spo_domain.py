@@ -1,7 +1,10 @@
 """A6 (chatbot-growth-r1, AC-911): unblock `spo_allocation` in the default
 `system_settings.chatbot_unsupported_domains` list.
 
-`crm_procurement_spo_last_receipt_list` now answers "last in for X" -
+`crm_procurement_spo_allocations_last_receipt_list` now answers "last in for X" -
+(named `crm_procurement_spo_last_receipt_list` when this migration was written; renamed
+in the same lane so the tool search's `source_id LIKE '%spo_allocation%'` filter can
+retrieve it - the DDL below is unchanged and this docstring is the only edit) -
 `spo_allocation` no longer needs to be refused. `goods_receive` stays
 unsupported (nothing in this plan reads GRN data).
 
