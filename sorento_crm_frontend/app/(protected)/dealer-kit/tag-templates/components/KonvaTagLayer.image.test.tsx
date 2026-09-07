@@ -80,6 +80,30 @@ class StubImage {
   }
 }
 
+/**
+ * An image whose `onload` fires but reports 0x0 (R3, #723) - the same shape
+ * a real, not-yet-measured `HTMLImageElement` has: `naturalWidth`/
+ * `naturalHeight` (and so `.width`/`.height`) read 0 until the browser has
+ * actually decoded the source. `cropPixels` turns that into a 0x0 crop
+ * rect, and Konva's own `drawImage` throws `InvalidStateError` on a source
+ * OR destination rect with a zero dimension - the Versions sheet's "View"
+ * crash, caught only by the error boundary.
+ */
+class ZeroSizeStubImage {
+  width = 0;
+  height = 0;
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  private _src = '';
+  set src(value: string) {
+    this._src = value;
+    Promise.resolve().then(() => this.onload?.());
+  }
+  get src() {
+    return this._src;
+  }
+}
+
 beforeEach(() => {
   vi.stubGlobal('Image', StubImage);
 });
@@ -262,5 +286,28 @@ describe('KonvaTagLayer image crop (S8)', () => {
     const image = nodes(container, 'image')[0] as HTMLElement;
     expect(image.getAttribute('data-width')).toBe('20');
     expect(image.getAttribute('data-height')).toBe('20');
+  });
+
+  it('an image that "loaded" at 0x0 never reaches Konva as a crop source (R3, #723)', async () => {
+    vi.stubGlobal('Image', ZeroSizeStubImage);
+
+    const { container } = await renderLoaded(
+      <KonvaTagLayer
+        layer={imageLayer({
+          fit: 'contain',
+          cropRect: { x: 0.25, y: 0, width: 0.5, height: 1 },
+        })}
+        scale={1}
+        display={{ imageUrl: 'https://cdn.test/photo.png' }}
+      />,
+    );
+
+    // No `Image` node at all - a 0x0-crop `KonvaImage` (what used to reach
+    // Konva here) is exactly what threw InvalidStateError. The placeholder
+    // path (same as the "not loaded yet" `!image` case) instead: a Rect and
+    // a Text, no Image.
+    expect(nodes(container, 'image')).toHaveLength(0);
+    expect(nodes(container, 'rect')).toHaveLength(1);
+    expect(nodes(container, 'text')).toHaveLength(1);
   });
 });

@@ -474,7 +474,17 @@ function ImageContent({
 }) {
   const image = useHtmlImage(url);
 
-  if (!image) {
+  // A not-yet-loaded (or genuinely 0x0) `HTMLImageElement` reads
+  // `naturalWidth`/`naturalHeight` (and so `.width`/`.height`) as 0, which
+  // `cropPixels` turns into a 0x0 crop rect - Konva's own `drawImage` throws
+  // `InvalidStateError` on a source OR destination rect with a zero
+  // dimension (r6 S8 review, #723 - the Versions sheet's "View" crash).
+  // `useHtmlImage` only ever resolves `image` from `onload`, so this
+  // SHOULD be unreachable once `!image` above is false - checked anyway,
+  // since the failure mode is a full-page crash (caught only by the error
+  // boundary) rather than a misdrawn picture, and it costs nothing to
+  // treat "loaded but 0x0" the same as "not loaded yet".
+  if (!image || image.width <= 0 || image.height <= 0) {
     return (
       <>
         <Rect width={w} height={h} fill="#f0f0f0" stroke="#ccc" strokeWidth={1} />
