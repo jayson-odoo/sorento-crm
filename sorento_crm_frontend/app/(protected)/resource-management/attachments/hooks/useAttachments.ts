@@ -387,12 +387,13 @@ export function useBulkImportAttachment() {
   });
 }
 
-export function useDirectoryTree(deleted = false) {
+export function useDirectoryTree(deleted = false, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: ['attachment-directories-tree', deleted],
     queryFn: () => getDirectoryTree(deleted),
     staleTime: 1000 * 60 * 2,
     gcTime: 1000 * 60 * 10,
+    enabled: options?.enabled ?? true,
   });
 }
 

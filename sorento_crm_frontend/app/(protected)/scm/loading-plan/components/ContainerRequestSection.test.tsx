@@ -216,9 +216,11 @@ function row(over: Partial<ContainerRequestRow> = {}): ContainerRequestRow {
  * parent and what the grid shows afterwards.
  */
 const onQtyChange = vi.fn();
+const onRemarkChange = vi.fn();
 
 function Harness({ readOnly }: { readOnly?: boolean }) {
   const [edits, setEdits] = React.useState<Record<string, number>>({});
+  const [remarks, setRemarks] = React.useState<Record<string, string>>({});
   return (
     <ContainerRequestSection
       planId="plan-1"
@@ -229,6 +231,11 @@ function Harness({ readOnly }: { readOnly?: boolean }) {
       onQtyChange={(rowKey, qty) => {
         onQtyChange(rowKey, qty);
         setEdits((prev) => ({ ...prev, [rowKey]: qty }));
+      }}
+      remarkFor={(r) => remarks[r.row_key] ?? r.remark ?? ''}
+      onRemarkChange={(rowKey, remark) => {
+        onRemarkChange(rowKey, remark);
+        setRemarks((prev) => ({ ...prev, [rowKey]: remark }));
       }}
     />
   );
@@ -264,6 +271,7 @@ beforeEach(() => {
   routerPush.mockReset();
   state.download = vi.fn();
   onQtyChange.mockReset();
+  onRemarkChange.mockReset();
 });
 
 describe('ContainerRequestSection - loading / empty / error states', () => {
@@ -502,7 +510,8 @@ describe('ContainerRequestSection - the grid', () => {
   it('carries an Incoming PL column that is never part of the suggestion (AC-B4/B5)', () => {
     state.build.data = {
       stock_list_as_of: '2026-08-18T00:00:00',
-      rows: [row({ open_so_need: 10, incoming_pl: 600, suggested_qty: 10 })],
+      // on_hand nonzero so Total supply (605) reads distinctly from Incoming PL (600).
+      rows: [row({ open_so_need: 10, on_hand: 5, incoming_pl: 600, suggested_qty: 10 })],
       sources: EMPTY_SOURCES,
     };
     renderSection();
@@ -510,6 +519,18 @@ describe('ContainerRequestSection - the grid', () => {
     expect(screen.getByText('Incoming PL')).toBeInTheDocument();
     expect(screen.getByText('600')).toBeInTheDocument();
     expect(screen.getByDisplayValue('10')).toBeInTheDocument(); // the ask, untouched by it
+  });
+
+  it('shows a Total supply column summing on hand, SPO and incoming PL (R7, AC-D4)', () => {
+    state.build.data = {
+      stock_list_as_of: '2026-08-18T00:00:00',
+      rows: [row({ on_hand: 30, incoming_spo: 20, incoming_pl: 15 })],
+      sources: EMPTY_SOURCES,
+    };
+    renderSection();
+
+    expect(screen.getByText('Total supply')).toBeInTheDocument();
+    expect(screen.getByText('65')).toBeInTheDocument();
   });
 
   it('clicking the product opens the row breakdown (AC-A2.3)', async () => {
@@ -531,6 +552,21 @@ describe('ContainerRequestSection - the grid', () => {
 
     expect(onQtyChange).toHaveBeenCalledWith('p1', 25);
     await waitFor(() => expect(screen.getByDisplayValue('25')).toBeInTheDocument());
+  });
+
+  // B2, review round 1: the Remarks column's own input (R11) - same field, same save as the
+  // preview's own Remarks cell (`SupplierSheet.test.tsx` covers that half).
+  it('the Remarks cell is editable, and the typed remark reaches the record', async () => {
+    renderSection();
+
+    fireEvent.change(screen.getByPlaceholderText('Instruction to the supplier'), {
+      target: { value: 'pack in 2 cartons' },
+    });
+
+    expect(onRemarkChange).toHaveBeenCalledWith('p1', 'pack in 2 cartons');
+    await waitFor(() =>
+      expect(screen.getByDisplayValue('pack in 2 cartons')).toBeInTheDocument(),
+    );
   });
 
   it('a cancelled plan shows the same grid, with nothing typeable (AC-A8)', () => {
@@ -958,44 +994,37 @@ describe('ContainerRequestSection - the eight figures open the shared lightbox (
     expect(within(dialog).getByText('Total outstanding').closest('tr')).toHaveTextContent('60');
   });
 
-  it('a peak figure opens its channel dialog on the 12-month tab, with both peak cells marked (AC-B6, S1)', () => {
+  // R8: the Project peak / Retail peak COLUMNS are gone, but the peak they showed is not -
+  // it is still on the same dialog's 12-month history tab, one click from the Open cell.
+  // Radix `TabsTrigger` switches on mouse down; a bare `click` leaves the old panel up.
+  function switchTab(dialog: HTMLElement, name: string) {
+    const tab = within(dialog).getByRole('tab', { name });
+    fireEvent.mouseDown(tab);
+    fireEvent.click(tab);
+  }
+
+  it('the Project dialog still exposes the 12-month history tab with the peak month named (AC-D5)', () => {
     withHistory();
     renderSection();
 
-    // The cell states the peak and the month it fell in.
-    const peak = screen.getByRole('button', { name: 'Project ordered, last 12 months' });
-    expect(peak).toHaveTextContent('1,240');
-    expect(peak).toHaveTextContent('Jun 26');
+    const dialog = openFigure('Open project sales orders');
+    switchTab(dialog, '12-month history');
 
-    fireEvent.click(peak);
-    const dialog = screen.getByRole('dialog');
-
-    expect(dialog).toHaveTextContent('Project · ITEM-1');
-    // Landed ON the history tab, not the open one.
-    expect(within(dialog).getByRole('tab', { name: '12-month history' })).toHaveAttribute(
-      'data-state',
-      'active',
-    );
     const projectPeak = dialog.querySelector('[data-peak="project"]');
-    const retailPeak = dialog.querySelector('[data-peak="retail"]');
     expect(projectPeak?.textContent).toBe('1,240');
     expect(projectPeak?.closest('tr')).toHaveTextContent('Jun 26');
-    expect(retailPeak?.textContent).toBe('320');
-    expect(retailPeak?.closest('tr')).toHaveTextContent('Jul 26');
   });
 
-  it('the Retail peak opens the retail dialog on the same tab', () => {
+  it('the Retail dialog still exposes the 12-month history tab with the peak month named (AC-D5)', () => {
     withHistory();
     renderSection();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Retail ordered, last 12 months' }));
+    const dialog = openFigure('Open retail sales orders');
+    switchTab(dialog, '12-month history');
 
-    const dialog = screen.getByRole('dialog');
-    expect(dialog).toHaveTextContent('Retail · ITEM-1');
-    expect(within(dialog).getByRole('tab', { name: '12-month history' })).toHaveAttribute(
-      'data-state',
-      'active',
-    );
+    const retailPeak = dialog.querySelector('[data-peak="retail"]');
+    expect(retailPeak?.textContent).toBe('320');
+    expect(retailPeak?.closest('tr')).toHaveTextContent('Jul 26');
   });
 
   it('names no context beside the title any more (S3, AC-C4)', () => {

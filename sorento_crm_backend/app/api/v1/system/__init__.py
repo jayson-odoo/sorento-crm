@@ -24,6 +24,7 @@ from app.api.v1.system import (
     chat_history,
     chatbot,
     statuses,
+    translations,
 )
 from app.modules.runtime.guards import require_module_enabled_with_api_key
 
@@ -60,3 +61,6 @@ router.include_router(
 # Status engine (ADR-0001). CORE plumbing, so it rides the always-on `base` guard
 # rather than a module key of its own.
 router.include_router(statuses.router, tags=["statuses"])
+# Translation memory (R15/R16, purchasing consolidation batch). Not module-scoped -
+# see `app.models.translation_memory` for why.
+router.include_router(translations.router, tags=["translations"])

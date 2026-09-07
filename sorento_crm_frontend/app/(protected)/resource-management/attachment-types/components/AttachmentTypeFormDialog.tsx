@@ -23,6 +23,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import {
   useCreateAttachmentType,
   useUpdateAttachmentType,
@@ -32,6 +33,8 @@ import {
   AttachmentTypeSchema,
   type AttachmentTypeSchemaType,
 } from '../forms/attachment-type-schema';
+import { useDirectoryTree } from '../../attachments/hooks/useAttachments';
+import { flattenDirectoryOptions } from '../../attachment-directories/components/drivePath';
 
 interface AttachmentTypeFormDialogProps {
   open: boolean;
@@ -48,6 +51,8 @@ export default function AttachmentTypeFormDialog({
   const { data: attachmentType, isLoading: isLoadingType } = useAttachmentType(attachmentTypeId || null);
   const createMutation = useCreateAttachmentType();
   const updateMutation = useUpdateAttachmentType();
+  const { data: directoryTree = [] } = useDirectoryTree();
+  const directoryOptions = flattenDirectoryOptions(directoryTree);
 
   const form = useForm<AttachmentTypeSchemaType>({
     resolver: zodResolver(AttachmentTypeSchema),
@@ -62,6 +67,7 @@ export default function AttachmentTypeFormDialog({
       is_certificate: false,
       max_validity_months: null,
       is_shared: false,
+      default_directory_id: null,
     },
     mode: 'onTouched',
   });
@@ -81,6 +87,7 @@ export default function AttachmentTypeFormDialog({
           is_certificate: attachmentType.is_certificate ?? false,
           max_validity_months: attachmentType.max_validity_months ?? null,
           is_shared: attachmentType.is_shared ?? false,
+          default_directory_id: attachmentType.default_directory_id ?? null,
         });
       } else {
         form.reset({
@@ -94,6 +101,7 @@ export default function AttachmentTypeFormDialog({
           is_certificate: false,
           max_validity_months: null,
           is_shared: false,
+          default_directory_id: null,
         });
       }
     }
@@ -115,6 +123,7 @@ export default function AttachmentTypeFormDialog({
             is_certificate: data.is_certificate ?? false,
             max_validity_months: data.max_validity_months ?? null,
             is_shared: data.is_shared ?? false,
+            default_directory_id: data.default_directory_id ?? null,
           },
         });
       } else {
@@ -129,6 +138,7 @@ export default function AttachmentTypeFormDialog({
           is_certificate: data.is_certificate ?? false,
           max_validity_months: data.max_validity_months ?? null,
           is_shared: data.is_shared ?? false,
+          default_directory_id: data.default_directory_id ?? null,
         });
       }
       onOpenChange(false);
@@ -362,6 +372,29 @@ export default function AttachmentTypeFormDialog({
                     />
                   </FormControl>
                   <FormLabel className="cursor-pointer">Shared across companies</FormLabel>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="default_directory_id"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Default folder</FormLabel>
+                  <FormControl>
+                    <SearchableSelect
+                      value={field.value ?? ''}
+                      onChange={(value) => field.onChange(value || null)}
+                      options={directoryOptions}
+                      placeholder="No default folder"
+                      clearable
+                    />
+                  </FormControl>
+                  <p className="text-xs text-muted-foreground">
+                    Where an upload of this type files by default - still changeable per upload.
+                  </p>
+                  <FormMessage />
                 </FormItem>
               )}
             />

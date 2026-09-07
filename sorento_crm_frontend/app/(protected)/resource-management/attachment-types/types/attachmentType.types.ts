@@ -17,4 +17,6 @@ export interface AttachmentTypeFormData {
   max_validity_months?: number | null;
   /** An upload of this type is written with company_id = NULL (visible to every company). */
   is_shared?: boolean;
+  /** Folder an upload of this type files into by default; null = no default. */
+  default_directory_id?: string | null;
 }

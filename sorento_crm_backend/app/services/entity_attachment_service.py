@@ -5,6 +5,7 @@ import logging
 import os
 import uuid
 from typing import Optional, Any
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models.entity_attachment import EntityAttachmentLink
@@ -208,12 +209,23 @@ class EntityAttachmentService:
             .filter(EntityAttachmentLink.entity_type == et, EntityAttachmentLink.entity_id == eid)
             .count()
         )
+        # `sort_order` is MAX(existing) + 1, not the count (review round 1, item 5's
+        # nit on `shipment_line_photos`, fixed here since every caller shares this
+        # method): once a middle link has been deleted, `count()` repeats an existing
+        # value and two links tie for the same position instead of the new one always
+        # landing last.
+        max_sort_order = (
+            self.db.query(func.max(EntityAttachmentLink.sort_order))
+            .filter(EntityAttachmentLink.entity_type == et, EntityAttachmentLink.entity_id == eid)
+            .scalar()
+        )
+        next_sort_order = 0 if max_sort_order is None else max_sort_order + 1
         link = EntityAttachmentLink(
             entity_type=et,
             entity_id=eid,
             attachment_id=att_id,
             is_primary=(count == 0),
-            sort_order=count,
+            sort_order=next_sort_order,
             created_by=created_by,
         )
         self.db.add(link)

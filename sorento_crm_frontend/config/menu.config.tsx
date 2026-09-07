@@ -208,16 +208,6 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Planning',
         children: [
           {
-            title: 'Reorder Planning',
-            path: '/scm/reorder',
-            permission: 'scm.reorder.run',
-          },
-          {
-            title: 'Loading Plan',
-            path: '/scm/loading-plan',
-            permission: 'scm.reorder.run',
-          },
-          {
             title: 'Simulation',
             path: '/scm/simulation',
             permission: 'scm.reorder.run',
@@ -255,11 +245,6 @@ export const MENU_SIDEBAR: MenuConfig = [
             permission: 'projects.projects.view',
           },
           {
-            title: 'Order Inquiries',
-            path: '/project-sales/order-inquiries',
-            permission: 'projects.projects.view',
-          },
-          {
             title: 'Planning changes',
             path: '/project-sales/planning-changes',
             permission: 'projects.projects.view',
@@ -268,31 +253,6 @@ export const MENU_SIDEBAR: MenuConfig = [
             title: 'Forecast & Reports',
             path: '/project-sales/reports',
             permission: 'projects.projects.view',
-          },
-        ],
-      },
-      {
-        title: 'Orders',
-        children: [
-          {
-            title: 'Sales Orders',
-            path: '/scm/sales-orders',
-            permission: 'scm.dashboard.view',
-          },
-          {
-            title: 'Purchase Orders',
-            path: '/scm/purchase-orders',
-            permission: 'scm.dashboard.view',
-          },
-          {
-            title: 'Proforma Invoices',
-            path: '/scm/proforma-invoices',
-            permission: 'scm.dashboard.view',
-          },
-          {
-            title: 'Incoming Containers',
-            path: '/scm/incoming',
-            permission: 'scm.reorder.run',
           },
         ],
       },
@@ -337,6 +297,40 @@ export const MENU_SIDEBAR: MenuConfig = [
         title: 'Stock Inquiries',
         path: '/procurement-management/stock-inquiries',
         permission: 'procurement.stock_inquiries.view',
+      },
+      {
+        title: 'Supply Chain',
+        children: [
+          {
+            title: 'Reorder Planning',
+            path: '/scm/reorder',
+            permission: 'scm.reorder.run',
+            moduleKey: 'scm',
+          },
+          {
+            title: 'Loading Plan',
+            path: '/scm/loading-plan',
+            permission: 'scm.reorder.run',
+            moduleKey: 'scm',
+          },
+          {
+            title: 'Order Inquiries',
+            path: '/project-sales/order-inquiries',
+            permission: 'projects.projects.view',
+          },
+          {
+            title: 'Purchase Orders',
+            path: '/scm/purchase-orders',
+            permission: 'scm.dashboard.view',
+            moduleKey: 'scm',
+          },
+          {
+            title: 'Proforma Invoices',
+            path: '/scm/proforma-invoices',
+            permission: 'scm.dashboard.view',
+            moduleKey: 'scm',
+          },
+        ],
       },
     ],
   },
@@ -602,6 +596,12 @@ export const MENU_SIDEBAR: MenuConfig = [
     icon: Briefcase,
     moduleKey: 'procurement',
     children: [
+      {
+        title: 'Sales Orders',
+        path: '/scm/sales-orders',
+        permission: 'scm.dashboard.view',
+        moduleKey: 'scm',
+      },
       {
         title: 'Purchase Requests',
         path: '/procurement-management/purchase-requests',
@@ -899,6 +899,11 @@ export const MENU_SIDEBAR: MenuConfig = [
             title: 'Status Graphs',
             path: '/system-management/status-graphs',
             permission: 'system.statuses.view',
+          },
+          {
+            title: 'Translations',
+            path: '/system-management/translations',
+            permission: 'system.translations.view',
           },
           {
             title: 'Lookup Sets',
@@ -2107,6 +2112,11 @@ export const MENU_SIDEBAR_COMPACT: MenuConfig = [
         title: 'Status Graphs',
         path: '/system-management/status-graphs',
         permission: 'system.statuses.view',
+      },
+      {
+        title: 'Translations',
+        path: '/system-management/translations',
+        permission: 'system.translations.view',
       },
       {
         title: 'Lookup Sets',

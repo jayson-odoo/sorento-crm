@@ -1063,7 +1063,10 @@ def test_plan_of_lists_pulls_and_covers_for_a_crm_spo_po_and_is_empty_for_an_imp
             db, str(shipment.id),
             [{
                 "shipment_line_id": str(lines[0].id), "qty": 100, "include": True,
-                "so_line_ids": [f"retail:{so_line.id}"],
+                # A take needs somewhere to land (B4, review round 1) - the link a confirm
+                # writes hangs off an allocation, so a ticked line states its location.
+                "location_splits": [{"warehouse_id": str(wh.id), "qty": 100}],
+                "so_takes": [{"key": f"retail:{so_line.id}", "qty": 100}],
             }],
             actor="tester",
         )
@@ -1300,7 +1303,7 @@ def test_unwind_deletes_the_order_inquiry_link_before_the_allocation_it_points_a
             [{
                 "shipment_line_id": str(lines[0].id), "qty": 100, "include": True,
                 "location_splits": [{"warehouse_id": str(wh.id), "qty": 100}],
-                "so_line_ids": [f"project:{row.id}"],
+                "so_takes": [{"key": f"project:{row.id}", "qty": 40}],
             }],
         )
         link = db.query(OrderInquiryLink).filter(OrderInquiryLink.row_id == row.id).one()
