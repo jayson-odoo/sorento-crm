@@ -526,7 +526,17 @@ class SPOAllocation(Base, CompanyScopedMixin):
     storage_zone = relationship("StorageZone", back_populates="spo_allocations")
     product = relationship("Product", back_populates="spo_allocations")
     uom = relationship("UnitOfMeasure", foreign_keys=[uom_id])
-    picking_lines = relationship("PickingLine", back_populates="spo_allocation")
+    #: `passive_deletes=True` (spo-xlsx-supersede, reviewer cleanup): the FK is
+    #: `ON DELETE SET NULL`, and without this SQLAlchemy loads this collection
+    #: on `session.delete(allocation)` and NULLs each child's
+    #: `spo_allocation_id` ITSELF - which would undo a repoint the first-push
+    #: supersede has just made (D27) whenever the collection was already in the
+    #: identity map. Leaving it to the database makes the
+    #: repoint-then-delete ordering structural rather than a matter of which
+    #: rows happened to be loaded.
+    picking_lines = relationship(
+        "PickingLine", back_populates="spo_allocation", passive_deletes=True
+    )
     
     __table_args__ = (
         Index("ix_spo_allocations_inbound_shipment_id", "inbound_shipment_id"),
