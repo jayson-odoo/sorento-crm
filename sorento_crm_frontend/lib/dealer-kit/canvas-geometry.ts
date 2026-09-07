@@ -848,3 +848,42 @@ export function actualSizeView(
     panY: (container.height - artboard.height_mm * CANVAS_PX_PER_MM) / 2,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Brand fonts (PLAN-brand-font-manage.md)
+//
+// Not geometry, but a function over the same flat `layers` array, and
+// testable the same way this whole file is: without a browser.
+// ---------------------------------------------------------------------------
+
+/**
+ * A brand font was renamed: rewrite every layer that named the old family so
+ * an unsaved edit does not save the dead name back (AC-5).
+ *
+ * Both a `text` layer and a `price_badge`'s figure carry `props.fontFamily`
+ * flat - no nesting, since a `group` layer files its members by id in
+ * `props.children` rather than holding them (see `TagCanvasEditor`'s
+ * `groupSelectedLayers`), so every real layer is a sibling in this one array.
+ *
+ * Returns the SAME array reference when nothing matched, so a caller can skip
+ * `commit()` - and the history stack - on a no-op rename.
+ */
+export function renameFontFamilyInLayers(
+  layers: TagLayer[],
+  oldName: string,
+  newName: string,
+): TagLayer[] {
+  if (oldName === newName) return layers;
+  let changed = false;
+  const next = layers.map((layer) => {
+    if (
+      (layer.props.kind === 'text' || layer.props.kind === 'price_badge') &&
+      layer.props.fontFamily === oldName
+    ) {
+      changed = true;
+      return { ...layer, props: { ...layer.props, fontFamily: newName } };
+    }
+    return layer;
+  });
+  return changed ? next : layers;
+}

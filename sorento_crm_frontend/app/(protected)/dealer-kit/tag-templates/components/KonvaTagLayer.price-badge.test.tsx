@@ -28,6 +28,8 @@ vi.mock('react-konva', () => {
       fontStyle?: string;
       textDecoration?: string;
       align?: string;
+      x?: number;
+      y?: number;
     }) {
       return (
         <div
@@ -40,6 +42,8 @@ vi.mock('react-konva', () => {
           data-font-style={props.fontStyle ?? ''}
           data-decoration={props.textDecoration ?? ''}
           data-align={props.align ?? ''}
+          data-x={props.x ?? ''}
+          data-y={props.y ?? ''}
         >
           {props.text}
           {props.children}
@@ -245,5 +249,90 @@ describe('KonvaTagLayer price badge typography (AC-S6-4/5)', () => {
       (n) => n.getAttribute('data-text') === 'NETT',
     );
     expect(nett?.getAttribute('data-font-size')).toBe(String(Math.max(4, big * 0.56)));
+  });
+});
+
+describe('KonvaTagLayer price badge margin and padding (S3b, AC-7/8)', () => {
+  it('insets the callout group by margin and the figure further by padding', () => {
+    const { container } = render(
+      <KonvaTagLayer
+        layer={badgeLayer({
+          showBox: true,
+          cornerRadius: 0,
+          margin: { top: 2, right: 2, bottom: 2, left: 2 },
+          padding: { top: 1, right: 1, bottom: 1, left: 1 },
+        })}
+        scale={3}
+        display={{ price: PRICE }}
+      />,
+    );
+
+    // The outer per-layer Group sits at the layer's own x_mm/y_mm (0,0); the
+    // margin inset is the SECOND group, nested inside it.
+    const group = nodes(container, 'group')[1] as HTMLElement;
+    // 2mm margin at scale 3 = 6px.
+    expect(group.getAttribute('data-x')).toBe('6');
+    expect(group.getAttribute('data-y')).toBe('6');
+
+    // 1mm padding at scale 3 = 3px, measured inside the margin-inset box.
+    expect(figure(container).getAttribute('data-x')).toBe('3');
+    expect(figure(container).getAttribute('data-y')).toBe('3');
+  });
+
+  it('reads a legacy padding-only badge as margin, leaving the figure flush (AC-9)', () => {
+    const { container } = render(
+      <KonvaTagLayer
+        layer={badgeLayer({
+          showBox: true,
+          cornerRadius: 0,
+          padding: { top: 2, right: 2, bottom: 2, left: 2 },
+        })}
+        scale={3}
+        display={{ price: PRICE }}
+      />,
+    );
+
+    const group = nodes(container, 'group')[1] as HTMLElement;
+    expect(group.getAttribute('data-x')).toBe('6');
+    expect(group.getAttribute('data-y')).toBe('6');
+
+    // padding resolves to 0 under the legacy rule, so the figure draws flush
+    // inside the callout - exactly what this badge drew before margin existed.
+    expect(figure(container).getAttribute('data-x')).toBe('0');
+    expect(figure(container).getAttribute('data-y')).toBe('0');
+  });
+});
+
+describe('KonvaTagLayer price badge currency (S3c, AC-14/15)', () => {
+  it('keeps RM when the badge names no currency flag (AC-15)', () => {
+    render(<KonvaTagLayer layer={badgeLayer()} scale={3} display={{ price: PRICE }} />);
+
+    expect(screen.getByText('RM 1,599')).toBeInTheDocument();
+  });
+
+  it('drops RM on the figure when the badge switches currency off (AC-14)', () => {
+    render(
+      <KonvaTagLayer
+        layer={badgeLayer({ showCurrency: false })}
+        scale={3}
+        display={{ price: PRICE }}
+      />,
+    );
+
+    expect(screen.getByText('1,599')).toBeInTheDocument();
+    expect(screen.queryByText('RM 1,599')).not.toBeInTheDocument();
+  });
+
+  it('drops RM from both promo lines the same way (AC-14)', () => {
+    render(
+      <KonvaTagLayer
+        layer={badgeLayer({ variant: 'promo', showCurrency: false })}
+        scale={3}
+        display={{ price: PRICE }}
+      />,
+    );
+
+    expect(screen.getByText('LP: 1,599')).toBeInTheDocument();
+    expect(screen.getByText('599')).toBeInTheDocument();
   });
 });

@@ -52,7 +52,7 @@ export interface PolygonPoint {
   y: number;
 }
 
-export type ImageFit = 'cover' | 'contain';
+export type ImageFit = 'cover' | 'contain' | 'stretch';
 
 /** How an image layer is masked. `circle` is the round product cut-out on the flyer. */
 export type ImageMaskShape = 'none' | 'circle';
@@ -186,6 +186,14 @@ export interface PriceBadgeLayerProps {
   cornerRadius: number;
   showNett: boolean;
   /**
+   * Print `RM` before the figure (S3c, AC-13/14/15). Absent = true, so a
+   * badge saved before this flag existed still reads `RM 760`. Off drops the
+   * prefix on the figure AND, for the promo variant, both the struck `LP:`
+   * line and the `SP` line - `priceBadgeParts` in `price-badge.ts` is the
+   * one place that reads this, so the two renderers cannot disagree.
+   */
+  showCurrency?: boolean;
+  /**
    * Draw the box behind a LIST-ONLY badge (r4b, AC-S6-1).
    *
    * Absent means no box, so every badge saved before this prints exactly as
@@ -217,11 +225,22 @@ export interface PriceBadgeLayerProps {
   lineHeight?: number;
   letterSpacing?: number;
   /**
-   * Internal margin (S3). Absent = 0 on every side; insets the figure AND,
-   * for the boxed variants, the callout itself - the callout is the badge
-   * (r4b, AC-S6-2), so shrinking one shrinks the other.
+   * The figure's own inset from the callout's edge (S3b). Absent = 0 on
+   * every side. Independent of `margin` below: this one never moves the
+   * callout, only the figure inside it. `priceBadgeInsets` in
+   * `price-badge.ts` is the one place that resolves the two together,
+   * including the legacy rule that keeps a badge saved before `margin`
+   * existed pixel-identical.
    */
   padding?: LayerPadding;
+  /**
+   * The callout's own inset from the layer box (S3b). Absent means this
+   * badge was saved before `margin` existed, in which case `padding` above
+   * used to do both jobs at once - inset the callout AND leave the figure
+   * flush inside it - and `priceBadgeInsets` reads that as `margin: padding,
+   * padding: 0` so the badge draws exactly as it always did.
+   */
+  margin?: LayerPadding;
 }
 
 /**

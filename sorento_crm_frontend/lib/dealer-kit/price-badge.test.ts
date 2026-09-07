@@ -11,12 +11,14 @@ import { describe, expect, it } from 'vitest';
 import {
   NO_PRICE_TEXT,
   formatTagPrice,
+  priceBadgeInsets,
   priceBadgeParts,
   priceBadgeTypography,
 } from './price-badge';
 
 const LIST_ONLY = { variant: 'list_only' as const, showNett: true };
 const PROMO = { variant: 'promo' as const, showNett: true };
+const ZERO = { top: 0, right: 0, bottom: 0, left: 0 };
 
 describe('formatTagPrice', () => {
   it('prints whole ringgit with a thousands separator', () => {
@@ -25,6 +27,33 @@ describe('formatTagPrice', () => {
 
   it('rounds away the cents a showroom tag never shows', () => {
     expect(formatTagPrice(1599.49)).toBe('RM 1,599');
+  });
+
+  it('drops the currency prefix when asked, keeping the same grouping (S3c, AC-14)', () => {
+    expect(formatTagPrice(1599, false)).toBe('1,599');
+    expect(formatTagPrice(1599.49, false)).toBe('1,599');
+  });
+});
+
+describe('priceBadgeInsets (S3b, AC-7/9)', () => {
+  it('resolves both absent to zero', () => {
+    expect(priceBadgeInsets({})).toEqual({ margin: ZERO, padding: ZERO });
+  });
+
+  it('reads a legacy padding-only badge as margin = old padding, padding = 0 (AC-9)', () => {
+    const padding = { top: 1, right: 2, bottom: 3, left: 4 };
+    expect(priceBadgeInsets({ padding })).toEqual({ margin: padding, padding: ZERO });
+  });
+
+  it('reads an explicit margin and padding exactly as written, independently (AC-7)', () => {
+    const margin = { top: 2, right: 2, bottom: 2, left: 2 };
+    const padding = { top: 1, right: 1, bottom: 1, left: 1 };
+    expect(priceBadgeInsets({ margin, padding })).toEqual({ margin, padding });
+  });
+
+  it('reads an explicit margin with no padding as padding = 0, not the margin value', () => {
+    const margin = { top: 2, right: 2, bottom: 2, left: 2 };
+    expect(priceBadgeInsets({ margin })).toEqual({ margin, padding: ZERO });
   });
 });
 
@@ -52,6 +81,22 @@ describe('priceBadgeParts - list_only', () => {
 
     expect(parts.plainText).toBe(NO_PRICE_TEXT);
     expect(parts.amountText).toBe('');
+  });
+
+  it('keeps RM when the badge names no currency flag (S3c, AC-15)', () => {
+    const parts = priceBadgeParts(LIST_ONLY, { listPrice: 1599, offerPrice: null });
+
+    expect(parts.amountText).toBe('RM 1,599');
+  });
+
+  it('drops RM when the layer switches currency off (S3c, AC-14)', () => {
+    const parts = priceBadgeParts(
+      { ...LIST_ONLY, showCurrency: false },
+      { listPrice: 1599, offerPrice: null },
+    );
+
+    expect(parts.amountText).toBe('1,599');
+    expect(parts.plainText).toBe('1,599');
   });
 });
 
@@ -85,6 +130,17 @@ describe('priceBadgeParts - promo', () => {
     expect(parts.plainText).toBe('RM 1,599');
     expect(parts.boxed).toBe(false);
     expect(parts.struckText).toBeNull();
+  });
+
+  it('drops RM from both the struck line and SP line the same way (S3c, AC-14)', () => {
+    const parts = priceBadgeParts(
+      { ...PROMO, showCurrency: false },
+      { listPrice: 1599, offerPrice: 599 },
+    );
+
+    expect(parts.struckText).toBe('LP: 1,599');
+    expect(parts.amountText).toBe('599');
+    expect(parts.plainText).toBe('SP 599 NETT');
   });
 
   it('still shows the offer when the product has no list price to strike', () => {

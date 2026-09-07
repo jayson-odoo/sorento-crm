@@ -278,7 +278,7 @@ class CropRect(_StrictProps):
 class ImageLayerPropsDoc(_StrictProps):
     kind: Literal["image"]
     source: Optional[Union[ImageSourceAsset, ImageSourceAttachment]] = None
-    fit: Literal["cover", "contain"] = "contain"
+    fit: Literal["cover", "contain", "stretch"] = "contain"
     cropRect: Optional[CropRect] = None
     maskShape: Optional[Literal["none", "circle"]] = "none"
 
@@ -338,6 +338,9 @@ class PriceBadgeLayerPropsDoc(_StrictProps):
     textColor: str
     cornerRadius: float
     showNett: bool
+    # Prints `RM` before the figure (S3c, AC-13/14/15). Absent = true, so a
+    # badge saved before this flag existed still reads `RM 760`.
+    showCurrency: Optional[bool] = None
     # The list-only callout (r4b, AC-S6-1/2): absent means no box, so every
     # badge in the eight seeded layouts prints exactly as it did, and the
     # corners are the same normalized shape a polygon carries.
@@ -355,9 +358,14 @@ class PriceBadgeLayerPropsDoc(_StrictProps):
     align: Optional[Literal["left", "center", "right"]] = None
     lineHeight: Optional[float] = None
     letterSpacing: Optional[float] = None
-    # Insets the figure AND, for a boxed variant, the callout itself (S3,
-    # AC-S3-2) - the callout IS the badge (r4b, AC-S6-2).
+    # The figure's own inset from the callout's edge (S3b). Absent = 0 on
+    # every side.
     padding: Optional[LayerPaddingDoc] = None
+    # The callout's own inset from the layer box (S3b). Absent means this
+    # badge was saved before `margin` existed, in which case `padding` above
+    # used to do both jobs at once - `priceBadgeInsets` in the frontend's
+    # `price-badge.ts` is the one place that resolves the legacy rule.
+    margin: Optional[LayerPaddingDoc] = None
 
 
 class BadgeLayerPropsDoc(_StrictProps):
