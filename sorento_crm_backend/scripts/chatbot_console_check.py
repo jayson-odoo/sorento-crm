@@ -392,7 +392,18 @@ def main(argv: list[str] | None = None) -> int:
     import yaml
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("cases", help="the YAML case file")
+    parser.add_argument("cases", nargs="?", help="the YAML case file (omit with --say)")
+    parser.add_argument(
+        "--say",
+        action="append",
+        default=None,
+        metavar="TEXT",
+        help=(
+            "an ad-hoc turn. Repeatable, and the repeats are ONE conversation: each reply's "
+            "session variables feed the next turn exactly as a YAML `turns:` list does. "
+            "Nothing is graded - the reply is printed for a human to read."
+        ),
+    )
     parser.add_argument("--base-url", default="http://localhost:8000")
     parser.add_argument("--contact", default=None, help="default respond.io contact id")
     parser.add_argument("--api-key", default=os.getenv("EXTERNAL_API_KEY"))
@@ -436,6 +447,16 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    run_id = f"console-check-{int(time.time())}"
+    url = args.base_url.rstrip("/") + TURN_PATH
+    session = requests.Session()
+    session.trust_env = False
+
+    if args.say:
+        return _run_ad_hoc(args, session, url, run_id)
+    if not args.cases:
+        print("give a YAML case file, or --say \"<text>\"", file=sys.stderr)
+        return 2
     with open(args.cases, encoding="utf-8") as handle:
         document = yaml.safe_load(handle) or {}
     default_contact = args.contact or document.get("contact")
@@ -455,10 +476,6 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    run_id = f"console-check-{int(time.time())}"
-    url = args.base_url.rstrip("/") + TURN_PATH
-    session = requests.Session()
-    session.trust_env = False
 
     pinned = (
         f"  parser prompt pinned to version {args.prompt_version}"
@@ -471,6 +488,102 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"\n{len(cases) - failed} passed, {failed} failed  ({run_id})")
     return 1 if failed else 0
+
+
+def _latest_live_contact() -> str | None:
+    """The contact of the most recent chatbot turn - who the bot last spoke to.
+
+    The default for `--say`, because the envelope borrowing already needs a contact with a
+    stored turn and this is the one most likely to have one.
+    """
+    from sqlalchemy import text
+
+    db = _script_session()
+    try:
+        row = db.execute(
+            text(
+                "SELECT contact_respond_id FROM chatbot.turns WHERE envelope IS NOT NULL "
+                "ORDER BY created_at DESC LIMIT 1"
+            )
+        ).fetchone()
+    finally:
+        db.close()
+    return str(row[0]) if row else None
+
+
+def _trace_line(turn_id: str | None) -> str:
+    """One line of WHY: the tool, the rungs, the reveals - off the persisted trace."""
+    if not turn_id:
+        return "trace: (no turn id)"
+    from sqlalchemy import text
+
+    db = _script_session()
+    try:
+        row = db.execute(
+            text("SELECT trace FROM chatbot.turns WHERE id = :id"), {"id": turn_id}
+        ).fetchone()
+    finally:
+        db.close()
+    events = [e for e in ((row[0] if row else None) or []) if isinstance(e, dict) and e.get("kind")]
+    parts: list[str] = []
+    for event in events:
+        if event["kind"] == "tool":
+            args = {
+                k: v for k, v in (event.get("args") or {}).items()
+                if k not in ("view", "contact_id", "space_id", "_diagnostics")
+            }
+            parts.append(f"tool={event.get('name')} args={json.dumps(args, default=str)}")
+        elif event["kind"] == "crossdomain":
+            parts.append(f"rung={event.get('rung')}({event.get('rows')} rows)")
+        elif event["kind"] == "reveals":
+            dropped = event.get("dropped") or []
+            if dropped:
+                parts.append("reveals dropped=" + ",".join(str(d) for d in dropped))
+    return "trace: " + ("  ".join(parts) if parts else "no tool call")
+
+
+def _run_ad_hoc(args, session, url, run_id) -> int:
+    """`--say` turns as ONE conversation. Nothing is graded; the reply is printed.
+
+    Reuses the YAML path's own two functions - `_envelope_for` builds the borrowed
+    envelope (so `is_test` / `test_run_id` are set the same way, D14) and `_next_state`
+    feeds each reply's session variables into the next turn, which is exactly what a
+    `turns:` list does. So an ad-hoc conversation and a multi-turn case exercise the same
+    engine path, and neither writes anything outside `chatbot.turns`.
+    """
+    contact = str(args.contact or _latest_live_contact() or "")
+    if not contact:
+        print("no contact: pass --contact, or run one turn first", file=sys.stderr)
+        return 2
+    base = _base_envelope(contact)
+    previous_state = None
+    with _lanes_on(False):
+        for index, text_in in enumerate(args.say, start=1):
+            envelope = _envelope_for(
+                base,
+                contact=contact,
+                message=text_in,
+                run_id=run_id,
+                previous_state=previous_state,
+                prompt_version=args.prompt_version,
+            )
+            body = _post(session, url, args.api_key, envelope, args.timeout)
+            print(f"\n--- turn {index}  contact {contact} ---")
+            print(f"> {text_in}")
+            if "_http_error" in body:
+                print(f"  {body['_http_error']}")
+                return 1
+            print(f"  branch_kind: {body.get('branch_kind')}")
+            reply = (body.get("reply") or {}).get("text")
+            print(f"  reply.text: {reply if reply else '(none - this lane speaks in actions)'}")
+            for action in body.get("actions") or []:
+                if isinstance(action, dict) and action.get("kind") == "send_message":
+                    print(f"  send_message: {action.get('text')}")
+                    if action.get("quick_replies"):
+                        print(f"  quick_replies: {action['quick_replies']}")
+            print("  " + _trace_line(body.get("turn_id")))
+            previous_state = _next_state(body)
+    return 0
 
 
 def _run_cases(cases, session, url, args, default_contact, run_id) -> int:

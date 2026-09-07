@@ -22,6 +22,19 @@ venv/bin/python scripts/chatbot_console_check.py \
     tests/chatbot/console_cases/2026-09-06.yaml --base-url http://127.0.0.1:8004
 ```
 
+**`--say` is the same runner without a file**, for trying something by hand. Repeat it and
+the repeats are ONE conversation - each reply's session variables feed the next turn exactly
+as a YAML `turns:` list does - and each turn prints its branch, reply, `send_message` texts,
+quick replies and a one-line trace (tool + args, cross-domain rungs, reveals dropped).
+Nothing is graded and nothing extra is written; `--contact` defaults to whoever the bot
+last answered.
+
+```bash
+venv/bin/python scripts/chatbot_console_check.py \
+    --say "check stock srtwc286" --say "PO?" --base-url http://127.0.0.1:8004
+# add --prompt-version <ai_prompt_versions.id> to try an UNPROMOTED prompt (dry run only)
+```
+
 Every turn is a dry run (`is_test`, `test_run_id`), so nothing outside `chatbot.turns` is written
 and no WhatsApp message can leave. The envelope is borrowed from that contact's most recent
 `chatbot.turns` row, which is why the script refuses a non-local `--base-url` without `--i-know`:
