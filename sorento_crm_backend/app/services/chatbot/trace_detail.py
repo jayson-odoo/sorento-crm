@@ -48,17 +48,30 @@ def _kind_records(records: list[dict[str, Any]], kind: str) -> list[dict[str, An
 
 
 def _cap_envelope(envelope: Any) -> Any:
+    """Truncate, never drop (review, 7 Sep 2026): the cut is on ENCODED BYTES, not
+    code points - a code-point cut on a multibyte (e.g. Chinese) envelope either
+    undercounts the real size against the byte cap or slices a character in half,
+    which `errors="ignore"` on decode then silently drops instead of rendering.
+
+    `ensure_ascii=False`: the default `json.dumps` escapes every non-ASCII
+    character to a `\\uXXXX` sequence, which is pure ASCII and can never be cut
+    mid-character - that would make the byte-vs-code-point distinction this fix
+    exists for moot. Un-escaped, a Chinese envelope's characters are the real
+    2-4 byte UTF-8 sequences the byte cap has to reckon with.
+    """
     if envelope is None:
         return None
     try:
-        encoded = json.dumps(envelope, default=str)
+        encoded = json.dumps(envelope, default=str, ensure_ascii=False)
     except Exception:  # noqa: BLE001 - a trace read must never fail the request
         return {"truncated": True, "note": "payload is not JSON-serialisable"}
-    if len(encoded) <= TOOL_ENVELOPE_BYTE_CAP:
+    encoded_bytes = encoded.encode("utf-8")
+    if len(encoded_bytes) <= TOOL_ENVELOPE_BYTE_CAP:
         return json.loads(encoded)
     return {
         "truncated": True,
-        "note": f"envelope omitted: {len(encoded)} bytes exceeds the {TOOL_ENVELOPE_BYTE_CAP} byte cap",
+        "bytes": len(encoded_bytes),
+        "head": encoded_bytes[:TOOL_ENVELOPE_BYTE_CAP].decode("utf-8", errors="ignore"),
     }
 
 

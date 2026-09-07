@@ -159,6 +159,63 @@ class TestCheckAccessAttributes:
         assert access["all_attributes_allowed"] is False
 
 
+class TestNullWorkspaceFallback:
+    """Measured gap (review, 7 Sep 2026): a contact with `workspace_id` NULL joins
+    to nothing against `space_id`, so `resolve_contact_id` alone returns None and
+    a real grant read as OFF. `check_access` recovers it with a second lookup by
+    `respond_io_id` where `workspace_id IS NULL`."""
+
+    NULL_WORKSPACE_CONTACT_ID = "ZZT-contact-null-workspace-1"
+
+    def _seed_null_workspace_contact(self, session_factory, respond_io_id: str) -> str:
+        db = session_factory()
+        db.execute(
+            text(
+                "INSERT INTO respond_contacts (id, respond_io_id, phone_number, workspace_id, session_vars) "
+                "VALUES (gen_random_uuid()::text, :cid, :phone, NULL, CAST(:sv AS jsonb))"
+            ),
+            {"cid": respond_io_id, "phone": f"+6000{uuid.uuid4().hex[:7]}", "sv": json.dumps({})},
+        )
+        db.commit()
+        return db.execute(
+            text("SELECT id FROM respond_contacts WHERE respond_io_id = :cid"),
+            {"cid": respond_io_id},
+        ).scalar()
+
+    def test_a_null_workspace_contacts_grant_still_resolves(self, session_factory):
+        contact_id = self._seed_null_workspace_contact(session_factory, self.NULL_WORKSPACE_CONTACT_ID)
+        svc.set_granted_keys(session_factory(), contact_id, ["inventory.sellable"], actor_id="u-1")
+
+        access = check_access(
+            session_factory(),
+            agent_code="general_enquiries",
+            contact_id=self.NULL_WORKSPACE_CONTACT_ID,
+            space_id=SPACE_ID,
+        )
+        assert access["attributes"] == ["inventory.sellable"]
+
+    def test_two_null_workspace_contacts_sharing_a_respond_io_id_fail_closed(self, session_factory):
+        respond_io_id = "ZZT-contact-null-workspace-shared"
+        db = session_factory()
+        for _ in range(2):
+            db.execute(
+                text(
+                    "INSERT INTO respond_contacts (id, respond_io_id, phone_number, workspace_id, session_vars) "
+                    "VALUES (gen_random_uuid()::text, :cid, :phone, NULL, CAST(:sv AS jsonb))"
+                ),
+                {"cid": respond_io_id, "phone": f"+6000{uuid.uuid4().hex[:7]}", "sv": json.dumps({})},
+            )
+        db.commit()
+
+        access = check_access(
+            session_factory(),
+            agent_code="general_enquiries",
+            contact_id=respond_io_id,
+            space_id=SPACE_ID,
+        )
+        assert access["attributes"] == []
+
+
 class TestFieldRevealKeys:
     def test_lists_distinct_keys_from_active_tools(self, session_factory):
         from app.models.access import McpTool

@@ -33,7 +33,7 @@ from app.schemas.chatbot_field_reveal import (
     FieldRevealKeysResponse,
 )
 from app.services import contact_field_reveal_service as service
-from app.services.error_handler import handle_not_found
+from app.services.error_handler import handle_not_found, handle_unprocessable
 
 router = APIRouter(prefix="/chatbot")
 
@@ -82,6 +82,15 @@ def set_contact_field_reveals(
 ):
     """Full-list replace: exactly `payload.granted` ends up granted (AC-963)."""
     _require_contact(db, respond_contact_id)
+
+    allowed = {item["key"] for item in service.field_reveal_keys(db)}
+    unknown = sorted(set(payload.granted) - allowed)
+    if unknown:
+        raise handle_unprocessable(
+            f"Unknown field reveal key(s): {', '.join(unknown)}. "
+            f"Allowed keys: {', '.join(sorted(allowed)) or 'none'}."
+        )
+
     granted = service.set_granted_keys(
         db, respond_contact_id, payload.granted, actor_id=str(current_user.get("id") or "")
     )

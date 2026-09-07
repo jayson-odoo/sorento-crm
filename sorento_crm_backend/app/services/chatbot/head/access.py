@@ -21,6 +21,56 @@ from app.services.mcp_access_service import evaluate_agent
 logger = logging.getLogger(__name__)
 
 
+def _resolve_contact_with_null_workspace_fallback(
+    db: Session, *, contact_id: str, space_id: str | None
+) -> str | None:
+    """`field_access.resolve_contact_id`, then a fallback for the NULL-workspace gap.
+
+    Measured (review, 7 Sep 2026): 16 contacts have `workspace_id` NULL and 6 sit
+    in a non-default workspace. `resolve_contact_id`'s own JOIN against the given
+    `space_id` returns zero rows for a NULL-workspace contact - `RespondContact.
+    workspace_id` has nothing to join to - so a field reveal granted in the admin
+    UI silently read as OFF to the chatbot. Recovered here, not inside
+    `resolve_contact_id` itself: that function is also called by
+    `field_access.decide()` (agent field-gating), `stock_visibility.py` (policy
+    resolution) and `contact_attachment_access.py` / `contact_access_type_service.
+    py`, each of which currently reads an unresolved contact as CONTACT_NOT_FOUND /
+    default-deny - widening resolution for all of them is a live change to
+    already-shipped access boundaries this review did not ask for and a
+    security-relevant surface a field-reveal fix should not touch as a side
+    effect. The non-default-workspace 6 are left unresolved here too, on purpose:
+    that is a genuinely different workspace context, not this bug, and the review's
+    fix names the NULL-workspace case only.
+    """
+    from app.services.field_access import resolve_contact_id
+
+    resolved = resolve_contact_id(db, contact_id, space_id)
+    if resolved is not None:
+        return resolved
+
+    from app.models.access import RespondContact
+
+    rows = (
+        db.query(RespondContact.id)
+        .filter(
+            RespondContact.respond_io_id == str(contact_id),
+            RespondContact.workspace_id.is_(None),
+        )
+        .limit(2)
+        .all()
+    )
+    if len(rows) != 1:
+        if len(rows) > 1:
+            logger.warning(
+                "chatbot: respond_io_id %s matches %s NULL-workspace contacts; "
+                "denying rather than picking one",
+                contact_id,
+                len(rows),
+            )
+        return None
+    return rows[0][0]
+
+
 def _granted_field_reveal_keys(db: Session, *, contact_id: str, space_id: str | None) -> list[str]:
     """This contact's granted field-reveal keys (chatbot growth r1, Slice C).
 
@@ -32,19 +82,14 @@ def _granted_field_reveal_keys(db: Session, *, contact_id: str, space_id: str | 
     same posture `field_access.py::resolve_contact_id` takes.
     """
     try:
-        from app.models.access import RespondContact
-        from app.models.respond_workspace import RespondWorkspace
         from app.services.contact_field_reveal_service import granted_keys
 
-        query = db.query(RespondContact.id).filter(RespondContact.respond_io_id == contact_id)
-        if space_id:
-            query = query.join(
-                RespondWorkspace, RespondWorkspace.id == RespondContact.workspace_id
-            ).filter(RespondWorkspace.space_id == str(space_id))
-        rows = query.limit(2).all()
-        if len(rows) != 1:
+        resolved = _resolve_contact_with_null_workspace_fallback(
+            db, contact_id=contact_id, space_id=space_id
+        )
+        if resolved is None:
             return []
-        return granted_keys(db, rows[0][0])
+        return granted_keys(db, resolved)
     except Exception:  # noqa: BLE001 - a lookup failure must fail closed, not fail the turn
         logger.warning("chatbot: field-reveal lookup failed for %s", contact_id, exc_info=True)
         return []

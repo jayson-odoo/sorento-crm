@@ -223,6 +223,67 @@ class TestComposedFromHandBuiltTrace:
         assert resp.status_code == 404
 
 
+class TestToolEnvelopeTruncation:
+    """AC-970 review fix (7 Sep 2026): the cut is on ENCODED BYTES, so a multibyte
+    envelope is truncated, not silently dropped or corrupted."""
+
+    def _row_with_envelope(self, db, envelope: dict):
+        contact = _contact("envelope")
+        trace = [
+            {
+                "kind": "tool",
+                "name": "crm_master_products_list",
+                "args": {},
+                "envelope": envelope,
+                "ms": 10,
+            }
+        ]
+        return _seed_turn(db, contact_respond_id=contact, trace=trace)
+
+    def test_an_oversized_envelope_is_truncated_with_the_marker(self, client, db):
+        big = {"items": [{"value": "x" * 9000}]}
+        row = self._row_with_envelope(db, big)
+
+        resp = client.get(f"{BASE}/{row.id}")
+        assert resp.status_code == 200, resp.text
+        envelope = resp.json()["trace_detail"]["tool"]["envelope"]
+
+        assert envelope["truncated"] is True
+        assert envelope["bytes"] > 8192
+        assert isinstance(envelope["head"], str)
+        assert len(envelope["head"].encode("utf-8")) <= 8192
+
+    def test_a_multibyte_chinese_envelope_is_truncated_without_crashing(self, client, db):
+        # Each character is 3 bytes in UTF-8, so this well exceeds the 8192 byte cap.
+        big = {"items": [{"value": "多" * 4000}]}
+        row = self._row_with_envelope(db, big)
+
+        resp = client.get(f"{BASE}/{row.id}")
+        assert resp.status_code == 200, resp.text
+        envelope = resp.json()["trace_detail"]["tool"]["envelope"]
+
+        assert envelope["truncated"] is True
+        # 3 bytes/char * 4000 chars, plus the surrounding JSON - comfortably over the cap.
+        assert envelope["bytes"] > 8192
+        assert isinstance(envelope["head"], str)
+        # `errors="ignore"` may drop a trailing partial multibyte sequence, so the
+        # cut string's own re-encoded length is at or just under the cap, never over.
+        assert len(envelope["head"].encode("utf-8")) <= 8192
+        # `errors="ignore"` drops an incomplete byte sequence outright rather than
+        # substituting U+FFFD, so a clean cut never shows the replacement character.
+        assert "�" not in envelope["head"]
+        assert "多" in envelope["head"]
+
+    def test_a_small_envelope_is_not_truncated(self, client, db):
+        small = {"items": [{"value": "hi"}]}
+        row = self._row_with_envelope(db, small)
+
+        resp = client.get(f"{BASE}/{row.id}")
+        assert resp.status_code == 200, resp.text
+        envelope = resp.json()["trace_detail"]["tool"]["envelope"]
+        assert envelope == small
+
+
 class TestFailedTurnStageOrder:
     """AC-973: the failing stage renders FIRST, with its error text."""
 

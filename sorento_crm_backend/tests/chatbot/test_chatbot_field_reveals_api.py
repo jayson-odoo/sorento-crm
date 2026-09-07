@@ -139,6 +139,22 @@ class TestContactFieldReveals:
         resp = client.get(f"{BASE}/contacts/ZZT-no-such-contact/field-reveals")
         assert resp.status_code == 404
 
+    def test_put_rejects_an_unknown_key(self, client, db):
+        contact_id = _contact(db)
+        _seed_restricted_tool(db)
+
+        resp = client.put(
+            f"{BASE}/contacts/{contact_id}/field-reveals",
+            json={"granted": ["inventory.sellable", "not_a_real_key"]},
+        )
+        assert resp.status_code == 422, resp.text
+        assert "not_a_real_key" in resp.text
+        assert "inventory.sellable" in resp.text  # the allowed list, named
+
+        # Nothing was written by the rejected call.
+        get_resp = client.get(f"{BASE}/contacts/{contact_id}/field-reveals")
+        assert get_resp.json()["granted"] == []
+
     def test_put_requires_edit_permission(self, client, db):
         contact_id = _contact(db)
         _GRANTS.discard(CONTACT_EDIT)

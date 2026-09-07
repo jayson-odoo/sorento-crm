@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects import postgresql
 
 revision = "488_contact_field_reveals"
 down_revision = "487_chatbot_warehouse_cue"
@@ -36,7 +37,7 @@ def upgrade() -> None:
         op.create_table(
             "contact_field_reveals",
             sa.Column(
-                "id", sa.dialects.postgresql.UUID(as_uuid=False), primary_key=True
+                "id", postgresql.UUID(as_uuid=False), primary_key=True
             ),
             sa.Column("respond_contact_id", sa.Text(), nullable=False),
             sa.Column("field_key", sa.Text(), nullable=False),
@@ -77,7 +78,7 @@ def upgrade() -> None:
             "mcp_tools",
             sa.Column(
                 "restricted_fields",
-                sa.dialects.postgresql.JSONB(astext_type=sa.Text()),
+                postgresql.JSONB(astext_type=sa.Text()),
                 nullable=False,
                 server_default=sa.text("'[]'::jsonb"),
             ),

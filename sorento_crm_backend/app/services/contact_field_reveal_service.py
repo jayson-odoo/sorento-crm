@@ -14,8 +14,6 @@ history on the next save.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from sqlalchemy.orm import Session
 
 from app.models.access import ContactFieldReveal, McpTool
@@ -78,7 +76,6 @@ def set_granted_keys(
         .filter(ContactFieldReveal.respond_contact_id == respond_contact_id)
         .all()
     }
-    now = datetime.now(timezone.utc)
 
     for key in wanted:
         row = existing.get(key)
@@ -92,13 +89,15 @@ def set_granted_keys(
                 )
             )
         elif not row.granted:
+            # `updated_at`'s own `onupdate=func.now()` fires from this write; an
+            # explicit UTC value here landed 9 hours BEFORE `created_at` on a
+            # server in a positive-UTC-offset timezone (both columns are naive,
+            # so one is `now()` in local time and the other was UTC).
             row.granted = True
-            row.updated_at = now
 
     for key, row in existing.items():
         if key not in wanted and row.granted:
             row.granted = False
-            row.updated_at = now
 
     db.commit()
     return granted_keys(db, respond_contact_id)
