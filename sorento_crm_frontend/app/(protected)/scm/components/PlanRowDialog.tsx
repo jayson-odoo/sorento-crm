@@ -1,12 +1,14 @@
 'use client';
 
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   type ColumnDef,
   type ExpandedState,
   type OnChangeFn,
+  type SortingState,
   getCoreRowModel,
   getExpandedRowModel,
+  getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
 import { ChevronDown, ChevronRight, Plus, Trash2 } from 'lucide-react';
@@ -22,9 +24,11 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
@@ -1585,22 +1589,41 @@ export function SoCoveragePicker({
   onChange,
   unassigned,
   takes,
+  onTakeChange,
+  spoQty,
   bucketHits,
+  readOnly,
+  onOrderChange,
 }: {
   coverage: SoCoverageRow[];
   tickedKeys: string[];
   onChange: (keys: string[]) => void;
   unassigned: number;
-  /** What each ticked row actually GETS out of this SPO, by `key` (AC-G2's Take column).
+  /** What each ticked row actually GETS out of this SPO, by `key` (AC-I2's Take column).
    *  Omitted by a caller that holds no walk - the column then does not render at all,
    *  rather than reading 0 for every row and being mistaken for one. */
   takes?: Record<string, number>;
+  /** Editing a Take cell (R19) - present together with `takes` turns the column from a
+   *  plain figure into a numeric input; absent (or `readOnly`) leaves it read-only. */
+  onTakeChange?: (key: string, qty: number) => void;
+  /** The SPO line's own quantity - only needed alongside `onTakeChange`, for the "total
+   *  taken exceeds the SPO qty" refusal (AC-I2). */
+  spoQty?: number;
   /** SO coverage keys whose date fell in the schedule week that opened this picker (S4,
    *  AC-D3) - see `PoTakesPicker`'s own doc for the row hook this reads through. */
   bucketHits?: Set<string>;
+  /** J2: the SPO document's "SO covered" lightbox reuses this picker to LIST what a line
+   *  already covers rather than tick anything - no select column, no Take input, and the
+   *  footer states a count instead of "Unassigned" (there is nothing left to assign, it is
+   *  already committed). */
+  readOnly?: boolean;
+  /** The order the rows are CURRENTLY shown in, project tab then retail tab, each in its
+   *  own active sort (S7, review round 1). The caller's cascade walks this, so "the rows
+   *  after the one I edited" means the rows after it ON SCREEN - which is the only order
+   *  the operator can see. Reported on mount and on every re-sort. */
+  onOrderChange?: (keys: string[]) => void;
 }) {
-  const toggle = (key: string, on: boolean) =>
-    onChange(on ? [...tickedKeys, key] : tickedKeys.filter((x) => x !== key));
+  const editable = !readOnly && Boolean(onTakeChange) && Boolean(takes);
 
   // S5: a row `qty === 0 && taken_qty > 0` is covered by ANOTHER SPO entirely - never
   // tickable, so it renders grey and its checkbox is always unticked and disabled.
@@ -1612,11 +1635,33 @@ export function SoCoveragePicker({
     [coverage, takes],
   );
 
+  // Read by the FROZEN `columns` below (same technique `SpoPlannerTable`'s own qty input
+  // uses, and for the same reason): a `columns` array rebuilt whenever a take changes
+  // remounts whatever `flexRender` renders for that cell, which drops the Take input's
+  // focus and caret after every keystroke.
+  const tickedKeysRef = useRef(tickedKeys);
+  tickedKeysRef.current = tickedKeys;
+  // S1 (review round 1): the footer sums are read through refs too. Frozen inside the
+  // columns memo they stated whatever the totals were AT MOUNT, so the Take footer sat at
+  // its seeded figure while every cell above it moved.
+  const totalQtyRef = useRef(totalQty);
+  totalQtyRef.current = totalQty;
+  const totalTakenRef = useRef(totalTaken);
+  totalTakenRef.current = totalTaken;
+  const takesRef = useRef(takes);
+  takesRef.current = takes;
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const onTakeChangeRef = useRef(onTakeChange);
+  onTakeChangeRef.current = onTakeChange;
+
   // S3: search + filter, over the FULL `coverage` array - see `PoTakesPicker` for why.
   const [searchInput, setSearchInput] = useState('');
   const [appliedSearch, setAppliedSearch] = useState('');
   const [draftConditions, setDraftConditions] = useState<PickerFilterCondition[]>([]);
   const [appliedConditions, setAppliedConditions] = useState<PickerFilterCondition[]>([]);
+  // R18: one tab per family, the footer shared beneath both.
+  const [tab, setTab] = useState<'project' | 'retail'>('project');
 
   const fields = useMemo<PickerFilterField[]>(
     () => [
@@ -1631,18 +1676,6 @@ export function SoCoveragePicker({
         options: distinctFieldOptions(coverage, (c) => c.customer_name),
       },
       {
-        // R3: the FILTER reads `demand_class` (what the SO itself is classified as), not
-        // `kind` (where the row came from) - an inquiry row's `demand_class` is always
-        // `'project'`, so it still filters under Project.
-        id: 'demand_class',
-        label: 'Class',
-        options: [
-          { value: 'project', label: 'Project' },
-          { value: 'retail', label: 'Retail' },
-          { value: 'unclassified', label: 'Unclassified' },
-        ],
-      },
-      {
         id: 'warehouse_code',
         label: 'Location',
         options: distinctFieldOptions(coverage, (c) => c.warehouse_code),
@@ -1651,7 +1684,7 @@ export function SoCoveragePicker({
     [coverage],
   );
 
-  const rows = useMemo(() => {
+  const filtered = useMemo(() => {
     let out = coverage;
     const needle = appliedSearch.trim().toLowerCase();
     if (needle) {
@@ -1665,11 +1698,6 @@ export function SoCoveragePicker({
       if (!cond.value) continue;
       if (cond.field === 'document') out = out.filter((c) => c.document === cond.value);
       if (cond.field === 'customer_name') out = out.filter((c) => c.customer_name === cond.value);
-      if (cond.field === 'demand_class') {
-        out = out.filter((c) =>
-          cond.value === 'unclassified' ? !c.demand_class : c.demand_class === cond.value,
-        );
-      }
       if (cond.field === 'warehouse_code') out = out.filter((c) => c.warehouse_code === cond.value);
     }
     return out;
@@ -1678,9 +1706,25 @@ export function SoCoveragePicker({
   const activeCount = appliedConditions.filter((c) => c.value).length;
   const isFiltered = Boolean(appliedSearch.trim()) || activeCount > 0;
 
-  const columns = useMemo<ColumnDef<SoCoverageRow>[]>(
-    () => [
-      {
+  // R18: partitioned by `kind` (which family the row came from - project rows are always
+  // order-inquiry rows, retail rows are always book lines), not `demand_class` (what the
+  // SO itself is classified as, which the Class cell still reads and can disagree with
+  // `kind` - see that cell's own comment). Each tab lists only its own family.
+  const projectRows = useMemo(() => filtered.filter((c) => c.kind === 'project'), [filtered]);
+  const retailRows = useMemo(() => filtered.filter((c) => c.kind === 'retail'), [filtered]);
+  const projectCount = useMemo(
+    () => coverage.filter((c) => c.kind === 'project').length,
+    [coverage],
+  );
+  const retailCount = useMemo(
+    () => coverage.filter((c) => c.kind === 'retail').length,
+    [coverage],
+  );
+
+  const columns = useMemo<ColumnDef<SoCoverageRow>[]>(() => {
+    const cols: ColumnDef<SoCoverageRow>[] = [];
+    if (!readOnly) {
+      cols.push({
         id: 'select',
         header: '',
         cell: ({ row }) => {
@@ -1688,19 +1732,29 @@ export function SoCoveragePicker({
           const taken = isTaken(c);
           return (
             <Checkbox
-              checked={!taken && tickedKeys.includes(c.key)}
+              checked={!taken && tickedKeysRef.current.includes(c.key)}
               disabled={taken}
-              onCheckedChange={(checked) => toggle(c.key, !!checked)}
+              onCheckedChange={(checked) =>
+                onChangeRef.current(
+                  checked
+                    ? [...tickedKeysRef.current, c.key]
+                    : tickedKeysRef.current.filter((x) => x !== c.key),
+                )
+              }
               aria-label={`Cover ${c.document ?? c.key}`}
             />
           );
         },
         size: 40,
         enableResizing: false,
-      },
+        enableSorting: false,
+      });
+    }
+    cols.push(
       {
         id: 'document',
-        header: 'Sales order',
+        accessorFn: (c) => c.document ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Sales order" column={column} />,
         cell: ({ row }) => textCell(row.original.document),
         footer: () => TOTAL_LABEL,
         size: 130,
@@ -1708,7 +1762,8 @@ export function SoCoveragePicker({
       },
       {
         id: 'customer_name',
-        header: 'Customer',
+        accessorFn: (c) => c.customer_name ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Customer" column={column} />,
         cell: ({ row }) => (
           <span className="block truncate" title={row.original.customer_name ?? undefined}>
             {textCell(row.original.customer_name)}
@@ -1720,9 +1775,11 @@ export function SoCoveragePicker({
         // R3: the SAME pill the sales-order list paints for `demand_class`, not a private
         // Project/Retail string - an inquiry row's own SO has no `demand_class` to read, so
         // it reads "Project" off the row's `demand_class` (always 'project' for that family)
-        // with "· inquiry" naming where the row itself came from.
+        // with "· inquiry" naming where the row itself came from. Not one of the sortable
+        // columns (AC-I4 names the other seven, not this one).
         id: 'kind',
         header: 'Class',
+        enableSorting: false,
         cell: ({ row }) => {
           const cls = demandClassBadge(row.original.demand_class);
           return (
@@ -1741,16 +1798,18 @@ export function SoCoveragePicker({
       {
         // S3: the family's own word for this column (`PoTabs`, the purchase-order list).
         id: 'required_date',
-        header: 'Delivery date',
+        accessorFn: (c) => c.required_date ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Delivery date" column={column} />,
         cell: ({ row }) => fmtDate(row.original.required_date),
         size: 120,
         meta: RIGHT,
       },
       {
         id: 'qty',
-        header: 'Outstanding',
+        accessorFn: (c) => c.qty,
+        header: ({ column }) => <DataGridColumnHeader title="Outstanding" column={column} />,
         cell: ({ row }) => fmtInt(row.original.qty),
-        footer: () => fmtInt(totalQty),
+        footer: () => fmtInt(totalQtyRef.current),
         size: 110,
         meta: RIGHT,
       },
@@ -1758,7 +1817,8 @@ export function SoCoveragePicker({
         // S5: what an EARLIER SPO already covers of this row - dash when none, the SPO
         // number(s) as the tooltip AND under the figure.
         id: 'taken_qty',
-        header: 'Taken',
+        accessorFn: (c) => c.taken_qty,
+        header: ({ column }) => <DataGridColumnHeader title="Taken" column={column} />,
         cell: ({ row }) => {
           const c = row.original;
           if (!(c.taken_qty > 0)) return <span className="tabular-nums">{EM_DASH}</span>;
@@ -1773,40 +1833,128 @@ export function SoCoveragePicker({
         size: 110,
         meta: RIGHT,
       },
-      ...(takes
-        ? [
-            {
-              id: 'take',
-              header: 'Take',
-              cell: ({ row }) => fmtInt(takes[row.original.key] ?? 0),
-              footer: () => fmtInt(totalTaken ?? 0),
-              size: 90,
-              meta: RIGHT,
-            } as ColumnDef<SoCoverageRow>,
-          ]
-        : []),
-      {
-        id: 'warehouse_code',
-        header: 'Location',
-        cell: ({ row }) => textCell(row.original.warehouse_code),
-        size: 110,
-      },
-    ],
+    );
+    if (takes) {
+      cols.push({
+        id: 'take',
+        accessorFn: (c) => takesRef.current?.[c.key] ?? 0,
+        header: ({ column }) => <DataGridColumnHeader title="Take" column={column} />,
+        cell: ({ row }) => {
+          const c = row.original;
+          const ticked = tickedKeysRef.current.includes(c.key);
+          const value = ticked ? (takesRef.current?.[c.key] ?? 0) : 0;
+          if (!editable) {
+            return <span className="tabular-nums">{fmtInt(value)}</span>;
+          }
+          const invalid = ticked && value > c.qty;
+          return (
+            <Input
+              type="number"
+              min={0}
+              step={1}
+              className={cn(
+                'h-8 w-20 tabular-nums',
+                invalid &&
+                  'border-destructive text-destructive focus-visible:ring-destructive/40',
+              )}
+              value={value}
+              disabled={!ticked || isTaken(c)}
+              aria-label={`Take from ${c.document ?? c.key}`}
+              onChange={(e) => {
+                const next = Math.max(0, Number(e.target.value) || 0);
+                onTakeChangeRef.current?.(c.key, next);
+              }}
+            />
+          );
+        },
+        footer: () => fmtInt(totalTakenRef.current ?? 0),
+        size: 100,
+        meta: RIGHT,
+      });
+    }
+    cols.push({
+      id: 'warehouse_code',
+      accessorFn: (c) => c.warehouse_code ?? '',
+      header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
+      cell: ({ row }) => textCell(row.original.warehouse_code),
+      size: 110,
+    });
+    return cols;
+    // Frozen at mount - `readOnly` and whether `takes` is present never flip for an already
+    // mounted picker (the caller either passes a walk or does not); the cells read the live
+    // ticks/takes through the refs above instead, same reason `SpoPlannerTable`'s own qty
+    // input freezes its `columns`.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tickedKeys, takes, totalQty, totalTaken],
-  );
+  }, []);
 
-  const table = useReactTable({
+  const [projectSorting, setProjectSorting] = useState<SortingState>([
+    { id: 'required_date', desc: false },
+  ]);
+  const [retailSorting, setRetailSorting] = useState<SortingState>([
+    { id: 'required_date', desc: false },
+  ]);
+
+  const projectTable = useReactTable({
     columns,
-    data: rows,
+    data: projectRows,
     getRowId: (c) => c.key,
+    state: { sorting: projectSorting },
+    onSortingChange: setProjectSorting,
     getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
   });
+  const retailTable = useReactTable({
+    columns,
+    data: retailRows,
+    getRowId: (c) => c.key,
+    state: { sorting: retailSorting },
+    onSortingChange: setRetailSorting,
+    getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+  });
+  const activeTable = tab === 'project' ? projectTable : retailTable;
+
+  // S7 (review round 1): the order the operator is LOOKING at - project tab first, then
+  // retail, each in its own active sort - handed back to the caller so its Take cascade
+  // re-flows the rows after the edited one on screen rather than the rows after it in the
+  // server's own walk. Reported through a signature so a re-render that changed nothing
+  // does not re-notify.
+  const orderedKeys = [
+    ...projectTable.getSortedRowModel().rows.map((r) => r.original.key),
+    ...retailTable.getSortedRowModel().rows.map((r) => r.original.key),
+  ];
+  const orderSignature = orderedKeys.join('|');
+  const onOrderChangeRef = useRef(onOrderChange);
+  onOrderChangeRef.current = onOrderChange;
+  useEffect(() => {
+    onOrderChangeRef.current?.(orderSignature ? orderSignature.split('|') : []);
+  }, [orderSignature]);
+
+  // AC-I2: a take above its own row's outstanding, or the total above the SPO qty, marks
+  // the offending cell(s) destructive (the Take cell above) and states which, ONE sentence,
+  // in the footer that would otherwise say "Unassigned".
+  const overRow = editable
+    ? coverage.find((c) => tickedKeys.includes(c.key) && (takes?.[c.key] ?? 0) > c.qty)
+    : undefined;
+  const overCap =
+    editable && spoQty !== undefined && totalTaken !== null ? totalTaken > spoQty : false;
+  const validationMessage = overRow
+    ? `${overRow.document ?? 'A row'}'s take exceeds its outstanding of ${fmtInt(overRow.qty)}.`
+    : overCap
+      ? `Total taken ${fmtInt(totalTaken ?? 0)} exceeds the SPO qty ${fmtInt(spoQty ?? 0)}.`
+      : null;
+
+  const footerLine = readOnly
+    ? `${fmtInt(filtered.length)} sales order${filtered.length === 1 ? '' : 's'} · qty ${fmtInt(totalQty)}`
+    : (validationMessage ??
+      `Unassigned ${fmtInt(unassigned)}${
+        isFiltered ? ` · ${fmtInt(filtered.length)} of ${fmtInt(coverage.length)} shown` : ''
+      }`);
 
   return (
     <div className="space-y-2">
       <DataGridListToolbar
-        table={table}
+        table={activeTable}
         searchSlot={
           <ListSearchInput
             value={searchInput}
@@ -1839,30 +1987,55 @@ export function SoCoveragePicker({
         exportConfig={false}
         showColumns={false}
       />
-      <DataGrid
-        table={table}
-        recordCount={rows.length}
-        listingKey={null}
-        tableLayout={{
-          width: 'fixed',
-          columnsResizable: true,
-          // Always rendered inside PlanRowDialog's own DialogBody (overflow-y-auto).
-          scrollerMaxHeight: false,
-        }}
-        rowClassName={(c) =>
-          cn(isTaken(c) && 'text-muted-foreground', bucketHits?.has(c.key) && 'bg-primary/10')
-        }
-        rowAttributes={(c) => ({
-          ...(isTaken(c) ? { 'data-taken': 'true' } : {}),
-          ...(bucketHits?.has(c.key) ? { 'data-bucket-hit': 'true' } : {}),
-        })}
-        emptyMessage="No open demand this SPO could cover."
+      <Tabs value={tab} onValueChange={(v) => setTab(v as 'project' | 'retail')}>
+        <TabsList variant="line">
+          <TabsTrigger value="project">{`Project (${fmtInt(projectCount)})`}</TabsTrigger>
+          <TabsTrigger value="retail">{`Retail (${fmtInt(retailCount)})`}</TabsTrigger>
+        </TabsList>
+        <TabsContent value="project" className="mt-2 focus-visible:outline-none">
+          <DataGrid
+            table={projectTable}
+            recordCount={projectRows.length}
+            listingKey={null}
+            tableLayout={{ width: 'fixed', columnsResizable: true, scrollerMaxHeight: false }}
+            rowClassName={(c) =>
+              cn(isTaken(c) && 'text-muted-foreground', bucketHits?.has(c.key) && 'bg-primary/10')
+            }
+            rowAttributes={(c) => ({
+              ...(isTaken(c) ? { 'data-taken': 'true' } : {}),
+              ...(bucketHits?.has(c.key) ? { 'data-bucket-hit': 'true' } : {}),
+            })}
+            emptyMessage="No open project demand this SPO could cover."
+          >
+            <DataGridTable />
+          </DataGrid>
+        </TabsContent>
+        <TabsContent value="retail" className="mt-2 focus-visible:outline-none">
+          <DataGrid
+            table={retailTable}
+            recordCount={retailRows.length}
+            listingKey={null}
+            tableLayout={{ width: 'fixed', columnsResizable: true, scrollerMaxHeight: false }}
+            rowClassName={(c) =>
+              cn(isTaken(c) && 'text-muted-foreground', bucketHits?.has(c.key) && 'bg-primary/10')
+            }
+            rowAttributes={(c) => ({
+              ...(isTaken(c) ? { 'data-taken': 'true' } : {}),
+              ...(bucketHits?.has(c.key) ? { 'data-bucket-hit': 'true' } : {}),
+            })}
+            emptyMessage="No open retail demand this SPO could cover."
+          >
+            <DataGridTable />
+          </DataGrid>
+        </TabsContent>
+      </Tabs>
+      <p
+        className={cn(
+          'border-t pt-2 text-2xs',
+          validationMessage ? 'font-medium text-destructive' : 'text-muted-foreground',
+        )}
       >
-        <DataGridTable />
-      </DataGrid>
-      <p className="border-t pt-2 text-2xs text-muted-foreground">
-        {`Unassigned ${fmtInt(unassigned)}`}
-        {isFiltered ? ` · ${fmtInt(rows.length)} of ${fmtInt(coverage.length)} shown` : ''}
+        {footerLine}
       </p>
     </div>
   );

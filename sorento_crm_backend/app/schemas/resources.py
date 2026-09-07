@@ -73,6 +73,9 @@ class AttachmentTypeBase(BaseModel):
     # When true, an upload of this type is written with company_id = NULL -
     # visible to every company. Flipping this later touches no existing row.
     is_shared: bool = False
+    # Folder an upload of this type files into by default (R4). None = no default,
+    # same as today.
+    default_directory_id: Optional[str] = None
 
 
 class AttachmentTypeCreate(AttachmentTypeBase):
@@ -90,6 +93,7 @@ class AttachmentTypeUpdate(BaseModel):
     max_validity_months: Optional[int] = None
     triggers_n8n_webhook: Optional[bool] = None
     is_shared: Optional[bool] = None
+    default_directory_id: Optional[str] = None
 
 
 class AttachmentTypeResponse(AttachmentTypeBase):
@@ -97,7 +101,11 @@ class AttachmentTypeResponse(AttachmentTypeBase):
 
     id: str
     created_at: datetime
-    
+    # Stable machine key (e.g. 'packing_list'), distinct from the editable
+    # `type_name` label. Read-only: not on AttachmentTypeBase, so create/update
+    # payloads cannot set it. NULL for types that predate the column.
+    code: Optional[str] = None
+
     @field_validator('id', mode='before')
     @classmethod
     def convert_uuid_to_string(cls, v):

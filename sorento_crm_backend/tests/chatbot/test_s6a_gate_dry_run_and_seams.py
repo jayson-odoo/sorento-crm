@@ -15,7 +15,8 @@ from sqlalchemy import text
 from app.config import settings
 from app.services.chatbot import contracts
 from app.services.chatbot import engine as engine_mod
-from app.services.chatbot.lanes.business import resolve_gate
+from app.services.chatbot.lanes.business import pickers, resolve_gate
+from app.services.chatbot.lanes.business.gate import run_gate
 from app.services.chatbot.lanes.business.services import ResolveGateServices, production_services
 from app.services.error_handler import AppException
 from tests.chatbot.conftest import set_chatbot_switches
@@ -585,3 +586,520 @@ class TestFixtureObservesADeliberateWriteMidTurn:
             "the fixture did not observe a write made mid-run_turn on a fresh session - "
             "every 'wrote nothing' D14 assertion in this suite would be vacuous"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Owner ruling, console pass 3 (6 Sep 2026), item A: the ambiguous-customer picker
+# ("Which customer do you mean?", `gate.py`'s "AMBIGUOUS CUSTOMER -> ASK WHICH COMPANY"
+# block, ~line 650) must stamp each option "N. <name> (<company code>) - has DO" / "-
+# no DO", the same shape as the ported `pickers.annotate_incoming` "- has incoming" /
+# "- no incoming" stamp and the retired spine's "has stock details" did-you-mean stamp.
+# Evidence turns 5ea477a6 (#15) and 934d4c18 (#16).
+#
+# `ResolveGateServices.probe`'s production binding is itself unreachable
+# (`app/services/chatbot/lanes/business/services.py::_probe` raises `NotImplementedError`
+# - S6b's entity-ids-transformer/output-structurer wiring for the PICKER probe has not
+# landed, unlike the fetch step's own use of them). The DO-stamp test below therefore
+# builds the picker's `probe` argument from a REAL `OrderService(db).list_orders(...)`
+# read against REAL seeded Postgres rows - never a hand-built n8n dict - wrapped in the
+# envelope shape `sorento_crm_mcp/presenters.py` documents for
+# `crm_order_management_orders_list` ("Customer" / "Actual Delivery Date" fields, read
+# verbatim from that file, 2026-09-07): the exact shape the real probe would hand
+# `annotate_customer` once wired.
+# --------------------------------------------------------------------------- #
+
+
+class TestOwnerRulingACustomerPickerLabelCarriesCompanyCode:
+    def test_which_customer_lines_carry_the_company_code(self) -> None:
+        """`gate.py`'s ambiguous-customer block renders "N. <name>" only today - no
+        company code. Built from `ResolvedEntity.as_dict()`'s own field shape
+        (app/services/entity_resolver.py), never a hand-built n8n dict.
+
+        AMENDED 7 Sep 2026 (coder, with the captain): this test first asserted the
+        CUSTOMER code ("ZZTDOA"). The owner's words were "company code", and the shape
+        they named it from is the old spine's own "A CRAFT IDEA SDN BHD (SRT)" - SRT is
+        the CRM company (`companies.code`; the two rows on this install are SRT and
+        MOCHA), not a customer code. That is also the only reading that does any work
+        here: the picker exists because ONE customer name resolves to several accounts,
+        and printing a per-account code next to each line would still leave two lines of
+        the same name to choose between when the duplicate is one account per company
+        ledger. The resolver now stamps `company_code` beside `company_name`
+        (`_attach_company_info`), and the fixture below carries it exactly as the real
+        payload does."""
+        resolver = {
+            "resolutions": [
+                {
+                    "token": "ambigco",
+                    "matches": [
+                        {
+                            "entity_type": "customer",
+                            "canonical_code": "ZZTDOA",
+                            "uuid": "cust-a",
+                            "match_field": "customer_name",
+                            "match_tier": "substring",
+                            "similarity": None,
+                            "company_id": "zzt-co-srt",
+                            "company_name": "Sorento",
+                            "company_code": "SRT",
+                            "display": {
+                                "customer_name": "ZZT Ambigco Alpha Sdn Bhd",
+                                "phone_number": None,
+                                "email": None,
+                            },
+                        },
+                        {
+                            "entity_type": "customer",
+                            "canonical_code": "ZZTDOB",
+                            "uuid": "cust-b",
+                            "match_field": "customer_name",
+                            "match_tier": "substring",
+                            "similarity": None,
+                            "company_id": "zzt-co-mocha",
+                            "company_name": "Mocha",
+                            "company_code": "MOCHA",
+                            "display": {
+                                "customer_name": "ZZT Ambigco Beta Sdn Bhd",
+                                "phone_number": None,
+                                "email": None,
+                            },
+                        },
+                    ],
+                }
+            ]
+        }
+        parser = {
+            "domain_hint": "order",
+            "entities": [
+                {"raw": "ambigco", "hint": "customer", "canonical_code": None, "current_message": True}
+            ],
+        }
+
+        out = run_gate({}, parser=parser, resolver=resolver)
+
+        assert out["require_specific"] is True, (
+            "fixture must reach the ambiguous-customer branch: "
+            f"gate_reason={out.get('gate_reason')!r}"
+        )
+        clarification = out["gate_clarification"]
+        assert "ZZT Ambigco Alpha Sdn Bhd (SRT)" in clarification, (
+            f"the picker line must carry the owning company's code next to the customer "
+            f"name: {clarification!r}"
+        )
+        assert "ZZT Ambigco Beta Sdn Bhd (MOCHA)" in clarification, (
+            f"the picker line must carry the owning company's code next to the customer "
+            f"name: {clarification!r}"
+        )
+        # The roster the pick resolves against carries the SAME label, so a customer who
+        # types the whole line back resolves to the row they read.
+        assert [e["title"] for e in out["compatible_entities"]] == [
+            "ZZT Ambigco Alpha Sdn Bhd (SRT)",
+            "ZZT Ambigco Beta Sdn Bhd (MOCHA)",
+        ], out["compatible_entities"]
+
+
+class TestOwnerRulingACustomerPickerDOStamp:
+    def test_which_customer_lines_carry_has_do_and_no_do(self, session_factory) -> None:
+        """Two similarly-named customers under Sorento (the suite's default company
+        scope, tests/conftest.py): one with a DO (an order carrying
+        `actual_delivery_date`, app/models/order.py:271), one with none. The picker's
+        suffix must read "- has DO" / "- no DO", never today's "- has delivery" /
+        "- no delivery" / "- no recent delivery", and must not confuse "an order
+        exists" with "a DO exists" - `pickers.annotate_customer`'s `with_delivery` set
+        is built from ANY matching order row today, with no read of the delivery-date
+        field at all, so customer B (an order but no DO YET) is the second, substantive
+        defect this test catches alongside the wording."""
+        from datetime import date
+
+        from app.models.order import Customer, Order
+        from app.services.order_service import OrderService
+
+        db = session_factory()
+        cust_a = Customer(customer_code="ZZTDOA", customer_name="ZZT Ambigco Alpha Sdn Bhd")
+        cust_b = Customer(customer_code="ZZTDOB", customer_name="ZZT Ambigco Beta Sdn Bhd")
+        db.add_all([cust_a, cust_b])
+        db.commit()
+        order_a = Order(
+            order_number="ZZTDOORD-A1",
+            customer_id=cust_a.id,
+            debtor_name=cust_a.customer_name,
+            actual_delivery_date=date(2026, 6, 1),
+        )
+        order_b = Order(
+            order_number="ZZTDOORD-B1",
+            customer_id=cust_b.id,
+            debtor_name=cust_b.customer_name,
+            actual_delivery_date=None,
+        )
+        db.add_all([order_a, order_b])
+        db.commit()
+
+        rows = OrderService(db).list_orders(customer_ids=[cust_a.id, cust_b.id], limit=100)["data"]
+        assert len(rows) == 2, f"seed must produce exactly the two orders under test, got {len(rows)}"
+
+        # The exact envelope shape `sorento_crm_mcp/presenters.py` builds for
+        # `crm_order_management_orders_list` (`("Customer", o.get("debtor_name"))`,
+        # `("Actual Delivery Date", o.get("actual_delivery_date"))`), fed with the REAL
+        # order rows just read - this is what the real probe would hand the annotator.
+        probe = {
+            "items": [
+                {
+                    "title": row.order_number,
+                    "fields": [
+                        {"label": "Customer", "value": row.debtor_name},
+                        {
+                            "label": "Actual Delivery Date",
+                            "value": row.actual_delivery_date.isoformat()
+                            if row.actual_delivery_date
+                            else None,
+                        },
+                    ],
+                }
+                for row in rows
+            ]
+        }
+
+        gate = {
+            "gate_clarification": (
+                "Which customer do you mean? Please choose:\n"
+                f"1. {cust_a.customer_name} ({cust_a.customer_code})\n"
+                f"2. {cust_b.customer_name} ({cust_b.customer_code})"
+            ),
+            "compatible_entities": [
+                {
+                    "uuid": cust_a.id,
+                    "entity_type": "customer",
+                    "code": cust_a.customer_code,
+                    "title": cust_a.customer_name,
+                },
+                {
+                    "uuid": cust_b.id,
+                    "entity_type": "customer",
+                    "code": cust_b.customer_code,
+                    "title": cust_b.customer_name,
+                },
+            ],
+        }
+
+        out = pickers.annotate_customer(dict(gate), probe=probe, parser={})
+        lines = out["escalate_message"].splitlines()
+        line_a = next(l for l in lines if l.startswith("1."))
+        line_b = next(l for l in lines if l.startswith("2."))
+
+        assert line_a.endswith(" - has DO"), (
+            f"RED (the actual gap): a customer WITH a DO (actual_delivery_date set) "
+            f"must read '- has DO': {line_a!r}"
+        )
+        assert line_b.endswith(" - no DO"), (
+            f"RED (the actual gap): a customer with NO DO must read '- no DO', not the "
+            f"current 'has delivery' wording that ignores actual_delivery_date "
+            f"entirely: {line_b!r}"
+        )
+
+        # Guard: picking "1" must still resolve to the FIRST customer - the annotator
+        # only appends a suffix, it must never reorder or renumber the roster.
+        assert gate["compatible_entities"][0]["uuid"] == cust_a.id
+        assert gate["compatible_entities"][0]["title"] == cust_a.customer_name
+
+
+# --------------------------------------------------------------------------- #
+# Owner ruling A, the PRODUCTION seam. The stamp above is worth nothing until the
+# ambiguous-customer branch actually reaches a probe on a live turn:
+# `ResolveGateServices.probe`'s production binding raised `NotImplementedError` until
+# 7 Sep 2026, so `resolve_gate._run_probe` caught it on every single turn and the
+# annotator rendered the BARE picker.
+#
+# This test crosses the whole seam and stops at the socket (lesson 102): the gate's own
+# `run_gate` decides the branch, `resolve_gate.run` calls the PRODUCTION bundle's `probe`,
+# `entity_ids_transformer` builds the tool arguments, and only `MCPRuntimeClient.call_tool`
+# is replaced - with a fake that answers the STRING the real client answers (the shape that
+# defeated three fixes in #700), built from a REAL `OrderService(db).list_orders(...)` read
+# of the seeded rows using the arguments the transformer actually emitted. So the customer
+# uuids, the delivery window, the string parse and the annotator all run for real.
+# --------------------------------------------------------------------------- #
+
+
+class TestOwnerRulingATheCustomerPickerReachesTheProductionProbeSeam:
+    SPACE_ID = "364817"
+
+    def _seed(self, db: Any) -> tuple[Any, Any, str]:
+        from datetime import date
+
+        from app.models.company import Company
+        from app.models.order import Customer, Order
+        from tests._pg_fixture import unique_code
+
+        company = Company(name="ZZT Probe Seam Co", code=unique_code("ZPS")[:50])
+        db.add(company)
+        db.flush()
+        cust_a = Customer(
+            customer_code="ZZTSEAMA",
+            customer_name="ZZT Seamco Alpha Sdn Bhd",
+            company_id=company.id,
+        )
+        cust_b = Customer(
+            customer_code="ZZTSEAMB",
+            customer_name="ZZT Seamco Beta Sdn Bhd",
+            company_id=company.id,
+        )
+        db.add_all([cust_a, cust_b])
+        db.commit()
+        db.add_all(
+            [
+                Order(
+                    order_number="ZZTSEAMORD-A1",
+                    customer_id=cust_a.id,
+                    debtor_name=cust_a.customer_name,
+                    actual_delivery_date=date(2026, 9, 1),
+                    company_id=company.id,
+                ),
+                Order(
+                    order_number="ZZTSEAMORD-B1",
+                    customer_id=cust_b.id,
+                    debtor_name=cust_b.customer_name,
+                    actual_delivery_date=None,
+                    company_id=company.id,
+                ),
+            ]
+        )
+        db.commit()
+        return cust_a, cust_b, str(company.code)
+
+    def _resolver_payload(self, cust_a: Any, cust_b: Any, company_code: str) -> dict[str, Any]:
+        def _match(cust: Any) -> dict[str, Any]:
+            return {
+                "entity_type": "customer",
+                "canonical_code": cust.customer_code,
+                "uuid": cust.id,
+                "match_field": "customer_name",
+                "match_tier": "substring",
+                "similarity": None,
+                "company_id": cust.company_id,
+                "company_name": "ZZT Probe Seam Co",
+                "company_code": company_code,
+                "display": {"customer_name": cust.customer_name},
+            }
+
+        return {
+            "tokens": ["seamco"],
+            "resolutions": [
+                {
+                    "token": "seamco",
+                    "resolved": False,
+                    "ambiguous": True,
+                    "matches": [_match(cust_a), _match(cust_b)],
+                    "alternatives": [],
+                }
+            ],
+            "unresolved_tokens": [],
+        }
+
+    def test_the_ambiguous_customer_branch_probes_through_the_production_bundle(
+        self, session_factory, monkeypatch
+    ) -> None:
+        """`resolve_gate.run` -> `services.probe` -> `entity_ids_transformer` -> the MCP
+        client, then the answer back through `parse_mcp_content` into the annotator. The
+        seam is graded on what it ASKS (both seeded customer uuids, the render view, the
+        90-day delivery window) and on what the customer then reads."""
+        import json as _json
+
+        from app.services.ai_assistant_service import MCPRuntimeClient
+        from app.services.order_service import OrderService
+
+        from app.models.base import set_company_scope
+
+        db = session_factory()
+        cust_a, cust_b, company_code = self._seed(db)
+        # The scope the ENGINE stamps on every session it opens (`engine._scoped_factory`,
+        # from the contact's own `respond_contact_companies` rows). Without it the suite's
+        # Sorento default hides the seeded company's orders and the probe reads zero rows -
+        # which is the "no DO" answer, arrived at for the wrong reason.
+        set_company_scope(db, frozenset({cust_a.company_id}))
+        resolver = self._resolver_payload(cust_a, cust_b, company_code)
+
+        asked: list[tuple[str, dict[str, Any]]] = []
+
+        def _fake_call_tool(self_client, tool_name: str, args: dict[str, Any]) -> str:
+            asked.append((tool_name, args))
+            rows = OrderService(db).list_orders(
+                customer_ids=list(args.get("customer_ids") or []), limit=100
+            )["data"]
+            # `sorento_crm_mcp/presenters.py::_orders_list`, field for field, over the REAL
+            # rows - and returned as the STRING `MCPRuntimeClient.call_tool` returns.
+            return _json.dumps(
+                {
+                    "answers": [
+                        {
+                            "title": row.order_number,
+                            "fields": [
+                                {"label": "Order Number", "value": row.order_number},
+                                {"label": "Customer", "value": row.debtor_name},
+                                {
+                                    "label": "Actual Delivery Date",
+                                    "value": row.actual_delivery_date.isoformat()
+                                    if row.actual_delivery_date
+                                    else None,
+                                },
+                            ],
+                        }
+                        for row in rows
+                    ]
+                }
+            )
+
+        monkeypatch.setattr(MCPRuntimeClient, "call_tool", _fake_call_tool)
+
+        services = production_services(db, space_id=self.SPACE_ID)
+
+        def _resolve_entity(body: dict[str, Any]) -> dict[str, Any]:
+            return resolver
+
+        services = ResolveGateServices(
+            access_types=services.access_types,
+            resolve_entity=_resolve_entity,
+            probe=services.probe,  # THE seam under test, production binding
+        )
+
+        ctx = {
+            "contact": {"id": CONTACT_ID},
+            "parse": {
+                "output": {
+                    "domain_hint": "order",
+                    "intent_hint": "check_order",
+                    "entities": [
+                        {
+                            "raw": "seamco",
+                            "hint": "customer",
+                            "canonical_code": None,
+                            "current_message": True,
+                        }
+                    ],
+                }
+            },
+            "session": {},
+        }
+
+        out = resolve_gate.run(
+            ctx,
+            "resolve",
+            {},
+            services=services,
+            space_id=self.SPACE_ID,
+            probe_default_start="2026-06-09",
+        )
+
+        assert asked, (
+            "the ambiguous-customer branch never reached `ResolveGateServices.probe` - "
+            "the production binding is unwired again, and every live picker renders bare"
+        )
+        tool_name, args = asked[0]
+        assert tool_name == resolve_gate.CUSTOMER_PROBE_TOOL, tool_name
+        assert set(args.get("customer_ids") or []) == {cust_a.id, cust_b.id}, args
+        assert args.get("view") == "render", args
+        assert args.get("actual_delivery_date_from") == "2026-06-09", args
+
+        message = out["escalate_message"]
+        lines = [line for line in message.splitlines() if line[:1].isdigit()]
+        assert len(lines) == 2, message
+        assert lines[0].endswith(" - has DO"), message
+        assert lines[1].endswith(" - no DO"), message
+        assert f"({company_code})" in lines[0], (
+            f"the picker line must still name the owning company: {message!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Review of #706, S1 + S2. `_cust_base` groups a customer FAMILY by normalised name
+# only - n8n's own grouping, and the two production captures of the shape (rg-15114061,
+# JYL JUBIN under Mocha and Sorento; rg-15125764, YI HONG TILING under both) show live
+# rendering a cross-ledger family as ONE picker line whose pick carries both ledgers'
+# uuids. That is kept: the customer named one business, the CRM holds it in two ledgers,
+# and the order answer downstream is already labelled per company (`routing_companies`),
+# so a silent pass with both ledgers is the complete answer, not a wrong one (S2 - the
+# coder's disagreement with the review, stated in the PR). What was wrong (S1) is the
+# SUFFIX: it read the representative row's code alone, so a two-ledger family printed one
+# ledger while its pick reached both. It now names every ledger the family spans.
+# --------------------------------------------------------------------------- #
+
+
+def _cust_row(uuid: str, name: str, *, company: tuple[str, str, str], code: str) -> dict:
+    """One resolver customer match in `ResolvedEntity.as_dict()`'s shape."""
+    company_id, company_name, company_code = company
+    return {
+        "entity_type": "customer",
+        "canonical_code": code,
+        "uuid": uuid,
+        "match_field": "customer_name",
+        "match_tier": "substring",
+        "similarity": None,
+        "company_id": company_id,
+        "company_name": company_name,
+        "company_code": company_code,
+        "display": {"customer_name": name, "phone_number": None, "email": None},
+    }
+
+
+SRT = ("zzt-co-srt", "Sorento", "SRT")
+MOCHA = ("zzt-co-mocha", "Mocha", "MOCHA")
+
+
+class TestAPickerLineNamesEveryLedgerItsFamilySpans:
+    PARSER = {
+        "domain_hint": "order",
+        "entities": [
+            {"raw": "a craft idea", "hint": "customer", "canonical_code": None, "current_message": True}
+        ],
+    }
+
+    def _gate(self, matches: list[dict]) -> dict:
+        from app.services.chatbot.lanes.business.gate import run_gate
+
+        resolver = {"resolutions": [{"token": "a craft idea", "matches": matches}]}
+        return run_gate({}, parser=dict(self.PARSER), resolver=resolver)
+
+    def test_a_two_ledger_family_prints_both_codes(self) -> None:
+        """S1. Two families: "A CRAFT IDEA" spanning SRT and MOCHA, and "A CRAFT IDEA
+        TRADING" in SRT only. The first line must say both ledgers, because its pick
+        carries both ledgers' rows; the second says its one."""
+        out = self._gate(
+            [
+                _cust_row("u-srt-1", "A CRAFT IDEA SDN BHD", company=SRT, code="300-A001"),
+                _cust_row("u-mocha", "A CRAFT IDEA SDN BHD", company=MOCHA, code="300-A001"),
+                _cust_row("u-srt-2", "A CRAFT IDEA TRADING SDN BHD", company=SRT, code="300-A002"),
+            ]
+        )
+        assert out["require_specific"] is True, out.get("gate_reason")
+        titles = [e["title"] for e in out["compatible_entities"]]
+        assert titles == ["A CRAFT IDEA SDN BHD (SRT, MOCHA)", "A CRAFT IDEA TRADING SDN BHD (SRT)"], (
+            f"a family spanning two ledgers must name both, in first-seen order: {titles!r}"
+        )
+        families = out["picker_families"]
+        assert set(families["A CRAFT IDEA"]) == {"u-srt-1", "u-mocha"}, families
+        assert "1. A CRAFT IDEA SDN BHD (SRT, MOCHA)" in out["gate_clarification"]
+
+    def test_a_ledger_with_no_code_on_the_row_contributes_nothing(self) -> None:
+        """An older payload: the MOCHA row has no `company_code`. The line names what it
+        can and never prints an empty pair of brackets."""
+        mocha_no_code = _cust_row("u-mocha", "A CRAFT IDEA SDN BHD", company=MOCHA, code="300-A001")
+        mocha_no_code["company_code"] = None
+        out = self._gate(
+            [
+                _cust_row("u-srt-1", "A CRAFT IDEA SDN BHD", company=SRT, code="300-A001"),
+                mocha_no_code,
+                _cust_row("u-srt-2", "A CRAFT IDEA TRADING SDN BHD", company=SRT, code="300-A002"),
+            ]
+        )
+        titles = [e["title"] for e in out["compatible_entities"]]
+        assert titles[0] == "A CRAFT IDEA SDN BHD (SRT)", titles
+
+    def test_the_same_name_in_two_ledgers_is_one_family_and_passes_with_both(self) -> None:
+        """S2, the disagreement stated as a test: one name in two ledgers is ONE family
+        (live parity, captures rg-15114061 / rg-15125764), the gate passes, and BOTH
+        ledgers' rows go forward so the order answer covers both, labelled per company."""
+        out = self._gate(
+            [
+                _cust_row("u-srt", "A CRAFT IDEA SDN BHD", company=SRT, code="300-A001"),
+                _cust_row("u-mocha", "A CRAFT IDEA SDN BHD", company=MOCHA, code="300-A001"),
+            ]
+        )
+        assert out["require_specific"] is False, out.get("gate_reason")
+        assert {e["uuid"] for e in out["compatible_entities"]} == {"u-srt", "u-mocha"}

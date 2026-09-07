@@ -13,9 +13,13 @@
  * thirty days.
  *
  * The table is THEIR sheet, not a listing of ours (R12): their ten columns in
- * their own spellings, their row order, their merged families as `rowSpan`,
- * their yellow fields and their red figures, and their `合计` row - the same
- * `SheetModel` the xlsx and the PDF are drawn from, so the three tally.
+ * their own spellings, their row order, their merged families as `rowSpan`, OUR
+ * highlight on any row with a quantity to load (R10 - not their own yellow
+ * fields or red figures, which the renderer no longer replays), and their
+ * `合计` row - the same `SheetModel` the xlsx and the PDF are drawn from, so
+ * the three tally. Drawn by the shared `SupplierSheet`
+ * (`scm/components/SupplierSheet.tsx`, R9) - the same renderer the loading
+ * plan's own preview uses - rather than a copy of one table.
  *
  * The company segment is cosmetic here, unlike the catalogue's: the token is
  * globally unique and is the whole credential. It is in the address so every
@@ -24,6 +28,8 @@
  * A plain table rather than `DataGrid`: this is a document, not a listing. There
  * is nothing to search, sort, page, resize or remember per user, and the grid's
  * column-preference machinery reads an endpoint that answers 401 to a stranger.
+ * Read-only by design (R9): the shared renderer's `editable` prop is never passed
+ * here - a leaked link must never let a stranger amend our own ask.
  */
 
 import { use, useEffect, useState } from 'react';
@@ -31,14 +37,12 @@ import { Download, LoaderCircle } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
-import { cn } from '@/lib/utils';
+import { SupplierSheet } from '@/app/(protected)/scm/components/SupplierSheet';
 import {
   SupplierRequestUnavailableError,
   readSupplierRequest,
   readSupplierRequestDocument,
   type SupplierRequest,
-  type SupplierRequestSheetCell,
-  type SupplierRequestSheetRow,
 } from '../../../lib/publicSupplierRequestService';
 
 type Status =
@@ -56,42 +60,6 @@ function requestDate(iso: string): string {
   const d = String(parsed.getDate()).padStart(2, '0');
   const m = String(parsed.getMonth() + 1).padStart(2, '0');
   return `${d}/${m}/${parsed.getFullYear()}`;
-}
-
-/** A cell of their sheet. Empty stays empty: a dash would read as a value they wrote. */
-function cellText(value: string | number | null): string {
-  if (value === null || value === undefined) return '';
-  return typeof value === 'number' ? new Intl.NumberFormat('en-US').format(value) : value;
-}
-
-function SheetCells({
-  row,
-  head,
-}: {
-  row: SupplierRequestSheetRow;
-  head?: boolean;
-}) {
-  return (
-    <>
-      {row.cells.map((cell: SupplierRequestSheetCell, index) =>
-        cell.covered ? null : (
-          <td
-            key={index}
-            rowSpan={cell.rowspan > 1 ? cell.rowspan : undefined}
-            colSpan={cell.colspan > 1 ? cell.colspan : undefined}
-            className={cn(
-              'border border-border px-2 py-1.5 align-middle',
-              cell.fill === 'yellow' && 'bg-[#ffff00] text-black',
-              cell.red && 'text-red-600',
-              head && 'font-semibold',
-            )}
-          >
-            {cellText(cell.value)}
-          </td>
-        ),
-      )}
-    </>
-  );
 }
 
 export default function PublicSupplierRequestPage({
@@ -220,50 +188,8 @@ export default function PublicSupplierRequestPage({
           此要求没有项目。 / This request has no items.
         </p>
       ) : (
-        <div className="mt-5 -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
-          <table className="w-full min-w-[820px] border-collapse text-center text-xs">
-            <thead>
-              {sheet.title ? (
-                <tr>
-                  <th
-                    colSpan={sheet.columns.length}
-                    className="border border-border px-2 py-2 text-center text-base font-semibold"
-                  >
-                    {sheet.title}
-                  </th>
-                </tr>
-              ) : null}
-              <tr>
-                {sheet.columns.map((column, index) => (
-                  <th
-                    key={`${column.label}-${index}`}
-                    className="border border-border px-2 py-1.5 text-center font-semibold"
-                  >
-                    {column.label}
-                    {column.label_en ? (
-                      <span className="block text-[10px] font-normal text-muted-foreground">
-                        {column.label_en}
-                      </span>
-                    ) : null}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sheet.rows.map((row, index) => (
-                <tr key={index}>
-                  <SheetCells row={row} />
-                </tr>
-              ))}
-            </tbody>
-            {sheet.totals ? (
-              <tfoot>
-                <tr className="text-red-600">
-                  <SheetCells row={sheet.totals} head />
-                </tr>
-              </tfoot>
-            ) : null}
-          </table>
+        <div className="mt-5">
+          <SupplierSheet sheet={sheet} />
         </div>
       )}
     </main>

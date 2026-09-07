@@ -587,3 +587,220 @@ def test_a_bare_entity_under_a_carried_order_domain_is_typed_as_customer() -> No
         f"the bare entity must be retyped customer under the carried order domain: "
         f"{out.get('entities')!r}"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Owner ruling, console pass 3 (6 Sep 2026), item B: "all of them" after a
+# did-you-mean offer must select EVERY offered code, not clarify_menu.
+#
+# `output_exchange.py`'s existing `dym_active` branch (~line 1402) already threads all
+# three positions through `dym_numbered_multi_select` -> `apply_dym_pick` when fed a
+# hand-built `dym_last_result_set`, which is what makes the assertion below land on the
+# ONE thing that is actually wrong rather than on a fixture error: `apply_dym_pick`
+# (output_exchange.py:958) unconditionally stamps `o["entity_op"] = "replace_combine"`,
+# never the plain `"replace"` this ruling's pick-all contract calls for. Measured with
+# `venv/bin/python` against this exact input before writing this test - the entities,
+# `current_message` and `reference_target` are already correct; only `entity_op` is red.
+# --------------------------------------------------------------------------- #
+
+
+def _dym_row(idx: int, code: str, *, for_raw: str) -> dict:
+    return {
+        "idx": idx,
+        "label": code,
+        "value": code,
+        "product": code,
+        "uuid": None,
+        "entity_type": "product",
+        "for_raw": for_raw,
+        "for_hint": "product",
+        "for_canonical": "SRTKS8091",
+    }
+
+
+class TestOwnerRulingBAllOfThemOverPendingDymOffer:
+    def test_all_of_them_selects_every_offered_code(self) -> None:
+        """"Srtks8091 got stock" offered SRTKS6091/SRTKS8047/SRTKS8050 as a numbered
+        did-you-mean list (a real trigram "did you mean" for a missing product code,
+        AC per tests/chatbot/test_r3_pending_end_to_end.py's own real-resolver
+        companion test). "all of them" over that PENDING offer must answer stock for
+        all three, never fall to a clarify menu."""
+        dym_set = [
+            _dym_row(1, "SRTKS6091", for_raw="srtks8091"),
+            _dym_row(2, "SRTKS8047", for_raw="srtks8091"),
+            _dym_row(3, "SRTKS8050", for_raw="srtks8091"),
+        ]
+        state = {
+            "dym_last_result_set": dym_set,
+            "dym_offer": {
+                "id": "ZZT-offer-1",
+                "domain": "inventory",
+                "ttl": 3,
+                "candidates": [{"code": r["product"], "for_raw": r["for_raw"]} for r in dym_set],
+                "picked": [],
+            },
+            "entities": [
+                {"raw": "srtks8091", "hint": "product", "canonical_code": None, "current_message": False}
+            ],
+            "domain_hint": "inventory",
+            "intent_hint": "check_stock",
+        }
+        out = run(
+            parser_output(message_type="casual", entities=[], reference_positions=[]),
+            message="all of them",
+            state=state,
+        )
+
+        codes = sorted(e.get("canonical_code") for e in out.get("entities") or [])
+        assert codes == ["SRTKS6091", "SRTKS8047", "SRTKS8050"], (
+            f"'all of them' over a pending did-you-mean offer must resolve to ALL THREE "
+            f"offered codes, not clarify_menu or a partial pick: {out.get('entities')!r}"
+        )
+        assert all(e.get("current_message") is True for e in out["entities"]), (
+            f"every pick-all entity must be marked current_message so downstream reads "
+            f"it as this turn's own scope: {out['entities']!r}"
+        )
+        assert out.get("message_type") == "business_query", (
+            "a pick-all over a pending dym offer must route as a business query, not stay "
+            f"casual: {out.get('message_type')!r}"
+        )
+        assert out.get("entity_op") == "replace", (
+            "RED (the actual gap): apply_dym_pick stamps entity_op 'replace_combine' "
+            f"unconditionally; this pick-all contract calls for a plain 'replace'. Got "
+            f"{out.get('entity_op')!r}"
+        )
+
+    def test_cold_all_of_them_with_nothing_pending_still_clarifies(self) -> None:
+        """Guard (#700 item E): with NO dym offer pending, "all of them" must not be
+        misread as a pick-all - `output_exchange.py` leaves message_type/entities alone
+        and `route.decide` is what turns this into clarify_menu (see
+        `tests/chatbot/test_route_unit.py::TestBroadenAllNeverReadAsLowSignal`, kept
+        green here as a companion assertion at the post-processor's own boundary)."""
+        out = run(
+            parser_output(message_type="casual", entities=[], reference_positions=[]),
+            message="all of them",
+            state={},
+        )
+        assert out.get("entities") == [], (
+            f"a cold 'all of them' must not invent any entity pick: {out.get('entities')!r}"
+        )
+        assert out.get("reference_target") != "dym", (
+            f"a cold 'all of them' must not be read as a dym pick-all: {out!r}"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Owner ruling, console pass 3 (6 Sep 2026), item D1: a pending escalation offer must
+# not consume a request that names a DIFFERENT team. Evidence turn 9a40182a: pending
+# {kind: escalation_offer, team: warehouse, domain: inventory}; "escalate to marketing"
+# parsed request_for_help, is_affirmative true, routing null - post-process set
+# is_escalation_confirmation true and the turn assigned + commented "Team: warehouse".
+#
+# Measured with `venv/bin/python` against the two inputs below before writing this
+# test: today's `offered_escalation and is_affirmative` check (output_exchange.py
+# ~line 1873) ignores `o["routing"]` entirely, so BOTH scenarios below come back
+# `is_escalation_confirmation: true` today - RED for the right reason.
+# --------------------------------------------------------------------------- #
+
+
+def _pending_warehouse_state() -> dict:
+    return {
+        "pending": {"kind": "escalation_offer", "team": "warehouse", "domain": "inventory"},
+        "response": "Would you like me to escalate to warehouse team?",
+        "routing": {"suggested_team": "warehouse", "suggested_agent": "general_enquiries"},
+    }
+
+
+class TestOwnerRulingD1PendingOfferTeamMismatch:
+    def test_a_named_different_team_routes_there_and_does_not_confirm_the_old_offer(
+        self,
+    ) -> None:
+        """(a) the parser's own routing names a team different from the pending offer's
+        team: the turn must route to the NAMED team and must NOT read as a confirmation
+        of the stale warehouse offer."""
+        out = run(
+            parser_output(
+                message_type="request_for_help",
+                is_affirmative=True,
+                routing={"suggested_team": "marketing_promotion", "suggested_agent": None},
+            ),
+            message="escalate to marketing",
+            state=_pending_warehouse_state(),
+        )
+        assert out["routing"]["suggested_team"] == "marketing_promotion", (
+            f"an explicitly named team must win: {out['routing']!r}"
+        )
+        assert out["escalation"].get("is_escalation_confirmation") is False, (
+            "RED (the actual gap): a pending warehouse offer must not be silently "
+            "confirmed by a request that names a DIFFERENT team. Got "
+            f"{out['escalation']!r}"
+        )
+
+    def test_null_routing_request_for_help_asks_which_team_instead_of_confirming(
+        self,
+    ) -> None:
+        """(b) routing null AND a pending offer exists AND the message is a
+        request_for_help (not a bare affirmative): ask which team, do not silently
+        accept the stale pending offer. New contract field `team_unresolved` - the
+        coder may name it differently, but SOME signal must distinguish this arm from
+        a plain confirmation."""
+        out = run(
+            parser_output(
+                message_type="request_for_help",
+                is_affirmative=True,
+                routing={"suggested_team": None, "suggested_agent": None},
+            ),
+            message="can someone else help me",
+            state=_pending_warehouse_state(),
+        )
+        assert out["escalation"].get("is_escalation_confirmation") is False, (
+            "RED (the actual gap): a request_for_help with NO named team must not "
+            f"auto-confirm the stale pending offer. Got {out['escalation']!r}"
+        )
+        assert out["escalation"].get("team_unresolved") is True, (
+            f"a request_for_help with no named team and a pending offer must surface a "
+            f"team-unresolved signal so the lane can ask, per #700 item L's existing "
+            f"'which team' clarify. Got {out['escalation']!r}"
+        )
+
+    def test_bare_yes_with_null_routing_still_confirms_the_pending_offer(self) -> None:
+        """(c) guard, keep green: a bare "yes" with routing null still accepts the
+        pending offer - today's path, unchanged."""
+        out = run(
+            parser_output(
+                message_type="casual",
+                is_affirmative=True,
+                routing={"suggested_team": None, "suggested_agent": None},
+            ),
+            message="yes",
+            state=_pending_warehouse_state(),
+        )
+        assert out["escalation"].get("is_escalation_confirmation") is True, (
+            f"a bare affirmative over a pending offer must still confirm it: {out['escalation']!r}"
+        )
+
+    def test_an_accept_word_in_front_of_a_fresh_ask_does_not_confirm_the_stale_offer(
+        self,
+    ) -> None:
+        """(d) Review of #706, blocker B2. The first cut of rule (b) kept an accept-word
+        list over the raw message behind the model's own flag, to rescue one capture where
+        the flag is wrong ("YES ESCALTE", parser-15074293). Unanchored token membership
+        re-opened the defect the rule exists for: "ok, can someone else help me" over a
+        pending warehouse offer read "ok" as an acceptance and confirmed the stale offer -
+        turn 9a40182a's shape with one word in front. The list is gone; the model's
+        `escalation.is_escalation_confirmation` is the one accept signal, and the capture
+        it gets wrong is a registered divergence, not a reason to sniff text (D11)."""
+        out = run(
+            parser_output(
+                message_type="request_for_help",
+                is_affirmative=True,
+                routing={"suggested_team": None, "suggested_agent": None},
+                escalation={"is_escalation_confirmation": False},
+            ),
+            message="ok, can someone else help me",
+            state=_pending_warehouse_state(),
+        )
+        assert out["escalation"].get("is_escalation_confirmation") is False, (
+            f"'ok' in front of a fresh ask is not an acceptance: {out['escalation']!r}"
+        )
+        assert out["escalation"].get("team_unresolved") is True, out["escalation"]

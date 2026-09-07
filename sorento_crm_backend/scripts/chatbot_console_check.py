@@ -26,6 +26,13 @@ carries `variables`, and the next turn sends it as `previous_conversation_state`
 harness key the engine honours on a dry run (`engine.HARNESS_KEYS`). That is what makes a
 picker sequence ("check stock for X" then "1") checkable without writing session state.
 
+**`cold: true` on a case is the same key with an EMPTY map** (AC-112): the engine reads
+`previous_conversation_state` by MEMBERSHIP, so `{}` says "this contact remembers nothing"
+and absence says "use the stored row". The script borrows a real contact's envelope, and
+that contact has real stored state, so a turn the owner hit cold is not reproducible here
+without it. Spell it `cold: true` rather than `previous_conversation_state: {}` - both work
+and the flag is the one that survives a YAML round trip unambiguously.
+
 **The runner owns the lane switches.** `chatbot_business_lane_enabled` and
 `chatbot_completed_lanes` decide whether the CRM ANSWERS a turn or delegates it to n8n, and
 a delegated turn comes back with an empty reply - which would grade the handoff, not the
@@ -314,6 +321,20 @@ def _grade(expect: dict[str, Any], body: dict[str, Any], pending: str | None) ->
     return failures
 
 
+def _initial_state(case: dict[str, Any]) -> Any:
+    """The `previous_conversation_state` this case's FIRST turn sends, or None for absent.
+
+    `cold: true` is `{}`, and `{}` is not the same as absent: the engine tests MEMBERSHIP
+    of the key (`engine._harness_keys_present`), so an empty map says "this contact
+    remembers nothing" while an absent key leaves the stored session row in place. An
+    explicit `previous_conversation_state:` in the file still wins, so a case can inject
+    real memory instead.
+    """
+    if "previous_conversation_state" in case:
+        return case["previous_conversation_state"]
+    return {} if case.get("cold") is True else None
+
+
 def _turns_of(case: dict[str, Any]) -> list[dict[str, Any]]:
     """A single-turn case and a `turns:` case, as one list of turns."""
     if isinstance(case.get("turns"), list):
@@ -415,7 +436,7 @@ def _run_cases(cases, session, url, args, default_contact, run_id) -> int:
             failed += 1
             continue
         base = _base_envelope(contact)
-        previous_state = case.get("previous_conversation_state")
+        previous_state = _initial_state(case)
         case_failures: list[str] = []
         last_line = ""
         last_branch = None

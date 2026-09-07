@@ -247,7 +247,10 @@ describe('every DataGrid list segment has a loading.tsx (M5-01)', () => {
     // ten (`system-management/mcp-tools`, `user-management/settings/notifications`)
     // are also added to BODY_ONLY_SEGMENTS below, which does not change this count
     // - both were already found by the walk itself. Total: 139.
-    expect(requiredSegmentNames.length).toBe(139);
+    // Purchasing consolidation batch (lane C, R16): `system-management/translations`
+    // is a new DataGrid list segment with its own `loading.tsx`, found by the walk
+    // itself - no BODY_ONLY_SEGMENTS entry needed. Total: 140.
+    expect(requiredSegmentNames.length).toBe(140);
 
     for (const name of requiredSegmentNames) {
       const dir = path.join(PROTECTED_ROOT, name);

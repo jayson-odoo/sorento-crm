@@ -374,8 +374,18 @@ def _entity(entity: str) -> str:
     return entity
 
 
+# The three routes below are deliberately plain `def`, never `async def`
+# (production incident 2026-09-07). The service call is synchronous SQLAlchemy
+# work taking 14-31s per 200-record batch, and an `async def` route ran it ON
+# the gunicorn worker's event loop: every other request on that worker stalled
+# for the whole batch, and when one batch ran past 120s (a lock wait) the loop
+# missed gunicorn's heartbeat, the arbiter logged WORKER TIMEOUT and killed the
+# worker, nginx answered 502 "upstream prematurely closed" and the ESB
+# re-offered its whole 5,000-row run. A `def` route runs in Starlette's
+# threadpool: the loop keeps serving and heartbeating, the batch takes as long
+# as it takes. Pinned by tests/test_ingest_routes_are_sync.py.
 @ingest_router.post("/{entity}")
-async def ingest_masters(
+def ingest_masters(
     entity: str = Path(...),
     payload: dict = Body(...),
     dry_run: bool = Query(
@@ -488,7 +498,7 @@ async def ingest_masters(
     # keep masters up to date must not gain the ability to empty them.
     dependencies=[Depends(require_external_permission_for_path(DELETE_PERMISSIONS))],
 )
-async def delete_records(
+def delete_records(
     entity: str = Path(...),
     payload: dict = Body(...),
     dry_run: bool = Query(
@@ -567,7 +577,7 @@ async def delete_records(
 
 
 @read_router.post("/{entity}")
-async def read_current_state(
+def read_current_state(
     entity: str = Path(...),
     payload: dict = Body(...),
     db: Session = Depends(get_db),

@@ -73,6 +73,14 @@ SUGGESTED_TEAMS = (
     "marketing_promotion",
     "it_admin",
 )
+
+# The team `output_exchange`'s routing chain falls to when this turn named none, its domain
+# derives none and no previous turn carried one - the HARD default at the end of the
+# nullish chain, so this body never emits a null team. Named here because TWO readers need
+# the same word: the chain that writes it, and the escalation lane's inheritance guard
+# (AC-815 / review of #706 B1), which must not mistake a carried default for a previous
+# turn's real routing.
+DEFAULT_SUGGESTED_TEAM = "customer_service"
 SuggestedTeam = Literal[SUGGESTED_TEAMS]  # type: ignore[valid-type]
 
 SUGGESTED_AGENTS = (
@@ -296,6 +304,10 @@ class Pending(BaseModel):
     kind: PendingKind
     team: str | None = None
     domain: str | None = None
+    # `member_offer` only: how many more turns the roster stays on the customer's screen
+    # (AC-816 rule 1, `tail/pending.MEMBER_OFFER_TTL`). Absent on every other kind, and on
+    # a marker written by n8n, which has no clock - the reader treats absence as "open".
+    ttl: int | None = None
 
 
 class SessionVars(BaseModel):
@@ -587,6 +599,13 @@ SELF_CLOSING_BRANCH_KINDS: frozenset[str] = (
 # the write tool would have composed - and an executor that had to match two spellings of
 # "nothing happened" would be matching a typo the day a third lane arrived.
 PREVIEW = "<preview>"
+
+# The same fact said in the CUSTOMER's words. `PREVIEW` is an operator token and belongs on
+# `status` and the trace facts; it must never reach a `send_message`, because the executor
+# executes actions and nothing else, so a dry-run ideate turn sent the literal string
+# "<preview>" to whoever typed the idea. One sentence, in the vocabulary of the person who
+# would read it, and it still says plainly that nothing was generated.
+PREVIEW_IDEATE_REPLY = "[dry-run: ideation reply not generated]"
 
 
 # `DELEGATED_BRANCH_KINDS` used to be the complement of the set above and is GONE: with

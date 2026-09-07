@@ -77,7 +77,7 @@ vi.mock('./ConsolidatedPackingListPanel', () => ({
   ConsolidatedPackingListPanel: () => null,
 }));
 vi.mock('./AllocationPanel', () => ({ AllocationPanel: () => null }));
-vi.mock('./PackingListUploadDialog', () => ({
+vi.mock('@/app/(protected)/procurement-management/packing-lists/components/PackingListUploadDialog', () => ({
   PackingListUploadDialog: ({
     supplierId,
     supplierName,

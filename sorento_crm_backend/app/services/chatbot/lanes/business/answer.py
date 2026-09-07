@@ -719,6 +719,14 @@ def crossdomain_render(
     # ASKED about - one with no uuid was never probed, so "no incoming" would be an absence
     # nothing established - so only a PROBED code earns the negative line.
     nothing: list[str] = []
+    # Owner console pass 4, item G (6 Sep 2026): codes the OTHER domain answered, which the
+    # primary one did not. Turn 858c9c54 named MSK11A-QT only inside "But there is INCOMING
+    # stock (ETA) ...", so a stock question came back as two codes' stock and then an
+    # incoming fact about a third, leaving the customer to infer the thing they had asked.
+    # Say it, and say it above the incoming lead. Same evidence and same guard as `nothing`
+    # below it - this is the only place that knows both that the primary render did not echo
+    # the code and that the other domain was actually probed for it.
+    only_other: list[str] = []
     for m in jsc.array(zs.get("missing")):
         rows = list(by_code.get(jsc.get(m, "_n"), []))
         if not rows:
@@ -728,6 +736,11 @@ def crossdomain_render(
                 if label not in nothing:
                     nothing.append(label)
             continue
+        code = jsc.get(m, "code") or jsc.get(m, "_n")
+        if jsc.truthy(code) and not _ms_is_uuid(code):
+            label = jsc.js_string(code)
+            if label not in only_other:
+                only_other.append(label)
 
         def qty(it: Any) -> float:
             """`Number(fieldPref(it, 'quantity_on_hand', 'quantity on hand') ?? NaN)`.
@@ -821,11 +834,21 @@ def crossdomain_render(
     named_codes = [c for c in jsc.array(zs.get("returned_codes")) if jsc.truthy(c)]
     can_state_absence = bool(named_codes) or jsc.get(passthrough, "has_result") is not True
 
+    origin_incoming = zs.get("origin_domain") == "incoming"
+    primary_word = "incoming" if origin_incoming else "stock"
+    other_word = "stock" if origin_incoming else "incoming"
+
+    # The one-sided line: the primary domain has nothing for these codes, and the block
+    # below is about to say what the OTHER one has. No escalation offer - something IS
+    # being shown - and `can_state_absence` gates it exactly as it gates the both-empty
+    # sentence, so a render that answered ABOUT the code without printing it (a warehouse
+    # breakdown, a demand verdict) never gets "no stock" underneath the stock it just showed.
+    only_other_note = ""
+    if only_other and can_state_absence:
+        only_other_note = f"No {primary_word} for {', '.join(only_other)}."
+
     nothing_note = ""
     if nothing and can_state_absence:
-        origin_incoming = zs.get("origin_domain") == "incoming"
-        primary_word = "incoming" if origin_incoming else "stock"
-        other_word = "stock" if origin_incoming else "incoming"
         team = zs.get("team")
         offer = (
             f" Would you like me to escalate to {jsc.js_string(team)} team?"
@@ -837,6 +860,8 @@ def crossdomain_render(
         )
 
     body = (lead + "\n\n" + "\n\n".join(blocks) + silent_note + mention) if blocks else ""
+    if body and only_other_note:
+        body = f"{only_other_note}\n\n{body}"
     if nothing_note:
         body = f"{body}\n\n{nothing_note}" if body else nothing_note
 
@@ -1590,6 +1615,24 @@ _DATE_SCOPE_DOMAINS = frozenset({"order"})
 
 _ORDER_TYPES = frozenset({"order", "customer_order", "order_number"})
 
+# Types whose CANONICAL CODE is the identity the customer recognises, so the resolver's
+# `display` name must never stand in for it (owner rule, 6 Sep 2026; prod turn 631d4b65).
+#
+# `product` and only `product`, and the set is one entry because that is what the evidence
+# supports. Item A put `product_name` at the head of `_DISPLAY_NAME_KEYS` so a shipment
+# with a null `shipment_number` could print its container, and "check eta for
+# IBKS7245-NG-BL" then answered "product: Iborn. Bidet. (+7 more)" - a free-text
+# description maintained for a different audience, with no way for the reader to tell it
+# means the code they asked about.
+#
+# Every OTHER type is already right and is deliberately left alone: a customer, a
+# transporter, a form and a brand have no customer-facing code (their `canonical_code` is
+# an internal account or slug), a promotion's canonical_code IS its uuid, an
+# `attachment_type` is known by its type name, and `spo` / `grn` / `warehouse` reach this
+# ladder through display keys that are themselves codes. The trigger for a second entry is
+# a measured turn where a coded type prints a name instead.
+_CODE_FIRST_TYPES = frozenset({"product"})
+
 # DENY-list, not an allow-list, ON PURPOSE. `brand` / `category` reach `compatible_entities`
 # on the product domains but `entity-ids-transformer` maps neither to a tool param, so a
 # category resolved in one company beside a product resolved in another would make
@@ -1924,6 +1967,27 @@ def not_found_error_message(
                     name = f"{jsc.js_string(code)} ({jsc.js_string(customer)})" if jsc.truthy(customer) else code
                 else:
                     name = customer if jsc.truthy(customer) else ""
+            elif jsc.get(match, "entity_type") in _CODE_FIRST_TYPES:
+                # CODE FIRST. The code is what the customer typed, what is on the carton and
+                # what they will type again; the name is a description for somebody else.
+                # It falls back to the display name only when there is no code at all, so
+                # the entity is still named rather than dropped.
+                #
+                # The name is deliberately NOT appended in parentheses today: on the turn
+                # this rule comes from it is junk, and "IBKS7245-NG-BL (Iborn. Bidet.)"
+                # publishes the junk next to the answer instead of in place of it. The
+                # trigger for adding it is a measured turn where the code alone is
+                # genuinely ambiguous to the reader.
+                code = jsc.get(match, "canonical_code")
+                if jsc.truthy(code):
+                    name = code
+                else:
+                    name = ""
+                    for key in _DISPLAY_NAME_KEYS:
+                        value = jsc.get(display, key)
+                        if jsc.truthy(value):
+                            name = value
+                            break
             else:
                 # `attachment_type` shows its `type_name`, NOT the long alias description;
                 # `description` stays ahead of `canonical_code` so a promotion (whose code IS

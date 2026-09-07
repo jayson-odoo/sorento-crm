@@ -42,6 +42,16 @@ describe('BackToList', () => {
     ).toBe('/order-management/orders');
   });
 
+  it('drops the detail page\'s own `tab` param, since it is not list state', () => {
+    search = 'page=2&sort=name&tab=lines';
+
+    render(<BackToList listPath="/scm/sales-orders" label="Back to sales orders" />);
+
+    expect(screen.getByRole('link', { name: /Back to sales orders/ }).getAttribute('href')).toBe(
+      '/scm/sales-orders?page=2&sort=name',
+    );
+  });
+
   it('S3-01: a caller that owns its whole href keeps it (spec verification worklist)', () => {
     search = 'page=2&limit=50';
 

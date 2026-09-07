@@ -70,30 +70,30 @@ class TestOfferIsOpen:
     """The helper itself, both forms and the closed case."""
 
     def test_the_legacy_frozen_string_alone_opens_the_offer(self) -> None:
-        assert ox._offer_is_open({"response": LEGACY_OFFER}) is True
+        assert ox.offer_is_open({"response": LEGACY_OFFER}) is True
 
     def test_the_pending_marker_alone_opens_the_offer(self) -> None:
         """No legacy string anywhere: a session the CRM wrote after S2."""
-        assert ox._offer_is_open({"pending": {"kind": "escalation_offer"}}) is True
+        assert ox.offer_is_open({"pending": {"kind": "escalation_offer"}}) is True
 
     def test_both_together_open_it_once(self) -> None:
         assert (
-            ox._offer_is_open(
+            ox.offer_is_open(
                 {"response": LEGACY_OFFER, "pending": {"kind": "escalation_offer"}}
             )
             is True
         )
 
     def test_neither_leaves_it_closed(self) -> None:
-        assert ox._offer_is_open({"response": "Here are 3 promotions."}) is False
-        assert ox._offer_is_open({}) is False
-        assert ox._offer_is_open(None) is False
+        assert ox.offer_is_open({"response": "Here are 3 promotions."}) is False
+        assert ox.offer_is_open({}) is False
+        assert ox.offer_is_open(None) is False
 
     @pytest.mark.parametrize("kind", ["team_clarify", "company_clarify", "tier_ask"])
     def test_a_DIFFERENT_pending_kind_does_not_open_an_escalation_offer(self, kind: str) -> None:
         """The marker is typed for exactly this reason: a pending tier ask is not an
         escalation offer, and treating it as one would escalate on a tier reply."""
-        assert ox._offer_is_open({"pending": {"kind": kind}}) is False
+        assert ox.offer_is_open({"pending": {"kind": kind}}) is False
 
 
 class TestThroughPostProcess:

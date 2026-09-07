@@ -129,10 +129,10 @@ const bodyCellSpacingVariants = cva('', {
     size: {
       dense: 'px-2.5 py-2',
       // Roomier default row spacing - every CRM list matches the Administrative
-      // Users density. `h-[60px]` acts as a row MIN-height in tables (cells are
+      // Users density. `h-11` (44px) acts as a row MIN-height in tables (cells are
       // align-middle), so single-line rows get the same breathing room as the
       // avatar rows without inflating the avatar rows themselves.
-      default: 'px-4 py-3 h-[60px]',
+      default: 'px-4 py-2 h-11',
     },
   },
   defaultVariants: {

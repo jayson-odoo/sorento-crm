@@ -511,6 +511,11 @@ class ResolvedEntity:
     # prompt for the former. See `_attach_company_info`.
     company_id: Optional[str] = None
     company_name: Optional[str] = None
+    # The owning company's short CODE ("SRT", "MOCHA"), alongside its name. The chatbot's
+    # ambiguous-customer picker prints it next to the account name, because the SAME
+    # customer name exists once per company ledger ("A CRAFT IDEA SDN BHD (SRT)") and the
+    # code is what tells the two lines apart in a WhatsApp-width list.
+    company_code: Optional[str] = None
     # The exact text this row was matched AGAINST, set by the AND probes so
     # `token_word_coverage_for_rows` can report which query words actually
     # landed. It is the probe's blob, NOT everything in `display`: the product
@@ -656,6 +661,7 @@ class ResolutionResult:
                             "similarity": m.similarity,
                             "company_id": m.company_id,
                             "company_name": m.company_name,
+                            "company_code": m.company_code,
                             "display": m.display,
                         }
                         for m in tr.matches
@@ -670,6 +676,7 @@ class ResolutionResult:
                             "similarity": a.similarity,
                             "company_id": a.company_id,
                             "company_name": a.company_name,
+                            "company_code": a.company_code,
                             "display": a.display,
                         }
                         for a in tr.alternatives
@@ -1311,11 +1318,11 @@ def _probe_transporter(db: Session, tokens: list[str]) -> dict[str, list[Resolve
 
 
 def _probe_inbound_shipment(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
-    """Exact match across shipment_number / container / BOL / invoice."""
+    """Exact match across shipment_number / container / BOL / SO ref / invoice."""
     result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
     if not tokens:
         return result
-    # All four match fields are number-style identifiers - strip whitespace
+    # All the match fields are number-style identifiers - strip whitespace
     # both sides so 'SHP- 2026-001' matches 'SHP-2026-001' etc.
     normalized = [_strip_all_ws(t.lower()) for t in tokens]
     rows = (
@@ -1324,6 +1331,11 @@ def _probe_inbound_shipment(db: Session, tokens: list[str]) -> dict[str, list[Re
             InboundShipment.shipment_number,
             InboundShipment.shipping_container_number,
             InboundShipment.bill_of_lading_number,
+            # `提单号` lands here (the SO field), not `bill_of_lading_number`, on an
+            # upload made through the supplier-documents dialog (Q1 ruling) - a search
+            # on the B/L alone missed every container uploaded that way (S3, review
+            # round 1).
+            InboundShipment.forwarder_order_ref,
             InboundShipment.invoice_number,
             InboundShipment.shipment_status,
             InboundShipment.estimated_arrival_date,
@@ -1334,6 +1346,7 @@ def _probe_inbound_shipment(db: Session, tokens: list[str]) -> dict[str, list[Re
                 _ws_insensitive_lower(InboundShipment.shipment_number).in_(normalized),
                 _ws_insensitive_lower(InboundShipment.shipping_container_number).in_(normalized),
                 _ws_insensitive_lower(InboundShipment.bill_of_lading_number).in_(normalized),
+                _ws_insensitive_lower(InboundShipment.forwarder_order_ref).in_(normalized),
                 _ws_insensitive_lower(InboundShipment.invoice_number).in_(normalized),
             ),
             InboundShipment.shipment_status != _DRAFT_SHIPMENT_STATUS,
@@ -1350,6 +1363,8 @@ def _probe_inbound_shipment(db: Session, tokens: list[str]) -> dict[str, list[Re
                 match_field = "shipping_container_number"
             elif row.bill_of_lading_number and _strip_all_ws(row.bill_of_lading_number.lower()) == tl_no_ws:
                 match_field = "bill_of_lading_number"
+            elif row.forwarder_order_ref and _strip_all_ws(row.forwarder_order_ref.lower()) == tl_no_ws:
+                match_field = "forwarder_order_ref"
             elif row.invoice_number and _strip_all_ws(row.invoice_number.lower()) == tl_no_ws:
                 match_field = "invoice_number"
             if not match_field:
@@ -1847,6 +1862,9 @@ def _prefix_probe_inbound_shipment(db: Session, token: str) -> list[ResolvedEnti
                 _norm_prefix(InboundShipment.shipment_number, token),
                 _norm_prefix(InboundShipment.shipping_container_number, token),
                 _norm_prefix(InboundShipment.bill_of_lading_number, token),
+                # `提单号` lands here (the SO field), not `bill_of_lading_number`, on an
+                # upload made through the supplier-documents dialog (S3, review round 1).
+                _norm_prefix(InboundShipment.forwarder_order_ref, token),
                 _norm_prefix(InboundShipment.invoice_number, token),
             ),
             InboundShipment.shipment_status != _DRAFT_SHIPMENT_STATUS,
@@ -3822,6 +3840,7 @@ class IntersectionResolutionResult:
                 "match_tier": m.match_tier,
                 "company_id": m.company_id,
                 "company_name": m.company_name,
+                "company_code": m.company_code,
                 "display": m.display,
             })
         result: dict[str, Any] = {
@@ -3837,6 +3856,7 @@ class IntersectionResolutionResult:
                     "match_tier": m.match_tier,
                     "company_id": m.company_id,
                     "company_name": m.company_name,
+                    "company_code": m.company_code,
                     "display": m.display,
                     # Transport key for `token_word_coverage_for_rows`: the
                     # text this row's probe actually scored. Coverage cannot
@@ -3861,6 +3881,7 @@ class IntersectionResolutionResult:
                     "similarity": a.similarity,
                     "company_id": a.company_id,
                     "company_name": a.company_name,
+                    "company_code": a.company_code,
                     "display": a.display,
                 }
                 for a in self.alternatives
@@ -4058,8 +4079,8 @@ def _scope_allows(scope: Any, company_id: Optional[str], *, shared: bool) -> boo
 
 
 def _attach_company_info(db: Session, matches: list[ResolvedEntity]) -> set[tuple[str, str]]:
-    """Stamp ``company_id`` / ``company_name`` on every company-scoped match, and
-    report the ones this caller's company scope must not see.
+    """Stamp ``company_id`` / ``company_name`` / ``company_code`` on every
+    company-scoped match, and report the ones this caller's company scope must not see.
 
     Attribution and isolation are one pass because they need the same fact from
     opposite sides of the isolation filter:
@@ -4147,8 +4168,8 @@ def _attach_company_info(db: Session, matches: list[ResolvedEntity]) -> set[tupl
         from app.models.company import Company
 
         names = {
-            str(cid): name
-            for cid, name in db.query(Company.id, Company.name)
+            str(cid): (name, code)
+            for cid, name, code in db.query(Company.id, Company.name, Company.code)
             .filter(Company.id.in_(company_ids))
             .all()
         }
@@ -4156,7 +4177,9 @@ def _attach_company_info(db: Session, matches: list[ResolvedEntity]) -> set[tupl
         logger.exception("company name lookup failed")
         return blocked
     for match, cid in pending:
-        match.company_name = names.get(cid)
+        name, code = names.get(cid, (None, None))
+        match.company_name = name
+        match.company_code = code
     return blocked
 
 

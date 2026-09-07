@@ -42,6 +42,7 @@ from app.services.scm.outstanding_import_service import (
     DEFAULT_PO_CURRENCY,
     SPO_UPLOAD_SOURCE,
 )
+from app.services.storage_router import delete_object_best_effort
 from app.schemas.procurement import (
     SupplierCreate, SupplierUpdate, ProductSupplierCreate, ProductSupplierUpdate,
     InboundShipmentCreate, InboundShipmentUpdate,
@@ -923,7 +924,14 @@ class InboundShipmentService:
             self.db,
             shipment_id,
             InboundShipment,
-            code_fields=("shipment_number", "shipping_container_number", "bill_of_lading_number", "invoice_number"),
+            code_fields=(
+                "shipment_number", "shipping_container_number", "bill_of_lading_number",
+                # `提单号` lands here (the SO field), not `bill_of_lading_number`, on
+                # an upload made through the supplier-documents dialog (S3, review
+                # round 1) - a lookup on the B/L alone missed every container
+                # uploaded that way.
+                "forwarder_order_ref", "invoice_number",
+            ),
         )
         if not resolved_ids:
             raise handle_not_found("Inbound Shipment", shipment_id)
@@ -1033,6 +1041,12 @@ class InboundShipmentService:
         method returned at `if not lines` and left a fully received container reading
         `in_transit` forever, while the detail page (a joined relationship load) showed
         the very lines it could not find.
+
+        CAVEAT (S4, review round 1): `spo_allocated_quantity` is summed per PRODUCT, not
+        per line, so a container carrying the same product on two lines gives BOTH lines
+        the whole product's allocated figure. Pre-existing and left as is here - the
+        column has one writer and changing what it means is a change to every reader of
+        it. Backlogged in `PLAN-scm-purchasing-consolidation-6sep.md` (Deviations, lane D).
         """
         shipment = (
             self.db.query(InboundShipment)
@@ -1136,7 +1150,13 @@ class InboundShipmentService:
         else:
             shipment.supplier_id = None
 
-    def _upsert_shipment_lines(self, shipment: InboundShipment, incoming: list[dict]) -> None:
+    def _upsert_shipment_lines(
+        self,
+        shipment: InboundShipment,
+        incoming: list[dict],
+        *,
+        existing_lines: Optional[list[InboundShipmentLine]] = None,
+    ) -> list[tuple[str, str]]:
         """Apply an explicit line set to a container without throwing its attribution away.
 
         An edit form states the whole line set, so a line nobody stated is gone. But it does
@@ -1146,6 +1166,16 @@ class InboundShipmentService:
         which factory packed what, which is exactly the loss the per-supplier line exists to
         stop. So an incoming line is matched to the one already there and UPDATED: what the
         payload states wins, what it leaves out is kept.
+
+        `existing_lines` scopes which of the shipment's CURRENT lines are candidates for
+        that matching (and so for deletion when nothing claims them) - the caller's whole
+        set by default (`update_shipment`'s edit form states the container's whole line
+        set), but `create_shipment`'s update-in-place path passes only the lines THIS
+        upload speaks for (its own supplier's, per `_is_superseded_line`): a line outside
+        that scope belongs to another factory's own packing list and is left alone,
+        touched by neither the matching nor the departing-line delete below (browser-test
+        round, finding 1 - the same reuse this method already gave the edit form is now
+        also what a re-uploaded packing list gets, so a photo on a reused line survives).
 
         Matching:
 
@@ -1165,8 +1195,12 @@ class InboundShipmentService:
 
         Attributed lines are resolved before unattributed ones, so a payload that mixes the
         two claims the named rows first rather than by payload order.
+
+        Returns the storage `(provider, key)` pairs a departing line's photos left behind
+        (see `shipment_line_photos.purge_for_lines`) - the caller purges them, best-effort,
+        AFTER its own commit, same ordering `delete_photo` uses.
         """
-        existing = list(shipment.shipment_lines)
+        existing = list(shipment.shipment_lines) if existing_lines is None else list(existing_lines)
         by_pair: dict[tuple[str, Optional[str]], InboundShipmentLine] = {}
         by_product: dict[str, list[InboundShipmentLine]] = {}
         for line in existing:
@@ -1234,7 +1268,9 @@ class InboundShipmentService:
         # NULL as a value, so an insert that reuses a departing row's key would collide if
         # the unit of work flushed the save first.
         departing = [line for line in existing if str(line.id) not in claimed]
+        photo_objects: list[tuple[str, str]] = []
         if departing:
+            departing_ids = [str(line.id) for line in departing]
             # The proforma-invoice links pointing at these lines go with them, HERE, in the
             # same transaction. The FK is ON DELETE SET NULL, which left a phantom behind:
             # a link naming a shipment but no line on it, so the invoice read as sitting on
@@ -1242,13 +1278,17 @@ class InboundShipmentService:
             # could never be converted again. One writer for the deletion and the trail it
             # invalidates, rather than a sweeper that runs later and sometimes.
             from app.models.scm import ProformaInvoiceShipmentLink
+            from app.services.scm import shipment_line_photos
 
             self.db.query(ProformaInvoiceShipmentLink).filter(
-                ProformaInvoiceShipmentLink.inbound_shipment_line_id.in_(
-                    [str(line.id) for line in departing]
-                )
+                ProformaInvoiceShipmentLink.inbound_shipment_line_id.in_(departing_ids)
             ).delete(synchronize_session=False)
             self.db.flush()
+            # Same reasoning, for the line's own photos (browser-test round, finding 1):
+            # `entity_attachment_links` carries no FK onto `inbound_shipment_lines`, so a
+            # departing line's photo links would otherwise sit there naming an id nothing
+            # resolves any more.
+            photo_objects = shipment_line_photos.purge_for_lines(self.db, departing_ids)
         for line in departing:
             self.db.delete(line)
         self.db.flush()
@@ -1278,6 +1318,7 @@ class InboundShipmentService:
                 )
             )
         self.db.flush()
+        return photo_objects
 
     def create_shipment(self, shipment_data: InboundShipmentCreate, created_by: str | None = None):
         """Create or update-in-place an inbound shipment with lines.
@@ -1368,21 +1409,62 @@ class InboundShipmentService:
             states_supplier = bool(shipment_data.supplier_id) or any(
                 (line.supplier_id or None) for line in (shipment_data.shipment_lines or [])
             )
-            for line in existing.shipment_lines[:]:
-                if states_supplier and not _is_superseded_line(
-                    line, incoming_suppliers, incoming_products
-                ):
-                    continue
-                self.db.delete(line)
-            self.db.flush()
-            for d in merged_lines:
-                line = InboundShipmentLine(
-                    **d, shipment_id=existing.id, **_line_company_kwargs(existing)
+            photo_objects: list[tuple[str, str]]
+            if states_supplier:
+                # REUSE: every real, in-app upload names a supplier (R12 asks for one per
+                # file), so this is the path a re-uploaded packing list actually takes.
+                # `_upsert_shipment_lines` matches an incoming line to the row already
+                # there by `(product, supplier)` and updates it IN PLACE rather than
+                # deleting and recreating: a re-upload used to mint a new line id every
+                # time, which orphaned that line's photos (`entity_attachment_links` has
+                # no real FK onto the line) - browser-test round, finding 1. Scoped to
+                # this upload's own lines, same as the delete used to be: a line outside
+                # `_is_superseded_line` belongs to another factory's own list and is left
+                # alone entirely.
+                scoped_existing = [
+                    line
+                    for line in existing.shipment_lines
+                    if _is_superseded_line(line, incoming_suppliers, incoming_products)
+                ]
+                photo_objects = self._upsert_shipment_lines(
+                    existing, merged_lines, existing_lines=scoped_existing
                 )
-                self.db.add(line)
-            self.db.flush()
+            else:
+                # RE-POINT is not applicable here either: every merged line's
+                # `supplier_id` is explicitly `None` (this upload names no supplier at
+                # all), which never matches an existing line's OWN (possibly attributed)
+                # supplier under the `(product, supplier)` key `_upsert_shipment_lines`
+                # reuses by - reusing here would leave a line's old, real supplier
+                # silently intact although nothing in this upload said so
+                # (`test_an_n8n_resend_clears_the_header_the_container_used_to_name`).
+                # This upload restates the WHOLE container from scratch (the n8n PDF
+                # path, legacy callers) - every existing line is superseded, deleted
+                # outright, and its photos purged with it before the fresh rows land.
+                departing_ids = [str(line.id) for line in existing.shipment_lines]
+                from app.models.scm import ProformaInvoiceShipmentLink
+                from app.services.scm import shipment_line_photos
+
+                if departing_ids:
+                    self.db.query(ProformaInvoiceShipmentLink).filter(
+                        ProformaInvoiceShipmentLink.inbound_shipment_line_id.in_(
+                            departing_ids
+                        )
+                    ).delete(synchronize_session=False)
+                    self.db.flush()
+                photo_objects = shipment_line_photos.purge_for_lines(self.db, departing_ids)
+                for line in existing.shipment_lines[:]:
+                    self.db.delete(line)
+                self.db.flush()
+                for d in merged_lines:
+                    line = InboundShipmentLine(
+                        **d, shipment_id=existing.id, **_line_company_kwargs(existing)
+                    )
+                    self.db.add(line)
+                self.db.flush()
             self._derive_header_supplier(existing, shipment_data.supplier_id)
             self.db.commit()
+            for provider, key in photo_objects:
+                delete_object_best_effort(provider, key)
             self.db.refresh(existing)
             self.refresh_shipment_line_statuses(existing.id)
             # D6 (S3): a container this shipment now names may already sit on
@@ -1461,7 +1543,7 @@ class InboundShipmentService:
     def update_shipment(self, shipment_id: str, shipment_data: InboundShipmentUpdate, updated_by: str):
         """Update an inbound shipment. If shipment_lines provided, replace existing lines."""
         shipment = self.get_shipment(shipment_id)
-        
+
         update_data = shipment_data.model_dump(exclude_unset=True, exclude={"shipment_lines"})
         if "shipment_status" in update_data:
             update_data["shipment_status"] = _normalize_inbound_shipment_status(
@@ -1469,7 +1551,8 @@ class InboundShipmentService:
             )
         for key, value in update_data.items():
             setattr(shipment, key, value)
-        
+
+        photo_objects: list[tuple[str, str]] = []
         if "shipment_lines" in shipment_data.model_dump(exclude_unset=True):
             # The whole line set, upserted onto what is already there (grouped by product
             # AND supplier - the same key `create_shipment` merges on, because the same
@@ -1488,7 +1571,7 @@ class InboundShipmentService:
                     f"Product {code} is on this line set twice for the same supplier; "
                     "combine the two lines or pick a different product on one of them."
                 )
-            self._upsert_shipment_lines(
+            photo_objects = self._upsert_shipment_lines(
                 shipment, _merge_shipment_lines(shipment_data.shipment_lines, header_supplier)
             )
             # The lines just changed, so the header has to be re-derived from them or it
@@ -1497,6 +1580,8 @@ class InboundShipmentService:
 
 
         self.db.commit()
+        for provider, key in photo_objects:
+            delete_object_best_effort(provider, key)
         self.db.refresh(shipment)
         self.refresh_shipment_line_statuses(shipment_id)
         if "shipping_container_number" in update_data:
@@ -1587,7 +1672,14 @@ class SPOAllocationService:
             self.db,
             shipment_id,
             InboundShipment,
-            code_fields=("shipment_number", "shipping_container_number", "bill_of_lading_number", "invoice_number"),
+            code_fields=(
+                "shipment_number", "shipping_container_number", "bill_of_lading_number",
+                # `提单号` lands here (the SO field), not `bill_of_lading_number`, on
+                # an upload made through the supplier-documents dialog (S3, review
+                # round 1) - a lookup on the B/L alone missed every container
+                # uploaded that way.
+                "forwarder_order_ref", "invoice_number",
+            ),
         )
         if shipment_ids is not None:
             if not shipment_ids:
@@ -2335,6 +2427,131 @@ class SPOAllocationService:
                         "picking_date": ph_date,
                     }
                 )
+
+        # R23, AC-J2: which purchase-order line each allocation PULLED from, via
+        # `SPOAllocation.po_line_id`. No `line_no` on `purchase_order_lines` to name (the
+        # model carries no per-line ordinal), so that field is always null - the FE renders
+        # the PO number as the link's own label either way.
+        po_line_ids = {str(a.po_line_id) for a, *_ in rows if a.po_line_id}
+        po_info: Dict[str, dict] = {}
+        if po_line_ids:
+            from app.models.procurement import PurchaseOrder as _PurchaseOrder
+
+            for pol_id, po_id, po_number in (
+                self.db.query(
+                    PurchaseOrderLine.id, _PurchaseOrder.id, _PurchaseOrder.po_number
+                )
+                .join(_PurchaseOrder, _PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+                .filter(PurchaseOrderLine.id.in_(po_line_ids))
+                .all()
+            ):
+                po_info[str(pol_id)] = {
+                    "po_number": po_number,
+                    "purchase_order_id": str(po_id),
+                    "line_no": None,
+                }
+
+        # R23, AC-J2: every sales order this allocation covers - `order_inquiry_links`
+        # (project, R19's ticks already write these) keyed by `spo_allocation_id`, and the
+        # RETAIL half off each SPO line's own `source_ref.so_coverage` (R20 as amended,
+        # review round 1): that JSON is the authoritative record of a retail take - it is
+        # what `create` and `revise` write, and what `_retail_coverage`, `coverage_for_so_
+        # lines` and `planner_state` all read - while `scm.order_link_claim(source=
+        # 'planner')` is a best-effort audit echo beside it. Reading the claim here made
+        # this document disagree with the planner over the same take twice: a claim refused
+        # at write time (that write cannot fail the confirm) showed nothing covered, and the
+        # claim's own identity is one row per sales-order line, so two shipment lines of the
+        # same product taking one sales order kept only the second.
+        #
+        # `source_ref` hangs off the SPO LINE, one level above the allocation, so a line
+        # split across warehouses shows its coverage on the FIRST of its allocation rows -
+        # the same "first if several" `coverage_for_so_lines` already applies to the mirror
+        # image of this join, and the only reading that lets the header's `so_qty` foot.
+        so_covered_by_alloc: Dict[str, list] = {}
+        if alloc_ids:
+            from app.models.order import Customer as _Customer
+            from app.models.order import SalesOrder as _SalesOrder
+            from app.models.order import SalesOrderLine as _SalesOrderLine
+            from app.models.project_so import (
+                OrderInquiry,
+                OrderInquiryLink,
+                OrderInquiryRow,
+                ProjectSalesOrder,
+            )
+            from app.models.projects import Project as _Project
+
+            for spo_alloc_id, doc_no, provisional, link_qty, project_title in (
+                self.db.query(
+                    OrderInquiryLink.spo_allocation_id,
+                    ProjectSalesOrder.autocount_doc_no,
+                    ProjectSalesOrder.provisional_ref,
+                    OrderInquiryLink.qty,
+                    _Project.title,
+                )
+                .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+                .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+                .join(
+                    ProjectSalesOrder,
+                    ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
+                )
+                .outerjoin(_Project, _Project.id == ProjectSalesOrder.project_id)
+                .filter(OrderInquiryLink.spo_allocation_id.in_(alloc_ids))
+                .all()
+            ):
+                # The SALES side's own document number (`_project_coverage`'s own rule) -
+                # `OrderInquiryLink.document` is the PURCHASE side's number instead (already
+                # named by THIS document's own `spo_number`), so it is never what "SO
+                # covered" means to state here.
+                so_covered_by_alloc.setdefault(str(spo_alloc_id), []).append(
+                    {
+                        "document": doc_no or provisional,
+                        "customer": project_title,
+                        "demand_class": "project",
+                        "qty": float(link_qty or 0),
+                    }
+                )
+            from app.services.scm import spo_conversion_service as _spo_conv
+
+            # The FIRST allocation of each SPO line, in the order this document's own query
+            # walked them (`spo_line_number`, then id) - see the note above.
+            first_alloc_by_po_line: Dict[str, str] = {}
+            for allocation, *_ in rows:
+                if allocation.po_line_id:
+                    first_alloc_by_po_line.setdefault(
+                        str(allocation.po_line_id), str(allocation.id)
+                    )
+            coverage_rows = _spo_conv._spo_so_coverage_rows(
+                self.db, po_line_ids=list(first_alloc_by_po_line.keys())
+            )
+            so_line_ids = {so_line_id for so_line_id, *_ in coverage_rows}
+            so_info: Dict[str, tuple] = {}
+            if so_line_ids:
+                for sl_id, so_number, customer_name in (
+                    self.db.query(
+                        _SalesOrderLine.id,
+                        _SalesOrder.so_number,
+                        _Customer.customer_name,
+                    )
+                    .join(_SalesOrder, _SalesOrder.id == _SalesOrderLine.sales_order_id)
+                    .outerjoin(_Customer, _Customer.id == _SalesOrder.customer_id)
+                    .filter(_SalesOrderLine.id.in_(so_line_ids))
+                    .all()
+                ):
+                    so_info[str(sl_id)] = (so_number, customer_name)
+            for so_line_id, _spo_number, cover_qty, po_line_id, _po_id in coverage_rows:
+                allocation_id = first_alloc_by_po_line.get(po_line_id)
+                if not allocation_id:
+                    continue
+                so_number, customer_name = so_info.get(so_line_id, (None, None))
+                so_covered_by_alloc.setdefault(allocation_id, []).append(
+                    {
+                        "document": so_number,
+                        "customer": customer_name,
+                        "demand_class": "retail",
+                        "qty": float(cover_qty or 0),
+                    }
+                )
+
         supplier_counts: Dict[Optional[str], int] = {}
         for allocation, shipment, supplier_name, is_open in rows:
             allocated = allocation.allocated_quantity or 0
@@ -2380,6 +2597,8 @@ class SPOAllocationService:
                     else None,
                     grns=line_grns.get(str(allocation.id), []),
                     line_status=allocation.line_status,
+                    po=po_info.get(str(allocation.po_line_id)) if allocation.po_line_id else None,
+                    so_covered=so_covered_by_alloc.get(str(allocation.id), []),
                 )
             )
 
@@ -2411,6 +2630,31 @@ class SPOAllocationService:
         majority_name = entries[0][0] if entries else None
         extra_count = max(len(entries) - 1, 0)
 
+        linked_grns = self.get_linked_grns_for_spo(spo_number)
+
+        # R23, AC-J3: the header linkage strip - rollups across every line on this
+        # document. `packing_list` names the FIRST shipment any line landed off (a document
+        # is routinely one container; a split across several picks whichever line the
+        # query met first, same "first if several" reasoning `get_document`'s own GRN
+        # fallback already uses).
+        so_covered_all = [c for line in lines for c in (line.so_covered or [])]
+        packing_list = None
+        for allocation, shipment, *_ in rows:
+            if shipment is not None:
+                packing_list = {
+                    "id": str(shipment.id),
+                    "container": shipment.shipping_container_number,
+                }
+                break
+        linkage = {
+            "po_count": len({p["purchase_order_id"] for p in po_info.values()}),
+            "line_count": len(lines),
+            "so_count": len(so_covered_all),
+            "so_qty": sum(c.qty for c in so_covered_all),
+            "packing_list": packing_list,
+            "grn_count": len(linked_grns),
+        }
+
         return SPODocument(
             spo_number=spo_number,
             doc_date=doc_date,
@@ -2425,7 +2669,8 @@ class SPOAllocationService:
             # The GRNs received against this document - the retired per-allocation
             # page's Related Documents capability, now at its natural (document)
             # grain. Same key-matched reader the old page used.
-            linked_grns=self.get_linked_grns_for_spo(spo_number),
+            linked_grns=linked_grns,
+            linkage=linkage,
         )
 
     def delete_document(self, spo_number: str) -> dict:
@@ -2496,6 +2741,7 @@ class SPOAllocationService:
         created_by: str,
         *,
         forward_match: bool = True,
+        commit: bool = True,
     ):
         """Create a new SPO allocation.
 
@@ -2505,6 +2751,13 @@ class SPOAllocationService:
         written first, before the one that actually covers its warehouse exists -
         so that caller suppresses it here and fires it once, per SPO number, when
         the whole file has landed.
+
+        ``commit=False`` (S3, review round 1) FLUSHES instead, leaving the commit to
+        the caller: ``spo_conversion_service.revise`` re-deals a whole SPO's rows in
+        one transaction, and a commit per row meant a refusal on the third row left
+        the first two standing - a half-applied SPO, which is the one thing that
+        action promises never to leave behind. The shipment-line refresh is the
+        caller's too then (it commits, and ``revise`` runs it once at the end).
         """
         allocation_dict = allocation_data.model_dump()
         allocation_dict["receipt_status"] = _normalize_spo_receipt_status(
@@ -2546,10 +2799,13 @@ class SPOAllocationService:
                 self.db, allocation, allocation.container_number
             )
         self.db.add(allocation)
-        self.db.commit()
-        self.db.refresh(allocation)
-        self._capture_incoming_cost(allocation)
-        if allocation.inbound_shipment_id:
+        if commit:
+            self.db.commit()
+            self.db.refresh(allocation)
+        else:
+            self.db.flush()
+        self._capture_incoming_cost(allocation, commit=commit)
+        if commit and allocation.inbound_shipment_id:
             # An SPO document has no shipment until somebody books a container for it, and
             # there is nothing to refresh until then.
             InboundShipmentService(self.db).refresh_shipment_line_statuses(
@@ -2567,7 +2823,9 @@ class SPOAllocationService:
     def _next_spo_line_number(self, spo_number: str) -> int:
         return next_spo_line_number(self.db, spo_number)
 
-    def _capture_incoming_cost(self, allocation: SPOAllocation) -> None:
+    def _capture_incoming_cost(
+        self, allocation: SPOAllocation, *, commit: bool = True
+    ) -> None:
         """Stamp the packing-list cost, in its currency, on the inbound shipment line.
 
         AC-C3.2. The allocation is the moment the incoming cost becomes a fact about this
@@ -2591,6 +2849,12 @@ class SPOAllocationService:
 
         Best-effort: this runs AFTER the allocation has committed, so a failure here must
         not turn a successful write into a 500 for the caller.
+
+        ``commit=False`` (S3, review round 1) means the CALLER owns the transaction (the
+        one batch ``spo_conversion_service.revise`` writes): the stamp is flushed with the
+        rest of it, and a failure is re-raised rather than rolled back - a rollback here
+        would silently discard the caller's whole batch, and swallowing it would leave the
+        caller holding a session it cannot flush anyway.
         """
         try:
             line = (
@@ -2653,13 +2917,18 @@ class SPOAllocationService:
 
             line.currency = currency
             line.updated_at = datetime.utcnow()
-            self.db.commit()
+            if commit:
+                self.db.commit()
+            else:
+                self.db.flush()
         except Exception:  # noqa: BLE001 - best-effort side effect, see docstring
             logger.warning(
                 "Failed to capture the incoming cost for SPO allocation %s",
                 getattr(allocation, "id", None),
                 exc_info=True,
             )
+            if not commit:
+                raise
             self.db.rollback()
 
     def upsert_allocation(

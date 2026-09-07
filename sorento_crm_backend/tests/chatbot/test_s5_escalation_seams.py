@@ -446,9 +446,11 @@ def test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state(
     )
     monkeypatch.setattr(engine_mod, "default_space_id", lambda db: "364817")
 
-    # The lane's own clarify fragment, exactly as `run()` builds it: no actions (nothing
-    # was assigned), the R3 marker, and `clarify_company_reply`'s composed ask riding on
-    # the `clarify` carrier the tail reads it off.
+    # A hand-built clarify fragment: the R3 marker and `clarify_company_reply`'s composed
+    # ask riding on the `clarify` carrier the tail reads it off. `actions: []` here is the
+    # TEST's stub, not the lane's shape - the real lane sends every clarify as a
+    # `send_message` (prod turn 9dd4cd0f); what this one grades is that the tail turns the
+    # carrier into the reply and re-persists the offer, whatever the lane sent.
     def fake_run_escalation_lane(ctx, item, *, dry_run=False, session_factory=None):
         return {
             "arm": "clarify",
@@ -488,7 +490,7 @@ def test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state(
     # The ask REPLACES the acknowledgement: the clarify arm assigns nobody, so there is
     # nothing to tell the customer about a PIC.
     assert (result.reply or {}).get("text") == CLARIFY_TEXT
-    assert result.actions == []
+    assert result.actions == [], "the stub handed the engine none; it must invent none"
 
     row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
     assert row.status == "done", row.error
@@ -518,8 +520,169 @@ def test_clarify_arm_surfaces_the_ask_and_re_persists_the_offer_state(
     # on the customer's screen, so the marker says so. The next turn still resolves a
     # number against `selection_context` + `last_result_set`, which the assertions above
     # are what protect.
+    # `ttl` 3: the clarify arm RE-PERSISTS the roster, which is the bot asking again, so
+    # the offer's clock starts over rather than continuing to run down (AC-816 rule 1).
     assert variables.get("pending") == {
         "kind": "member_offer",
         "team": "customer_service",
         "domain": None,
+        "ttl": 3,
     }
+
+
+def test_a_clarifys_quick_replies_reach_the_persisted_reply(
+    session_factory, system_settings_row, monkeypatch
+) -> None:
+    """Prod turn 9dd4cd0f, the half that outlives the turn.
+
+    The escalation clarifies build their own quick replies - the teams, so the answer is a
+    tap - and the tail composes no `quick_reply` on that arm. The persisted reply therefore
+    said `quick_replies: null` and the `replied` trace fact said `False` about a turn that
+    had just sent two buttons. Chat History and the trace screen read the REPLY, so both
+    would have shown a different turn from the one the customer got (reviewer, #705).
+
+    Driven through the REAL lane: the fragment under test is the one `escalation.run`
+    builds, with only the staff seam injected.
+    """
+    from sqlalchemy import text as sql_text
+
+    from app.models.chatbot_turn import ChatbotTurn
+    from app.models.user import SystemSetting
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.contracts import Envelope
+    from app.services.chatbot.head import parser as parser_mod
+    from app.services.chatbot.lanes import escalation as escalation_mod
+    from tests.chatbot.test_s5_escalation_lane import _services
+
+    contact_id = "ZZT-esc-clarify-qr"
+    db = session_factory()
+    db.execute(
+        sql_text(
+            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+            "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
+        ),
+        {"cid": contact_id, "phone": "+60000000096", "sv": json.dumps({"variables": {}})},
+    )
+    setting = db.query(SystemSetting).filter(SystemSetting.id == system_settings_row.id).one()
+    setting.chatbot_completed_lanes = ["out_of_scope"]
+    db.commit()
+
+    def fake_resolve_config(db, *, current_date, override_version_id=None):
+        return parser_mod.ParserConfig(
+            system_prompt="stub",
+            prompt_version=1,
+            provider="openai",
+            model="gpt-test",
+            api_key="sk-test",
+        )
+
+    parser_output = {
+        "message_type": "request_for_help",
+        "intent_hint": None,
+        "domain_hint": None,
+        "scope_intent": None,
+        "is_affirmative": None,
+        "user_goal": "wants Nurain",
+        "access_levels": [],
+        "broaden_axis": None,
+        "date_mode": None,
+        "date_filter_start": None,
+        "date_filter_end": None,
+        "match_mode": "and",
+        "demand_qty": None,
+        "entities": [],
+        "entity_op": "replace_combine",
+        "scope_exclusive": False,
+        "requested_attributes": [],
+        "contains_flyer": False,
+        "reference_positions": [],
+        "reference_target": None,
+        "person_mention": "Nurain",
+        "is_active": None,
+        "order_status": None,
+        "correction": False,
+        # The DERIVED routing carries a team (the post-processor's own chain); the RAW
+        # snapshot is what says this message named none, which is what makes the mention
+        # route rather than read as one made in passing.
+        "routing": {
+            "suggested_team": "customer_service",
+            "suggested_agent": "general_enquiries",
+            "team_source": "inferred",
+        },
+        "escalation": {"is_escalation_confirmation": True, "company_pick": None},
+    }
+
+    monkeypatch.setattr(parser_mod, "resolve_config", fake_resolve_config)
+    monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: dict(parser_output))
+    monkeypatch.setattr(
+        engine_mod,
+        "check_access",
+        lambda db, *, agent_code, contact_id, space_id: {
+            "allowed": True,
+            "decision": "allow",
+            "agent_name": "General Enquiries",
+            "attributes": None,
+            "all_attributes_allowed": None,
+        },
+    )
+    monkeypatch.setattr(engine_mod, "default_space_id", lambda db: "364817")
+
+    def real_lane_with_a_staff_seam(ctx, item, *, dry_run=False, session_factory=None):
+        services = _services()
+        services.staff_lookup = lambda person: [
+            {
+                "user_id": "u-1",
+                "user_name": "Nurain A",
+                "respond_user_id": "r-1",
+                "team_code": code,
+                "team_name": name,
+            }
+            for code, name in (
+                ("do_customer_service", "DO Customer Service"),
+                ("project_customer_service", "Project Customer Service"),
+            )
+        ]
+        ctx = {
+            **ctx,
+            "parse": {
+                **(ctx.get("parse") or {}),
+                "_parser_raw": {"routing": {"suggested_team": None, "suggested_agent": None}},
+            },
+        }
+        return escalation_mod.run(ctx, item, services=services, dry_run=dry_run)
+
+    monkeypatch.setattr(engine_mod, "run_escalation_lane", real_lane_with_a_staff_seam)
+
+    envelope = Envelope(
+        contact={"id": contact_id, "phone": "+60000000096", "custom_fields": []},
+        message={
+            "event_type": "message.received",
+            "contact": {"id": contact_id},
+            "message": {
+                "messageId": "ZZT-esc-clarify-qr-1",
+                "contactId": contact_id,
+                "channelId": "whatsapp",
+                "traffic": "incoming",
+                "message": {"type": "text", "text": "I want to escalate to Nurain"},
+            },
+        },
+    )
+
+    result = engine_mod.run_turn(envelope, session_factory=session_factory)
+
+    assert result.status == "done", result.error
+    sends = [a for a in result.actions if a["kind"] == "send_message"]
+    assert len(sends) == 1, result.actions
+    assert "DO Customer Service" in sends[0]["quick_replies"]
+
+    row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
+    persisted = row.response["reply"]
+    assert persisted["quick_replies"] == sends[0]["quick_replies"], (
+        "the reply Chat History shows must carry the buttons the customer was sent: "
+        f"{persisted!r} vs {sends[0]!r}"
+    )
+    assert persisted["text"] == sends[0]["text"]
+    replied = next(r for r in row.trace if r["stage"] == "replied")
+    assert replied["facts"]["quick_replies"] is True, (
+        f"the trace says this turn offered nothing to tap: {replied['facts']!r}"
+    )

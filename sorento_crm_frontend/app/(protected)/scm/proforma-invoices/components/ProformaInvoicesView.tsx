@@ -51,6 +51,7 @@ import {
   useBulkDeleteProformaInvoices,
   useConvertProformaInvoicesToDraftShipment,
   useProformaInvoices,
+  useProformaInvoicesApplied,
 } from '../../hooks/useProformaInvoices';
 import type {
   ProformaInvoiceListRow,
@@ -59,7 +60,10 @@ import type {
 import { EM_DASH, fmtDate, fmtInt, fmtQty, fmtSupplierCost } from '../../lib/format';
 import { ConvertToPackingListDialog } from './ConvertToPackingListDialog';
 import { OverCapacityDialog } from './OverCapacityDialog';
-import { ProformaUploadDialog } from './ProformaUploadDialog';
+// The shared "Upload supplier documents" dialog (R12, purchasing consolidation batch, lane
+// C): this page's own `ProformaUploadDialog` (single-file, proforma only) is retired once
+// this lands, since every caller of it now opens the shared one instead.
+import { PackingListUploadDialog as ProformaUploadDialog } from '@/app/(protected)/procurement-management/packing-lists/components/PackingListUploadDialog';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
@@ -178,6 +182,10 @@ export function ProformaInvoicesView() {
   });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [uploadOpen, setUploadOpen] = useState(false);
+  // The shared dialog does not invalidate any list on its own (it does not know which list
+  // is reading what it just wrote) - every caller wires its own, same as
+  // `PackingListsList`'s `onImported` does for its own query key.
+  const invalidateProformaLists = useProformaInvoicesApplied();
   const [bulkDeleteIds, setBulkDeleteIds] = useState<string[] | null>(null);
   const [convertOpen, setConvertOpen] = useState(false);
   const [overCapacity, setOverCapacity] = useState<string | null>(null);
@@ -710,11 +718,14 @@ export function ProformaInvoicesView() {
         </Card>
       </DataGrid>
 
-      {/* No `onApplied` auto-close here: the dialog's own result summary ("Created N,
+      {/* No auto-close on import here: the dialog's own result summary ("Created N,
           updated M") would never paint if the parent closed it the instant the apply
-          finished. The dialog invalidates the list on apply regardless of this prop; the
-          user dismisses it themselves once they have read the result. */}
-      <ProformaUploadDialog open={uploadOpen} onOpenChange={setUploadOpen} />
+          finished. The user dismisses it themselves once they have read the result. */}
+      <ProformaUploadDialog
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+        onImported={invalidateProformaLists}
+      />
 
       {/* How many cbm the WHOLE selection is, and which container it is going into (S5,
           ruling 1). No per-line quantity question here - that is the PI detail's own. */}

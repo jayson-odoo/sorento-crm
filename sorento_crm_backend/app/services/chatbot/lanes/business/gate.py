@@ -173,6 +173,28 @@ def _cust_name(match: Any) -> str:
     return raw.strip()
 
 
+def _display_name(match: Any) -> str | None:
+    """The resolver's own human label for this record, or `None` when it gave none.
+
+    A CRM addition to the ported node's entity shape, and the reason is a defect the
+    customer reads. `canonical_code` for a customer is the ACCOUNT code
+    (`entity_resolver._probe_customer`) or the denormalised `debtor_name`
+    (`_probe_customer_debtor_name`), and the two land on DIFFERENT `customers` rows for
+    one trading name - so the per-uuid de-dupe below keeps both, and the not-found line
+    printed "300-H070" at a customer who has never seen that string. The resolver already
+    knows the name; the gate was simply dropping it.
+
+    Customers only, deliberately: they are the one type whose `canonical_code` is not what
+    the customer typed. A product code IS the product's name to this audience.
+    """
+    display = jsc.get(match, "display")
+    for key in ("customer_name", "debtor_name"):
+        value = jsc.get(display, key)
+        if jsc.truthy(value):
+            return jsc.js_string(value).strip()
+    return None
+
+
 def _cust_base(match: Any) -> str:
     """`_custBase` - the family GROUPING KEY, never customer copy."""
     name = _cust_name(match) or jsc.js_string(jsc.get(match, "canonical_code") or "")
@@ -210,11 +232,18 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     by_uuid: dict[Any, dict[str, Any]] = {}
     for m in flat:
         if jsc.truthy(m) and jsc.truthy(jsc.get(m, "uuid")):
-            by_uuid[jsc.get(m, "uuid")] = {
+            entity = {
                 "uuid": jsc.get(m, "uuid"),
                 "entity_type": jsc.get(m, "entity_type"),
                 "code": jsc.get(m, "canonical_code"),
             }
+            # Written only when there IS one, so every entity the resolver gave no name
+            # for keeps exactly the three keys the JS emits. Registered against the
+            # capture corpus as `CAPTURE_BODY_ADDITIONS["disallowed-entity-gate"]`.
+            display_name = _display_name(m)
+            if display_name:
+                entity["display_name"] = display_name
+            by_uuid[jsc.get(m, "uuid")] = entity
     entities = list(by_uuid.values())
 
     allowed = ALLOWED.get(domain)  # `ALLOWED[domain] ?? null`
@@ -763,9 +792,33 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
                 s = _TRAILING_WS_DASH.sub("", _WS_RUN.sub(" ", s)).strip()
                 return s or name
 
+            # ── the option line NAMES THE LEDGER(S) the family sits in ──────
+            # Owner ruling, console pass 3 (6 Sep 2026): "N. <name> (<company code>)".
+            # A family is keyed by NAME (`_cust_base`, n8n's own grouping), so one line can
+            # stand for accounts in more than one ledger - captures rg-15114061 (JYL JUBIN
+            # under Mocha and Sorento) and rg-15125764 (YI HONG TILING under both) are
+            # exactly that, and live rendered each as ONE line whose pick carried both
+            # ledgers' uuids. The suffix therefore names EVERY ledger the family spans, in
+            # first-seen order ("(SRT, MOCHA)"), never only the representative's - a single
+            # code over a two-ledger family would say the pick reaches one ledger when it
+            # reaches both (review of #706, S1). The resolver stamps `company_code` on every
+            # company-scoped match (`_attach_company_info`); a row with none - a shared row,
+            # an older payload - contributes nothing, and a family with no code at all
+            # prints as it does today.
+            def _company_suffix(m: Any) -> str:
+                fam_key = _cust_base(m)
+                codes: list[str] = []
+                for row in fam_rows_all:
+                    if _cust_base(row) != fam_key:
+                        continue
+                    code = jsc.js_string(jsc.get(row, "company_code") or "").strip()
+                    if code and code not in codes:
+                        codes.append(code)
+                return f" ({', '.join(codes)})" if codes else ""
+
             # computed ONCE and indexed by i in BOTH renders, so the printed line and the
             # roster `title` are byte-equal by construction.
-            rep_labels = [_rep_label(m) for m in reps]
+            rep_labels = [_rep_label(m) + _company_suffix(m) for m in reps]
             require_specific = True
             gate_passed = False
             gate_reason = (
@@ -777,7 +830,10 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
             )
             # The roster must be the SAME rows in the SAME order as the numbered lines or
             # the positional pick misresolves. `title` is what compile-current-state
-            # labels the row with, so a reply by name resolves as well as one by number.
+            # labels the row with, so a reply by name resolves as well as one by number -
+            # which is why the company code goes into `rep_labels` itself rather than only
+            # into the printed line: a customer who types the whole line back must resolve
+            # to the row they read.
             compatible_entities = [
                 {
                     "uuid": jsc.get(m, "uuid"),

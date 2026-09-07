@@ -970,8 +970,12 @@ class TestCannedLanesDryRun:
         that does not depend on the seam - unlike escalation, whose two sentences are
         fixed and interpolate state the turn already resolved. The whole reply is
         therefore a placeholder, and the action says so with `preview: true` beside its
-        `dry_run`, so a reader of the preview cannot mistake `<preview>` for copy the
-        customer would have received.
+        `dry_run`.
+
+        The placeholder is `PREVIEW_IDEATE_REPLY`, NOT the `<preview>` token. The token is
+        the operator's and stays on `status` and the trace facts; this string is what a
+        `send_message` carries, and the executor executes actions and nothing else - so a
+        dry-run turn used to send the literal "<preview>" to whoever typed the idea.
         """
         from app.services.chatbot import contracts
 
@@ -986,11 +990,15 @@ class TestCannedLanesDryRun:
         assert IDEATE_TOOL_CALLS == []
         assert result.branch_kind == "ideate"
         assert result.delegate is None
-        assert result.reply["text"] == contracts.PREVIEW
+        assert result.reply["text"] == contracts.PREVIEW_IDEATE_REPLY
+        assert contracts.PREVIEW not in result.reply["text"], (
+            "the operator's diagnostic token must never reach the customer: "
+            f"{result.reply['text']!r}"
+        )
         assert result.actions == [
             {
                 "kind": "send_message",
-                "text": contracts.PREVIEW,
+                "text": contracts.PREVIEW_IDEATE_REPLY,
                 "quick_replies": result.reply.get("quick_replies"),
                 "result_set": result.reply.get("result_set"),
                 "dry_run": True,
@@ -1000,6 +1008,14 @@ class TestCannedLanesDryRun:
         assert result.session_patch is not None
         row = _turn_row(session_factory, result.turn_id)
         assert row.status == "done"
+        # The OPERATOR's half is unchanged: `status` still carries the marker, which is
+        # what a reader of the fragment keys on, and the action still carries
+        # `preview: true` (asserted above).
+        from app.services.chatbot.lanes.ideate import preview_result
+
+        fragment = preview_result({"session": {"session_vars": {}}})
+        assert fragment["status"] == contracts.PREVIEW
+        assert fragment["reply_text"] == contracts.PREVIEW_IDEATE_REPLY
 
     def test_access_denied_dry_run_write_nothing(
         self, session_factory, seeded, system_settings_row, stub_parser, stub_access

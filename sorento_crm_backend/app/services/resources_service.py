@@ -1927,7 +1927,7 @@ class AttachmentService:
             return None
         return None
     
-    def create_attachment(self, attachment_data: AttachmentCreate, uploaded_by: str):
+    def create_attachment(self, attachment_data: AttachmentCreate, uploaded_by: Optional[str]):
         """Create a new attachment."""
         from sqlalchemy.orm import joinedload
         import uuid as uuid_module

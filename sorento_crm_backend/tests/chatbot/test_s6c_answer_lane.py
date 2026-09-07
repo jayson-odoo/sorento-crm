@@ -2555,3 +2555,212 @@ class TestStatusAwareMissMessageIncludesTheEtaDate:
             "the owner's ruling wants the estimated delivery date in the message too, "
             f"not just the status: {message!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Owner console defect A, the REGRESSION (prod turn 631d4b65, 6 Sep 2026). Item A widened
+# `_DISPLAY_NAME_KEYS` so an `inbound_shipment` with a null `shipment_number` printed its
+# container rather than its uuid - and put `product_name` at the head of that list, so a
+# PRODUCT now prints its description instead of its code. `check eta for IBKS7245-NG-BL`
+# answered "product: Iborn. Bidet. (+7 more)": the code the customer typed, and the only
+# string they can check the answer against, was gone.
+# --------------------------------------------------------------------------- #
+
+
+class TestAProductIsNamedByItsCode:
+    """Owner rule: for a PRODUCT the CODE is the identity.
+
+    Name-first is right only for types with no customer-facing code - a customer, a
+    transporter, a form, a brand are known by name and their `canonical_code` is an
+    internal account or slug. A product code is what the customer typed, what is on the
+    carton and what they will type again; a `product_name` is a free-text description
+    maintained for a different audience ("Iborn. Bidet."), and there is no way for the
+    reader to tell that it means the code they asked about.
+    """
+
+    CODE = "IBKS7245-NG-BL"
+    UUID = "aaaa1111-1111-4a11-9a11-111111111111"
+
+    def _match(self, code: str, uuid: str, name: str) -> dict:
+        return {
+            "entity_type": "product",
+            "uuid": uuid,
+            "canonical_code": code,
+            "display": {"product_name": name, "is_active": True},
+        }
+
+    def _run(self, matches: list[dict], *, token: str) -> str:
+        from app.services.chatbot.lanes.business.answer import not_found_error_message
+
+        resolved = {
+            "tokens": [token],
+            "unresolved_tokens": [],
+            "resolutions": [{"token": token, "matches": matches}],
+            "intersection": matches,
+            "by_entity_type": {"product": matches},
+        }
+        parser = {
+            "domain_hint": "incoming",
+            "entities": [{"hint": "product", "raw": token}],
+            "routing": {"suggested_team": "purchasing"},
+            "access_levels": [],
+        }
+        gate = {
+            "gate_passed": True,
+            "compatible_entities": [
+                {"uuid": m["uuid"], "entity_type": "product", "code": m["canonical_code"]}
+                for m in matches
+            ],
+        }
+        out = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
+        return (out.get("found_summary") or "") + "\n" + (out.get("escalate_message") or "")
+
+    def test_the_breakdown_names_the_code_never_the_description_alone(self) -> None:
+        rendered = self._run(
+            [self._match(self.CODE, self.UUID, "Iborn. Bidet.")], token=self.CODE
+        )
+        assert f"product: {self.CODE}" in rendered, (
+            "the product line must open with the code the customer typed: "
+            f"{rendered!r}"
+        )
+        assert "product: Iborn. Bidet." not in rendered, (
+            f"the description must never stand in for the code: {rendered!r}"
+        )
+
+    def test_the_typed_code_is_the_representative_of_a_collapsed_family(self) -> None:
+        """The "(+7 more)" collapse stays; what must not happen is a SIBLING being the one
+        name the customer sees. The loose IB* prefix match that pulled the siblings in is
+        pre-existing and is a different problem."""
+        siblings = [
+            self._match(f"IBKS7245-NG-{n}", f"aaaa1111-1111-4a11-9a11-11111111111{i}", "Iborn. Bidet.")
+            for i, n in enumerate(("RD", "GR", "WH"), start=2)
+        ]
+        rendered = self._run(
+            [self._match(self.CODE, self.UUID, "Iborn. Bidet."), *siblings], token=self.CODE
+        )
+        assert f"product: {self.CODE}" in rendered, (
+            f"the typed code must be the representative of the collapsed set: {rendered!r}"
+        )
+
+    def test_a_customer_is_still_named_by_its_display_name(self) -> None:
+        """Item I stays green: a customer HAS no customer-facing code, so name-first is
+        the right ladder there and the account code is the internal identifier."""
+        from app.services.chatbot.lanes.business.answer import not_found_error_message
+
+        cust_uuid = "bbbb2222-2222-4b22-9b22-222222222222"
+        match = {
+            "entity_type": "customer",
+            "uuid": cust_uuid,
+            "canonical_code": "300-H070",
+            "display": {"customer_name": "HANLIM TRADING SDN BHD"},
+        }
+        resolved = {
+            "tokens": ["hanlim"],
+            "unresolved_tokens": [],
+            "resolutions": [{"token": "hanlim", "matches": [match]}],
+            "intersection": [match],
+            "by_entity_type": {"customer": [match]},
+        }
+        parser = {
+            "domain_hint": "order",
+            "entities": [{"hint": "customer", "raw": "hanlim"}],
+            "routing": {"suggested_team": "customer_service"},
+            "access_levels": [],
+        }
+        gate = {
+            "gate_passed": True,
+            "compatible_entities": [
+                {"uuid": cust_uuid, "entity_type": "customer", "code": "300-H070"}
+            ],
+        }
+        out = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
+        rendered = (out.get("found_summary") or "") + "\n" + (out.get("escalate_message") or "")
+        assert "HANLIM TRADING SDN BHD" in rendered, rendered
+        assert "300-H070" not in rendered, rendered
+
+
+# --------------------------------------------------------------------------- #
+# Owner console pass 4, item G (prod turn 858c9c54, after #705). The three-code stock
+# turn now names MSK11A-QT - but only INSIDE the cross-domain block, as
+# "But there is INCOMING stock (ETA) for the requested products: MSK11A-QT container
+# TEMU6355180 ...". Read top to bottom that reply answers a stock question with two
+# codes' stock and then, with no seam between them, an incoming fact about a third; the
+# customer is left to infer the thing they actually asked, which is that MSK11A-QT has
+# no stock. The owner's ruling: SAY IT, and say it before the incoming block.
+#
+# The negative belongs where the evidence for it is. `crossdomain_render` is the only
+# place that knows BOTH that the primary render did not echo the code and that the other
+# domain was actually probed for it - the stock composer upstream knows neither - and it
+# already owns the sibling sentence for the both-empty case ("No stock and no incoming
+# for X"). Its block is appended UNDER the primary answer, so a line at the head of that
+# block is exactly the stock section's last word before the incoming lead.
+# --------------------------------------------------------------------------- #
+
+
+class TestAZeroStockCodeIsNamedBeforeTheIncomingBlock:
+    ZEROSET = {
+        "active": True,
+        "origin_domain": "inventory",
+        "team": "warehouse",
+        "returned_codes": ["MWT5727SS-CR", "MHS1028"],
+        "missing": [{"code": "MSK11A-QT", "_n": "MSK11A-QT", "uuid": "u-msk"}],
+    }
+
+    @staticmethod
+    def _incoming_row(code: str) -> dict:
+        return {
+            "fields": [
+                {"key": "product_code", "label": "Product Code", "value": code},
+                {"key": "container_number", "label": "Container", "value": "TEMU6355180"},
+                {"key": "estimated_arrival_date", "label": "ETA", "value": "2026-10-02"},
+            ]
+        }
+
+    def _render(self, rows: list[dict], **zs_overrides) -> str:
+        from app.services.chatbot.lanes.business.answer import crossdomain_render
+
+        zs = {**self.ZEROSET, **zs_overrides}
+        out = crossdomain_render(
+            {"items": rows, "has_result": True}, zeroset=zs, validator={"has_result": True}
+        )
+        return out["_xdBlock"]["block"]
+
+    def test_the_stock_miss_is_stated_above_the_incoming_lead(self) -> None:
+        block = self._render([self._incoming_row("MSK11A-QT")])
+        assert "No stock for MSK11A-QT" in block, (
+            f"the customer asked about stock and was never told there is none: {block!r}"
+        )
+        assert block.index("No stock for MSK11A-QT") < block.index("INCOMING stock"), (
+            f"the stock answer must finish before the incoming block starts: {block!r}"
+        )
+
+    def test_the_incoming_direction_says_no_incoming(self) -> None:
+        """The mirror: an INCOMING question whose code has none, answered with its stock.
+        The word follows the question that was asked, exactly as the both-empty sentence
+        already does."""
+        block = self._render([self._incoming_row("MSK11A-QT")], origin_domain="incoming")
+        assert "No incoming for MSK11A-QT" in block, block
+        assert block.index("No incoming for MSK11A-QT") < block.index("stock details"), block
+
+    def test_a_code_with_nothing_on_either_side_keeps_its_own_sentence(self) -> None:
+        """Guard, #705's H: a code the probe answered with NOTHING still gets the single
+        combined sentence and the escalation offer, not two half-sentences."""
+        block = self._render([])
+        assert "No stock and no incoming for MSK11A-QT" in block, block
+        assert "No stock for MSK11A-QT." not in block, (
+            f"the both-empty case must not also emit the one-sided line: {block!r}"
+        )
+        assert "escalate" in block.lower(), block
+
+    def test_a_code_the_primary_render_did_echo_is_not_called_missing(self) -> None:
+        """Guard: `missing` means "the primary render did not echo this code", which is
+        only the same statement as "there is none" when the render is product-keyed. A
+        warehouse breakdown answers ABOUT the code without printing it, and `can_state_absence`
+        is what stops "No stock" landing under the stock it just printed."""
+        block = self._render(
+            [self._incoming_row("MSK11A-QT")], returned_codes=[]
+        )
+        assert "No stock for MSK11A-QT" not in block, (
+            f"an absence was asserted where the render could not establish one: {block!r}"
+        )
+        assert "INCOMING stock" in block, block

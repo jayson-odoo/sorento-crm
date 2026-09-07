@@ -6,11 +6,12 @@ Use this flow to bulk-import **SPO allocations** from an Excel file. SPO allocat
 
 
 1. Open **[Procurement → SPO Allocations](/procurement-management/spo-allocations)** (URL: `/procurement-management/spo-allocations`). The page is titled **SPO Allocations**.
-2. Click the **[Import options](/procurement-management/spo-allocations#guide_target=procurement.spo-allocations.import-options-button)** button in the toolbar (upload icon).
-3. Pick **Import SPO** from the dropdown.
-4. The **SPO Import** dialog opens. Drag in or browse to your SPO Excel file.
-5. (Recommended) Click **[Test](/procurement-management/spo-allocations#guide_target=template-upload.test-button)** to validate the file before importing. Fix any reported errors first.
-6. Click **[Import](/procurement-management/spo-allocations#guide_target=procurement.spo-allocations.import-confirm-button)** to queue the import job.
+2. Click the **[Upload SPO](/procurement-management/spo-allocations#guide_target=procurement.spo-allocations.import-options-button)** button - it is the primary button on the toolbar.
+3. The **SPO Import** dialog opens. Drag in or browse to your SPO Excel file.
+4. (Recommended) Click **[Test](/procurement-management/spo-allocations#guide_target=template-upload.test-button)** to validate the file before importing. Fix any reported errors first.
+5. Click **[Import](/procurement-management/spo-allocations#guide_target=procurement.spo-allocations.import-confirm-button)** to queue the import job.
+
+To create a single SPO allocation by hand instead, use **Create SPO Allocation** in the toolbar's **Actions** menu.
 
 ## What the system captures (column reference)
 

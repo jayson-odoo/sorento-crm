@@ -12,7 +12,7 @@ Reproduced, because `not-found-error-message` downstream spreads that item.
 The probe seam is a parameter, not a call: `probe` is whatever `sub-get-results` returned
 (`{answers|items: [...]}`), or `None` when it did not run. `annotate_customer` tells the
 two apart on purpose - a probe that FAILED must render the bare picker, never a confident
-"- no delivery" on evidence that was never gathered.
+"- no DO" on evidence that was never gathered.
 """
 from __future__ import annotations
 
@@ -26,6 +26,11 @@ from app.services.chatbot import jsc
 _NUMBERED_LINE = re.compile(r"^\s*[0-9]+\.\s+(.+?)\s*\Z")
 _PRODUCT_CODE_LABEL = re.compile(r"product\s*code", re.IGNORECASE)
 _CUSTOMER_LABEL = re.compile(r"^\s*customer\s*\Z", re.IGNORECASE)
+# The probe is `crm_order_management_orders_list`, and its presenter
+# (`sorento_crm_mcp/presenters.py::_orders_list`) emits the DELIVERY ORDER's own date under
+# this label on every row. It is what says a DO exists: an order row on its own says only
+# that an order exists, which is a different question and the one the picker used to answer.
+_ACTUAL_DELIVERY_LABEL = re.compile(r"^\s*actual\s*delivery\s*date\s*\Z", re.IGNORECASE)
 _BRACKET_OR_PAREN = re.compile(r"\[[^\]]*\]|\([^)]*\)")
 _LEGAL_FORM = re.compile(r"\bSDN\.?\s*BHD\.?\b|\bSDN\b|\bBHD\b")
 _NON_ALNUM_UPPER = re.compile(r"[^A-Z0-9]+")
@@ -120,26 +125,45 @@ def _customer_base(value: Any) -> str:
     return s.strip()
 
 
+def _row_field(a: Any, label_re: "re.Pattern[str]") -> Any:
+    """The `fields[]` entry whose label matches, or None. The envelope's own shape."""
+    if not jsc.truthy(a) or not isinstance(jsc.get(a, "fields"), list):
+        return None
+    field = jsc.find(
+        jsc.get(a, "fields"),
+        lambda x: bool(label_re.match(jsc.js_string(jsc.get(x, "label") or ""))),
+    )
+    return jsc.get(field, "value") if jsc.truthy(field) else None
+
+
+def _row_has_do(a: Any) -> bool:
+    """Does this order row have a DELIVERY ORDER?
+
+    Owner ruling, console pass 3 (6 Sep 2026). The picker's suffix claims a DO, so an
+    order with no `actual_delivery_date` is a customer with NO DO yet - which is exactly
+    the answer the person picking needs, and exactly the one the old set (built from every
+    row the probe returned) could never give.
+    """
+    value = _row_field(a, _ACTUAL_DELIVERY_LABEL)
+    if value is None:
+        value = jsc.get(a, "actual_delivery_date") if jsc.truthy(a) else None
+    return jsc.nullish_str(value).strip() != ""
+
+
 def _customer_of_row(a: Any) -> Any:
     """`custOfRow` - the "Customer" field, else `customer_name`, else `customer`."""
     if not jsc.truthy(a):
         return None
-    if isinstance(jsc.get(a, "fields"), list):
-        field = jsc.find(
-            jsc.get(a, "fields"),
-            lambda x: bool(
-                _CUSTOMER_LABEL.match(jsc.js_string(jsc.get(x, "label") or ""))
-            ),
-        )
-        if jsc.truthy(field) and jsc.truthy(jsc.get(field, "value")):
-            return jsc.js_string(jsc.get(field, "value"))
+    value = _row_field(a, _CUSTOMER_LABEL)
+    if jsc.truthy(value):
+        return jsc.js_string(value)
     return jsc.get(a, "customer_name") or jsc.get(a, "customer") or None
 
 
 def annotate_customer(
     gate: dict[str, Any] | None, *, probe: Any, parser: dict[str, Any] | None
 ) -> dict[str, Any]:
-    """`annotate-customer-picker` - which candidates have a matching delivery."""
+    """`annotate-customer-picker` - which candidates have a delivery ORDER."""
     out = gate if isinstance(gate, dict) else {}
     probe = probe if jsc.truthy(probe) else {}
     parser = parser if isinstance(parser, dict) else {}
@@ -180,28 +204,37 @@ def annotate_customer(
         out["customer_probe_skip_reason"] = "page_saturated"
         return out
 
-    with_delivery: set[str] = set()
+    # ONLY rows that carry a delivery-order date count. `crm_order_management_orders_list`
+    # returns every matching ORDER, delivered or not, so the old membership test ("this
+    # customer appears in the probe") stamped "has delivery" on a customer whose orders
+    # had not shipped.
+    with_do: set[str] = set()
     for row in rows:
+        if not _row_has_do(row):
+            continue
         base = _customer_base(_customer_of_row(row))
         if base:
-            with_delivery.add(base)
+            with_do.add(base)
 
     # NO reordering, no renumbering - the numbers are the pick affordance. Suffixes only,
-    # and a plain hyphen, never an em-dash.
-    suffix_hit = " - has delivery"
-    suffix_miss = " - no recent delivery" if probe_windowed else " - no delivery"
+    # and a plain hyphen, never an em-dash. The wording is the owner's: "has DO" / "no DO",
+    # one stamp whether or not the probe was windowed (the window is a fact about the
+    # MEASUREMENT and is still reported on `customer_probe_window_days`; hedging it into
+    # the line is what made the old "no recent delivery" unreadable at WhatsApp width).
+    suffix_hit = " - has DO"
+    suffix_miss = " - no DO"
     annotated = _annotate_lines(
         bare,
-        lambda label: suffix_hit if _customer_base(label) in with_delivery else suffix_miss,
+        lambda label: suffix_hit if _customer_base(label) in with_do else suffix_miss,
     )
     message = annotated
-    if len(with_delivery) == 0:
+    if len(with_do) == 0:
         message += (
-            "\n\nNone of these have a recent delivery."
+            "\n\nNone of these have a recent DO."
             if probe_windowed
-            else "\n\nNone of these have a matching delivery."
+            else "\n\nNone of these have a matching DO."
         )
     out["escalate_message"] = message
-    out["customer_probe_hits"] = len(with_delivery)
+    out["customer_probe_hits"] = len(with_do)
     out["customer_probe_skip_reason"] = None
     return out

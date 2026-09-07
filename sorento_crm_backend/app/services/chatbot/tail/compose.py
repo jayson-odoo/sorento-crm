@@ -81,7 +81,7 @@ def crossdomain_compose(
     if not isinstance(user_response, str) or user_response.strip() == "":
         return dict(item)
 
-    # LOCKED WORDING: this exact prefix is the contract `output_exchange._offer_is_open`
+    # LOCKED WORDING: this exact prefix is the contract `output_exchange.offer_is_open`
     # reads (and R3's `pending` marker mirrors). Do not reword.
     phrase = f"Would you like me to escalate to {jsc.js_string(jsc.get(block, 'team'))} team?"
 

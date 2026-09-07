@@ -101,7 +101,10 @@ def test_the_pdf_keeps_their_marks_and_our_bilingual_intro(monkeypatch):
         require_aliases(db, "supplier_inventory")
         html = _html(db, monkeypatch)
 
-        assert "fill" in html and "#FFFF00".lower() in html.lower()
+        # R10 (purchasing consolidation, 6 Sep) replaced the source yellow with our own
+        # highlight color (#fff2cc) once `fill` means "qty to load > 0" rather than "their
+        # yellow cell" - see `supplier_notice_service._document_html`'s own comment.
+        assert "fill" in html and "#fff2cc" in html.lower()
         assert "请为下一个货柜准备以下项目" in html
         assert "宋体" in html
 

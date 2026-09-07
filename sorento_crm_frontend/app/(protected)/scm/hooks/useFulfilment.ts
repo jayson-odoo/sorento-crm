@@ -14,17 +14,23 @@ import {
   getContainerSizes,
   getFulfilmentSuppliers,
   getLoadingPlanList,
+  getShipmentLinePhotos,
+  getSpoPlannerState,
   getSpoSuggestion,
   getSupplierChatContacts,
   getSupplierNotices,
   getSupplierStock,
   getSupplierStockListFile,
+  previewContainerRequest,
+  reviseSpo,
   saveLoadingPlanEdits,
   sendContainerRequest,
   updateLoadingPlanCutOff,
+  uploadShipmentLinePhotos,
   type ContainerRequestLine,
   type ContainerRequestSendOptions,
   type LoadingPlanCreate,
+  type LoadingPlanLineEdit,
   type LoadingPlanListParams,
   type SpoConfirmLine,
 } from '../services/fulfilmentService';
@@ -155,7 +161,7 @@ export function useUpdateLoadingPlanCutOff(planId: string | null) {
 export function useSaveLoadingPlanEdits(planId: string | null) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (edits: Record<string, number>) =>
+    mutationFn: (edits: Record<string, LoadingPlanLineEdit>) =>
       saveLoadingPlanEdits(planId as string, edits),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: [...KEY, 'container-request', planId] });
@@ -180,6 +186,37 @@ export function useContainerRequestBuild(planId: string | null) {
     queryKey: [...KEY, 'container-request', planId],
     queryFn: () => buildContainerRequest(planId as string),
     enabled: !!planId,
+    retry: false,
+  });
+}
+
+/**
+ * The exact document a Send would produce (R9, AC-E2) - what the Preview page state shows,
+ * in place of Phase 1's client-side `mockSupplierSheet` (deleted with this change; both
+ * returned the same `SupplierSheetModel`, so nothing else about `LoadingPlanView` moves).
+ *
+ * `enabled` is the caller's own `docPreviewOpen`: this is a page state Ms Tee opens
+ * deliberately, not a background fetch every record page pays for. `lines` is expected
+ * DEBOUNCED by the caller - typing in the preview's own qty/remark inputs changes `lines` on
+ * every keystroke, and firing a request per character would be wasteful; `placeholderData`
+ * keeps the last document on screen while a new one is asked for, rather than blanking the
+ * table between keystrokes.
+ */
+export function useContainerRequestPreview(
+  planId: string | null,
+  lines: ContainerRequestLine[],
+  enabled: boolean,
+) {
+  return useQuery({
+    // `planId` sits where every other container-request key puts it (right after
+    // `'container-request'`), NOT after `'preview'` (review round 1, S5): save and send both
+    // invalidate `[...KEY, 'container-request', planId]`, which is a PREFIX match, so a
+    // `'preview'` segment ahead of `planId` put this query outside that prefix and a save
+    // never invalidated the previously-fetched preview.
+    queryKey: [...KEY, 'container-request', planId, 'preview', JSON.stringify(lines)],
+    queryFn: () => previewContainerRequest(planId as string, lines),
+    enabled: enabled && !!planId,
+    placeholderData: (prev) => prev,
     retry: false,
   });
 }
@@ -360,10 +397,81 @@ export function useDeleteSpo(shipmentId: string | null) {
   });
 }
 
+/** The planner in EDIT mode (R24, AC-K1): one SPO's own lines, each carrying both the
+ *  suggestion shape and the state it was persisted with. `purchaseOrderId` null means the
+ *  planner is in create mode and nothing is fetched. */
+export function useSpoPlannerState(shipmentId: string | null, purchaseOrderId: string | null) {
+  return useQuery({
+    queryKey: [...KEY, 'spo-planner-state', shipmentId, purchaseOrderId],
+    queryFn: () => getSpoPlannerState(shipmentId as string, purchaseOrderId as string),
+    enabled: !!shipmentId && !!purchaseOrderId,
+  });
+}
+
+/** Save changes on an SPO already created (R24, AC-K2). Invalidates the same queries
+ *  `useCreateSpo` does - the remainder planner and the PO book both moved - plus the
+ *  planner state itself, so a second edit of the same SPO re-reads what was just written
+ *  rather than the pre-save snapshot. */
+export function useReviseSpo(shipmentId: string | null, purchaseOrderId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (lines: SpoConfirmLine[]) =>
+      reviseSpo(shipmentId as string, purchaseOrderId as string, lines),
+    onSuccess: (out) => {
+      void qc.invalidateQueries({ queryKey: [...KEY, 'spo-suggestion', shipmentId] });
+      void qc.invalidateQueries({ queryKey: [...KEY, 'spo-planner-state', shipmentId] });
+      void qc.invalidateQueries({ queryKey: ['scm', 'purchase-orders'] });
+      void qc.invalidateQueries({ queryKey: ['spo-allocations'] });
+      const removed = out.removed_line_count
+        ? ` ${out.removed_line_count} line${out.removed_line_count === 1 ? '' : 's'} removed.`
+        : '';
+      toast.success(`Saved ${out.po_number ?? 'the SPO'}.${removed}`);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+}
+
 export function useDownloadSpoWorksheet(shipmentId: string | null) {
   return useMutation({
     mutationFn: (fallbackName?: string | null) =>
       downloadSpoWorksheet(shipmentId as string, fallbackName),
     onError: (e: Error) => toast.error(e.message),
+  });
+}
+
+/** Supplier photos on a shipment line (R25, lane C, slice C3) - every line's photos in
+ *  one read, keyed by line id, so the Lines tab fetches once rather than once per row. */
+export function useShipmentLinePhotos(shipmentId: string | null) {
+  return useQuery({
+    queryKey: [...KEY, 'line-photos', shipmentId],
+    queryFn: () => getShipmentLinePhotos(shipmentId as string),
+    enabled: !!shipmentId,
+  });
+}
+
+/**
+ * Upload photos onto a shipment line (R25, lane C, slice C3, review round 1 item 7) -
+ * moved out of `ShipmentLinePhotosCell` so the cell reads/writes through the same
+ * hook layer every other feature does (`PRINCIPLES.md` layering).
+ *
+ * Invalidates in `onSettled`, not `onSuccess`: a partial batch (review round 1 item
+ * 4 - the backend purges the failed file but keeps whatever landed before it) still
+ * changed the line's photo list even though the call itself rejects, so the strip
+ * has to refetch on the error path too, not only on success.
+ */
+export function useUploadShipmentLinePhotos(shipmentId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ lineId, files }: { lineId: string; files: File[] }) =>
+      uploadShipmentLinePhotos(shipmentId as string, lineId, files),
+    onSuccess: (_photos, variables) => {
+      toast.success(
+        variables.files.length === 1 ? 'Photo added' : `${variables.files.length} photos added`,
+      );
+    },
+    onError: (e: Error) => toast.error(e.message),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: [...KEY, 'line-photos', shipmentId] });
+    },
   });
 }

@@ -150,6 +150,23 @@ def decide(
     def is_low_signal() -> bool:
         # OR of four; the fourth is the bare-business-query clause (loose `==`, so an
         # ABSENT domain_hint counts exactly like a null one).
+        #
+        # ... unless the post-processor already said this turn NARROWED a live business
+        # question. A ROUTER backstop, same class as `is_clarification`'s broaden arm
+        # below and `is_offer_hold`'s single-company roster arm, reading only structured
+        # state (D11 - nothing here looks at the customer's words). Owner console pass 4,
+        # item E, live turn 0d1fc129: "last month" under a pending order roster came back
+        # `message_type: casual`, so this arm fired above the business one and the customer
+        # was asked for the date range they had just given - even though `output_exchange`'s
+        # Tier 3 had restored `intent_hint: check_order` and `domain_hint: order` from the
+        # offer's own state and stamped `member_offer_filter_modification`. A turn that
+        # changed a filter on a question that is still open is the opposite of
+        # content-free. The DOMAIN is still required: without one there is no question to
+        # have narrowed, which is the same premise as the fourth clause above.
+        if qf.get("member_offer_filter_modification") is True and jsc.truthy(
+            qf.get("domain_hint")
+        ):
+            return False
         return (
             qf.get("message_type") == "casual"
             or qf.get("message_type") == "unknown"

@@ -837,12 +837,17 @@ def _axis_labelled_subject(entities: Any) -> str:
 
     Three STRUCTURAL rules, no text patterns over the customer's words (D11):
 
-    * One label per RECORD. A customer reached both by its account code and by its name
-      arrives as two rows on one uuid; the longer of the two is the name, and the account
-      code is an internal identifier the customer never typed and cannot check. (The gate
-      drops the resolver's `match_field` today; when it carries it, that field is the exact
-      test and replaces the length tie-break.)
-    * An alias row collapses into its base, for the types that HAVE aliases only.
+    * **A customer is named by the resolver's own `display_name`, never by
+      `canonical_code`.** Live, "hanlim" resolves to TWO `customers` rows - one reached by
+      `customer_code` (`300-H070`) and one by the denormalised `debtor_name` - on two
+      different uuids, so the per-uuid de-dupe keeps both and the longest-code tie-break
+      below can never fire between them. The account code is an internal identifier the
+      customer has never seen. `gate.run_gate` carries `display_name` for exactly this,
+      and a record without one falls back to its code, which is the whole of today's
+      behaviour for every other type.
+    * An alias row collapses into its base, for the types that HAVE aliases only - which
+      is what prints ONE line for "HANLIM TRADING SDN BHD" and "HANLIM TRADING SDN BHD
+      [A/C II]". It works on the LABEL, so it could not match a code against a name.
     * The label comes from `_AXES`, the miss lane's own axis vocabulary, so the two lanes
       cannot drift. A type no axis claims keeps today's bare, unlabelled code.
     """
@@ -856,17 +861,20 @@ def _axis_labelled_subject(entities: Any) -> str:
     for x in jsc.array(entities):
         code = jsc.nullish_str(jsc.get(x, "code")).strip()
         uuid = jsc.nullish_str(jsc.get(x, "uuid")).strip()
-        # `code` is the canonical code the customer recognises, never a uuid: for types with
-        # no code the resolver fills it with the record's OWN uuid, and four promotion uuids
-        # once printed under "no promotions records for ...".
-        if not code or code == uuid or _UUID_RE.match(code):
+        # The resolver's human label wins where it gave one (customers today); everything
+        # else keeps the canonical code, which for a product IS what the customer typed.
+        label = jsc.nullish_str(jsc.get(x, "display_name")).strip() or code
+        # Whatever is about to be PRINTED is what must not be a uuid: for types with no
+        # code the resolver fills `code` with the record's OWN uuid, and four promotion
+        # uuids once printed under "no promotions records for ...".
+        if not label or label == uuid or _UUID_RE.match(label):
             continue
-        row = {"type": jsc.nullish_str(jsc.get(x, "entity_type")).strip().lower(), "code": code}
+        row = {"type": jsc.nullish_str(jsc.get(x, "entity_type")).strip().lower(), "code": label}
         if not uuid:
             unkeyed.append(row)
             continue
         held = by_record.get(uuid)
-        if held is None or len(code) > len(held["code"]):
+        if held is None or len(label) > len(held["code"]):
             by_record[uuid] = row
     rows = [*by_record.values(), *unkeyed]
 

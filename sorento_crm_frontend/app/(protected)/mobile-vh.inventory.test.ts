@@ -30,6 +30,11 @@
  * outright rather than converted. `cell-breakdown-scroll.inventory.test.ts`
  * is what keeps them gone, so the baseline below drops by 2 files / 3 lines
  * (one of the three was a comment naming the other file's 50vh).
+ *
+ * Purchasing consolidation batch (lane C, 6 Sep 2026) added one more new site,
+ * same reason as the 128 - `PackingListUploadDialog.tsx`'s new upload dialog body
+ * is `max-h-[65vh]`, same convention its sibling `SpoScheduleMatrixTable.tsx`
+ * already carries. Baseline below is +1 file / +1 line.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -60,6 +65,7 @@ const FRACTIONAL_VH_FILES = [
   'app/(protected)/master-data-management/flyer-spec-proposals/components/FlyerSpecReviewScreen.tsx',
   'app/(protected)/master-data-management/products/components/LinkAttachmentBrowserDialog.tsx',
   'app/(protected)/master-data-management/products/components/ProductAttachmentsTab.tsx',
+  'app/(protected)/procurement-management/packing-lists/components/PackingListUploadDialog.tsx',
   'app/(protected)/procurement-management/packing-lists/components/SpoScheduleMatrixTable.tsx',
   'app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestConversationPanel.tsx',
   'app/(protected)/procurement-management/stock-inquiries/components/StockInquiryConversationPanel.tsx',
@@ -262,13 +268,13 @@ describe('fixed viewport-height sweep (M6-02 / M6-03)', () => {
     }
   });
 
-  it('the allowlist matches its baseline (223 lines, 148 files)', () => {
+  it('the allowlist matches its baseline (224 lines, 149 files)', () => {
     let matchingLines = 0;
     for (const file of ALLOWLIST.keys()) {
       const lines = fs.readFileSync(file, 'utf8').split('\n');
       matchingLines += lines.filter((line) => PATTERN.test(line)).length;
     }
-    expect(ALLOWLIST.size).toBe(148);
-    expect(matchingLines).toBe(223);
+    expect(ALLOWLIST.size).toBe(149);
+    expect(matchingLines).toBe(224);
   });
 });
