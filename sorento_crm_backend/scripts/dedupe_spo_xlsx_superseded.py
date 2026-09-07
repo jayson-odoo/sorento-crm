@@ -254,6 +254,9 @@ def _apply_document(
             if row.inbound_shipment_id:
                 counts["shipment_ids"].add(str(row.inbound_shipment_id))
         if target is not None:
+            # Nothing may be pending when the repoint widens its read under a
+            # disabled company scope (same structural rule as the ingest).
+            db.flush()
             counts["links_moved"] += repoint_allocation_dependants(
                 db,
                 [str(row.id) for row in removing],

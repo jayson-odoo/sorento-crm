@@ -166,6 +166,11 @@ once; then the dedupe runs on production by the captain with `--dry-run` first.
   product in SQL (AC-X34). Captain reverted the coder's zero-count omission from the verdict: the
   shipping-order verdict keeps the fixed key set the sales / purchase order verdict has, so the ESB
   sees no shape change; AC-X29 asserts `adopted` absent-or-0 instead.
+- Security round 3 (clean) left two tightenings, applied by the captain: the group redistribution
+  writes a RELEASED member from its own remaining picking lines and distributes only the rest of
+  the picking sum over the non-released members (so a sibling's proven receipt is never handed to
+  a line whose GRN was just deleted); the dedupe flushes before the repoint widens its read under
+  the disabled company scope, the same structural rule the ingest already follows.
 
 ## 6. Reviewer round cleanups (2026-09-07, not decisions)
 
