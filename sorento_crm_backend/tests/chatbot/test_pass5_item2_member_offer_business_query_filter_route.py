@@ -287,7 +287,17 @@ def _seed_real_hanlim_and_srtwc286(session_factory) -> str:
         is_active=True,
         company_id=company.id,
     )
-    db.add_all([product, rpacc, customer])
+    # A second, unrelated customer - review round 2, nit 3: AC-829's customer-half
+    # replacement (a bare token resolving to a CUSTOMER instead of a product REPLACES
+    # the customer half of the carried pair, not the product half) is otherwise asserted
+    # by measurement alone, unpinned by a test.
+    other_customer = Customer(
+        customer_code="acmezzt",
+        customer_name="ZZT Acme Trading",
+        is_active=True,
+        company_id=company.id,
+    )
+    db.add_all([product, rpacc, customer, other_customer])
     db.commit()
     return company.id
 
@@ -418,6 +428,60 @@ class TestB2ABareProductCodeUnderTheOfferNarrowsTheProduct:
 
         reply_text = (head.reply or {}).get("text") or ""
         assert "Product: rpacc" in reply_text, reply_text
+
+    def test_bare_code_that_resolves_to_a_customer_narrows_the_customer_half(
+        self, seeded, session_factory, monkeypatch
+    ):
+        """AC-829's other half: `resolve_bare_reply_under_member_offer` is symmetric
+        across both halves of the carried pair - a bare token that resolves to a
+        CUSTOMER (not a product) replaces the CUSTOMER half, keeps the product and the
+        date window. Reviewer measured this working on review round 2 but left it
+        unpinned; this is the pin. "acmezzt" (a real customer code, seeded alongside
+        hanlim/srtwc286/rpacc, unrelated to either) stands in for a real bare-customer
+        reply."""
+        _seed_member_offer(
+            session_factory, date_filter_start="2026-08-01", date_filter_end="2026-08-31"
+        )
+        _wire_business_lane(session_factory, monkeypatch)
+
+        qf = _parser_output(
+            message_type="casual",
+            intent_hint=None,
+            domain_hint=None,
+            entities=[],
+            entity_op="reuse",
+            broaden_axis=None,
+            date_mode=None,
+            date_filter_start=None,
+            date_filter_end=None,
+            routing={"suggested_team": None, "suggested_agent": None},
+        )
+        _stub_parser(monkeypatch, qf)
+        envelope = _envelope(is_test=True)
+        envelope.message["message"]["messageId"] = "ZZT-item2-b2-customer-half"
+        envelope.message["message"]["message"]["text"] = "acmezzt"
+
+        head = engine_mod.run_turn(envelope, session_factory=session_factory)
+
+        output = head.ctx["parse"]["output"]
+        raws = {str(e.get("raw")).lower() for e in (output.get("entities") or [])}
+        assert "acmezzt" in raws, (
+            "a bare reply resolving to a CUSTOMER must narrow the customer half of the "
+            f"carried pair: {output!r}"
+        )
+        assert "hanlim" not in raws, (
+            f"the OLD customer must be replaced, not kept alongside the new one: {output!r}"
+        )
+        assert "srtwc286" in raws, (
+            f"the product half must survive a customer-half narrowing: {output!r}"
+        )
+        assert output.get("date_filter_start") == "2026-08-01", (
+            f"the window must be kept while the customer narrows: {output!r}"
+        )
+        assert output.get("date_filter_end") == "2026-08-31", output
+
+        reply_text = (head.reply or {}).get("text") or ""
+        assert "acmezzt" in reply_text.lower(), reply_text
 
 
 class TestB3TheOfferHoldTeamMenuDoesNotFireOnAStillOpenNoWindowOffer:

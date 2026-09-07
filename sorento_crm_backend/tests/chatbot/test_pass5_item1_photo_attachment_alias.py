@@ -399,6 +399,26 @@ class TestPass5Item1PhotoAliasAgainstTheRealMigrationSeededData:
             f"candidate the DB happened to return first: {compatible_codes!r}"
         )
 
+        # THE ACTUAL KILL TEST (review round 2): `compatible_codes` alone does not kill,
+        # because gate.py:393's silent `non_products[0]` pick can ALSO land on "Product
+        # Photos" by DB row order with the domain scoping removed - measured, this seed
+        # order does exactly that, so the assertion above stays green with
+        # `entity_resolver._product_attachment_type_ids` disabled and proves nothing about
+        # this item's own fix. What the fix actually changes is the RESOLVER's own
+        # candidate set for the "photo" token - two matches (Product Photos AND Shipment
+        # Line Photo) without the scoping, one WITH it - so pin that directly, on the
+        # resolver's own `resolutions`, which is what gate.py's non-product branch reads.
+        photo_resolution = next(r for r in gate.get("resolutions", []) if r.get("token") == "photo")
+        photo_matches = photo_resolution.get("matches") or []
+        assert len(photo_matches) == 1, (
+            "the RESOLVER itself must return exactly one candidate for \"photo\" once "
+            "domain-scoped - two candidates (Product Photos AND Shipment Line Photo) is "
+            f"the pre-fix shape, and gate.py's own silent pick can land on either by row "
+            f"order regardless of this test's other assertions: {photo_matches!r}"
+        )
+        assert photo_matches[0].get("canonical_code") == "Product Photos", photo_matches
+
+
     def test_product_resolves_exact_and_send_attachments_is_reached(
         self, session_factory, stub_parser, stub_access, system_settings_row, monkeypatch
     ) -> None:

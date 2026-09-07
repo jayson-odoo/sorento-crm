@@ -546,6 +546,12 @@ DIVERGENCES: list[Divergence] = [
             # over a `suggest_offer` roster is merged through `apply_dym_pick` instead of
             # replacing the scope. n8n has no such arm either.
             ("output", "suggest_offer_pick_merged"),
+            # Console pass 5, item B2 (H80/AC-829): stamped by
+            # `resolve_gate.resolve_bare_reply_under_member_offer` when a bare reply under
+            # an open member_offer resolved against the RESOLVER and replaced a half of
+            # the carried pair. Same class as the five above - a key no capture can
+            # contain, because `sub-resolve-and-gate` has no equivalent arm at all.
+            ("output", "bare_member_offer_entity_resolved"),
         ),
     ),
 ]
