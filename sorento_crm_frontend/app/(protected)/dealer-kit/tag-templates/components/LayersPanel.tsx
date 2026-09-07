@@ -57,7 +57,6 @@ import {
   panelRows,
   type ReparentTarget,
 } from '@/lib/dealer-kit/canvas-geometry';
-import { ScrollArea } from '@/components/ui/scroll-area';
 
 function layerIcon(type: TagLayerType) {
   switch (type) {
@@ -193,7 +192,15 @@ export function LayersPanel({
           Layers
         </span>
       </div>
-      <ScrollArea className="flex-1">
+      {/* A plain overflow container, not the shared `ScrollArea` (AC-S4-3
+          review, #720): Radix wraps its Viewport's children in an inline
+          `display: table` div (sized to CONTENT, min-width: 100% only), so
+          a row's own `flex-1 min-w-0 truncate` name never actually gets
+          squeezed - the table cell just grows to fit it, and only the
+          panel's OWN width ever clips anything, at whatever happens to be
+          rightmost. Same reasoning `StockDebtClient.tsx` already uses for a
+          pinned grid column that had the identical failure mode. */}
+      <div className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden">
         <div className="p-1">
           <DndContext
             sensors={sensors}
@@ -234,7 +241,7 @@ export function LayersPanel({
             </p>
           )}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }

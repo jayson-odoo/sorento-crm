@@ -221,6 +221,35 @@ describe('TagCanvasEditor ghost pass for off-artboard layers (S4, AC-S4-1/3)', (
     ).toBeInTheDocument();
   });
 
+  it('the outside marker stays inside the Layers panel row, not clipped past it (AC-S4-3 review, #720)', () => {
+    render(<TagCanvasEditor doc={overflowingLayerDoc()} onChange={vi.fn()} />);
+
+    const marker = screen.getByTitle('Partly outside the tag, it will not print');
+    // `shrink-0`, same as the eye/lock buttons after it - none of the row's
+    // fixed-width content shrinks; only the layer name does.
+    expect(marker.className).toContain('shrink-0');
+
+    // A sibling of the truncating NAME (not nested inside it, not nested
+    // inside anything else) - both direct children of the SAME flex row, so
+    // there is one flex context deciding what shrinks and what does not.
+    const row = marker.parentElement!;
+    const name = Array.from(row.children).find((el) =>
+      el.className.includes('truncate'),
+    ) as HTMLElement;
+    expect(name).toBeTruthy();
+    expect(name.className).toContain('min-w-0');
+    expect(name.className).toContain('flex-1');
+    expect(row.className).toContain('flex');
+
+    // Radix `ScrollArea` wraps its own children in an inline
+    // `display: table` div sized to CONTENT (min-width: 100% only, no
+    // max-width) - a row's `flex-1 min-w-0 truncate` name never actually
+    // gets squeezed there, so the panel's own overflow-x just clips
+    // whatever ends up rightmost instead of letting the name shrink first.
+    // The panel is a plain overflow container now, not that primitive.
+    expect(document.querySelector('[data-radix-scroll-area-viewport]')).toBeNull();
+  });
+
   it('a fully-inside layer draws once - no ghost, no marker (AC-S4-5)', () => {
     render(<TagCanvasEditor doc={doc()} onChange={vi.fn()} />);
 
