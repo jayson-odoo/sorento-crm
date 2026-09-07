@@ -222,9 +222,20 @@ class _Builder:
         # only consumer that reads this and drops a field/summary item whose
         # key is here unless the contact's access grants the permission key.
         self.restricted_fields: dict[str, str] = {}
+        # spec_key -> registry label (A1). A SEPARATE top-level envelope key from
+        # `field_vocabulary` on purpose: that one already drives the incoming
+        # clearance/timeline projection in `output_structurer` (gated on its mere
+        # truthiness), so folding spec labels into it would misfire that whole
+        # machinery on every product spec answer, including a no-attribute ask
+        # that must show the compact "Specs:" line rather than have every keyed
+        # field stripped down to none.
+        self.spec_vocabulary: dict[str, str] = {}
 
     def restrict(self, key: str, permission: str) -> None:
         self.restricted_fields[key] = permission
+
+    def note_spec(self, key: str, label: str) -> None:
+        self.spec_vocabulary[key] = label
 
     def item(
         self,
@@ -841,23 +852,41 @@ def _promotion_products(rows: list[dict], b: _Builder) -> None:
             b.attach(a.get("attachment") or a)
 
 
+def _spec_field_value(spec: dict) -> Any:
+    """The VALUE half of "label: value unit" (the field's own label is the
+    registry label) - `_qty` compacts a numeric value the same way every other
+    quantity field does ("1.2000" -> "1.2")."""
+    value = spec.get("value")
+    val_text = _qty(value) if isinstance(value, (int, float)) else value
+    unit = spec.get("unit")
+    return f"{val_text} {unit}".strip() if _filled(unit) else val_text
+
+
 def _products(rows: list[dict], b: _Builder) -> None:
     for p in rows:
         desc = p.get("description")
-        b.item(
-            p.get("product_code"),
-            [
-                ("company_name", "Company", p.get("company_name")),
-                ("Product Code", p.get("product_code")),
-                ("Product Name", _distinct_name(p.get("product_code"), p.get("product_name"))),
-                ("Description", desc if _filled(desc) and desc != p.get("product_name") else None),
-                # Always surface price + dimensions for the products list; when the
-                # row has no value, render "Not defined" instead of dropping the line.
-                ("List Price", _money(p.get("list_price")) or "Not defined"),
-                ("Dimensions", _dims(p) or "Not defined"),
-            ],
-            discontinued=p.get("is_discontinued") is True,
-        )
+        pairs: list[tuple[Any, ...]] = [
+            ("company_name", "Company", p.get("company_name")),
+            ("Product Code", p.get("product_code")),
+            ("Product Name", _distinct_name(p.get("product_code"), p.get("product_name"))),
+            ("Description", desc if _filled(desc) and desc != p.get("product_name") else None),
+            # Always surface price + dimensions for the products list; when the
+            # row has no value, render "Not defined" instead of dropping the line.
+            ("List Price", _money(p.get("list_price")) or "Not defined"),
+            ("Dimensions", _dims(p) or "Not defined"),
+        ]
+        # A1 (AC-901/AC-902): every POPULATED spec key as its own keyed field,
+        # already ranked by the backend (rank_weight desc, then label) - this
+        # presenter does not re-sort. `output_structurer` is what decides whether
+        # to show all of them, one asked key, or the compact "Specs:" line.
+        for spec in p.get("specs") or []:
+            key = spec.get("key")
+            label = spec.get("label")
+            if not _filled(key) or not _filled(label):
+                continue
+            pairs.append((f"spec:{key}", label, _spec_field_value(spec)))
+            b.note_spec(str(key), str(label))
+        b.item(p.get("product_code"), pairs, discontinued=p.get("is_discontinued") is True)
         for a in p.get("attachments") or []:
             b.attach(a)
 
@@ -1487,6 +1516,8 @@ def present_response(tool_name: str, raw: str) -> str:
                 envelope["intro"] = _sintro
     if b.restricted_fields:
         envelope["restricted_fields"] = dict(b.restricted_fields)
+    if b.spec_vocabulary:
+        envelope["spec_vocabulary"] = dict(b.spec_vocabulary)
     # Uniform group_by (A3, AC-905/AC-906): the backend already bucketed the
     # rows into `groups: [{key, label, rows}]`; render each bucket's `rows`
     # through the SAME row->item mapping the flat list used, so a grouped

@@ -1025,6 +1025,120 @@ def _names_a_shipment(ctx: dict[str, Any]) -> bool:
     )
 
 
+#: Base (non-spec) fields kept on a product item even when `requested_attributes`
+#: narrows to one spec key - identity anchors, so "wattage of X" still says WHICH
+#: product the number belongs to.
+_PRODUCT_IDENTITY_LABELS: frozenset[str] = frozenset({"Product Code", "Company"})
+
+_SPEC_KEY_PREFIX = "spec:"
+_SPEC_SUMMARY_CAP = 8
+
+
+def _normalize_spec_word(v: Any) -> str:
+    """Lowercase, trim, collapse `_`/`-` to a space - the same normalization on
+    both sides of a spec-vocabulary match (a registry key and a customer's own
+    word disagree on separators, never on letters)."""
+    return re.sub(r"[_\-]+", " ", jsc.nullish_str(v).strip().lower()).strip()
+
+
+def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
+    """A1 (AC-901/AC-902): the product spec projection, product envelopes ONLY.
+
+    A SEPARATE branch from the clearance/incoming projection above - deliberately
+    not folded into it. That one is gated on `field_vocabulary` truthiness and
+    would, for a no-attribute ask, strip every keyed field down to the identity
+    allow-list; the compact "Specs:" line below IS the no-attribute case, so
+    reusing that gate would delete the very thing this function exists to add.
+
+    No requested_attributes: every item keeps its base fields, plus ONE synthetic
+    "Specs:" field summarising up to `_SPEC_SUMMARY_CAP` populated keys ("and N
+    more" beyond that).
+
+    With requested_attributes: only the matched spec key(s) survive per item
+    (identity fields kept, everything else - name/description/price/dimensions/
+    other specs - dropped); an asked word that matches no spec on THIS item
+    (whether or not the registry has it at all) renders "no <label> recorded for
+    <code>", using the vocabulary's label when the word matches a KNOWN registry
+    key/label, else the asked word itself.
+    """
+    vocab_raw = e.get("spec_vocabulary")
+    vocab: dict[str, str] = vocab_raw if isinstance(vocab_raw, dict) else {}
+    # word -> label, keyed by the NORMALIZED form of both the spec_key and the
+    # label - a customer asking "wattage" or "power rating" both have to reach
+    # the same registry row when the label itself is "Wattage".
+    vocab_by_norm: dict[str, tuple[str, str]] = {}  # normalized word -> (spec_key, label)
+    for key, label in vocab.items():
+        vocab_by_norm[_normalize_spec_word(key)] = (key, label)
+        vocab_by_norm[_normalize_spec_word(label)] = (key, label)
+
+    asked_norms = [_normalize_spec_word(a) for a in req_attrs if jsc.nullish_str(a).strip()]
+    asked_norms = [a for a in asked_norms if a]
+
+    for it in e.get("items") or []:
+        if not jsc.truthy(it) or not isinstance(jsc.get(it, "fields"), list):
+            continue
+        fields: list[dict[str, Any]] = it["fields"]
+        code = None
+        for f in fields:
+            if isinstance(f, dict) and f.get("label") == "Product Code":
+                code = f.get("value")
+                break
+        base = [
+            f
+            for f in fields
+            if not (isinstance(f, dict) and jsc.js_string(f.get("key") or "").startswith(_SPEC_KEY_PREFIX))
+        ]
+        spec_fields = [
+            f
+            for f in fields
+            if isinstance(f, dict) and jsc.js_string(f.get("key") or "").startswith(_SPEC_KEY_PREFIX)
+        ]
+
+        if not asked_norms:
+            # No attribute asked: base fields untouched, plus the compact summary.
+            if spec_fields:
+                shown = spec_fields[:_SPEC_SUMMARY_CAP]
+                remainder = len(spec_fields) - len(shown)
+                summary = ", ".join(f"{f.get('label')}: {f.get('value')}" for f in shown)
+                if remainder > 0:
+                    summary += f" and {remainder} more"
+                it["fields"] = base + [{"key": "specs_summary", "label": "Specs", "value": summary}]
+            continue
+
+        # An attribute was asked: identity fields + ONLY the matched spec keys.
+        kept_base = [
+            f for f in base if isinstance(f, dict) and f.get("label") in _PRODUCT_IDENTITY_LABELS
+        ]
+        spec_by_norm_key: dict[str, dict[str, Any]] = {}
+        for f in spec_fields:
+            raw_key = jsc.js_string(f.get("key") or "")[len(_SPEC_KEY_PREFIX):]
+            spec_by_norm_key[_normalize_spec_word(raw_key)] = f
+            spec_by_norm_key[_normalize_spec_word(f.get("label"))] = f
+
+        matched: list[dict[str, Any]] = []
+        misses: list[dict[str, Any]] = []
+        seen_field_ids: set[int] = set()
+        for norm in asked_norms:
+            hit = spec_by_norm_key.get(norm)
+            if hit is not None:
+                if id(hit) not in seen_field_ids:
+                    matched.append(hit)
+                    seen_field_ids.add(id(hit))
+                continue
+            # Not on THIS product - name it with the registry label when the word
+            # matches a known key/label, else the asked word itself.
+            vocab_hit = vocab_by_norm.get(norm)
+            label = vocab_hit[1] if vocab_hit else jsc.js_string(req_attrs[asked_norms.index(norm)])
+            misses.append(
+                {
+                    "key": f"spec_miss:{norm}",
+                    "label": label,
+                    "value": f"no {label.lower()} recorded for {jsc.js_string(code)}",
+                }
+            )
+        it["fields"] = kept_base + matched + misses
+
+
 def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
     """The MCP render envelope becomes a WhatsApp message. Deterministic, no LLM (H7).
 
@@ -1079,6 +1193,13 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         if isinstance(semantic_input.get("requested_attributes"), list)
         else []
     )
+
+    # A1 (AC-901/AC-902): the product spec projection, gated on the envelope's OWN
+    # result_type - never on `field_vocabulary`/`spec_vocabulary` truthiness, so a
+    # product with zero derived specs (no `spec_vocabulary` at all) still gets the
+    # plain today's-four-fields answer rather than being skipped by accident.
+    if jsc.js_string(e.get("result_type") or "") == "products":
+        _project_product_specs(e, req_attrs)
 
     # H46: CONTAINS the sentinel, not IS it. `contracts.is_timeline` is the one declaration
     # (S6a put it there for exactly this consumer); re-deriving it here is what let a

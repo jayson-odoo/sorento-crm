@@ -368,6 +368,30 @@ def test_pipeline_summary_absent_on_so_outstanding_bucket_own_summary():
     assert "summary_items" not in out
 
 
+def test_products_specs_render_as_keyed_fields_ranked_by_backend_order():
+    out = env("crm_master_products_list", {
+        "data": [{
+            "product_code": "SRTWC8517",
+            "specs": [
+                {"key": "thickness", "label": "Thickness", "value": 1.2, "unit": "mm", "rank_weight": 5.0},
+                {"key": "wattage", "label": "Wattage", "value": 60, "unit": "W", "rank_weight": 3.0},
+            ],
+        }],
+    })
+    fields = out["items"][0]["fields"]
+    keyed = [f for f in fields if f.get("key", "").startswith("spec:")]
+    assert [f["label"] for f in keyed] == ["Thickness", "Wattage"]
+    assert keyed[0]["value"] == "1.2 mm"
+    assert keyed[1]["value"] == "60 W"
+    assert out["spec_vocabulary"] == {"thickness": "Thickness", "wattage": "Wattage"}
+
+
+def test_products_no_specs_key_no_vocabulary():
+    out = env("crm_master_products_list", {"data": [{"product_code": "SRTWC8517"}]})
+    assert "spec_vocabulary" not in out
+    assert not any(f.get("key", "").startswith("spec:") for f in out["items"][0]["fields"])
+
+
 def test_purchase_orders_placed_renders_fields_and_restricts_supplier():
     out = env("crm_procurement_purchase_orders_placed_list", {
         "data": [{

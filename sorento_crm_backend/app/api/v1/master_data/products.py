@@ -65,25 +65,41 @@ def _normalize_entities(raw: Optional[list[str]]) -> Optional[list[str]]:
     return out or None
 
 
-def _with_specifications(service: ProductService, result: dict) -> JSONResponse:
-    """The listing page, each row carrying its derived specs.
+def _with_specs_and_or_specifications(
+    service: ProductService,
+    result: dict,
+    *,
+    include_specifications: bool,
+    include_specs: bool,
+) -> JSONResponse:
+    """The listing page, each row carrying `specifications` and/or `specs`.
 
     Serialized through `ListResponse[ProductResponse]` BY HAND and returned as a
     raw response, because the declared `response_model` drops any key it does not
-    declare - the standing gotcha. Declaring the field on the schema instead
-    would emit `"specifications": null` on every row for every caller that never
-    asked, which is exactly the byte-for-byte change this opt-in exists to avoid.
+    declare - the standing gotcha. Declaring the fields on the schema instead
+    would emit them as `null` on every row for every caller that never asked,
+    which is exactly the byte-for-byte change these two opt-ins exist to avoid.
 
-    The field set is otherwise identical: the same model does the serializing,
-    this only adds one key per row.
+    Two separate fields on purpose - they answer different questions:
+    `specifications: {values, rendered_text, sources}` is a sentence for a human
+    editing the catalogue (`include_specifications`, existing); `specs:
+    [{key, label, value, unit, rank_weight}]` is the RANKED LIST the chatbot
+    presenter walks to build one field per populated key (`include_specs`, A1 -
+    chatbot-growth-r1, AC-901). A caller can ask for either, both, or neither;
+    asking for one never changes what the other returns.
     """
     body = ListResponse[ProductResponse].model_validate(result).model_dump(mode="json")
     rows = result.get("data") or []
-    by_product = service.specifications_for_products([str(row.id) for row in rows])
+    ids = [str(row.id) for row in rows]
+    specifications_by_product = service.specifications_for_products(ids) if include_specifications else {}
+    specs_by_product = service.spec_list_for_products(ids) if include_specs else {}
     for serialized, row in zip(body.get("data") or [], rows):
-        # Present-but-null when nothing has been derived: absence of data is a
-        # fact the caller should be able to read, not a key it has to miss.
-        serialized["specifications"] = by_product.get(str(row.id))
+        if include_specifications:
+            # Present-but-null when nothing has been derived: absence of data is a
+            # fact the caller should be able to read, not a key it has to miss.
+            serialized["specifications"] = specifications_by_product.get(str(row.id))
+        if include_specs:
+            serialized["specs"] = specs_by_product.get(str(row.id)) or []
     return JSONResponse(content=body)
 
 
@@ -142,6 +158,16 @@ def get_products(
             "`specifications: {values, rendered_text, sources}`, or null when the "
             "product has no derived row. Off by default - the response is "
             "unchanged for every caller that does not ask."
+        ),
+    ),
+    include_specs: bool = Query(
+        False,
+        description=(
+            "Attach each row's derived product specs as a RANKED LIST: "
+            "`specs: [{key, label, value, unit, rank_weight}]`, only populated keys, "
+            "ordered by rank_weight desc then label. `[]` when the product has none. "
+            "Off by default - the response is unchanged for every caller that does "
+            "not ask. Distinct from `include_specifications` (see that field)."
         ),
     ),
     sort: Optional[str] = Query("created_at"),
@@ -205,8 +231,13 @@ def get_products(
         if isinstance(result, dict) and result.get("alternatives"):
             from fastapi.encoders import jsonable_encoder
             return JSONResponse(content=jsonable_encoder(result))
-        if include_specifications and isinstance(result, dict):
-            return _with_specifications(service, result)
+        if (include_specifications or include_specs) and isinstance(result, dict):
+            return _with_specs_and_or_specifications(
+                service,
+                result,
+                include_specifications=include_specifications,
+                include_specs=include_specs,
+            )
         return result
     except Exception as e:
         elapsed_ms = (time.perf_counter() - started) * 1000

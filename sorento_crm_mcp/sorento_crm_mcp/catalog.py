@@ -73,6 +73,11 @@ CATALOG: tuple[ToolSpec, ...] = (
             "spec sentence) and `sources` (per key: derived | human | category, i.e. where the "
             "value came from). Null on a product with no derived specs, which means 'not recorded', never "
             "'does not have it'. Default false; omit it for a plain price/dimension listing.\n\n"
+            "SPEC LIST (A1, chatbot-growth-r1): `include_specs` (always sent by the render presenter) adds "
+            "`specs: [{key, label, value, unit, rank_weight}]` - only populated keys, ordered by "
+            "rank_weight desc then label. Distinct from `include_specifications` above (this is the "
+            "ranked-list shape the render presenter appends as fields; that one is the sentence/values "
+            "block for a catalogue editor).\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
@@ -87,7 +92,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             # Declared, not passed through: the compiled tool builds its signature
             # from THIS tuple, so a param missing here never reaches the backend
             # however well the description documents it.
-            "include_specifications",
+            "include_specifications", "include_specs",
             "sort", "dir",
             "contact_id", "space_id",
         ),

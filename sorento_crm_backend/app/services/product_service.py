@@ -611,6 +611,56 @@ class ProductService:
             for row in rows
         }
 
+    def spec_list_for_products(self, product_ids: List[str]) -> dict:
+        """A1 (chatbot-growth-r1, AC-901/AC-902): the spec block as a RANKED LIST,
+        `{product_id: [{key, label, value, unit, rank_weight}, ...]}`, ordered by
+        `rank_weight` desc then `label` - the shape the MCP presenter needs to build
+        one field per populated key AND its own synonym-matched projection, neither
+        of which the `values`-dict shape `specifications_for_products` returns can
+        do (no label, no unit, no ordering).
+
+        Only POPULATED keys - a key present in the registry but not derived for this
+        product is simply absent from its list, same "absence is a fact" rule as
+        `specifications_for_products`.
+        """
+        from app.models.product_spec import ProductSpecifications, ProductSpecRegistry
+
+        ids = [str(pid) for pid in product_ids if pid]
+        if not ids:
+            return {}
+
+        rows = (
+            self.db.query(ProductSpecifications)
+            .filter(ProductSpecifications.product_id.in_(ids))
+            .all()
+        )
+        if not rows:
+            return {}
+
+        registry = {r.spec_key: r for r in self.db.query(ProductSpecRegistry).all()}
+
+        out: dict[str, list[dict]] = {}
+        for row in rows:
+            specs: list[dict] = []
+            for key, entry in (row.values or {}).items():
+                if not isinstance(entry, dict) or entry.get("value") is None:
+                    continue
+                reg = registry.get(key)
+                if reg is None:
+                    continue
+                specs.append(
+                    {
+                        "key": key,
+                        "label": reg.label,
+                        "value": entry["value"],
+                        "unit": entry.get("unit") or reg.unit,
+                        "rank_weight": float(reg.rank_weight) if reg.rank_weight is not None else 1.0,
+                    }
+                )
+            specs.sort(key=lambda s: (-s["rank_weight"], s["label"]))
+            out[str(row.product_id)] = specs
+        return out
+
     def _attach_product_alternatives(self, payload: dict, input_code: Optional[str]) -> None:
         """Attach trigram/graph sibling-product alternatives to an empty listing.
 

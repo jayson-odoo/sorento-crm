@@ -149,6 +149,10 @@ TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
     # keep or drop per contact - a caller that wants the pre-A2 shape passes
     # include_sellable=false explicitly (still possible, just no longer default).
     "crm_inventory_stock_balance_list": {"include_sellable": "true"},
+    # A1 (chatbot-growth-r1): the presenter always asks for the ranked spec list
+    # so a spec question ("SRTWC8517 spec", "wattage of X") can be answered from
+    # THIS tool - no separate spec tool exists in the catalog.
+    "crm_master_products_list": {"include_specs": "true"},
 }
 
 # Tools whose responses are blocked / row-filtered to ACTIVE promotions only.
