@@ -324,3 +324,15 @@ with `po_line_id` set and `source_system` NULL (`spo_conversion_service._write_a
   NULL-`po_line_id` row and stays a candidate until stamped `crm_spo`; on a first push it would be
   superseded with links, shipment, zone, uom, rejected and notes carried, losing only its row id
   and `created_by`. Accepted.
+
+- **AC-X55 [BE][T]** (reviewer KV, mixed-writer document) Row A keyed by warehouse W (NULL source, no
+  location, 10 / 10 closed) and row B keyed by location code equal to W's code (`scm_upload`,
+  5 / 5 closed) for the same product on one SPO; a first push with ONE line for W qty 15. Exactly
+  one new line is created (carrying 10 from A), B is kept and closed, the verdict is `created`
+  with `lines.superseded 1`, and no `uq_spo_allocations_company_source_ref` conflict occurs.
+  Removing the claimed-line guard must turn this red.
+
+- **Named residual (D25c, reviewer):** rows are indexed under one key, lines under both, so an
+  incoming line whose warehouse code resolves to no warehouse cannot match a warehouse-keyed row
+  (unreachable on measured data: every AutoCount row carries a warehouse). Symmetrising would
+  reintroduce two groups claiming one row. Accepted.
