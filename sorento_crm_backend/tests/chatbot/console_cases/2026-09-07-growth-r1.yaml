@@ -405,18 +405,14 @@ cases:
   #     WHERE c.customer_name ILIKE '%hanlim%' GROUP BY 1,2 ORDER BY 3 DESC;
   #   -> HANLIM TRADING SDN BHD [A/C I] 121 DOs (Sorento), and a Mocha ledger with rows too.
   #
-  # MEASURED RED for a reason this lane does not own. Run console-check-1788803384 (turn
-  # 11932963, pinned to v18): the parser emits business_query / order / check_order on its
-  # own, but `_tool_pick` chose `crm_order_analytics` (0.497), which can never be answered
-  # (3b took it out of the pool). Run console-check-1788803959 (turn 1cd826a0, after 3b):
-  # the pick is now `..._orders_by_product_list` (0.485) over `..._orders_list` (0.466)
-  # with `has_product: false` - the by-product tool REQUIRES a product narrower and
-  # answers an empty page without one, so the lane still says "no order matched" and
-  # offers escalation. Remove the marker when a customer-only order ask reaches the
-  # orders list.
+  # WAS RED TWICE for reasons this case measured on its way in: `crm_order_analytics` won
+  # the pick (0.497) and could never be answered (3b took it out of the pool), then the
+  # by-product tool won (0.485) with no product narrower and answered an empty page (item 7
+  # drops it from a customer-only order pool). XPASS on console-check-1788805573, marker
+  # removed: the reply is the orders list ("Here are the orders I found. 1. *Order Number:*
+  # 202607-3796 ...").
   - name: owner 8 Sep - a delivery word plus a name over an escalate offer is an order ask
     cold: true
-    expected_red_until: by-product tool never picked without a product narrower (3b follow-up, 8 Sep 2026)
     turns:
       - text: "check stock C-FH14"
         expect:

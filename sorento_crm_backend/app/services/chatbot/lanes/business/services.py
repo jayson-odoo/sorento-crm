@@ -266,6 +266,36 @@ def _tool_similarity(tool: dict[str, Any]) -> float:
         return float("-inf")
 
 
+_ORDER_DOMAIN = "order"
+_ORDERS_BY_PRODUCT_TOOL = "crm_order_management_orders_by_product_list"
+
+
+def drop_by_product_without_product(
+    tools: list[dict[str, Any]], *, domain: Any, has_product: bool | None
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Item 7 (8 Sep 2026): a customer-only ORDER ask cannot use the by-product tool.
+
+    Measured on turns 3a56a48c / 0c171511 / 8d69aa55 / 11932963 / 1cd826a0 ("delivery to
+    hanlim"): all 15 HANLIM customers resolved into `customer_ids`, but the pick was
+    `crm_order_management_orders_by_product_list` (0.485 against the orders list's
+    0.466-0.473) with `has_product: false`. That route REQUIRES a product narrower
+    (`orders.py` `has_product_narrower`) and answers an EMPTY page without one, so a
+    customer with 120+ orders read "no order matched these".
+
+    Returns `(kept, dropped_names)`. Applies ONLY when the pool is the order domain and
+    the turn resolved NO product (`has_product is False` - `None` means the lane could
+    not tell and the pool is left alone); every other pool is returned as the same
+    object, untouched. The same CRM-policy seam as `_collapse_incoming_shipments`
+    (F4), applied by the lane between `select_tool` and `tool_filter` so the ported
+    node keeps deciding by similarity over a pool that is already final.
+    """
+    if domain != _ORDER_DOMAIN or has_product is not False:
+        return tools, []
+    kept = [t for t in tools if t.get("name") != _ORDERS_BY_PRODUCT_TOOL]
+    dropped = [t["name"] for t in tools if t.get("name") == _ORDERS_BY_PRODUCT_TOOL]
+    return (kept, dropped) if dropped else (tools, [])
+
+
 def _collapse_incoming_shipments(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Rename `crm_incoming_stock_shipments` to `crm_incoming_stock_list` in place, keeping
     its similarity and recording `collapsed_from` on the renamed candidate.

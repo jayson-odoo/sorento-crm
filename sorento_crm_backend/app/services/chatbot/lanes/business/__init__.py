@@ -27,7 +27,11 @@ import time
 from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import resolve_gate
-from app.services.chatbot.lanes.business.services import FetchServices, ResolveGateServices
+from app.services.chatbot.lanes.business.services import (
+    FetchServices,
+    ResolveGateServices,
+    drop_by_product_without_product,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -294,14 +298,20 @@ def run_fetch(
         logger.warning("chatbot: tool search did not run", exc_info=True)
         return _error_fragment(f"tool search failed: {exc}")
 
-    pick = fetch_mod.tool_filter(
-        candidates,
-        has_product=(
-            any(isinstance(e, dict) and e.get("entity_type") == "product" for e in entities)
-            if isinstance(entities, list)
-            else None
-        ),
+    has_product = (
+        any(isinstance(e, dict) and e.get("entity_type") == "product" for e in entities)
+        if isinstance(entities, list)
+        else None
     )
+    # Item 7 (8 Sep 2026): a customer-only order ask never reaches the by-product tool -
+    # `services.drop_by_product_without_product` (the F4 policy seam; a no-op on every
+    # other pool). Recorded on `_tool_pick` so the trace says what the pool lost and why.
+    candidates, dropped_no_product = drop_by_product_without_product(
+        candidates, domain=domain, has_product=has_product
+    )
+    pick = fetch_mod.tool_filter(candidates, has_product=has_product)
+    if dropped_no_product and pick.items:
+        pick.items[0]["json"].setdefault("_tool_pick", {})["dropped_no_product"] = dropped_no_product
     if pick.outcome == "not_found":
         # H11: zero tools is an OUTCOME, not an empty turn. The engine gets something to
         # say rather than a fragment that looks like a lane which never ran.
