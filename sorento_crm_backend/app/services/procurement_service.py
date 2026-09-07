@@ -302,20 +302,28 @@ def _is_live_group_member(allocation) -> bool:
     """Whether this AutoCount line takes part in its group's recompute (D28c,
     AC-X41).
 
-    Two exclusions, one predicate, because both are the same statement: the
-    line is no longer demand this system may move a receipt onto.
+    Three exclusions, one predicate, because all three are the same statement:
+    the line is no longer demand this system may move a receipt onto.
 
+    - RETIRED (`retired_at` set, D28d): the ESB has stopped naming it, by
+      absence in a re-push of the same DocKey or because the document was
+      re-created under a new one. This is the only one of the three that a
+      `closed` + `fully_received` row can carry, and it is what tells a
+      retired line from a live fully received one.
     - `cancelled`: covers no demand by definition.
     - closed for a reason OTHER than a receipt (`closed` with `receipt_status`
-      anything but `fully_received`): retired by the leftover sweep, or by a
-      cancelled document. A recompute must neither give it a share nor write
-      to it at all, or a receipt would revive demand AutoCount itself retired
-      (and `_write_received`'s reopen would fire on it).
+      anything but `fully_received`): retired by the leftover sweep before
+      D28d existed, or by a cancelled document. A recompute must neither give
+      it a share nor write to it at all, or a receipt would revive demand
+      AutoCount itself retired (and `_write_received`'s reopen would fire on
+      it).
 
-    A line closed BY a receipt (`closed` + `fully_received`) IS live: the
-    receipt is the only reason it is closed, so if that receipt goes the line
-    must come back (AC-X35).
+    A line closed BY a receipt (`closed` + `fully_received`) and still named
+    by the ESB IS live: the receipt is the only reason it is closed, so if
+    that receipt goes the line must come back (AC-X35).
     """
+    if getattr(allocation, "retired_at", None) is not None:
+        return False
     line_status = (allocation.line_status or "").strip().lower()
     receipt_status = (allocation.receipt_status or "").strip().lower()
     if line_status in _CANCELLED_WORDS or receipt_status in _CANCELLED_WORDS:
@@ -323,6 +331,18 @@ def _is_live_group_member(allocation) -> bool:
     if line_status == "closed" and receipt_status != "fully_received":
         return False
     return True
+
+
+def _spo_allocation_group_key(allocation) -> tuple:
+    """The `(company, spo_number, product, location)` key an AutoCount line
+    shares its receipt over (D28a). One definition, used both to visit a group
+    once and to see which groups a release touched (D28d)."""
+    return (
+        str(allocation.company_id),
+        _spo_match_key(allocation.spo_number),
+        str(allocation.product_id),
+        _spo_group_location(allocation.location_code),
+    )
 
 
 def _spo_group_location(location_code: Optional[str]) -> Optional[str]:
@@ -4167,6 +4187,12 @@ class PickingHeaderService:
                 SPOAllocation.spo_number == alloc.spo_number,
                 SPOAllocation.product_id == alloc.product_id,
                 SPOAllocation.source_system == shipping_order_rules.AUTOCOUNT_SOURCE_SYSTEM,
+                # D28d: a retired line is not a member of anything. It is
+                # closed and otherwise identical to a live fully received one,
+                # which is how a retired DocKey's rows rejoined the new
+                # DocKey's group, took a Seq-order share of its GRN and
+                # reopened when that GRN was deleted.
+                SPOAllocation.retired_at.is_(None),
             )
             .all()
         )
@@ -4175,6 +4201,12 @@ class PickingHeaderService:
             for row in rows
             if _spo_match_key(row.spo_number) == target_key
             and _spo_group_location(row.location_code) == location
+            # Compared in Python too (AC-X47): the SQL predicate above is an
+            # index probe, and every OTHER component of the key is re-checked
+            # here - a UUID that compares equal in SQL but not as a string
+            # (or a driver that hands back a different type) must not slip
+            # into a group whose receipt it would then share.
+            and str(row.product_id) == str(alloc.product_id)
         ]
         if not members:
             return [alloc]
@@ -4187,7 +4219,7 @@ class PickingHeaderService:
         return members
 
     def _sync_group_received(
-        self, members: list[SPOAllocation], *, released: set
+        self, members: list[SPOAllocation], *, released: set, group_released: bool = False
     ) -> None:
         """D28a/D28c: one AutoCount group's approved picking total over its
         lines, floored per line by what a DECLARER stated for it.
@@ -4242,7 +4274,11 @@ class PickingHeaderService:
             .first()
             is not None
         )
-        if not has_approved_line and not released_ids:
+        if not has_approved_line and not released_ids and not group_released:
+            # D28's ownership gate. `group_released` (D28d) is the third way
+            # in: the GRN just deleted pointed at a RETIRED line of this
+            # group, which is no longer a member but whose receipt these
+            # lines were sharing.
             return
 
         computed = self.get_computed_received_map(member_ids)
@@ -4298,21 +4334,39 @@ class PickingHeaderService:
         released = {str(value) for value in (released or set())}
         shipment_ids: set = set()
         done_groups: set = set()
+        # D28d: which GROUPS a release touched, retired members included. A
+        # retired line is no longer a member of its group (it takes no share
+        # and is never written), but a GRN deleted off it is still an event
+        # for the live lines that SHARED that receipt: without this the group
+        # would fail the D28 ownership gate ("no approved line, nobody
+        # released") and a sibling would keep a share of a GRN that no longer
+        # exists - MB2 again, one row over (AC-X40's sibling).
+        released_group_keys = {
+            _spo_allocation_group_key(alloc)
+            for alloc in allocations
+            if str(alloc.id) in released
+            and (alloc.source_system or "") == shipping_order_rules.AUTOCOUNT_SOURCE_SYSTEM
+        }
         for alloc in allocations:
             if alloc.inbound_shipment_id:
                 shipment_ids.add(alloc.inbound_shipment_id)
             if (alloc.source_system or "") == shipping_order_rules.AUTOCOUNT_SOURCE_SYSTEM:
-                key = (
-                    str(alloc.company_id),
-                    _spo_match_key(alloc.spo_number),
-                    str(alloc.product_id),
-                    _spo_group_location(alloc.location_code),
-                )
+                if alloc.retired_at is not None:
+                    # D28d: the ESB no longer names this line. Nothing here
+                    # writes to it - not even when a GRN pointing at it was
+                    # just deleted and it arrives in the released set - and it
+                    # anchors no group of its own.
+                    continue
+                key = _spo_allocation_group_key(alloc)
                 if key in done_groups:
                     continue
                 done_groups.add(key)
                 members = self._autocount_group_members(alloc)
-                self._sync_group_received(members, released=released)
+                self._sync_group_received(
+                    members,
+                    released=released,
+                    group_released=key in released_group_keys,
+                )
                 for member in members:
                     if member.inbound_shipment_id:
                         shipment_ids.add(member.inbound_shipment_id)

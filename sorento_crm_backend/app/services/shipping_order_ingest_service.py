@@ -51,6 +51,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -359,6 +360,11 @@ class ShippingOrderIngestService(MasterRefResolver):
         # claim on this spo_number is a fact about the DOCUMENT, not about
         # any one reference on it, so it is checked before the ladder runs.
         self._guard_spo_number_conflict(payload)
+        # D28d: the guard has just established that any OTHER DocKey on this
+        # number is fully closed - the delete-and-recreate path. Those rows
+        # are history now, so they are retired here rather than left looking
+        # like live fully received lines of this document.
+        self._retire_other_dockey_rows(payload)
 
         # EVERYTHING is resolved before ANYTHING is written - same rule as
         # `DocumentIngestService._apply`, for the same reason: an unresolved
@@ -507,23 +513,24 @@ class ShippingOrderIngestService(MasterRefResolver):
             row.line_status = LINE_CLOSED
             counts["cancelled"] += 1
         for row in retired_refs:
-            # D28c, the FOURTH writer of `stated_received` (F2, retirement),
-            # and only for a REF row: retiring an AutoCount line FREEZES the
-            # receipt it was retired with. Without this, a line the GRN alone
-            # had fully received (stated nothing) and this push no longer
-            # names is closed above, and the day that GRN is deleted the
-            # group recompute's reopen condition fires - bringing demand
-            # AutoCount itself retired back as open supply. Recording the
-            # receipt as stated keeps the line at that figure, so it stays
-            # closed; a sibling this push DOES still name is unaffected and
-            # behaves per AC-X35. The ref-less `pool` / `already_closed`
-            # rows are deliberately NOT frozen: they carry no DtlKey, so they
+            # D28d + D28c, for a REF row only: this push no longer names the
+            # line, so it is RETIRED - marked as such (the group recompute
+            # skips a retired row entirely, so it can neither take a share of
+            # a sibling's GRN nor be reopened when one is deleted) and its
+            # receipt is FROZEN as stated (belt and braces: even if some
+            # future path did write to it, a line the GRN alone had received
+            # cannot fall below the figure it was retired with, so it stays
+            # closed). A sibling this push DOES still name is unaffected and
+            # behaves per AC-X35. The ref-less `pool` / `already_closed` rows
+            # are deliberately untouched here: they carry no DtlKey, so they
             # are not AutoCount lines and never enter the group recompute.
             if (row.source_system or "") != shipping_order_rules.AUTOCOUNT_SOURCE_SYSTEM:
                 continue
             frozen = max(int(row.stated_received or 0), int(row.quantity_received or 0))
             if frozen > 0:
                 row.stated_received = frozen
+            if row.retired_at is None:
+                row.retired_at = datetime.now(timezone.utc)
         self.db.flush()
         self._write_order_link_claims(payload)
         self.spo_numbers_touched.add(payload.spo_number)
@@ -591,6 +598,52 @@ class ShippingOrderIngestService(MasterRefResolver):
                 f"spo_number {payload.spo_number!r} is already linked to another source",
                 field_name="spo_number",
             )
+
+    def _retire_other_dockey_rows(self, payload: CanonicalShippingOrder) -> None:
+        """Retire the rows a DIFFERENT DocKey left on this `spo_number` (D28d).
+
+        Reached only after `_guard_spo_number_conflict` has passed, which means
+        every such row is CLOSED: the document was deleted and re-created under
+        a fresh DocKey, so the old key's lines are history. They must not stay
+        indistinguishable from this document's own fully received lines -
+        `_autocount_group_members` would take them back into the
+        `(product, location)` group, hand them a Seq-order share of a sibling's
+        GRN, and reopen them the day that GRN is deleted (the reviewer's 58
+        open units against a 29-unit order).
+
+        Queried explicitly because `_existing_rows` excludes them BY DESIGN
+        (it matches this DocKey, or the ref-less rows of the number) - which is
+        exactly why nothing had ever marked them. Idempotent: an existing
+        `retired_at` is left alone, and the receipt freeze only ever raises the
+        stated floor.
+        """
+        rows = (
+            self.db.query(SPOAllocation)
+            .filter(
+                SPOAllocation.company_id == self.company_id,
+                SPOAllocation.spo_number == payload.spo_number,
+                SPOAllocation.source_system == shipping_order_rules.AUTOCOUNT_SOURCE_SYSTEM,
+                SPOAllocation.source_doc_ref.isnot(None),
+                SPOAllocation.source_doc_ref != payload.source_ref,
+            )
+            .all()
+        )
+        if not rows:
+            return
+        now = datetime.now(timezone.utc)
+        for row in rows:
+            frozen = max(int(row.stated_received or 0), int(row.quantity_received or 0))
+            if frozen > 0:
+                row.stated_received = frozen
+            if row.retired_at is None:
+                row.retired_at = now
+        self.db.flush()
+        logger.info(
+            "ingest.spo_dockey_retired spo_number=%s doc_ref=%s retired=%d",
+            payload.spo_number,
+            payload.source_ref,
+            len(rows),
+        )
 
     def _existing_rows(self, payload: CanonicalShippingOrder) -> list[SPOAllocation]:
         """This document's rows: by DocKey, or by DocNo when none carries one yet."""
@@ -844,6 +897,10 @@ class ShippingOrderIngestService(MasterRefResolver):
             values["quantity_received"] = max(stored_received, int(values["quantity_received"] or 0))
         for column, value in values.items():
             setattr(row, column, value)
+        # D28d: the payload NAMES this row (a by-ref update, an adoption claim,
+        # a create), so it is live again whatever it was before - the one and
+        # only clearer of the retirement marker.
+        row.retired_at = None
         if force_closed:
             # `cancelled` (D3/D9): every line closes regardless of what is
             # still outstanding - a cancelled shipment covers no demand

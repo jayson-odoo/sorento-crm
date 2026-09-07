@@ -58,7 +58,7 @@ import argparse
 import logging
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -127,6 +127,38 @@ def _incoming_values(row: SPOAllocation) -> dict[str, Any]:
         "inbound_shipment_id": row.inbound_shipment_id,
         "line_number": row.spo_line_number,
     }
+
+
+def _retire_older_dockeys(rows: list[SPOAllocation], dry_run: bool) -> int:
+    """Mark the rows a SUPERSEDED DocKey left behind as retired (D28d).
+
+    `_newest_dockey_rows` picks one DocKey as the document AutoCount is
+    stating now and passes over the rest. Those rows are history, and until
+    they say so the group recompute keeps treating a closed, fully received
+    one as a live line: it takes a Seq-order share of the live document's GRN
+    and reopens when that GRN is deleted. The ingest stamps them on the next
+    push of the number; this stamps the corpus the sweep is already walking,
+    so production ends consistent instead of waiting for a push that may
+    never come.
+
+    Idempotent: an existing `retired_at` is left alone, and the freeze only
+    ever raises the stated floor.
+    """
+    if not rows:
+        return 0
+    now = datetime.now(timezone.utc)
+    marked = 0
+    for row in rows:
+        if row.retired_at is not None:
+            continue
+        marked += 1
+        if dry_run:
+            continue
+        frozen = max(int(row.stated_received or 0), int(row.quantity_received or 0))
+        if frozen > 0:
+            row.stated_received = frozen
+        row.retired_at = now
+    return marked
 
 
 def _newest_dockey_rows(refs: list[SPOAllocation]) -> list[SPOAllocation]:
@@ -213,11 +245,30 @@ def _apply_document(
         return None
 
     incoming_rows = _newest_dockey_rows(refs)
+    # D28d: everything the newest-DocKey choice passed over is a retired
+    # document's rows. Marked whether or not this document has a group to
+    # supersede, since the marker is about the OLD DocKey, not about the
+    # dedupe.
+    newest_ids = {str(row.id) for row in incoming_rows}
+    older_rows = [row for row in refs if str(row.id) not in newest_ids]
+    retired_marked = _retire_older_dockeys(older_rows, dry_run)
+
     plan = plan_xlsx_supersede([_incoming_values(row) for row in incoming_rows], refless)
     if not plan.groups:
         # Every candidate row is a group the newest DocKey names no line for,
-        # or one D26a refuses - this document is already settled.
-        return None
+        # or one D26a refuses - this document has nothing left to supersede.
+        if retired_marked and not dry_run:
+            db.commit()
+        if not retired_marked:
+            return None
+        return {
+            "rows_removed": 0,
+            "lines_touched": 0,
+            "links_moved": 0,
+            "groups_kept": plan.groups_kept,
+            "retired_marked": retired_marked,
+            "shipment_ids": set(),
+        }
 
     by_id = {str(row.id): row for row in refless}
     counts: dict[str, Any] = {
@@ -225,6 +276,7 @@ def _apply_document(
         "lines_touched": 0,
         "links_moved": 0,
         "groups_kept": plan.groups_kept,
+        "retired_marked": retired_marked,
         "shipment_ids": set(),
     }
 
@@ -336,6 +388,7 @@ def run(
         "lines_touched": 0,
         "links_moved": 0,
         "groups_kept": 0,
+        "retired_marked": 0,
     }
     with company_scope(db, frozenset({company_id})):
         after: Optional[str] = None
@@ -348,13 +401,20 @@ def run(
                 if counts is None:
                     continue
                 summary["documents"] += 1
-                for key in ("rows_removed", "lines_touched", "links_moved", "groups_kept"):
+                for key in (
+                    "rows_removed",
+                    "lines_touched",
+                    "links_moved",
+                    "groups_kept",
+                    "retired_marked",
+                ):
                     summary[key] += counts[key]
                 print(
                     f"  {spo_number}: xlsx rows removed {counts['rows_removed']}, "
                     f"lines touched {counts['lines_touched']}, "
                     f"links moved {counts['links_moved']}, "
-                    f"groups kept {counts['groups_kept']}"
+                    f"groups kept {counts['groups_kept']}, "
+                    f"old-DocKey rows retired {counts['retired_marked']}"
                 )
             after = numbers[-1]
             if len(numbers) < BATCH_SIZE:
@@ -412,6 +472,7 @@ def main() -> int:
         print(f"lines touched:       {summary['lines_touched']}")
         print(f"links moved:         {summary['links_moved']}")
         print(f"ref-less groups kept: {summary['groups_kept']}")
+        print(f"old-DocKey rows retired: {summary['retired_marked']}")
     except ValueError as exc:
         print(str(exc))
         return 2

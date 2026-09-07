@@ -528,6 +528,16 @@ class SPOAllocation(Base, CompanyScopedMixin):
     #: writes `max(stated_received, its share of the approved picking total)`.
     #: NULL reads as 0: every row written before this column existed stated nothing.
     stated_received = Column(Integer, nullable=True)
+    #: When the ESB stopped naming this line (spo-xlsx-supersede D28d, migration
+    #: 488). Set by the leftover sweep (a re-push of the same DocKey no longer
+    #: states it) and by the DocKey-change path (the document was re-created, so
+    #: the old DocKey's rows are history); cleared the moment a push names the
+    #: row again. Without it a retired line is indistinguishable from a live
+    #: fully received one - it rejoined its `(spo_number, product, location)`
+    #: group, took a share of a sibling's GRN, and could be REOPENED when a GRN
+    #: was deleted, showing 58 open units on a 29-unit order. The group
+    #: recompute skips a retired row entirely.
+    retired_at = Column(DateTime(timezone=True), nullable=True)
 
     inbound_shipment = relationship("InboundShipment", back_populates="spo_allocations")
     supplier = relationship("Supplier", foreign_keys=[supplier_id])

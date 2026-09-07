@@ -46,6 +46,7 @@ TransferedQty lags until the transfer is keyed there). The received guard alread
 | D25b | **No positional adoption in a supersede push** (delta security review, blocker 2). Adoption passes 1 and 2 (keyed on product + location) still run beside a supersede; pass 3 (position alone, counts agree) is skipped in any push that superseded a group, so a NULL-source CRM / n8n row can never be rewritten as an unrelated product's line. |
 | D30a | **Delete is opt-in.** `ShippingOrderIngestService(..., may_delete=False)` is the default; the route passes the resolved `.delete` grant, the dedupe script passes True explicitly. `repoint_allocation_dependants` takes `company_id` as a required keyword and flushes outside the disabled-scope read block. |
 | D28c | **Stated receipt is the floor** (reviewer round 3, MB1 / MB2). `quantity_received` alone cannot tell an ESB-stated receipt from a GRN-derived share, so a GRN delete either destroyed AutoCount's TransferedQty on the released line (MB1) or left a redistributed share stranded on a sibling with no GRN behind it, closed, invisible to reorder planning (MB2). New column `spo_allocations.stated_received` (nullable integer, NULL reads 0), written ONLY by the declarers of an AutoCount line's receipt: the ESB push (max rule), the supersede carry and the dedupe carry. The group recompute distributes the approved picking total across the non-released members in Seq order and writes each line `max(stated, share)`; a released member is written `max(stated, its own remaining picking lines)`. This replaces the D28b stored-sum floor (the stored sum was the thing that could not be trusted). The recompute reopens a line it had closed by receipt (`receipt_status fully_received`) when its receipt falls below its allocation; a `cancelled` line or one closed by the leftover sweep is never touched. Migration 488 backfills `stated_received = quantity_received` on `autocount` rows (on production those hold ESB values only: no GRN has ever pointed at an AutoCount line, they all point at the xlsx rows). |
+| D28d | **Retirement is explicit** (reviewer kill-test round 5). A line the ESB has stopped naming - by absence in a re-push of the same DocKey, or because the document was deleted and re-created under a NEW DocKey - is closed and otherwise indistinguishable from a live, fully received line, so it rejoined its `(spo_number, product, location)` group: it took a Seq-order share of a sibling's GRN and REOPENED when that GRN was deleted (58 open units against a 29-unit order). New column `spo_allocations.retired_at` (nullable timestamptz, migration 488). TWO setters: the leftover sweep, for the ref rows a re-push no longer names, alongside the D28c freeze; and the DocKey-change path, for the other DocKey's rows once `_guard_spo_number_conflict` has established they are all closed. ONE clearer: `_write_row`, on any row the payload names. The group recompute excludes a retired row from membership, from every share and from every write; a release recorded against a retired line still opens its group's gate, because the live lines were sharing that receipt. The dedupe script marks the DocKeys it passes over, so production ends consistent rather than waiting for a push that may never come. |
 | D29 | **Dedupe = the same rule, run once.** `scripts/dedupe_spo_xlsx_superseded.py --company <code> [--since <ts>] --dry-run|--apply`: for every `spo_number` holding BOTH ref-less rows AND ref rows, treat the existing ref rows (in `spo_line_number` order) as the incoming line-set and apply D26 + D27 to the ref-less rows. Per company under `company_scope`, keyset-paged, one commit per document, prints one line per document (spo_number, ref-less rows removed, lines touched, links moved, groups kept). Idempotent: a second `--apply` is a no-op. Shares the algorithm with the ingest through one function in `shipping_order_rules` / the service, never a second copy. Amended (S5, S8, nit 1): the "incoming" side is the ref rows of the NEWEST `source_doc_ref` only (a retired DocKey's rows are never a repoint target); the script calls `register_company_scope_listeners()` before opening `company_scope`; `--since` is parsed as a naive DB-local timestamp. |
 
 ## 2. Design
@@ -213,6 +214,31 @@ once; then the dedupe runs on production by the captain with `--dry-run` first.
     stored receipt, so counting those draws again for the standing lines made the group report one
     GRN twice (a retired line holding 10 with its own 10-unit GRN also handed 10 to a live
     sibling: 20 reported for one receipt).
+- Round 5 as-built, D28d (2026-09-07, coder on Opus): `retired_at` (nullable `TIMESTAMP WITH TIME
+  ZONE`) joins `stated_received` in migration 488 - both `ADD COLUMN IF NOT EXISTS`, both dropped
+  by `revert`, and the `stated_received` backfill unchanged. `retired_at` is deliberately NOT
+  backfilled: no existing row can be known retired retrospectively, and the two setters stamp it
+  the next time the document is pushed (or the dedupe walks it).
+  - Setters: the leftover sweep (ref rows, `autocount` only, alongside the freeze) and
+    `_retire_other_dockey_rows(payload)`, called right after `_guard_spo_number_conflict` because
+    that guard is what establishes the old DocKey's rows are all closed. The other DocKey's rows
+    are queried explicitly - `_existing_rows` excludes them BY DESIGN, which is exactly why
+    nothing had ever marked them. Both setters are idempotent and never overwrite an existing
+    `retired_at`. Clearer: `_write_row`, one line, so any row the payload names is live again.
+  - `_autocount_group_members` filters `retired_at IS NULL` in SQL and re-checks
+    `str(row.product_id) == str(alloc.product_id)` in Python (AC-X47);
+    `_is_live_group_member` is false for a retired row (AC-X48); and
+    `_sync_received_for_allocations` skips a retired row as a group anchor, so a retired row is
+    never written even when a GRN deleted off it puts it in the released set.
+  - ADDED beyond the ruling, and required by it: `_sync_group_received` gained
+    `group_released`. With retired rows out of membership, a GRN deleted off a RETIRED line no
+    longer put anything in the group's `released_ids`, so the D28 ownership gate ("no approved
+    line, nobody released") closed and the live sibling kept a share of a GRN that no longer
+    existed - AC-X40's own sibling assertion (drops to 0, reopens) went red. The caller now
+    computes which group KEYS a release touched, retired members included, from the allocations
+    it already holds (`_spo_allocation_group_key`, one definition shared with the visit-once
+    set), and passes that as the gate's third way in. Nothing else about the retired row changes:
+    it takes no share and is never written.
 - Scope note on D28 / D28c, documented boundary: the floor only ever over-states, never
   under-states. A carried floor on a NON-RELEASED sibling is not clawed back when the GRN behind
   the original xlsx receipt is later deleted - the carry was a statement about that line at
