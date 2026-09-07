@@ -421,6 +421,10 @@ class ShippingOrderIngestService(MasterRefResolver):
                 )
                 if guard == shipping_order_rules.GUARD_RECEIVED_LOCKED:
                     warnings.append(WARN_RECEIVED_LOCKED)
+                    # Nothing is recorded here, `stated_received` included
+                    # (D28c ruling 1): the line is refused precisely because
+                    # the push states LESS than already arrived, and the max
+                    # rule would keep the higher stored statement anyway.
                     continue
                 self._write_row(
                     row, values, force_closed,
@@ -498,9 +502,28 @@ class ShippingOrderIngestService(MasterRefResolver):
         # re-push that simply stopped naming a line this time. `already_closed`
         # (S4) rows fall through here unchanged - they were excluded only
         # from adoption CANDIDACY, not from this sweep.
-        for row in [*by_ref.values(), *pool, *already_closed]:
+        retired_refs = list(by_ref.values())
+        for row in [*retired_refs, *pool, *already_closed]:
             row.line_status = LINE_CLOSED
             counts["cancelled"] += 1
+        for row in retired_refs:
+            # D28c, the FOURTH writer of `stated_received` (F2, retirement),
+            # and only for a REF row: retiring an AutoCount line FREEZES the
+            # receipt it was retired with. Without this, a line the GRN alone
+            # had fully received (stated nothing) and this push no longer
+            # names is closed above, and the day that GRN is deleted the
+            # group recompute's reopen condition fires - bringing demand
+            # AutoCount itself retired back as open supply. Recording the
+            # receipt as stated keeps the line at that figure, so it stays
+            # closed; a sibling this push DOES still name is unaffected and
+            # behaves per AC-X35. The ref-less `pool` / `already_closed`
+            # rows are deliberately NOT frozen: they carry no DtlKey, so they
+            # are not AutoCount lines and never enter the group recompute.
+            if (row.source_system or "") != shipping_order_rules.AUTOCOUNT_SOURCE_SYSTEM:
+                continue
+            frozen = max(int(row.stated_received or 0), int(row.quantity_received or 0))
+            if frozen > 0:
+                row.stated_received = frozen
         self.db.flush()
         self._write_order_link_claims(payload)
         self.spo_numbers_touched.add(payload.spo_number)
@@ -782,6 +805,34 @@ class ShippingOrderIngestService(MasterRefResolver):
         values = dict(values)
         values.pop("line_number", None)
         if "quantity_received" in values:
+            # D28c: the DECLARED receipt, recorded before the clamp below and
+            # from the DECLARED figure only. This is AutoCount's own
+            # TransferedQty on an ordinary push, and the group's carried share
+            # on a supersede (the caller has already folded the carry into
+            # `quantity_received` by then, which is what makes the carry a
+            # statement too). It must never pick up a GRN-derived stored
+            # value, which is the whole reason the column exists - so it is
+            # read from `values`, not from the clamped result.
+            #
+            # Same MAX rule as `quantity_received` (D26): a re-push stating a
+            # LOWER TransferedQty never lowers the floor, because a receipt
+            # that physically arrived does not un-arrive. The by-ref update
+            # path refuses such a line outright (`received_guard` ->
+            # `received_locked` -> `continue`), so nothing is recorded there
+            # at all, which is the same answer the max rule would give.
+            declared = int(values["quantity_received"] or 0)
+            stored_stated = int(getattr(row, "stated_received", 0) or 0)
+            stated = max(stored_stated, declared)
+            if stated > 0:
+                # Only a POSITIVE statement is recorded. NULL reads 0
+                # everywhere (D28c ruling 4), so writing a 0 would say
+                # nothing extra while making an ESB-written row differ from
+                # an xlsx-written one on a column neither has declared
+                # anything on (the parity comparison in
+                # tests/test_ingest_parity_s3_shipping_orders.py reads every
+                # column literally). The max rule means this can never lower
+                # an existing figure either.
+                values["stated_received"] = stated
             # Security review (blocker 1), belt-and-suspenders on EVERY caller
             # of this method: `quantity_received` can never regress below what
             # the row already shows, even if some future path calls this

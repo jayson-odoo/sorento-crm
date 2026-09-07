@@ -518,6 +518,16 @@ class SPOAllocation(Base, CompanyScopedMixin):
     #: to a held `InboundShipment` - `inbound_shipment_id` is the resolved
     #: link, this is the raw fact so a later shipment can still be relinked.
     container_number = Column(String(100), nullable=True)
+    #: The receipt a DECLARER stated for this line, as opposed to the one a GRN
+    #: proves (spo-xlsx-supersede D28c, migration 488). Written only by AutoCount's
+    #: own `qty_received` (TransferedQty) on a push and by the supersede / dedupe
+    #: carry; never by the GRN recompute, which is exactly why it exists:
+    #: `quantity_received` alone cannot say whether a figure was stated or derived,
+    #: so deleting a GRN either erased AutoCount's own statement or stranded a
+    #: redistributed share on a sibling with nothing behind it. The group recompute
+    #: writes `max(stated_received, its share of the approved picking total)`.
+    #: NULL reads as 0: every row written before this column existed stated nothing.
+    stated_received = Column(Integer, nullable=True)
 
     inbound_shipment = relationship("InboundShipment", back_populates="spo_allocations")
     supplier = relationship("Supplier", foreign_keys=[supplier_id])

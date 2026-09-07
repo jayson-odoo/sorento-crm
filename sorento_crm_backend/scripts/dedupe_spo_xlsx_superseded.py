@@ -238,6 +238,13 @@ def _apply_document(
             )
             if not dry_run:
                 row.quantity_received = received
+                # D28c: the carry is a STATEMENT about this line's receipt,
+                # exactly like AutoCount's own TransferedQty on a push - so it
+                # is recorded as the floor the GRN recompute may raise but
+                # never drop below. Same max rule as `quantity_received`.
+                stated = max(int(row.stated_received or 0), received)
+                if stated > 0:
+                    row.stated_received = stated
                 row.line_status = LINE_CLOSED if closed else LINE_OPEN
                 row.receipt_status = RECEIPT_FULLY_RECEIVED if closed else RECEIPT_PENDING
                 if not row.inbound_shipment_id and line_plan.inbound_shipment_id:

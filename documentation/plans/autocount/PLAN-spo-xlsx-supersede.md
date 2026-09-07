@@ -173,6 +173,52 @@ once; then the dedupe runs on production by the captain with `--dry-run` first.
   a line whose GRN was just deleted); the dedupe flushes before the repoint widens its read under
   the disabled company scope, the same structural rule the ingest already follows.
 
+- Round 4 as-built, D28c (2026-09-07, coder on Opus): `spo_allocations.stated_received`, nullable
+  INTEGER, NO server default, migration `488_spo_alloc_stated_received` on
+  `487_chatbot_warehouse_cue` (single head; the lane DB took the DDL through the migration's own
+  `apply(bind)` because that database converges by `create_all` and `alembic upgrade head` trips
+  on an older chatbot revision - the documented drift in `sorento_crm_backend/CLAUDE.md`).
+  - FOUR writers, and only these: the ESB push (`_write_row`, each line's own declared
+    `qty_received`, read BEFORE the `quantity_received` clamp so a GRN-derived stored figure can
+    never be captured as a statement), the first-push supersede carry, the dedupe carry, and
+    RETIREMENT (F2: the leftover sweep freezes a REF row's receipt as stated, so a line the GRN
+    alone had received and AutoCount stopped naming cannot be revived by a later GRN delete). The
+    GRN recompute never writes it.
+  - Only a POSITIVE statement is recorded: NULL reads 0 everywhere, so writing a 0 would say
+    nothing extra while making an ESB row differ from an xlsx row on a column neither declared
+    anything on - which `tests/test_ingest_parity_s3_shipping_orders.py` compares literally.
+  - The floor is MONOTONIC by design, exactly like `quantity_received` under `received_guard`: a
+    re-push stating a lower TransferedQty never lowers it. The supported correction for an
+    AutoCount keying error is the deletion endpoint followed by a re-push; there is no lowering
+    path and no UI for one. On the by-ref update path a refused line (`received_locked`) records
+    nothing, which is the same answer the max rule would give.
+  - `_sync_group_received`: the approved `goods_received` gate stays; a RELEASED member is written
+    `max(stated, its own approved picking lines)`; the LIVE non-released members
+    (`_is_live_group_member`: not cancelled, and not closed for any reason other than a receipt)
+    take `distribute_received(full picking sum of the non-released side, their allocated list in
+    Seq order)` and are each written `max(stated, share)`. A non-live member gets no share and no
+    write at all (AC-X41), while a receipt drawn against one still flows to the lines that are
+    standing. D28b's stored-sum floor is deleted: the stored sum was the untrustworthy figure.
+  - `_write_received(alloc, total, *, may_reopen=False)` reopens (open + pending) only when
+    `total < allocated` AND the row was `closed` + `fully_received` before the write, and only on
+    the group path. The per-allocation path for `scm_upload` / NULL-source rows is unchanged.
+  - Closed-only supersede (`may_delete=False`): the NEW AutoCount lines carry `stated_received`
+    (they are the live representation); the kept, annotated xlsx row keeps whatever it holds and
+    gets none. Its receipt already duplicated the carry before this column existed - the known
+    cost of the closed-only path, not a D28c regression.
+  - Not exposed on any API surface: `SPOAllocationResponse` exposes `quantity_received` (computed
+    on read), but nothing needs the provenance figure, so the column stays server-side.
+- Test debt, round 4:
+  `tests/test_spo_xlsx_supersede.py::TestAcX33GroupRecomputeKeepsLineStatusConsistent::
+  test_a_line_closed_by_the_leftover_sweep_is_never_reopened` seeds its closed member as `closed`
+  + `fully_received` with NO `stated_received` and no picking line, and relies on the D28b
+  stored-sum floor its own docstring names to keep it at 29. D28c deletes that floor, and that
+  seed is now the exact signature of "closed by a receipt nothing states and no GRN backs", which
+  MB2 / AC-X35 require to reopen. Either `stated_received=29` on the seed (then it is AC-X36's
+  property: a stated receipt is the floor and the line stays closed) or `receipt_status="pending"`
+  (then it is AC-X41's property: closed for a reason other than a receipt, excluded from the
+  group entirely) makes it green. Not edited by the coder (tester's file).
+
 ## 6. Reviewer round cleanups (2026-09-07, not decisions)
 
 - `sync_grn_received_to_spo`'s D28 skip is unreachable (its ids come from the header's own picking

@@ -291,6 +291,40 @@ def _spo_match_key(spo_number: Optional[str]) -> str:
     return re.sub(r"[^A-Za-z0-9]", "", str(spo_number).strip()).upper()
 
 
+#: A line nothing may write a receipt onto. There is no `cancelled`
+#: `line_status` on `spo_allocations` today - the ESB's own `cancelled`
+#: document forces `closed` instead - so the word itself is the guard for the
+#: day a writer introduces one: a cancelled line covers no demand.
+_CANCELLED_WORDS = frozenset({"cancelled", "canceled"})
+
+
+def _is_live_group_member(allocation) -> bool:
+    """Whether this AutoCount line takes part in its group's recompute (D28c,
+    AC-X41).
+
+    Two exclusions, one predicate, because both are the same statement: the
+    line is no longer demand this system may move a receipt onto.
+
+    - `cancelled`: covers no demand by definition.
+    - closed for a reason OTHER than a receipt (`closed` with `receipt_status`
+      anything but `fully_received`): retired by the leftover sweep, or by a
+      cancelled document. A recompute must neither give it a share nor write
+      to it at all, or a receipt would revive demand AutoCount itself retired
+      (and `_write_received`'s reopen would fire on it).
+
+    A line closed BY a receipt (`closed` + `fully_received`) IS live: the
+    receipt is the only reason it is closed, so if that receipt goes the line
+    must come back (AC-X35).
+    """
+    line_status = (allocation.line_status or "").strip().lower()
+    receipt_status = (allocation.receipt_status or "").strip().lower()
+    if line_status in _CANCELLED_WORDS or receipt_status in _CANCELLED_WORDS:
+        return False
+    if line_status == "closed" and receipt_status != "fully_received":
+        return False
+    return True
+
+
 def _spo_group_location(location_code: Optional[str]) -> Optional[str]:
     """The location half of the `(product, location)` group key (D28a).
 
@@ -3118,11 +3152,13 @@ class SPOAllocationService:
     #:    lines, and skipped entirely when nothing picks against it and nobody is
     #:    releasing it - that stored value was stated or carried, not computed here.
     #: 3. WRITE path, per GROUP (`_sync_group_received` for an `autocount` row): the
-    #:    group's approved picking total redistributed over its lines (D28a), but never
-    #:    below the stored sum of its non-released members (D28b's floor) - a pushed
-    #:    line-set that replaced one aggregated row shares one receipt, and a partial
-    #:    Sorento pick against one of its lines is not evidence that the rest never
-    #:    arrived.
+    #:    group's approved picking total redistributed over its lines (D28a), each line
+    #:    floored by its own `stated_received` (D28c) - a pushed line-set that replaced
+    #:    one aggregated row shares one receipt, so a partial Sorento pick against one of
+    #:    its lines is not evidence that the rest never arrived, while a share only a GRN
+    #:    produced leaves again when that GRN does. The floor is per line and comes from
+    #:    the DECLARED column, never from `quantity_received`: the stored figure cannot
+    #:    say whether it was stated or derived, which is what D28b got wrong.
     @staticmethod
     def _receipt_is_computed(allocation) -> bool:
         return getattr(allocation, "source_system", None) is None
@@ -4066,7 +4102,9 @@ class PickingHeaderService:
             is not None
         )
 
-    def _write_received(self, alloc: SPOAllocation, total: int) -> None:
+    def _write_received(
+        self, alloc: SPOAllocation, total: int, *, may_reopen: bool = False
+    ) -> None:
         """The one place a recompute writes a receipt onto an allocation.
 
         `receipt_status` AND `line_status` both come off the same test
@@ -4074,16 +4112,27 @@ class PickingHeaderService:
 
         - receipt reaches the allocation -> `closed` + `fully_received`;
         - receipt below it, row currently open -> stays `open` + `pending`;
-        - receipt below it, row already CLOSED -> stays closed. A recompute
-          is not the event that revives retired demand: that row was closed
-          by the leftover sweep, a cancelled document or a full receipt, and
-          only a real restatement of the document reopens it.
+        - receipt below it, row closed BY A RECEIPT (`closed` +
+          `fully_received`) -> reopened when `may_reopen` (D28c, AC-X35): the
+          receipt that closed it is gone, and a line reading closed with
+          nothing received is supply this system can no longer see - the exact
+          MB2 defect. Only the group path passes `may_reopen`, because only
+          there is the receipt the whole reason the line was closed.
+        - receipt below it, row closed any OTHER way (the leftover sweep, a
+          cancelled document) -> left closed. A recompute does not revive
+          demand a document retired; those rows are `scm_upload`-era anyway
+          and never reach the group path.
         """
+        closed_by_receipt = (alloc.line_status or "") == "closed" and (
+            alloc.receipt_status or ""
+        ) == "fully_received"
         alloc.quantity_received = total
         fully_received = total >= (alloc.allocated_quantity or 0)
         alloc.receipt_status = "fully_received" if fully_received else "pending"
         if fully_received:
             alloc.line_status = "closed"
+        elif may_reopen and closed_by_receipt:
+            alloc.line_status = "open"
 
     def _autocount_group_members(self, alloc: SPOAllocation) -> list[SPOAllocation]:
         """The AutoCount lines sharing this allocation's `(spo_number, product,
@@ -4140,32 +4189,45 @@ class PickingHeaderService:
     def _sync_group_received(
         self, members: list[SPOAllocation], *, released: set
     ) -> None:
-        """D28a: one AutoCount group's picking total, redistributed over its lines.
+        """D28a/D28c: one AutoCount group's approved picking total over its
+        lines, floored per line by what a DECLARER stated for it.
 
-        The group total is summed over every member and spread in
-        `spo_line_number` order through the SAME
+        The picking total is spread in `spo_line_number` order through the SAME
         `shipping_order_rules.distribute_received` the first-push supersede
         carries a receipt with (each line up to its allocated quantity,
-        remainder onto the last) - never one line's own picking total onto
-        that line alone, which is what a repointed GRN draw (D27) would
-        otherwise make of a 47-unit receipt against a 29 + 18 line pair.
+        remainder onto the last) - never one line's own picking total onto that
+        line alone, which is what a repointed GRN draw (D27) would otherwise
+        make of a 47-unit receipt against a 29 + 18 line pair.
 
-        D28's ownership rule still governs, at GROUP level: if nothing
-        APPROVED picks against any member and none is being released, the
-        stored values were stated (ESB) or carried (D26) rather than computed
-        here, and are left alone. A draft GRN's line does not open the group
-        for rewrite - it proves nothing has been received yet, and the
-        approval is the event that does.
+        D28's ownership rule governs entry, at GROUP level: if nothing
+        APPROVED picks against any member and none is being released, nothing
+        here computed the stored values and they are left alone. A draft GRN's
+        line does not open the group for rewrite - it proves nothing has been
+        received yet, and the approval is the event that does.
 
-        D28b, the FLOOR: the group is never lowered below what its
-        non-released members already hold. The redistribution runs only when
-        the approved picking sum EXCEEDS that stored sum, which is the only
-        case where the GRNs know something the stored figures do not; short of
-        that the stored figures already account for the whole picking sum
-        (they were stated by the ESB or carried by a supersede) and are left
-        exactly as they are. A RELEASED member is outside the floor and is
-        recomputed from its own remaining picking lines, so a GRN delete still
-        gives its receipt back.
+        D28c, the per-line FLOOR (this replaces D28b's stored-sum floor, which
+        used the very figure that could not be trusted): each line is written
+        `max(stated_received, its share)`, so
+
+        - AutoCount's own `TransferedQty` (and a supersede / dedupe carry,
+          which is the same kind of statement) survives a GRN delete - MB1 was
+          a released line's stated 25 being written to 0;
+        - a share that only a GRN produced leaves WITH that GRN, because
+          nothing states it - MB2 was 18 stranded on a sibling for ever.
+
+        A RELEASED member (its GRN unlinked, re-pointed or deleted) is outside
+        the distribution entirely and is written `max(stated, its own
+        remaining approved picking lines)`: a sibling's proven receipt must
+        never land on the line whose GRN was just taken away.
+
+        A member that is not LIVE (`_is_live_group_member`: cancelled, or
+        closed for any reason other than a receipt) is skipped completely - no
+        share, no write, no reopen (AC-X41). The group's approved picking
+        total is still the FULL sum over the non-released side, and it goes to
+        the live members in Seq order with the remainder on the last live
+        line: a receipt drawn against a line that has since been retired is
+        still a receipt this document took, and the lines still standing are
+        the only ones that can carry it.
         """
         member_ids = [str(member.id) for member in members]
         released_ids = released & set(member_ids)
@@ -4182,25 +4244,42 @@ class PickingHeaderService:
         )
         if not has_approved_line and not released_ids:
             return
+
         computed = self.get_computed_received_map(member_ids)
-        picking_total = sum(computed.values())
-        floor = sum(
-            int(member.quantity_received or 0)
+
+        def _stated(member: SPOAllocation) -> int:
+            # NULL reads 0: a row written before migration 488 stated nothing.
+            return int(member.stated_received or 0)
+
+        non_released = [member for member in members if str(member.id) not in released_ids]
+        released_members = [
+            member
             for member in members
-            if str(member.id) not in released_ids
-        )
-        if picking_total <= floor:
-            # The floor holds. Only a member being released moves, and it
-            # moves to what its OWN remaining picking lines prove.
-            for member in members:
-                if str(member.id) in released_ids:
-                    self._write_received(member, computed.get(str(member.id), 0))
+            if str(member.id) in released_ids and _is_live_group_member(member)
+        ]
+        live_targets = [member for member in non_released if _is_live_group_member(member)]
+
+        for member in released_members:
+            # Its OWN remaining approved picking lines, floored by what a
+            # declarer stated: a sibling's proven receipt must never land on
+            # the line whose GRN was just taken away (MB1).
+            self._write_received(
+                member,
+                max(_stated(member), computed.get(str(member.id), 0)),
+                may_reopen=True,
+            )
+
+        if not live_targets:
             return
+        # The full picking sum of the non-released side, including any drawn
+        # against a member that is no longer live - that receipt was still
+        # taken, and only the standing lines can carry it (AC-X41).
+        kept_total = sum(computed.get(str(member.id), 0) for member in non_released)
         shares = shipping_order_rules.distribute_received(
-            picking_total, [int(member.allocated_quantity or 0) for member in members]
+            kept_total, [int(member.allocated_quantity or 0) for member in live_targets]
         )
-        for member, share in zip(members, shares):
-            self._write_received(member, share)
+        for member, share in zip(live_targets, shares):
+            self._write_received(member, max(_stated(member), share), may_reopen=True)
 
     def _sync_received_for_allocations(
         self, allocations: list[SPOAllocation], *, released: Optional[set] = None
