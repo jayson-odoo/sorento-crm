@@ -33,7 +33,7 @@ from __future__ import annotations
 import logging
 import uuid
 from contextlib import contextmanager
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 from sqlalchemy import text
@@ -72,6 +72,13 @@ def _warehouse_code(env, warehouse_ref: str) -> str:
     return env.db.execute(
         text("SELECT warehouse_code FROM warehouses WHERE id = :id"), {"id": wh_id}
     ).scalar()
+
+
+def _now() -> datetime:
+    """A tz-aware timestamp for seeding `retired_at` (round 5, D28d) -
+    silently dropped by the ORM until the column exists (same trick as
+    `stated_received` in round 4); once it lands, this is a real value."""
+    return datetime.now(timezone.utc)
 
 
 def _picking_line_pointing_at(env, allocation_id: str, *, qty_picked: int = 5) -> PickingLine:
@@ -3187,3 +3194,402 @@ class TestAcX42ARetiredMembersOwnGrnIsNotRedistributed:
         assert by_id2[str(live_line.id)]["quantity_received"] == 0, by_id2
         assert by_id2[str(live_line.id)]["line_status"] == "open", by_id2
         assert by_id2[str(live_line.id)]["receipt_status"] == "pending", by_id2
+
+
+# ============================================================================ #
+# Round 5 (reviewer kill-test round, 2026-09-07, PLAN D28d retirement marker)
+# ============================================================================ #
+# Vocabulary (UAC): "retired" = `spo_allocations.retired_at IS NOT NULL`, set
+# when the ESB stops naming a line - by absence in a re-push of the same
+# DocKey (the leftover sweep) or by the document being re-created under a
+# NEW DocKey (the old DocKey's rows) - and cleared when a push names the row
+# again.
+
+
+# ============================================================================ #
+# AC-X43 (D28d DocKey change)
+# ============================================================================ #
+class TestAcX43ANewDockeyRetiresTheOldDockeysClosedRow:
+    def test_a_push_under_a_fresh_dockey_retires_the_old_dockeys_row_and_never_double_counts_open(
+        self, env
+    ):
+        """AC-X43. DocKey A's line L1 (P at L, allocated 29, received 29 by
+        a Sorento GRN only, stated NULL, closed `fully_received`); a push
+        under a FRESH DocKey B names P at L qty 29 received 0 with a NEW
+        DtlKey. After push B: L1 carries `retired_at` set and
+        `stated_received 29`; M1 (B's row) is open 0 / 29. After
+        `delete_grn` of L1's GRN: L1 still closed at 29, M1 unchanged; open
+        outstanding on the SPO is 29, never 58.
+
+        RED today: `retired_at` does not exist - the raw SQL read below
+        raises `UndefinedColumn`. Once the column lands but before the
+        DocKey-change retirement is written, L1 is simply never touched by
+        push B at all (a push under a NEW DocKey has no code path that
+        looks at another DocKey's rows), so `retired_at` stays NULL.
+        """
+        from app.services.procurement_service import PickingHeaderService
+
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        doc_a = f"{MARKER}:ACDOC:{uuid.uuid4().hex[:8]}"
+
+        l1 = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=wh_code,
+            allocated_quantity=29, quantity_received=29, line_status="closed",
+            receipt_status="fully_received", source_system="autocount",
+            source_ref=f"{MARKER}:AC1:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_a,
+            stated_received=None,
+        )
+        env.db.add(l1)
+        env.db.flush()
+
+        header = PickingHeader(
+            id=str(uuid.uuid4()), company_id=env.company_a,
+            picking_number=unique_code(MARKER), picking_type="goods_received",
+            picking_status="approved", spo_number=number,
+        )
+        env.db.add(header)
+        env.db.flush()
+        env.db.add(
+            PickingLine(
+                id=str(uuid.uuid4()), company_id=env.company_a,
+                picking_header_id=header.id, spo_allocation_id=l1.id,
+                product_id=product_id, quantity_expected=29, quantity_picked=29,
+            )
+        )
+        env.db.flush()
+        env.db.commit()
+
+        line_b = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=29, qty_received=0
+        )
+        record_b = _spo_record(
+            env, number=number, lines=[line_b], supplier_ref=env.supplier_ref
+        )
+        res = env.post(INGEST_SPO, [record_b])
+        assert res.status_code == 200, res.text
+
+        def _row(alloc_id):
+            env.db.expire_all()
+            return env.db.execute(
+                text(
+                    "SELECT quantity_received, line_status, receipt_status, "
+                    "stated_received, retired_at FROM spo_allocations WHERE id = :id"
+                ),
+                {"id": alloc_id},
+            ).mappings().first()
+
+        after_push = _row(l1.id)
+        assert after_push["retired_at"] is not None, (
+            "L1 (DocKey A's row) must be retired once a push arrives under a "
+            f"fresh DocKey naming the same product/location - got {after_push}"
+        )
+        assert after_push["stated_received"] == 29, (
+            "the DocKey-change retirement must freeze stated = max(stated, "
+            f"received) - got {after_push}"
+        )
+        assert after_push["quantity_received"] == 29, after_push
+        assert after_push["line_status"] == "closed", after_push
+
+        rows_by_ref = {r["source_ref"]: r for r in _spo_rows(env, number)}
+        m1 = rows_by_ref[line_b["source_ref"]]
+        assert m1["quantity_received"] == 0, m1
+        assert m1["line_status"] == "open", m1
+        assert m1["allocated_quantity"] == 29, m1
+
+        PickingHeaderService(env.db).delete_grn(header.id)
+
+        after_delete = _row(l1.id)
+        assert after_delete["quantity_received"] == 29, (
+            "a retired row must stay at 29 - a GRN release must never touch "
+            f"it - got {after_delete}"
+        )
+        assert after_delete["line_status"] == "closed", after_delete
+
+        m1_after = {r["source_ref"]: r for r in _spo_rows(env, number)}[
+            line_b["source_ref"]
+        ]
+        assert m1_after["quantity_received"] == 0, (
+            "M1 must be unaffected by L1's GRN release - it never shared a "
+            f"group with a retired row - got {m1_after}"
+        )
+
+        open_gap = env.db.execute(
+            text(
+                "SELECT COALESCE(SUM(allocated_quantity - quantity_received), 0) AS gap "
+                "FROM spo_allocations WHERE company_id = :c AND spo_number = :n "
+                "AND line_status != 'closed'"
+            ),
+            {"c": env.company_a, "n": number},
+        ).scalar()
+        assert int(open_gap) == 29, (
+            "open outstanding on the SPO must be 29 (M1's own gap), never 58 "
+            f"(double-counting L1's retired 29) - got {open_gap}"
+        )
+
+
+# ============================================================================ #
+# AC-X44 (D28d membership)
+# ============================================================================ #
+class TestAcX44ARetiredRowIsNotAGroupMember:
+    def test_a_retired_dockey_change_row_takes_no_share_from_a_fresh_grn_on_the_new_row(
+        self, env
+    ):
+        """AC-X44, first half. A retired row (L1 from the AC-X43 shape:
+        closed, `fully_received`, stated 29, `retired_at` set, no active
+        picking line of its own) beside M1 (open, allocated 29, same
+        group) with an approved GRN of 29 against M1 ONLY: the recompute
+        must write M1 29 closed and leave L1 untouched - a retired, fully
+        received line takes no share.
+
+        RED today: `_autocount_group_members` does not exclude a retired
+        row (the column/filter does not exist) - L1 is closed +
+        `fully_received`, which `_is_live_group_member` already treats as
+        LIVE (D28c/AC-X35), so L1 (Seq 1) absorbs the WHOLE redistribution
+        ahead of M1 (Seq 2) in `distribute_received`'s ordered algorithm
+        (L1's own allocated 29 exactly consumes the total), leaving M1 at
+        0 instead of 29.
+        """
+        from app.services.procurement_service import PickingHeaderService
+
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        doc_a = f"{MARKER}:ACDOC:{uuid.uuid4().hex[:8]}"
+        doc_b = f"{MARKER}:ACDOC:{uuid.uuid4().hex[:8]}"
+
+        l1 = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=wh_code,
+            allocated_quantity=29, quantity_received=29, line_status="closed",
+            receipt_status="fully_received", source_system="autocount",
+            source_ref=f"{MARKER}:AC1:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_a,
+            stated_received=29, retired_at=_now(),
+        )
+        m1 = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=2, product_id=product_id, location_code=wh_code,
+            allocated_quantity=29, quantity_received=0, line_status="open",
+            receipt_status="pending", source_system="autocount",
+            source_ref=f"{MARKER}:BC1:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_b,
+            stated_received=0,
+        )
+        env.db.add_all([l1, m1])
+        env.db.flush()
+
+        header = PickingHeader(
+            id=str(uuid.uuid4()), company_id=env.company_a,
+            picking_number=unique_code(MARKER), picking_type="goods_received",
+            picking_status="approved", spo_number=number,
+        )
+        env.db.add(header)
+        env.db.flush()
+        env.db.add(
+            PickingLine(
+                id=str(uuid.uuid4()), company_id=env.company_a,
+                picking_header_id=header.id, spo_allocation_id=m1.id,
+                product_id=product_id, quantity_expected=29, quantity_picked=29,
+            )
+        )
+        env.db.flush()
+        env.db.commit()
+
+        PickingHeaderService(env.db).sync_grn_received_to_spo(header.id)
+
+        env.db.expire_all()
+        rows = env.db.execute(
+            text(
+                "SELECT id, quantity_received, line_status, receipt_status "
+                "FROM spo_allocations WHERE id IN (:a, :b)"
+            ),
+            {"a": str(l1.id), "b": str(m1.id)},
+        ).mappings().all()
+        by_id = {str(r["id"]): r for r in rows}
+
+        assert by_id[str(m1.id)]["quantity_received"] == 29, (
+            "M1 must receive the full 29 its own GRN proved - a retired "
+            f"sibling must never absorb it first - got {by_id}"
+        )
+        assert by_id[str(m1.id)]["line_status"] == "closed", by_id
+        assert by_id[str(m1.id)]["receipt_status"] == "fully_received", by_id
+
+        assert by_id[str(l1.id)]["quantity_received"] == 29, (
+            f"a retired row must never be written by the group recompute - got {by_id}"
+        )
+        assert by_id[str(l1.id)]["line_status"] == "closed", by_id
+        assert by_id[str(l1.id)]["receipt_status"] == "fully_received", by_id
+
+    def test_a_retired_by_absence_at_full_receipt_row_takes_no_share_from_a_fresh_grn_on_a_sibling(
+        self, env
+    ):
+        """AC-X44, second half (the AC-X40 shape). A same-DocKey row
+        retired BY ABSENCE at FULL receipt (closed, `fully_received`,
+        stated 29, `retired_at` set - AC-X40's outcome) beside a LIVE
+        sibling (open, allocated 18) with a FRESH approved GRN of 40
+        against the sibling ONLY: the sibling must read 40 (the whole
+        total, remainder rule - it is the only LIVE member), the retired
+        row must stay untouched.
+
+        RED today for the same structural reason as the first half: a
+        closed + `fully_received` row is LIVE under D28c alone (AC-X35),
+        so without the `retired_at` exclusion the retired row (Seq 1,
+        allocated 29) absorbs 29 of the 40 ahead of the sibling (Seq 2,
+        last), leaving the sibling at 11 instead of 40.
+        """
+        from app.services.procurement_service import PickingHeaderService
+
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        doc_ref = f"{MARKER}:ACDOC:{uuid.uuid4().hex[:8]}"
+
+        retired = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=wh_code,
+            allocated_quantity=29, quantity_received=29, line_status="closed",
+            receipt_status="fully_received", source_system="autocount",
+            source_ref=f"{MARKER}:AC1:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+            stated_received=29, retired_at=_now(),
+        )
+        sibling = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=2, product_id=product_id, location_code=wh_code,
+            allocated_quantity=18, quantity_received=0, line_status="open",
+            receipt_status="pending", source_system="autocount",
+            source_ref=f"{MARKER}:AC2:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+            stated_received=0,
+        )
+        env.db.add_all([retired, sibling])
+        env.db.flush()
+
+        header = PickingHeader(
+            id=str(uuid.uuid4()), company_id=env.company_a,
+            picking_number=unique_code(MARKER), picking_type="goods_received",
+            picking_status="approved", spo_number=number,
+        )
+        env.db.add(header)
+        env.db.flush()
+        env.db.add(
+            PickingLine(
+                id=str(uuid.uuid4()), company_id=env.company_a,
+                picking_header_id=header.id, spo_allocation_id=sibling.id,
+                product_id=product_id, quantity_expected=40, quantity_picked=40,
+            )
+        )
+        env.db.flush()
+        env.db.commit()
+
+        PickingHeaderService(env.db).sync_grn_received_to_spo(header.id)
+
+        env.db.expire_all()
+        rows = env.db.execute(
+            text(
+                "SELECT id, quantity_received, line_status, receipt_status "
+                "FROM spo_allocations WHERE id IN (:a, :b)"
+            ),
+            {"a": str(retired.id), "b": str(sibling.id)},
+        ).mappings().all()
+        by_id = {str(r["id"]): r for r in rows}
+
+        assert by_id[str(sibling.id)]["quantity_received"] == 40, (
+            "the sibling must take the WHOLE 40 (remainder rule, only LIVE "
+            f"member) - a retired row must never absorb any of it - got {by_id}"
+        )
+        assert by_id[str(sibling.id)]["line_status"] == "closed", by_id
+        assert by_id[str(sibling.id)]["receipt_status"] == "fully_received", by_id
+
+        assert by_id[str(retired.id)]["quantity_received"] == 29, (
+            f"a retired row must never be written by the group recompute - got {by_id}"
+        )
+        assert by_id[str(retired.id)]["line_status"] == "closed", by_id
+
+
+# ============================================================================ #
+# AC-X45 (D28d unretire)
+# ============================================================================ #
+class TestAcX45ARowRetiredByAbsenceUnretiresWhenNamedAgain:
+    def test_a_third_push_naming_the_row_again_clears_retired_at(self, env):
+        """AC-X45. A row retired by absence (a re-push of the same DocKey
+        that omitted it) has `retired_at` NULL again once a LATER push of
+        the SAME DocKey names it again - it rejoins the group.
+
+        RED today: `retired_at` does not exist - the raw SQL read raises
+        `UndefinedColumn`. Once it exists but before the leftover sweep
+        sets it, the first assertion below (retired_at IS NOT NULL after
+        the omitting push) already fails.
+        """
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        doc_ref = f"{MARKER}:ACDOC:{uuid.uuid4().hex[:8]}"
+        dtl1 = f"{MARKER}:AC1:{uuid.uuid4().hex[:8]}"
+        dtl2 = f"{MARKER}:AC2:{uuid.uuid4().hex[:8]}"
+
+        line1 = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=wh_code,
+            allocated_quantity=29, quantity_received=0, line_status="open",
+            receipt_status="pending", source_system="autocount",
+            source_ref=dtl1, source_doc_ref=doc_ref, stated_received=0,
+        )
+        line2 = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=2, product_id=product_id, location_code=wh_code,
+            allocated_quantity=18, quantity_received=0, line_status="open",
+            receipt_status="pending", source_system="autocount",
+            source_ref=dtl2, source_doc_ref=doc_ref, stated_received=0,
+        )
+        env.db.add_all([line1, line2])
+        env.db.flush()
+        env.db.commit()
+
+        def _row(alloc_id):
+            env.db.expire_all()
+            return env.db.execute(
+                text(
+                    "SELECT line_status, retired_at FROM spo_allocations WHERE id = :id"
+                ),
+                {"id": alloc_id},
+            ).mappings().first()
+
+        # Push 2: same DocKey, omits line 1's DtlKey - the leftover sweep
+        # retires it.
+        line2_push = _spo_line(
+            env, ref=dtl2, warehouse_ref=env.warehouse_ref, product_ref=env.product_ref,
+            qty_ordered=18, qty_received=0,
+        )
+        record2 = _spo_record(
+            env, ref=doc_ref, number=number, lines=[line2_push], supplier_ref=env.supplier_ref
+        )
+        res2 = env.post(INGEST_SPO, [record2])
+        assert res2.status_code == 200, res2.text
+
+        after_retire = _row(line1.id)
+        assert after_retire["retired_at"] is not None, (
+            f"a leftover-swept AutoCount line must be retired - got {after_retire}"
+        )
+        assert after_retire["line_status"] == "closed", after_retire
+
+        # Push 3: same DocKey, names line 1's DtlKey again - it must unretire.
+        line1_push = _spo_line(
+            env, ref=dtl1, warehouse_ref=env.warehouse_ref, product_ref=env.product_ref,
+            qty_ordered=29, qty_received=0,
+        )
+        line2_push_again = _spo_line(
+            env, ref=dtl2, warehouse_ref=env.warehouse_ref, product_ref=env.product_ref,
+            qty_ordered=18, qty_received=0,
+        )
+        record3 = _spo_record(
+            env, ref=doc_ref, number=number, lines=[line1_push, line2_push_again],
+            supplier_ref=env.supplier_ref,
+        )
+        res3 = env.post(INGEST_SPO, [record3])
+        assert res3.status_code == 200, res3.text
+
+        after_unretire = _row(line1.id)
+        assert after_unretire["retired_at"] is None, (
+            "a push naming the row again must clear retired_at - it rejoins "
+            f"the group - got {after_unretire}"
+        )

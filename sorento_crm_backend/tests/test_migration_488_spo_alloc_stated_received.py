@@ -21,13 +21,14 @@ than a bare `FileNotFoundError` deep inside `importlib`.
 from __future__ import annotations
 
 import importlib.util
+import uuid
 from pathlib import Path
 
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import text
 
-from tests._pg_fixture import blank_session
+from tests._pg_fixture import blank_session, unique_code
 
 MIGRATION = (
     Path(__file__).resolve().parents[1]
@@ -91,3 +92,99 @@ def test_upgrade_adds_the_nullable_stated_received_column():
             "stated_received must be nullable - NULL reads as 0 on every "
             f"pre-migration row - got {row}"
         )
+
+
+def _product(db) -> str:
+    """The FK chain a raw insert into `spo_allocations` needs."""
+    cat, uom, pid = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    db.execute(
+        text(
+            "INSERT INTO product_categories (id, category_code, category_name) "
+            "VALUES (:i, :c, 'ZZT category')"
+        ),
+        {"i": cat, "c": unique_code("C")[:50]},
+    )
+    db.execute(
+        text("INSERT INTO units_of_measure (id, uom_code, uom_name) VALUES (:i, :c, 'Each')"),
+        {"i": uom, "c": unique_code("U")[:20]},
+    )
+    db.execute(
+        text(
+            "INSERT INTO products (id, product_code, product_name, category_id, "
+            "base_uom_id, list_price, is_active) "
+            "VALUES (:i, :c, 'ZZT product', :cat, :uom, 10, true)"
+        ),
+        {"i": pid, "c": unique_code("P")[:50], "cat": cat, "uom": uom},
+    )
+    return pid
+
+
+def test_apply_backfills_stated_received_for_autocount_rows_only_and_adds_retired_at():
+    """AC-X46 (reviewer KM). `revert(bind)` then a raw-inserted `autocount`
+    row (`quantity_received 25`) and an `scm_upload` row beside it;
+    `apply(bind)` must backfill `stated_received` 25 / NULL respectively
+    (autocount rows only, D28c), and `retired_at` must exist as a column
+    afterwards (D28d, migration 488 alongside `stated_received`).
+
+    RED today (before the coder's migration adds `retired_at` beside
+    `stated_received`): `revert(bind)` does not drop a `retired_at` column
+    at all (it never existed to begin with), and `apply(bind)` never
+    creates one, so the final `information_schema` check finds nothing.
+    Left as it found it: `revert(bind)` at the end returns the scratch
+    schema to its pre-migration shape before `blank_session()` tears down.
+    """
+    module = _load_migration()
+    with blank_session() as db:
+        module.revert(db)
+
+        product_id = _product(db)
+        ac_id, up_id = str(uuid.uuid4()), str(uuid.uuid4())
+        db.execute(
+            text(
+                "INSERT INTO spo_allocations (id, spo_number, product_id, "
+                "allocated_quantity, quantity_received, quantity_rejected, "
+                "receipt_status, line_status, source_system, synced_to_excel) "
+                "VALUES (:i, :n, :p, 29, 25, 0, 'pending', 'open', 'autocount', false)"
+            ),
+            {"i": ac_id, "n": unique_code("SPO"), "p": product_id},
+        )
+        db.execute(
+            text(
+                "INSERT INTO spo_allocations (id, spo_number, product_id, "
+                "allocated_quantity, quantity_received, quantity_rejected, "
+                "receipt_status, line_status, source_system, synced_to_excel) "
+                "VALUES (:i, :n, :p, 10, 3, 0, 'pending', 'open', 'scm_upload', false)"
+            ),
+            {"i": up_id, "n": unique_code("SPO"), "p": product_id},
+        )
+
+        module.apply(db)
+
+        rows = db.execute(
+            text(
+                "SELECT id, stated_received FROM spo_allocations WHERE id IN (:a, :b)"
+            ),
+            {"a": ac_id, "b": up_id},
+        ).mappings().all()
+        by_id = {str(r["id"]): r["stated_received"] for r in rows}
+        assert by_id[ac_id] == 25, (
+            f"the autocount row must be backfilled stated_received = quantity_received - got {by_id}"
+        )
+        assert by_id[up_id] is None, (
+            f"the scm_upload row must NOT be backfilled - got {by_id}"
+        )
+
+        retired_at_col = db.execute(
+            text(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'spo_allocations' AND column_name = 'retired_at' "
+                "AND table_schema = current_schema()"
+            )
+        ).scalar()
+        assert retired_at_col is not None, (
+            "retired_at column was not created by apply() (D28d, alongside stated_received)"
+        )
+
+        # Leave the scratch schema as found: undo this test's own apply()
+        # before `blank_session()` rolls back the outer transaction.
+        module.revert(db)
