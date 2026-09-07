@@ -353,8 +353,18 @@ class ShippingOrderIngestService(MasterRefResolver):
         ]
 
         rows = self._existing_rows(payload)
-        outcome = IngestOutcome.UPDATED if rows else IngestOutcome.CREATED
-        by_ref, pool, already_closed = self._split_rows(rows)
+        # D25: a document whose number carries no DtlKey anywhere yet is on
+        # its FIRST push, however many xlsx-era rows it already holds - and
+        # the verdict says `created`, because what lands is the AutoCount
+        # line-set, not an update of the rows the upload left behind (which
+        # are superseded below).
+        first_push = not self._has_ref_row(payload)
+        outcome = (
+            IngestOutcome.CREATED if first_push or not rows else IngestOutcome.UPDATED
+        )
+        by_ref, pool, already_closed, supersede_pool = self._split_rows(
+            rows, first_push=first_push
+        )
 
         counts = {"adopted": 0, "created": 0, "updated": 0, "deleted": 0, "cancelled": 0}
 
@@ -381,7 +391,24 @@ class ShippingOrderIngestService(MasterRefResolver):
             else:
                 unmatched.append(values)
 
-        if unmatched and pool:
+        if supersede_pool:
+            # D25/D26/D27, before adoption and instead of it: on a first push
+            # the ref-less set is REPLACED by the pushed line-set, its
+            # receipts carried per `(product, location)` group and its links
+            # moved. What comes back is the groups AutoCount named no line
+            # for, which stay ref-less and fall through to the leftover sweep
+            # below (kept, closed, links untouched).
+            pool.extend(
+                self._supersede_xlsx_rows(
+                    payload, unmatched, supersede_pool, counts, force_closed,
+                    container_number=container_number, warnings=warnings,
+                )
+            )
+        elif unmatched and pool:
+            # Adoption is the ESB-era path only (D25): a `pool` here means
+            # this number already carries a DtlKey, so its ref-less rows are
+            # single lines an earlier push has not claimed yet - not the
+            # aggregates a first push supersedes.
             self._adopt_lines(
                 unmatched, pool, counts, force_closed,
                 container_number=container_number, warnings=warnings,
@@ -523,32 +550,71 @@ class ShippingOrderIngestService(MasterRefResolver):
             or 0
         )
 
+    def _has_ref_row(self, payload: CanonicalShippingOrder) -> bool:
+        """Whether this `spo_number` already carries ANY row with a DtlKey (D25).
+
+        The first-push test is about the NUMBER's whole history in this
+        company, not about the rows `_existing_rows` matched: a ref row left
+        by a since-retired DocKey is deliberately excluded from that query
+        (S1/S2), and it is exactly the evidence that this document is no
+        longer xlsx-era. Asked as its own query for that reason rather than
+        read off `rows`.
+        """
+        return (
+            self.db.query(SPOAllocation.id)
+            .filter(
+                SPOAllocation.company_id == self.company_id,
+                SPOAllocation.spo_number == payload.spo_number,
+                SPOAllocation.source_ref.isnot(None),
+            )
+            .first()
+            is not None
+        )
+
     def _split_rows(
-        self, rows: list[SPOAllocation]
-    ) -> tuple[dict[str, SPOAllocation], list[SPOAllocation], list[SPOAllocation]]:
-        """`(by_ref, pool, already_closed)`.
+        self, rows: list[SPOAllocation], *, first_push: bool = False
+    ) -> tuple[
+        dict[str, SPOAllocation],
+        list[SPOAllocation],
+        list[SPOAllocation],
+        list[SPOAllocation],
+    ]:
+        """`(by_ref, pool, already_closed, supersede_pool)`.
 
         A second row sharing one `source_ref` cannot happen - the partial
         unique index on `(company_id, source_ref)` forbids it - so there is
-        no third "duplicate ref" bucket to defend against here.
+        no "duplicate ref" bucket to defend against here.
 
         `already_closed` (S4 review fix): a ref-less row this system already
         closed - by an earlier absence, or the deletion endpoint - is not a
         live xlsx-era adoption candidate any more; matching a NEW DtlKey onto
         it would resurrect demand that was correctly retired. It still flows
         into `_apply`'s final leftover sweep unchanged.
+
+        `supersede_pool` (D25): on a FIRST push - this `spo_number` holds no
+        ref row at all, so every row it has is the xlsx-era representation of
+        the document - the whole ref-less set, open AND closed, is superseded
+        by the AutoCount line-set instead. `pool` and `already_closed` are
+        empty for that document: neither adoption (which pairs ONE row with
+        ONE line, and an xlsx row is an AGGREGATE of N lines) nor S4's
+        exclusion can express what has to happen there. S4 still holds
+        everywhere else, which is where it was earned: once a ref row exists,
+        a closed ref-less row beside it was retired on purpose.
         """
         by_ref: dict[str, SPOAllocation] = {}
         pool: list[SPOAllocation] = []
         already_closed: list[SPOAllocation] = []
+        supersede_pool: list[SPOAllocation] = []
         for row in rows:
             if row.source_ref:
                 by_ref[row.source_ref] = row
+            elif first_push:
+                supersede_pool.append(row)
             elif row.line_status == LINE_CLOSED:
                 already_closed.append(row)
             else:
                 pool.append(row)
-        return by_ref, pool, already_closed
+        return by_ref, pool, already_closed, supersede_pool
 
     def _line_values(
         self,
@@ -670,6 +736,109 @@ class ShippingOrderIngestService(MasterRefResolver):
             )
             if not linked and warnings is not None:
                 warnings.append(WARN_CONTAINER_UNRESOLVED)
+
+    def _supersede_xlsx_rows(
+        self,
+        payload: CanonicalShippingOrder,
+        unmatched: list[dict[str, Any]],
+        supersede_pool: list[SPOAllocation],
+        counts: dict[str, int],
+        force_closed: bool,
+        *,
+        container_number: Optional[str] = None,
+        warnings: Optional[list[str]] = None,
+    ) -> list[SPOAllocation]:
+        """D25/D26/D27: the xlsx-era row set REPLACED by the pushed line-set.
+
+        Grouped by `(product_id, upper(location_code))` - the pair the upload
+        itself dedups on, and the only pair that can pair an xlsx AGGREGATE
+        row with the N AutoCount lines it stands for. Per group with an
+        incoming counterpart: the lines are created as new rows in Seq order,
+        the group's received quantity is carried across them (each up to its
+        own allocated quantity, remainder onto the last), whatever pointed at
+        the superseded rows is repointed onto the group's FIRST line, and the
+        superseded rows are then deleted.
+
+        The plan itself is `shipping_order_rules.plan_xlsx_supersede` - the
+        ONE algorithm, shared with `scripts/dedupe_spo_xlsx_superseded.py`,
+        which applies the identical plan to ref rows a push has already
+        appended. Only the writing differs: created rows here, updated rows
+        there.
+
+        Returns the ref-less rows NO incoming line named, for the caller to
+        hand to the ordinary leftover sweep (kept and closed, links intact).
+        """
+        plan = shipping_order_rules.plan_xlsx_supersede(unmatched, supersede_pool)
+        by_id = {str(row.id): row for row in supersede_pool}
+        if not plan.groups:
+            return [by_id[row_id] for row_id in plan.kept_row_ids if row_id in by_id]
+
+        next_number = self._max_line_number(payload)
+        consumed: set[int] = set()
+        superseded = 0
+
+        for group in plan.groups:
+            target: Optional[SPOAllocation] = None
+            for line_plan in group.lines:
+                values = dict(unmatched[line_plan.index])
+                allocated = int(values.get("allocated_quantity") or 0)
+                received, closed = shipping_order_rules.carried_received(
+                    allocated, values.get("quantity_received"), line_plan.carried_received
+                )
+                values["quantity_received"] = received
+                values["line_status"] = LINE_CLOSED if closed else LINE_OPEN
+                values["receipt_status"] = (
+                    RECEIPT_FULLY_RECEIVED if closed else RECEIPT_PENDING
+                )
+                next_number += 1
+                row = SPOAllocation(
+                    id=str(uuid.uuid4()),
+                    company_id=self.company_id,
+                    spo_number=payload.spo_number,
+                    spo_line_number=next_number,
+                )
+                self.db.add(row)
+                self._write_row(
+                    row, values, force_closed,
+                    container_number=container_number, warnings=warnings,
+                )
+                if not row.inbound_shipment_id and line_plan.inbound_shipment_id:
+                    # D26: the line's OWN container link wins when the push
+                    # named a container this system knows; short of that the
+                    # group keeps the shipment the xlsx row was already
+                    # booked against, which is the only record of it left
+                    # once that row is gone.
+                    row.inbound_shipment_id = line_plan.inbound_shipment_id
+                counts["created"] += 1
+                consumed.add(line_plan.index)
+                if target is None:
+                    target = row
+            self.db.flush()
+            removing = [
+                by_id[row_id] for row_id in group.superseded_row_ids if row_id in by_id
+            ]
+            if target is not None:
+                shipping_order_rules.repoint_allocation_dependants(
+                    self.db,
+                    [str(row.id) for row in removing],
+                    str(target.id),
+                    company_id=self.company_id,
+                )
+            for row in removing:
+                self.db.delete(row)
+            superseded += len(removing)
+
+        self.db.flush()
+        if superseded:
+            # Absent when zero, same rule `lines.dropped` follows on a
+            # document verdict - a re-push that supersedes nothing must not
+            # report the key at all (AC-X9).
+            counts["superseded"] = counts.get("superseded", 0) + superseded
+        for index in sorted(consumed, reverse=True):
+            # Consumed here, so the ordinary create loop cannot write the
+            # same line a second time.
+            del unmatched[index]
+        return [by_id[row_id] for row_id in plan.kept_row_ids if row_id in by_id]
 
     def _adopt_lines(
         self,

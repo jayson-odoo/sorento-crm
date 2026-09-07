@@ -92,8 +92,12 @@ STATUS_OPTIONAL: dict[str, bool] = {
 # own constants - there was exactly one call site for each) and two
 # documentation-only entries: `lines.dropped` names the `lines.dropped` COUNT
 # key a document verdict carries (D9), not a `warnings` list entry itself;
-# `deprecated_field` is retired code (D15 end state) kept here so a pre-2.1
-# integration checking for it by name still finds it documented.
+# `lines.superseded` is the same kind of entry for a shipping order (D27,
+# spo-xlsx-supersede) - the count of xlsx-era rows a document's FIRST push
+# replaced with the AutoCount line-set, so an ESB reading a verdict can tell a
+# supersede apart from a plain create; `deprecated_field` is retired code
+# (D15 end state) kept here so a pre-2.1 integration checking for it by name
+# still finds it documented.
 WARNINGS: list[str] = sorted(
     {
         WARN_CUSTOMER_CREATED,
@@ -111,6 +115,7 @@ WARNINGS: list[str] = sorted(
         "brand_created",
         "segment_unknown",
         "lines.dropped",
+        "lines.superseded",
         "deprecated_field",
     }
 )
