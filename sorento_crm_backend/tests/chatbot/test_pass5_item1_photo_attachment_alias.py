@@ -17,8 +17,7 @@ migration verbatim and by querying the local prod-copy DB read-only (`psql`, no 
 `attachment_types` carries `90e76894-8384-4186-a3f7-ef73667726ff` "Product Photos" (no
 migration seeds it - pre-existing admin data, `code IS NULL`) AND
 `96d71584-d305-4054-b246-213cc0bbc79d` "Shipment Line Photo" side by side, and
-"Shipment Line Photo" contains the substring "photo" case-insensitively - missed on this
-tester's OWN first read of that same `psql` output (a measurement error, corrected here).
+"Shipment Line Photo" contains the substring "photo" case-insensitively.
 
 **MEASURED, not guessed, exactly what "photo" resolves to today.** In-process,
 read-only (`SessionLocal`, a nested transaction rolled back at the end, never committed,
@@ -36,12 +35,7 @@ one seam this Postgres-only harness cannot touch, per
   (`_prefix_probe_attachment_type`, ~2381-2483, the `elif token_lower in code_l or
   token_lower in type_l or token_lower in desc_l:` branch ~2460) returns BOTH
   "Product Photos" and "Shipment Line Photo" for "photo" - `resolved: false,
-  ambiguous: true`, exactly two matches, both `match_tier: "substring"`;
-* the SAME call also shows the product token `SRTWC8517SHUF` ambiguous - two real EXACT
-  matches (one per company the capture's own contact, `respond_io_id 437264483`, is
-  really scoped to - Sorento `00000000-...0001`, Mocha `5e2c68f5-...`) merged with several
-  prefix-tier variant codes under ONE token entry (`ambiguous` keys off `len(matches) > 1`
-  regardless of tier, not on tier alone).
+  ambiguous: true`, exactly two matches, both `match_tier: "substring"`.
 
 **Where the ambiguity actually goes: an asymmetry in `gate.py`'s own per-token OR-mode
 classifier, `run_gate` ~319-394.** For a `product` token this file's own logic is careful:
@@ -50,32 +44,10 @@ numbered pick (`specific_options` / `still_ambiguous`, ~450-495). For a NON-prod
 (attachment_type, certificate, ...) the SAME function has no such path - `~360-393`:
 `np_exact = [m for m in non_products if match_tier == "exact"]`; when that is empty (no
 exact hit - exactly "photo"'s shape, both hits are substring-tier) and the candidates do
-not share one code (`np_same_key`, ~393's sibling condition - false here, "Product Photos"
-and "Shipment Line Photo" are different codes), the function falls to
-`picks = [non_products[0]]` (line 393) - it SILENTLY keeps whichever candidate the
-database happened to return first, with no `resolved_by` marker
-(`lanes/business/miss_suggest.py::gate_resolved_tokens`, ~110-125, only recognises
-`"document-class-narrowing"` / `"same-code-collapse"`), so `miss_suggest.py`'s own miss
-list still carries "photo" as an open, unresolved token regardless of what the gate
-silently picked. Measured directly (debug instrumentation added to `gate.py` for this
-investigation, run, then reverted - `git status` on that file confirmed clean before this
-commit): with the two real rows seeded, `compatible_entities` narrows to "Product Photos"
-alone with `gate_passed: True, require_specific: False` - no did-you-mean YET - and then,
-when the (silently, non-deterministically picked) type's own fetch comes back with zero
-rows, `lanes/business/answer.py::build_suggest_offer`'s own D1 listing (`~2934-2941`, the
-already-cited `d1s` block) DOES fire, because "photo" was never marked resolved -
-reproduced here verbatim: stubbing `business.run_fetch` to a genuine zero-row result
-(`has_result: False`, the honest stand-in for "the query narrowed to the wrong/unlinked
-type found nothing" - not invented data) produces "Couldn't find \"photo\" (attachment
-type). Did you mean shipment_line_photo?" - the SAME class of reply as production's own
-capture, though not byte-identical (production's picked-and-missed type and this
-seed's differ, because the gate's own pick is order-dependent, not because the mechanism
-differs). This is the whole account: `#713` itself never touches attachment-type
-resolution (confirmed below); the deploy alongside it added a second `attachment_types`
-row that collides on the substring "photo", and `gate.py`'s asymmetric non-product
-ambiguity handling (silent-first-pick, never flagged) is what turns that data collision
-into first a WRONG silent choice and then, once that choice's own query comes up empty, a
-customer-facing did-you-mean - never a deterministic delivery of the file that DOES exist.
+not share one code, the function falls to `picks = [non_products[0]]` (line 393) - it
+SILENTLY keeps whichever candidate the database happened to return first, with no
+`resolved_by` marker, so `miss_suggest.py`'s own miss list still carries "photo" as an
+open, unresolved token regardless of what the gate silently picked.
 
 **#713's own diff, for the record.** `git diff 5e8acfef4..043e2a0be --
 sorento_crm_backend/app` touches exactly seven files: `head/output_exchange.py`,
@@ -85,29 +57,56 @@ sorento_crm_backend/app` touches exactly seven files: `head/output_exchange.py`,
 changed. `#713`'s own diff is not the cause; `#707`'s migration, deployed the same run,
 is.
 
+**The FIX is domain-scoped resolution** (`entity_resolver._product_attachment_type_ids`) -
+see that function's own docstring for the two-pass account: the first cut filtered
+`attachments.entity_type == 'product'`, which is EMPTY in production (a product's file is
+linked via `product_attachments`, never via `attachments.entity_type`) and left "photo"
+exactly as ambiguous as before; corrected to join through `product_attachments`.
+
+**How `send_attachments` is actually reached, crossed at the real seam (review of this
+item, round 1, B1/Q1/#727).** The first cut's `_no_tool_fetch_services` stubbed
+`tool_search` to `[]`, which makes `lanes/business/__init__.py::run_fetch` return
+`not_found` at its own `pick.outcome == "not_found"` guard (~289-292) BEFORE `mcp_call` is
+ever reached - so the stub's own decision, not a missing fetch mechanism, is what kept
+`send_attachments` out of `result.actions`. `product_attachment` DOES have a fetch path:
+`crm_master_product_attachments_list`, chosen by `tool_search` (an embedding call, needing
+`OPENAI_API_KEY`) and then called over MCP (`mcp_call`, returning a STRING -
+`MCPRuntimeClient.call_tool`'s own return shape, `"\n".join(content[].text)`). Both are
+`FetchServices` seams (`services.py:95-105`) a test may stub independently: `tool_search`
+is faked here (deterministic tool choice, the same test-worthy substitute the resolver
+seam tests already make for `embed`/vector search); `mcp_call` uses the REAL production
+binding, with only `MCPRuntimeClient.call_tool` monkeypatched to the STRING shape it
+actually returns - the same recipe
+`test_s6a_gate_dry_run_and_seams.py::TestOwnerRulingATheCustomerPickerReachesTheProductionProbeSeam`
+already uses for the resolver's own probe seam. AC-604 (module docstring ~770-773 of
+`lanes/business/fetch.py`) says a zero-tool turn gets a DISTINGUISHABLE `not_found`
+outcome; it does not claim `product_attachment` has no deterministic fetch, and this file's
+first cut over-read it into that claim. Corrected: **Closes #727** (opened, then found
+invalid on measurement) - there was no "materially larger, security-relevant" gap to
+build; the harness was stubbing the wrong seam.
+
 Below: `TestPass5Item1PhotoAliasAgainstTheRealMigrationSeededData` seeds exactly the rows
 migrations `021_add_attachment_type_code_and_complaint_document.py` (pre-existing
 "Product Photos" admin row, unaffected) and `485_shipment_line_photo_type.py`
 ("Shipment Line Photo", "Proforma Invoice") produce, plus the product marked discontinued
 (`is_discontinued=True`) as the control dump's own `(PRODUCT DISCONTINUED)` flag shows,
-and asserts the two things the AC actually wants: (1) "photo" resolves to Product Photos
-with NO did-you-mean, and (2) the product resolves by its exact code and the turn reaches
-`send_attachments`. Both are watched red for the reasons measured above - the SECOND
-attachment type is what turns (1) red (a genuine did-you-mean, or a wrong silent pick,
-depending on row order - either way never a clean single answer), and (2) is red because
-`send_attachments` needs a real fetch this harness cannot drive without `OPENAI_API_KEY`,
-so it is asserted on the resolved entities + the tool-call args the turn WOULD have sent,
-per the captain's own fallback instruction.
+linked through `product_attachments` the way a real product photo actually is (`Attachment`
+with `entity_type=None`, the production shape - not `entity_type="product"`, which the
+first cut of this file wrongly seeded and no production row carries), and asserts the two
+things the AC actually wants: (1) "photo" resolves to Product Photos with NO did-you-mean,
+and (2) the product resolves by its exact code and the turn reaches `send_attachments` with
+the correct tool call args.
 """
 from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
+from app.models.product import Product, ProductAttachment, ProductCategory, UnitOfMeasure
 from app.models.resources import Attachment, AttachmentType
 from app.services.chatbot import engine as engine_mod
+from app.services.chatbot.lanes.business import services as business_services_mod
 from app.services.chatbot.lanes.business.services import FetchServices
+from tests._pg_fixture import unique_code
 from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_engine import _parser_output, stub_access, stub_parser  # noqa: F401
 from tests.chatbot.test_engine_company_scope import (
@@ -119,8 +118,6 @@ from tests.chatbot.test_engine_company_scope import (
     _wire_answer_services,
     _wire_real_resolve_entity,
 )
-from app.models.product import Product, ProductCategory, UnitOfMeasure
-from tests._pg_fixture import unique_code
 
 PRODUCT_CODE = "SRTWC8517-SH-UF"
 
@@ -189,34 +186,96 @@ def _seed_migration_attachment_types(session_factory: Any) -> None:
     db.commit()
 
 
-def _seed_attachment(session_factory: Any, *, product_id: str, attachment_type_id: str) -> str:
+def _seed_product_attachment(session_factory: Any, *, product_id: str, attachment_type_id: str) -> str:
+    """The PRODUCTION linkage (review of this item, round 1, blocker B2): a product's own
+    file is a `product_attachments` row pointing at an `Attachment` whose OWN
+    `entity_type` is NULL - measured against the local prod-copy database (4302 of 4430
+    attachment rows carry a NULL `entity_type`; ZERO carry `entity_type='product'`). The
+    first cut of this file seeded `Attachment(entity_type="product")` with no
+    `product_attachments` row at all, a shape no production row has, which is why
+    `_product_attachment_type_ids`'s own first cut (filtering on `entity_type='product'`)
+    read as green here while returning an EMPTY set against the real database."""
     db = session_factory()
-    row = Attachment(
+    attachment = Attachment(
         attachment_type_id=attachment_type_id,
         original_filename=f"{PRODUCT_CODE}-photo.jpg",
         stored_filename="zzt-a5317cf4-stored.jpg",
         file_path="https://example.test/zzt-a5317cf4-stored.jpg",
-        entity_type="product",
-        entity_id=product_id,
+        entity_type=None,
+        entity_id=None,
     )
-    db.add(row)
+    db.add(attachment)
+    db.flush()
+    link = ProductAttachment(product_id=product_id, attachment_id=attachment.id)
+    db.add(link)
     db.commit()
-    return row.id
+    return attachment.id
 
 
-def _no_tool_fetch_services() -> FetchServices:
-    """AC-604's own zero-tool wiring - `embed`/`tool_search` are the only things that
-    would need `OPENAI_API_KEY`, so they are stubbed to "nothing matched"; `mcp_call`
-    stays a hard failure so an actual tool call is a wiring drift, not a silent pass."""
+# The tool the resolved product_attachment domain calls - `sub_answer.py`'s own
+# domain -> tool pairing (`"domain": "product_attachment"`).
+_PRODUCT_ATTACHMENTS_TOOL = "crm_master_product_attachments_list"
 
-    def _mcp_call(name: str, args: dict) -> Any:
-        raise AssertionError("no MCP tool matched - tool_filter must return before this runs")
 
-    return FetchServices(
-        embed=lambda query: [0.0, 0.0, 0.0],
-        tool_search=lambda embedding, *, query, domain: [],
-        mcp_call=_mcp_call,
-    )
+def _photo_fetch_services(db: Any, monkeypatch: Any, *, calls: list[tuple[str, dict]]) -> FetchServices:
+    """Crosses the REAL fetch seam (review of this item, round 1, Q1/#727): `tool_search`
+    is faked to a deterministic pick (an embedding call needs `OPENAI_API_KEY`, which is
+    absent everywhere this suite runs), and `mcp_call` is the PRODUCTION binding
+    (`business_services.fetch_services(db).mcp_call`) with only
+    `MCPRuntimeClient.call_tool` monkeypatched to the STRING shape it actually returns -
+    the same recipe `test_s6a_gate_dry_run_and_seams.py::
+    TestOwnerRulingATheCustomerPickerReachesTheProductionProbeSeam` already uses for the
+    resolver's own probe seam. `calls` records every `(tool_name, args)` the real
+    `entity_ids_transformer` built, so a test can assert on the ACTUAL args sent, not on
+    what it expects them to be.
+    """
+    import json as _json
+
+    from app.services.ai_assistant_service import MCPRuntimeClient
+
+    def _fake_call_tool(self_client: Any, tool_name: str, args: dict[str, Any]) -> str:
+        calls.append((tool_name, dict(args)))
+        return _json.dumps(
+            {
+                "items": [
+                    {
+                        "title": PRODUCT_CODE,
+                        "fields": [
+                            {"label": "Product Code", "value": PRODUCT_CODE},
+                            {"label": "Attachment Type", "value": "Product Photos"},
+                        ],
+                        "attachments": [
+                            {
+                                "url": "https://example.test/zzt-a5317cf4-stored.jpg",
+                                "filename": f"{PRODUCT_CODE}-photo.jpg",
+                                "mimeType": "image/jpeg",
+                                "attachmentType": "Product Photos",
+                            }
+                        ],
+                    }
+                ],
+                "attachments": [
+                    {
+                        "url": "https://example.test/zzt-a5317cf4-stored.jpg",
+                        "filename": f"{PRODUCT_CODE}-photo.jpg",
+                        "mimeType": "image/jpeg",
+                        "attachmentType": "Product Photos",
+                    }
+                ],
+                "action_links": [],
+                "intro": "Here are the product files I found.",
+                "has_result": True,
+            }
+        )
+
+    monkeypatch.setattr(MCPRuntimeClient, "call_tool", _fake_call_tool)
+
+    base = business_services_mod.fetch_services(db)
+
+    def _tool_search(embedding: Any, *, query: str, domain: Any) -> Any:
+        return [{"name": _PRODUCT_ATTACHMENTS_TOOL, "similarity": 0.95}]
+
+    return FetchServices(embed=lambda query: [0.0], tool_search=_tool_search, mcp_call=base.mcp_call)
 
 
 def _photo_attachment_type_entities() -> list[dict[str, Any]]:
@@ -241,12 +300,19 @@ def _photo_attachment_type_entities() -> list[dict[str, Any]]:
 
 
 def _run_turn_seeded(
-    session_factory, stub_parser, stub_access, system_settings_row, monkeypatch, *, contact_id: str
+    session_factory,
+    stub_parser,
+    stub_access,
+    system_settings_row,
+    monkeypatch,
+    *,
+    contact_id: str,
+    calls: list[tuple[str, dict]],
 ):
     company_id = _seed_company(session_factory, name="ZZT PhotoAlias Co")
     product_id = _seed_discontinued_product(session_factory, company_id=company_id, code=PRODUCT_CODE)
     _seed_migration_attachment_types(session_factory)
-    _seed_attachment(
+    _seed_product_attachment(
         session_factory, product_id=product_id, attachment_type_id=PRODUCT_PHOTOS_UUID
     )
     workspace_id = _seed_workspace(session_factory)
@@ -262,8 +328,9 @@ def _run_turn_seeded(
     _set_completed_lanes(session_factory, system_settings_row, ["business_query"])
     _wire_real_resolve_entity(monkeypatch)
     _wire_answer_services(monkeypatch)
+    fetch_services = _photo_fetch_services(session_factory(), monkeypatch, calls=calls)
     monkeypatch.setattr(
-        engine_mod.business_services, "fetch_services", lambda db: _no_tool_fetch_services()
+        engine_mod.business_services, "fetch_services", lambda db: fetch_services
     )
 
     stub_parser(
@@ -288,8 +355,8 @@ def _run_turn_seeded(
 class TestPass5Item1PhotoAliasAgainstTheRealMigrationSeededData:
     """The real seed - `Product Photos` (pre-existing) PLUS `Shipment Line Photo` /
     `Proforma Invoice` (`485_shipment_line_photo_type.py`) - production's actual shape,
-    not the single-row seed the first pass of this investigation wrongly measured as
-    clean. Watched red on 043e2a0be."""
+    linked through `product_attachments` the way a real product photo actually is.
+    Watched red on 043e2a0be."""
 
     def test_photo_resolves_to_product_photos_with_no_did_you_mean(
         self, session_factory, stub_parser, stub_access, system_settings_row, monkeypatch
@@ -301,6 +368,7 @@ class TestPass5Item1PhotoAliasAgainstTheRealMigrationSeededData:
             system_settings_row,
             monkeypatch,
             contact_id="ZZT-contact-photo-alias-1",
+            calls=[],
         )
         reply_text = (result.reply or {}).get("text") or ""
 
@@ -331,23 +399,14 @@ class TestPass5Item1PhotoAliasAgainstTheRealMigrationSeededData:
             f"candidate the DB happened to return first: {compatible_codes!r}"
         )
 
-    def test_product_resolves_exact_and_the_would_be_fetch_args_are_correct(
+    def test_product_resolves_exact_and_send_attachments_is_reached(
         self, session_factory, stub_parser, stub_access, system_settings_row, monkeypatch
     ) -> None:
-        """The FIX, at this item's actual measured scope: the resolver-level domain
-        scoping (`entity_resolver._product_attachment_type_ids`) makes "photo" resolve
-        to the product exactly and the attachment_type deterministically - no
-        did-you-mean (test above), no wrong silent pick. Asserted here on the args the
-        turn WOULD hand `crm_master_product_attachments_list`, built the exact same way
-        `run_fetch` builds them (`entity_ids_transformer`), rather than on
-        `send_attachments` actually firing - this harness cannot drive the real MCP
-        call (no `OPENAI_API_KEY`), and whether `product_attachment` has ANY
-        deterministic path to `send_attachments` that skips MCP entirely is a separate,
-        larger, security-relevant gap (duplicating/rerouting the access-level /
-        company-scope logic `/api/v1/master-data/product-attachments` already carries)
-        that this item's brief never asked for. See the xfail test below and
-        https://github.com/jayson-odoo/sorento-crm/issues/727.
-        """
+        """THE FIX end to end, crossing the real fetch seam (review round 1, Q1/#727):
+        the resolved product + attachment_type reach `crm_master_product_attachments_list`
+        with the correct filter args, and the turn's own actions carry `send_attachments`
+        with the file the seeded `product_attachments` link names."""
+        calls: list[tuple[str, dict]] = []
         result = _run_turn_seeded(
             session_factory,
             stub_parser,
@@ -355,6 +414,7 @@ class TestPass5Item1PhotoAliasAgainstTheRealMigrationSeededData:
             system_settings_row,
             monkeypatch,
             contact_id="ZZT-contact-photo-alias-2",
+            calls=calls,
         )
 
         db = session_factory()
@@ -370,73 +430,26 @@ class TestPass5Item1PhotoAliasAgainstTheRealMigrationSeededData:
             f"the exact product code must resolve: {product_entities!r}"
         )
 
-        from app.services.chatbot.lanes.business import fetch as fetch_mod
-
-        trigger = {
-            "tool": "crm_master_product_attachments_list",
-            "entities": gate.get("compatible_entities", []),
-            "semantic_input": {},
-        }
-        would_be_args = fetch_mod.entity_ids_transformer(trigger)
+        assert calls, f"the MCP tool was never called: actions={result.actions!r}"
+        tool_name, args = calls[0]
+        assert tool_name == _PRODUCT_ATTACHMENTS_TOOL, tool_name
         product_uuid = next(e["uuid"] for e in product_entities if e.get("code") == PRODUCT_CODE)
-        assert would_be_args.get("product_ids") == [product_uuid], would_be_args
-        assert would_be_args.get("attachment_type_ids") == [PRODUCT_PHOTOS_UUID], would_be_args
+        assert args.get("product_ids") == [product_uuid], args
+        assert args.get("attachment_type_ids") == [PRODUCT_PHOTOS_UUID], args
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "product_attachment has no deterministic zero-tool fetch path - it needs "
-            "the MCP tool-search-then-call pipeline (run_fetch), which needs "
-            "OPENAI_API_KEY to pick a tool, and this harness has none. A domain-known "
-            "tool-name shortcut would still call mcp_call, which this harness makes a "
-            "hard failure on purpose. Tracked as issue #727, not fixed here - it is a "
-            "materially larger, security-relevant change (duplicating or rerouting the "
-            "access-level / company-scope logic /api/v1/master-data/product-attachments "
-            "already carries) than the attachment-type ambiguity this item's brief "
-            "scoped."
-        ),
-    )
-    def test_send_attachments_is_reached(
-        self, session_factory, stub_parser, stub_access, system_settings_row, monkeypatch
-    ) -> None:
-        result = _run_turn_seeded(
-            session_factory,
-            stub_parser,
-            stub_access,
-            system_settings_row,
-            monkeypatch,
-            contact_id="ZZT-contact-photo-alias-3",
-        )
         kinds = [a["kind"] for a in result.actions]
         assert "send_attachments" in kinds, (
-            "product_attachment has no deterministic zero-tool fetch path today, so a "
-            f"cleanly resolved photo request never emits send_attachments: actions={result.actions!r}"
+            f"a cleanly resolved photo request must reach send_attachments: actions={result.actions!r}"
         )
 
 
 class TestPass5Item1IsolatedMechanismCheckSingleAttachmentType:
-    """NOT a regression guard - an unrealistic, single-row seed the first pass of this
-    investigation used before the real migration-seeded ambiguity (above) was found.
-    Kept only to isolate the `send_attachments`-gap finding from the ambiguity finding:
-    even with the ambiguity removed entirely, `send_attachments` still never fires,
-    because there is no AC-604-style zero-tool deterministic fetch for this domain -
-    tracked as its own issue (#727), out of THIS item's scope. See the class-level
-    docstring on `TestPass5Item1PhotoAliasAgainstTheRealMigrationSeededData`'s
-    `test_send_attachments_is_reached` for the full reasoning; this is the same xfail,
-    proven again on the unrealistic single-type seed so the ambiguity finding and the
-    fetch-gap finding stay provably independent."""
+    """An unrealistic, single-row seed the first pass of this investigation used before
+    the real migration-seeded ambiguity (above) was found. Kept as a narrower guard:
+    with the ambiguity removed entirely, `send_attachments` still fires - isolating the
+    domain-scoping finding from the fetch-seam finding stays provably independent."""
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "product_attachment has no deterministic zero-tool fetch path - see "
-            "TestPass5Item1PhotoAliasAgainstTheRealMigrationSeededData."
-            "test_send_attachments_is_reached and issue #727. Not fixed here: a "
-            "materially larger, security-relevant change than the attachment-type "
-            "ambiguity this item's brief scoped."
-        ),
-    )
-    def test_single_attachment_type_still_never_reaches_send_attachments(
+    def test_single_attachment_type_reaches_send_attachments(
         self, session_factory, stub_parser, stub_access, system_settings_row, monkeypatch
     ) -> None:
         company_id = _seed_company(session_factory, name="ZZT PhotoAlias Solo Co")
@@ -452,7 +465,7 @@ class TestPass5Item1IsolatedMechanismCheckSingleAttachmentType:
             )
         )
         db.commit()
-        _seed_attachment(session_factory, product_id=product_id, attachment_type_id=PRODUCT_PHOTOS_UUID)
+        _seed_product_attachment(session_factory, product_id=product_id, attachment_type_id=PRODUCT_PHOTOS_UUID)
         workspace_id = _seed_workspace(session_factory)
         contact_id = "ZZT-contact-photo-alias-solo"
         _seed_contact(
@@ -463,8 +476,10 @@ class TestPass5Item1IsolatedMechanismCheckSingleAttachmentType:
         _set_completed_lanes(session_factory, system_settings_row, ["business_query"])
         _wire_real_resolve_entity(monkeypatch)
         _wire_answer_services(monkeypatch)
+        calls: list[tuple[str, dict]] = []
+        fetch_services = _photo_fetch_services(session_factory(), monkeypatch, calls=calls)
         monkeypatch.setattr(
-            engine_mod.business_services, "fetch_services", lambda db: _no_tool_fetch_services()
+            engine_mod.business_services, "fetch_services", lambda db: fetch_services
         )
         stub_parser(
             _parser_output(
@@ -488,7 +503,5 @@ class TestPass5Item1IsolatedMechanismCheckSingleAttachmentType:
 
         kinds = [a["kind"] for a in result.actions]
         assert "send_attachments" in kinds, (
-            "even with the ambiguity removed, send_attachments still never fires - the "
-            f"gap is the missing zero-tool fetch, not (only) the alias data collision: "
-            f"actions={result.actions!r}"
+            f"a cleanly resolved photo request must reach send_attachments: actions={result.actions!r}"
         )

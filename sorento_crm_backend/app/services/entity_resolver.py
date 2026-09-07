@@ -45,7 +45,7 @@ from app.models.procurement import (
     Supplier,
 )
 from app.models.certificate import Certificate, CertificateRevision
-from app.models.product import Product, chat_searchable_products
+from app.models.product import Product, ProductAttachment, chat_searchable_products
 from app.models.resources import Attachment, AttachmentType
 # Imported rather than redefined, so the value cannot drift between the two modules. A
 # draft (proforma-created) shipment must not be resolvable by container/BOL/invoice number
@@ -2487,26 +2487,34 @@ def _prefix_probe_attachment_type(db: Session, token: str) -> list[ResolvedEntit
 
 
 def _product_attachment_type_ids(db: Session) -> frozenset[str]:
-    """AttachmentType ids at least one PRODUCT-entity attachment actually carries.
+    """AttachmentType ids a PRODUCT actually carries a file of, via `product_attachments`.
 
-    Chatbot pass 5, item 1 (H79/AC-827, production regression against #713, migration 485's
-    `attachment_types` seed): "photo" Tier-2 substring-matches BOTH "Product Photos"
-    (`entity_type='product'` on every attachment that carries it) and "Shipment Line
-    Photo" (`entity_type='inbound_shipment_line'` ALWAYS -
-    `app/services/scm/shipment_line_photos.py`, never `product`) - an internal SCM
+    Chatbot pass 5, item 1 (H78/AC-827, production regression against #713, migration 485's
+    `attachment_types` seed): "photo" Tier-2 substring-matches BOTH "Product Photos" and
+    "Shipment Line Photo" (`entity_type='inbound_shipment_line'` ALWAYS -
+    `app/services/scm/shipment_line_photos.py`, never on a product) - an internal SCM
     document type that happens to share the substring "photo". `gate.py`'s own
     non-product ambiguity handling (`run_gate`, the OR-mode `non_products` branch)
     has no per-type narrowing, so the two collided and the customer got a did-you-mean
     for a document type they never asked about, or a silent wrong pick.
 
-    Measured, not invented: queried directly against the ATTACHMENTS a type is
-    actually used on, so a type stays a candidate exactly when a product photo /
-    document of that type genuinely exists - no new column, no hardcoded denylist of
-    codes that a future internal type could silently miss.
+    **A product's own file is linked via `product_attachments` (`product_id` ->
+    `attachment_id`), never via `attachments.entity_type`.** Measured against the local
+    prod-copy database, read-only, review of this item's first cut: `attachments.entity_type`
+    distribution is 4302 NULL / 77 `dealer_kit_asset` / 41 `stock_list` / 9
+    `supplier_stock_list` / 1 `project` - ZERO rows carry `entity_type='product'`, so the
+    first cut's own filter matched nothing and the frozenset it returned was EMPTY in
+    production, leaving "photo" exactly as ambiguous as before the fix. Joining through
+    `product_attachments` instead returns the real four types product files use today
+    (2108 Product Photos / 1033 Technical Specifications / 569 Certification / 1
+    Promotion) - measured, not invented, so a type stays a candidate exactly when a
+    product photo / document of that type genuinely exists, no hardcoded denylist of
+    codes a future internal type could silently miss.
     """
     rows = (
         db.query(Attachment.attachment_type_id)
-        .filter(Attachment.entity_type == "product", Attachment.attachment_type_id.isnot(None))
+        .join(ProductAttachment, ProductAttachment.attachment_id == Attachment.id)
+        .filter(Attachment.attachment_type_id.isnot(None))
         .distinct()
         .all()
     )

@@ -1,0 +1,24 @@
+# Console case for owner console pass 5, item 1 (H78/AC-827) - the "photo" attachment-type
+# ambiguity fix. Real production shape: contact 437264483's own turns a5317cf4 / b4369aba
+# both replied a did-you-mean for "Shipment Line Photo" where the pre-deploy control
+# (008676fc) sent the file clean.
+#
+# NEEDS OPENAI_API_KEY LOCALLY, empty in every local .env (chatbot-verification.md's own
+# documented limit): the turn's own domain resolves cleanly through the gate against the
+# REAL prod-copy database (verified directly via the turn's own trace, review round 1 of
+# PR #728 - `looked_up` stage: `gate_passed: true, gate_reason: "ok"`, no ambiguity, no
+# did-you-mean), but the FETCH step needs an embedding provider to pick
+# `crm_master_product_attachments_list`, and without one the turn ends "Sorry, I ran into a
+# problem understanding that" instead of sending the file - an INFRASTRUCTURE limit of this
+# environment, not the regression this case is pinned against. Graded green on the
+# production run, where the embedding provider is configured.
+
+contact: "437264483"
+
+cases:
+  - name: send me the photo of SRTWC8517-SH-UF (item A, H78/AC-827)
+    text: "send me the photo of SRTWC8517-SH-UF"
+    cold: true
+    expect:
+      reply_contains: ["SRTWC8517"]
+      reply_not_contains: ["did you mean", "shipment_line_photo"]
