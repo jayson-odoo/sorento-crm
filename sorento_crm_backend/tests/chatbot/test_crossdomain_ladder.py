@@ -200,3 +200,14 @@ class TestAC924ThirdCodeNeverDeclaredAbsentWithoutBeingAsked:
         )
         assert out["_xdBlock"]["nothing_codes"] == ["SRTWC8517"]
         assert "UNPROBED-CODE" not in out["_xdBlock"]["block"]
+
+
+class TestAC911SPOAllocationDomainNoLongerUnsupported:
+    def test_spo_allocation_removed_goods_receive_stays(self) -> None:
+        """AC-911: `spo_allocation` is no longer in `DEFAULT_UNSUPPORTED_DOMAINS`;
+        `goods_receive` still is - `crm_procurement_spo_last_receipt_list` (A6)
+        answers "last in" now, nothing in this plan reads GRN data."""
+        from app.services.chatbot.head.route import DEFAULT_UNSUPPORTED_DOMAINS
+
+        assert "spo_allocation" not in DEFAULT_UNSUPPORTED_DOMAINS
+        assert "goods_receive" in DEFAULT_UNSUPPORTED_DOMAINS

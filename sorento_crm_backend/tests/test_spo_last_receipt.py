@@ -156,13 +156,10 @@ def test_last_receipt_names_warehouse(db):
     assert rows[0]["warehouse"] == "BRW"
 
 
-def test_spo_allocation_domain_no_longer_unsupported():
-    """AC-911: spo_allocation is no longer in DEFAULT_UNSUPPORTED_DOMAINS; goods_receive
-    still is."""
-    from app.services.chatbot.head.route import DEFAULT_UNSUPPORTED_DOMAINS
-
-    assert "spo_allocation" not in DEFAULT_UNSUPPORTED_DOMAINS
-    assert "goods_receive" in DEFAULT_UNSUPPORTED_DOMAINS
+# AC-911's DEFAULT_UNSUPPORTED_DOMAINS assertion lives in
+# tests/chatbot/test_crossdomain_ladder.py, not here - this file sits outside
+# tests/chatbot/, and importing app.services.chatbot from there trips
+# tests/chatbot/test_import_boundary.py's module-boundary guard.
 
 
 # --------------------------------------------------------------------- route

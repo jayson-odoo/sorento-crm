@@ -584,6 +584,25 @@ DIVERGENCES: list[Divergence] = [
             ("_xdBlock", "nothing_missing"),
         ),
     ),
+    # A6 (chatbot-growth-r1, AC-911): `spo_allocation` is no longer in
+    # `DEFAULT_UNSUPPORTED_DOMAINS` - `crm_procurement_spo_last_receipt_list` answers
+    # "last in" now, so a turn asking about it routes to `business_query` instead of
+    # `not_supported`. This capture is exactly that case (test_run_id
+    # "rs1b4-01-notsupported"), so the whole item diverges (branch_kind and the
+    # access-check fields it carries) - blanket, because the hazard changes what this
+    # turn IS, not one field of it. Owner-approved 7 Sep 2026 (this plan). Behaviour
+    # pinned by test_crossdomain_ladder.py::TestAC911SPOAllocationDomainNoLongerUnsupported
+    # and route.py's own DEFAULT_UNSUPPORTED_DOMAINS.
+    Divergence(
+        node="route-turn",
+        fixture="rs1b4-01-notsupported",
+        hazard="A6 (AC-911)",
+        reason=(
+            "spo_allocation was unblocked from DEFAULT_UNSUPPORTED_DOMAINS, so this "
+            "capture's domain now routes to business_query instead of the captured "
+            "not_supported - the deliberate point of A6."
+        ),
+    ),
 ]
 
 
