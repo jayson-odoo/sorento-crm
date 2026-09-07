@@ -8,6 +8,7 @@ not the other.
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -183,3 +184,209 @@ def received_guard(
     if new_received is not None and new_received < received:
         return GUARD_RECEIVED_LOCKED
     return GUARD_OK
+
+
+# ---------------------------------------------------------------------------
+# D25/D26/D27 (spo-xlsx-supersede): the xlsx-era row set vs the AutoCount
+# line-set on a document's FIRST push.
+#
+# ONE algorithm, two writers. The planning half is pure and lives here so the
+# ESB push (`ShippingOrderIngestService._supersede_xlsx_rows`, which CREATES
+# the incoming lines) and the one-off dedupe
+# (`scripts/dedupe_spo_xlsx_superseded.py`, which UPDATES ref rows a push has
+# already appended) cannot drift: the two differ only in whether the line each
+# plan speaks for is a new row or an existing one.
+# ---------------------------------------------------------------------------
+
+#: `(product_id, upper(location_code))` - the pair the xlsx upload itself
+#: dedups on (`outstanding_import_service._spo_line_plans`), and therefore the
+#: only pair that can pair an xlsx AGGREGATE row with the N AutoCount lines it
+#: stands for.
+SupersedeKey = tuple[Optional[str], Optional[str]]
+
+
+@dataclass(frozen=True)
+class SupersedeLinePlan:
+    """One incoming line of a superseded group.
+
+    `index` is its position in the `incoming` sequence the caller passed, so
+    the caller can map it back to whatever it holds there (a `values` dict on
+    the push, an existing `SPOAllocation` on the dedupe).
+    """
+
+    index: int
+    carried_received: int
+    inbound_shipment_id: Optional[str]
+
+
+@dataclass(frozen=True)
+class SupersedeGroupPlan:
+    """One `(product, location)` group that HAS an incoming counterpart.
+
+    `lines` is in AutoCount Seq order, so `lines[0]` is the repoint target
+    (D27) and the last entry is the one any receipt remainder lands on (D26).
+    """
+
+    key: SupersedeKey
+    lines: tuple[SupersedeLinePlan, ...]
+    superseded_row_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SupersedePlan:
+    """`groups` are superseded (rows repointed then removed); `kept_row_ids`
+    are the ref-less rows AutoCount names no line for at all, which D27
+    leaves alone for the ordinary leftover sweep to close."""
+
+    groups: tuple[SupersedeGroupPlan, ...]
+    kept_row_ids: tuple[str, ...]
+
+
+def supersede_group_key(product_id, location_code: Optional[str]) -> SupersedeKey:
+    """The D26 grouping pair, normalised the same way `_adopt_lines` normalises
+    its own coarse key - a location is compared upper-cased and a blank one is
+    `None`, never `''`."""
+    location = (location_code or "").strip().upper() or None
+    return (str(product_id) if product_id else None, location)
+
+
+def carried_received(
+    allocated: int, incoming_received: Optional[int], carried: Optional[int]
+) -> tuple[int, bool]:
+    """`(quantity_received, is_closed)` for one line of a superseded group (D26).
+
+    The receipt is whichever side states more - the carry off the xlsx row
+    (a Sorento GRN that already happened) or what AutoCount itself reports
+    (its own TransferedQty, which lags until the transfer is keyed there).
+    `is_closed` is the single test both `line_status` and `receipt_status`
+    hang off, so the two can never disagree.
+    """
+    received = max(int(incoming_received or 0), int(carried or 0))
+    return received, received >= int(allocated or 0)
+
+
+def plan_xlsx_supersede(incoming, refless_rows) -> SupersedePlan:
+    """Plan D26/D27 for ONE document. Pure: reads, decides, writes nothing.
+
+    `incoming` is a sequence of mappings carrying `product_id`,
+    `location_code`, `allocated_quantity` and an optional `line_number`
+    (AutoCount's Seq). `refless_rows` is the document's xlsx-era
+    `SPOAllocation` rows (`source_ref IS NULL`), each read for `id`,
+    `product_id`, `location_code`, `quantity_received`, `inbound_shipment_id`
+    and `spo_line_number`.
+
+    Per group with an incoming counterpart: the group's whole received
+    quantity is distributed across its lines in Seq order, each line up to
+    its own `allocated_quantity`, and any remainder onto the LAST line - a
+    stale upload can state a smaller line-set than AutoCount does, and a
+    receipt that physically arrived may not be dropped just because no line
+    has room left for it.
+    """
+    ordered_rows = sorted(
+        refless_rows,
+        key=lambda r: (
+            r.spo_line_number if r.spo_line_number is not None else 10**9,
+            str(r.id),
+        ),
+    )
+    incoming = list(incoming)
+    # Same convention as `_adopt_lines._position`: Seq is authoritative only
+    # when EVERY line of the document carries one, otherwise payload order is
+    # the only order there is.
+    all_have_seq = bool(incoming) and all(
+        line.get("line_number") is not None for line in incoming
+    )
+
+    lines_by_key: dict[SupersedeKey, list[int]] = {}
+    for index, values in enumerate(incoming):
+        key = supersede_group_key(values.get("product_id"), values.get("location_code"))
+        lines_by_key.setdefault(key, []).append(index)
+    for indexes in lines_by_key.values():
+        indexes.sort(key=lambda i: incoming[i]["line_number"] if all_have_seq else i)
+
+    rows_by_key: dict[SupersedeKey, list] = {}
+    for row in ordered_rows:
+        key = supersede_group_key(row.product_id, row.location_code)
+        rows_by_key.setdefault(key, []).append(row)
+
+    groups: list[SupersedeGroupPlan] = []
+    kept: list[str] = []
+    for key, rows in rows_by_key.items():
+        indexes = lines_by_key.get(key)
+        if not indexes:
+            # D27: AutoCount lists no line for this product + location, so
+            # there is nothing to supersede it WITH. Kept, links untouched.
+            kept.extend(str(row.id) for row in rows)
+            continue
+        group_received = sum(int(row.quantity_received or 0) for row in rows)
+        group_shipment = next(
+            (str(row.inbound_shipment_id) for row in rows if row.inbound_shipment_id), None
+        )
+        remaining = group_received
+        line_plans: list[SupersedeLinePlan] = []
+        for position, index in enumerate(indexes):
+            allocated = int(incoming[index].get("allocated_quantity") or 0)
+            is_last = position == len(indexes) - 1
+            take = remaining if is_last else min(remaining, max(allocated, 0))
+            take = max(take, 0)
+            remaining -= take
+            line_plans.append(
+                SupersedeLinePlan(
+                    index=index, carried_received=take, inbound_shipment_id=group_shipment
+                )
+            )
+        groups.append(
+            SupersedeGroupPlan(
+                key=key,
+                lines=tuple(line_plans),
+                superseded_row_ids=tuple(str(row.id) for row in rows),
+            )
+        )
+    return SupersedePlan(groups=tuple(groups), kept_row_ids=tuple(kept))
+
+
+def repoint_allocation_dependants(
+    db: Session,
+    from_ids,
+    to_id: str,
+    *,
+    company_id: Optional[str] = None,
+    dry_run: bool = False,
+) -> int:
+    """Move every row pointing at `from_ids` onto `to_id` (D27), and say how many.
+
+    The three tables that name an allocation - `picking_lines` (a GRN's pick),
+    `scm.order_link_claim` (an SO<->SPO pairing) and
+    `projects.order_inquiry_links` (a placement) - all carry
+    `ON DELETE SET NULL`, so a superseded row that is simply deleted would
+    silently strip a real receipt's pairing instead of moving it. Enumerated
+    ONCE here rather than at each writer, and through the ORM models so the
+    ambient company scope applies exactly as it does to every other read.
+
+    `dry_run` counts what WOULD move without touching a row - the dedupe
+    script's preview needs the same enumeration, and a second copy of it is
+    how the two would come to disagree.
+    """
+    from app.models.procurement import PickingLine
+    from app.models.project_so import OrderInquiryLink
+    from app.models.scm import OrderLinkClaim
+
+    ids = [str(value) for value in from_ids if value]
+    if not ids:
+        return 0
+    moved = 0
+    for model in (PickingLine, OrderLinkClaim, OrderInquiryLink):
+        query = db.query(model).filter(model.spo_allocation_id.in_(ids))
+        if company_id:
+            query = query.filter(model.company_id == company_id)
+        rows = query.all()
+        for row in rows:
+            if not dry_run:
+                row.spo_allocation_id = to_id
+            moved += 1
+    if moved and not dry_run:
+        # Flushed HERE, before the caller deletes the superseded rows: the
+        # UPDATE has to reach the database ahead of the DELETE or the FK's
+        # `SET NULL` wins the race and the pairing is lost anyway.
+        db.flush()
+    return moved
