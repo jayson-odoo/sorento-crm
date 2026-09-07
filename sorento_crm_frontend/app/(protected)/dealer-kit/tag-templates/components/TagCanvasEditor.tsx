@@ -138,6 +138,7 @@ import {
   Copy,
   CornerLeftUp,
   CornerRightDown,
+  Crop,
   Expand,
   Eye,
   EyeOff,
@@ -206,8 +207,17 @@ import {
   Label as KonvaLabel,
   Tag as KonvaLabelTag,
   Text as KonvaText,
+  Image as KonvaImage,
 } from 'react-konva';
 import { KonvaTagLayer } from './KonvaTagLayer';
+import { useHtmlImage } from './useHtmlImage';
+import {
+  CROP_HANDLE_ANCHORS,
+  cropRectFromDrag,
+  panCropRect,
+  resolvedCropRect,
+  type CropRect,
+} from '@/lib/dealer-kit/image-crop';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -346,6 +356,9 @@ const ROTATION_LABEL_OFFSET_PX = 24;
  */
 const POLYGON_VERTEX_HANDLE_RADIUS_PX = 5;
 const POLYGON_EDGE_HANDLE_SIZE_PX = 7;
+
+/** Crop window handles (S8), same square-handle size as a polygon edge's. */
+const CROP_HANDLE_SIZE_PX = 8;
 
 const ZOOM_LIMITS = { min: CANVAS_MIN_ZOOM, max: CANVAS_MAX_ZOOM };
 
@@ -1605,6 +1618,132 @@ export function TagCanvasEditor({
     }
   }, [cornerHandleLayer]);
 
+  // -- Image crop (S8) --------------------------------------------------------
+
+  /** The image layer currently in crop mode, or null. Entered ONLY from the
+   * context menu's "Crop image" (double-click on an image stays a no-op). */
+  const [cropEditingLayerId, setCropEditingLayerId] = useState<string | null>(null);
+  /** The crop window mid-edit, normalised 0-1 against the source. Seeded from
+   * the layer's own `cropRect` on entry; nothing is written to the layer
+   * until Enter/click-outside commits it. */
+  const [cropDraft, setCropDraft] = useState<CropRect | null>(null);
+  const cropDragRef = useRef<{
+    anchor: { fx: number; fy: number } | null;
+    base: CropRect;
+    origin: { x: number; y: number };
+    cancelled: boolean;
+  } | null>(null);
+
+  /** Eligibility mirrors `cornerHandleLayer`'s own guard (S5): locked,
+   * hidden, deleted or no-longer-an-image all take the mode away for free
+   * the next time this recomputes, the same "derived guard" pattern. */
+  const cropEditingLayer = useMemo(() => {
+    if (!cropEditingLayerId) return null;
+    const layer = layers.find((l) => l.id === cropEditingLayerId);
+    if (!layer || layer.locked || !layer.visible || layer.props.kind !== 'image') return null;
+    return layer as TagLayer & { props: Extract<TagLayerProps, { kind: 'image' }> };
+  }, [cropEditingLayerId, layers]);
+
+  const cropImageUrl = cropEditingLayer
+    ? layerDisplay(cropEditingLayer, dataOf(cropEditingLayer), library.assetUrls)?.imageUrl
+    : null;
+  const cropImage = useHtmlImage(cropImageUrl ?? null);
+
+  /** The WHOLE source drawn "in its fitted position" (AC-S8-2): always
+   * CONTAIN, regardless of the layer's own `fit` - cropping needs the whole
+   * picture on screen to choose a window from, not whatever `fit` would
+   * otherwise letterbox or crop away. */
+  const cropFrame = useMemo(() => {
+    if (!cropEditingLayer || !cropImage) return null;
+    const w = cropEditingLayer.width_mm * scale;
+    const h = cropEditingLayer.height_mm * scale;
+    const ratio = cropImage.width / cropImage.height;
+    const boxRatio = w / h;
+    const wide = ratio > boxRatio;
+    const fitW = wide ? w : h * ratio;
+    const fitH = wide ? w / ratio : h;
+    return { x: (w - fitW) / 2, y: (h - fitH) / 2, width: fitW, height: fitH };
+  }, [cropEditingLayer, cropImage, scale]);
+
+  const enterCropMode = useCallback(() => {
+    if (selectedIds.size !== 1) return;
+    const layer = layers.find((l) => selectedIds.has(l.id));
+    if (!layer || layer.props.kind !== 'image') return;
+    setCropEditingLayerId(layer.id);
+    setCropDraft(resolvedCropRect(layer.props.cropRect));
+  }, [selectedIds, layers]);
+
+  /** Writes the draft, one history entry, then leaves the mode. */
+  const commitCrop = useCallback(() => {
+    const layer = cropEditingLayer;
+    const draft = cropDraft;
+    setCropEditingLayerId(null);
+    setCropDraft(null);
+    cropDragRef.current = null;
+    if (!layer || !draft) return;
+    updateLayerProps(layer.id, { cropRect: draft });
+  }, [cropEditingLayer, cropDraft, updateLayerProps]);
+
+  /** Esc (AC-S8-3): the layer's own `cropRect` was never touched, so there
+   * is nothing to undo - just stop editing. */
+  const cancelCropMode = useCallback(() => {
+    setCropEditingLayerId(null);
+    setCropDraft(null);
+    cropDragRef.current = null;
+  }, []);
+
+  const startCropDrag = useCallback(
+    (anchor: { fx: number; fy: number } | null, origin: { x: number; y: number }) => {
+      if (!cropDraft) return;
+      cropDragRef.current = { anchor, base: cropDraft, origin, cancelled: false };
+    },
+    [cropDraft],
+  );
+
+  const cropRectFromEvent = useCallback(
+    (e: Konva.KonvaEventObject<DragEvent>): CropRect | null => {
+      const drag = cropDragRef.current;
+      if (!drag || !cropFrame || cropFrame.width <= 0 || cropFrame.height <= 0) return null;
+      const node = e.target;
+      const normDx = (node.x() - drag.origin.x) / cropFrame.width;
+      const normDy = (node.y() - drag.origin.y) / cropFrame.height;
+      return drag.anchor
+        ? cropRectFromDrag(drag.base, drag.anchor, normDx, normDy)
+        : panCropRect(drag.base, normDx, normDy);
+    },
+    [cropFrame],
+  );
+
+  const handleCropDragMove = useCallback(
+    (e: Konva.KonvaEventObject<DragEvent>) => {
+      const next = cropRectFromEvent(e);
+      if (next) setCropDraft(next);
+    },
+    [cropRectFromEvent],
+  );
+
+  const handleCropDragEnd = useCallback(
+    (e: Konva.KonvaEventObject<DragEvent>) => {
+      const drag = cropDragRef.current;
+      const next = cropRectFromEvent(e);
+      cropDragRef.current = null;
+      if (drag?.cancelled) return;
+      if (next) setCropDraft(next);
+    },
+    [cropRectFromEvent],
+  );
+
+  // The mode itself is what disappears if the layer stops being eligible
+  // mid-edit (deleted, locked, hidden) - the same reasoning as the polygon
+  // handles' own cleanup effect just above.
+  useEffect(() => {
+    if (cropEditingLayerId && !cropEditingLayer) {
+      setCropEditingLayerId(null);
+      setCropDraft(null);
+      cropDragRef.current = null;
+    }
+  }, [cropEditingLayerId, cropEditingLayer]);
+
   /** Escape climbs one level, and deselects at the top. */
   const selectParentGroup = useCallback(() => {
     const first = Array.from(selectedIds)[0];
@@ -2307,6 +2446,17 @@ export function TagCanvasEditor({
         return;
       }
       if (e.evt.button !== 0) return;
+      // Crop mode (S8, AC-S8-3): `e.target` is the Konva node actually hit,
+      // same as `isBackground` below reads it. The window and its 8 handles
+      // start their OWN Konva drag on this same mousedown, so this only
+      // treats it as "outside" when it hit neither of those - a hit on them
+      // falls through to Konva's own drag machinery untouched.
+      if (cropEditingLayerId) {
+        const name = e.target.name();
+        if (name === 'crop-window' || name.startsWith('crop-handle-')) return;
+        commitCrop();
+        return;
+      }
       if (handMode) {
         panRef.current = { x: point.x, y: point.y, panX: view.panX, panY: view.panY };
         return;
@@ -2316,7 +2466,7 @@ export function TagCanvasEditor({
       marqueeRef.current = { start, additive: e.evt.shiftKey };
       setMarquee(bandBetween(start, start));
     },
-    [handMode, view, isBackground],
+    [handMode, view, isBackground, cropEditingLayerId, commitCrop],
   );
 
   const handleStageMouseMove = useCallback(() => {
@@ -2599,6 +2749,13 @@ export function TagCanvasEditor({
       }
       if (e.key === 'Escape') {
         e.preventDefault();
+        // Crop mode (S8) outranks everything else Escape does: it is its
+        // own modal edit, and cancelling it leaves the layer's cropRect
+        // exactly as it was, never touched until a commit.
+        if (cropEditingLayerId) {
+          cancelCropMode();
+          return;
+        }
         // Before the deselect, which is what unmounts the handles and lets
         // Konva's last `dragend` through (r4d).
         cancelPolygonDrag();
@@ -2611,6 +2768,13 @@ export function TagCanvasEditor({
           return;
         }
         selectParentGroup();
+        return;
+      }
+      // Enter commits crop mode (S8, AC-S8-3) before anything else it might
+      // otherwise mean.
+      if (e.key === 'Enter' && cropEditingLayerId) {
+        e.preventDefault();
+        commitCrop();
         return;
       }
       // Enter toggles edit-points mode (S5) on the eligible selection -
@@ -2744,6 +2908,9 @@ export function TagCanvasEditor({
     nudgeSelection,
     cornerHandleLayer,
     editingPoints,
+    cropEditingLayerId,
+    cancelCropMode,
+    commitCrop,
   ]);
 
   // A window that loses focus while Space is down would otherwise stay in hand.
@@ -2778,6 +2945,10 @@ export function TagCanvasEditor({
   }, [selectedIds, layers]);
 
   const selectionIsGroup = selectedLayer?.props.kind === 'group';
+  /** The context menu's "Crop image" (S8): an image layer only, entered ONLY
+   * from this menu (double-click on an image stays a no-op, captain call 4). */
+  const canCropSelectedImage =
+    selectedLayer?.props.kind === 'image' && !selectedLayer.locked && selectedLayer.visible;
 
   const selectedData = selectedLayer ? dataOf(selectedLayer) : null;
 
@@ -3370,9 +3541,12 @@ export function TagCanvasEditor({
                       // In SELECT mode `polygonHandles` is null (S5 gates it
                       // on `editingPoints` too), so the full anchor set below
                       // shows instead - points stay normalised 0-1, so a box
-                      // resize scales the shape with no maths change.
+                      // resize scales the shape with no maths change. Crop
+                      // mode (S8) hides every resize anchor the same way -
+                      // the crop window's own handles own the drag while it
+                      // is open.
                       enabledAnchors={
-                        polygonHandles
+                        polygonHandles || cropEditingLayerId
                           ? []
                           : [
                               'top-left',
@@ -3473,6 +3647,103 @@ export function TagCanvasEditor({
                             }}
                           />
                         ))}
+                      </Group>
+                    )}
+
+                    {/* Crop mode (S8): the whole source at 40% opacity in
+                        its fitted (always CONTAIN) position, the crop
+                        window bright on top of it - the SAME image drawn a
+                        second time, opaque, clipped to the window; the
+                        opaque draw always wins there regardless of paint
+                        order (S4 review used the same reasoning for the
+                        ghost pass), so the two never fight over how that
+                        part looks. */}
+                    {cropEditingLayer && cropImage && cropFrame && cropDraft && (
+                      <Group
+                        x={cropEditingLayer.x_mm * scale}
+                        y={cropEditingLayer.y_mm * scale}
+                        rotation={cropEditingLayer.rotation_deg}
+                      >
+                        <KonvaImage
+                          image={cropImage}
+                          x={cropFrame.x}
+                          y={cropFrame.y}
+                          width={cropFrame.width}
+                          height={cropFrame.height}
+                          opacity={0.4}
+                          listening={false}
+                        />
+                        <Group
+                          clipFunc={(ctx) => {
+                            ctx.rect(
+                              cropFrame.x + cropDraft.x * cropFrame.width,
+                              cropFrame.y + cropDraft.y * cropFrame.height,
+                              cropDraft.width * cropFrame.width,
+                              cropDraft.height * cropFrame.height,
+                            );
+                          }}
+                        >
+                          <KonvaImage
+                            image={cropImage}
+                            x={cropFrame.x}
+                            y={cropFrame.y}
+                            width={cropFrame.width}
+                            height={cropFrame.height}
+                            listening={false}
+                          />
+                        </Group>
+                        <Rect
+                          x={cropFrame.x + cropDraft.x * cropFrame.width}
+                          y={cropFrame.y + cropDraft.y * cropFrame.height}
+                          width={cropDraft.width * cropFrame.width}
+                          height={cropDraft.height * cropFrame.height}
+                          stroke="#3b82f6"
+                          strokeWidth={1.5}
+                          listening={false}
+                        />
+                        {/* Dragging INSIDE the window pans it (AC-S8-2).
+                            Transparent so the dimmed/bright split above
+                            still shows through; drawn before the handles so
+                            a handle wins an overlapping click. */}
+                        <Rect
+                          name="crop-window"
+                          x={cropFrame.x + cropDraft.x * cropFrame.width}
+                          y={cropFrame.y + cropDraft.y * cropFrame.height}
+                          width={cropDraft.width * cropFrame.width}
+                          height={cropDraft.height * cropFrame.height}
+                          fill="transparent"
+                          draggable={!handMode}
+                          onDragStart={(e) => startCropDrag(null, { x: e.target.x(), y: e.target.y() })}
+                          onDragMove={handleCropDragMove}
+                          onDragEnd={handleCropDragEnd}
+                        />
+                        {CROP_HANDLE_ANCHORS.map((anchor) => {
+                          const hx =
+                            cropFrame.x +
+                            (cropDraft.x + anchor.fx * cropDraft.width) * cropFrame.width;
+                          const hy =
+                            cropFrame.y +
+                            (cropDraft.y + anchor.fy * cropDraft.height) * cropFrame.height;
+                          return (
+                            <Rect
+                              key={`crop-handle-${anchor.name}`}
+                              name={`crop-handle-${anchor.name}`}
+                              x={hx}
+                              y={hy}
+                              width={CROP_HANDLE_SIZE_PX}
+                              height={CROP_HANDLE_SIZE_PX}
+                              offsetX={CROP_HANDLE_SIZE_PX / 2}
+                              offsetY={CROP_HANDLE_SIZE_PX / 2}
+                              fill="#ffffff"
+                              stroke="#3b82f6"
+                              strokeWidth={1.5}
+                              draggable={!handMode}
+                              onDragStart={() => startCropDrag(anchor, { x: hx, y: hy })}
+                              onDragMove={handleCropDragMove}
+                              onDragEnd={handleCropDragEnd}
+                            />
+                          );
+                        })}
                       </Group>
                     )}
 
@@ -3614,6 +3885,12 @@ export function TagCanvasEditor({
                   Duplicate
                   <ContextMenuShortcut>Ctrl+D</ContextMenuShortcut>
                 </ContextMenuItem>
+                {canCropSelectedImage && (
+                  <ContextMenuItem onSelect={enterCropMode}>
+                    <Crop />
+                    Crop image
+                  </ContextMenuItem>
+                )}
 
                 <ContextMenuSeparator />
 

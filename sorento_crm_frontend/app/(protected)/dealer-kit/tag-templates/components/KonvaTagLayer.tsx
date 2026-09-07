@@ -32,58 +32,14 @@ import {
   scalePolygonPoints,
 } from '@/lib/dealer-kit/polygon-path';
 import { paddedBox } from '@/lib/dealer-kit/text-reflow';
+import { cropPixels, type CropRect } from '@/lib/dealer-kit/image-crop';
+import { useHtmlImage } from './useHtmlImage';
 
 // `TagLayerDisplay` is resolved by whoever owns the data (the editor, the
 // designer) and handed DOWN: the canvas draws layers and knows nothing about
 // products, which is what lets one component render a template, a placed tag
 // and a preview.
 export type { TagLayerDisplay };
-
-/**
- * Load an image for Konva.
- *
- * Konva needs a real HTMLImageElement rather than a URL, and re-rendering with
- * a half-loaded one paints nothing, so the element only reaches the stage once
- * it has decoded.
- *
- * **No `crossOrigin`.** It used to be `anonymous`, for a reason that does not
- * hold: a signed URL needs no CORS, and `anonymous` makes the browser DISCARD
- * an image whose response carries no `Access-Control-Allow-Origin`. The R2
- * bucket serving library assets sends none, so every badge, icon and diagram on
- * a tag failed to decode and sat on the placeholder text below forever - which
- * is exactly what the eight seeded templates showed, all 28 pieces of artwork,
- * on a canvas that was otherwise correct.
- *
- * What `anonymous` would buy is an UNTAINTED canvas, and nothing here wants
- * one: the tag PDF is rendered by headless Chromium against the print page, not
- * by `stage.toDataURL()`, and there is no `toDataURL` anywhere under
- * `dealer-kit/`. Bring it back only alongside a client-side canvas export - and
- * with a CORS rule on the bucket, or the export will draw blanks instead.
- */
-function useHtmlImage(url: string | null | undefined): HTMLImageElement | null {
-  const [image, setImage] = useState<HTMLImageElement | null>(null);
-
-  useEffect(() => {
-    if (!url) {
-      setImage(null);
-      return;
-    }
-    let live = true;
-    const element = new window.Image();
-    element.src = url;
-    element.onload = () => {
-      if (live) setImage(element);
-    };
-    element.onerror = () => {
-      if (live) setImage(null);
-    };
-    return () => {
-      live = false;
-    };
-  }, [url]);
-
-  return image;
-}
 
 interface KonvaTagLayerProps {
   layer: TagLayer;
@@ -274,6 +230,7 @@ function LayerContent({
           url={display?.imageUrl ?? null}
           fit={props.fit}
           maskShape={props.maskShape ?? 'none'}
+          cropRect={props.cropRect}
         />
       );
 
@@ -491,12 +448,14 @@ function ImageContent({
   url,
   fit,
   maskShape,
+  cropRect,
 }: {
   w: number;
   h: number;
   url: string | null;
   fit: 'cover' | 'contain' | 'stretch';
   maskShape: 'none' | 'circle';
+  cropRect?: CropRect;
 }) {
   const image = useHtmlImage(url);
 
@@ -517,6 +476,12 @@ function ImageContent({
     );
   }
 
+  // Crop applies BEFORE fit (S8): `crop` tells Konva which source pixels to
+  // draw, and the ratio below uses the CROPPED width/height so `fit` places
+  // the cropped region, not the whole picture. Absent `cropRect` resolves to
+  // the whole image, so this is a no-op for anything saved before S8.
+  const crop = cropPixels(cropRect, image);
+
   // `contain` letterboxes inside the box, `cover` fills it and overflows; the
   // clip below is what turns overflow into a crop rather than a picture spilling
   // over the layer next to it. `stretch` draws at the box's own size - nothing
@@ -527,7 +492,7 @@ function ImageContent({
     drawW = w;
     drawH = h;
   } else {
-    const ratio = image.width / image.height;
+    const ratio = crop.width / crop.height;
     const boxRatio = w / h;
     const wide = fit === 'contain' ? ratio > boxRatio : ratio < boxRatio;
     drawW = wide ? w : h * ratio;
@@ -537,6 +502,7 @@ function ImageContent({
   const body = (
     <KonvaImage
       image={image}
+      crop={crop}
       x={(w - drawW) / 2}
       y={(h - drawH) / 2}
       width={drawW}

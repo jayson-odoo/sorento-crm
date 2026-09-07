@@ -39,6 +39,7 @@ import type {
   TagLayerProps,
 } from '@/lib/dealer-kit/tag-template-types';
 import { imageSourceOf } from '@/lib/dealer-kit/tag-template-types';
+import { isCropped } from '@/lib/dealer-kit/image-crop';
 import { defaultPolygonPoints } from '@/lib/dealer-kit/polygon-path';
 import { priceBadgeInsets, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import { isDynamic } from '@/lib/dealer-kit/product-block';
@@ -985,6 +986,19 @@ function ImageInspector({
             options={MASK_SHAPE_OPTIONS}
           />
         </div>
+        {/* Only when a crop is actually set (S8, AC-S8-5) - entering crop
+            mode itself is the context menu's "Crop image", not this panel. */}
+        {isCropped(props.cropRect) && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs"
+            onClick={() => onChange({ ...props, cropRect: undefined })}
+          >
+            Reset crop
+          </Button>
+        )}
       </div>
     </section>
   );

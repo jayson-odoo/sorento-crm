@@ -10,7 +10,7 @@
  * CSS variables.
  */
 
-import { useMemo, type CSSProperties } from 'react';
+import { useMemo, useState, type CSSProperties } from 'react';
 import JsBarcode from 'jsbarcode';
 
 import type {
@@ -44,6 +44,7 @@ import {
   MM_TO_PT,
 } from '@/lib/dealer-kit/barcode';
 import { paddedBox } from '@/lib/dealer-kit/text-reflow';
+import { cropWindowStyle, isCropped, type CropRect } from '@/lib/dealer-kit/image-crop';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -304,18 +305,111 @@ function renderImageLayer(
         backgroundColor: url ? 'transparent' : '#f5f5f5',
       }}
     >
-      {url && (
+      {url &&
+        (isCropped(props.cropRect) ? (
+          <CroppedImage url={url} cropRect={props.cropRect as CropRect} fit={props.fit} />
+        ) : (
+          <img
+            src={url}
+            alt=""
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit:
+                props.fit === 'cover' ? 'cover' : props.fit === 'stretch' ? 'fill' : 'contain',
+            }}
+          />
+        ))}
+    </div>
+  );
+}
+
+/**
+ * A cropped image, fitted per `fit` (S8).
+ *
+ * CSS `object-fit` has no "and only this sub-rectangle" mode, so this
+ * reproduces contain/cover on a plain `<div>` instead: `aspectRatio` set to
+ * the CROPPED region's own ratio, sized with the same `min`/`max`-width
+ * percentage-plus-aspect-ratio technique that gets `object-fit: cover` and
+ * `contain` behaviour out of a div that has no image of its own. The crop
+ * fraction's own W:H only equals the source's real pixel ratio when the
+ * source happens to be square, so this needs the REAL natural size first -
+ * `onLoad` measures it; until then it falls back to the plain (uncropped)
+ * fit so there is always something reasonable on screen, never a blank box.
+ */
+function CroppedImage({
+  url,
+  cropRect,
+  fit,
+}: {
+  url: string;
+  cropRect: CropRect;
+  fit: 'cover' | 'contain' | 'stretch';
+}) {
+  const [natural, setNatural] = useState<{ width: number; height: number } | null>(null);
+
+  if (!natural) {
+    return (
+      <img
+        src={url}
+        alt=""
+        onLoad={(e) =>
+          setNatural({
+            width: e.currentTarget.naturalWidth,
+            height: e.currentTarget.naturalHeight,
+          })
+        }
+        style={{
+          width: '100%',
+          height: '100%',
+          objectFit: fit === 'cover' ? 'cover' : fit === 'stretch' ? 'fill' : 'contain',
+        }}
+      />
+    );
+  }
+
+  const layout = cropWindowStyle(cropRect, natural);
+  const base: CSSProperties = { position: 'relative', overflow: 'hidden' };
+  const windowStyle: CSSProperties =
+    fit === 'stretch'
+      ? { ...base, width: '100%', height: '100%' }
+      : fit === 'cover'
+        ? {
+            ...base,
+            position: 'absolute',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            minWidth: '100%',
+            minHeight: '100%',
+            width: 'auto',
+            height: 'auto',
+            aspectRatio: layout.aspectRatio,
+          }
+        : {
+            ...base,
+            maxWidth: '100%',
+            maxHeight: '100%',
+            width: 'auto',
+            height: 'auto',
+            aspectRatio: layout.aspectRatio,
+          };
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
+      <div style={windowStyle}>
         <img
           src={url}
           alt=""
           style={{
-            width: '100%',
-            height: '100%',
-            objectFit:
-              props.fit === 'cover' ? 'cover' : props.fit === 'stretch' ? 'fill' : 'contain',
+            position: 'absolute',
+            width: layout.img.width,
+            height: layout.img.height,
+            left: layout.img.left,
+            top: layout.img.top,
           }}
         />
-      )}
+      </div>
     </div>
   );
 }
