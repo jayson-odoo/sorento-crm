@@ -1342,7 +1342,7 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             # turn names no date, so the carry below would silently restore the PREVIOUS
             # window and answer the opposite of what was asked.
             #
-            # Owner console pass 5, item B1 (7 Sep 2026, H80/AC-828): `broaden_axis == "date"`
+            # Owner console pass 5, item B1 (7 Sep 2026, H79/AC-828): `broaden_axis == "date"`
             # is the PARSER's read of the turn's SHAPE, not proof the turn named no date -
             # captures e4381b0d / 98526b81 ("last month") set `broaden_axis: "date"` AND a
             # concrete `date_filter_start` / `date_filter_end` in the SAME parser output
@@ -2831,79 +2831,16 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
                     o["entity_op"] = "reuse"
                     o["member_offer_scope_reused"] = True  # diagnostic
 
-            # Owner console pass 5, item B2 (7 Sep 2026, H81/AC-829, D11 inventory row
-            # R-b): a BARE code-shaped reply narrows the PRODUCT half of the carried
-            # pair. "rpacc" (turn 6ea9fd1a, after a working "last month") is never
-            # extracted as an entity by the parser at all - `entities: []`,
-            # `message_type: "casual"` - so nothing downstream of the parser can invent
-            # one. NOT a substring or regex over the customer's message (D11's own rule
-            # for new code: "no regex or substring match over ctx.text"): the bare
-            # reply, tokenised the same way `_TOKEN_RE` already does elsewhere in this
-            # file, is compared by EQUALITY against ONE SEGMENT of a code WE persisted
-            # (`prev_state.routing_companies[].codes`, split on its own separators),
-            # never against the code's raw text as a whole - the same class of tap
-            # `_team_clarify_pick` above is inventoried under (equality against a
-            # closed list of strings this codebase composed one turn earlier). The
-            # candidate segment's OWN code must additionally split with the carried
-            # product entity's own token as its FIRST segment ("SRTWC286-SH-RPACC" for
-            # a carried "srtwc286"), which is what tells a product variant apart from
-            # the customer's own debtor code sitting in the SAME list (`codes` mixes
-            # both, gate.py's own `_co_label` comment says so) - again by equality
-            # between two strings this codebase computed, not by reading either as
-            # prose.
-            prior_product = jsc.find(
-                jsc.array(o.get("entities")),
-                lambda e: jsc.lower_or_empty(jsc.get(e, "hint")) == "product",
-            )
-            if prior_product is not None:
-                base_token = "".join(
-                    _TOKEN_RE.findall(
-                        jsc.js_string(
-                            jsc.get(prior_product, "canonical_code")
-                            or jsc.get(prior_product, "raw")
-                            or ""
-                        ).lower()
-                    )
-                )
-                bare_reply = _split_reply_to(parent_input.get("latest_user_message")).strip()
-                bare_tokens = _TOKEN_RE.findall(bare_reply.lower())
-                bare_token = bare_tokens[0] if len(bare_tokens) == 1 else None
-                if base_token and bare_token and bare_token != base_token:
-                    candidates: set[str] = set()
-                    for c in jsc.array(prior_state.get("routing_companies")):
-                        for code in jsc.array(jsc.get(c, "codes")):
-                            segments = _TOKEN_RE.findall(jsc.js_string(code).lower())
-                            if (
-                                len(segments) > 1
-                                and segments[0] == base_token
-                                and bare_token in segments[1:]
-                            ):
-                                candidates.add(code)
-                    if len(candidates) == 1:
-                        o["entities"] = [
-                            e
-                            for e in jsc.array(o.get("entities"))
-                            if jsc.lower_or_empty(jsc.get(e, "hint")) != "product"
-                        ] + [
-                            {
-                                "raw": bare_reply,
-                                "hint": "product",
-                                "canonical_code": None,
-                                "current_message": True,
-                                "confident": True,
-                            }
-                        ]
-                        # The bare reply now carries a real, current-message entity - the
-                        # SAME shape the "bare entity under an open member roster" block
-                        # above (AC-816 rule 3) promotes `casual` out of, and for the same
-                        # reason: a `casual` message_type left in place routes the rest of
-                        # the turn (the tail's `escalate-catalog` / `cs-offer-gate`) as an
-                        # unanswered offer, so a genuinely resolved narrowing still built
-                        # the CS-member-roster reply instead of answering the query.
-                        if o.get("message_type") == "casual":
-                            o["message_type"] = "business_query"
-                        o["bare_product_code_narrowed"] = True  # diagnostic
-
+            # Owner console pass 5, item B2 (7 Sep 2026, H80/AC-829): a BARE reply the
+            # parser extracted NOTHING from ("rpacc", turn 6ea9fd1a - `entities: []`)
+            # has nothing here for THIS arm to narrow with - the carried pair rides
+            # through unchanged, deliberately. Narrowing it is
+            # `resolve_gate.resolve_bare_reply_under_member_offer`'s job, downstream,
+            # where the RESOLVER exists to ask (review round 1, B3: the first cut's
+            # roster-code-segment reader here invented a shape - "SRTWC286-SH-RPACC" -
+            # no production capture's `routing_companies` carries; production's real
+            # shape is a product coded literally RPACC, which only the resolver can
+            # tell apart from junk text).
             o["member_offer_filter_modification"] = True  # diagnostic
         elif is_new_query:
             # Tier 3b - NEW QUERY: abandon the offer. Touch nothing.

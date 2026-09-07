@@ -56,21 +56,28 @@ under D11, `head/output_exchange.py` module docstring).
 
 **B2's stage.** `_parser_raw` for "rpacc" (both 6ea9fd1a and a78625ec) is IDENTICAL in
 shape - `message_type: "casual"`, `entities: []`, `entity_op: "reuse"` - the parser never
-extracts "rpacc" as a product entity at all. Given B1's defect, once fixed, "rpacc" would
-still reach the entity-op executor with zero entities of its own, so nothing downstream of
-the parser can invent a product entity the parser never emitted; the brief's own B2 ask
-("a bare product code under the offer narrows the product") therefore names a NEW
-deterministic reader over the offer's own OWN roster state - the same class of mechanism
-as `output_exchange._coCompanyPick` (D11-inventoried: a code-shaped bare reply matched
-against the offer's own persisted state, never free text) - that does not exist yet for
-PRODUCT narrowing under a member offer. Confirmed by reading `head/output_exchange.py` in
-full: no site reads a bare reply against `prev_state.routing_companies[].codes` (where
-"SRTWC286-SH-200" etc. live) to substitute the product half of a carried entity pair. This
-is a gap, not a wrong branch - stated rather than guessed at a line number that does not
-exist.
+extracts "rpacc" as a product entity at all, so nothing downstream of the parser can
+invent one without asking somewhere real.
 
-No em or en dashes. No regex over customer text (the assertions below read structured
-`parse.output` / `branch_kind`, never `ctx.text`).
+**Corrected on review, round 1 (blocker B3).** The first cut of this fix read a bare
+reply against `prev_state.routing_companies[].codes` looking for a matching SEGMENT, and
+invented a code shape ("SRTWC286-SH-RPACC") to make it fire - measured against the REAL
+vendored `routing_companies` on 6ea9fd1a (below): no code in it contains "rpacc" anywhere,
+as a suffix or otherwise. Production's real shape, queried read-only against the local
+prod-copy database: TWO products are coded literally `RPACC` (`d7eeb622-...` under Mocha,
+`c18fa9ea-...` under Sorento - the SAME cross-company duplicate shape `srtwc286` itself
+is). The bare token IS a product code; it is not a suffix of anything the offer's own
+state carries. Fixed per #698's own rule, restated for this shape: the whole message goes
+to the RESOLVER as one token, and the RESOLVER decides what it is -
+`resolve_gate.resolve_bare_reply_under_member_offer`, called between the resolver seam and
+the gate, replaces the matching half of the carried pair on an unambiguous match (a
+same-code cross-company collapse counts as one) and changes nothing otherwise, so a
+genuine miss answers not-found off the UNCHANGED carried pair rather than reaching
+`offer_hold` (B3, below, stays a green regression guard either way).
+
+No em or en dashes. No regex or substring over customer text for TYPING - the new
+mechanism sends the bare reply to the real resolver and reads its answer; the assertions
+below read structured `parse.output` / `branch_kind`, never `ctx.text`.
 """
 from __future__ import annotations
 
@@ -100,16 +107,56 @@ ROSTER = [
     for i in range(1, 7)
 ]
 
-# The routing_companies roster the real captures carry (company codes + labels a bare
-# reply would need to be matched against for B2's still-missing mechanism) - synthetic
-# codes here, never the production account names measured while diagnosing this.
+# The REAL `routing_companies` turn 6ea9fd1a carries (`previous_conversation_state`,
+# vendored at `tests/fixtures/chatbot/6ea9fd1a-86e8-461e-a56e-a7865beb6cfc.json`) - not
+# synthetic, and deliberately kept exactly as production has it: no code here contains
+# "rpacc" (review round 1, blocker B3 - the first cut of this fix invented one that did).
+# The company id/name are the real Sorento default row's, so `_wire_business_lane`'s own
+# seeded company can be scoped under it without a second, unreachable identity in state.
 ROUTING_COMPANIES = [
     {
-        "company_id": "zzt-company-1",
-        "company_name": "ZZT Co",
-        "brand_code": "zzt",
-        "codes": ["hanlim-code-1", "SRTWC286-SH-200", "SRTWC286-SH-RPACC"],
-        "labels": ["HANLIM ZZT TRADING", "SRTWC286-SH-200", "SRTWC286-SH-RPACC"],
+        "company_id": "00000000-0000-0000-0000-000000000001",
+        "company_name": "Sorento",
+        "brand_code": "sorento",
+        "codes": [
+            "300-H070",
+            "300-H030",
+            "300-H118",
+            "300-H119",
+            "HANLIM TRADING SDN BHD [A/C IV]",
+            "HANLIM TRADING SDN BHD",
+            "HANLIM TRADING SDN BHD (CERAMIC & ELLECI)",
+            "HANLIM TRADING SDN BHD [A/C III]",
+            "HANLIM TRADING SDN BHD [A/C I]",
+            "SRTWC286-SH-200",
+            "SRTWC286-SH-P",
+            "SRTWC286-SH-PP",
+            "SRTWC286-SH",
+            "SRTWC286-SH-UF",
+            "SRTWC286-SH-NEW-150",
+            "SRTWC286-SH-150",
+            "SRTWC286-SH-NEW-P",
+            "SRTWC286-SH-NEW-200",
+            "SRTWC286-SH-NEW",
+        ],
+        "labels": [
+            "HANLIM TRADING SDN BHD [A/C II]",
+            "HANLIM TRADING SDN BHD [A/C I]",
+            "HANLIM TRADING SDN BHD [A/C III]",
+            "HANLIM TRADING SDN BHD [A/C IV]",
+            "HANLIM TRADING SDN BHD",
+            "HANLIM TRADING SDN BHD (CERAMIC & ELLECI)",
+            "SRTWC286-SH-200",
+            "SRTWC286-SH-P",
+            "SRTWC286-SH-PP",
+            "SRTWC286-SH",
+            "SRTWC286-SH-UF",
+            "SRTWC286-SH-NEW-150",
+            "SRTWC286-SH-150",
+            "SRTWC286-SH-NEW-P",
+            "SRTWC286-SH-NEW-200",
+            "SRTWC286-SH-NEW",
+        ],
     }
 ]
 
@@ -199,13 +246,13 @@ def _seed_real_hanlim_and_srtwc286(session_factory) -> str:
     """The two entities the carried pair names, as REAL rows - `_probe_customer`
     exact-matches `customer_code` and `_probe_product` exact-matches `product_code`,
     both whitespace/case-insensitive, so the lowercase raws the parser carries
-    ("hanlim" / "srtwc286") resolve cleanly. Also seeds the "SRTWC286-SH-RPACC" variant
-    B2's own bare-code narrowing (`ROUTING_COMPANIES`) names - `_prefix_probe_product`
-    substring-matches "rpacc" against it (Tier 2), so once the narrowing swaps the
-    entity's `raw` to "rpacc" the resolver has a real row to land on and the header
-    (`tail/compile_state.py::_search_scope_header`, built from the GATE's resolved
-    entities, never the parser's raw hint alone) can print it. Returns the company id
-    so the caller can scope the contact and the resolver to it."""
+    ("hanlim" / "srtwc286") resolve cleanly. Also seeds a product coded literally
+    `RPACC` - the PRODUCTION shape (review round 1, blocker B3: two real rows exist,
+    `d7eeb622-...` Mocha / `c18fa9ea-...` Sorento, same-code cross-company duplicates,
+    queried read-only against the local prod-copy database) - so
+    `resolve_bare_reply_under_member_offer`'s own resolver probe has a real row to land
+    on. Returns the company id so the caller can scope the contact and the resolver to
+    it."""
     db = session_factory()
     company = Company(name=unique_code("ZZTHanlim"), code=unique_code("ZZTH")[:50])
     db.add(company)
@@ -225,9 +272,9 @@ def _seed_real_hanlim_and_srtwc286(session_factory) -> str:
         is_active=True,
         company_id=company.id,
     )
-    variant = Product(
-        product_code="SRTWC286-SH-RPACC",
-        product_name="ZZT item2 product SRTWC286-SH-RPACC",
+    rpacc = Product(
+        product_code="RPACC",
+        product_name="RPACC",
         category_id=category.id,
         base_uom_id=uom.id,
         list_price=10,
@@ -240,7 +287,7 @@ def _seed_real_hanlim_and_srtwc286(session_factory) -> str:
         is_active=True,
         company_id=company.id,
     )
-    db.add_all([product, variant, customer])
+    db.add_all([product, rpacc, customer])
     db.commit()
     return company.id
 
