@@ -259,3 +259,33 @@ re-created under a new DocKey (the old DocKey's rows). Cleared when a push names
 - **AC-X48 [BE]** `_is_live_group_member` is false for a retired row; the leftover sweep, the
   DocKey-change path and the dedupe script's older-DocKey pass are the only setters of
   `retired_at`; `_write_row` on a named row is the only clearer.
+
+## Round 6 (production dedupe finding, 2026-09-08, PLAN D25c)
+
+Production fact: the dedupe applied to 3,150 documents but skipped SPO-2026/09-0028, the incident
+example, because its 16 Excel rows carry `source_system` NULL, `location_code` NULL, `warehouse_id`
+set. Both the Procurement page's Upload SPO (`process_spo_import`) and the n8n packing-list route
+write that shape; only the SCM outstanding upload writes `scm_upload`. D25a's premise that a
+NULL-source row "states one line for one real line" was wrong: both NULL-source writers load an
+Excel aggregate.
+
+- **AC-X13 (revised) [BE][T]** (D25c) A ref-less row with `source_system` NULL for product P,
+  `warehouse_id` W and no `location_code`, closed with received 47, on an SPO with no ref row; a
+  first push names P at the warehouse whose code resolves to W with two lines 29 / 18. The row is
+  superseded exactly as AC-X1 (deleted, receipt carried 29 / 18, links moved, `lines.superseded 1`).
+
+- **AC-X49 [BE][T]** (D25c grouping) Grouping is by `(product_id, warehouse_id)` when both sides
+  carry a warehouse, falling back to `(product_id, upper(location_code))` only when one side has no
+  warehouse. A `scm_upload` row with `location_code 'brw'` and `warehouse_id` W and an incoming
+  line resolving to W group together; a row for W beside a row for W2 of the same product form two
+  groups, each carried onto its own lines.
+
+- **AC-X50 [BE][T]** (D26 carry) The superseded row's `storage_zone_id`, like its
+  `inbound_shipment_id`, is carried onto every new line of the group that has none.
+
+- **AC-X51 [S][T]** (D29) The dedupe applies the same predicate: a document holding NULL-source
+  ref-less closed rows beside `autocount` rows (the SPO-0028 shape, keyed by warehouse) is
+  deduplicated; a second run reports 0.
+
+- **AC-X29 (unchanged)** a NULL-source row for a product the push does not name is a kept group,
+  closed, links and zone untouched.
