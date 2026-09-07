@@ -1,6 +1,6 @@
 # PLAN: DO list product-code search, delivered-status backfill, MCP incoming/summary feedback (7 Sep 2026)
 
-Status: REVIEWED (Phase 3 done, PR pending)
+Status: PR #711 OPEN, browser-verified 7 Sep
 Branch: `fix/do-search-and-mcp-feedback-7sep` (one lane, one PR)
 UAC: `do-search-and-mcp-feedback-7sep-acceptance-criteria.md`
 
