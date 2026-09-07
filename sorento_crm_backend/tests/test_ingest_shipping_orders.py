@@ -123,14 +123,16 @@ def _seed_legacy_row(
     allocated_quantity: int = 10,
     quantity_received: int = 0,
     line_status: str = "open",
+    inbound_shipment_id: str | None = None,
 ) -> SPOAllocation:
     """An xlsx-era row: `source_system='scm_upload'`, no ref columns.
 
-    `source_ref` / `source_doc_ref` are NOT set here on purpose - the columns do
-    not exist on `SPOAllocation` yet (plan section 2.4's migration is still
-    ahead of this test), and a ref-less row is exactly what the xlsx upload
-    always wrote, so this is the correct shape for the fixture as well as the
-    only one the current model accepts.
+    `source_ref` / `source_doc_ref` are left NULL on purpose - a ref-less row
+    is exactly what the xlsx upload always wrote, and that shape is what the
+    S4/D25 adoption-vs-supersede rules key off. `inbound_shipment_id`
+    (spo-xlsx-supersede AC-X6) is the one column callers may want stamped on
+    the seed itself, since it is what `spo-xlsx-supersede`'s D26 carries
+    forward onto every line of a superseded group.
     """
     product_id = env.refs.resolve(
         entity_type="products", source_ref=product_ref or env.product_ref
@@ -146,6 +148,7 @@ def _seed_legacy_row(
         receipt_status="pending" if allocated_quantity > quantity_received else "fully_received",
         line_status=line_status,
         source_system="scm_upload",
+        inbound_shipment_id=inbound_shipment_id,
     )
     env.db.add(row)
     env.db.flush()
