@@ -38,12 +38,9 @@ from tests.chatbot.test_engine import (  # noqa: F401 - fixtures
 
 
 def _slot(value: Any, *, turn: int, source: str = "current_message") -> dict[str, Any]:
-    return {
-        "value": value,
-        "set_at_turn": turn,
-        "set_at": "2026-09-07T04:00:00+00:00",
-        "source": source,
-    }
+    """One slot. NO wall clock: the state ages in turns only (D11) and AC-206 wants a dry
+    run's session patch byte-equal to a live run's, which a timestamp would break."""
+    return {"value": value, "set_at_turn": turn, "source": source}
 
 
 def _product(code: str) -> dict[str, Any]:

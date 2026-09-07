@@ -758,6 +758,17 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
         # carry the prior one forward so a CRM question mid-collection does not wipe an
         # open draft (IU3).
         "ideation": jsc.get(ideate, "ideation") if jsc.truthy(ideate) else (jsc.get(prev, "ideation") or None),
+        # Growth r1 slice B3: WHAT THE CONVERSATION IS ABOUT, per axis, each axis ageing
+        # on its own. `dialogue/focus.py` is the only writer; this only persists what it
+        # decided. It rides on `ctx.parse` (beside `_parser_raw`) rather than on the
+        # emission, because the emission is the graded wire shape.
+        #
+        # The keys beside it - `entities`, `domain_hint`, `date_filter_*`,
+        # `requested_attributes`, `access_levels`, `query_brands` - stay for one release
+        # and stay authoritative (AC-951): every lane reads them, and `focus.from_session`
+        # projects them into a focus for a session written before this existed. Removing
+        # them is the follow-up the plan names, after the corpus is re-derived.
+        "focus": jsc.get(jsc.get(ctx, "parse"), "_focus") or None,
     }
     output: dict[str, Any] = {
         "variables": variables,

@@ -20,6 +20,7 @@ from sqlalchemy import text
 
 from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import engine as engine_mod
+from app.services.chatbot import trace as trace_mod
 from app.services.chatbot.contracts import BRANCH_KINDS
 from tests.chatbot.test_engine import (  # noqa: F401 - re-exported fixtures used by name
     CONTACT_ID,
@@ -32,8 +33,18 @@ from tests.chatbot.test_engine import (  # noqa: F401 - re-exported fixtures use
 
 
 def _assert_trace_is_legible(trace: list[dict[str, Any]]) -> None:
+    """Every STAGE record reads as sentences (AC-007, D11).
+
+    Stage records only. The same array also carries the structured decisions
+    `trace.TurnTrace.add` writes (`decay`, `focus`, `open_question`, `tool`, ...), and
+    those are machine payloads by design - the trace screen renders them as their own
+    sections, not as timeline prose. `trace.stage_records` is the one place that tells the
+    two apart.
+    """
     assert trace, "no trace records were written at all"
-    for record in trace:
+    records = trace_mod.stage_records(trace)
+    assert records, "no STAGE records were written at all"
+    for record in records:
         assert "raw" in record, record
         summary, why = record["summary"], record["why"]
         assert summary and why, record

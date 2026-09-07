@@ -42,6 +42,7 @@ from app.services.chatbot.head.output_exchange import ParserOutputError, post_pr
 from app.services.outbound_url_guard import OutboundUrlRejected, assert_safe_outbound_url
 from app.services.respond_workspace_service import RespondWorkspaceService
 from app.services.user_service import UserPermissionService
+from app.services.chatbot import trace as trace_mod
 from tests._pg_fixture import blank_session
 from tests.chatbot import _corpus
 from tests.chatbot.test_engine import (  # noqa: F401 - fixtures used by name
@@ -432,7 +433,7 @@ class TestPromptOverridesAC807:
             "override_version_id - it must be dropped before the parser is asked"
         )
         trace = _turn_row(session_factory, result.turn_id).trace
-        understood = next(r for r in trace if r["stage"] == "understood")
+        understood = next(r for r in trace_mod.stage_records(trace) if r["stage"] == "understood")
         assert understood["facts"]["prompt_version"] == 1, (
             "the trace's prompt_version fact must be the production label's version "
             f"(1), not the override (999): {understood['facts']}"

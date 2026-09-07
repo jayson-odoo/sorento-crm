@@ -35,6 +35,9 @@ CHAINS = worlds_mod.multi_turn_worlds(WORLDS)
 # quieter table.
 WORLD_FLOOR = 100
 
+# See `_graded_variables`.
+_PORT_ONLY_KEYS = frozenset({"pending", "focus"})
+
 
 @pytest.fixture()
 def world_db(session_factory):
@@ -96,13 +99,21 @@ def _graded_variables(world: worlds_mod.World, actual: dict) -> tuple[dict, dict
     """Both sides, with the two allowed differences removed from each.
 
     `pending` is the R3 marker the JS had no equivalent of (the same field-scoped
-    divergence the node replay registers), and `dym_offer.id` is `$execution.id` becoming
-    the CRM turn id. Nothing else is excused: a world that differs anywhere else is
-    either a defect or a NAMED body difference, and a body difference SKIPS the world
-    rather than quietly ignoring the key.
+    divergence the node replay registers), `focus` is growth r1 slice B3's dialogue state
+    (registered the same way, for the same reason: no capture predates the code that
+    writes it), and `dym_offer.id` is `$execution.id` becoming the CRM turn id. Nothing
+    else is excused: a world that differs anywhere else is either a defect or a NAMED body
+    difference, and a body difference SKIPS the world rather than quietly ignoring the key.
+
+    `entities`, `domain_hint`, `date_filter_*`, `requested_attributes`, `access_levels`
+    and `query_brands` are deliberately NOT in the list. They are what the six focus rules
+    decide, so grading them is the proof that slice B3 moved those decisions without
+    changing any of them.
     """
-    expected = worlds_mod.drop_paths({k: v for k, v in world.expected_variables.items() if k != "pending"})
-    got = worlds_mod.drop_paths({k: v for k, v in actual.items() if k != "pending"})
+    expected = worlds_mod.drop_paths(
+        {k: v for k, v in world.expected_variables.items() if k not in _PORT_ONLY_KEYS}
+    )
+    got = worlds_mod.drop_paths({k: v for k, v in actual.items() if k not in _PORT_ONLY_KEYS})
     return expected, got
 
 

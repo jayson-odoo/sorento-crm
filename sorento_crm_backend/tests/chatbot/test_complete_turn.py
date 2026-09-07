@@ -36,6 +36,7 @@ from app.services.chatbot.head import parser as parser_mod
 # with the auth chain.
 from tests.chatbot.test_chat_turn_endpoint import api_key, client  # noqa: F401 - fixtures
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output
+from app.services.chatbot import trace as trace_mod
 
 _COMPLETE_URL = "/api/v1/external/chat/turn/{turn_id}/complete"
 
@@ -148,15 +149,15 @@ class TestTheTailWritesTheSession:
 
     def test_the_turn_closes_done_with_the_head_s_trace_continued(self, seeded, stub_parser, session_factory):
         head = _head(session_factory, is_test=False)
-        before = len(_turn_row(session_factory, head.turn_id).trace)
+        before = len(trace_mod.stage_records(_turn_row(session_factory, head.turn_id).trace))
         engine_mod.complete_turn(head.turn_id, _fragments(), session_factory=session_factory)
         row = _turn_row(session_factory, head.turn_id)
         assert row.status == "done"
         assert row.stage == "remembered"
-        stages = [record["stage"] for record in row.trace]
+        stages = [record["stage"] for record in trace_mod.stage_records(row.trace)]
         assert len(stages) == before + 2, "the tail APPENDS, it does not start a second timeline"
         assert stages[-2:] == ["replied", "remembered"]
-        for record in row.trace[-2:]:
+        for record in trace_mod.stage_records(row.trace)[-2:]:
             assert record["summary"] and record["why"]
             assert "{" not in record["summary"], "the trace renders words, not JSON (D11)"
 

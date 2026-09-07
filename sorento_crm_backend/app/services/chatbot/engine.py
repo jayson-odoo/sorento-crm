@@ -1265,6 +1265,10 @@ def _run_stages(  # noqa: PLR0915
         "contact_id": contact_respond_id,
         "previous_conversation_state": variables,
         "referenced_result_set": referenced_result_set,
+        # D11's counter, so the focus rules can date the slots they set. It is an INPUT
+        # to the post-processor and never part of its output, which is what keeps the
+        # 1,875 captured emissions byte-comparable.
+        "turn_no": turn_no,
     }
     user_block = parser.build_user_block(
         previous_response=variables.get("response"),
@@ -1330,6 +1334,16 @@ def _run_stages(  # noqa: PLR0915
         return _failed_result(turn_id, "understood", message, actions, dry_run)
 
     qf = parse_block.get("output") or {}
+    # -- the focus rules' result, read back off the out-parameter (slice B3) ------ #
+    # `_post_process` cannot put it on the emission: `parse.output` IS the graded wire
+    # shape. It hands it back on `parent_input` instead, and the engine carries it on the
+    # PARSE BLOCK, beside `_parser_raw`, which is how `ctx.parse` already carries a value
+    # the emission does not (`tail/compile_state._picker_carry` reads that one).
+    dialogue_out = parent_input.pop("_dialogue_out", None) or {}
+    parse_block["_focus"] = dialogue_out.get("focus") or {}
+    for entry in dialogue_out.get("trace") or []:
+        turn_trace.add("focus", entry)
+
     turn_trace.record(
         "understood",
         summary=(

@@ -13,9 +13,11 @@ AC-940, AC-941, AC-971. Two things happen here, in this order, at the `received`
    message and, when a question is open, to say whether this message answers it.
 
 **Turns, never minutes.** Owner decision D11: `age_turns = turn_no - set_at_turn` and
-nothing else decides a drop. `set_at` is carried into the trace so an operator can also see
-the wall-clock age, and `age_minutes` is computed for the same reason - neither is read by
-any branch here, and a reviewer finding one that is has found a defect.
+nothing else decides a drop. There is no wall clock in the persisted state at all (see
+`contracts.FocusSlot` for the second reason: AC-206 wants a dry run's session patch
+byte-equal to a live run's, and a timestamp inside the state makes two identical turns
+differ). The TRACE carries the clock, stamped by `TurnTrace.add` as `at`, which is where an
+operator reads it and where nothing can branch on it.
 
 Ageing is INCLUSIVE of the TTL: a slot set at turn N with `ttl_turns = 3` is alive at
 N+1, N+2 and N+3 and is dropped at N+4. That is AC-940's own arithmetic ("the same at N+2
@@ -24,7 +26,6 @@ carries", "at N+4 does NOT").
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from app.services.chatbot.contracts import FOCUS_SLOTS
@@ -99,7 +100,6 @@ def apply(
             slot=name,
             value=slot.get("value"),
             set_at_turn=_int(slot.get("set_at_turn"), _UNKNOWN_SET_AT_TURN),
-            set_at=slot.get("set_at"),
             age=age_turns(slot, turn_no=turn_no),
             reason=(
                 f"not restated for {age_turns(slot, turn_no=turn_no)} turns; the focus TTL "
@@ -126,7 +126,6 @@ def apply(
                 slot="open_question",
                 value=question.get("kind"),
                 set_at_turn=asked_at,
-                set_at=question.get("asked_at"),
                 age=age,
                 reason=(
                     f"unanswered for {age} turns; this question's TTL is {life}. It is "
@@ -146,8 +145,8 @@ def focus_hints(focus: Any) -> dict[str, Any]:
     """The alive slots as the parser sees them: values only, no bookkeeping.
 
     Entities keep the three keys the parser already emits and reads (`raw`, `hint`,
-    `canonical_code`); `set_at_turn`, `set_at` and `source` are engine bookkeeping and
-    never reach the model. A slot with no value is absent rather than null, so the hint
+    `canonical_code`); `set_at_turn` and `source` are engine bookkeeping and never reach
+    the model. A slot with no value is absent rather than null, so the hint
     block a model is shown says only what is true.
     """
     out: dict[str, Any] = {}
@@ -199,20 +198,13 @@ def open_question_hint(question: Any) -> dict[str, Any] | None:
 
 
 def _drop_entry(
-    *,
-    slot: str,
-    value: Any,
-    set_at_turn: int,
-    set_at: Any,
-    age: int,
-    reason: str,
+    *, slot: str, value: Any, set_at_turn: int, age: int, reason: str
 ) -> dict[str, Any]:
     return {
         "slot": slot,
         "value": value,
         "set_at_turn": set_at_turn,
         "age_turns": age,
-        "age_minutes": _age_minutes(set_at),
         "reason": reason,
     }
 
@@ -240,14 +232,3 @@ def _is_empty(value: Any) -> bool:
     return value is None or value == [] or value == {} or value == ""
 
 
-def _age_minutes(set_at: Any) -> int | None:
-    """Wall-clock age, for the TRACE only. Never read by a branch (D11)."""
-    if not isinstance(set_at, str) or not set_at:
-        return None
-    try:
-        stamp = datetime.fromisoformat(set_at)
-    except ValueError:
-        return None
-    if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=timezone.utc)
-    return int((datetime.now(timezone.utc) - stamp).total_seconds() // 60)

@@ -36,6 +36,7 @@ from typing import Any
 import pytest
 
 from app.services.chatbot.lanes import escalation as escalation_mod
+from app.services.chatbot import trace as trace_mod
 
 
 # --------------------------------------------------------------------------- #
@@ -682,7 +683,7 @@ def test_a_clarifys_quick_replies_reach_the_persisted_reply(
         f"{persisted!r} vs {sends[0]!r}"
     )
     assert persisted["text"] == sends[0]["text"]
-    replied = next(r for r in row.trace if r["stage"] == "replied")
+    replied = next(r for r in trace_mod.stage_records(row.trace) if r["stage"] == "replied")
     assert replied["facts"]["quick_replies"] is True, (
         f"the trace says this turn offered nothing to tap: {replied['facts']!r}"
     )

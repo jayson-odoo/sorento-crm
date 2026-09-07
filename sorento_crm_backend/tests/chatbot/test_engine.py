@@ -21,6 +21,7 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.contracts import TURN_STAGES, Envelope
 from app.services.chatbot.head import parser as parser_mod
+from app.services.chatbot import trace as trace_mod
 
 CONTACT_ID = "ZZT-contact-900000009"
 
@@ -195,7 +196,9 @@ class TestHappyPath:
         stub_access()
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
 
-        trace = _turn_row(session_factory, result.turn_id).trace
+        # STAGE records only: the same array also carries the structured decisions
+        # `TurnTrace.add` writes (`decay`, `focus`, ...), which are not timeline rows.
+        trace = trace_mod.stage_records(_turn_row(session_factory, result.turn_id).trace)
         assert [r["stage"] for r in trace] == ["received", "understood", "access", "routed"]
         for record in trace:
             assert record["summary"] and record["why"]
@@ -210,7 +213,7 @@ class TestHappyPath:
         stub_parser()
         stub_access()
         result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
-        trace = _turn_row(session_factory, result.turn_id).trace
+        trace = trace_mod.stage_records(_turn_row(session_factory, result.turn_id).trace)
         assert all(r["stage"] in TURN_STAGES for r in trace)
         # The four the HEAD owns. `looked_up` onwards arrive with the lanes and the tail;
         # a stage that did not run is omitted, never recorded empty (AC-252).

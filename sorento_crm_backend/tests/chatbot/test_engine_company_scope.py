@@ -61,6 +61,7 @@ from app.services.chatbot.lanes.business.services import AnswerServices, Resolve
 from tests._pg_fixture import unique_code
 from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_engine import _parser_output, stub_access, stub_parser  # noqa: F401
+from app.services.chatbot import trace as trace_mod
 
 # D5's own hardcoded n8n default, reused here as the workspace's `space_id` rather
 # than a made-up one: `stub_access()` (imported above) points `engine_mod.default_space_id`
@@ -187,7 +188,7 @@ def _turn_row(session_factory: Any, turn_id: str) -> ChatbotTurn:
 
 
 def _looked_up_resolved(row: ChatbotTurn) -> dict[str, Any]:
-    record = next(r for r in row.trace if r["stage"] == "looked_up")
+    record = next(r for r in trace_mod.stage_records(row.trace) if r["stage"] == "looked_up")
     return record["raw"]["resolve_gate"]["resolved"]
 
 

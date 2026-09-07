@@ -337,17 +337,20 @@ class FocusSlot(BaseModel):
     """One axis of what the conversation is currently about.
 
     `set_at_turn` is the CONTACT's turn number (`engine._turn_no`), which is what the
-    decay pass counts in - owner decision D11, turns only, no wall-clock TTL. `set_at`
-    is kept for the trace alone: an operator reading a decay line wants to know it
-    happened twenty minutes ago as well as three turns ago, and neither number is
-    allowed to decide anything.
+    decay pass counts in - owner decision D11, turns only, no wall-clock TTL.
+
+    **There is no `set_at` on the persisted slot**, and the plan's own words are why: it
+    describes the timestamp as "kept for the trace only". Persisting it would also break
+    an acceptance criterion that already exists - AC-206 says a dry run's returned
+    `session_patch` is byte-equal to what a live run persists, and a wall clock inside the
+    state makes two otherwise identical turns differ. The TRACE carries the clock instead:
+    every `focus` and `decay` entry `TurnTrace.add` writes is stamped with `at`.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     value: Any = None
     set_at_turn: int = 0
-    set_at: str | None = None
     source: FocusSource = "current_message"
 
 
@@ -393,7 +396,8 @@ class OpenQuestion(BaseModel):
     options: list[dict[str, Any]] = Field(default_factory=list)
     expects: OpenQuestionExpects
     asked_at_turn: int = 0
-    asked_at: str | None = None
+    # No wall clock here either, and for the same two reasons as `FocusSlot`: the TTL is
+    # counted in turns (D11) and AC-206 wants a dry run's patch byte-equal to a live one's.
     ttl_turns: int = 1
     # Everything the handler needs and nothing the reader has to guess at: the offering
     # domain, the team an escalation names, issue #708's `keep` list of siblings that

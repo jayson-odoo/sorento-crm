@@ -19,6 +19,7 @@ from app.services.chatbot.lanes.business import pickers, resolve_gate
 from app.services.chatbot.lanes.business.gate import run_gate
 from app.services.chatbot.lanes.business.services import ResolveGateServices, production_services
 from app.services.error_handler import AppException
+from app.services.chatbot import trace as trace_mod
 from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_engine import (  # noqa: F401  - fixtures used by name
     CONTACT_ID,
@@ -175,7 +176,7 @@ class TestShadowFailurePath:
         row = _turn_row(session_factory, result.turn_id)
         assert row.status == "delegated"
         assert row.error is None, "the SHADOW lane's failure must not fail the turn itself"
-        looked_up = [r for r in row.trace if r["stage"] == "looked_up"]
+        looked_up = [r for r in trace_mod.stage_records(row.trace) if r["stage"] == "looked_up"]
         assert len(looked_up) == 1, row.trace
         assert looked_up[0]["status"] == "failed"
         assert "resolve-entity is down" in (looked_up[0].get("error") or "")

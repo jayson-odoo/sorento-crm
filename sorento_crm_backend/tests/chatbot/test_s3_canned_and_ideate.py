@@ -33,6 +33,7 @@ from app.models.chatbot_turn import ChatbotTurn
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.contracts import Envelope
 
+from app.services.chatbot import trace as trace_mod
 from tests.chatbot.test_engine import (  # noqa: F401 - fixtures reused by name
     CONTACT_ID,
     _envelope,
@@ -370,7 +371,7 @@ class TestCannedBranchesFinishInTurn:
         row = _turn_row(session_factory, result.turn_id)
         assert row.status == "done", row.error
         assert row.branch_kind == kind
-        stages = [r["stage"] for r in row.trace]
+        stages = [r["stage"] for r in trace_mod.stage_records(row.trace)]
         assert stages[:4] == ["received", "understood", "access", "routed"]
         assert "replied" in stages
         assert "remembered" in stages

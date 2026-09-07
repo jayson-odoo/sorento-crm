@@ -546,6 +546,10 @@ def body_difference(
     the parser inherits it, so reporting a session-key difference on such a turn would
     name the symptom instead of the cause.
     """
+    # The session keys the PORT writes and no capture can carry. Same list, same reason as
+    # `divergences._PORT_ONLY_SESSION_KEYS`, which is the node-level half of this: `pending`
+    # is the R3 marker and `focus` is growth r1 slice B3's dialogue state. Everything else
+    # in the patch is still graded, `entities` and `domain_hint` included.
     if world.missing_inputs:
         return (
             "the capture does not carry "

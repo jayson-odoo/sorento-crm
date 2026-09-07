@@ -30,6 +30,26 @@ class Divergence:
     strip_paths: tuple[tuple[str, ...], ...] = ()
 
 
+# The two session keys the PORT writes and no capture can carry, stripped from both sides
+# of every `compile-current-state` comparison. Declared once because two entries need the
+# same list: the blanket H13/H14 one below, and each of the thirteen per-fixture entries
+# above it - a per-fixture entry wins the `find` lookup, so it has to carry the strip
+# itself or the fixture is compared on a key it could not have.
+#
+# `pending` is the R3 marker (AC-202). `focus` is growth r1 slice B3: what the
+# conversation is about, per axis, each axis ageing on its own. The JS has no equivalent
+# of either, so no capture can show one, and requiring one would be requiring the corpus
+# to have been recorded after the code that writes it. Everything else in the session
+# patch is still compared byte for byte, `entities` and `domain_hint` included - which is
+# the point, because those are what slice B3 must NOT have moved.
+_PORT_ONLY_SESSION_KEYS: tuple[tuple[str, ...], ...] = (
+    ("reply", "session_patch", "variables", "pending"),  # the shipping seal
+    ("variables", "pending"),  # a pre-RS-3 capture, unwrapped by the runner
+    ("reply", "session_patch", "variables", "focus"),
+    ("variables", "focus"),
+)
+
+
 # The five owner-ruling-K captures whose re-prompt turn named no domain and no entities,
 # so the SUBJECT carry (AC-816 rule 1, 6 Sep 2026) moves them on those two fields as well
 # as on the three the whole group moves on. Measured, one capture at a time: the other
@@ -99,11 +119,10 @@ DIVERGENCES: list[Divergence] = [
             strip_paths=(
                 ("reply", "session_patch", "variables", "selection_context"),
                 ("reply", "session_patch", "variables", "last_result_set"),
-                ("reply", "session_patch", "variables", "pending"),
                 ("variables", "selection_context"),
                 ("variables", "last_result_set"),
-                ("variables", "pending"),
             )
+            + _PORT_ONLY_SESSION_KEYS
             # THE SUBJECT CARRY (prod exec 15445325, same ruling, 6 Sep 2026). A carried
             # offer now takes the domain and the entities it was made ABOUT with it, so
             # the five captures where the re-prompt turn named neither also move on those
@@ -140,17 +159,20 @@ DIVERGENCES: list[Divergence] = [
     Divergence(
         node="compile-current-state",
         fixture=None,
-        hazard="H13/H14 (R3)",
+        hazard="H13/H14 (R3) + growth r1 slice B3 (AC-951)",
         reason=(
-            "the port writes the `pending` marker the JS had no equivalent of, so the "
-            "next turn can ask 'is an escalation offer open?' of state instead of of the "
-            "bot's own previous words (D11). Field-scoped: every other byte of the "
-            "session patch is still compared, and AC-203's own test asserts the marker."
+            "the port writes two session keys the JS had no equivalent of. `pending` is "
+            "the R3 marker, so the next turn can ask 'is an escalation offer open?' of "
+            "state instead of of the bot's own previous words (D11). `focus` is what the "
+            "conversation is about, per axis, each axis ageing on its own turn counter "
+            "(growth r1 slice B, owner decision D6/D11) - no capture predates the code "
+            "that writes it and none ever can. Field-scoped: every other byte of the "
+            "session patch is still compared, `entities` and `domain_hint` included, "
+            "which is what proves slice B3 moved the carry rules without changing them. "
+            "AC-203's own test asserts the marker and "
+            "tests/chatbot/test_focus_rules.py asserts the focus."
         ),
-        strip_paths=(
-            ("reply", "session_patch", "variables", "pending"),  # the shipping seal
-            ("variables", "pending"),  # a pre-RS-3 capture, unwrapped by the runner
-        ),
+        strip_paths=_PORT_ONLY_SESSION_KEYS,
     ),
     # ------------------------------------------------------------------ #
     # S6c.

@@ -63,6 +63,22 @@ def _cap(raw: Any, *, limit: int = RAW_BYTE_CAP) -> Any:
     }
 
 
+def stage_records(records: Any) -> list[dict[str, Any]]:
+    """The records that are STEPS the turn ran, out of an array that also holds decisions.
+
+    `chatbot.turns.trace` carries two kinds of record. A STAGE record has no `kind` and is
+    a timeline row. Everything else carries one: `note` (an operator asked for a retry,
+    written by the admin endpoint) and the structured decisions `TurnTrace.add` writes
+    (`decay`, `focus`, `open_question`, `tool`, ...), none of which has a start, a duration
+    or a status of its own.
+
+    The test is `kind` ABSENT, not `kind != "note"`: the one-known-value form meant every
+    new kind arrived in the timeline as a blank row. `turnPresentation.stageRecords` on the
+    frontend is the same rule, said once on each side of the wire.
+    """
+    return [r for r in (records or []) if isinstance(r, dict) and "kind" not in r]
+
+
 class TurnTrace:
     """An ordered list of stage records, plus the clock for the stage in progress."""
 
@@ -150,7 +166,7 @@ class TurnTrace:
 
     def stages(self) -> list[str]:
         """The STAGE records' names. `add`ed entries carry a `kind` and are not stages."""
-        return [r["stage"] for r in self._records if "stage" in r]
+        return [r["stage"] for r in stage_records(self._records)]
 
 
 # --------------------------------------------------------------------------- #

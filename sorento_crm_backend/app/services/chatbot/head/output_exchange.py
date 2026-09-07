@@ -30,6 +30,7 @@ import re
 from typing import Any
 
 from app.services.chatbot import jsc, topic
+from app.services.chatbot.dialogue import focus as focus_rules
 from app.services.chatbot.contracts import (
     DEFAULT_SUGGESTED_TEAM,
     ENTITY_HINTS,
@@ -1375,6 +1376,9 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             # an unmapped wandered domain leaves broaden_axis as "all" - fail open.
 
     # -- ENTITY OPERATION EXECUTOR (op + axis-aware replace/combine) --------------------- #
+    # Set by the `reuse` arm below and read by the focus rules at the `#6` position, which
+    # is where the trace line for it is written.
+    entityless_domain_reused = False
     if not jsc.truthy(o.get("is_menu_label")):
         domain = o.get("domain_hint")
 
@@ -1390,58 +1394,24 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         if op == "clear":
             final_entities: list = []
         elif op == "reuse":
+            # ENTITIES, plus ONE call out. The date window, `requested_attributes` and
+            # `is_active` used to be carried right here and are gone - they are decisions
+            # about what the conversation is still about, and they belong to
+            # `dialogue/focus.py` now (AC-950), which runs them at the `#6` position below.
+            #
+            # The entity-less domain continuity is the one that cannot wait for that
+            # position, and the reason is downstream: the positional-pick block fires only
+            # while `domain_hint` is still falsy, so carrying the domain after it takes the
+            # stamp off `domain_reused_entityless` and puts it on `domain_inherited_for_
+            # position` (measured: 5 captures moved on exactly those two keys). So the
+            # DECISION lives in the dialogue module and the CALL stays here.
             final_entities = prior
-            has_current_date = jsc.truthy(o.get("date_filter_start")) or jsc.truthy(
-                o.get("date_filter_end")
+            entityless_domain_reused = focus_rules.reuse_domain_entityless(
+                o,
+                prev=parent_input.get("previous_conversation_state") or {},
+                explicit=explicit,
+                switch_domain=switch_domain,
             )
-            pcs = parent_input.get("previous_conversation_state")
-            # broaden_axis "date" = the user explicitly asked to drop the window. Such a
-            # turn names no date, so the carry below would silently restore the PREVIOUS
-            # window and answer the opposite of what was asked.
-            all_time = jsc.lower_or_empty(o.get("broaden_axis")) == "date"
-            if all_time:
-                o["date_filter_start"] = None
-                o["date_filter_end"] = None
-                o["date_mode"] = None
-            elif not has_current_date:
-                if jsc.truthy(jsc.get(pcs, "date_filter_start")):
-                    o["date_filter_start"] = jsc.get(pcs, "date_filter_start")
-                if jsc.truthy(jsc.get(pcs, "date_filter_end")):
-                    o["date_filter_end"] = jsc.get(pcs, "date_filter_end")
-                if jsc.truthy(jsc.get(pcs, "date_mode")):
-                    o["date_mode"] = jsc.get(pcs, "date_mode")
-
-            # requested_attributes: the PERSPECTIVE of the question is an axis the pick
-            # turn did not name - carry it like the date window (exec 13951947).
-            cur_attrs = [a for a in jsc.array(o.get("requested_attributes")) if jsc.truthy(a)]
-            prev_attrs = [
-                a for a in jsc.array(jsc.get(pcs, "requested_attributes")) if jsc.truthy(a)
-            ]
-            if len(cur_attrs) == 0 and len(prev_attrs) > 0:
-                o["requested_attributes"] = prev_attrs
-
-            # is_active: only carry if THIS turn left it null (no status word)
-            cur_active = norm(o.get("is_active"))
-            if (
-                cur_active is None
-                and jsc.has(pcs, "is_active")
-                and norm(jsc.get(pcs, "is_active")) is not None
-            ):
-                o["is_active"] = jsc.get(pcs, "is_active")
-            # domain continuity for entity-less reuse (e.g. "and the price?")
-            if o.get("message_type") != "casual" and o.get("message_type") != "request_for_help":
-                if not explicit and not switch_domain:  # a domain switch beats the carry
-                    o["domain_hint"] = (
-                        jsc.get(pcs, "domain_hint")
-                        if jsc.truthy(jsc.get(pcs, "domain_hint"))
-                        else (o.get("domain_hint") if jsc.truthy(o.get("domain_hint")) else None)
-                    )
-                    o["intent_hint"] = (
-                        jsc.get(pcs, "intent_hint")
-                        if jsc.truthy(jsc.get(pcs, "intent_hint"))
-                        else (o.get("intent_hint") if jsc.truthy(o.get("intent_hint")) else None)
-                    )
-                    o["domain_reused_entityless"] = True
         else:  # 'modify' | 'replace' | 'replace_combine' | anything else
             current_axes = {axis_of(e) for e in current}
             exclusive = o.get("scope_exclusive") is True
@@ -1573,20 +1543,9 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         *jsc.array(o.get("access_levels")),
     ]
     o["query_brands"] = _stated_brands(o.get("entities"), raw_levels, msg_t)
-    # F7: the brand is part of the QUERY SCOPE, so it must travel with the scope. Two
-    # conditions, both required, so the carry can never widen or silently narrow.
-    if not len(o["query_brands"]):
-        prev_brands = [
-            b for b in jsc.array(prev_state.get("query_brands")) if jsc.nullish_str(b).lower() in BRANDS
-        ]
-        ents = jsc.array(o.get("entities"))
-        reusing_scope = o.get("entity_op") == "reuse" or (
-            len(ents) > 0
-            and not any(jsc.truthy(e) and jsc.get(e, "current_message") is True for e in ents)
-        )
-        if prev_brands and reusing_scope:
-            o["query_brands"] = [b for b in BRANDS if b in prev_brands]
-            o["_query_brands_carried"] = True
+    # F7's CARRY is gone from here (AC-950): the brand is part of the query scope, so it
+    # travels with the scope, and the scope is `dialogue/focus.py`'s `brands` slot now.
+    # `_query_brands_carried` is still the diagnostic it stamps.
 
     tier_set = set(_stated_tiers(msg_t, o.get("entities")))
     for a in raw_levels:
@@ -1598,23 +1557,9 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         if p:
             tier_set.add(p["tier"])
     o["access_levels"] = [t for t in TIER_ORDER if t in tier_set]
-    # F4(b): carry the PICKED TIER across a continuation of the SAME question. Same
-    # predicate as the brand carry; kept separate because the two axes can legitimately
-    # disagree (new brand, same tier).
-    if not len(o["access_levels"]):
-        prev_tiers = [
-            t
-            for t in (jsc.nullish_str(x).strip().lower() for x in jsc.array(prev_state.get("access_levels")))
-            if t in TIER_ORDER
-        ]
-        ents2 = jsc.array(o.get("entities"))
-        reusing2 = o.get("entity_op") == "reuse" or (
-            len(ents2) > 0
-            and not any(jsc.truthy(e) and jsc.get(e, "current_message") is True for e in ents2)
-        )
-        if prev_tiers and reusing2:
-            o["access_levels"] = [t for t in TIER_ORDER if t in prev_tiers]
-            o["_tier_carried"] = True
+    # F4(b)'s CARRY is gone from here too (AC-950), for the same reason and into the same
+    # module's `tier` slot. The two axes stay separate rules there because they can
+    # legitimately disagree (new brand, same tier).
 
     # -- "ALL / SEMUA" on a numbered menu -> expand to EVERY offered position ------------ #
     sel_ctx0 = jsc.nullish_str(prev_state.get("selection_context") or "")
@@ -1997,73 +1942,54 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             # was added.
             o["bare_entity_under_offer"] = True
 
-    # -- domain continuity for entity-bearing continuations (bare "Y" code) -------------- #
-    # Key on the EFFECTIVE domain signal, NOT domain_hint===null. Must run BEFORE
-    # blocklist-apply so the correct domain drives the filter.
-    if o.get("message_type") != "casual" and o.get("message_type") != "request_for_help":
-        if not explicit and not switch_domain:
-            prev_dom = jsc.get(parent_input.get("previous_conversation_state"), "domain_hint") or None
-            cur_ents = [
-                e
-                for e in jsc.array(o.get("entities"))
-                if jsc.truthy(e) and jsc.get(e, "current_message") is True
-            ]
-            if jsc.truthy(prev_dom) and len(cur_ents) > 0:
-                # OWNER RULING K, rule 4: a BARE entity turn is typed by the carried
-                # domain, not by the model's guess at the token's shape. Narrow on
-                # purpose - ONE current entity, the model named neither a domain nor an
-                # intent, and the message is nothing but that entity - because those are
-                # the turns that carry no type evidence of their own. Anything wider is a
-                # real query and keeps the hint-based check below.
-                bare_type = BARE_ENTITY_TYPE_BY_DOMAIN.get(jsc.js_string(prev_dom))
-                bare_entity_turn = (
-                    bare_type is not None
-                    and len(cur_ents) == 1
-                    # A PICK IS NEVER BARE. An entity carrying an `ordinal` was produced
-                    # by a positional reply against a numbered list, so the customer named
-                    # a ROW, not an entity, and the row already knows what type it is
-                    # (capture parser-15129616: "17" against a list of orders).
-                    and not any(jsc.get(e, "ordinal") is not None for e in cur_ents)
-                    and not jsc.truthy(jsc.get(parser_raw_snapshot, "domain_hint"))
-                    and not jsc.truthy(jsc.get(parser_raw_snapshot, "intent_hint"))
-                    and _message_is_only_these_entities(
-                        parent_input.get("latest_user_message"), cur_ents
-                    )
-                )
-                blocked_for_prev = set(DOMAIN_BLOCKED_HINTS.get(prev_dom, []))
-                compatible = bare_entity_turn or all(
-                    jsc.lower_or_empty(jsc.get(e, "hint")) not in blocked_for_prev for e in cur_ents
-                )
-                if compatible:
-                    o["domain_hint"] = prev_dom  # OVERRIDE guessed domain
-                    prev_intent = jsc.get(parent_input.get("previous_conversation_state"), "intent_hint")
-                    o["intent_hint"] = (
-                        prev_intent
-                        if jsc.truthy(prev_intent)
-                        else (o.get("intent_hint") if jsc.truthy(o.get("intent_hint")) else None)
-                    )
-                    o["domain_inherited_compatible"] = True
-                    if bare_entity_turn:
-                        # RETYPE, in place: `cur_ents` holds the same dicts `o.entities`
-                        # does, so the blocklist below, the axis map and the resolver all
-                        # see the domain's own type rather than the guessed one. Stamped
-                        # only when the type actually MOVED - a diagnostic that fires on
-                        # every turn it agrees with says nothing about the ones it changed.
-                        retyped = False
-                        for e in cur_ents:
-                            if jsc.lower_or_empty(jsc.get(e, "hint")) != bare_type:
-                                e["hint"] = bare_type
-                                retyped = True
-                        if retyped:
-                            o["bare_entity_retyped"] = bare_type  # diagnostic
-                else:
-                    o["domain_inherit_blocked"] = prev_dom  # topic switch, kept current
-
-    # #6: a bare/dominant domain-switch word overrides the continuity carry.
-    if switch_domain:
-        o["domain_hint"] = switch_domain
-        o["domain_switched_by_keyword"] = switch_domain
-        o["intent_hint"] = None  # downstream re-derives from the new domain
+    # -- THE FOCUS RULES (growth r1 slice B3) -------------------------------------------- #
+    # ONE call, in the position the two blocks it replaces occupied: after every writer of
+    # `o["entities"]` (the did-you-mean pick, the numbered multi-select, the positional
+    # resolve and the tier pick all run above) and BEFORE the B2' reconciliation and the
+    # domain blocklist, both of which read `domain_hint` and must read the FINAL one. That
+    # ordering is why this is here rather than at the end of the function; the file says so
+    # at each of those two blocks and the corpus is what proves it.
+    #
+    # Deleted from HERE and rewritten as named rules in `dialogue/focus.py` (AC-950):
+    # owner ruling K rule 4 (`domain_inherited_compatible` / `bare_entity_retyped` /
+    # `domain_inherit_blocked`), the `#6` switch-word override, owner ruling K rule 2
+    # (`entities_dropped_on_topic_change`), the executor's date / attribute / `is_active`
+    # carries and `_query_brands_carried` / `_tier_carried`. Every diagnostic those blocks
+    # stamped is still stamped, by the rule that took the decision over, which is what lets
+    # the 1,875 captured fixtures grade the move.
+    focus_turn = focus_rules.Turn(
+        o=o,
+        prev=prev_state,
+        turn_no=int(jsc.js_number(parent_input.get("turn_no")) or 1)
+        if parent_input.get("turn_no") is not None
+        else 1,
+        explicit=bool(explicit),
+        switch_domain=switch_domain,
+        is_carried=ce_is_carried,
+        date_widened=bool(date_widen),
+        signals=v3_signals(parser_raw_snapshot),
+        parser_raw=parser_raw_snapshot if isinstance(parser_raw_snapshot, dict) else {},
+        latest_user_message=parent_input.get("latest_user_message"),
+        # An open question is alive when the previous turn armed a roster the customer can
+        # still see. `selection_context` is that marker today and stays the reader for one
+        # release (AC-951); slice B4 replaces it with `open_question` and this line with it.
+        has_picker=bool(jsc.truthy(prev_state.get("selection_context"))),
+        entityless_domain_reused=entityless_domain_reused,
+    )
+    focus_out = focus_rules.apply(
+        focus_rules.from_session(prev_state, turn_no=focus_turn.turn_no), focus_turn
+    )
+    # OUT-PARAMETER, and deliberately not a key on the emission. `output.output` IS the
+    # graded wire shape: 271 captured `output_exchange` fixtures compare it byte for byte
+    # and every world compares `ctx.parse.output` against the parse its own execution
+    # produced, so one added key would diverge all of them and skip every world with "the
+    # parser post-processor disagrees with the body that produced this capture" - which is
+    # the gate, not a formality. `parent_input` is the caller's own per-turn dict, is never
+    # compared, and is exactly where the engine can read the result back from.
+    parent_input["_dialogue_out"] = {
+        "focus": focus_out.focus,
+        "trace": focus_out.entries,
+    }
 
     # -- B2' POST-MERGE ENTITY RECONCILIATION -------------------------------------------- #
     # Placed AFTER every entity-set writer and after the domain carries, so `domain_hint`
@@ -2190,53 +2116,18 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             if dropped:
                 o["broaden_dropped"] = dropped
 
-    # -- OWNER RULING K, rule 2: CARRIED ENTITIES DIE ON A TOPIC CHANGE ------------------- #
-    # The entity-op executor keeps every prior entity whose axis this turn did not name,
-    # which is right within one subject and wrong across two: a customer named on an order
-    # turn kept scoping the promotion question that followed it, because nothing had ever
-    # asked whether the subject was still the same one (H66).
-    #
-    # Placed AFTER the blocklist rather than inside the executor, deliberately. The
-    # blocklist already removes a carried entity whose HINT cannot belong to the new
-    # domain, and pre-empting it would only move that same removal one step earlier while
-    # rewriting the diagnostics that describe it (measured: 13 captures changed nothing
-    # but those diagnostics). What is left for this pass is exactly what the blocklist
-    # cannot see: an entity whose hint is perfectly legal in the new domain and which
-    # nevertheless belongs to the old subject. The domain is also FINAL here - after the
-    # continuity carry and the #6 switch - so no reader has to know whether it was the
-    # model's guess or the carried one.
-    #
-    # THREE conditions, and each one is load-bearing:
-    #
-    # * `explicit` - a DECISIVE intent plus a domain, so this is the customer's own domain
-    #   and not the model's guess at a bare token's shape. A guessed domain reads as a
-    #   change on exactly the turns that are not one (the naked code after a customer
-    #   pick, fork exec 13687305) and dropping the pick there answered for a customer
-    #   nobody had mentioned.
-    # * a this-turn entity - the new question brings its own scope. A turn that names no
-    #   entity has the carry as its ONLY scope ("stock?" after a promo for a product), and
-    #   clearing it turns a continuation into "which product?".
-    # * `topic.changed` - the SAME definition the tail's offer carry uses. A turn that
-    #   names no domain, or the same one, is a continuation.
-    #
-    # `new_offer` is False here because the head cannot see one: offers are built in the
-    # tail, and the tail applies that half of the rule itself.
-    if not jsc.truthy(o.get("is_menu_label")) and jsc.is_array(o.get("entities")):
-        tc_current = [e for e in o["entities"] if jsc.truthy(e) and not ce_is_carried(e)]
-        if (
-            explicit
-            and len(tc_current) > 0
-            and topic.changed(prev_state_domain, o.get("domain_hint"))
-        ):
-            tc_dropped = [
-                f"{jsc.get(e, 'hint')}:{jsc.get(e, 'raw')}"
-                for e in o["entities"]
-                if jsc.truthy(e) and ce_is_carried(e)
-            ]
-            if tc_dropped:
-                o["entities"] = tc_current
-                o["entities_dropped_on_topic_change"] = tc_dropped  # diagnostic
-
+    # -- OWNER RULING K, rule 2: the DROP, decided by `dialogue/focus.reset_on_topic` ---- #
+    # The decision was taken at the `#6` position with every other focus rule; the WRITE
+    # lands here, where the deleted block always landed it. The placement is load-bearing
+    # and stays argued the way it always was: the blocklist above already removes a carried
+    # entity whose HINT cannot belong to the new domain, and pre-empting it moves that same
+    # removal one step earlier while rewriting the diagnostics that describe it - measured
+    # on 7 Sep 2026, 16 captured fixtures changed `entities_filtered` and `broaden_dropped`
+    # and nothing else when the drop ran early. What is left for this pass is exactly what
+    # the blocklist cannot see: an entity whose hint is legal in the new domain and which
+    # nevertheless belongs to the old subject.
+    if focus_out.drop_carried_entities and not jsc.truthy(o.get("is_menu_label")):
+        focus_rules.drop_carried_entities_on_topic_change(o, is_carried=ce_is_carried)
     prior_routing = jsc.get(parent_input.get("previous_conversation_state"), "routing")
     if prior_routing is None:
         prior_routing = {}

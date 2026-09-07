@@ -110,6 +110,7 @@ import pytest
 
 from app.services.chatbot.contracts import SUGGESTED_TEAMS
 from tests.chatbot import _corpus
+from app.services.chatbot import trace as trace_mod
 
 # --------------------------------------------------------------------------- #
 # Shared builders
@@ -962,7 +963,7 @@ def test_out_of_scope_finishes_in_turn(session_factory, system_settings_row, mon
     # is where the lane's reply/actions are composed; `remembered` is the tail's session
     # write, one stage further. There is no `sent` stage - D9, the CRM never sends.
     assert row.stage == "remembered"
-    stages = [r["stage"] for r in row.trace]
+    stages = [r["stage"] for r in trace_mod.stage_records(row.trace)]
     assert stages == ["received", "understood", "access", "routed", "looked_up", "replied", "remembered"]
     assert all(r["status"] == "ok" for r in row.trace)
 
