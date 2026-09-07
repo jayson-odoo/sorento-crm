@@ -1269,15 +1269,22 @@ def _run_stages(  # noqa: PLR0915
         # to the post-processor and never part of its output, which is what keeps the
         # 1,875 captured emissions byte-comparable.
         "turn_no": turn_no,
+        # Which parser CONTRACT this emission was made under. The three growth-r1 signals
+        # are read only when the prompt that produced them asked for them; under v1 and v2
+        # the model was never told what `topic_reset` means, so a value it invented to
+        # satisfy a schema must not clear a customer's scope.
+        "parser_emits_v3": parser_config.emits_v3,
     }
     user_block = parser.build_user_block(
         previous_response=variables.get("response"),
         latest_user_message=latest_user_message,
         pending_kind=_pending_kind(variables),
         # D6: the parser receives STRUCTURED HINTS about what is still alive, never the
-        # raw previous state and never transcript prose. Both are empty until a turn has
-        # written dialogue state, so a build mid-rollout sends the same bytes it sends
-        # today (`test_parser_user_block_parity.py`).
+        # raw previous state and never transcript prose. Gated on the PROMPT VERSION, not
+        # merely on there being hints to send: v1 and v2 have no instruction that mentions
+        # either block, so a contact who already has focus state must not change how the
+        # promoted prompt parses (`test_parser_user_block_parity.py`).
+        emits_v3=parser_config.emits_v3,
         focus_hints=decayed.focus_hints,
         open_question_hint=decayed.open_question_hint,
     )

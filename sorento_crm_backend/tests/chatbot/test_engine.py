@@ -110,14 +110,28 @@ def seeded(session_factory):
 def stub_parser(monkeypatch):
     """Stub the provider call, the way `test_ideation_turn` stubs the ideate extractor."""
 
-    def _install(output: dict[str, Any] | None = None, *, error: Exception | None = None, on_call=None):
+    def _install(
+        output: dict[str, Any] | None = None,
+        *,
+        error: Exception | None = None,
+        on_call=None,
+        emits_v3: bool = False,
+    ):
+        """`emits_v3` picks the parser CONTRACT this stubbed turn runs under.
+
+        False by default, which is the promoted one: v1's 26-key schema, no `Focus:` line
+        in the user block, and the three growth-r1 signals read as inert. A test about the
+        dialogue rules asks for True and says so.
+        """
+
         def fake_resolve_config(db, *, current_date, override_version_id=None):
             return parser_mod.ParserConfig(
                 system_prompt="stub",
-                prompt_version=1,
+                prompt_version=3 if emits_v3 else 1,
                 provider="openai",
                 model="gpt-test",
                 api_key="sk-test",
+                emits_v3=emits_v3,
             )
 
         def fake_parse(config, user_block):

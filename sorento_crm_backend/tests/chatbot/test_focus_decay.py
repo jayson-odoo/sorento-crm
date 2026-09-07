@@ -248,6 +248,7 @@ class TestTheParserIsHandedHintsNotState:
             previous_response="hi",
             latest_user_message="stock?",
             pending_kind=None,
+            emits_v3=True,
             focus_hints={},
             open_question_hint=None,
         )
@@ -255,11 +256,32 @@ class TestTheParserIsHandedHintsNotState:
         assert without == with_empty
         assert "Focus:" not in without
 
-    def test_alive_focus_becomes_one_compact_line(self) -> None:
+    def test_a_v1_prompt_is_sent_no_hints_even_with_focus_alive(self) -> None:
+        """The gate is the PROMPT VERSION, not "are there hints".
+
+        v1 and v2 have no instruction that mentions either block, so sending them to the
+        promoted prompt would hand the live model two labelled blocks it was never told
+        how to read - and it would do so for exactly the contacts who have been talking
+        longest, which is the worst possible population to change under.
+        """
         block = parser_mod.build_user_block(
             previous_response="hi",
             latest_user_message="incoming?",
             pending_kind=None,
+            emits_v3=False,
+            focus_hints={"domain": "inventory", "products": [{"raw": "SRTWC8517"}]},
+            open_question_hint={"kind": "escalate_yes_no", "expects": "yes_no", "options": []},
+        )
+
+        assert "Focus:" not in block
+        assert "Open question:" not in block
+
+    def test_alive_focus_becomes_one_compact_line_under_v3(self) -> None:
+        block = parser_mod.build_user_block(
+            previous_response="hi",
+            latest_user_message="incoming?",
+            pending_kind=None,
+            emits_v3=True,
             focus_hints={"domain": "inventory"},
             open_question_hint={"kind": "escalate_yes_no", "expects": "yes_no", "options": []},
         )

@@ -32,6 +32,7 @@ from typing import Any
 from app.services.chatbot import jsc, topic
 from app.services.chatbot.dialogue import focus as focus_rules
 from app.services.chatbot.dialogue import open_question as open_question_mod
+from app.services.chatbot.head import parser as parser_keys
 from app.services.chatbot.contracts import (
     DEFAULT_SUGGESTED_TEAM,
     ENTITY_HINTS,
@@ -820,16 +821,13 @@ def output_exchange(json_item: dict, parent_input: dict) -> dict:
 # Imported rather than restated: one list of required keys, in the file that declares the
 # schema the provider is held to.
 #
-# The three growth-r1 keys are exempt for a DIFFERENT reason from `broaden_axis`, and the
-# difference is worth stating. `broaden_axis` is a key the live model sometimes omits. The
-# other three are keys NO capture has and no capture ever will: they arrived with prompt
-# v3 on 7 Sep 2026, the corpus is 1,875 emissions made before that, and the replay feeds
-# `_parser_raw` straight into this function. Requiring them here would fail every one of
-# those replays at the first line, which is precisely the regression the corpus exists to
-# catch. `_v3_defaults` below fills them instead, so every reader downstream sees the same
-# three keys whichever prompt version produced the emission.
-V3_EMISSION_KEYS = ("answers_open_question", "anaphora", "topic_reset")
-_EXEMPT_FROM_REQUIRED = frozenset({"broaden_axis"}) | frozenset(V3_EMISSION_KEYS)
+# `_required_emission_keys` reads the V1 schema's keys, which is the whole reason the
+# three growth-r1 keys need no exemption of their own: they are declared by the v3 schema
+# only (`parser.PARSE_OUTPUT_JSON_SCHEMA_V3`), so a v1 or v2 emission - which is every one
+# of the 1,875 captures, and production until the owner moves the label - is complete
+# without them. `v3_signals` supplies their defaults to the readers.
+V3_EMISSION_KEYS = parser_keys.V3_EMISSION_KEYS
+_EXEMPT_FROM_REQUIRED = frozenset({"broaden_axis"})
 
 # What a pre-v3 emission means, said explicitly rather than left as an absent key. "No
 # question was answered, nothing was referred back to, and the topic did not reset" is the
@@ -843,8 +841,15 @@ NO_OPEN_QUESTION_ANSWER: dict[str, Any] = {
 }
 
 
-def v3_signals(o: Any) -> dict[str, Any]:
-    """The three prompt-v3 keys, defaulted when the emission does not carry them.
+def v3_signals(o: Any, *, emits_v3: bool = True) -> dict[str, Any]:
+    """The three prompt-v3 keys, defaulted when this parse was not made under v3.
+
+    **`emits_v3` is the gate, and it is not the same question as "is the key present".**
+    Strict structured output makes every declared property required, so a v1 prompt run
+    against a v3 schema emits all three - invented, because no instruction in it says what
+    they mean. Reading a value the model had to make up would let a promoted v1 deployment
+    clear a customer's scope on `topic_reset`. So the reader asks which CONTRACT the
+    emission was made under, and returns the inert defaults for anything else.
 
     THE DEFAULTING HAPPENS HERE AND NOT ON `o`, and the difference is the corpus. Writing
     the defaults into the emission would add three keys to `output_exchange`'s own output
@@ -859,6 +864,12 @@ def v3_signals(o: Any) -> dict[str, Any]:
     or None. A model's `"true"`, `-1` or `"Yes please"` is operator-facing nonsense that
     must not reach a handler.
     """
+    if not emits_v3:
+        return {
+            "answers_open_question": dict(NO_OPEN_QUESTION_ANSWER),
+            "anaphora": False,
+            "topic_reset": False,
+        }
     answer = jsc.get(o, "answers_open_question")
     answer = answer if isinstance(answer, dict) else {}
     yes_no = jsc.nullish_str(answer.get("yes_no")).strip().lower()
@@ -882,9 +893,8 @@ _EMISSION_OBJECT_KEYS = ("routing", "escalation")
 
 
 def _required_emission_keys() -> frozenset[str]:
-    from app.services.chatbot.head.parser import DECLARED_KEYS
-
-    return DECLARED_KEYS - _EXEMPT_FROM_REQUIRED
+    """The V1 keys minus `broaden_axis`. Never the v3 ones: see `_EXEMPT_FROM_REQUIRED`."""
+    return parser_keys.DECLARED_KEYS - _EXEMPT_FROM_REQUIRED
 
 
 def _assert_emission(o: dict) -> None:
@@ -2004,7 +2014,9 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # closed vocabulary of eight that the timeline renders, `chatbot.turns.stage` stores
     # and 1,875 fixtures carry; a ninth for a deterministic, instantaneous step would be a
     # wire change for no reader's benefit.
-    turn_signals = v3_signals(parser_raw_snapshot)
+    turn_signals = v3_signals(
+        parser_raw_snapshot, emits_v3=parent_input.get("parser_emits_v3") is True
+    )
     answered_entry = None
     open_question = open_question_mod.from_state(
         prev_state, asked_at_turn=int(jsc.js_number(parent_input.get("turn_no")) or 1) - 1

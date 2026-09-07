@@ -700,6 +700,11 @@ class OwnerWorld:
     # The focus TTL this world runs under. Named per world because the TTL is what two of
     # them are about.
     ttl_turns: int = 3
+    # Which parser CONTRACT this conversation runs under. False is the PROMOTED one (v1):
+    # 26 keys, no `Focus:` line, the three growth-r1 signals inert. A world about a pick,
+    # an anaphora or a topic reset needs v3 and says so, which also documents which of
+    # these cases only start working when the owner moves the label (AC-952).
+    emits_v3: bool = False
 
 
 def _product(code: str, **over: Any) -> dict[str, Any]:
@@ -737,6 +742,7 @@ def _answers(**kw: Any) -> dict[str, Any]:
 OWNER_WORLDS: tuple[OwnerWorld, ...] = (
     OwnerWorld(
         world_id="owner-pick-then-next-pick",
+        emits_v3=True,
         acs=("AC-944",),
         why=(
             "A picker of three products is offered. '2' resolves to the SECOND FROZEN "
@@ -789,6 +795,7 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
     ),
     OwnerWorld(
         world_id="owner-escalate-declined-after-a-result",
+        emits_v3=True,
         acs=("AC-945",),
         why=(
             "An escalation offer, then 'no'. The declined copy is the lane's; what this "
@@ -822,6 +829,7 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
     ),
     OwnerWorld(
         world_id="owner-escalate-offer-left-unanswered-then-decays",
+        emits_v3=True,
         acs=("AC-945",),
         why=(
             "The offer is neither accepted nor declined: the customer asks a stock "
@@ -1032,6 +1040,7 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
     ),
     OwnerWorld(
         world_id="owner-quoted-reply-pick",
+        emits_v3=True,
         acs=("AC-947",),
         why=(
             "A quoted reply to an OLDER picker resolves against THAT message's frozen "

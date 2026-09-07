@@ -347,16 +347,17 @@ def owner_stubs(monkeypatch):
     """The parser and the access check, stubbed at the seams the derived worlds use."""
     from app.services.chatbot.head import parser as parser_mod
 
-    def _install(emission: dict) -> None:
+    def _install(emission: dict, *, emits_v3: bool = False) -> None:
         monkeypatch.setattr(
             parser_mod,
             "resolve_config",
             lambda db, *, current_date, override_version_id=None: parser_mod.ParserConfig(
                 system_prompt="stub",
-                prompt_version=3,
+                prompt_version=3 if emits_v3 else 1,
                 provider="openai",
                 model="gpt-test",
                 api_key="sk-test",
+                emits_v3=emits_v3,
             ),
         )
         monkeypatch.setattr(parser_mod, "parse", lambda config, user_block: emission)
@@ -549,7 +550,7 @@ def test_owner_world(world, owner_stubs, session_factory, monkeypatch) -> None:
                     },
                 },
             )
-        owner_stubs(_owner_emission(turn.emission))
+        owner_stubs(_owner_emission(turn.emission), emits_v3=world.emits_v3)
         envelope = _owner_envelope(
             turn.message, index, quoted="ZZT-owner-quoted" if turn.quoted_rows else None
         )

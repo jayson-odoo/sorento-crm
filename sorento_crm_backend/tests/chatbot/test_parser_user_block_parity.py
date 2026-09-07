@@ -37,6 +37,7 @@ import pytest
 
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.contracts import Envelope
+from app.services.chatbot.dialogue import decay as decay_mod
 from app.services.chatbot.head import parser as parser_mod
 
 FIXTURE = (
@@ -108,6 +109,77 @@ def test_the_user_block_says_nothing_about_a_result_set(turn6) -> None:
     head, tail = crm.split("\nCurrent user message: ")
     assert head.startswith("Previous response: ")
     assert tail == "What is the weather in KL today\n\n"
+
+
+def test_a_session_WITH_focus_state_still_sends_the_same_bytes_under_v1(turn6) -> None:
+    """Growth r1 slice B2, blocker 2 of the 7 Sep review.
+
+    The `Focus:` and `Open question:` lines are the second real divergence this file
+    guards, and they are the more dangerous one: `pending` fires on a handful of turns,
+    whereas focus state accumulates on EVERY contact the moment slice B3 ships. If the
+    lines were gated on "are there hints" rather than on the prompt VERSION, the promoted
+    v1 prompt would start receiving two labelled blocks it has no instruction about - and
+    it would start receiving them for the contacts who have been talking longest, which is
+    the worst population to change under.
+
+    So this is the same fixture with a full focus and an open question forced into the
+    session, asserted byte-identical to the block n8n sends.
+    """
+    envelope = Envelope(**turn6["envelope"])
+    session_block = turn6["session_block"]
+    variables = dict(session_block["session_vars"]["variables"])
+    variables["focus"] = {
+        "products": {
+            "value": [{"raw": "SRTWC8517", "hint": "product", "canonical_code": "SRTWC8517"}],
+            "set_at_turn": 40,
+            "source": "current_message",
+        },
+        "domain": {"value": "inventory", "set_at_turn": 40, "source": "current_message"},
+    }
+    variables["open_question"] = {
+        "kind": "product_pick",
+        "options": [{"idx": 1, "label": "SRTWC8517"}],
+        "expects": "pick",
+        "asked_at_turn": 40,
+        "ttl_turns": 3,
+        "payload": {},
+    }
+    hints = decay_mod.apply(variables, turn_no=41, ttl_turns=3)
+    assert hints.focus_hints, "the fixture must actually carry focus for this to prove anything"
+    assert hints.open_question_hint is not None
+
+    crm = parser_mod.build_user_block(
+        previous_response=variables.get("response"),
+        latest_user_message=engine_mod.build_latest_user_message(envelope, session_block),
+        pending_kind=engine_mod._pending_kind(variables),
+        emits_v3=False,
+        focus_hints=hints.focus_hints,
+        open_question_hint=hints.open_question_hint,
+    )
+
+    assert crm == _n8n_user_block(turn6["baseline_workflow_inputs"])
+    assert "Focus:" not in crm
+    assert "Open question:" not in crm
+
+
+def test_the_same_session_DOES_get_the_hints_under_v3(turn6) -> None:
+    """The other half: the gate is a version switch, not a way of never sending them."""
+    variables = dict(turn6["session_block"]["session_vars"]["variables"])
+    variables["focus"] = {
+        "domain": {"value": "inventory", "set_at_turn": 40, "source": "current_message"}
+    }
+    hints = decay_mod.apply(variables, turn_no=41, ttl_turns=3)
+
+    crm = parser_mod.build_user_block(
+        previous_response=variables.get("response"),
+        latest_user_message="stock?",
+        pending_kind=None,
+        emits_v3=True,
+        focus_hints=hints.focus_hints,
+        open_question_hint=hints.open_question_hint,
+    )
+
+    assert 'Focus: {"domain": "inventory"}' in crm
 
 
 def test_no_pending_line_is_added_on_this_turn(turn6) -> None:

@@ -68,17 +68,56 @@ class ParserConfig:
     provider: str
     model: str
     api_key: str
+    # Does the RESOLVED prompt ask for the growth-r1 keys (`parser.emits_v3`)? It decides
+    # the strict schema, the two extra user-block lines and whether the dialogue rules
+    # read the three signals at all. Defaults FALSE so a test stub, a harness mock and any
+    # caller written before slice B2 all parse under the v1 contract, which is the one
+    # production is promoted to.
+    emits_v3: bool = False
+
+# The three keys prompt v3 adds (growth r1 slice B2). Named here because THREE readers
+# need the same list: the v3 schema below, `output_exchange.v3_signals`, and the guard
+# asserting the live v1 body never mentions one.
+V3_EMISSION_KEYS: tuple[str, ...] = ("answers_open_question", "anaphora", "topic_reset")
+
+# The token that says a resolved prompt asks for the v3 shape.
+#
+# **The marker is the KEY ITSELF, and that is the point.** The registry offers two other
+# places to put one - `AIPromptVersion.config_json` and a dedicated first-line token - and
+# neither covers every path this has to cover. `ai_prompt_registry.render` returns
+# `(text, version)` and nothing else, so `config_json` is not on the resolution path at
+# all without widening that signature; and the FALLBACK path has no registry row to carry
+# metadata, because a fresh install parses off `chatbot_parser_prompt.SEMANTIC_PARSER_PROMPT`
+# before any migration has seeded anything. A token in the TEXT is on every path by
+# construction.
+#
+# Reading the OUTPUT key rather than inventing a marker line then makes the two
+# impossible to drift: the schema the provider is held to is derived from the same string
+# that tells the model what to emit, so a prompt that asks for `answers_open_question` is
+# exactly the prompt whose schema declares it. There is no third place to update.
+V3_PROMPT_MARKER = '"answers_open_question"'
 
 
-def _build_json_schema() -> dict[str, Any]:
+def emits_v3(system_prompt: Any) -> bool:
+    """Does this RESOLVED prompt text ask for the v3 keys? See `V3_PROMPT_MARKER`."""
+    return V3_PROMPT_MARKER in str(system_prompt or "")
+
+
+def _build_json_schema(*, v3: bool) -> dict[str, Any]:
     """The strict `ParseOutput` schema the provider is held to (AC-105).
 
-    26 top-level keys until 7 Sep 2026 and 29 since (growth r1 slice B2 adds
-    `answers_open_question`, `anaphora` and `topic_reset`); `routing` carries exactly two
-    members. The first 26 are what the LIVE parser emits: every one of the 488 captured
-    raw emissions has that shape, and the three new ones are absent from every capture,
-    which is why `output_exchange` exempts them from its own required-key check rather
-    than this schema relaxing.
+    TWO schemas, and the split is the whole of growth r1's promotion safety. 26 top-level
+    keys for prompt v1 and v2 - what the LIVE parser emits, and the shape every one of the
+    488 captured raw emissions has - and 29 for v3, which adds `answers_open_question`,
+    `anaphora` and `topic_reset`. `routing` carries exactly two members in both.
+
+    ONE schema for both versions would not be a tidy-up, it would be a live behaviour
+    change on the promoted prompt: strict structured output requires every declared
+    property to be REQUIRED, so a v1 prompt run against the v3 schema is forced to emit
+    three keys no instruction in it mentions, and the model has to invent all three. `parse`
+    picks the schema from `ParserConfig.emits_v3`, which is read off the resolved prompt
+    TEXT, so the shape the provider is held to and the shape the prompt asks for cannot
+    disagree.
 
     Built from the prompt's own OUTPUT block. `additionalProperties: false` is what makes
     "exactly these keys, no others" a provider guarantee instead of an instruction, and
@@ -93,153 +132,130 @@ def _build_json_schema() -> dict[str, Any]:
     what the WIRE is held to.
     """
     string_or_null = {"type": ["string", "null"]}
-    return {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "message_type": {"type": "string"},
-            "intent_hint": string_or_null,
-            "domain_hint": string_or_null,
-            "scope_intent": string_or_null,
-            "is_affirmative": {"type": ["boolean", "null"]},
-            "user_goal": string_or_null,
-            "access_levels": {"type": "array", "items": {"type": "string"}},
-            "broaden_axis": string_or_null,
-            "date_mode": string_or_null,
-            "date_filter_start": string_or_null,
-            "date_filter_end": string_or_null,
-            "match_mode": string_or_null,
-            "demand_qty": {"type": ["number", "string", "null"]},
-            "entities": {
-                "type": "array",
-                "items": {
+    properties: dict[str, Any] = {
+        "message_type": {"type": "string"},
+        "intent_hint": string_or_null,
+        "domain_hint": string_or_null,
+        "scope_intent": string_or_null,
+        "is_affirmative": {"type": ["boolean", "null"]},
+        "user_goal": string_or_null,
+        "access_levels": {"type": "array", "items": {"type": "string"}},
+        "broaden_axis": string_or_null,
+        "date_mode": string_or_null,
+        "date_filter_start": string_or_null,
+        "date_filter_end": string_or_null,
+        "match_mode": string_or_null,
+        "demand_qty": {"type": ["number", "string", "null"]},
+        "entities": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "raw": string_or_null,
+                    "hint": string_or_null,
+                    "canonical_code": string_or_null,
+                    "current_message": {"type": ["boolean", "null"]},
+                    "confident": {"type": ["boolean", "null"]},
+                },
+                "required": ["raw", "hint", "canonical_code", "current_message", "confident"],
+            },
+        },
+        "entity_op": string_or_null,
+        "scope_exclusive": {"type": ["boolean", "null"]},
+        "requested_attributes": {"type": "array", "items": {"type": "string"}},
+        "contains_flyer": {"type": ["boolean", "null"]},
+        "reference_positions": {"type": "array", "items": {"type": "number"}},
+        "reference_target": string_or_null,
+        "person_mention": string_or_null,
+        "is_active": {"type": ["boolean", "string", "null"]},
+        "order_status": string_or_null,
+        "correction": {"type": ["boolean", "null"]},
+        "routing": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                # `string_or_null`, NOT an enum of `SUGGESTED_TEAMS`, and from
+                # 7 Sep 2026 that is a CONTRACT rather than the general permissiveness
+                # the docstring above describes (owner rules R-a / R-c, console pass
+                # 4). The prompt asks for an enum member when the customer's team word
+                # maps to exactly one, and for the customer's OWN word, verbatim and
+                # lowercased, when it maps to several ("marketing" - three teams) or to
+                # none ("sales"). `null` therefore means one thing only: the customer
+                # named no team.
+                #
+                # That is what lets `lanes/escalation._person_routing` tell "escalate
+                # to marketing" (ask which of the three) from "I want to talk to a
+                # human" (assign the default) without reading either message, which
+                # D11 forbids. Tightening this to an enum would delete the
+                # discriminator and take the H64 defect back.
+                "suggested_team": string_or_null,
+                "suggested_agent": string_or_null,
+            },
+            # NO `team_source`. It is not a live key: the live `sub-semantic-parser`
+            # system message never asks for it and not one of the 488 captured
+            # emissions carries it. It belongs to the UNPROMOTED B-TEAM-1' lane change
+            # (plan, S1 "pending re-port"), and declaring it `required` here would make
+            # the CRM the only deployment that forces the model to invent one.
+            "required": ["suggested_team", "suggested_agent"],
+        },
+        "escalation": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "is_escalation_confirmation": {"type": ["boolean", "null"]},
+                "company_pick": string_or_null,
+            },
+            "required": ["is_escalation_confirmation", "company_pick"],
+        },
+    }
+    if v3:
+        properties.update(
+            {
+                # 1-based POSITIONS against the frozen `open_question.options` rows,
+                # never uuids: the model is shown labels only, so a position is the
+                # only handle it can hold and the engine resolves it.
+                "answers_open_question": {
                     "type": "object",
                     "additionalProperties": False,
                     "properties": {
-                        "raw": string_or_null,
-                        "hint": string_or_null,
-                        "canonical_code": string_or_null,
-                        "current_message": {"type": ["boolean", "null"]},
-                        "confident": {"type": ["boolean", "null"]},
+                        "resolved": {"type": ["boolean", "null"]},
+                        "picks": {"type": "array", "items": {"type": "number"}},
+                        "yes_no": string_or_null,
+                        "free_text": string_or_null,
                     },
-                    "required": ["raw", "hint", "canonical_code", "current_message", "confident"],
+                    "required": ["resolved", "picks", "yes_no", "free_text"],
                 },
-            },
-            "entity_op": string_or_null,
-            "scope_exclusive": {"type": ["boolean", "null"]},
-            "requested_attributes": {"type": "array", "items": {"type": "string"}},
-            "contains_flyer": {"type": ["boolean", "null"]},
-            "reference_positions": {"type": "array", "items": {"type": "number"}},
-            "reference_target": string_or_null,
-            "person_mention": string_or_null,
-            "is_active": {"type": ["boolean", "string", "null"]},
-            "order_status": string_or_null,
-            "correction": {"type": ["boolean", "null"]},
-            # -- growth r1 slice B2: the three keys prompt v3 adds ---------------- #
-            # Declared on the WIRE for every version, because a strict `json_schema` has
-            # to list every property it allows and OpenAI's strict mode requires every
-            # property to be required. A v1 or v2 emission therefore carries them too,
-            # guessed - which is safe, because every reader acts only on `focus` and
-            # `open_question` and both are empty until the slice B3/B4 writers fill them.
-            #
-            # `post_process` treats all three as ABSENT-TOLERANT
-            # (`output_exchange._EXEMPT_FROM_REQUIRED`), which is what keeps the 1,875
-            # captured emissions replayable: none of them has these keys and none of them
-            # ever will.
-            "answers_open_question": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "resolved": {"type": ["boolean", "null"]},
-                    # 1-based POSITIONS against the frozen `open_question.options` rows,
-                    # never uuids: the model is shown labels only, so a position is the
-                    # only handle it can hold and the engine resolves it.
-                    "picks": {"type": "array", "items": {"type": "number"}},
-                    "yes_no": {"type": ["string", "null"]},
-                    "free_text": {"type": ["string", "null"]},
-                },
-                "required": ["resolved", "picks", "yes_no", "free_text"],
-            },
-            "anaphora": {"type": ["boolean", "null"]},
-            "topic_reset": {"type": ["boolean", "null"]},
-            "routing": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    # `string_or_null`, NOT an enum of `SUGGESTED_TEAMS`, and from
-                    # 7 Sep 2026 that is a CONTRACT rather than the general permissiveness
-                    # the docstring above describes (owner rules R-a / R-c, console pass
-                    # 4). The prompt asks for an enum member when the customer's team word
-                    # maps to exactly one, and for the customer's OWN word, verbatim and
-                    # lowercased, when it maps to several ("marketing" - three teams) or to
-                    # none ("sales"). `null` therefore means one thing only: the customer
-                    # named no team.
-                    #
-                    # That is what lets `lanes/escalation._person_routing` tell "escalate
-                    # to marketing" (ask which of the three) from "I want to talk to a
-                    # human" (assign the default) without reading either message, which
-                    # D11 forbids. Tightening this to an enum would delete the
-                    # discriminator and take the H64 defect back.
-                    "suggested_team": string_or_null,
-                    "suggested_agent": string_or_null,
-                },
-                # NO `team_source`. It is not a live key: the live `sub-semantic-parser`
-                # system message never asks for it and not one of the 488 captured
-                # emissions carries it. It belongs to the UNPROMOTED B-TEAM-1' lane change
-                # (plan, S1 "pending re-port"), and declaring it `required` here would make
-                # the CRM the only deployment that forces the model to invent one.
-                "required": ["suggested_team", "suggested_agent"],
-            },
-            "escalation": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "is_escalation_confirmation": {"type": ["boolean", "null"]},
-                    "company_pick": string_or_null,
-                },
-                "required": ["is_escalation_confirmation", "company_pick"],
-            },
-        },
-        "required": [
-            "message_type",
-            "intent_hint",
-            "domain_hint",
-            "scope_intent",
-            "is_affirmative",
-            "user_goal",
-            "access_levels",
-            "broaden_axis",
-            "date_mode",
-            "date_filter_start",
-            "date_filter_end",
-            "match_mode",
-            "demand_qty",
-            "entities",
-            "entity_op",
-            "scope_exclusive",
-            "requested_attributes",
-            "contains_flyer",
-            "reference_positions",
-            "reference_target",
-            "person_mention",
-            "is_active",
-            "order_status",
-            "correction",
-            "answers_open_question",
-            "anaphora",
-            "topic_reset",
-            "routing",
-            "escalation",
-        ],
+                "anaphora": {"type": ["boolean", "null"]},
+                "topic_reset": {"type": ["boolean", "null"]},
+            }
+        )
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": properties,
+        "required": list(properties),
     }
 
 
-PARSE_OUTPUT_JSON_SCHEMA = _build_json_schema()
+PARSE_OUTPUT_JSON_SCHEMA = _build_json_schema(v3=False)
+PARSE_OUTPUT_JSON_SCHEMA_V3 = _build_json_schema(v3=True)
 PARSE_OUTPUT_SCHEMA_NAME = "chatbot_parse_output"
 # The keys the schema declares. Validation is "every required key present, nothing
 # unknown kept" - unknown keys are IGNORED (the risk the plan names: a model that
-# occasionally adds one must not fail a turn), missing ones are REJECTED.
+# occasionally adds one must not fail a turn), missing ones are REJECTED. Per SCHEMA,
+# because a v1 emission legitimately carries none of the three v3 keys.
 DECLARED_KEYS: frozenset[str] = frozenset(PARSE_OUTPUT_JSON_SCHEMA["required"])
+DECLARED_KEYS_V3: frozenset[str] = frozenset(PARSE_OUTPUT_JSON_SCHEMA_V3["required"])
+
+
+def schema_for(*, v3: bool) -> tuple[dict[str, Any], frozenset[str]]:
+    """`(json_schema, required_keys)` for the version this turn is parsing under."""
+    return (
+        (PARSE_OUTPUT_JSON_SCHEMA_V3, DECLARED_KEYS_V3)
+        if v3
+        else (PARSE_OUTPUT_JSON_SCHEMA, DECLARED_KEYS)
+    )
 
 
 def resolve_config(
@@ -278,6 +294,9 @@ def resolve_config(
         provider=provider,
         model=model,
         api_key=api_key,
+        # Read off the TEXT that was actually resolved, so promoting v3 is still one label
+        # move and nothing here has to be told about it. See `V3_PROMPT_MARKER`.
+        emits_v3=emits_v3(system_prompt),
     )
 
 
@@ -286,6 +305,7 @@ def build_user_block(
     previous_response: Any,
     latest_user_message: Any,
     pending_kind: str | None,
+    emits_v3: bool = False,
     focus_hints: Mapping[str, Any] | None = None,
     open_question_hint: Mapping[str, Any] | None = None,
 ) -> str:
@@ -297,17 +317,19 @@ def build_user_block(
     `previous_response`, so a session written by n8n and one written by the CRM both
     parse the same way during the migration window.
 
-    **Growth r1 slice B adds two more, and both are ABSENT until a turn has written
-    dialogue state.** `Focus:` is the alive slots and `Open question:` is what the bot is
-    waiting for, each as one compact JSON line - structured hints, never transcript prose
-    (D6). Prompt v3 is written against them; v1 and v2 have no instruction that mentions
-    either, so an unpromoted deployment sees exactly the bytes it sees today and
-    `test_parser_user_block_parity.py` still holds.
+    **Growth r1 slice B adds two more, and they are gated on the PROMPT VERSION.** `Focus:`
+    is the alive slots and `Open question:` is what the bot is waiting for, each as one
+    compact JSON line - structured hints, never transcript prose (D6). Prompt v3's INPUT
+    block names them; v1 and v2 have no instruction that mentions either, so sending them
+    to one of those would be handing the live model two labelled blocks it was never told
+    how to read. `emits_v3` is therefore required for both lines, not merely a non-empty
+    hint: a contact who already has focus state must not change how the PROMOTED prompt
+    parses, and `test_parser_user_block_parity.py` holds for a session with focus as well
+    as for one without.
 
-    The lines are emitted only when there is something to say. An empty `Focus: {}` would
-    be a statement the model has to interpret ("the conversation is about nothing"), and
-    it would change the block on every turn of a build that has not started writing focus
-    yet.
+    Under v3 the lines are still emitted only when there is something to say. An empty
+    `Focus: {}` would be a statement the model has to interpret ("the conversation is
+    about nothing") rather than the absence of one.
     """
     import json
     import re
@@ -321,9 +343,9 @@ def build_user_block(
     ]
     if pending_kind:
         lines.append(f"Pending: the assistant is waiting for a {pending_kind} reply.")
-    if focus_hints:
+    if emits_v3 and focus_hints:
         lines.append("Focus: " + json.dumps(focus_hints, ensure_ascii=False, sort_keys=True))
-    if open_question_hint:
+    if emits_v3 and open_question_hint:
         lines.append(
             "Open question: "
             + json.dumps(open_question_hint, ensure_ascii=False, sort_keys=True)
@@ -361,6 +383,7 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
     """
     from app.services.llm_provider import get_provider
 
+    json_schema, required_keys = schema_for(v3=config.emits_v3)
     messages = [
         {"role": "system", "content": config.system_prompt},
         {"role": "user", "content": user_block},
@@ -372,7 +395,7 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
             temperature=0.0,
             model=config.model,
             max_tokens=PARSER_MAX_TOKENS,
-            json_schema=PARSE_OUTPUT_JSON_SCHEMA,
+            json_schema=json_schema,
             json_schema_name=PARSE_OUTPUT_SCHEMA_NAME,
         )
     except Exception as exc:  # noqa: BLE001 - provider/transport failure is a failed stage
@@ -397,7 +420,7 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
             raise ParserError(f"parser returned non-JSON content: {exc}") from exc
         if not isinstance(parsed, dict):
             raise ParserError("parser returned a non-object")
-        missing = DECLARED_KEYS - set(parsed)
+        missing = required_keys - set(parsed)
         if missing:
             raise ParserError(
                 f"parser output missing required key(s): {', '.join(sorted(missing))}"

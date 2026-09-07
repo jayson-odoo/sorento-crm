@@ -102,23 +102,76 @@ class TestV3StopsTellingTheModelToCarry:
             assert dash not in SEMANTIC_PARSER_PROMPT_V3
 
 
-class TestTheWireCarriesTheThreeKeys:
-    def test_the_schema_declares_and_requires_them(self) -> None:
-        schema = parser_mod.PARSE_OUTPUT_JSON_SCHEMA
-        for key in ox.V3_EMISSION_KEYS:
+class TestTheWireCarriesTheThreeKeysUNDERV3ONLY:
+    """The gate, and it is the difference between shipping this and breaking production.
+
+    Strict structured output makes every declared property REQUIRED, so a schema shared
+    between the versions forces the promoted v1 prompt to emit three keys no instruction
+    in it mentions - and the model invents all three.
+    """
+
+    def test_the_v3_schema_declares_and_requires_them(self) -> None:
+        schema = parser_mod.PARSE_OUTPUT_JSON_SCHEMA_V3
+        for key in parser_mod.V3_EMISSION_KEYS:
             assert key in schema["properties"]
             assert key in schema["required"]
 
+    def test_the_v1_schema_declares_none_of_them(self) -> None:
+        schema = parser_mod.PARSE_OUTPUT_JSON_SCHEMA
+        for key in parser_mod.V3_EMISSION_KEYS:
+            assert key not in schema["properties"]
+            assert key not in schema["required"]
+        assert len(schema["required"]) == 26
+
+    def test_the_two_schemas_differ_by_exactly_those_three(self) -> None:
+        assert parser_mod.DECLARED_KEYS_V3 - parser_mod.DECLARED_KEYS == set(
+            parser_mod.V3_EMISSION_KEYS
+        )
+        assert parser_mod.DECLARED_KEYS - parser_mod.DECLARED_KEYS_V3 == set()
+
     def test_the_answer_object_is_strict_too(self) -> None:
-        answer = parser_mod.PARSE_OUTPUT_JSON_SCHEMA["properties"]["answers_open_question"]
+        answer = parser_mod.PARSE_OUTPUT_JSON_SCHEMA_V3["properties"]["answers_open_question"]
         assert answer["additionalProperties"] is False
         assert set(answer["required"]) == {"resolved", "picks", "yes_no", "free_text"}
 
-    def test_the_live_v1_prompt_still_validates_because_they_are_exempt(self) -> None:
-        """The 1,875 captured emissions predate v3 and always will. `post_process` must
-        never reject one for a key that could not have existed when it was captured."""
-        for key in ox.V3_EMISSION_KEYS:
-            assert key in ox._EXEMPT_FROM_REQUIRED
+    def test_the_version_is_read_off_the_resolved_prompt_text(self) -> None:
+        """One string decides both what the model is asked for and what it is held to, so
+        the two cannot drift."""
+        assert parser_mod.emits_v3(SEMANTIC_PARSER_PROMPT) is False
+        assert parser_mod.emits_v3(SEMANTIC_PARSER_PROMPT_SLIM) is False
+        assert parser_mod.emits_v3(SEMANTIC_PARSER_PROMPT_V3) is True
+        assert parser_mod.emits_v3(None) is False
+
+    def test_schema_for_picks_the_pair_that_belong_together(self) -> None:
+        schema, required = parser_mod.schema_for(v3=False)
+        assert schema is parser_mod.PARSE_OUTPUT_JSON_SCHEMA
+        assert required is parser_mod.DECLARED_KEYS
+        schema, required = parser_mod.schema_for(v3=True)
+        assert schema is parser_mod.PARSE_OUTPUT_JSON_SCHEMA_V3
+        assert required is parser_mod.DECLARED_KEYS_V3
+
+    def test_a_v1_emission_needs_no_exemption_to_post_process(self) -> None:
+        """The 1,875 captured emissions predate v3 and always will. They are COMPLETE
+        under the v1 contract now, rather than complete-with-three-exemptions."""
+        assert ox._required_emission_keys() == parser_mod.DECLARED_KEYS - {"broaden_axis"}
+        for key in parser_mod.V3_EMISSION_KEYS:
+            assert key not in ox._required_emission_keys()
+
+    def test_the_signals_are_inert_for_a_parse_made_under_v1(self) -> None:
+        """A v1 model asked to fill a v3 schema invents all three; reading one would let a
+        promoted v1 deployment clear a customer's scope."""
+        invented = {
+            "answers_open_question": {"resolved": True, "picks": [2], "yes_no": "yes"},
+            "anaphora": True,
+            "topic_reset": True,
+        }
+
+        assert ox.v3_signals(invented, emits_v3=False) == {
+            "answers_open_question": ox.NO_OPEN_QUESTION_ANSWER,
+            "anaphora": False,
+            "topic_reset": False,
+        }
+        assert ox.v3_signals(invented, emits_v3=True)["topic_reset"] is True
 
 
 class TestV3SignalsNormalises:

@@ -464,7 +464,7 @@ class TestTheAnsweredStepOnARealTurn:
     def test_a_v3_pick_resolves_against_the_frozen_rows_and_scopes_the_turn(
         self, session_factory, seeded, stub_parser, stub_access
     ) -> None:
-        stub_parser()
+        stub_parser(emits_v3=True)
         stub_access()
         emission = _parser_output(
             message_type="casual",
@@ -499,7 +499,7 @@ class TestTheAnsweredStepOnARealTurn:
         outcome}` shape."""
         from app.models.chatbot_turn import ChatbotTurn
 
-        stub_parser()
+        stub_parser(emits_v3=True)
         stub_access()
         emission = _parser_output(
             message_type="casual",
@@ -521,13 +521,35 @@ class TestTheAnsweredStepOnARealTurn:
         assert entry["outcome"] == "Picked A."
         assert entry["answer"]["picks"] == [1]
 
+    def test_a_v1_parse_is_inert_even_when_the_emission_carries_the_keys(
+        self, session_factory, seeded, stub_parser, stub_access
+    ) -> None:
+        """The gate is the CONTRACT, not the key's presence: a v1 prompt held to a v3
+        schema would emit all three, invented."""
+        stub_parser()  # v1
+        stub_access()
+        emission = _parser_output(
+            message_type="casual",
+            entities=[],
+            answers_open_question={"resolved": True, "picks": [1], "yes_no": None, "free_text": None},
+        )
+
+        result = self._run(
+            session_factory,
+            {"selection_context": "disambiguation", "last_result_set": _rows("A", "B")},
+            emission,
+        )
+
+        qf = (result.ctx or {}).get("parse", {}).get("output", {})
+        assert "open_question_answered" not in qf
+
     def test_the_lane_is_inert_without_the_v3_key(
         self, session_factory, seeded, stub_parser, stub_access
     ) -> None:
         """AC-952: this ships before the owner promotes v3, so a v1 or v2 emission - which
         is every one of the 1,875 captures and every production turn today - must reach
         exactly the code it reaches now."""
-        stub_parser()
+        stub_parser()  # v1: the promoted contract
         stub_access()
         emission = _parser_output(message_type="casual", entities=[])
         emission.pop("answers_open_question", None)
