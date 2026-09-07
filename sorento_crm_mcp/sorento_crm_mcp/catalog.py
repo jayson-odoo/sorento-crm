@@ -458,13 +458,20 @@ CATALOG: tuple[ToolSpec, ...] = (
             "'50' after being asked how many), pass that number as `requested_qty`. Some contacts are "
             "answered yes/no against it instead of with quantities, and without it the reply can only "
             "ask how many units they need.\n\n"
+            "SELLABLE: `include_sellable=true` (always sent by the render presenter) adds `open_so_qty` "
+            "(open sales-order quantity not yet a delivery order) and `sellable` (on_hand minus "
+            "open_so_qty, negative when oversold) per row. Field-reveal gated downstream, not by this "
+            "tool.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results. "
             "Pass BOTH or NEITHER: `contact_id` without `space_id` returns no rows."
         ),
         "/api/v1/inventory/stock/balance",
         (),
-        ("page", "limit", "product_ids", "sort", "dir", "warehouse_ids", "quantity_operator", "quantity_value", "status", "requested_qty", "contact_id", "space_id"),
+        (
+            "page", "limit", "product_ids", "sort", "dir", "warehouse_ids", "quantity_operator",
+            "quantity_value", "status", "requested_qty", "include_sellable", "contact_id", "space_id",
+        ),
         domain="inventory",
         related_tools=("crm_inventory_warehouses_list",),
         escalation_team="warehouse",

@@ -299,6 +299,11 @@ def run_fetch(
         "entities": entities,
         "semantic_input": semantic_input,
         "contact_id": contact_id,
+        # A2 (chatbot-growth-r1): read by `output_structurer`'s restricted-field
+        # drop, which is the ONLY consumer of `access.attributes`. Slice C wires
+        # `check_access` to fill it from `contact_field_reveals`; until then it is
+        # always None, so every restricted field stays hidden by construction.
+        "access": ctx.get("access"),
     }
     args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
     if tool_name in fetch_mod.ENTITY_FILTER_REQUIRED_TOOLS and not fetch_mod.has_narrowing_filter(

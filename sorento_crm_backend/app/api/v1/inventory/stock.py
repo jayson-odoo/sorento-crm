@@ -71,6 +71,50 @@ class BulkDeleteStockRequest(BaseModel):
     ids: list[str]
 
 
+def _with_sellable(service: StockService, result: dict) -> JSONResponse:
+    """Attach `open_so_qty` + `sellable` per row/entry (A2, AC-903/AC-904).
+
+    Bypasses `response_model` on purpose, same reason as products'
+    `_with_specifications`: `StockBalanceListResponse` does not declare these
+    fields, so returning `result` straight through response_model would drop
+    them silently rather than serialize them. `sellable` is `on_hand - open_qty`,
+    left NEGATIVE here - the chatbot presenter is what renders "0 (oversold by
+    N)"; a raw/staff caller reading a negative number can already do that math.
+
+    `stock_availability` rows are skipped entirely: that mode's whole point is
+    never disclosing a quantity, and open_so_qty/sellable are quantities.
+    """
+    body = StockBalanceListResponse.model_validate(result).model_dump(mode="json")
+    rows = result.get("data") or []
+    product_ids: set[str] = {
+        str(getattr(r, "product_id", None)) for r in rows if getattr(r, "product_id", None)
+    }
+    for entry in result.get("stock_summary") or []:
+        pid = entry.get("product_id") if isinstance(entry, dict) else None
+        if pid:
+            product_ids.add(str(pid))
+    open_so = service.open_so_qty_by_product(list(product_ids))
+
+    def _attach(target: dict, pid: str, on_hand) -> None:
+        open_qty = open_so.get(pid, 0)
+        try:
+            oh = int(on_hand) if on_hand is not None else 0
+        except (TypeError, ValueError):
+            oh = 0
+        target["open_so_qty"] = open_qty
+        target["sellable"] = oh - open_qty
+
+    for serialized, row in zip(body.get("data") or [], rows):
+        pid = str(getattr(row, "product_id", "") or "")
+        if pid:
+            _attach(serialized, pid, getattr(row, "quantity_on_hand", None))
+    for entry in body.get("stock_summary") or []:
+        pid = str(entry.get("product_id") or "")
+        if pid:
+            _attach(entry, pid, entry.get("total_on_hand"))
+    return JSONResponse(content=body)
+
+
 @router.get("/balance", response_model=StockBalanceListResponse)
 def get_stock_balance(
     page: int = Query(1, ge=1),
@@ -139,6 +183,15 @@ def get_stock_balance(
             "the quantity again."
         ),
     ),
+    include_sellable: bool = Query(
+        False,
+        description=(
+            "Attach `open_so_qty` (open sales-order quantity not yet DO'd) and "
+            "`sellable` (on_hand minus open_so_qty) to each detailed row / compact "
+            "summary entry. Off by default - the response is unchanged for every "
+            "caller that does not ask. Never attached in `availability` mode."
+        ),
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -190,6 +243,8 @@ def get_stock_balance(
         if isinstance(result, dict) and result.get("alternatives"):
             from fastapi.encoders import jsonable_encoder
             return JSONResponse(content=jsonable_encoder(result))
+        if include_sellable and isinstance(result, dict):
+            return _with_sellable(service, result)
         return result
     except Exception as e:
         raise handle_internal_error(str(e))

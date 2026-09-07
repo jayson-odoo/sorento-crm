@@ -277,6 +277,62 @@ def test_stock_uses_relabelled_location_fields():
     assert out["last_updated_at"] == "2026-06-12T09:28:56+08:00"
 
 
+def test_stock_omits_sellable_when_backend_did_not_send_it():
+    """AC-903: byte-identical when the backend answered with no `sellable` at all."""
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [{"product_code": "SRTWT107", "quantity_on_hand": 36}],
+    })
+    labels = {x["label"] for x in out["items"][0]["fields"]}
+    assert "Open SO" not in labels
+    assert "Sellable (on hand minus open SO)" not in labels
+    assert "restricted_fields" not in out
+
+
+def test_stock_carries_open_so_and_sellable_restricted():
+    """AC-904: both fields present, and marked restricted so `output_structurer`
+    (the actual gate) can drop them per contact - the MCP itself stays unfiltered."""
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [{"product_code": "SRTWT107", "quantity_on_hand": 36,
+                  "open_so_qty": 10, "sellable": 26}],
+    })
+    f = {x["label"]: x["value"] for x in out["items"][0]["fields"]}
+    assert f["Open SO"] == 10
+    assert f["Sellable (on hand minus open SO)"] == 26
+    assert out["restricted_fields"] == {
+        "open_so_qty": "inventory.sellable",
+        "sellable": "inventory.sellable",
+    }
+
+
+def test_stock_sellable_negative_renders_oversold_wording():
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [{"product_code": "SRTWT107", "quantity_on_hand": 5,
+                  "open_so_qty": 8, "sellable": -3}],
+    })
+    f = {x["label"]: x["value"] for x in out["items"][0]["fields"]}
+    assert f["Sellable (on hand minus open SO)"] == "0 (oversold by 3)"
+
+
+def test_stock_compact_carries_open_so_and_sellable_restricted():
+    out = env("crm_inventory_stock_balance_list", {
+        "data": [],
+        "stock_visibility": {"mode": "compact", "source": "access_type"},
+        "stock_summary": [{
+            "product_id": "p1", "product_code": "SRTWT107", "product_name": "SRTWT107",
+            "total_on_hand": 12, "open_so_qty": 4, "sellable": 8,
+            "locations": [{"warehouse_code": "BRW", "quantity_on_hand": 12}],
+            "flags": {},
+        }],
+    })
+    f = {x.get("label"): x["value"] for x in out["items"][0]["fields"]}
+    assert f["Open SO"] == 4
+    assert f["Sellable (on hand minus open SO)"] == 8
+    assert out["restricted_fields"] == {
+        "open_so_qty": "inventory.sellable",
+        "sellable": "inventory.sellable",
+    }
+
+
 def test_forms_minimal_name_only():
     out = env("crm_forms_management_forms_list", {"data": [{"name": "Renovation Form", "attachment_id": "x"}]})
     assert out["items"][0]["fields"] == [{"label": "Form Name", "value": "Renovation Form"}]

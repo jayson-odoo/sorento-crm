@@ -1001,6 +1001,37 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     ctx = ctx if isinstance(ctx, dict) else {}
     e = _extract_envelope(result)
 
+    # -- restricted-field drop (A2/A5/A6, general rule) ---------------------- #
+    # A presenter marks a field or summary item RESTRICTED by putting its key in
+    # the envelope's `restricted_fields` (field key -> permission key, e.g.
+    # "inventory.sellable", "purchase_orders.supplier" - `sorento_crm_mcp.
+    # presenters._Builder.restrict`). Dropped here unless the contact's access
+    # grants that permission. `ctx["access"]["attributes"]` is a list; today
+    # `head/access.py::check_access` always returns it as None (Slice C wires it
+    # from `contact_field_reveals`), so None is read as the EMPTY grant set and
+    # every restricted field is hidden by construction - which is exactly what
+    # keeps a stock/PO/SPO answer byte-identical to before this rule existed
+    # (AC-903). The MCP itself stays unfiltered; this is the ONE place a
+    # restricted field is ever dropped for the chatbot.
+    restricted = e.get("restricted_fields")
+    if isinstance(restricted, dict) and restricted:
+        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
+        granted_raw = access_ctx.get("attributes")
+        granted = set(granted_raw) if isinstance(granted_raw, list) else set()
+
+        def _keep_field(f: Any) -> bool:
+            if not _has_key(f):
+                return True
+            perm = restricted.get(jsc.js_string(f["key"]))
+            return perm is None or perm in granted
+
+        for it in e.get("items") or []:
+            if jsc.truthy(it) and isinstance(jsc.get(it, "fields"), list):
+                it["fields"] = [f for f in it["fields"] if _keep_field(f)]
+        for si in e.get("summary_items") or []:
+            if jsc.truthy(si) and isinstance(jsc.get(si, "fields"), list):
+                si["fields"] = [f for f in si["fields"] if _keep_field(f)]
+
     # -- requested-attribute projection ------------------------------------- #
     # The CRM dumps every clearance field the caller may see, by design: it prevents the
     # LEAK, this prevents the DUMP. KEY-based, never label-based: a label table here was

@@ -210,6 +210,15 @@ class _Builder:
         self.items: list[dict[str, Any]] = []
         self.attachments: list[dict[str, Any]] = []
         self.action_links: list[dict[str, Any]] = []
+        # field key -> permission key (A2/A5/A6, e.g. "inventory.sellable",
+        # "purchase_orders.supplier"). The MCP itself stays unfiltered (in-app
+        # assistant + n8n operators are internal); `output_structurer` is the
+        # only consumer that reads this and drops a field/summary item whose
+        # key is here unless the contact's access grants the permission key.
+        self.restricted_fields: dict[str, str] = {}
+
+    def restrict(self, key: str, permission: str) -> None:
+        self.restricted_fields[key] = permission
 
     def item(
         self,
@@ -1012,9 +1021,19 @@ def _stock(rows: list[dict], b: _Builder) -> None:
                 ("warehouse", "Warehouse", wh_name if _filled(wh_name) else "-"),
                 ("system_location", "System Location", sysloc if _filled(sysloc) else "-"),
                 ("quantity_on_hand", "Quantity On Hand", qoh if qoh is not None else "-"),
+                # A2 (AC-903/AC-904): present only when the backend was asked
+                # (`include_sellable=true`, the default for this tool). RESTRICTED
+                # below - `output_structurer` drops both unless the contact holds
+                # `inventory.sellable`, which is how a caller with no grant reads a
+                # byte-identical answer to before this pair existed (AC-903).
+                ("open_so_qty", "Open SO", _stock_int(s.get("open_so_qty"))),
+                ("sellable", "Sellable (on hand minus open SO)", _sellable_value(s.get("sellable"))),
             ],
             discontinued=is_discontinued,
         )
+    if any(s.get("sellable") is not None for s in rows):
+        b.restrict("open_so_qty", "inventory.sellable")
+        b.restrict("sellable", "inventory.sellable")
 
 
 def _stock_int(v: Any) -> Any:
@@ -1026,6 +1045,19 @@ def _stock_int(v: Any) -> Any:
         return int(Decimal(str(v)))
     except (InvalidOperation, TypeError, ValueError):
         return v
+
+
+def _sellable_value(v: Any) -> Any:
+    """`sellable` (A2, AC-904): a negative number reads "0 (oversold by N)",
+    never a bare negative - the backend leaves the raw signed number so this
+    presenter owns the wording, same split as `_money`/`_stock_int`."""
+    if v is None:
+        return v
+    try:
+        n = int(Decimal(str(v)))
+    except (InvalidOperation, TypeError, ValueError):
+        return v
+    return f"0 (oversold by {-n})" if n < 0 else n
 
 
 def _stock_compact(payload: dict, b: _Builder) -> None:
@@ -1046,6 +1078,22 @@ def _stock_compact(payload: dict, b: _Builder) -> None:
         if _filled(code_field):
             fields.append({"key": "product_code", "label": "Product Code", "value": code_field})
         fields.append({"label": "Total", "value": _stock_int(entry.get("total_on_hand"))})
+        # A2 (AC-903/AC-904): same pair as the detailed row, RESTRICTED behind
+        # `inventory.sellable` (see `_stock`). Keyed, unlike the location pairs
+        # below, so `output_structurer`'s restricted-drop can match on them.
+        if entry.get("sellable") is not None:
+            fields.append(
+                {"key": "open_so_qty", "label": "Open SO", "value": _stock_int(entry.get("open_so_qty"))}
+            )
+            fields.append(
+                {
+                    "key": "sellable",
+                    "label": "Sellable (on hand minus open SO)",
+                    "value": _sellable_value(entry.get("sellable")),
+                }
+            )
+            b.restrict("open_so_qty", "inventory.sellable")
+            b.restrict("sellable", "inventory.sellable")
         for loc in entry.get("locations") or []:
             if not isinstance(loc, dict):
                 continue
@@ -1306,5 +1354,7 @@ def present_response(tool_name: str, raw: str) -> str:
             envelope["summary_items"] = _sitems
             if _sintro:
                 envelope["intro"] = _sintro
+    if b.restricted_fields:
+        envelope["restricted_fields"] = dict(b.restricted_fields)
     _annotate_field_access(envelope, tool_name)
     return json.dumps(envelope)

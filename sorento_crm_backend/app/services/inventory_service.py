@@ -1012,6 +1012,38 @@ class StockService:
                 payload["relaxed_axis"] = "entity"
         return payload
 
+    def open_so_qty_by_product(self, product_ids: list[str]) -> dict[str, int]:
+        """Open (not-yet-DO'd) SO quantity per product, across every warehouse (A2).
+
+        Feeds `sellable = on_hand - open_so_qty` (AC-903/AC-904). Product-level
+        only, not per-warehouse: the plan's per-warehouse split ("per warehouse
+        when the line has one, else the product total row") has no AC that reads
+        a per-warehouse Open SO number, and A0 measured only 0.8% of open SO
+        lines lack `warehouse_id` - not enough of a data problem to earn a second
+        aggregation with nothing to test it against (`documentation/plans/chatbot/
+        chatbot-growth-r1-acceptance-criteria.md` AC-904b).
+
+        An open DO (created, not yet delivered) is NOT subtracted here - AutoCount
+        deducts stock at DO creation, so it is already out of `on_hand` (AC-904b).
+        """
+        from app.models.order import SalesOrderLine
+
+        ids = [str(pid) for pid in product_ids if pid]
+        if not ids:
+            return {}
+        delta = SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered
+        rows = (
+            self.db.query(SalesOrderLine.product_id, func.sum(delta).label("open_qty"))
+            .filter(
+                SalesOrderLine.product_id.in_(ids),
+                SalesOrderLine.line_status == "open",
+                delta > 0,
+            )
+            .group_by(SalesOrderLine.product_id)
+            .all()
+        )
+        return {str(pid): int(qty or 0) for pid, qty in rows}
+
     # ------------------------------------------------------ stock visibility
 
     def _apply_stock_visibility(

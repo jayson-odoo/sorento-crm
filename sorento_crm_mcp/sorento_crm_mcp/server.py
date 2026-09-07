@@ -144,6 +144,11 @@ TOOL_DEFAULT_QUERY_PARAMS: dict[str, dict[str, str]] = {
     "crm_marketing_promotions_list": {"serving_policy": "true"},
     "crm_marketing_promotion_products_list": {"serving_policy": "true"},
     "crm_marketing_promotion_attachments_list": {"serving_policy": "true"},
+    # A2 (chatbot-growth-r1): the presenter always asks for open_so_qty +
+    # sellable so `output_structurer`'s restricted-field rule has something to
+    # keep or drop per contact - a caller that wants the pre-A2 shape passes
+    # include_sellable=false explicitly (still possible, just no longer default).
+    "crm_inventory_stock_balance_list": {"include_sellable": "true"},
 }
 
 # Tools whose responses are blocked / row-filtered to ACTIVE promotions only.
