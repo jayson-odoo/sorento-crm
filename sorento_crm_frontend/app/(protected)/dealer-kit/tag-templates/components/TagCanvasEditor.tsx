@@ -2384,15 +2384,45 @@ export function TagCanvasEditor({
     [isBackground],
   );
 
-  // Runs before the Radix trigger, being the deeper DOM node. It must NOT call
-  // preventDefault: the trigger needs this event, and the trigger is what stops
-  // the browser's own menu.
-  const handleStageContextMenu = useCallback(() => {
-    const point = pointerMm();
-    const hitId = point ? hitLayerAt(layers, point.x_mm, point.y_mm, entered) : null;
-    setMenuOnEmpty(!hitId);
-    if (hitId && !selectedIds.has(hitId)) setSelectedIds(new Set([hitId]));
-  }, [pointerMm, layers, entered, selectedIds]);
+  /**
+   * Bound on the OUTER container div Radix's trigger wraps (S10, observed
+   * bug), not on the Konva `<Stage>` itself.
+   *
+   * `<Stage onContextMenu>` only fires once Konva's OWN internal listener -
+   * bound to `stage.content` specifically - sees the native event; a DOM
+   * overlay that sits ALONGSIDE the Stage as this same container's sibling
+   * (the preview-block eye chips a few hundred lines down, absolutely
+   * positioned right over a layer's own corner) can be the native event's
+   * real target instead, in which case Konva's listener never runs at all:
+   * `menuOnEmpty` is left at whatever it last was - `true` on the very
+   * first right-click of a session - while Radix's OWN trigger (bound to
+   * THIS div either way) still opens the menu, showing the empty one. The
+   * fix reads the point off THIS event's own `clientX`/`clientY` against
+   * the Stage's content div, rather than `stage.getPointerPosition()` -
+   * which only reflects whatever Konva's own listener last recorded - so
+   * the hit test no longer depends on that listener having run at all.
+   *
+   * Runs before the Radix trigger despite sharing its element: Radix's own
+   * "contextmenu" handling is composed onto this SAME div via `asChild`
+   * (React's handler-composition order, not DOM bubbling). It must NOT call
+   * preventDefault - the trigger needs this event, and the trigger is what
+   * stops the browser's own menu.
+   */
+  const handleStageContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      const content = stageRef.current?.getContent();
+      const point = content
+        ? (() => {
+            const rect = content.getBoundingClientRect();
+            return stageToMm(view, e.clientX - rect.left, e.clientY - rect.top);
+          })()
+        : null;
+      const hitId = point ? hitLayerAt(layers, point.x_mm, point.y_mm, entered) : null;
+      setMenuOnEmpty(!hitId);
+      if (hitId && !selectedIds.has(hitId)) setSelectedIds(new Set([hitId]));
+    },
+    [view, layers, entered, selectedIds],
+  );
 
   // -- Undo / Redo -----------------------------------------------------------
 
@@ -3143,6 +3173,7 @@ export function TagCanvasEditor({
                 handMode && 'cursor-grab active:cursor-grabbing',
                 wheelPanning && 'cursor-grabbing',
               )}
+              onContextMenu={handleStageContextMenu}
             >
               <CanvasRulers
                 widthMm={doc.width_mm}
@@ -3170,7 +3201,6 @@ export function TagCanvasEditor({
                   onMouseMove={handleStageMouseMove}
                   onMouseUp={handleStageMouseUp}
                   onDblClick={handleStageDoubleClick}
-                  onContextMenu={handleStageContextMenu}
                 >
                   <KonvaLayer x={view.panX} y={view.panY}>
                     {/* White tag background */}
