@@ -23,6 +23,7 @@ from app.api.v1.system import (
     respond_outbox,
     chat_history,
     chatbot,
+    chatbot_field_reveals,
     statuses,
     translations,
 )
@@ -56,6 +57,14 @@ router.include_router(chat_history.router, tags=["chat-history"])
 router.include_router(
     chatbot.router,
     tags=["chatbot-turns"],
+    dependencies=[Depends(require_module_enabled_with_api_key("chatbot"))],
+)
+# Per-contact field reveals (Slice C): admin config over the chatbot's field-gate
+# table, not a turn-path surface. Same module guard: the grant is meaningless
+# where the chatbot engine is not installed.
+router.include_router(
+    chatbot_field_reveals.router,
+    tags=["chatbot-field-reveals"],
     dependencies=[Depends(require_module_enabled_with_api_key("chatbot"))],
 )
 # Status engine (ADR-0001). CORE plumbing, so it rides the always-on `base` guard

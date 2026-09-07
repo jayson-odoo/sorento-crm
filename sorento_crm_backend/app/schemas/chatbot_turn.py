@@ -43,6 +43,20 @@ class ChatbotTurnResponse(BaseModel):
     response: dict[str, Any] | None = None
 
 
+class ChatbotTurnDetailResponse(ChatbotTurnResponse):
+    """`GET /turns/{id}` (Slice D, AC-970): the row plus the normalised trace detail
+    `app.services.chatbot.trace_detail.compose_trace_detail` builds from `trace`.
+
+    `trace_detail` stays a loose dict for the same reason `trace` and `response`
+    above do: its shape is read off whatever the engine happened to write, which
+    grows as the `data` and `dialogue` lanes add `TurnTrace.add` kinds this build
+    has not seen yet. A strict model would DROP a kind the day it is added - the
+    exact failure this file's own docstring already names.
+    """
+
+    trace_detail: dict[str, Any]
+
+
 class ChatbotTurnListResponse(BaseModel):
     items: list[ChatbotTurnResponse]
     # Opaque. Absent (null) when there is no further page.

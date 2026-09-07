@@ -1,12 +1,13 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, Copy, RotateCcw, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Copy, ListTree, RotateCcw, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { SearchableCode } from '@/components/common/find-in-text/SearchableCode';
 import { cn } from '@/lib/utils';
 import { useRetryChatbotTurn } from '../hooks/useChatbotTurns';
+import { TurnDetailDrawer } from './TurnDetailDrawer';
 import {
   buildTimeline,
   canRetry,
@@ -42,6 +43,7 @@ export function TurnPanel({
   retryUnavailableReason?: string | null;
 }) {
   const [open, setOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(false);
   const headline = useMemo(() => turnHeadline(turn), [turn]);
   const rows = useMemo(() => buildTimeline(turn), [turn]);
   const duration = turnDuration(turn);
@@ -55,51 +57,68 @@ export function TurnPanel({
       )}
       data-testid="turn-panel"
     >
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-1.5 flex-wrap text-start"
-      >
-        <Badge
-          variant={failed ? 'destructive' : headline.tone === 'pending' ? 'warning' : 'success'}
-          appearance="light"
-          size="sm"
+      <div className="flex w-full items-center gap-1.5 flex-wrap">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex flex-1 min-w-0 items-center gap-1.5 flex-wrap text-start"
         >
-          {headline.word}
-        </Badge>
-        {turn.branch_kind && laneWords(turn.branch_kind) !== headline.word && (
-          // Two suppressions. On `clarify_menu` and friends the status word IS the lane,
-          // and printing it twice reads as a rendering bug rather than as emphasis. On a
-          // turn that failed before routing there is no lane at all, and "Failed at
-          // Understood, Lane not reached" says the same thing twice in a worse voice -
-          // the timeline's own "not reached" row already carries it.
-          <span className="text-xs text-muted-foreground">{laneWords(turn.branch_kind)}</span>
-        )}
-        {turn.attempt > 1 && (
-          <Badge variant="warning" appearance="light" size="sm">
-            attempt {turn.attempt}
+          <Badge
+            variant={failed ? 'destructive' : headline.tone === 'pending' ? 'warning' : 'success'}
+            appearance="light"
+            size="sm"
+          >
+            {headline.word}
           </Badge>
-        )}
-        {turn.is_test && (
-          <Badge variant="secondary" appearance="light" size="sm">
-            test
-          </Badge>
-        )}
-        {duration && (
-          <span className="text-xs text-muted-foreground tabular-nums">{duration}</span>
-        )}
-        {/* The mockup's id chip: an operator quoting a turn to an engineer needs the handle
-            without expanding the panel. Short, never the bare UUID (the full one is on the
-            Copy button inside). */}
-        <span className="text-2xs text-muted-foreground/80 tabular-nums">
-          #{shortTurnId(turn.id)}
-        </span>
-        <span className="ms-auto flex items-center gap-1 text-xs text-muted-foreground">
-          {open ? 'hide' : 'details'}
-          {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
-        </span>
-      </button>
+          {turn.branch_kind && laneWords(turn.branch_kind) !== headline.word && (
+            // Two suppressions. On `clarify_menu` and friends the status word IS the lane,
+            // and printing it twice reads as a rendering bug rather than as emphasis. On a
+            // turn that failed before routing there is no lane at all, and "Failed at
+            // Understood, Lane not reached" says the same thing twice in a worse voice -
+            // the timeline's own "not reached" row already carries it.
+            <span className="text-xs text-muted-foreground">{laneWords(turn.branch_kind)}</span>
+          )}
+          {turn.attempt > 1 && (
+            <Badge variant="warning" appearance="light" size="sm">
+              attempt {turn.attempt}
+            </Badge>
+          )}
+          {turn.is_test && (
+            <Badge variant="secondary" appearance="light" size="sm">
+              test
+            </Badge>
+          )}
+          {duration && (
+            <span className="text-xs text-muted-foreground tabular-nums">{duration}</span>
+          )}
+          {/* The mockup's id chip: an operator quoting a turn to an engineer needs the handle
+              without expanding the panel. Short, never the bare UUID (the full one is on the
+              Copy button inside). */}
+          <span className="text-2xs text-muted-foreground/80 tabular-nums">
+            #{shortTurnId(turn.id)}
+          </span>
+          <span className="ms-auto flex items-center gap-1 text-xs text-muted-foreground">
+            {open ? 'hide' : 'details'}
+            {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
+          </span>
+        </button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 w-6 p-0 shrink-0"
+          aria-label="Open full trace"
+          title="Open full trace"
+          onClick={() => setDetailOpen(true)}
+        >
+          <ListTree className="size-3.5" />
+        </Button>
+      </div>
+
+      <TurnDetailDrawer
+        turnId={detailOpen ? turn.id : null}
+        onOpenChange={(o) => !o && setDetailOpen(false)}
+      />
 
       {open && (
         <div className="mt-2">
