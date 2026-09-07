@@ -91,6 +91,15 @@ vi.mock('react-konva', async () => {
         data-w={props.width}
         data-h={props.height}
         onMouseDown={(e) => {
+          // Real Konva dispatches exactly ONE handler per click, from its
+          // OWN internal hit-test - never DOM bubbling, since the whole
+          // canvas is one element (R1, #723). Without stopping it, this
+          // div's mousedown ALSO bubbles to the Stage stand-in's own
+          // onMouseDown below, which - reporting a fixed 'artboard-bg'
+          // target regardless of what was actually clicked - would treat
+          // every click on the window or a handle as "outside" too, and
+          // commit (closing crop mode) before any drag ever started.
+          e.stopPropagation();
           moveTo(e);
           props.onDragStart?.({ target: node });
         }}
@@ -98,8 +107,16 @@ vi.mock('react-konva', async () => {
           moveTo(e);
           props.onDragMove?.({ target: node });
         }}
-        onMouseUp={(e) => {
-          moveTo(e);
+        // NOT `moveTo(e)` first (R1, #723): Konva's own `mouseup`/`dragend`
+        // handling (`DragAndDrop.js`) never recomputes a dragged node's
+        // position - `dragend` fires with whatever the node's position
+        // CURRENTLY is, which is wherever the last `dragmove` (real Konva,
+        // or this component's own `positionCropHandle`) left it. Calling
+        // `moveTo(e)` here would silently overwrite that with a FRESH raw
+        // value from the mouseup event's own coordinates, hiding exactly
+        // the bug this file's "commit writes the dragged rect" tests exist
+        // to catch.
+        onMouseUp={() => {
           props.onDragEnd?.({ target: node });
         }}
       >
@@ -110,20 +127,45 @@ vi.mock('react-konva', async () => {
 
   // `getContent()` is the Konva Stage API `handleStageContextMenu` reaches
   // for - a freshly created div has an all-zero rect in jsdom, so a click's
-  // `clientX/clientY` map onto stage pixels unchanged.
+  // `clientX/clientY` map onto stage pixels unchanged. `getPointerPosition`
+  // (R1, #723) is what `handleStageMouseDown` bails out on `if (!point)` -
+  // a fixed non-null point is enough since the crop-mode branch it needs
+  // to reach never reads it for anything past that guard.
   function StageStandIn({
     children,
     ref,
+    onMouseDown,
   }: {
     children?: React.ReactNode;
-    ref?: React.Ref<{ getContent: () => HTMLElement }>;
+    ref?: React.Ref<{ getContent: () => HTMLElement; getPointerPosition: () => { x: number; y: number } }>;
+    onMouseDown?: (e: {
+      evt: { button: number; preventDefault: () => void; shiftKey: boolean };
+      target: { name: () => string };
+    }) => void;
   }) {
-    const instance = { getContent: () => document.createElement('div') };
+    const instance = {
+      getContent: () => document.createElement('div'),
+      getPointerPosition: () => ({ x: 0, y: 0 }),
+    };
     if (typeof ref === 'function') ref(instance);
     else if (ref && 'current' in (ref as { current: unknown })) {
       (ref as { current: unknown }).current = instance;
     }
-    return <div data-konva="stage">{children}</div>;
+    return (
+      <div
+        data-konva="stage"
+        // A click that hits neither the crop window nor a handle - "outside"
+        // (R1, #723), same as a real click on the artboard background would.
+        onMouseDown={(e) =>
+          onMouseDown?.({
+            evt: { button: 0, preventDefault: () => {}, shiftKey: e.shiftKey },
+            target: { name: () => 'artboard-bg' },
+          })
+        }
+      >
+        {children}
+      </div>
+    );
   }
 
   // Exposes x/y/width/height/opacity as data attributes (S8 review, #723):
@@ -377,6 +419,11 @@ describe('TagCanvasEditor crop mode - commit and cancel (S8, AC-S8-3)', () => {
     // 6/60 = 0.1 (what the OLD, always-whole-image-contain frame gave).
     const window_ = cropHandle(container, 'crop-window');
     fireEvent.mouseDown(window_, { clientX: 0, clientY: 0 });
+    // A real drag moves via one or more `mousemove` ticks BEFORE the
+    // `mouseup` that ends it (R1, #723) - `mouseup` on its own carries no
+    // position of its own in this stand-in, matching Konva's own dragend,
+    // which never recomputes the node's position either.
+    fireEvent.mouseMove(window_, { clientX: 6, clientY: 3 });
     fireEvent.mouseUp(window_, { clientX: 6, clientY: 3 });
 
     fireEvent.keyDown(window, { key: 'Enter' });
@@ -392,6 +439,67 @@ describe('TagCanvasEditor crop mode - commit and cancel (S8, AC-S8-3)', () => {
     expect(container.querySelector('[data-name="crop-window"]')).toBeNull();
   });
 
+  it('dragging the top-centre handle down then pressing Enter writes the crop, and Reset crop appears (R1, #723)', async () => {
+    let latest: TagLayer[] = [];
+    const { container } = await renderReady(docWith(imageLayer()), {
+      onLayersChange: (layers: TagLayer[]) => {
+        latest = layers;
+      },
+    });
+    await enterCropMode(container);
+
+    const handle = cropHandle(container, 'crop-handle-top-center');
+    fireEvent.mouseDown(handle, { clientX: 30, clientY: 0 });
+    fireEvent.mouseMove(handle, { clientX: 30, clientY: 20 });
+    fireEvent.mouseUp(handle);
+
+    fireEvent.keyDown(window, { key: 'Enter' });
+
+    const committed = latest.find((l) => l.id === 'img1')!;
+    const cropRect = committed.props.kind === 'image' ? committed.props.cropRect : null;
+    expect(cropRect).not.toBeNull();
+    expect(cropRect!.y).toBeGreaterThan(0);
+    // A precise check alongside the loose one above: a 20px drag of 30 -
+    // the box's own full height for this fixture (20mm/10mm -> 60x30px) -
+    // is 20/30 = 2/3 of the FULL_CROP source. The OLD bug (re-deriving
+    // normDy from the dragend event's OWN self-overwritten node, rather
+    // than the last correctly-computed MOVE tick) does not revert to zero
+    // for THIS particular anchor/direction the way the crop-window pan
+    // test above does - it computes a DIFFERENT, still-positive, still
+    // WRONG value (1/3) - so `y > 0` alone would not have caught it here.
+    expect(cropRect!.y).toBeCloseTo(2 / 3, 4);
+    // The layer stays selected (the right-click that opened crop mode
+    // selected it, and committing never deselects) - the Inspector's own
+    // "Reset crop" appears as soon as the committed cropRect selects less
+    // than the whole image (`isCropped`).
+    expect(screen.getByRole('button', { name: 'Reset crop' })).toBeInTheDocument();
+  });
+
+  it('a canvas click outside the crop window commits the drag too, not just Enter (R1, #723)', async () => {
+    let latest: TagLayer[] = [];
+    const { container } = await renderReady(docWith(imageLayer()), {
+      onLayersChange: (layers: TagLayer[]) => {
+        latest = layers;
+      },
+    });
+    await enterCropMode(container);
+
+    const handle = cropHandle(container, 'crop-handle-top-center');
+    fireEvent.mouseDown(handle, { clientX: 30, clientY: 0 });
+    fireEvent.mouseMove(handle, { clientX: 30, clientY: 20 });
+    fireEvent.mouseUp(handle);
+
+    // Click the STAGE itself, not the window or a handle - "outside".
+    fireEvent.mouseDown(container.querySelector('[data-konva="stage"]')!);
+
+    const committed = latest.find((l) => l.id === 'img1')!;
+    const cropRect = committed.props.kind === 'image' ? committed.props.cropRect : null;
+    expect(cropRect).not.toBeNull();
+    expect(cropRect!.y).toBeGreaterThan(0);
+    expect(cropRect!.y).toBeCloseTo(2 / 3, 4);
+    expect(container.querySelector('[data-name="crop-window"]')).toBeNull();
+  });
+
   it('Esc leaves the layer\'s cropRect exactly as it was (AC-S8-3)', async () => {
     let latest: TagLayer[] = [];
     const original = { x: 0, y: 0, width: 0.5, height: 0.5 };
@@ -404,6 +512,7 @@ describe('TagCanvasEditor crop mode - commit and cancel (S8, AC-S8-3)', () => {
 
     const window_ = cropHandle(container, 'crop-window');
     fireEvent.mouseDown(window_, { clientX: 0, clientY: 0 });
+    fireEvent.mouseMove(window_, { clientX: 6, clientY: 3 });
     fireEvent.mouseUp(window_, { clientX: 6, clientY: 3 });
 
     fireEvent.keyDown(window, { key: 'Escape' });
@@ -556,8 +665,13 @@ describe('TagCanvasEditor crop mode - edge/middle handles do not strand (S3 revi
     // A move that is mostly vertical (0 -> 15px of 30, half the frame) but
     // ALSO 10px sideways (30 -> 40) - the sideways component is what
     // `cropRectFromDrag` throws away for this anchor, and what used to
-    // strand the handle.
-    fireEvent.mouseUp(handle, { clientX: 40, clientY: 15 });
+    // strand the handle. The repositioning happens on the MOVE tick itself
+    // (R1, #723: `handleCropDragEnd` no longer repositions - by the time it
+    // runs, Konva's own dragend never recomputes a node's position, so
+    // there is nothing further to correct); `mouseup` alone carries no
+    // position update in this stand-in.
+    fireEvent.mouseMove(handle, { clientX: 40, clientY: 15 });
+    fireEvent.mouseUp(handle);
 
     expect(crop.nodes.get('crop-handle-top-center')!.x()).toBe(30);
   });

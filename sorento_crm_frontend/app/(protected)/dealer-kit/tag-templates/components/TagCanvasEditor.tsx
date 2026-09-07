@@ -1668,6 +1668,11 @@ export function TagCanvasEditor({
     base: CropRect;
     origin: { x: number; y: number };
     cancelled: boolean;
+    /** The last rect a MOVE tick actually computed (r6 S8 review, #723) -
+     *  `handleCropDragEnd` reads this instead of re-deriving from the drag
+     *  event's own node, which by then no longer carries the raw pointer
+     *  position. See the comment on `handleCropDragEnd` below for why. */
+    lastRect: CropRect;
   } | null>(null);
 
   /** Eligibility mirrors `cornerHandleLayer`'s own guard (S5): locked,
@@ -1743,7 +1748,7 @@ export function TagCanvasEditor({
   const startCropDrag = useCallback(
     (anchor: { fx: number; fy: number } | null, origin: { x: number; y: number }) => {
       if (!cropDraft) return;
-      cropDragRef.current = { anchor, base: cropDraft, origin, cancelled: false };
+      cropDragRef.current = { anchor, base: cropDraft, origin, cancelled: false, lastRect: cropDraft };
     },
     [cropDraft],
   );
@@ -1808,9 +1813,11 @@ export function TagCanvasEditor({
 
   const handleCropDragMove = useCallback(
     (e: Konva.KonvaEventObject<DragEvent>) => {
-      const anchor = cropDragRef.current?.anchor ?? { fx: 0, fy: 0 };
+      const drag = cropDragRef.current;
+      const anchor = drag?.anchor ?? { fx: 0, fy: 0 };
       const next = cropRectFromEvent(e);
       if (next) {
+        if (drag) drag.lastRect = next;
         setCropDraft(next);
         positionCropHandle(e, next, anchor);
       }
@@ -1818,20 +1825,30 @@ export function TagCanvasEditor({
     [cropRectFromEvent, positionCropHandle],
   );
 
-  const handleCropDragEnd = useCallback(
-    (e: Konva.KonvaEventObject<DragEvent>) => {
-      const drag = cropDragRef.current;
-      const anchor = drag?.anchor ?? { fx: 0, fy: 0 };
-      const next = cropRectFromEvent(e);
-      cropDragRef.current = null;
-      if (drag?.cancelled) return;
-      if (next) {
-        setCropDraft(next);
-        positionCropHandle(e, next, anchor);
-      }
-    },
-    [cropRectFromEvent, positionCropHandle],
-  );
+  /**
+   * Reads `drag.lastRect`, not a fresh `cropRectFromEvent(e)` off the
+   * dragend event's own node (r6 S8 review, #723 - AC-S8-3 never
+   * committing). Konva's own `mouseup`/`dragend` handling
+   * (`DragAndDrop.js`) never recomputes a dragged node's position - it
+   * fires with whatever the node's position CURRENTLY is, which by the
+   * time dragend runs is whatever `positionCropHandle` last SET it to (the
+   * corrected window-anchored point, in the SAME coordinate space as
+   * `drag.origin` but a different UNIT - "how far the window moved"
+   * rather than "how far the pointer moved"). Re-deriving `normDx`/`normDy`
+   * from that self-written position feeds the previous tick's OUTPUT back
+   * in as this tick's INPUT, which very nearly always computes back to the
+   * starting rect - the crop silently reverted on every commit. `lastRect`
+   * is the actual last correctly-computed rect (from a MOVE tick, whose
+   * own node position Konva itself had JUST written from the real pointer,
+   * before we overwrote it) - a drag that never moved (a plain click) still
+   * lands on `base`, which `startCropDrag` seeds `lastRect` with.
+   */
+  const handleCropDragEnd = useCallback(() => {
+    const drag = cropDragRef.current;
+    cropDragRef.current = null;
+    if (!drag || drag.cancelled) return;
+    setCropDraft(drag.lastRect);
+  }, []);
 
   // The mode itself is what disappears if the layer stops being eligible
   // mid-edit (deleted, locked, hidden) - the same reasoning as the polygon
