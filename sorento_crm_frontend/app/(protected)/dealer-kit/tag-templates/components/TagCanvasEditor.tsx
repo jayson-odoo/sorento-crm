@@ -553,7 +553,20 @@ export function TagCanvasEditor({
   const stageRef = useRef<Konva.Stage | null>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
   const shiftHeld = useShiftKey();
-  /** The live angle pill shown while dragging the rotate handle (S9). */
+  /**
+   * The live angle pill shown while dragging the rotate handle (S9).
+   *
+   * `setState` per transform tick (review nit): unlike the text-reflow loop
+   * right below it in `handleTransform`, which is already fully imperative
+   * (`node.width()`/`textNode.width()`, one `batchDraw()`), this genuinely
+   * triggers a React re-render every tick while rotating. Left as `setState`
+   * rather than converted to a ref-updated `Label` here: that needs the
+   * pill's `Label`/`Tag`/`Text` mounted (and its visibility toggled)
+   * imperatively too, which is a JSX/ref restructuring of its own, not a
+   * same-shape swap - a rotate drag is also a short, bounded gesture, not a
+   * sustained one, so the cost is a real one but not a hot path worth that
+   * risk without its own test coverage in this pass.
+   */
   const [rotationLabel, setRotationLabel] = useState<{
     x: number;
     y: number;
