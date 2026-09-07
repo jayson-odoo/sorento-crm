@@ -213,3 +213,10 @@ or a supersede / dedupe carry declared for an `autocount` line; NULL reads as 0.
   deleting the GRN afterwards leaves it closed at 29, never reopened: a line AutoCount retired is
   not demand again because the CRM receipt that closed it went away. A sibling still named by the
   push behaves per AC-X35 (drops and reopens).
+
+- **AC-X41 [BE][T]** (D28c distribution members, reviewer F4) In a group of two `autocount` lines,
+  L1 (Seq 1, allocated 29) retired by absence at received 0 (closed, `receipt_status pending`,
+  stated 0) and L2 (Seq 2, allocated 18, open) with one approved GRN of 40 against L2: after the
+  recompute L1 still reads 0 closed and L2 reads 40 (the whole picking total, remainder on the last
+  LIVE line). A member that is closed with `receipt_status != fully_received` (retired by absence,
+  or `cancelled`) takes no share; a member closed BY receipt still does (and may reopen, AC-X35).
