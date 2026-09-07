@@ -311,3 +311,16 @@ with `po_line_id` set and `source_system` NULL (`spo_conversion_service._write_a
   non-null) lands on every new line without one; `quantity_rejected` (group sum) and
   `allocation_notes` (group notes joined with "; ") land on the group's FIRST line, notes appended
   never overwritten. Same in the dedupe.
+
+- **AC-X53a [BE][T]** (read path) `_receipt_is_computed` treats `crm_spo` exactly like NULL: an
+  SCM-raised allocation stamped `crm_spo` with one approved GRN of 5 lists `quantity_received 5` on
+  the SPO allocations read path, not its stored 0.
+
+- **AC-X54a [BE][T]** (idempotent carry) Running the dedupe twice over a document whose Excel rows
+  were closed (not deleted) by a close-only supersede leaves `quantity_rejected` at the group sum
+  (max rule, never added twice) and `allocation_notes` without duplicated fragments.
+
+- **Named residual (D25c):** an accepted allocation suggestion with no PO line writes a NULL-source,
+  NULL-`po_line_id` row and stays a candidate until stamped `crm_spo`; on a first push it would be
+  superseded with links, shipment, zone, uom, rejected and notes carried, losing only its row id
+  and `created_by`. Accepted.
