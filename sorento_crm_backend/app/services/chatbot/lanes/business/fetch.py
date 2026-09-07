@@ -758,6 +758,38 @@ def _find_payload(j: Any) -> dict[str, Any] | None:
     return None
 
 
+def _rendered_answers(e: dict[str, Any]) -> list[Any]:
+    """The grouped rows in the order the numbered message printed them.
+
+    Same walk and same skip conditions as the group render below, so "row 2 on screen" and
+    `answers[1]` cannot disagree. Falls back to the flat `items` when a group carries none,
+    because an empty `answers` would break the positional pick outright rather than shift
+    it.
+    """
+    out: list[Any] = []
+    for grp in e.get("groups") or []:
+        if not isinstance(grp, dict) or not isinstance(grp.get("items"), list):
+            continue
+        out.extend(grp["items"])
+    return out or (e.get("items") or [])
+
+
+def group_axis(ctx: Any) -> str:
+    """The `group_by` axis this turn asked for, off the trigger's `semantic_input`.
+
+    Read twice - once to filter the grouped rows, once to decide whether the AXIS itself
+    is a restricted value - so it is one function rather than two inline digs through a
+    value that arrives as a dict on a live turn and as a JSON STRING on some captured n8n
+    triggers (`output_structurer` already has to handle both).
+    """
+    si: Any = (ctx or {}).get("semantic_input") if isinstance(ctx, dict) else None
+    if isinstance(si, str):
+        si = _safe_json(si)
+    if not isinstance(si, dict):
+        return ""
+    return jsc.js_string(si.get("group_by") or "").strip()
+
+
 def _extract_envelope(j: Any) -> dict[str, Any]:
     empty = {
         "items": [],
@@ -1045,8 +1077,20 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
         vocab_by_norm[_normalize_spec_word(key)] = (key, label)
         vocab_by_norm[_normalize_spec_word(label)] = (key, label)
 
-    asked_norms = [_normalize_spec_word(a) for a in req_attrs if jsc.nullish_str(a).strip()]
-    asked_norms = [a for a in asked_norms if a]
+    # The normalised word AND the word the customer actually typed, PAIRED (review, nit
+    # 10). Two parallel lists went out of step the moment `req_attrs` carried a blank or a
+    # word that normalised away - `req_attrs[asked_norms.index(norm)]` then named a
+    # DIFFERENT attribute in the "no X recorded" sentence, and it only shows on the one
+    # phrasing that has a blank in it.
+    asked: list[tuple[str, str]] = []
+    for raw in req_attrs:
+        text = jsc.nullish_str(raw).strip()
+        if not text:
+            continue
+        norm = _normalize_spec_word(text)
+        if norm:
+            asked.append((norm, text))
+    asked_norms = [norm for norm, _ in asked]
 
     for it in e.get("items") or []:
         if not jsc.truthy(it) or not isinstance(jsc.get(it, "fields"), list):
@@ -1092,7 +1136,7 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
         matched: list[dict[str, Any]] = []
         misses: list[dict[str, Any]] = []
         seen_field_ids: set[int] = set()
-        for norm in asked_norms:
+        for norm, asked_word in asked:
             hit = spec_by_norm_key.get(norm)
             if hit is not None:
                 if id(hit) not in seen_field_ids:
@@ -1102,7 +1146,7 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
             # Not on THIS product - name it with the registry label when the word
             # matches a known key/label, else the asked word itself.
             vocab_hit = vocab_by_norm.get(norm)
-            label = vocab_hit[1] if vocab_hit else jsc.js_string(req_attrs[asked_norms.index(norm)])
+            label = vocab_hit[1] if vocab_hit else asked_word
             misses.append(
                 {
                     "key": f"spec_miss:{norm}",
@@ -1147,12 +1191,41 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             perm = restricted.get(jsc.js_string(f["key"]))
             return perm is None or perm in granted
 
-        for it in e.get("items") or []:
-            if jsc.truthy(it) and isinstance(jsc.get(it, "fields"), list):
-                it["fields"] = [f for f in it["fields"] if _keep_field(f)]
-        for si in e.get("summary_items") or []:
-            if jsc.truthy(si) and isinstance(jsc.get(si, "fields"), list):
-                si["fields"] = [f for f in si["fields"] if _keep_field(f)]
+        def _filter_rows(rows: Any) -> None:
+            for row in rows or []:
+                if jsc.truthy(row) and isinstance(jsc.get(row, "fields"), list):
+                    row["fields"] = [f for f in row["fields"] if _keep_field(f)]
+
+        _filter_rows(e.get("items"))
+        _filter_rows(e.get("summary_items"))
+        # A3/A5's GROUPED shape carries the same rows a second time, and the first
+        # cut of this rule filtered `items` only - so `group_by=product` on a PO
+        # question rendered every supplier a dealer must never see, and
+        # `group_by=supplier` printed the restricted value as the SECTION HEADING,
+        # where no field filter could ever reach it. Both are closed here: every
+        # group's rows go through the same `_keep_field`, and the AXIS itself is
+        # refused below when the grant is not held.
+        for grp in e.get("groups") or []:
+            if not (jsc.truthy(grp) and isinstance(grp, dict)):
+                continue
+            _filter_rows(grp.get("items"))
+            _filter_rows(grp.get("summary_items"))
+
+        # THE HEADING IS NOT A FIELD. A group's `label` is the axis value itself, so a
+        # restricted axis leaks by being grouped ON, whatever the rows carry. The answer
+        # is to drop the grouping and answer FLAT rather than to redact the headings:
+        # "Supplier A / Supplier B" with the names blanked still tells the dealer how many
+        # suppliers there are and which rows share one, and an ungrouped list is the
+        # honest answer to a question we may not break down.
+        # The axis NAME and the restricted FIELD KEY are the same word by construction:
+        # a tool may only group on an axis it renders as a field, and `group_by=supplier`
+        # groups on the `supplier` field the presenter marked restricted. So the lookup
+        # is the same `restricted` map, with no second table to keep in step.
+        axis = group_axis(ctx)
+        axis_perm = restricted.get(axis) if axis else None
+        if axis_perm is not None and axis_perm not in granted:
+            e["groups"] = []
+            e["group_by_dropped"] = axis
 
     # -- requested-attribute projection ------------------------------------- #
     # The CRM dumps every clearance field the caller may see, by design: it prevents the
@@ -1502,7 +1575,13 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     out: dict[str, Any] = {
         "response": msg.strip(),
         "response_intro": e.get("intro"),
-        "answers": e.get("items"),
+        # GROUPED: the flat `items` order and the NUMBERED order the customer just read
+        # are two different orders, and `answers` is what a positional pick ("2") resolves
+        # against - so a grouped answer used to hand back a different record than the one
+        # numbered 2 on screen (review, should-fix 4). Flattened in RENDER order, which is
+        # the only order the customer can be talking about. Ungrouped, this is `items`
+        # unchanged, so nothing else moves.
+        "answers": _rendered_answers(e) if groups_render else e.get("items"),
     }
     # Spread-in, not defaulted: a reply with no summary keeps EXACTLY the keys it has today.
     if qs_render:

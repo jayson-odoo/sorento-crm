@@ -377,12 +377,21 @@ def run_fetch(
             # A9: which restricted keys this turn's envelope carried, which the
             # contact's access actually granted, and which were therefore dropped -
             # the same "attributes is a list, today always None" contract A2 reads.
+            dropped = [k for k in restricted if restricted[k] not in granted]
+            # The GROUP AXIS, when `output_structurer` refused it (blocker 1, AC-907):
+            # a restricted value used as a section heading is a leak no field filter can
+            # reach, so the axis is dropped and the answer rendered flat - and the trace
+            # has to say which axis went, or the operator reads an ungrouped answer to a
+            # grouped question with no reason anywhere.
+            axis_dropped = envelope.get("group_by_dropped") if isinstance(envelope, dict) else None
+            if axis_dropped:
+                dropped.append(f"group_by:{axis_dropped}")
             trace.add(
                 "reveals",
                 {
                     "restricted_fields_seen": sorted(restricted.keys()),
                     "granted": sorted(granted),
-                    "dropped": sorted(k for k in restricted if k not in granted),
+                    "dropped": sorted(dropped),
                 },
             )
     item = fetch_mod.fetch_result(structured, tool=tool_item, tier_probe=None)
