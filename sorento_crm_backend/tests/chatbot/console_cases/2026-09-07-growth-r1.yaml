@@ -393,3 +393,37 @@ cases:
           branch_kind: business_query
           reply_contains: ["SRTWC8517"]
           no_uuid: true
+
+  # Owner turns 2d903c96 -> 17d38019 (8 Sep): after a stock answer that ends in an escalate
+  # offer, "delivery to hanlim" came back `request_for_help` with both hints null and only
+  # the customer entity, the lane went out_of_scope, and the next turn was read as a YES to
+  # the offer. A delivery word beside a customer name is an order ask, whatever the model
+  # stamps: `output_exchange` retypes it off the switch-word table, and the parser prompt
+  # now says so in the request_for_help definition itself.
+  #   SELECT c.customer_name, co.name, count(o.id) FROM customers c JOIN companies co ON
+  #     co.id = c.company_id LEFT JOIN orders o ON o.customer_id = c.id
+  #     WHERE c.customer_name ILIKE '%hanlim%' GROUP BY 1,2 ORDER BY 3 DESC;
+  #   -> HANLIM TRADING SDN BHD [A/C I] 121 DOs (Sorento), and a Mocha ledger with rows too.
+  #
+  # MEASURED RED for a reason this lane does not own (run console-check-1788803384, turn
+  # 11932963, pinned to v18): the parser now emits business_query / order / check_order on
+  # its own and the guard has nothing left to do, but `_tool_pick` chose
+  # `crm_order_analytics` (0.497) over `..._orders_by_product_list` (0.485) and
+  # `..._orders_list` (0.466). The analytics tool needs a `metric` the fetch lane never
+  # sends, answers empty, and the lane offers escalation - the same drift that turned the
+  # KENWEALTH pipeline case red on 8 Sep (3a). Remove the marker when that pick is fixed.
+  - name: owner 8 Sep - a delivery word plus a name over an escalate offer is an order ask
+    cold: true
+    expected_red_until: crm_order_analytics never picked for a plain DO ask (3a, 8 Sep 2026)
+    turns:
+      - text: "check stock C-FH14"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["C-FH14"]
+          no_uuid: true
+      - text: "delivery to hanlim"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["HANLIM"]
+          reply_not_contains: ["escalat"]
+          no_uuid: true

@@ -602,3 +602,163 @@ class TestOwner8SepANewAskIsNeverAnEscalationYes:
         )
         assert out["escalation"].get("escalation_declined") is True
         assert out["message_type"] == "casual"
+
+
+class TestOwner8SepADeliveryWordPlusANameIsAnOrderAsk:
+    """Defect 3, "delivery to hanlim" (owner turns 2d903c96 / 17d38019 / 3a56a48c). The
+    parser is inconsistent on the phrase: 3a56a48c parsed it business_query / order /
+    check_order, 2d903c96 came back `request_for_help` with BOTH hints null and only the
+    customer entity, so the guard above (decisive intent AND a current entity) never fired
+    and the lane went `out_of_scope`. The widened guard is structural: a switch word of ONE
+    domain among THIS message's content tokens (the sanctioned `DOMAIN_SWITCH_WORDS` table,
+    no word list over the text) plus an entity named this turn is a business ask."""
+
+    _OFFERED = {
+        "response": "Would you like me to escalate to Sorento customer service team?",
+        "pending": {"kind": "member_offer", "team": "customer_service", "domain": "order"},
+    }
+
+    def _hanlim(self, **over):
+        return _emission(
+            message_type="request_for_help",
+            intent_hint=None,
+            domain_hint=None,
+            entities=[{"raw": "hanlim", "hint": "customer", "confident": True, "current_message": True}],
+            **over,
+        )
+
+    def test_the_2d903c96_shape_is_an_order_ask_not_a_help_request(self) -> None:
+        out = _post(self._hanlim(), previous=self._OFFERED, latest="delivery to hanlim")
+        assert out["message_type"] == "business_query"
+        assert out["domain_hint"] == "order"
+        assert out["intent_hint"] == "check_order"
+        assert out["escalation"]["is_escalation_confirmation"] is False
+        assert out["switch_word_retyped"] == "order"
+        assert [e["raw"] for e in out["entities"] if e.get("current_message")] == ["hanlim"]
+
+    def test_the_same_shape_with_no_offer_open_is_retyped_too(self) -> None:
+        """The NEW arm is not gated on an open offer: a help request that names a customer
+        beside a delivery word is an order ask on a cold turn as well."""
+        out = _post(self._hanlim(), previous={}, latest="delivery to hanlim")
+        assert out["message_type"] == "business_query"
+        assert out["domain_hint"] == "order" and out["intent_hint"] == "check_order"
+
+    def test_the_malay_delivery_word_is_the_same_ask(self) -> None:
+        out = _post(self._hanlim(), previous=self._OFFERED, latest="hantar ke hanlim")
+        assert out["message_type"] == "business_query" and out["domain_hint"] == "order"
+
+    def test_when_the_model_also_said_yes_the_widened_guard_defuses_it(self) -> None:
+        """The EXISTING arm (model said `is_escalation_confirmation: true`) now fires on the
+        2d903c96 shape too: no decisive intent, but a switch word plus a current entity."""
+        out = _post(
+            self._hanlim(escalation={"is_escalation_confirmation": True, "company_pick": None}),
+            previous=self._OFFERED,
+            latest="delivery to hanlim",
+        )
+        assert out["escalation"]["is_escalation_confirmation"] is False
+        assert out["message_type"] == "business_query"
+
+    # ---- negatives: nothing else moves ---------------------------------------------- #
+
+    def test_escalate_to_a_named_team_over_an_offer_stays_a_help_request(self) -> None:
+        """"order" is a switch word, but the customer named a TEAM and no entity: a person
+        was asked for, and the turn stays `request_for_help`."""
+        out = _post(
+            _emission(
+                message_type="request_for_help",
+                intent_hint=None,
+                domain_hint=None,
+                entities=[],
+                routing={"suggested_team": "customer_service", "suggested_agent": None},
+            ),
+            previous=self._OFFERED,
+            latest="escalate to order team",
+        )
+        assert out["message_type"] == "request_for_help"
+        assert "switch_word_retyped" not in out
+
+    @pytest.mark.parametrize("latest", ["yes", "ok", "no"])
+    def test_a_bare_answer_has_no_entity_and_no_switch_word(self, latest: str) -> None:
+        affirmative = latest != "no"
+        out = _post(
+            _emission(
+                message_type="request_for_help" if affirmative else "clarification",
+                intent_hint=None,
+                entities=[],
+                is_affirmative=affirmative,
+                escalation={"is_escalation_confirmation": affirmative, "company_pick": None},
+            ),
+            previous=self._OFFERED,
+            latest=latest,
+        )
+        assert out["escalation"]["is_escalation_confirmation"] is affirmative
+        assert "switch_word_retyped" not in out
+
+    def test_a_help_request_about_my_order_with_no_entity_is_unchanged(self) -> None:
+        """A switch word alone is not an ask - "can someone help me with my order" names
+        nobody and nothing, and `request_for_help` is exactly right for it."""
+        emission = _emission(message_type="request_for_help", intent_hint=None, domain_hint=None, entities=[])
+        out = _post(emission, previous={}, latest="can someone help me with my order")
+        assert out["message_type"] == "request_for_help"
+        assert out["intent_hint"] is None and out["domain_hint"] is None
+        assert out["escalation"]["is_escalation_confirmation"] is False
+        assert "switch_word_retyped" not in out
+
+    def test_a_help_request_with_no_entity_is_byte_identical(self) -> None:
+        """Byte identity for the turn the arm must never touch: the same emission with the
+        helper reporting no switch domain produces the very same output object."""
+        import app.services.chatbot.head.output_exchange as oe
+
+        emission = _emission(message_type="request_for_help", intent_hint=None, domain_hint=None, entities=[])
+        with_rule = _post(emission, previous=self._OFFERED, latest="can someone help me with my delivery")
+        original = oe._switch_word_domain
+        oe._switch_word_domain = lambda message: None
+        try:
+            without_rule = _post(emission, previous=self._OFFERED, latest="can someone help me with my delivery")
+        finally:
+            oe._switch_word_domain = original
+        assert with_rule == without_rule
+        assert with_rule["message_type"] == "request_for_help"
+
+    def test_a_carried_entity_alone_is_not_a_current_one(self) -> None:
+        """A bare "delivery" is the #6 switch-word consumer's own case (every content token
+        a switch word, no current entity), so the message here carries a second token."""
+        out = _post(
+            _emission(
+                message_type="request_for_help",
+                intent_hint=None,
+                domain_hint=None,
+                entities=[{"raw": "hanlim", "hint": "customer", "current_message": False}],
+            ),
+            previous=self._OFFERED,
+            latest="someone handle the delivery",
+        )
+        assert out["message_type"] == "request_for_help"
+        assert "switch_word_retyped" not in out
+
+
+class TestSwitchWordDomainOfThisMessage:
+    """`_switch_word_domain`: the single domain whose switch word appears among the
+    message's content tokens (`_TOKEN_RE` minus `SWITCH_FILLER`, the #6 consumer's own
+    tokenisation); None on zero or on more than one domain."""
+
+    @pytest.mark.parametrize(
+        ("message", "domain"),
+        [
+            ("delivery to hanlim", "order"),
+            ("any DO delivered to hanlim last week", "order"),
+            ("penghantaran untuk hanlim", "order"),
+            ("PO for SRTWC8517", "purchase_order"),
+            ("PO?", "purchase_order"),
+            ("spo SRTWC8517", "spo_allocation"),
+            ("check stock srtwc286", "inventory"),
+            ("stock and delivery for hanlim", None),  # two domains
+            ("yes", None),
+            ("can someone help me", None),
+            ("do you have srtwc286", None),  # "do" is deliberately NOT a switch word
+        ],
+    )
+    def test_domain_of(self, message: str, domain: str | None) -> None:
+        from app.services.chatbot.head.output_exchange import _switch_word_domain
+
+        assert _switch_word_domain(message) == domain

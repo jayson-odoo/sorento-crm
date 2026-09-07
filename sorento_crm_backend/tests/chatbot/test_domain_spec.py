@@ -56,6 +56,14 @@ DOMAIN_SWITCH_WORDS_BEFORE = {
     "orders": "order",
     "outstanding": "order",
     "tempahan": "order",
+    # 8 Sep 2026 (owner turn 2d903c96 "delivery to hanlim"): the delivery vocabulary.
+    "delivery": "order",
+    "deliveries": "order",
+    "deliver": "order",
+    "delivered": "order",
+    "penghantaran": "order",
+    "hantar": "order",
+    "dihantar": "order",
     "incoming": "incoming",
     "eta": "incoming",
     "shipment": "incoming",
@@ -71,6 +79,10 @@ DOMAIN_SWITCH_WORDS_BEFORE = {
     "specifications": "master_products",
     "dimension": "master_products",
     "dimensions": "master_products",
+    # 8 Sep 2026: the measured triggers the two rows' own comments name (turns 18d9b95c,
+    # bd6eacf4 / 796957f4).
+    "po": "purchase_order",
+    "spo": "spo_allocation",
 }
 
 DEFAULT_UNSUPPORTED_DOMAINS_BEFORE = ("goods_receive",)

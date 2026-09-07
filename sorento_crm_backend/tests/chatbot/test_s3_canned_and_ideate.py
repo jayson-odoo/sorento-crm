@@ -395,6 +395,13 @@ class TestAccessDeniedNoSessionWrite:
             _parser_output(
                 message_type="request_for_help",
                 routing={"suggested_team": None, "suggested_agent": f"general{em_dash}enquiries"},
+                # A pure help request, no entity: since 8 Sep 2026 a `request_for_help`
+                # that names an entity beside a decisive intent is retyped `business_query`
+                # (owner turn 2d903c96), and that would hand the agent slot to the derived
+                # `general_enquiries` this very test says only a help request bypasses.
+                intent_hint=None,
+                domain_hint=None,
+                entities=[],
             )
         )
         stub_access(allowed=False, decision="deny_unknown_agent")

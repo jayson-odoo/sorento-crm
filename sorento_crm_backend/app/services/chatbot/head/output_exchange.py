@@ -33,6 +33,7 @@ from app.services.chatbot import jsc, topic
 from app.services.chatbot.contracts import (
     BARE_ENTITY_TYPE_BY_DOMAIN,
     DEFAULT_SUGGESTED_TEAM,
+    DOMAIN_SPEC,
     DOMAIN_SWITCH_WORDS,
     ENTITY_HINTS,
     INTENT_HINTS,
@@ -616,6 +617,27 @@ _SHORT_DATE_RE = re.compile(r"^[0-9]{1,2}[-/][0-9]{1,2}[-/][0-9]{2,4}$")
 _FENCE_RE = re.compile(r"```[\s\S]*?```")
 _FENCE_MARK_RE = re.compile(r"```json?|```")
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+def _switch_word_domain(message: Any) -> str | None:
+    """The ONE domain whose switch word appears among THIS message's content tokens
+    (`_TOKEN_RE` minus `SWITCH_FILLER`, the #6 consumer's own tokenisation, over the
+    sanctioned `DOMAIN_SWITCH_WORDS` table and nothing else). None when no token is a
+    switch word, and None when the tokens name more than one domain - "stock and delivery
+    for hanlim" is ambiguous here and is left to the model.
+
+    Unlike #6 this does NOT require every content token to be a switch word: it is one
+    structural signal read beside a current-message entity (owner turn 2d903c96,
+    8 Sep 2026: "delivery to hanlim" is a delivery word plus a customer name), never a
+    classifier of the text on its own.
+    """
+    msg = _split_reply_to(message).lower()
+    domains = {
+        DOMAIN_SWITCH_WORDS[t]
+        for t in _TOKEN_RE.findall(msg)
+        if t not in SWITCH_FILLER and t in DOMAIN_SWITCH_WORDS
+    }
+    return next(iter(domains)) if len(domains) == 1 else None
 # U+2010..U+2015, U+2212, U+FE58, U+FE63, U+FF0D - the copy-paste dashes Excel / Word /
 # Sheets / PDF emit instead of ASCII '-' (observed live, exec 12053189).
 _DASHES = re.compile("[‐-―−﹘﹣－]")
@@ -2363,10 +2385,21 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # PARITY-SAFE BACKSTOP: `feat/chatbot-growth-dialogue`'s `open_question` step owns this
     # properly, where an offer is a typed question a non-answer leaves standing. This keeps
     # the wrong answer off a customer's screen until that lands.
-    business_ask_now = (
+    #
+    # WIDENED (owner turn 2d903c96, 8 Sep 2026, "delivery to hanlim"): the model emitted
+    # `request_for_help` with intent AND domain null, so the decisive-intent half was
+    # never true and the lane went `out_of_scope`. The second half is just as structural:
+    # a switch word of ONE domain among this message's content tokens (`_switch_word_domain`,
+    # over the sanctioned `DOMAIN_SWITCH_WORDS` table only) beside an entity named THIS
+    # turn. Still both halves - a switch word alone ("can someone help me with my order")
+    # names nothing and stays a help request; an entity alone is a picker answer.
+    switch_word_domain_now = _switch_word_domain(parent_input.get("latest_user_message"))
+    entity_named_now = jsc.is_array(o.get("entities")) and any(
+        jsc.get(e, "current_message") is True for e in o["entities"]
+    )
+    business_ask_now = entity_named_now and (
         jsc.js_string(o.get("intent_hint")) in DECISIVE_INTENTS
-        and jsc.is_array(o.get("entities"))
-        and any(jsc.get(e, "current_message") is True for e in o["entities"])
+        or switch_word_domain_now is not None
     )
     if parser_said_confirm and business_ask_now:
         parser_said_confirm = False
@@ -2375,6 +2408,31 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             **(esc_now if isinstance(esc_now, dict) else {}),
             "is_escalation_confirmation": False,
         }
+    # And the arm that catches 2d903c96 itself, where the model said NO confirmation and
+    # simply mis-typed the ask: a `request_for_help` that names no team (`llm_team_n` is
+    # None - a named team is a real request for a person and stays one) and IS a business
+    # ask by the test above is retyped `business_query`. The hints the model left null are
+    # filled from the table the switch word came from - `DOMAIN_SPEC[domain].intents[0]`
+    # is that domain's one decisive intent - so `route.decide` sends it to the business
+    # lane and the lane runs it as the order ask it was. Gated on all three, so every
+    # other turn is byte-identical. Turn 17d38019 (no entity emitted at all) is not
+    # catchable structurally; the parser prompt's own request_for_help definition now
+    # says what that turn should have emitted.
+    if req_help and llm_team_n is None and business_ask_now:
+        o["message_type"] = "business_query"
+        req_help = False
+        if not jsc.truthy(o.get("domain_hint")) and switch_word_domain_now is not None:
+            o["domain_hint"] = switch_word_domain_now
+        if not jsc.truthy(o.get("intent_hint")) and isinstance(o.get("domain_hint"), str):
+            spec = DOMAIN_SPEC.get(o["domain_hint"])
+            if spec is not None and spec.intents:
+                o["intent_hint"] = spec.intents[0]
+        esc_now = o.get("escalation")
+        o["escalation"] = {
+            **(esc_now if isinstance(esc_now, dict) else {}),
+            "is_escalation_confirmation": False,
+        }
+        o["switch_word_retyped"] = switch_word_domain_now or o.get("domain_hint")  # diagnostic
     # And NOTHING behind that. The model's flag is wrong on one capture in the corpus
     # (parser-15074293, "YES ESCALTE" - a typo of ESCALATE - came back
     # `is_escalation_confirmation: false`), and the first cut of this rule put an

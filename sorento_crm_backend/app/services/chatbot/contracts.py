@@ -140,7 +140,15 @@ DOMAIN_SPEC: dict[str, DomainSpec] = {
     "order": DomainSpec(
         intents=("check_order",),
         bare_entity_type="customer",
-        switch_words=("order", "orders", "outstanding", "tempahan"),
+        # "delivery" and its forms (owner turn 2d903c96, 8 Sep 2026): "delivery to hanlim"
+        # came back `request_for_help` with both hints null, and with no switch word for
+        # the delivery vocabulary the #6 consumer and the escalation guard had nothing
+        # structural to read. NOT "do": it collides with the English verb ("do you have").
+        switch_words=(
+            "order", "orders", "outstanding", "tempahan",
+            "delivery", "deliveries", "deliver", "delivered",
+            "penghantaran", "hantar", "dihantar",
+        ),
         tools=(
             "crm_order_management_orders_list",
             "crm_order_management_orders_by_product_list",
@@ -204,7 +212,13 @@ DOMAIN_SPEC: dict[str, DomainSpec] = {
     "spo_allocation": DomainSpec(
         intents=("check_spo",),
         bare_entity_type=None,
-        switch_words=(),
+        # "spo" (8 Sep 2026, the trigger the purchase_order row names): measured last-in
+        # asks under the labelled prompt came back in the WRONG domain - turn bd6eacf4
+        # ("last in for C-FH14" -> order / check_order) and 796957f4 (the same words ->
+        # incoming / check_incoming). "spo" is the one token of that vocabulary that is a
+        # whole word of its own; "last" / "in" are not sanctioned here, so the bare
+        # "last in" phrasing is the prompt's to teach, not this table's.
+        switch_words=("spo",),
         # `..._spo_allocations_...` and not `..._spo_...`: `search_tool_chunks` filters
         # `source_id LIKE '%spo_allocation%'`, so the shorter name was unretrievable
         # from this domain (growth r1 A6).
@@ -233,7 +247,12 @@ DOMAIN_SPEC: dict[str, DomainSpec] = {
         # switch would drag an unrelated turn into this domain. The decisive
         # `intent_hint` the prompt now teaches is the signal; add a switch word when a
         # measured turn shows the intent alone is not enough.
-        switch_words=(),
+        #
+        # That turn arrived (8 Sep 2026): 18d9b95c, "PO for SRTWC8517" under the labelled
+        # prompt -> domain inventory / check_stock, and the bare "PO?" (1d22dbb6 ->
+        # inventory, 98a9bec0 -> null) - the intent alone was not enough. Matched per WHOLE
+        # token by `_TOKEN_RE`, so "po" inside a code ("po1234") does not fire.
+        switch_words=("po",),
         tools=("crm_procurement_purchase_orders_placed_list",),
         escalation_team="purchasing",
     ),

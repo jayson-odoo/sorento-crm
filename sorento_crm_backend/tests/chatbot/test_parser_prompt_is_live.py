@@ -50,7 +50,11 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # `_without_growth_r1_addendum`. CONSTANT_CHARS is the body BEFORE that append, which is
 # what keeps this number a guard against drift in the live-derived text rather than a
 # number that moves every time growth r1's vocabulary is edited.
-CONSTANT_CHARS = 47744
+# +367 chars (8 Sep 2026, owner turn 2d903c96 "delivery to hanlim"): one sentence appended to
+# the request_for_help definition inside the MESSAGE TYPE block - a request_for_help is
+# ONLY a request for a human; a customer or product beside a delivery word is an order ask.
+# Intentional content, woven in where the definition lives, not drift.
+CONSTANT_CHARS = 48111
 
 
 def _without_growth_r1_addendum(text: str) -> str:

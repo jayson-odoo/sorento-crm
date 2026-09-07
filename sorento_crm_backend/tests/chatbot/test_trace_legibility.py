@@ -105,7 +105,15 @@ class TestTraceLegibilityAcrossBranchKinds:
         _assert_trace_is_legible(trace)
 
     def test_out_of_scope(self, session_factory, seeded, stub_parser, stub_access):
-        stub_parser(_parser_output(message_type="request_for_help", domain_hint="order"))
+        # A pure help request: no entity named this turn. Since 8 Sep 2026 a
+        # `request_for_help` that names an entity beside a decisive intent or a switch
+        # word is retyped `business_query` (owner turn 2d903c96, "delivery to hanlim"),
+        # and the default fixture carries exactly that shape.
+        stub_parser(
+            _parser_output(
+                message_type="request_for_help", domain_hint="order", intent_hint=None, entities=[]
+            )
+        )
         stub_access()
         result, trace = _run(session_factory, _envelope())
         assert result.branch_kind == "out_of_scope"
