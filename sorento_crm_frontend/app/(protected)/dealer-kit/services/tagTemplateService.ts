@@ -31,6 +31,7 @@ import type {
   TagTemplateVersion,
   TagTemplateVersionDetail,
 } from '@/lib/dealer-kit/tag-template-types';
+import { printSizeOf } from '@/lib/dealer-kit/request-tags';
 
 const BASE = '/api/v1/dealer-kit/tag-templates';
 
@@ -59,18 +60,21 @@ export async function createTemplate(input: {
   family: TagTemplateFamily;
   print_size: { width_mm: number; height_mm: number };
 }): Promise<TagTemplate> {
+  const doc = {
+    width_mm: input.print_size.width_mm,
+    height_mm: input.print_size.height_mm,
+    layers: [],
+  };
   const response = await apiFetch(BASE, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       name: input.name,
       family: input.family,
-      doc: {
-        width_mm: input.print_size.width_mm,
-        height_mm: input.print_size.height_mm,
-        layers: [],
-      },
-      print_size: input.print_size,
+      doc,
+      // Derived from the SAME doc rather than `input.print_size` a second
+      // time (S1), so the create path cannot ever state two different sizes.
+      print_size: printSizeOf(doc),
     }),
   });
   if (!response.ok) {
@@ -81,6 +85,14 @@ export async function createTemplate(input: {
 
 /**
  * Write the template's DRAFT doc. Publish is what moves the live pointer (S5).
+ *
+ * Carries `print_size` alongside `doc` (S1): the two are copies of one fact
+ * (`doc.width_mm/height_mm` is what the Tag Size control on the template
+ * page actually edits), and `printSizeOf` is the one place either can be
+ * read from so they cannot drift - a resize saved through this without it
+ * would leave the templates list's own Print size column, and every future
+ * `POST /from-tag`/publish snapshot, stuck on the size the template was
+ * CREATED at.
  *
  * `keepalive` is for the page-teardown autosave flush only: the browser cancels
  * a normal fetch when the document goes away, which is exactly the moment the
@@ -95,7 +107,7 @@ export async function updateTemplate(
   const response = await apiFetch(`${BASE}/${encodeURIComponent(id)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ doc }),
+    body: JSON.stringify({ doc, print_size: printSizeOf(doc) }),
     keepalive: options.keepalive,
   });
   if (!response.ok) {

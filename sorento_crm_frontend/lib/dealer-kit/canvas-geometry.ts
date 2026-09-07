@@ -520,6 +520,54 @@ function selectable(layer: TagLayer): boolean {
 }
 
 /**
+ * Does any part of this layer fall outside the tag's own artboard (S4)?
+ *
+ * Shrinking a tag (`resizeTag`) changes width/height only - layers keep their
+ * mm position - so a layer that used to sit comfortably inside can end up
+ * partly or wholly past the new edge. The canvas clips drawing to the
+ * artboard, so an overflowing layer needs a GHOSTED second pass to stay
+ * visible and clickable rather than silently vanishing (D4).
+ *
+ * Rotation means the layer's own axis-aligned box is not what actually
+ * overflows - a rotated rectangle's swept corners can, so this takes the
+ * AABB of the four rotated corners rather than the raw `x_mm/y_mm/width_mm/
+ * height_mm` box every other geometry helper in this file uses. A small
+ * epsilon keeps a layer exactly touching the edge counted as INSIDE (no
+ * ghosting), matching what a person means by "past the edge".
+ */
+export function layerOverflowsArtboard(
+  layer: RectMm & { rotation_deg: number },
+  doc: { width_mm: number; height_mm: number },
+): boolean {
+  const cx = layer.x_mm + layer.width_mm / 2;
+  const cy = layer.y_mm + layer.height_mm / 2;
+  const rad = (layer.rotation_deg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const hw = layer.width_mm / 2;
+  const hh = layer.height_mm / 2;
+  const corners = [
+    { x: -hw, y: -hh },
+    { x: hw, y: -hh },
+    { x: hw, y: hh },
+    { x: -hw, y: hh },
+  ].map(({ x, y }) => ({ x: cx + x * cos - y * sin, y: cy + x * sin + y * cos }));
+
+  const minX = Math.min(...corners.map((c) => c.x));
+  const maxX = Math.max(...corners.map((c) => c.x));
+  const minY = Math.min(...corners.map((c) => c.y));
+  const maxY = Math.max(...corners.map((c) => c.y));
+
+  const EPSILON_MM = 1e-6;
+  return (
+    minX < -EPSILON_MM ||
+    minY < -EPSILON_MM ||
+    maxX > doc.width_mm + EPSILON_MM ||
+    maxY > doc.height_mm + EPSILON_MM
+  );
+}
+
+/**
  * Every layer the band touches, expressed at the scope the user is working in.
  *
  * Touch selects rather than enclose, as Illustrator does: a band across the

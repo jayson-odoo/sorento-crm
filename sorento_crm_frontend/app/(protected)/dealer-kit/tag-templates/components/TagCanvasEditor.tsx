@@ -22,7 +22,15 @@
  * active; the right button starts nothing, because the context menu owns it.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
 
 import type Konva from 'konva';
 import { Konva as KonvaGlobal } from 'konva/lib/Global';
@@ -73,6 +81,7 @@ import {
   descendantsOf,
   fitView,
   hitLayerAt,
+  layerOverflowsArtboard,
   marqueeHits,
   moveLayers,
   refitAncestors,
@@ -129,6 +138,7 @@ import {
   Copy,
   CornerLeftUp,
   CornerRightDown,
+  Crop,
   Expand,
   Eye,
   EyeOff,
@@ -149,7 +159,7 @@ import { ProductPickDialog, type PickMode } from './ProductPickDialog';
 import { cn } from '@/lib/utils';
 import { useKitLibrary, useTagBindings } from './useTagBindings';
 import { getProductTagData } from '../../services/tagDataService';
-import { CanvasToolbar, type CanvasTool } from './CanvasToolbar';
+import { CanvasToolbar, type CanvasTool, type ToolbarTrailingAction } from './CanvasToolbar';
 import { CanvasRulers, RULER_THICKNESS } from './CanvasRulers';
 import { LayersPanel } from './LayersPanel';
 import { InspectorPanel } from './InspectorPanel';
@@ -172,6 +182,11 @@ import {
   type PanelLayout,
 } from '@/lib/dealer-kit/canvas-panels';
 import { toggleBold, toggleTextFlag, type TextFormatFlag } from '@/lib/dealer-kit/text-format';
+import {
+  getTagClipboard,
+  setTagClipboard,
+  subscribeTagClipboard,
+} from '@/lib/dealer-kit/tag-clipboard';
 import { InlineTextEditor } from './InlineTextEditor';
 
 /** What a previewed block is showing, named the way a person reads it. */
@@ -181,8 +196,29 @@ interface PreviewChoice {
 }
 
 // This component is loaded with ssr:false by the page, so direct imports are safe.
-import { Stage, Layer as KonvaLayer, Circle, Group, Rect, Line, Transformer } from 'react-konva';
+import {
+  Stage,
+  Layer as KonvaLayer,
+  Circle,
+  Group,
+  Rect,
+  Line,
+  Transformer,
+  Label as KonvaLabel,
+  Tag as KonvaLabelTag,
+  Text as KonvaText,
+  Image as KonvaImage,
+} from 'react-konva';
 import { KonvaTagLayer } from './KonvaTagLayer';
+import { useHtmlImage } from './useHtmlImage';
+import {
+  CROP_HANDLE_ANCHORS,
+  cropOverlayLayout,
+  cropRectFromDrag,
+  panCropRect,
+  resolvedCropRect,
+  type CropRect,
+} from '@/lib/dealer-kit/image-crop';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -197,6 +233,38 @@ let idCounter = 0;
 function newLayerId(): string {
   idCounter += 1;
   return `layer-${Date.now()}-${idCounter}`;
+}
+
+/**
+ * Whether Shift is held, tracked live rather than read once at keydown (S9).
+ *
+ * A rotate or resize drag runs its own mousemove loop inside Konva, and the
+ * user can press or release Shift mid-drag ("pressing it mid-drag snaps
+ * again"), so the Transformer's `rotationSnaps`/`keepRatio` props need a
+ * value that keeps updating for the length of the drag, not a snapshot taken
+ * when the drag started. Blur resets it so a Shift held when the window
+ * loses focus (e.g. an OS shortcut) does not stay stuck on.
+ */
+function useShiftKey(): boolean {
+  const [shift, setShift] = useState(false);
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setShift(true);
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setShift(false);
+    };
+    const blur = () => setShift(false);
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    window.addEventListener('blur', blur);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+      window.removeEventListener('blur', blur);
+    };
+  }, []);
+  return shift;
 }
 
 /**
@@ -271,6 +339,14 @@ const ZOOM_BUTTON_FACTOR = 1.25;
 const MARQUEE_SLOP_PX = 3;
 /** How far a duplicate or a paste lands from its original, in mm. */
 const CLONE_OFFSET_MM = 5;
+/** Arrow-key nudge distances in mm: plain, Shift, Alt/Option. */
+const NUDGE_MM = { base: 0.25, shift: 1, alt: 0.1 };
+/** Rotation snap steps, degrees, ONLY while Shift is held (S9). */
+const ROTATION_SNAPS = Array.from({ length: 24 }, (_, i) => i * 15);
+/** How close to a snap step (degrees) counts as snapped, Shift held. */
+const ROTATION_SNAP_TOLERANCE_DEG = 7;
+/** How far above the rotate handle the live angle pill sits, screen px. */
+const ROTATION_LABEL_OFFSET_PX = 24;
 
 /**
  * Polygon corner-editing handles, in SCREEN pixels (S4).
@@ -281,6 +357,9 @@ const CLONE_OFFSET_MM = 5;
  */
 const POLYGON_VERTEX_HANDLE_RADIUS_PX = 5;
 const POLYGON_EDGE_HANDLE_SIZE_PX = 7;
+
+/** Crop window handles (S8), same square-handle size as a polygon edge's. */
+const CROP_HANDLE_SIZE_PX = 8;
 
 const ZOOM_LIMITS = { min: CANVAS_MIN_ZOOM, max: CANVAS_MAX_ZOOM };
 
@@ -321,6 +400,22 @@ interface TagCanvasEditorProps {
   onUseTemplate?: () => void;
   /** The host owns saving, so the built-in Save bar would be a second Save. */
   hideSaveBar?: boolean;
+  /**
+   * The template id (template editor) or the placed tag's id (request
+   * designer), so the clipboard (S3) can tell a paste back onto the SAME
+   * doc (offset by `CLONE_OFFSET_MM`, as before) from a paste onto a
+   * DIFFERENT one (land at the original x/y). Absent in a test render; every
+   * copy then reads as the same doc, matching the old single-editor
+   * behaviour.
+   */
+  docId?: string;
+  /**
+   * The host's own right-end toolbar actions (S7): Full screen / the
+   * Template dropdown / Save for the request designer, Versions / Save /
+   * Full screen for the template page - passed straight through to
+   * `CanvasToolbar`'s own `trailing` slot. Absent renders no trailing group.
+   */
+  toolbarTrailing?: ToolbarTrailingAction[];
 }
 
 /** What the canvas is currently asking the user to pick. */
@@ -362,6 +457,8 @@ export function TagCanvasEditor({
   onLayersChange,
   onUseTemplate,
   hideSaveBar,
+  docId,
+  toolbarTrailing,
 }: TagCanvasEditorProps) {
   const [layers, setLayers] = useState<TagLayer[]>(doc.layers);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -389,9 +486,11 @@ export function TagCanvasEditor({
     width_mm: number;
     height_mm: number;
   } | null>(null);
-  const [clipboard, setClipboard] = useState<{ layers: TagLayer[]; roots: string[] } | null>(
-    null,
-  );
+  // Module-level, not `useState` (S3): the request designer remounts this
+  // whole component with a new `key` on every line switch, and a local
+  // clipboard would empty on that remount. `getTagClipboard` is stable across
+  // renders, so it doubles as the required "getServerSnapshot"-free selector.
+  const clipboard = useSyncExternalStore(subscribeTagClipboard, getTagClipboard);
   const [menuOnEmpty, setMenuOnEmpty] = useState(true);
   const [picker, setPicker] = useState<PickerState>({ kind: 'none' });
   const [pickerBusy, setPickerBusy] = useState(false);
@@ -454,6 +553,26 @@ export function TagCanvasEditor({
   const railPanelRef = useRef<ImperativePanelHandle>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
+  const shiftHeld = useShiftKey();
+  /**
+   * The live angle pill shown while dragging the rotate handle (S9).
+   *
+   * `setState` per transform tick (review nit): unlike the text-reflow loop
+   * right below it in `handleTransform`, which is already fully imperative
+   * (`node.width()`/`textNode.width()`, one `batchDraw()`), this genuinely
+   * triggers a React re-render every tick while rotating. Left as `setState`
+   * rather than converted to a ref-updated `Label` here: that needs the
+   * pill's `Label`/`Tag`/`Text` mounted (and its visibility toggled)
+   * imperatively too, which is a JSX/ref restructuring of its own, not a
+   * same-shape swap - a rotate drag is also a short, bounded gesture, not a
+   * sustained one, so the cost is a real one but not a hot path worth that
+   * risk without its own test coverage in this pass.
+   */
+  const [rotationLabel, setRotationLabel] = useState<{
+    x: number;
+    y: number;
+    text: string;
+  } | null>(null);
   const dragRef = useRef<DragSession | null>(null);
   /**
    * What a polygon handle drag started from (S4), so it can move by a delta.
@@ -1232,11 +1351,25 @@ export function TagCanvasEditor({
         setEditingLayerId(target.id);
         return;
       }
-      // A shape has nothing a second click could mean any more: a polygon
-      // shows its corner handles on SELECTION (r4b, AC-S4-10), so a
-      // double-click is just the click that selected it, twice.
+      // A polygon enters edit-points mode (S5): select mode (a single click)
+      // already shows the Transformer's resize anchors, so the second click
+      // is what asks for the vertex/edge handles instead. Any other shape
+      // has nothing a second click could mean, so it is just the click that
+      // selected it, twice.
       if (target.props.kind === 'shape') {
         setSelectedIds(new Set([target.id]));
+        if (target.props.shape === 'polygon') setEditingPointsId(target.id);
+        return;
+      }
+      // A boxed list-only price badge is the same shape by another name
+      // (AC-S6-2, AC-S5-4) - the same two modes apply.
+      if (
+        target.props.kind === 'price_badge' &&
+        target.props.variant === 'list_only' &&
+        target.props.showBox === true
+      ) {
+        setSelectedIds(new Set([target.id]));
+        setEditingPointsId(target.id);
         return;
       }
       if (target.props.kind !== 'group') return;
@@ -1253,20 +1386,27 @@ export function TagCanvasEditor({
     [layers, resolveTarget, pointerMm],
   );
 
-  // -- Polygon corner handles (S4, r4b) --------------------------------------
+  // -- Polygon corner handles (S4, r4b; select vs edit-points modes, S5) -----
 
   /**
-   * The layer the corner handles belong to: the SOLE selection, whenever it
+   * Which layer is in edit-points mode (S5), if any - raw state, not
+   * derived, because ENTERING the mode is a real user action (double-click,
+   * Enter, the Inspector button) with no geometry to derive it from. Reading
+   * it is always through `editingPoints` below, which folds in eligibility.
+   */
+  const [editingPointsId, setEditingPointsId] = useState<string | null>(null);
+
+  /**
+   * The layer ELIGIBLE for corner handles: the SOLE selection, whenever it
    * is an unlocked, visible polygon - or a price badge drawing the flyer's
    * white callout, which is the same shape by another name (AC-S6-2).
    *
-   * Selection alone, no double-click (r4b, AC-S4-10). The user picked Polygon
-   * from the shape list and dragged at the corner they wanted to move;
-   * nothing on screen said a second click was needed first, and a handle
-   * nobody can find is a feature nobody has. Derived rather than held in
-   * state, so there is one source of truth: clicking empty canvas, selecting
-   * something else, locking it, switching the shape back to a rectangle or
-   * unticking Box all take the handles away without a single setter.
+   * Derived rather than held in state, so there is one source of truth:
+   * clicking empty canvas, selecting something else, locking it, switching
+   * the shape back to a rectangle or unticking Box all take the eligibility
+   * away without a single setter. `editingPointsId` below is what actually
+   * decides whether the handles show (S5) - this only says whether they
+   * COULD.
    */
   const cornerHandleLayer = useMemo((): CornerHandleLayer | null => {
     if (selectedIds.size !== 1) return null;
@@ -1286,9 +1426,36 @@ export function TagCanvasEditor({
     return null;
   }, [selectedIds, layers]);
 
-  /** Where every handle sits, in the layer's own pixel space. */
+  /**
+   * Whether the eligible layer is actually in EDIT-POINTS mode right now
+   * (S5): select mode (single click) shows the Transformer's full anchor
+   * set instead; double-click, Enter, or the Inspector's "Edit points"
+   * button flip `editingPointsId` to the layer's id. A derived guard, not an
+   * effect - selecting anything else, or the layer losing eligibility
+   * (locked, hidden, deselected, shape switched away from polygon), takes
+   * this back to false the instant `cornerHandleLayer` itself goes null or
+   * points elsewhere, with nothing having to clear the raw id.
+   */
+  const editingPoints = Boolean(cornerHandleLayer && cornerHandleLayer.id === editingPointsId);
+
+  /**
+   * Clears the raw id once it stops pointing at the eligible layer (B2):
+   * `editingPoints` above already derives false the instant that happens, so
+   * the handles disappear correctly - but the id itself stayed put, so
+   * re-selecting the SAME polygon (click empty, then click it again) matched
+   * again and landed straight back in edit-points mode instead of showing
+   * the Transformer's own anchors like any other first click does.
+   */
+  useEffect(() => {
+    if (editingPointsId && cornerHandleLayer?.id !== editingPointsId) {
+      setEditingPointsId(null);
+    }
+  }, [cornerHandleLayer, editingPointsId]);
+
+  /** Where every handle sits, in the layer's own pixel space. Edit-points
+   * mode only (S5) - select mode shows the Transformer's own anchors instead. */
   const polygonHandles = useMemo(() => {
-    if (!cornerHandleLayer) return null;
+    if (!cornerHandleLayer || !editingPoints) return null;
     const width = cornerHandleLayer.width_mm * scale;
     const height = cornerHandleLayer.height_mm * scale;
     const vertices = scalePolygonPoints(
@@ -1306,7 +1473,7 @@ export function TagCanvasEditor({
         return { x: (point.x + next.x) / 2, y: (point.y + next.y) / 2 };
       }),
     };
-  }, [cornerHandleLayer, polygonPreview, scale]);
+  }, [cornerHandleLayer, editingPoints, polygonPreview, scale]);
 
   const startPolygonDrag = useCallback(
     (kind: 'vertex' | 'edge', index: number) => {
@@ -1486,6 +1653,213 @@ export function TagCanvasEditor({
       polygonDragRef.current = null;
     }
   }, [cornerHandleLayer]);
+
+  // -- Image crop (S8) --------------------------------------------------------
+
+  /** The image layer currently in crop mode, or null. Entered ONLY from the
+   * context menu's "Crop image" (double-click on an image stays a no-op). */
+  const [cropEditingLayerId, setCropEditingLayerId] = useState<string | null>(null);
+  /** The crop window mid-edit, normalised 0-1 against the source. Seeded from
+   * the layer's own `cropRect` on entry; nothing is written to the layer
+   * until Enter/click-outside commits it. */
+  const [cropDraft, setCropDraft] = useState<CropRect | null>(null);
+  const cropDragRef = useRef<{
+    anchor: { fx: number; fy: number } | null;
+    base: CropRect;
+    origin: { x: number; y: number };
+    cancelled: boolean;
+    /** The last rect a MOVE tick actually computed (r6 S8 review, #723) -
+     *  `handleCropDragEnd` reads this instead of re-deriving from the drag
+     *  event's own node, which by then no longer carries the raw pointer
+     *  position. See the comment on `handleCropDragEnd` below for why. */
+    lastRect: CropRect;
+  } | null>(null);
+
+  /** Eligibility mirrors `cornerHandleLayer`'s own guard (S5): locked,
+   * hidden, deleted or no-longer-an-image all take the mode away for free
+   * the next time this recomputes, the same "derived guard" pattern. */
+  const cropEditingLayer = useMemo(() => {
+    if (!cropEditingLayerId) return null;
+    const layer = layers.find((l) => l.id === cropEditingLayerId);
+    if (!layer || layer.locked || !layer.visible || layer.props.kind !== 'image') return null;
+    return layer as TagLayer & { props: Extract<TagLayerProps, { kind: 'image' }> };
+  }, [cropEditingLayerId, layers]);
+
+  const cropImageUrl = cropEditingLayer
+    ? layerDisplay(cropEditingLayer, dataOf(cropEditingLayer), library.assetUrls)?.imageUrl
+    : null;
+  const cropImage = useHtmlImage(cropImageUrl ?? null);
+
+  /**
+   * The overlay's own layout for an ARBITRARY crop rect, not just the
+   * current `cropDraft` (r6 S8 review, #723): `cropRectFromEvent` and
+   * `positionCropHandle` below need it for `drag.base` (the STABLE rect a
+   * drag started from) and for the in-flight `next` rect a tick just
+   * computed, not only for what has already committed to state.
+   *
+   * `cropOverlayLayout` (`lib/dealer-kit/image-crop.ts`) fits the CROPPED
+   * region per the layer's own `fit` - the SAME maths `KonvaTagLayer`'s
+   * `ImageContent` draws the committed layer with - rather than the old
+   * always-CONTAIN whole-image frame this replaced: that frame agreed with
+   * itself (the dimmed pass and the bright window both derived from it) but
+   * never with what the layer actually draws, so the two disagreed on scale
+   * and centring and the picture looked doubled.
+   */
+  const layoutForCropRect = useCallback(
+    (rect: CropRect) => {
+      if (!cropEditingLayer || !cropImage) return null;
+      const w = cropEditingLayer.width_mm * scale;
+      const h = cropEditingLayer.height_mm * scale;
+      if (w <= 0 || h <= 0) return null;
+      return cropOverlayLayout(rect, cropImage, cropEditingLayer.props.fit, w, h);
+    },
+    [cropEditingLayer, cropImage, scale],
+  );
+
+  const cropLayout = cropDraft ? layoutForCropRect(cropDraft) : null;
+
+  const enterCropMode = useCallback(() => {
+    if (selectedIds.size !== 1) return;
+    const layer = layers.find((l) => selectedIds.has(l.id));
+    if (!layer || layer.props.kind !== 'image') return;
+    setCropEditingLayerId(layer.id);
+    setCropDraft(resolvedCropRect(layer.props.cropRect));
+  }, [selectedIds, layers]);
+
+  /** Writes the draft, one history entry, then leaves the mode. */
+  const commitCrop = useCallback(() => {
+    const layer = cropEditingLayer;
+    const draft = cropDraft;
+    setCropEditingLayerId(null);
+    setCropDraft(null);
+    cropDragRef.current = null;
+    if (!layer || !draft) return;
+    updateLayerProps(layer.id, { cropRect: draft });
+  }, [cropEditingLayer, cropDraft, updateLayerProps]);
+
+  /** Esc (AC-S8-3): the layer's own `cropRect` was never touched, so there
+   * is nothing to undo - just stop editing. */
+  const cancelCropMode = useCallback(() => {
+    setCropEditingLayerId(null);
+    setCropDraft(null);
+    cropDragRef.current = null;
+  }, []);
+
+  const startCropDrag = useCallback(
+    (anchor: { fx: number; fy: number } | null, origin: { x: number; y: number }) => {
+      if (!cropDraft) return;
+      cropDragRef.current = { anchor, base: cropDraft, origin, cancelled: false, lastRect: cropDraft };
+    },
+    [cropDraft],
+  );
+
+  const cropRectFromEvent = useCallback(
+    (e: Konva.KonvaEventObject<DragEvent>): CropRect | null => {
+      const drag = cropDragRef.current;
+      if (!drag) return null;
+      // Normalised against the BASE rect's own layout, read ONCE per drag
+      // rather than the in-flight `next` rect's (r6 S8 review, #723): the
+      // source's own on-screen footprint changes AS the crop rect resizes
+      // (shrinking the selection zooms in), so re-deriving the scale every
+      // tick would make the same pointer distance mean a different amount
+      // of crop mid-drag - the same "read the base once" reasoning
+      // `startPolygonDrag` already uses above.
+      const baseLayout = layoutForCropRect(drag.base);
+      if (!baseLayout || baseLayout.source.width <= 0 || baseLayout.source.height <= 0) {
+        return null;
+      }
+      const node = e.target;
+      const normDx = (node.x() - drag.origin.x) / baseLayout.source.width;
+      const normDy = (node.y() - drag.origin.y) / baseLayout.source.height;
+      return drag.anchor
+        ? cropRectFromDrag(drag.base, drag.anchor, normDx, normDy)
+        : panCropRect(drag.base, normDx, normDy);
+    },
+    [layoutForCropRect],
+  );
+
+  /**
+   * Snaps the dragged handle's own Konva node back onto the recomputed
+   * point (S3 review), the same reason the polygon handles' own drag does
+   * it (`polygonPointsFromDrag` above): react-konva only writes a prop back
+   * to the node when its VALUE changed from the last render, so an
+   * edge/middle handle constrained to one axis (top-center moves only y,
+   * middle-left only x) never gets its OTHER axis corrected once Konva's
+   * own free drag has already moved it there on a diagonal pointer move -
+   * it strands off to the side instead of tracking the window.
+   *
+   * Takes `anchor` as an explicit argument rather than reading
+   * `cropDragRef.current.anchor` itself: `handleCropDragEnd` below clears
+   * that ref before this runs (its own `cancelled` guard needs the drag
+   * gone from the ref first), so reading it in here landed on the fallback
+   * `{ fx: 0, fy: 0 }` for every drag END and repositioned every handle
+   * onto the window's top-left corner instead of its own anchor. Positions
+   * against `rect`'s OWN layout (the in-flight/just-committed crop), unlike
+   * `cropRectFromEvent`'s base-pinned normalisation above - the handle has
+   * to land where THIS tick's window actually is, not where the drag
+   * started (r6 S8 review, #723).
+   */
+  const positionCropHandle = useCallback(
+    (e: Konva.KonvaEventObject<DragEvent>, rect: CropRect, anchor: { fx: number; fy: number }) => {
+      const layout = layoutForCropRect(rect);
+      if (!layout) return;
+      e.target.position({
+        x: layout.window.x + anchor.fx * layout.window.width,
+        y: layout.window.y + anchor.fy * layout.window.height,
+      });
+    },
+    [layoutForCropRect],
+  );
+
+  const handleCropDragMove = useCallback(
+    (e: Konva.KonvaEventObject<DragEvent>) => {
+      const drag = cropDragRef.current;
+      const anchor = drag?.anchor ?? { fx: 0, fy: 0 };
+      const next = cropRectFromEvent(e);
+      if (next) {
+        if (drag) drag.lastRect = next;
+        setCropDraft(next);
+        positionCropHandle(e, next, anchor);
+      }
+    },
+    [cropRectFromEvent, positionCropHandle],
+  );
+
+  /**
+   * Reads `drag.lastRect`, not a fresh `cropRectFromEvent(e)` off the
+   * dragend event's own node (r6 S8 review, #723 - AC-S8-3 never
+   * committing). Konva's own `mouseup`/`dragend` handling
+   * (`DragAndDrop.js`) never recomputes a dragged node's position - it
+   * fires with whatever the node's position CURRENTLY is, which by the
+   * time dragend runs is whatever `positionCropHandle` last SET it to (the
+   * corrected window-anchored point, in the SAME coordinate space as
+   * `drag.origin` but a different UNIT - "how far the window moved"
+   * rather than "how far the pointer moved"). Re-deriving `normDx`/`normDy`
+   * from that self-written position feeds the previous tick's OUTPUT back
+   * in as this tick's INPUT, which very nearly always computes back to the
+   * starting rect - the crop silently reverted on every commit. `lastRect`
+   * is the actual last correctly-computed rect (from a MOVE tick, whose
+   * own node position Konva itself had JUST written from the real pointer,
+   * before we overwrote it) - a drag that never moved (a plain click) still
+   * lands on `base`, which `startCropDrag` seeds `lastRect` with.
+   */
+  const handleCropDragEnd = useCallback(() => {
+    const drag = cropDragRef.current;
+    cropDragRef.current = null;
+    if (!drag || drag.cancelled) return;
+    setCropDraft(drag.lastRect);
+  }, []);
+
+  // The mode itself is what disappears if the layer stops being eligible
+  // mid-edit (deleted, locked, hidden) - the same reasoning as the polygon
+  // handles' own cleanup effect just above.
+  useEffect(() => {
+    if (cropEditingLayerId && !cropEditingLayer) {
+      setCropEditingLayerId(null);
+      setCropDraft(null);
+      cropDragRef.current = null;
+    }
+  }, [cropEditingLayerId, cropEditingLayer]);
 
   /** Escape climbs one level, and deselects at the top. */
   const selectParentGroup = useCallback(() => {
@@ -1672,6 +2046,26 @@ export function TagCanvasEditor({
 
     const transformer = transformerRef.current;
     if (!transformer) return;
+
+    // Live angle pill while dragging the ROTATE handle (S9): one decimal
+    // free, whole degrees once Shift is snapping. Cleared on every other
+    // anchor's tick and on `handleTransformEnd` below.
+    if (transformer.getActiveAnchor?.() === 'rotater') {
+      const rotaterNode = transformer.findOne('.rotater');
+      if (rotaterNode) {
+        const abs = rotaterNode.getAbsolutePosition();
+        const rotationDeg = transformer.rotation();
+        const text = `${shiftHeld ? Math.round(rotationDeg) : Math.round(rotationDeg * 10) / 10}°`;
+        setRotationLabel({
+          x: abs.x - view.panX,
+          y: abs.y - view.panY - ROTATION_LABEL_OFFSET_PX,
+          text,
+        });
+      }
+    } else {
+      setRotationLabel(null);
+    }
+
     for (const node of transformer.nodes()) {
       const layer = layers.find((l) => l.id === node.id());
       if (!layer || layer.props.kind !== 'text') continue;
@@ -1701,9 +2095,10 @@ export function TagCanvasEditor({
       }
     }
     transformer.getLayer()?.batchDraw();
-  }, [layers, scale]);
+  }, [layers, scale, shiftHeld, view]);
 
   const handleTransformEnd = useCallback(() => {
+    setRotationLabel(null);
     const transformer = transformerRef.current;
     if (!transformer) return;
 
@@ -2168,6 +2563,17 @@ export function TagCanvasEditor({
         return;
       }
       if (e.evt.button !== 0) return;
+      // Crop mode (S8, AC-S8-3): `e.target` is the Konva node actually hit,
+      // same as `isBackground` below reads it. The window and its 8 handles
+      // start their OWN Konva drag on this same mousedown, so this only
+      // treats it as "outside" when it hit neither of those - a hit on them
+      // falls through to Konva's own drag machinery untouched.
+      if (cropEditingLayerId) {
+        const name = e.target.name();
+        if (name === 'crop-window' || name.startsWith('crop-handle-')) return;
+        commitCrop();
+        return;
+      }
       if (handMode) {
         panRef.current = { x: point.x, y: point.y, panX: view.panX, panY: view.panY };
         return;
@@ -2177,7 +2583,7 @@ export function TagCanvasEditor({
       marqueeRef.current = { start, additive: e.evt.shiftKey };
       setMarquee(bandBetween(start, start));
     },
-    [handMode, view, isBackground],
+    [handMode, view, isBackground, cropEditingLayerId, commitCrop],
   );
 
   const handleStageMouseMove = useCallback(() => {
@@ -2245,15 +2651,45 @@ export function TagCanvasEditor({
     [isBackground],
   );
 
-  // Runs before the Radix trigger, being the deeper DOM node. It must NOT call
-  // preventDefault: the trigger needs this event, and the trigger is what stops
-  // the browser's own menu.
-  const handleStageContextMenu = useCallback(() => {
-    const point = pointerMm();
-    const hitId = point ? hitLayerAt(layers, point.x_mm, point.y_mm, entered) : null;
-    setMenuOnEmpty(!hitId);
-    if (hitId && !selectedIds.has(hitId)) setSelectedIds(new Set([hitId]));
-  }, [pointerMm, layers, entered, selectedIds]);
+  /**
+   * Bound on the OUTER container div Radix's trigger wraps (S10, observed
+   * bug), not on the Konva `<Stage>` itself.
+   *
+   * `<Stage onContextMenu>` only fires once Konva's OWN internal listener -
+   * bound to `stage.content` specifically - sees the native event; a DOM
+   * overlay that sits ALONGSIDE the Stage as this same container's sibling
+   * (the preview-block eye chips a few hundred lines down, absolutely
+   * positioned right over a layer's own corner) can be the native event's
+   * real target instead, in which case Konva's listener never runs at all:
+   * `menuOnEmpty` is left at whatever it last was - `true` on the very
+   * first right-click of a session - while Radix's OWN trigger (bound to
+   * THIS div either way) still opens the menu, showing the empty one. The
+   * fix reads the point off THIS event's own `clientX`/`clientY` against
+   * the Stage's content div, rather than `stage.getPointerPosition()` -
+   * which only reflects whatever Konva's own listener last recorded - so
+   * the hit test no longer depends on that listener having run at all.
+   *
+   * Runs before the Radix trigger despite sharing its element: Radix's own
+   * "contextmenu" handling is composed onto this SAME div via `asChild`
+   * (React's handler-composition order, not DOM bubbling). It must NOT call
+   * preventDefault - the trigger needs this event, and the trigger is what
+   * stops the browser's own menu.
+   */
+  const handleStageContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      const content = stageRef.current?.getContent();
+      const point = content
+        ? (() => {
+            const rect = content.getBoundingClientRect();
+            return stageToMm(view, e.clientX - rect.left, e.clientY - rect.top);
+          })()
+        : null;
+      const hitId = point ? hitLayerAt(layers, point.x_mm, point.y_mm, entered) : null;
+      setMenuOnEmpty(!hitId);
+      if (hitId && !selectedIds.has(hitId)) setSelectedIds(new Set([hitId]));
+    },
+    [view, layers, entered, selectedIds],
+  );
 
   // -- Undo / Redo -----------------------------------------------------------
 
@@ -2281,24 +2717,30 @@ export function TagCanvasEditor({
     for (const rootId of selectionRoots) {
       for (const childId of descendantsOf(layers, rootId)) ids.add(childId);
     }
-    setClipboard({
+    setTagClipboard({
       layers: structuredClone(layers.filter((layer) => ids.has(layer.id))),
       roots: [...selectionRoots],
+      sourceDocId: docId ?? null,
     });
-  }, [layers, selectionRoots]);
+  }, [layers, selectionRoots, docId]);
 
   const handlePaste = useCallback(() => {
     if (!clipboard || clipboard.layers.length === 0) return;
+    // Same doc (or neither side names one, as in a bare test render): offset
+    // like a duplicate, as before. A DIFFERENT doc - a copy carried across
+    // lines or from the template editor - lands at the original x/y instead,
+    // so a layout copied elsewhere reappears in the same place (S3).
+    const sameDoc = clipboard.sourceDocId === (docId ?? null);
     const cloned = cloneLayers(
       clipboard.layers,
       clipboard.roots,
       newLayerId,
-      CLONE_OFFSET_MM,
+      sameDoc ? CLONE_OFFSET_MM : 0,
       maxZ,
     );
     if (cloned.layers.length === 0) return;
     commit([...layers, ...cloned.layers], new Set(cloned.ids));
-  }, [clipboard, layers, maxZ, commit]);
+  }, [clipboard, layers, maxZ, commit, docId]);
 
   const handleCut = useCallback(() => {
     handleCopy();
@@ -2424,10 +2866,47 @@ export function TagCanvasEditor({
       }
       if (e.key === 'Escape') {
         e.preventDefault();
+        // Crop mode (S8) outranks everything else Escape does: it is its
+        // own modal edit, and cancelling it leaves the layer's cropRect
+        // exactly as it was, never touched until a commit.
+        if (cropEditingLayerId) {
+          cancelCropMode();
+          return;
+        }
         // Before the deselect, which is what unmounts the handles and lets
         // Konva's last `dragend` through (r4d).
         cancelPolygonDrag();
+        // Edit-points mode (S5) drops back to select mode first, same as
+        // Illustrator/Figma - the shape stays selected, only the vertex/edge
+        // handles go away. Escape's older job (step out of a group, or
+        // deselect) only runs once there is no mode left to leave.
+        if (editingPoints) {
+          setEditingPointsId(null);
+          return;
+        }
         selectParentGroup();
+        return;
+      }
+      // Scopes the two Enter handlers below off a focused BUTTON (review
+      // nit) - same `document.activeElement` reasoning as `isInput` above:
+      // a Tab-focused button (Save, Publish) firing its OWN native
+      // Enter-click would otherwise ALSO hit these and preventDefault it
+      // away, just because a crop or an eligible polygon happened to still
+      // be selected underneath.
+      const enterOnButton = document.activeElement instanceof HTMLButtonElement;
+      // Enter commits crop mode (S8, AC-S8-3) before anything else it might
+      // otherwise mean.
+      if (e.key === 'Enter' && cropEditingLayerId && !enterOnButton) {
+        e.preventDefault();
+        commitCrop();
+        return;
+      }
+      // Enter toggles edit-points mode (S5) on the eligible selection -
+      // in, if select mode is showing the Transformer's anchors; back out,
+      // if the vertex/edge handles are already up.
+      if (e.key === 'Enter' && cornerHandleLayer && !enterOnButton) {
+        e.preventDefault();
+        setEditingPointsId(editingPoints ? null : cornerHandleLayer.id);
         return;
       }
       if (!modifier && (e.key === 'v' || e.key === 'V')) {
@@ -2501,8 +2980,8 @@ export function TagCanvasEditor({
         handlePaste();
       }
 
-      // Nudge with arrow keys (1mm, or 0.1mm with shift).
-      const nudge = e.shiftKey ? 0.1 : 1;
+      // Nudge with arrow keys (0.25mm, 1mm with shift, 0.1mm with alt/option).
+      const nudge = e.shiftKey ? NUDGE_MM.shift : e.altKey ? NUDGE_MM.alt : NUDGE_MM.base;
       if (e.key === 'ArrowLeft' && selectedIds.size > 0) {
         e.preventDefault();
         nudgeSelection(-nudge, 0);
@@ -2551,6 +3030,11 @@ export function TagCanvasEditor({
     handleFit,
     handleZoomReset,
     nudgeSelection,
+    cornerHandleLayer,
+    editingPoints,
+    cropEditingLayerId,
+    cancelCropMode,
+    commitCrop,
   ]);
 
   // A window that loses focus while Space is down would otherwise stay in hand.
@@ -2585,6 +3069,10 @@ export function TagCanvasEditor({
   }, [selectedIds, layers]);
 
   const selectionIsGroup = selectedLayer?.props.kind === 'group';
+  /** The context menu's "Crop image" (S8): an image layer only, entered ONLY
+   * from this menu (double-click on an image stays a no-op, captain call 4). */
+  const canCropSelectedImage =
+    selectedLayer?.props.kind === 'image' && !selectedLayer.locked && selectedLayer.visible;
 
   const selectedData = selectedLayer ? dataOf(selectedLayer) : null;
 
@@ -2810,6 +3298,17 @@ export function TagCanvasEditor({
     [layers],
   );
 
+  /** Layers a resize left partly or wholly past the artboard edge (S4). */
+  const overflowingIds = useMemo(
+    () =>
+      new Set(
+        layers
+          .filter((layer) => layerOverflowsArtboard(layer, doc))
+          .map((layer) => layer.id),
+      ),
+    [layers, doc],
+  );
+
   const hasSelection = selectedIds.size > 0;
   const canEnterGroup = selectionIsGroup;
   const canSelectParent = insideGroupId !== null;
@@ -2847,6 +3346,7 @@ export function TagCanvasEditor({
         hasSelection={hasSelection}
         hasMultiSelection={selectedIds.size >= 2}
         selectionIsGroup={selectionIsGroup}
+        trailing={toolbarTrailing}
       />
 
       <div ref={panelGroupRef} className="flex flex-1 overflow-hidden">
@@ -2932,6 +3432,7 @@ export function TagCanvasEditor({
                     onToggleVisibility={handleToggleVisibility}
                     onToggleLock={handleToggleLock}
                     onMoveLayer={handleMoveLayer}
+                    overflowingIds={overflowingIds}
                   />
                 </ResizablePanel>
               </ResizablePanelGroup>
@@ -2944,6 +3445,7 @@ export function TagCanvasEditor({
                   onToggleVisibility={handleToggleVisibility}
                   onToggleLock={handleToggleLock}
                   onMoveLayer={handleMoveLayer}
+                  overflowingIds={overflowingIds}
                 />
               </div>
             )}
@@ -2967,6 +3469,7 @@ export function TagCanvasEditor({
                 handMode && 'cursor-grab active:cursor-grabbing',
                 wheelPanning && 'cursor-grabbing',
               )}
+              onContextMenu={handleStageContextMenu}
             >
               <CanvasRulers
                 widthMm={doc.width_mm}
@@ -2988,13 +3491,29 @@ export function TagCanvasEditor({
               >
                 <Stage
                   ref={stageRef as React.RefObject<Konva.Stage>}
-                  width={stageWidth}
-                  height={stageHeight}
+                  // Never 0 (#726). A Konva stage sizes its BUFFER canvas from
+                  // its own width/height, and any shape drawn with a fill, a
+                  // stroke and an absolute opacity below 1 composites through
+                  // that buffer (`Shape._useBufferCanvas`): Konva then calls
+                  // `drawImage(bufferCanvas)`, which throws `InvalidStateError:
+                  // the image argument is a canvas element with a width or
+                  // height of 0` and takes the whole route down through the
+                  // error boundary. The ghost pass (S4) draws exactly such a
+                  // shape - a translucent copy at 30% opacity - so any template
+                  // with a layer past the artboard edge crashed the moment the
+                  // stage measured 0. Which is not hypothetical: the template
+                  // page keeps this editor MOUNTED and merely `hidden` while
+                  // the version viewer is up (its own comment explains why),
+                  // and `display:none` makes the ResizeObserver report 0x0. So
+                  // Versions > View crashed every time on such a template.
+                  // `stageWidth`/`stageHeight` themselves stay honest - the
+                  // fit-to-view effects use `<= 0` to mean "not measured yet".
+                  width={Math.max(1, stageWidth)}
+                  height={Math.max(1, stageHeight)}
                   onMouseDown={handleStageMouseDown}
                   onMouseMove={handleStageMouseMove}
                   onMouseUp={handleStageMouseUp}
                   onDblClick={handleStageDoubleClick}
-                  onContextMenu={handleStageContextMenu}
                 >
                   <KonvaLayer x={view.panX} y={view.panY}>
                     {/* White tag background */}
@@ -3009,12 +3528,59 @@ export function TagCanvasEditor({
                       strokeWidth={1}
                     />
 
+                    {/* Ghost pass (S4, fixed #720): a layer a resize left
+                        partly or wholly past the artboard edge, drawn again
+                        here UNCLIPPED at 30% opacity so its outside part
+                        stays visible instead of vanishing behind the clip
+                        below - fully interactive (AC-S4-1: clicked, dragged
+                        back inside, transformed), not decorative. Its Konva
+                        id stays distinct from the real layer's (`${id}-
+                        ghost`, so `stage.findOne`/a test's `getByTestId`
+                        never collide with the clipped copy below), but
+                        `interactionId` routes every callback to the REAL
+                        layer, so selecting or dragging the ghost acts on it.
+                        The Transformer still attaches to the clipped copy's
+                        own node either way (real id, unaffected by any of
+                        this) - it renders outside any clip in the JSX tree
+                        regardless of which node it is attached to, so its
+                        handles draw correctly past the artboard edge. */}
+                    {sortedLayers
+                      .filter((layer) => overflowingIds.has(layer.id))
+                      .map((layer) => (
+                        <KonvaTagLayer
+                          key={`${layer.id}-ghost`}
+                          layer={{ ...withPolygonPreview(layer), id: `${layer.id}-ghost` }}
+                          scale={scale}
+                          display={layerDisplay(layer, dataOf(layer), library.assetUrls)}
+                          draggable={!handMode}
+                          listening={
+                            !handMode &&
+                            !(layer.props.kind === 'group' && entered.has(layer.id))
+                          }
+                          // Crop mode (S8, r6 S8 review, #723): same reason
+                          // as the clipped copy below - its own overlay
+                          // already draws this layer, correctly.
+                          opacity={layer.id === cropEditingLayerId ? 0 : 0.3}
+                          interactionId={layer.id}
+                          onSelect={handleCanvasSelect}
+                          onDoubleClick={handleLayerDoubleClick}
+                          onDragStart={handleDragStart}
+                          onDragMove={handleDragMove}
+                          onDragEnd={handleDragEnd}
+                          onHoverChange={handleLayerHoverChange}
+                        />
+                      ))}
+
                     {/* Layers, clipped to the artboard (S9 review S4): a
                         layer dragged or resized past the tag's own edge is
                         hidden on screen exactly the way TagSheetRenderer's
                         `overflow: hidden` clips it on the printed sheet -
                         WYSIWYG after a shrink, not a canvas that still shows
-                        what the PDF will not. */}
+                        what the PDF will not. The ghost pass above adds back
+                        the outside part at reduced opacity for an
+                        overflowing layer, ALSO interactive (#720); this copy
+                        is unchanged, keeps the real Konva id, and is what
+                        the Transformer attaches to either way. */}
                     <Group
                       clipFunc={(ctx) => {
                         ctx.rect(0, 0, canvasWidthPx, canvasHeightPx);
@@ -3031,6 +3597,12 @@ export function TagCanvasEditor({
                             !handMode &&
                             !(layer.props.kind === 'group' && entered.has(layer.id))
                           }
+                          // Crop mode (S8, r6 S8 review, #723) draws its own
+                          // overlay for this SAME layer, at the correct
+                          // transform - the layer's own render has to hide
+                          // for as long as that is up, or the two show at
+                          // once and the picture looks doubled.
+                          opacity={layer.id === cropEditingLayerId ? 0 : undefined}
                           onSelect={handleCanvasSelect}
                           onDoubleClick={handleLayerDoubleClick}
                           onDragStart={handleDragStart}
@@ -3120,17 +3692,35 @@ export function TagCanvasEditor({
                     {/* ONE Transformer, after every layer, for the selection. */}
                     <Transformer
                       ref={transformerRef}
-                      rotateEnabled
-                      keepRatio={false}
+                      // EDIT-POINTS mode (S5 review) hides the WHOLE
+                      // Transformer, rotate handle included - the plan calls
+                      // for the anchors gone while the vertex/edge handles
+                      // are up, and a rotate stalk sitting on top of them
+                      // reads as the Transformer still being "on" rather
+                      // than having handed off to the shape's own points.
+                      rotateEnabled={!editingPoints}
+                      // Shift keeps a corner drag's aspect ratio (side
+                      // anchors are unaffected by `keepRatio` regardless);
+                      // Shift also arms the rotation snap list below (S9).
+                      keepRatio={shiftHeld}
+                      rotationSnaps={shiftHeld ? ROTATION_SNAPS : []}
+                      rotationSnapTolerance={ROTATION_SNAP_TOLERANCE_DEG}
                       listening={!handMode}
                       onTransform={handleTransform}
                       onTransformEnd={handleTransformEnd}
-                      // A polygon keeps the ROTATION anchor and nothing else
-                      // (r4b, AC-S4-10): a resize anchor sits exactly where a
-                      // corner handle sits, and the anchor would win every
-                      // click meant for the corner.
+                      // A polygon/boxed badge in EDIT-POINTS mode (S5) shows
+                      // no resize anchors at all: a resize anchor sits
+                      // exactly where a corner handle sits, and the anchor
+                      // would win every click meant for the corner. In
+                      // SELECT mode `polygonHandles` is null (S5 gates it on
+                      // `editingPoints` too), so the full anchor set below
+                      // shows instead - points stay normalised 0-1, so a box
+                      // resize scales the shape with no maths change. Crop
+                      // mode (S8) hides every resize anchor the same way -
+                      // the crop window's own handles own the drag while it
+                      // is open.
                       enabledAnchors={
-                        polygonHandles
+                        polygonHandles || cropEditingLayerId
                           ? []
                           : [
                               'top-left',
@@ -3156,6 +3746,25 @@ export function TagCanvasEditor({
                         return newBox;
                       }}
                     />
+
+                    {/* Live angle pill while dragging the rotate handle
+                        (S9); gone as soon as the drag ends or moves to a
+                        different anchor. */}
+                    {rotationLabel && (
+                      <KonvaLabel
+                        x={rotationLabel.x}
+                        y={rotationLabel.y}
+                        listening={false}
+                      >
+                        <KonvaLabelTag fill="#3b82f6" cornerRadius={4} />
+                        <KonvaText
+                          text={rotationLabel.text}
+                          fontSize={11}
+                          padding={4}
+                          fill="#ffffff"
+                        />
+                      </KonvaLabel>
+                    )}
 
                     {/* Polygon corner handles (S4): a circle on every
                         corner and a smaller square on every edge midpoint,
@@ -3202,8 +3811,117 @@ export function TagCanvasEditor({
                             onDragStart={() => startPolygonDrag('vertex', index)}
                             onDragMove={handlePolygonDragMove}
                             onDragEnd={handlePolygonDragEnd}
+                            onMouseEnter={(e) => {
+                              const stage = e.target.getStage();
+                              if (stage) stage.container().style.cursor = 'crosshair';
+                            }}
+                            onMouseLeave={(e) => {
+                              const stage = e.target.getStage();
+                              if (stage) stage.container().style.cursor = 'default';
+                            }}
                           />
                         ))}
+                      </Group>
+                    )}
+
+                    {/* Crop mode (S8, r6 S8 review, #723): the whole source
+                        at 40% opacity, the crop window bright on top of it -
+                        the SAME image drawn a second time at the SAME
+                        transform (`cropLayout.source`), opaque, clipped to
+                        the window (`cropLayout.window`); the opaque draw
+                        always wins there regardless of paint order (S4
+                        review used the same reasoning for the ghost pass),
+                        so the two never fight over how that part looks. One
+                        shared layout for both passes is the whole fix here -
+                        two independently-derived ones (the old always-
+                        CONTAIN whole-image frame the bright window carved a
+                        fraction out of) agreed with each other but not with
+                        what the layer actually draws, so the picture looked
+                        doubled. The layer's own render is hidden below
+                        (`opacity={0}` on its `KonvaTagLayer`) for as long as
+                        this is up, so the two never both show at once. */}
+                    {cropEditingLayer && cropImage && cropLayout && cropDraft && (
+                      <Group
+                        x={cropEditingLayer.x_mm * scale}
+                        y={cropEditingLayer.y_mm * scale}
+                        rotation={cropEditingLayer.rotation_deg}
+                      >
+                        <KonvaImage
+                          image={cropImage}
+                          x={cropLayout.source.x}
+                          y={cropLayout.source.y}
+                          width={cropLayout.source.width}
+                          height={cropLayout.source.height}
+                          opacity={0.4}
+                          listening={false}
+                        />
+                        <Group
+                          clipFunc={(ctx) => {
+                            ctx.rect(
+                              cropLayout.window.x,
+                              cropLayout.window.y,
+                              cropLayout.window.width,
+                              cropLayout.window.height,
+                            );
+                          }}
+                        >
+                          <KonvaImage
+                            image={cropImage}
+                            x={cropLayout.source.x}
+                            y={cropLayout.source.y}
+                            width={cropLayout.source.width}
+                            height={cropLayout.source.height}
+                            listening={false}
+                          />
+                        </Group>
+                        <Rect
+                          x={cropLayout.window.x}
+                          y={cropLayout.window.y}
+                          width={cropLayout.window.width}
+                          height={cropLayout.window.height}
+                          stroke="#3b82f6"
+                          strokeWidth={1.5}
+                          listening={false}
+                        />
+                        {/* Dragging INSIDE the window pans it (AC-S8-2).
+                            Transparent so the dimmed/bright split above
+                            still shows through; drawn before the handles so
+                            a handle wins an overlapping click. */}
+                        <Rect
+                          name="crop-window"
+                          x={cropLayout.window.x}
+                          y={cropLayout.window.y}
+                          width={cropLayout.window.width}
+                          height={cropLayout.window.height}
+                          fill="transparent"
+                          draggable={!handMode}
+                          onDragStart={(e) => startCropDrag(null, { x: e.target.x(), y: e.target.y() })}
+                          onDragMove={handleCropDragMove}
+                          onDragEnd={handleCropDragEnd}
+                        />
+                        {CROP_HANDLE_ANCHORS.map((anchor) => {
+                          const hx = cropLayout.window.x + anchor.fx * cropLayout.window.width;
+                          const hy = cropLayout.window.y + anchor.fy * cropLayout.window.height;
+                          return (
+                            <Rect
+                              key={`crop-handle-${anchor.name}`}
+                              name={`crop-handle-${anchor.name}`}
+                              x={hx}
+                              y={hy}
+                              width={CROP_HANDLE_SIZE_PX}
+                              height={CROP_HANDLE_SIZE_PX}
+                              offsetX={CROP_HANDLE_SIZE_PX / 2}
+                              offsetY={CROP_HANDLE_SIZE_PX / 2}
+                              fill="#ffffff"
+                              stroke="#3b82f6"
+                              strokeWidth={1.5}
+                              draggable={!handMode}
+                              onDragStart={() => startCropDrag(anchor, { x: hx, y: hy })}
+                              onDragMove={handleCropDragMove}
+                              onDragEnd={handleCropDragEnd}
+                            />
+                          );
+                        })}
                       </Group>
                     )}
 
@@ -3345,6 +4063,12 @@ export function TagCanvasEditor({
                   Duplicate
                   <ContextMenuShortcut>Ctrl+D</ContextMenuShortcut>
                 </ContextMenuItem>
+                {canCropSelectedImage && (
+                  <ContextMenuItem onSelect={enterCropMode}>
+                    <Crop />
+                    Crop image
+                  </ContextMenuItem>
+                )}
 
                 <ContextMenuSeparator />
 
@@ -3504,6 +4228,10 @@ export function TagCanvasEditor({
               }
               onPreviewBlock={openBlockPreview}
               onClearBlockPreview={clearBlockPreview}
+              editingPoints={editingPoints}
+              onToggleEditPoints={(layerId) =>
+                setEditingPointsId((prev) => (prev === layerId ? null : layerId))
+              }
             />
           </ResizablePanel>
         </ResizablePanelGroup>
