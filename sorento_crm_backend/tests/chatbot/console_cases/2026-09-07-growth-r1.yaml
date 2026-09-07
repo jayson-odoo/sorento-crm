@@ -179,7 +179,7 @@ cases:
     cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["SO outstanding (not yet DO)", "DO open (not yet delivered)", "Delivered"]
+      reply_contains: ["SO Outstanding", "DO open (not yet delivered)", "Delivered"]
       no_uuid: true
 
   # Owner turn 98912914 (8 Sep): the same question with a customer whose name resolves to
@@ -201,7 +201,7 @@ cases:
     cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["SO outstanding (not yet DO)", "SRTWC286"]
+      reply_contains: ["SO Outstanding", "Transferred to DO", "SRTWC286"]
       no_uuid: true
 
   # `gate.ALLOWS_EMPTY['order'] is False`, so a bare "open DO by customer" has nothing to

@@ -332,7 +332,7 @@ def test_pipeline_summary_prepended_for_single_product_ask():
     })
     items = out["summary_items"]
     labels = [f["fields"][0]["label"] for f in items[:3]]
-    assert labels[0] == "SO outstanding (not yet DO)"
+    assert labels[0] == "SO Outstanding"
     assert items[0]["fields"][0]["value"] == 7
     assert labels[1] == "DO open (not yet delivered)"
     assert items[1]["fields"][0]["value"] == 3
@@ -354,7 +354,7 @@ def test_pipeline_summary_absent_when_no_so_outstanding_key():
         },
     })
     labels = [f["fields"][0]["label"] for f in out["summary_items"]]
-    assert "SO outstanding (not yet DO)" not in labels
+    assert "SO Outstanding" not in labels
 
 
 def test_pipeline_summary_absent_on_so_outstanding_bucket_own_summary():
@@ -1377,14 +1377,15 @@ def test_qs_m1_single_customer_single_product_is_one_item_in_the_item_shape():
     items = summary_items(s)
     assert len(items) == 1
     assert items[0]["title"] == "ECO WORLD SDN BHD · SRTWC8605"
+    # D3 (owner, 8 Sep 2026): the DO block in the owner's order and labels
     assert _fields(items[0]) == [
         ("customer", "Customer", "ECO WORLD SDN BHD"),
         ("product_code", "Product Code", "SRTWC8605"),
-        ("order_count", "DOs", 5),
+        ("order_count", "DO", 5),
         ("order_date", "DO Date", "01/03/2026 \u2013 20/07/2026"),
-        ("delivered_quantity", "Delivered Qty", 48),
-        ("pending_quantity", "Pending Qty", 17),
-        ("delivered_between", "Delivered", "02/03/2026 – 15/07/2026"),
+        ("delivered_quantity", "Delivered", 48),
+        ("delivered_between", "Delivery Date", "02/03/2026 – 15/07/2026"),
+        ("pending_quantity", "DO Outstanding", 17),
     ]
     # every field carries a key - consumers match on it, never on the label
     assert all(set(f) == {"key", "label", "value"} for f in items[0]["fields"])
@@ -1411,9 +1412,11 @@ def test_qs_m2_multi_customer_gets_a_leading_total_then_one_item_per_customer():
          "products": [{**_P_8605, "order_count": 6, "delivered_quantity": 55, "delivered_to": "2026-08-01"}],
          "groups": [_G_ECO, g2]}
     items = summary_items(s)
-    assert [i["title"] for i in items] == ["All customers (2) · SRTWC8605", "ECO WORLD SDN BHD · SRTWC8605",
+    assert [i["title"] for i in items] == ["SRTWC8605", "ECO WORLD SDN BHD · SRTWC8605",
                                            "HANLIM TRADING SDN BHD · SRTWC8605"]
     total = dict((k, v) for k, _, v in _fields(items[0]))
+    assert total["customers"] == 2 and "customer" not in total                       # D3: a Customers field, not a title
+    assert _fields(items[0])[0] == ("customers", "Customers", 2)
     assert total["delivered_quantity"] == 55 and total["order_count"] == 6           # products[], not a sum
     assert total["delivered_between"] == "02/03/2026 – 01/08/2026"
     hanlim = dict((k, v) for k, _, v in _fields(items[2]))
@@ -1434,7 +1437,8 @@ def test_qs_m4_real_multi68_envelope():
     items = summary_items(S)
     named = [g for g in S["groups"] if isinstance(g.get("customer"), str) and g["customer"].strip()]
     assert len(items) == 1 + len(named)
-    assert items[0]["title"] == f"All customers ({len(named)}) · {S['products'][0]['product_code']}"
+    assert items[0]["title"] == S["products"][0]["product_code"]
+    assert dict((k, v) for k, _, v in _fields(items[0]))["customers"] == len(named)
     total = dict((k, v) for k, _, v in _fields(items[0]))
     assert total["delivered_quantity"] == S["products"][0]["delivered_quantity"]
     assert "delivered_between" not in total                # old shape has no per-product dates: dropped, not None
@@ -1472,12 +1476,13 @@ def test_qs_m7_hostile_leaves_never_raise_or_leak():
     assert summary_intro(hostile, 3) is None                       # row_count unrenderable -> no intro
 
 
-def test_qs_m8_intro_states_the_page_geometry():
-    assert summary_intro({"row_count": 8}, 2) == "Summary over 8 DOs."          # no page geometry (amendment 5)
-    assert summary_intro({"row_count": 3}, 3) == "Summary over 3 DOs."
-    assert summary_intro({"row_count": 1}, 1) == "Summary over 1 DO."
+def test_qs_m8_intro_is_gone_except_the_truncation_notice():
+    """D3 (owner, 8 Sep 2026): "Summary over N DOs." is struck; the truncation notice
+    stays as its own line."""
+    assert summary_intro({"row_count": 8}, 2) is None
+    assert summary_intro({"row_count": 1}, 1) is None
     assert summary_intro({"row_count": 700, "groups_truncated": True}, 20) == (
-        "Summary over 700 DOs. Not every breakdown is shown — add a customer, a product or a date range.")
+        "Not every breakdown is shown — add a customer, a product or a date range.")
     assert "Not every breakdown" in summary_intro({"row_count": 9, "products_truncated": True}, 9)
 
 
@@ -1488,7 +1493,8 @@ def test_qs_m9_total_uses_the_crm_customer_count_not_the_visible_slice():
          "products": [{**_P_8605, "customer_count": 68, "order_count": 187, "delivered_quantity": 32649}],
          "groups": [_G_ECO]}
     items = summary_items(s)
-    assert items[0]["title"] == "All customers (68) · SRTWC8605"
+    assert items[0]["title"] == "SRTWC8605"
+    assert dict((k, v) for k, _, v in _fields(items[0]))["customers"] == 68
     assert dict((k, v) for k, _, v in _fields(items[0]))["delivered_quantity"] == 32649
     assert items[1]["title"] == "ECO WORLD SDN BHD · SRTWC8605"
     # and with no customer_count on the product (older CRM) it falls back to the visible rows
@@ -1500,7 +1506,7 @@ def test_qs_m0_summary_items_absent_unless_a_real_answer(monkeypatch):
     base = {"data": [{**_QS_ROW, "lines": []}], "pagination": {"total": 1, "page": 1, "limit": 20}}
     out = env("crm_order_management_orders_list", {**base, "summary": _SUM_M1})
     assert out["summary_items"] == summary_items(_SUM_M1)
-    assert out["intro"] == "Summary over 5 DOs."
+    assert out["intro"] == "Here are the orders I found."   # D3: no "Summary over N DOs." line
     assert "summary_lines" not in out
     assert "summary_items" not in env("crm_order_management_orders_list", base)                        # no summary
     assert "summary_items" not in env("crm_order_management_orders_list", {"data": [], "summary": _SUM_M1})  # no rows
@@ -1519,39 +1525,55 @@ _BP_ROW = {"product_code": "SRTWC286", "order_count": 2, "customer_count": 1,
 _BP_GRP = {"customer": "HENG SENG HARDWARE SDN BHD", **_BP_ROW}
 
 
-def test_by_product_so_outstanding_renders_per_row_after_pending_qty():
-    """Owner turn 98912914: the SO number rides on each products[]/groups[] row of the
-    by-product summary, never at the top level, and the presenter prints it as its own
-    field right after Pending Qty."""
+def test_by_product_so_block_renders_in_the_owners_order_before_the_do_block():
+    """D3 (owner console pass, 8 Sep 2026): SO, SO Date, Ordered, Transferred to DO,
+    SO Outstanding, then DO, DO Date, Delivered, Delivery Date, DO Outstanding - one field
+    per line, never at the top level of the by-product summary (that path would print DO
+    counts as quantities on a multi-variant row)."""
+    row = {**_BP_ROW, "so_count": 3, "so_date_from": "2026-05-01", "so_date_to": "2026-06-10",
+           "so_ordered_qty": 30, "so_transferred_qty": 23, "so_outstanding_qty": 7,
+           "order_date_from": "2026-05-03", "order_date_to": "2026-06-12",
+           "delivered_from": "2026-05-04", "delivered_to": "2026-06-13"}
     out = env("crm_order_management_orders_by_product_list", {
         "data": [{"order_number": "A1", "debtor_name": "HENG SENG HARDWARE SDN BHD"}],
         "summary": {"scope": "filter", "row_count": 2, "order_count": 2, "delivered_count": 1,
                     "pending_count": 1, "customers": ["HENG SENG HARDWARE SDN BHD"], "customer_count": 1,
-                    "products": [_BP_ROW], "groups": [_BP_GRP]},
+                    "products": [row], "groups": [{"customer": "HENG SENG HARDWARE SDN BHD", **row}]},
     })
     items = out["summary_items"]
     assert len(items) == 1
-    keys = [f["key"] for f in items[0]["fields"]]
-    assert keys.index("so_outstanding_qty") == keys.index("pending_quantity") + 1
-    so = next(f for f in items[0]["fields"] if f["key"] == "so_outstanding_qty")
-    assert so == {"key": "so_outstanding_qty", "label": "SO outstanding (not yet DO)", "value": 7}
-    # no top-level key -> the three-line pipeline is NOT prepended (that path would
-    # print DO counts as quantities on a multi-variant row)
-    assert [f["fields"][0]["label"] for f in items] != ["SO outstanding (not yet DO)"]
+    assert [(f["key"], f["label"], f["value"]) for f in items[0]["fields"]] == [
+        ("customer", "Customer", "HENG SENG HARDWARE SDN BHD"),
+        ("product_code", "Product Code", "SRTWC286"),
+        ("so_count", "SO", 3),
+        ("so_date", "SO Date", "01/05/2026 \u2013 10/06/2026"),
+        ("so_ordered_qty", "Ordered", 30),
+        ("so_transferred_qty", "Transferred to DO", 23),
+        ("so_outstanding_qty", "SO Outstanding", 7),
+        ("order_count", "DO", 2),
+        ("order_date", "DO Date", "03/05/2026 \u2013 12/06/2026"),
+        ("delivered_quantity", "Delivered", 10),
+        ("delivered_between", "Delivery Date", "04/05/2026 \u2013 13/06/2026"),
+        ("pending_quantity", "DO Outstanding", 3),
+    ]
+    assert out["intro"] == "Here are the orders I found."
 
 
-def test_by_product_so_outstanding_zero_still_prints_and_the_total_item_gets_it_free():
-    grp_a = {**_BP_GRP, "so_outstanding_qty": 7}
-    grp_b = {"customer": "QUIET SDN BHD", **_BP_ROW, "so_outstanding_qty": 0}
-    total = {**_BP_ROW, "customer_count": 2, "so_outstanding_qty": 7}
+def test_by_product_so_zero_still_prints_and_the_total_row_carries_customers():
+    grp_a = {**_BP_GRP, "so_outstanding_qty": 7, "so_count": 2}
+    grp_b = {"customer": "QUIET SDN BHD", **_BP_ROW, "so_outstanding_qty": 0, "so_count": 0}
+    total = {**_BP_ROW, "customer_count": 2, "so_outstanding_qty": 7, "so_count": 2}
     out = env("crm_order_management_orders_by_product_list", {
         "data": [{"order_number": "A1"}],
         "summary": {"scope": "filter", "row_count": 3, "products": [total], "groups": [grp_a, grp_b]},
     })
     items = out["summary_items"]
-    assert items[0]["title"] == "All customers (2) · SRTWC286"
+    assert items[0]["title"] == "SRTWC286"
+    assert items[0]["fields"][0] == {"key": "customers", "label": "Customers", "value": 2}
     so_values = [next(f["value"] for f in it["fields"] if f["key"] == "so_outstanding_qty") for it in items]
     assert so_values == [7, 7, 0]
+    so_counts = [next(f["value"] for f in it["fields"] if f["key"] == "so_count") for it in items]
+    assert so_counts == [2, 2, 0]
 
 
 def test_by_product_summary_without_the_key_renders_no_so_field():
@@ -1563,7 +1585,7 @@ def test_by_product_summary_without_the_key_renders_no_so_field():
     })
     for it in out["summary_items"]:
         assert "so_outstanding_qty" not in [f["key"] for f in it["fields"]]
-        assert "SO outstanding (not yet DO)" not in [f["label"] for f in it["fields"]]
+        assert "SO Outstanding" not in [f["label"] for f in it["fields"]]
 
 
 def test_purchase_orders_placed_po_date_sits_before_expected_date():

@@ -508,17 +508,25 @@ def _orders_by_product(rows: list[dict], b: _Builder) -> None:
 # the parser; an unnameable entry is dropped, not coerced.
 # NEVER RAISES on its own account - and the render path wraps it anyway.
 
+# D3 (owner console pass, 8 Sep 2026): the owner's order and labels - the SO block, then
+# the DO block. The SO figures ride on a row only under `include_pipeline`
+# (`stamp_so_outstanding_rows`); absent -> nothing, as every field here. The DO relabels
+# (DOs -> DO, Delivered Qty -> Delivered, Pending Qty -> DO Outstanding, Delivered span ->
+# Delivery Date) reach every include_summary caller, n8n included - owner ruling 8 Sep.
 _SUMMARY_FIELDS = (
     ("customer", "Customer"),
+    ("customers", "Customers"),
     ("product_code", "Product Code"),
-    ("order_count", "DOs"),
+    ("so_count", "SO"),
+    ("so_date", "SO Date"),
+    ("so_ordered_qty", "Ordered"),
+    ("so_transferred_qty", "Transferred to DO"),
+    ("so_outstanding_qty", "SO Outstanding"),
+    ("order_count", "DO"),
     ("order_date", "DO Date"),
-    ("delivered_quantity", "Delivered Qty"),
-    ("pending_quantity", "Pending Qty"),
-    # by-product rows only (owner turn 98912914): the CRM folds the open-SO quantity
-    # into each products[]/groups[] row when asked (`include_pipeline`); absent -> nothing
-    ("so_outstanding_qty", "SO outstanding (not yet DO)"),
-    ("delivered_between", "Delivered"),
+    ("delivered_quantity", "Delivered"),
+    ("delivered_between", "Delivery Date"),
+    ("pending_quantity", "DO Outstanding"),
 )
 
 
@@ -562,21 +570,29 @@ def _sl_between(from_val: Any, to_val: Any) -> Optional[str]:
     return a or b
 
 
-def _summary_item(customer: Optional[str], row: dict) -> Optional[dict]:
-    """One render item from a groups[]/products[] row; None when nothing can be named."""
+def _summary_item(customer: Optional[str], row: dict, *, customers: Optional[int] = None) -> Optional[dict]:
+    """One render item from a groups[]/products[] row; None when nothing can be named.
+    `customers` is the product TOTAL row's exact customer count (D3: it renders as a
+    `Customers` field where a customer row has `Customer`, replacing the old
+    "All customers (N)" title)."""
     code = row.get("product_code")
     if not isinstance(code, str) or not code.strip():
         return None
     code = code.strip()
     values = {
         "customer": customer,
+        "customers": customers,
         "product_code": code,
+        "so_count": _sl_num(row.get("so_count")),
+        "so_date": _sl_between(row.get("so_date_from"), row.get("so_date_to")),
+        "so_ordered_qty": _sl_num(row.get("so_ordered_qty")),
+        "so_transferred_qty": _sl_num(row.get("so_transferred_qty")),
+        "so_outstanding_qty": _sl_num(row.get("so_outstanding_qty")),
         "order_count": _sl_num(row.get("order_count")),
         "order_date": _sl_between(row.get("order_date_from"), row.get("order_date_to")),
         "delivered_quantity": _sl_num(row.get("delivered_quantity")),
-        "pending_quantity": _sl_num(row.get("pending_quantity")),
-        "so_outstanding_qty": _sl_num(row.get("so_outstanding_qty")),
         "delivered_between": _sl_between(row.get("delivered_from"), row.get("delivered_to")),
+        "pending_quantity": _sl_num(row.get("pending_quantity")),
     }
     fields = [
         {"key": k, "label": lbl, "value": values[k]}
@@ -616,7 +632,7 @@ def summary_items(summary: Any) -> list[dict]:
         n_cust = _sl_num(p.get("customer_count"))
         n_cust = int(n_cust) if (n_cust is not None and n_cust >= 0) else len(rows)
         if n_cust > 1 or (summary.get("groups_truncated") is True and rows):
-            total = _summary_item(f"All customers ({max(n_cust, len(rows))})", p)
+            total = _summary_item(None, p, customers=max(n_cust, len(rows)))
             if total:
                 items.append(total)
         for g in rows:
@@ -666,7 +682,7 @@ def _pipeline_summary_items(summary: Any) -> list[dict]:
     delivered_label = f"Delivered ({window})" if window else "Delivered"
     return [
         {"title": None, "fields": [
-            {"key": "so_outstanding", "label": "SO outstanding (not yet DO)", "value": so_qty},
+            {"key": "so_outstanding", "label": "SO Outstanding", "value": so_qty},
         ]},
         {"title": None, "fields": [
             {"key": "do_open", "label": "DO open (not yet delivered)", "value": do_open},
@@ -685,14 +701,12 @@ def summary_intro(summary: Any, n_items: int) -> Optional[str]:
     rc = _sl_num(summary.get("row_count"))
     if rc is None:
         return None
-    n = int(rc)
-    text = f"Summary over {n} DO{'' if n == 1 else 's'}."
-    # No page geometry: on a quantity ask the consumer prints the summary ONLY
-    # (order-quantity-summary amendment 5) - the DO page is not shown, so
-    # "showing N of them below" would describe something the reader cannot see.
+    # D3 (owner console pass, 8 Sep 2026): the "Summary over N DOs." sentence is struck -
+    # the items say everything; only the truncation notice survives, as its own line.
+    # `rc` is still required: a summary with no renderable row_count is not a summary.
     if summary.get("groups_truncated") is True or summary.get("products_truncated") is True:
-        text += " Not every breakdown is shown — add a customer, a product or a date range."
-    return text
+        return "Not every breakdown is shown — add a customer, a product or a date range."
+    return None
 
 
 #: Clearance fields, in the order a person narrates a container's journey, paired

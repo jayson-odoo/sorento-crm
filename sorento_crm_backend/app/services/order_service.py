@@ -264,28 +264,64 @@ def stamp_so_outstanding_rows(
         _cust_on = Customer.id == SalesOrder.customer_id
         if _p_cust is not None:
             _cust_on = and_(_cust_on, _p_cust)
+        # D3 (owner console pass, 8 Sep 2026): the SO block is five figures per customer x
+        # product, over EVERY sales-order line of the scope (any status) - the distinct SO
+        # count, the SO date span, the ordered and the transferred-to-DO quantities - plus
+        # the outstanding quantity, which is the open-lines-with-a-remainder aggregate
+        # it always was. One grouped query; the product row sums its groups (an SO has one
+        # customer, so a distinct count per group sums exactly per product).
+        outstanding = func.sum(delta).filter(and_(SalesOrderLine.line_status == "open", delta > 0))
         q = (
-            db.query(name_col, Product.product_code, func.sum(delta))
+            db.query(
+                name_col,
+                Product.product_code,
+                func.count(func.distinct(SalesOrderLine.sales_order_id)),
+                func.min(SalesOrder.order_date),
+                func.max(SalesOrder.order_date),
+                func.sum(SalesOrderLine.qty_ordered),
+                func.sum(SalesOrderLine.qty_delivered),
+                outstanding,
+            )
             .select_from(SalesOrderLine)
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .join(Product, Product.id == SalesOrderLine.product_id)
             .outerjoin(Customer, _cust_on)
-            .filter(SalesOrderLine.line_status == "open", delta > 0)
         )
         if customer_ids:
             q = q.filter(SalesOrder.customer_id.in_([str(c) for c in customer_ids]))
         if pids:
             q = q.filter(SalesOrderLine.product_id.in_(pids))
         q = _scoped(_scoped(q, _p_so), _p_line)
-        per_group: dict[tuple, Any] = {}
-        per_product: dict[str, Any] = {}
-        for cname, code, qty in q.group_by(name_col, Product.product_code).all():
-            n = _plain_number(qty) or 0
-            per_group[((cname or "").strip() or None, code)] = n
-            per_product[code] = (per_product.get(code) or 0) + n
+        per_group: dict[tuple, dict[str, Any]] = {}
+        per_product: dict[str, dict[str, Any]] = {}
+
+        def _figures(n_so, d_from, d_to, ordered, transferred, outstanding_qty) -> dict[str, Any]:
+            out: dict[str, Any] = {
+                "so_count": int(n_so or 0),
+                "so_ordered_qty": _plain_number(ordered) or 0,
+                "so_transferred_qty": _plain_number(transferred) or 0,
+                "so_outstanding_qty": _plain_number(outstanding_qty) or 0,
+            }
+            if d_from is not None and d_to is not None:
+                out["so_date_from"] = d_from.isoformat()
+                out["so_date_to"] = d_to.isoformat()
+            return out
+
+        for cname, code, n_so, d_from, d_to, ordered, transferred, outstanding_qty in q.group_by(
+            name_col, Product.product_code
+        ).all():
+            fig = _figures(n_so, d_from, d_to, ordered, transferred, outstanding_qty)
+            per_group[((cname or "").strip() or None, code)] = fig
+            agg = per_product.setdefault(code, {"so_count": 0, "so_ordered_qty": 0, "so_transferred_qty": 0, "so_outstanding_qty": 0})
+            for k in ("so_count", "so_ordered_qty", "so_transferred_qty", "so_outstanding_qty"):
+                agg[k] = agg[k] + fig[k]
+            if "so_date_from" in fig:
+                agg["so_date_from"] = min(agg.get("so_date_from") or fig["so_date_from"], fig["so_date_from"])
+                agg["so_date_to"] = max(agg.get("so_date_to") or fig["so_date_to"], fig["so_date_to"])
+        _ZERO = {"so_count": 0, "so_ordered_qty": 0, "so_transferred_qty": 0, "so_outstanding_qty": 0}
         for p in products:
             if isinstance(p, dict) and p.get("product_code"):
-                p["so_outstanding_qty"] = per_product.get(p["product_code"], 0)
+                p.update(per_product.get(p["product_code"], _ZERO))
         # Review round 2, S1: a 0 is written ONLY where it is a fact. The SO side keys on
         # `Customer.customer_name`, the DO side on `debtor_name` (coalesced to the customer
         # name), and 322 of 30,920 orders on the copy spell the two differently - a 0 on
@@ -312,9 +348,9 @@ def stamp_so_outstanding_rows(
                 continue
             key = (g.get("customer"), g["product_code"])
             if key in per_group:
-                g["so_outstanding_qty"] = per_group[key]
+                g.update(per_group[key])
             elif g.get("customer") in known_names:
-                g["so_outstanding_qty"] = 0
+                g.update(_ZERO)
     except Exception as exc:  # pragma: no cover - best-effort by contract
         logger.warning("stamp_so_outstanding_rows skipped: %s", exc)
 

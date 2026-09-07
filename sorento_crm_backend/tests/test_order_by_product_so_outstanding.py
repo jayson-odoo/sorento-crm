@@ -282,3 +282,62 @@ def test_route_without_include_pipeline_is_unchanged(client, db, scenario):
     resp = client.get(BASE, params={"product_ids": prod.id, "customer_ids": cust.id, "include_summary": "true"})
     assert resp.status_code == 200, resp.text
     assert "so_outstanding_qty" not in _walk_keys(resp.json(), set())
+
+
+# ------------------------------------------------------------------ D3 five SO figures
+
+def test_d3_the_so_block_is_five_figures_per_group_and_per_product(db, scenario):
+    """D3 (owner console pass, 8 Sep 2026): distinct SO count over every line of any
+    status, the SO date span, ordered and transferred-to-DO sums, and the outstanding
+    remainder - per customer x product and summed per product."""
+    from datetime import date as _d
+
+    cust, prod, wh = scenario  # already: one open SO 9 ordered / 2 delivered, no date
+    so_b = _so_line(db, customer_id=cust.id, product_id=prod.id, ordered=5, delivered=5, status="closed")
+    so_b.order_date = _d(2026, 3, 1)
+    so_c = _so_line(db, customer_id=cust.id, product_id=prod.id, ordered=4, delivered=1)
+    so_c.order_date = _d(2026, 6, 9)
+    other = customer(db, company_id=DEFAULT_COMPANY_ID, name="ABC TRADING SDN BHD")
+    _do(db, cust=other, prod=prod, wh=wh, qty=1)
+    _so_line(db, customer_id=other.id, product_id=prod.id, ordered=8, delivered=0)
+    db.commit()
+
+    s = OrderService(db).list_orders_by_product(
+        product_ids=[prod.id], include_summary=True, include_pipeline=True
+    )["summary"]
+    by_cust = {g["customer"]: g for g in s["groups"]}
+    heng = by_cust["HENG SENG HARDWARE SDN BHD"]
+    assert heng["so_count"] == 3
+    assert heng["so_date_from"] == "2026-03-01" and heng["so_date_to"] == "2026-06-09"
+    assert heng["so_ordered_qty"] == 18 and heng["so_transferred_qty"] == 8
+    assert heng["so_outstanding_qty"] == 10  # 7 + 3; the closed line is not outstanding
+    abc = by_cust["ABC TRADING SDN BHD"]
+    assert abc["so_count"] == 1 and abc["so_ordered_qty"] == 8 and abc["so_transferred_qty"] == 0
+    assert abc["so_outstanding_qty"] == 8 and "so_date_from" not in abc
+    p = s["products"][0]
+    assert p["so_count"] == 4 and p["so_ordered_qty"] == 26 and p["so_transferred_qty"] == 8
+    assert p["so_outstanding_qty"] == 18
+    assert p["so_date_from"] == "2026-03-01" and p["so_date_to"] == "2026-06-09"
+
+
+def test_d3_three_states_cover_all_five_figures(db, scenario):
+    cust, prod, wh = scenario
+    quiet = customer(db, company_id=DEFAULT_COMPANY_ID, name="QUIET SDN BHD")
+    _do(db, cust=quiet, prod=prod, wh=wh, qty=1)
+    _do(db, cust=cust, prod=prod, wh=wh, qty=2, debtor_name="HENG SENG HARDWARE (KL)")
+    db.commit()
+    s = OrderService(db).list_orders_by_product(
+        product_ids=[prod.id], include_summary=True, include_pipeline=True
+    )["summary"]
+    by_cust = {g["customer"]: g for g in s["groups"]}
+    keys = ("so_count", "so_ordered_qty", "so_transferred_qty", "so_outstanding_qty")
+    assert [by_cust["QUIET SDN BHD"][k] for k in keys] == [0, 0, 0, 0]          # known, nothing: zeros
+    assert not any(k in by_cust["HENG SENG HARDWARE (KL)"] for k in keys)       # unknown name: absent
+    assert by_cust["HENG SENG HARDWARE SDN BHD"]["so_count"] == 1              # matched: facts
+
+
+def test_d3_without_include_pipeline_no_so_figure_exists(db, scenario):
+    cust, prod, _ = scenario
+    plain = OrderService(db).list_orders_by_product(product_ids=[prod.id], customer_ids=[cust.id], include_summary=True)
+    keys = _walk_keys(plain, set())
+    assert not {"so_count", "so_date_from", "so_ordered_qty", "so_transferred_qty", "so_outstanding_qty"} & keys
