@@ -496,3 +496,31 @@ def test_a_mocha_spo_never_reaches_a_sorento_read(db):
     set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
     assert purchase_orders_placed_rows(db, product_ids=[prod.id]) == []
     assert purchase_orders_placed_summary(db, product_ids=[prod.id]) == {"po_placed_qty": 0, "po_placed_count": 0}
+
+
+def test_b1_both_summary_legs_apply_the_company_scope_by_hand(db):
+    """Review round 2, B1: the summary's legs are column-only aggregates, and a column-only
+    query is exactly where the session listener's scope is lost (order_service.
+    stamp_order_summary documents the measurement). A Sorento-only read must not count a
+    Mocha PO line or a Mocha SPO allocation - in the rows OR in the summary."""
+    from tests._mc_lookup_seed import MOCHA_ID, seed_mocha
+
+    seed_mocha(db)
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    _po_line(db, product_id=prod.id, ordered=5, received=0, po_number="PO-SRT")
+    _spo(db, product_id=prod.id, allocated=3, number="SPO-SRT")
+    m_po = _po_line(db, product_id=prod.id, ordered=70, received=0, po_number="PO-MCH")
+    m_line = db.query(PurchaseOrderLine).filter(PurchaseOrderLine.purchase_order_id == m_po.id).one()
+    m_po.company_id = MOCHA_ID
+    m_line.company_id = MOCHA_ID
+    m_spo = _spo(db, product_id=prod.id, allocated=90, number="SPO-MCH")
+    m_spo.company_id = MOCHA_ID
+    db.commit()
+
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    rows = purchase_orders_placed_rows(db, product_ids=[prod.id])
+    assert sorted(r["po_number"] for r in rows) == ["PO-SRT", "SPO-SRT"]
+    assert purchase_orders_placed_summary(db, product_ids=[prod.id]) == {"po_placed_qty": 8, "po_placed_count": 2}
+
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+    assert purchase_orders_placed_summary(db, product_ids=[prod.id]) == {"po_placed_qty": 168, "po_placed_count": 4}

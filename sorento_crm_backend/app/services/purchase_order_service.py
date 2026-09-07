@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation, Supplier
 from app.models.product import Product
+from app.services.company_scope import build_company_predicate, get_company_scope
 
 PO_GROUP_BY_AXES: frozenset[str] = frozenset({"product", "supplier", "date"})
 
@@ -267,6 +268,17 @@ def purchase_orders_placed_summary(
     The window is built by the same `_expected_date_window` the rows use, so the two
     cannot read one date differently.
     """
+    # COMPANY SCOPE, BY HAND (review round 2, B1). Both legs below are column-only
+    # aggregates, and a column-only query is where the session's do_orm_execute scope is
+    # lost (`order_service.stamp_order_summary` measured it: a Sorento-only read summed a
+    # Mocha row). The rows path keeps the scope because it selects the entities; the
+    # summary ANDs the same predicate in itself so the two never disagree on company.
+    _scope = get_company_scope(db)
+    _p_line = build_company_predicate(PurchaseOrderLine, _scope)
+    _p_po = build_company_predicate(PurchaseOrder, _scope)
+    _p_spo = build_company_predicate(SPOAllocation, _scope)
+    _scoped = lambda q, pred: q.filter(pred) if pred is not None else q  # noqa: E731
+
     delta = PurchaseOrderLine.qty_ordered - PurchaseOrderLine.qty_received
     q = (
         db.query(func.sum(delta), func.count(PurchaseOrderLine.id))
@@ -277,6 +289,7 @@ def purchase_orders_placed_summary(
         .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
         .filter(PurchaseOrderLine.line_status == "open", delta > 0)
     )
+    q = _scoped(_scoped(q, _p_line), _p_po)
     if product_ids:
         q = q.filter(PurchaseOrderLine.product_id.in_(product_ids))
     q = _apply_expected_date_window(q, expected_date_from, expected_date_to)
@@ -287,6 +300,7 @@ def purchase_orders_placed_summary(
     spo_q = _unshipped_spo_query(db, product_ids=product_ids).with_entities(
         func.sum(_spo_delta()), func.count(SPOAllocation.id)
     )
+    spo_q = _scoped(spo_q, _p_spo)
     spo_q = _apply_spo_expected_date_window(spo_q, expected_date_from, expected_date_to)
     spo_qty, spo_count = spo_q.one()
     return {
