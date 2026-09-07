@@ -1,7 +1,6 @@
 # PLAN: ingest parity standardisation (xlsx / manual vs ESB)
 
-Status: IN PROGRESS 2026-09-06. S0 green (1f38359d2 + 2fa492be3), S1 green (7b3f19e68), S2 green (e8659ee54, migration 476), S3 green (e479242a4, migration 477), S4 green (history importers retired, D15 end state, contract v2.1); lane awaiting reviewer + security-reviewer + browser verification. Lane branch `feat/ingest-parity` on top of
-`feat/autocount-document-ingest-v2` (PR #670) until #670 merges, then rebased onto main.
+Status: MERGED 2026-09-06 (PR #699 -> main 6e6bed893, tag `autocount-contract-v2.1`). S0-S4 green, reviewer + security-reviewer + browser verification done, guides written, D1-D24 final. Open follow-ups: BL-060 (conflicts worklist tab), ESB D24 re-offer counts (owed by the ESB session), ESB BL-SS-102 (mapped-but-blank -> null).
 UAC: `ingest-parity-standardisation-acceptance-criteria.md` (same folder). Grill record:
 `.lavish/ingest-parity-standardisation.html` (worktree-local).
 
