@@ -539,6 +539,25 @@ describe('entering edit-points mode (S5, AC-S5-2)', () => {
     expect(lastAnchors()).toEqual(FULL_ANCHORS);
   });
 
+  it('does nothing while a button elsewhere on the page has focus (review nit)', () => {
+    const outsideButton = document.createElement('button');
+    document.body.appendChild(outsideButton);
+    outsideButton.focus();
+
+    const { container } = render(
+      <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,
+    );
+    selectShape();
+
+    // A Tab-focused Save/Publish button firing its OWN native Enter-click
+    // must not ALSO be intercepted into edit-points mode just because a
+    // polygon happens to be selected underneath it.
+    fireEvent.keyDown(window, { key: 'Enter' });
+
+    expect(queryHandle(container, 'polygon-vertex-0')).toBeNull();
+    document.body.removeChild(outsideButton);
+  });
+
   it('the Inspector "Edit points" button enters the same mode', () => {
     const { container } = render(
       <TagCanvasEditor doc={docWith(shapeLayer('sh1', 'polygon'))} onChange={vi.fn()} />,

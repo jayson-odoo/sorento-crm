@@ -2829,9 +2829,16 @@ export function TagCanvasEditor({
         selectParentGroup();
         return;
       }
+      // Scopes the two Enter handlers below off a focused BUTTON (review
+      // nit) - same `document.activeElement` reasoning as `isInput` above:
+      // a Tab-focused button (Save, Publish) firing its OWN native
+      // Enter-click would otherwise ALSO hit these and preventDefault it
+      // away, just because a crop or an eligible polygon happened to still
+      // be selected underneath.
+      const enterOnButton = document.activeElement instanceof HTMLButtonElement;
       // Enter commits crop mode (S8, AC-S8-3) before anything else it might
       // otherwise mean.
-      if (e.key === 'Enter' && cropEditingLayerId) {
+      if (e.key === 'Enter' && cropEditingLayerId && !enterOnButton) {
         e.preventDefault();
         commitCrop();
         return;
@@ -2839,7 +2846,7 @@ export function TagCanvasEditor({
       // Enter toggles edit-points mode (S5) on the eligible selection -
       // in, if select mode is showing the Transformer's anchors; back out,
       // if the vertex/edge handles are already up.
-      if (e.key === 'Enter' && cornerHandleLayer) {
+      if (e.key === 'Enter' && cornerHandleLayer && !enterOnButton) {
         e.preventDefault();
         setEditingPointsId(editingPoints ? null : cornerHandleLayer.id);
         return;
