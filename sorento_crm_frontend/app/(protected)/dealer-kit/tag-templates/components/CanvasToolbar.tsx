@@ -33,6 +33,7 @@ import {
   Undo2,
   Ungroup,
 } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -71,10 +72,25 @@ interface CanvasToolbarProps {
   hasSelection: boolean;
   hasMultiSelection: boolean;
   selectionIsGroup: boolean;
+  /**
+   * Right-aligned actions, one more `ToolbarButton` group at the right end
+   * (S7, AC-S7-6) - Full screen / the Template dropdown / Save for the
+   * request designer, Versions / Save / Full screen for the template page.
+   * Absent renders nothing extra, same toolbar as before this round.
+   */
+  trailing?: ReactNode;
 }
 
-function ToolbarButton({
+/**
+ * One icon button, tooltip carrying the label and shortcut - the shape
+ * every tool-group button in this toolbar already uses. Exported so the
+ * `trailing` slot's own buttons (Full screen, the Template dropdown, Save -
+ * S7) read as one more group of these rather than a row of outlined text
+ * chips (AC-S7-6).
+ */
+export function ToolbarButton({
   icon: Icon,
+  iconClassName,
   label,
   onClick,
   disabled,
@@ -82,6 +98,8 @@ function ToolbarButton({
   active,
 }: {
   icon: React.ComponentType<{ className?: string }>;
+  /** Extra classes on the icon itself - `animate-spin` while Save is in flight. */
+  iconClassName?: string;
   label: string;
   onClick: () => void;
   disabled?: boolean;
@@ -104,7 +122,7 @@ function ToolbarButton({
           disabled={disabled}
           aria-pressed={active}
         >
-          <Icon className="size-4" />
+          <Icon className={cn('size-4', iconClassName)} />
           <span className="sr-only">{label}</span>
         </Button>
       </TooltipTrigger>
@@ -146,6 +164,7 @@ export function CanvasToolbar({
   hasSelection,
   hasMultiSelection,
   selectionIsGroup,
+  trailing,
 }: CanvasToolbarProps) {
   return (
     // `relative` is load-bearing, not decoration (r4d): each button's label is
@@ -269,6 +288,19 @@ export function CanvasToolbar({
         onClick={onUngroupSelected}
         disabled={!selectionIsGroup}
       />
+
+      {trailing && (
+        <>
+          {/* `ml-auto` pushes this group to the true right end (AC-S7-6)
+              rather than sitting flush after Ungroup - the row scrolls
+              (`overflow-x-auto` on the outer div) rather than clipping it
+              at 375px, same as every other group here. */}
+          <div className="ml-auto flex shrink-0 items-center gap-1">
+            <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
+            {trailing}
+          </div>
+        </>
+      )}
     </div>
   );
 }

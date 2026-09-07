@@ -40,7 +40,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { toast } from '@/lib/toast';
-import { History, Save as SaveIcon, Upload } from 'lucide-react';
+import { History, Loader2, Maximize2, Minimize2, Save as SaveIcon, Upload } from 'lucide-react';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
@@ -73,9 +73,10 @@ import {
 } from '../../services/tagTemplateService';
 import { tagSizePresets } from '@/lib/dealer-kit/request-tags';
 import { TemplateVersionsSheet } from '../components/TemplateVersionsSheet';
-import { FocusShell, FocusToggle } from '../../components/FocusMode';
+import { FocusShell } from '../../components/FocusMode';
 import { AutosaveIndicator } from '../../components/AutosaveIndicator';
 import { TagSizeControl } from '../../components/TagSizeControl';
+import { ToolbarButton } from '../components/CanvasToolbar';
 import { useAutosave } from '@/hooks/useAutosave';
 
 const TagCanvasEditor = dynamic(
@@ -381,6 +382,32 @@ export default function TagTemplateEditorPage() {
 
   const isLive = Boolean(template.published_version_id);
 
+  // The canvas toolbar's own right-end group (S7): Versions, Save, Full
+  // screen. Publish stays the page header's one action button.
+  const toolbarTrailing = (
+    <>
+      <ToolbarButton
+        icon={History}
+        label="Versions"
+        onClick={() => setVersionsOpen(true)}
+        disabled={viewingLoading}
+      />
+      <ToolbarButton
+        icon={saving ? Loader2 : SaveIcon}
+        iconClassName={saving ? 'animate-spin' : undefined}
+        label={saving ? 'Saving...' : 'Save'}
+        onClick={handleSave}
+        disabled={saving || Boolean(viewing)}
+      />
+      <ToolbarButton
+        icon={focus ? Minimize2 : Maximize2}
+        label={focus ? 'Exit full screen' : 'Full screen'}
+        onClick={() => setFocus(!focus)}
+        active={focus}
+      />
+    </>
+  );
+
   return (
     <FocusShell active={focus} onExit={() => setFocus(false)}>
     <div
@@ -413,37 +440,21 @@ export default function TagTemplateEditorPage() {
               </span>
             }
             actions={
-              // flex-wrap: at 375px four buttons plus BackToList do not fit
-              // one row (S7).
+              // Publish is the ONE action button (S7, AC-S7-2); Versions,
+              // Save and Full screen moved to the canvas toolbar's own
+              // trailing group below. flex-wrap: at 375px the Saved
+              // indicator, Publish and Back to templates still do not
+              // always fit one row.
               <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setVersionsOpen(true)}
-                  disabled={viewingLoading}
-                >
-                  <History className="size-3.5" />
-                  Versions
-                </Button>
                 <AutosaveIndicator
                   status={autosaveStatus}
                   savedAt={autosaveSavedAt}
                   onRetry={retryAutosave}
                 />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleSave}
-                  disabled={saving || Boolean(viewing)}
-                >
-                  <SaveIcon className="size-3.5" />
-                  {saving ? 'Saving...' : 'Save'}
-                </Button>
                 <Button size="sm" onClick={() => setPublishOpen(true)} disabled={Boolean(viewing)}>
                   <Upload className="size-3.5" />
                   Publish
                 </Button>
-                <FocusToggle active={focus} onToggle={setFocus} label="template" />
                 <BackToList listPath="/dealer-kit/tag-templates" label="Back to templates" />
               </div>
             }
@@ -480,6 +491,7 @@ export default function TagTemplateEditorPage() {
                 onResize={handleResizeTemplate}
               />
             }
+            toolbarTrailing={toolbarTrailing}
           />
         </div>
         {viewing && (

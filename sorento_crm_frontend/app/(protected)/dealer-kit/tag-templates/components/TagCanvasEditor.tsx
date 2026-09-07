@@ -408,6 +408,13 @@ interface TagCanvasEditorProps {
    * behaviour.
    */
   docId?: string;
+  /**
+   * The host's own right-end toolbar actions (S7): Full screen / the
+   * Template dropdown / Save for the request designer, Versions / Save /
+   * Full screen for the template page - passed straight through to
+   * `CanvasToolbar`'s own `trailing` slot. Absent renders no trailing group.
+   */
+  toolbarTrailing?: ReactNode;
 }
 
 /** What the canvas is currently asking the user to pick. */
@@ -450,6 +457,7 @@ export function TagCanvasEditor({
   onUseTemplate,
   hideSaveBar,
   docId,
+  toolbarTrailing,
 }: TagCanvasEditorProps) {
   const [layers, setLayers] = useState<TagLayer[]>(doc.layers);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -3222,6 +3230,7 @@ export function TagCanvasEditor({
         hasSelection={hasSelection}
         hasMultiSelection={selectedIds.size >= 2}
         selectionIsGroup={selectionIsGroup}
+        trailing={toolbarTrailing}
       />
 
       <div ref={panelGroupRef} className="flex flex-1 overflow-hidden">

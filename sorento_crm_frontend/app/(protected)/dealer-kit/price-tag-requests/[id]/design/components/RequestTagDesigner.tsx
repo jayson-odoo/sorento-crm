@@ -45,6 +45,8 @@ import {
   LayoutTemplate,
   Loader2,
   Eye,
+  Maximize2,
+  Minimize2,
   Save,
   RefreshCw,
 } from 'lucide-react';
@@ -84,6 +86,7 @@ import {
 } from '@/lib/dealer-kit/request-tags';
 import { formatTagPrice } from '@/lib/dealer-kit/price-badge';
 import { TagCanvasEditor } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
+import { ToolbarButton } from '@/app/(protected)/dealer-kit/tag-templates/components/CanvasToolbar';
 import { useKitLibrary } from '@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings';
 import { TagSizeControl } from '@/app/(protected)/dealer-kit/components/TagSizeControl';
 import { useAutosave } from '@/hooks/useAutosave';
@@ -813,6 +816,36 @@ export function RequestTagDesigner({
 
   // -- Render ----------------------------------------------------------------
 
+  // The canvas toolbar's own right-end group (S7): Full screen, the
+  // Template dropdown (still today's "Save as template" until S6 turns it
+  // into one) and Save. Only reaches the screen in design mode - it is
+  // handed to TagCanvasEditor, which only mounts there; arrange mode keeps
+  // its own Full screen + Save in the request bar below, since
+  // ArrangeSheetView has no canvas toolbar of its own to move them into.
+  const toolbarTrailing = (
+    <>
+      <ToolbarButton
+        icon={focus ? Minimize2 : Maximize2}
+        label={focus ? 'Exit full screen' : 'Full screen'}
+        onClick={() => setFocus(!focus)}
+        active={focus}
+      />
+      <ToolbarButton
+        icon={LayoutTemplate}
+        label="Save as template"
+        onClick={() => setSaveTemplateOpen(true)}
+        disabled={!selectedTag}
+      />
+      <ToolbarButton
+        icon={saving ? Loader2 : Save}
+        iconClassName={saving ? 'animate-spin' : undefined}
+        label={saving ? 'Saving...' : 'Save'}
+        onClick={save}
+        disabled={saving || transitioning}
+      />
+    </>
+  );
+
   const rail = (
     <>
       <LinesRail
@@ -863,12 +896,15 @@ export function RequestTagDesigner({
   return (
     <FocusShell active={focus} onExit={() => setFocus(false)}>
     <div className="flex h-full min-h-0 flex-1 flex-col">
-      {/* Request bar: what this is, which half is showing, and the two actions
-          that leave the page in a different state.
-          `flex-wrap` (S6): at 375px the back button, mode toggle, Full
-          screen, Save and (for a designing request) Mark proof ready do not
-          fit one row - the same fix the template page's own action row
-          carries. `min-h-10` rather than a fixed `h-10` so the row can
+      {/* Request bar: what this is, which half is showing, the Saved
+          indicator and - in design mode - the ONE action, Mark proof ready
+          (S7, AC-S7-1). Full screen, the Template dropdown and Save moved
+          into the canvas toolbar's own trailing group below; arrange mode
+          keeps its own Full screen + Save here, since ArrangeSheetView has
+          no canvas toolbar of its own to move them into.
+          `flex-wrap`: at 375px the back button, mode toggle and (arrange
+          mode, or a designing request) the remaining actions do not fit one
+          row - `min-h-10` rather than a fixed `h-10` so the row can
           actually grow into a second line instead of clipping it. */}
       <div className="flex min-h-10 shrink-0 flex-wrap items-center gap-2 border-b bg-background px-3 py-1.5">
         <Button
@@ -903,41 +939,31 @@ export function RequestTagDesigner({
 
         <AutosaveIndicator status={status} savedAt={savedAt} onRetry={retry} />
 
-        <FocusToggle
-          active={focus}
-          onToggle={setFocus}
-          label="tags"
-          className="h-7 text-xs"
-          iconClassName="size-3.5"
-        />
-
-        {mode === 'design' && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs"
-            onClick={() => setSaveTemplateOpen(true)}
-            disabled={!selectedTag}
-          >
-            <LayoutTemplate className="mr-1 size-3.5" />
-            Save as template
-          </Button>
+        {mode === 'arrange' && (
+          <>
+            <FocusToggle
+              active={focus}
+              onToggle={setFocus}
+              label="tags"
+              className="h-7 text-xs"
+              iconClassName="size-3.5"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={save}
+              disabled={saving || transitioning}
+            >
+              {saving ? (
+                <Loader2 className="mr-1 size-3.5 animate-spin" />
+              ) : (
+                <Save className="mr-1 size-3.5" />
+              )}
+              Save
+            </Button>
+          </>
         )}
-
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7 text-xs"
-          onClick={save}
-          disabled={saving || transitioning}
-        >
-          {saving ? (
-            <Loader2 className="mr-1 size-3.5 animate-spin" />
-          ) : (
-            <Save className="mr-1 size-3.5" />
-          )}
-          Save
-        </Button>
 
         {canMarkProofReady && (
           <Button
@@ -993,6 +1019,7 @@ export function RequestTagDesigner({
               }
               hideSaveBar
               docId={selectedTag.id}
+              toolbarTrailing={toolbarTrailing}
             />
           ) : (
             <CanvasMessage text="Preparing this line..." />
