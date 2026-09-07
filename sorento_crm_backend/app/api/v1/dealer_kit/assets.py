@@ -22,10 +22,13 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
+from app.models.dealer_kit import Asset
+from app.models.resources import Attachment
 from app.schemas.price_tag import AssetResponse
 from app.services.dealer_kit import asset_service
 from app.services.error_handler import AppException
@@ -133,3 +136,89 @@ def upload_asset(
 
     attachment = db.query(Attachment).filter(Attachment.id == asset.attachment_id).first()
     return _serialize(asset, attachment, urls)
+
+
+class _RenameAssetRequest(BaseModel):
+    name: str
+
+
+@router.patch("/{asset_id}", response_model=AssetResponse)
+def rename_asset(
+    asset_id: str,
+    body: _RenameAssetRequest,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    """Rename a library asset.
+
+    A font is named by FAMILY, not by id (see ``asset_service``'s "Brand
+    fonts" section), so renaming one also rewrites every text layer that
+    named the old family, in the same transaction. Any other kind carries its
+    id in the document and only the row changes (AC-D3, AC-12).
+    """
+    new_name = (body.name or "").strip()
+    if not new_name:
+        raise AppException(
+            status_code=422, message="Name cannot be empty.", code="VALIDATION_ERROR"
+        )
+    if len(new_name) > 200:
+        # Rejected rather than silently sliced: a truncated row next to docs
+        # rewritten with the FULL name would leave the row and the layers
+        # disagreeing about the family's own name.
+        raise AppException(
+            status_code=422,
+            message="Name must be 200 characters or fewer.",
+            code="VALIDATION_ERROR",
+        )
+
+    row = (
+        db.query(Asset, Attachment)
+        .join(Attachment, Attachment.id == Asset.attachment_id)
+        .filter(Asset.id == asset_id, Attachment.is_deleted.is_(False))
+        .first()
+    )
+    if row is None:
+        raise AppException(
+            status_code=404,
+            message="Asset not found. Someone might have deleted it already.",
+            code="ASSET_NOT_FOUND",
+        )
+    asset, attachment = row
+
+    if asset.kind == asset_service.FONT and new_name != asset.name:
+        # Two `@font-face` rules for one family would be ambiguous - and the
+        # inspector's dropdown lists a font by name, so two rows sharing one
+        # would be indistinguishable there too.
+        taken = (
+            db.query(Asset)
+            .filter(
+                Asset.kind == asset_service.FONT,
+                Asset.name == new_name,
+                Asset.id != asset_id,
+            )
+            .first()
+        )
+        if taken:
+            raise AppException(
+                status_code=409,
+                message=f'"{new_name}" is already the name of another brand font.',
+                code="FONT_NAME_TAKEN",
+            )
+        asset_service.rename_font_family(db, asset.name, new_name, asset.company_id)
+
+    asset.name = new_name
+    db.commit()
+    db.refresh(asset)
+
+    urls = asset_service.urls_for(db, [asset.id])
+    return _serialize(asset, attachment, urls)
+
+
+@router.delete("/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_asset(
+    asset_id: str,
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_MANAGE),
+):
+    """Delete a library asset. Refused while anything still names it (AC-9/10/12)."""
+    asset_service.delete_asset_guarded(db, asset_id)

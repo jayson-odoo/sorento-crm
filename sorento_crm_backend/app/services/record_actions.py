@@ -1033,6 +1033,32 @@ register(
 )
 
 
+def _delete_dealer_kit_asset(db: Session, payload: dict):
+    """A library asset: artwork or a brand font (PLAN-brand-font-manage.md).
+
+    Same guard the immediate `DELETE /dealer-kit/assets/{id}` route uses -
+    ``delete_asset_guarded`` refuses (``FONT_IN_USE`` / ``ASSET_IN_USE``) while
+    anything still names it, which the frontend only learns once the window
+    lapses and the commit fails (AC-10): the countdown disappears and the
+    toast carries the reason, same as any other guarded deferred delete.
+    """
+    from app.services.dealer_kit import asset_service
+
+    return asset_service.delete_asset_guarded(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="dealer_kit_asset.delete",
+        entity_types=("dealer_kit_asset",),
+        execute=_delete_dealer_kit_asset,
+        window=WINDOW_DESTRUCTIVE,
+        permission="dealer_kit.library.manage",
+        label="Delete asset",
+    )
+)
+
+
 def _undo_flyer_code_adopt(db: Session, payload: dict):
     """"This printed code is NOT that product" - undoing an adoption (D7, S1).
 
