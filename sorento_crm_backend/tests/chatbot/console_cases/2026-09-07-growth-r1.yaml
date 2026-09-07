@@ -280,6 +280,51 @@ cases:
       reply_contains: ["No stock, no incoming and no PO for SRTWB103"]
       no_uuid: true
 
+  # THE SUFFIXED-CODE PROBE (8 Sep 2026). These three answer the bare miss with no
+  # cross-domain sentence on a live turn while CB2904 and SRTWB103 above get theirs, and
+  # they are the most common shape in the catalogue - so this is Foundre's rule off for
+  # most products, and it earns three cases rather than a sentence in a plan.
+  #
+  # The obvious hypothesis is DISPROVEN, so nobody has to spend the hour again. Measured
+  # against the real resolver (`resolve_reference_post`, tokens=[code],
+  # entity_types=["product"]), under the Sorento-only company scope AND unscoped:
+  #
+  #   SRTWT7445-LV-NEW  1 match  tier exact        CB2904    1 match  tier exact
+  #   MSK11A-QT         1 match  tier exact        SRTWB103  1 match  tier exact
+  #   CWCX1009-SH       1 match  tier exact
+  #
+  # Identical. The suffix does not change how a code resolves, `crossdomain_zeroset`
+  # excludes no tier these codes land on, and its `requested` builder already accepts a
+  # single non-exact match as an ask (`exacts` first, else `len(prods) == 1`), so there is
+  # no tier rule left to widen. `tests/chatbot/test_foundre_rung_end_to_end.py::
+  # TestTheSuffixedCodeShapeReachesTheRung` drives all three through `run_turn` with that
+  # measured resolution and every one reaches the rung. The live difference therefore sits
+  # between the resolver and `returned_codes` / `missing` on those particular turns; the
+  # next probe is the persisted `looked_up` raw of a red run, not the tier.
+  - name: A7 suffixed code SRTWT7445-LV-NEW reaches the rung
+    text: "check stock SRTWT7445-LV-NEW"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["SRTWT7445-LV-NEW", "but a PO is placed"]
+      no_uuid: true
+
+  - name: A7 suffixed code MSK11A-QT reaches the rung
+    text: "check stock MSK11A-QT"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["MSK11A-QT", "but a PO is placed"]
+      no_uuid: true
+
+  - name: A7 suffixed code CWCX1009-SH reaches the rung
+    text: "check stock CWCX1009-SH"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["CWCX1009-SH", "but a PO is placed"]
+      no_uuid: true
+
   # EXPECTED RED, owned by another lane (`expected_red_until` below). A bare "PO?" routes `out_of_scope` (too thin to carry an intent), and
   # "any PO for it?" reaches the PO tool but resolves a DIFFERENT product - the carry does
   # not happen. Both are the carry semantics Slice B (`feat/chatbot-growth-dialogue`) is

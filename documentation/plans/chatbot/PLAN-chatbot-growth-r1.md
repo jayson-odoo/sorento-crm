@@ -187,8 +187,9 @@ migration 490 published, via the `--prompt-version` flag, so nothing is promoted
 
 | run | parser prompt | result |
 |---|---|---|
-| 1 | the tenant's `production` label (v1, FULL) | **11 pass / 3 fail** |
-| 2 | pinned to the growth r1 body | **13 pass / 1 fail** (the 1 is an `XFAIL` another lane owns) |
+| 1 | the tenant's `production` label (v1, FULL) | **11 pass / 3 fail** (14 cases) |
+| 2 | pinned to the growth r1 body | **13 pass / 1 fail** (14 cases; the 1 is an `XFAIL` another lane owns) |
+| 3 | pinned, after the three suffixed-code cases were added | **13 pass / 4 fail** (17 cases; the 3 new reds are finding 2 below) |
 
 **Foundre's rule now works from a real turn, and it never did before.** The console check of
 7 Sep found it unreachable; the cause was one missing field. `engine._TurnSwitches` - the
@@ -209,13 +210,38 @@ What still stands red, and who owns it:
 1. **The multi-turn carry into a PO follow-up** - marked `expected_red_until:
    feat/chatbot-growth-dialogue` in the case file, so it reports `XFAIL` and will report
    `XPASS` (a failure) the moment that lane fixes it. This lane changes no carry rule.
-2. **A suffixed product code does not reach the ladder.** `SRTWT7445-LV-NEW` (20 open PO
-   lines), `CWCX1009-SH` and `MSK11A-QT` answer the bare miss with no cross-domain sentence
-   and record NO `crossdomain` trace event, while `CB2904` and `SRTWB103` get theirs - so
-   `crossdomain_zeroset` shuts off at `active`, not at an empty probe. `requested` is built
-   from TYPED-EXACT resolver matches, so the suspect is the `match_tier` a hyphen-suffixed
-   code resolves with. That is a resolver slice, and it silently disables Foundre's rule for
-   a whole shape of product code - worth its own ticket.
+2. **A suffixed product code does not reach the ladder, and the resolver is NOT why.**
+   `SRTWT7445-LV-NEW`, `MSK11A-QT` and `CWCX1009-SH` answer the bare miss with no
+   cross-domain sentence and record no `crossdomain` trace event, while `CB2904` and
+   `SRTWB103` get theirs. Because that shape is most of the catalogue, this is Foundre's
+   rule off for most products.
+
+   **The match_tier hypothesis is DISPROVEN, measured 8 Sep 2026.** Called the real
+   resolver (`resolve_reference_post`, `tokens=[code]`, `entity_types=["product"]`) for
+   all five codes, under the Sorento-only company scope and unscoped:
+
+   | code | matches | tier |
+   |---|---|---|
+   | SRTWT7445-LV-NEW | 1 | exact |
+   | MSK11A-QT | 1 | exact |
+   | CWCX1009-SH | 1 | exact |
+   | CB2904 | 1 | exact |
+   | SRTWB103 | 1 | exact |
+
+   Identical. The suffix does not change how a code resolves, so `crossdomain_zeroset`
+   excludes no tier these codes land on - and its `requested` builder already accepts a
+   single non-exact match as an ask (`exacts` first, else `len(prods) == 1`, answer.py),
+   which is exactly the "one uuid is an unambiguous ask" rule, already shipped. There is
+   no tier rule left to widen, so NO code change was made: widening a replay-graded node
+   on a disproven premise would be a speculative edit to the one place H62 protects.
+
+   `tests/chatbot/test_foundre_rung_end_to_end.py::TestTheSuffixedCodeShapeReachesTheRung`
+   drives all three through `run_turn` with that measured resolution and every one reaches
+   the rung, so the mechanism is sound for the shape. The three are also console cases now,
+   so the red is measured per code rather than described. **The next probe is the persisted
+   `looked_up` raw of a red run** - specifically `zs.returned_codes` and `zs.missing` on the
+   turn - not the tier.
+
 3. **The live prompt is unstable on the two A1 spec phrasings** and they swap between runs,
    because the live REQUESTED ATTRIBUTES section has no rule for a bare "spec" and no entry
    for "steel grade" (the model emits `["dimension"]`, which the registry has no key for).

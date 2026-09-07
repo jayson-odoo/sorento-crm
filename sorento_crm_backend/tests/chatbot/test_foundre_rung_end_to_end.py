@@ -33,7 +33,16 @@ from tests.chatbot.test_engine import (  # noqa: F401 - re-exported fixtures use
     stub_parser,
 )
 
+#: The SUFFIXED shape, which the console check found never reaching the ladder on a live
+#: turn. Measured 8 Sep 2026 against the real resolver: `SRTWT7445-LV-NEW`, `MSK11A-QT`,
+#: `CWCX1009-SH`, `CB2904` and `SRTWB103` ALL come back as exactly one product match at
+#: tier `exact`, under the Sorento-only scope and unscoped alike - so the suffix does not
+#: change how a code resolves, and `crossdomain_zeroset` excludes no tier that these codes
+#: land on. This file pins the other half: given that resolution, the suffixed code reaches
+#: the rung exactly like the unsuffixed one. Whatever the live difference is, it is not the
+#: code shape and not the tier.
 CODE = "SRTWT7445-LV-NEW"
+SUFFIXED_CODES = ("SRTWT7445-LV-NEW", "MSK11A-QT", "CWCX1009-SH")
 PRODUCT_UUID = "11111111-1111-1111-1111-111111111111"
 PO_TOOL = "crm_procurement_purchase_orders_placed_list"
 
@@ -61,19 +70,21 @@ PO_ROWS = {
 }
 
 
-def _bundle() -> ResolveGateServices:
+def _bundle(code: str = CODE) -> ResolveGateServices:
     def _resolve_entity(body: dict[str, Any]) -> dict[str, Any]:
         return {
-            "tokens": [CODE],
+            "tokens": [code],
             "resolutions": [
                 {
-                    "raw": CODE,
-                    "token": CODE,
+                    "raw": code,
+                    "token": code,
                     "matches": [
                         {
                             "uuid": PRODUCT_UUID,
                             "entity_type": "product",
-                            "canonical_code": CODE,
+                            "canonical_code": code,
+                            # The tier the REAL resolver returns for every one of these
+                            # codes, measured, not assumed.
                             "match_tier": "exact",
                         }
                     ],
@@ -89,7 +100,7 @@ def _bundle() -> ResolveGateServices:
     )
 
 
-def _run_stock_turn(session_factory, monkeypatch, *, po_response):
+def _run_stock_turn(session_factory, monkeypatch, *, po_response, code: str = CODE):
     """A real stock turn for a product with NO stock, with the PO probe stubbed."""
     from app.models.user import SystemSetting
     from app.services.chatbot import engine as engine_mod
@@ -113,9 +124,24 @@ def _run_stock_turn(session_factory, monkeypatch, *, po_response):
 
     def _mcp_probe(name: str, args: dict) -> Any:
         probes.append(name)
-        return po_response if name == PO_TOOL else NO_ROWS
+        if name != PO_TOOL:
+            return NO_ROWS
+        # The probe answers about the code THIS turn asked about, so a parametrised run
+        # cannot pass by echoing another case's rows.
+        return {
+            "answers": [
+                {
+                    "fields": [
+                        {"key": "product_code", "label": "Product Code", "value": code},
+                        *[f for f in (po_response["answers"][0]["fields"] if po_response.get("answers") else [])
+                          if f.get("key") != "product_code"],
+                    ]
+                }
+            ],
+            "has_result": True,
+        } if po_response.get("answers") else NO_ROWS
 
-    bundle = _bundle()
+    bundle = _bundle(code)
     monkeypatch.setattr(
         engine_mod.business_services, "production_services", lambda db, *, space_id=None: bundle
     )
@@ -223,3 +249,55 @@ class TestAC922NothingOnAnyRung:
         assert f"No stock, no incoming and no PO for {CODE}." in said, said
         assert "no purchase order" not in said
         assert "escalate" in said.lower()
+
+
+class TestTheSuffixedCodeShapeReachesTheRung:
+    """The console check's finding, pinned from the other end.
+
+    Three hyphen-suffixed codes, the shape the live check found answering the bare miss
+    with no cross-domain sentence at all. Measured against the REAL resolver, each comes
+    back as exactly one product match at tier `exact` - the same as `CB2904` and
+    `SRTWB103`, which do reach the rung live - so `crossdomain_zeroset` excludes no tier
+    they land on, and there is no tier rule to widen. Given that resolution, each reaches
+    the rung here.
+
+    So the live difference is NOT the code shape and NOT the match tier. Whatever it is
+    lives between the resolver and `crossdomain_zeroset`'s `returned_codes` / `missing` on
+    those particular turns, and this class is what stops the next person spending the same
+    hour on the tier again.
+    """
+
+    @pytest.mark.parametrize("code", SUFFIXED_CODES)
+    def test_each_suffixed_code_gets_its_po_rung(
+        self, code, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        stub_parser(
+            _parser_output(
+                intent_hint="check_stock",
+                domain_hint="inventory",
+                entities=[{"raw": code, "hint": "product", "current_message": True}],
+            )
+        )
+        stub_access()
+        result, said, probes = _run_stock_turn(
+            session_factory, monkeypatch, po_response=PO_ROWS, code=code
+        )
+        assert result.status == "done", result.error
+        assert PO_TOOL in probes, f"{code}: the PO rung never ran"
+        assert "but a PO is placed" in said, said
+        assert code in said
+
+    @pytest.mark.parametrize("code", SUFFIXED_CODES)
+    def test_each_suffixed_code_gets_the_three_way_miss(
+        self, code, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        stub_parser(
+            _parser_output(
+                intent_hint="check_stock",
+                domain_hint="inventory",
+                entities=[{"raw": code, "hint": "product", "current_message": True}],
+            )
+        )
+        stub_access()
+        _, said, _ = _run_stock_turn(session_factory, monkeypatch, po_response=NO_ROWS, code=code)
+        assert f"No stock, no incoming and no PO for {code}." in said, said
