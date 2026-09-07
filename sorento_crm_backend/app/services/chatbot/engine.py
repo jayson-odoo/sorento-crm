@@ -1892,6 +1892,7 @@ def _run_stages(  # noqa: PLR0915
             turn_trace=turn_trace,
             stage=stage,
             space_id=space_id_for_turn,
+            crossdomain_ladder=_crossdomain_ladder(settings_row),
         )
 
     if branch_kind == "out_of_scope" and completes_here:
@@ -1952,6 +1953,7 @@ def _run_business_answer(
     turn_trace: Any,
     stage: list[str],
     space_id: str | None,
+    crossdomain_ladder: dict[str, list[str]] | None = None,
 ) -> TurnResult:
     """S6c's handover: the answer half plus the tail, with NO database session open.
 
@@ -1987,6 +1989,7 @@ def _run_business_answer(
             session_factory=session_factory,
             space_id=space_id,
             dry_run=dry_run,
+            crossdomain_ladder=crossdomain_ladder,
         )
     except Exception as exc:  # noqa: BLE001 - the lane's failure, with the lane's reply
         logger.exception("chatbot turn %s: business answer failed", turn_id)
@@ -2620,6 +2623,22 @@ def _unsupported_domains(row: Any) -> tuple[str, ...] | None:
     """
     configured = getattr(row, "chatbot_unsupported_domains", None) if row else None
     return tuple(str(x) for x in configured) if isinstance(configured, list) else None
+
+
+def _crossdomain_ladder(row: Any) -> dict[str, list[str]] | None:
+    """`system_settings.chatbot_crossdomain_ladder` (A7), or None for the default.
+
+    Same shape as `_unsupported_domains`: takes the row the turn has already read,
+    returns None when unset so `run_crossdomain` owns the fallback in one place.
+    """
+    configured = getattr(row, "chatbot_crossdomain_ladder", None) if row else None
+    if not isinstance(configured, dict):
+        return None
+    return {
+        str(k): [str(v) for v in vs]
+        for k, vs in configured.items()
+        if isinstance(vs, list)
+    }
 
 
 def _enabled_lanes(db: Session, row: Any = _UNSET) -> frozenset[str]:

@@ -386,6 +386,7 @@ def complete_answer(
     session_factory: Any,
     space_id: str | None = None,
     dry_run: bool = False,
+    crossdomain_ladder: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """S6c: finish the business turn in process, and return `{reply, actions, ...}`.
 
@@ -536,6 +537,7 @@ def complete_answer(
             contact_id=contact_id,
             space_id=space_id,
             dry_run=dry_run,
+            crossdomain_ladder=crossdomain_ladder,
         )
         result_item = answer_mod.build_result(
             promo,

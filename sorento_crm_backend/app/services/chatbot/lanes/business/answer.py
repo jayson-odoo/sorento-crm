@@ -719,6 +719,10 @@ def crossdomain_render(
     # ASKED about - one with no uuid was never probed, so "no incoming" would be an absence
     # nothing established - so only a PROBED code earns the negative line.
     nothing: list[str] = []
+    # A7: the FULL `missing` entries behind `nothing` (code, uuid, uuids) - kept alongside
+    # the label list so `run_crossdomain` can build the next ladder rung's probe entities
+    # without re-deriving which codes qualify.
+    nothing_missing: list[dict[str, Any]] = []
     # Owner console pass 4, item G (6 Sep 2026): codes the OTHER domain answered, which the
     # primary one did not. Turn 858c9c54 named MSK11A-QT only inside "But there is INCOMING
     # stock (ETA) ...", so a stock question came back as two codes' stock and then an
@@ -735,6 +739,7 @@ def crossdomain_render(
                 label = jsc.js_string(code)
                 if label not in nothing:
                     nothing.append(label)
+                    nothing_missing.append(m)
             continue
         code = jsc.get(m, "code") or jsc.get(m, "_n")
         if jsc.truthy(code) and not _ms_is_uuid(code):
@@ -873,8 +878,215 @@ def crossdomain_render(
         "origin": zs.get("origin_domain") or None,
         "probed_rows": len(items),
         "rendered_rows": len(blocks),
+        # A7: the codes with NOTHING on either side, and the sentence built for them - so
+        # `run_crossdomain` can try a NEXT ladder rung (e.g. purchase_order) for exactly
+        # these codes and, if that rung answers, swap this sentence for its own without
+        # re-deriving which codes it is even about. Additive - nothing here reads them yet
+        # when the ladder has no further rung, so this render's own wording is unchanged.
+        "nothing_codes": list(nothing),
+        "nothing_note": nothing_note,
+        "nothing_missing": list(nothing_missing),
     }
     return out
+
+
+#: A7: rungs beyond the hard-coded inventory<->incoming pair. Keyed by the rung NAME as it
+#: appears in `system_settings.chatbot_crossdomain_ladder` (a JSON list of strings, admin
+#: editable) - "incoming" is not here because that rung is the EXISTING hard probe above,
+#: never a second lookup. Only "purchase_order" exists today; a ladder entry naming
+#: anything else is simply never reached (no tool to call), which is the same "widen only
+#: with an entry" shape `_CHATBOT_COLUMN_DEFAULTS` uses elsewhere.
+_CROSSDOMAIN_RUNG_TOOL: dict[str, str] = {"purchase_order": "crm_procurement_purchase_orders_placed_list"}
+_CROSSDOMAIN_RUNG_TEAM: dict[str, str] = {"purchase_order": "purchasing"}
+
+
+def _next_crossdomain_rung(origin_domain: Any, *, ladder: dict[str, list[str]] | None) -> str | None:
+    """The rung AFTER the hard-coded inventory<->incoming probe, or None.
+
+    `ladder` is `None` when the caller passed none (H52: no ladder configured = the
+    pre-A7 single hard pair, unchanged - `TestCrossdomainProbe::
+    test_zeroset_active_triggers_exactly_one_probe...` pins this for a direct
+    `run_crossdomain` call with no `crossdomain_ladder` argument). In production
+    `engine._crossdomain_ladder` reads the REAL row, which carries the shipped default
+    (migration 489) the moment a settings row exists - so this function owns no default
+    of its own; the DATABASE row is the one place the default lives.
+
+    `ladder[origin][0]` is always the domain the hard probe above already asked (AC-923: a
+    tenant configuring `{"inventory": ["incoming"]}` has no second entry, so this returns
+    None and the PO rung never runs). Only the first name after it is tried - one further
+    rung per turn, same as the existing probe.
+    """
+    if not isinstance(ladder, dict):
+        return None
+    rungs = ladder.get(jsc.js_string(origin_domain))
+    if not isinstance(rungs, list) or len(rungs) < 2:
+        return None
+    for name in rungs[1:]:
+        if name in _CROSSDOMAIN_RUNG_TOOL:
+            return name
+    return None
+
+
+def _crossdomain_rung_probe_args(
+    missing: list[dict[str, Any]],
+    *,
+    rung: str,
+    parser: dict[str, Any] | None,
+    contact_id: Any,
+    space_id: Any,
+) -> dict[str, Any]:
+    """Same shape as `crossdomain_probe_args`, over the codes still `nothing` after the
+    first rung - never the full `missing` set, so a code the incoming probe already
+    answered is not re-asked about."""
+    qf = parser if isinstance(parser, dict) else {}
+    entities: list[dict[str, Any]] = []
+    for m in missing:
+        us = m["uuids"] if isinstance(m.get("uuids"), list) and m["uuids"] else (
+            [m["uuid"]] if jsc.truthy(m.get("uuid")) else []
+        )
+        entities.extend({"uuid": u, "entity_type": "product", "code": m.get("code")} for u in us)
+    codes = ", ".join(jsc.js_string(m.get("code")) for m in missing)
+    tool = _CROSSDOMAIN_RUNG_TOOL[rung]
+    return {
+        "tool": tool,
+        "contact_id": contact_id,
+        "entities": entities,
+        "semantic_input": {
+            "message_type": qf.get("message_type") if qf.get("message_type") is not None else None,
+            "intent_hint": qf.get("intent_hint") if qf.get("intent_hint") is not None else None,
+            "domain_hint": qf.get("domain_hint") if qf.get("domain_hint") is not None else None,
+            "user_goal": qf.get("user_goal") if qf.get("user_goal") is not None else None,
+            "contact_id": jsc.js_string(contact_id) if contact_id is not None else None,
+            "space_id": space_id_or_default(space_id),
+        },
+        "user_prompt": f"cross-domain probe (crossdomain -> {rung}) for: {codes}",
+    }
+
+
+def _crossdomain_rung_rows(probe_result: Any, *, missing: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """Which of `missing`'s codes the rung answered, and the rendered line per row.
+
+    Returns `{CODE: ["<qty> pcs expected <date>", ...]}` - only codes the rung actually
+    found rows for, in the shape `run_crossdomain` folds into the reply. Never renders
+    `supplier`: the field template simply does not name it, which is what keeps a dealer
+    from ever seeing it here without threading the field-reveal grant into this probe.
+    """
+    env: Any = probe_result if jsc.truthy(probe_result) else {}
+    if jsc.truthy(env) and isinstance(jsc.get(env, "output"), dict):
+        env = env["output"]
+    items = _envelope_items(env)
+    by_code: dict[str, list[Any]] = {}
+    for it in items:
+        c = jsc.nullish_str(_field_val(it, "product code")).strip()
+        if not c or c == _EMPTY_VALUE:
+            continue
+        by_code.setdefault(c.upper(), []).append(it)
+
+    def field_by_key(it: Any, k: str) -> Any:
+        f = jsc.find(jsc.get(it, "fields") or [], lambda x: jsc.has(x, "key") and x["key"] == k)
+        return jsc.get(f, "value") if jsc.truthy(f) else None
+
+    out: dict[str, list[str]] = {}
+    for m in missing:
+        code = jsc.js_string(m.get("code") or m.get("_n"))
+        rows = by_code.get(code.upper(), [])
+        if not rows:
+            continue
+        out[code] = [
+            f"{_fmt_xd_value(field_by_key(it, 'outstanding_qty'))} pcs expected "
+            f"{_fmt_xd_value(field_by_key(it, 'expected_date'))}"
+            for it in rows
+        ]
+    return out
+
+
+def _apply_crossdomain_rung(
+    render: dict[str, Any],
+    *,
+    xd: dict[str, Any],
+    parser: dict[str, Any] | None,
+    services: Any,
+    contact_id: Any,
+    space_id: Any,
+    ladder: dict[str, list[str]] | None,
+) -> None:
+    """Mutates `render["_xdBlock"]` in place: tries the ladder's next rung for the codes
+    the first probe found NOTHING for, and swaps the "no X and no Y" sentence for the
+    rung's own wording when it answers (AC-921/AC-922).
+
+    A no-op (H62/AC-924 kept byte-identical) when: the origin has no further rung
+    (AC-923), or the first probe found something for every requested code
+    (`nothing_codes` empty), or the rung probe itself fails - the SAME degrade-not-crash
+    contract the first probe already has.
+    """
+    block = render.get("_xdBlock") if isinstance(render, dict) else None
+    if not isinstance(block, dict):
+        return
+    nothing_codes = block.get("nothing_codes") or []
+    if not nothing_codes:
+        return
+    rung = _next_crossdomain_rung(xd.get("origin_domain"), ladder=ladder)
+    if rung is None:
+        return
+    missing = block.get("nothing_missing") or []
+    args = _crossdomain_rung_probe_args(
+        missing, rung=rung, parser=parser, contact_id=contact_id, space_id=space_id
+    )
+    try:
+        probe_result = services.mcp_probe(args["tool"], args)
+    except Exception:  # noqa: BLE001 - degrades to the existing nothing_note, never a dead turn
+        logger.warning("chatbot: cross-domain %s rung probe did not run", rung, exc_info=True)
+        return
+    lines_by_code = _crossdomain_rung_rows(
+        probe_result if isinstance(probe_result, dict) else {}, missing=missing
+    )
+    if not lines_by_code:
+        # The rung answered NOTHING either - AC-922's wording, one step further than the
+        # existing "no X and no Y".
+        still_nothing_note = (
+            f"No stock, no incoming and no {rung.replace('_', ' ')} for {', '.join(nothing_codes)}."
+        )
+        team = _CROSSDOMAIN_RUNG_TEAM.get(rung)
+        offer = (
+            f" Would you like me to escalate to {jsc.js_string(team)} team?"
+            if team
+            else " Would you like me to escalate this?"
+        )
+        new_note = still_nothing_note + offer
+    else:
+        found = [c for c in nothing_codes if c in lines_by_code]
+        still_nothing = [c for c in nothing_codes if c not in lines_by_code]
+        parts: list[str] = []
+        po_lines = "\n".join(line for c in found for line in lines_by_code[c])
+        parts.append(
+            f"No stock and no incoming for {', '.join(found)}, but a PO is placed:\n{po_lines}"
+        )
+        team = _CROSSDOMAIN_RUNG_TEAM.get(rung)
+        offer = (
+            f" Would you like me to escalate to {jsc.js_string(team)} team?"
+            if team
+            else " Would you like me to escalate this?"
+        )
+        if still_nothing:
+            parts.append(
+                f"No stock, no incoming and no {rung.replace('_', ' ')} for {', '.join(still_nothing)}.{offer}"
+            )
+        else:
+            parts[-1] = parts[-1] + offer
+        new_note = "\n\n".join(parts)
+
+    old_note = block.get("nothing_note") or ""
+    old_block_text = block.get("block") or ""
+    if old_note and old_block_text.endswith(old_note):
+        new_block_text = old_block_text[: -len(old_note)] + new_note
+    elif old_block_text:
+        new_block_text = f"{old_block_text}\n\n{new_note}"
+    else:
+        new_block_text = new_note
+    block["block"] = new_block_text
+    block["any"] = True
+    block["nothing_note"] = new_note
+    block["rung"] = rung
 
 
 def run_crossdomain(
@@ -888,11 +1100,14 @@ def run_crossdomain(
     contact_id: Any,
     space_id: Any = None,
     dry_run: bool = False,
+    crossdomain_ladder: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
-    """`crossdomain-zeroset -> crossdomain-gate -> crossdomain-probe -> crossdomain-render`.
+    """`crossdomain-zeroset -> crossdomain-gate -> crossdomain-probe -> crossdomain-render`,
+    then A7's further ladder rung (`_apply_crossdomain_rung`) when the first probe still
+    left codes with nothing on either side.
 
-    D14: a dry run makes the SAME probe. The read is what a test turn has to reproduce, or
-    console and clone testing prove nothing about production; the writes are what D14
+    D14: a dry run makes the SAME probe(s). The read is what a test turn has to reproduce,
+    or console and clone testing prove nothing about production; the writes are what D14
     suppresses, and this lane has none.
     """
     zeroset = crossdomain_zeroset(
@@ -917,6 +1132,15 @@ def run_crossdomain(
         probe_result if isinstance(probe_result, dict) else {},
         zeroset=xd,
         validator=validator_result,
+    )
+    _apply_crossdomain_rung(
+        render,
+        xd=xd,
+        parser=parser,
+        services=services,
+        contact_id=contact_id,
+        space_id=space_id,
+        ladder=crossdomain_ladder,
     )
     return {"zeroset": zeroset, "render": render}
 

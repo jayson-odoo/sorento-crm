@@ -536,6 +536,17 @@ class SystemSetting(Base):
         server_default='["goods_receive"]',
         default=lambda: ["goods_receive"],
     )
+    # A7 (chatbot-growth-r1, migration 489): the cross-domain probe ladder, per origin
+    # domain. `answer.py::run_crossdomain`'s hard inventory<->incoming pair became the
+    # first rung of this; `purchase_order` is the second rung on `inventory` (Foundre's
+    # rule: "no stock, no incoming, but a PO is placed"). A tenant with
+    # `{"inventory": ["incoming"]}` never probes PO at all.
+    chatbot_crossdomain_ladder = Column(
+        JSONB,
+        nullable=False,
+        server_default='{"inventory": ["incoming", "purchase_order"], "incoming": ["inventory"]}',
+        default=lambda: {"inventory": ["incoming", "purchase_order"], "incoming": ["inventory"]},
+    )
     # Which lanes the CRM is allowed to FINISH, by `branch_kind`, one at a time.
     #
     # `contracts.CRM_COMPLETED_BRANCH_KINDS` says what the code CAN complete; this says

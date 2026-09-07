@@ -192,6 +192,11 @@ DIVERGENCES: list[Divergence] = [
         strip_paths=(
             ("_xdBlock", "block"),
             ("_xdBlock", "any"),
+            # A7 (chatbot-growth-r1): new diagnostic keys, see the blanket entry at the
+            # bottom of this file for the full reason.
+            ("_xdBlock", "nothing_codes"),
+            ("_xdBlock", "nothing_note"),
+            ("_xdBlock", "nothing_missing"),
         ),
     ),
     # OWNER CONSOLE PASS 4, item G (6 Sep 2026): a requested code the PRIMARY domain
@@ -219,7 +224,14 @@ DIVERGENCES: list[Divergence] = [
                 "('No stock for <code>.'), where n8n said nothing at all. Field-scoped to "
                 "`_xdBlock.block`; every other key of the render is still compared."
             ),
-            strip_paths=(("_xdBlock", "block"),),
+            strip_paths=(
+                ("_xdBlock", "block"),
+                # A7 (chatbot-growth-r1): new diagnostic keys, see the blanket entry at
+                # the bottom of this file for the full reason.
+                ("_xdBlock", "nothing_codes"),
+                ("_xdBlock", "nothing_note"),
+                ("_xdBlock", "nothing_missing"),
+            ),
         )
         for name in (
             "exec-13484326",
@@ -546,6 +558,30 @@ DIVERGENCES: list[Divergence] = [
             # over a `suggest_offer` roster is merged through `apply_dym_pick` instead of
             # replacing the scope. n8n has no such arm either.
             ("output", "suggest_offer_pick_merged"),
+        ),
+    ),
+    # A7 (chatbot-growth-r1, AC-921/AC-922): `crossdomain_render`'s `_xdBlock` gained three
+    # diagnostic keys - `nothing_codes`, `nothing_note`, `nothing_missing` - so
+    # `run_crossdomain`'s NEW ladder rung (the purchase_order probe after the existing
+    # inventory<->incoming one) can act on exactly the codes the first probe found nothing
+    # for, without re-deriving them. n8n has no ladder and no equivalent keys; every
+    # existing capture predates A7, so no capture can carry them. Same class as the
+    # owner-ruling-K diagnostics above (a key no capture can contain), field-scoped so the
+    # rest of `_xdBlock` (`block`, `any`, `team`, `origin`, ...) still grades byte-exact.
+    # Behaviour pinned by test_crossdomain_ladder.py, not by these fixtures.
+    Divergence(
+        node="crossdomain-render",
+        fixture=None,
+        hazard="A7 (AC-921/AC-922) - added diagnostics",
+        reason=(
+            "`nothing_codes` / `nothing_note` / `nothing_missing` are new keys the port "
+            "adds to `_xdBlock` for the cross-domain ladder's next rung to read; n8n's "
+            "node has no ladder and no equivalent, so no capture can carry them."
+        ),
+        strip_paths=(
+            ("_xdBlock", "nothing_codes"),
+            ("_xdBlock", "nothing_note"),
+            ("_xdBlock", "nothing_missing"),
         ),
     ),
 ]
