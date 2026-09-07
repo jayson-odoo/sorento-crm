@@ -154,6 +154,28 @@ cases:
       reply_contains: ["SO outstanding (not yet DO)", "DO open (not yet delivered)", "Delivered"]
       no_uuid: true
 
+  # Owner turn 98912914 (8 Sep): the same question with a customer whose name resolves to
+  # several accounts and a code that resolves to a FAMILY (17 `SRTWC286*` variants) picks
+  # `crm_order_management_orders_by_product_list`, not `_orders_list`. That tool dropped
+  # `include_pipeline` end to end (route param, service, ToolSpec), so the answer had the
+  # per customer x product DO rows and no SO line at all. The SO figure now rides on EVERY
+  # products[]/groups[] row and prints after Pending Qty - as a row field, not the
+  # three-line pipeline, which keys on a TOP-LEVEL number and would print DO counts as
+  # quantities across the 3 variants in this row.
+  #   SELECT o.debtor_name, p.product_code, count(distinct o.id) FROM order_lines ol
+  #     JOIN orders o ON o.id = ol.order_id JOIN products p ON p.id = ol.product_id
+  #     WHERE o.debtor_name ILIKE '%heng seng hardware%' AND p.product_code ILIKE 'srtwc286%'
+  #     GROUP BY 1,2;
+  #   -> HENG SENG HARDWARE SDN BHD [A/C III] x SRTWC286-SH / -SH-150 / -SH-200 (6 / 2 / 4 DOs);
+  #      no open SO line for the pair today, so the field reads 0 - the LABEL is what is graded.
+  - name: A3 how many did the customer take - by-product tool carries the SO line per row  # NEW VOCABULARY
+    text: "how many did heng seng hardware take of srtwc286"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["SO outstanding (not yet DO)", "SRTWC286"]
+      no_uuid: true
+
   # `gate.ALLOWS_EMPTY['order'] is False`, so a bare "open DO by customer" has nothing to
   # scope and is refused before the tool runs. The product is the scope; the ANGLE is what
   # this case grades.

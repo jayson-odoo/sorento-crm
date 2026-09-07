@@ -510,6 +510,9 @@ _SUMMARY_FIELDS = (
     ("order_date", "DO Date"),
     ("delivered_quantity", "Delivered Qty"),
     ("pending_quantity", "Pending Qty"),
+    # by-product rows only (owner turn 98912914): the CRM folds the open-SO quantity
+    # into each products[]/groups[] row when asked (`include_pipeline`); absent -> nothing
+    ("so_outstanding_qty", "SO outstanding (not yet DO)"),
     ("delivered_between", "Delivered"),
 )
 
@@ -567,6 +570,7 @@ def _summary_item(customer: Optional[str], row: dict) -> Optional[dict]:
         "order_date": _sl_between(row.get("order_date_from"), row.get("order_date_to")),
         "delivered_quantity": _sl_num(row.get("delivered_quantity")),
         "pending_quantity": _sl_num(row.get("pending_quantity")),
+        "so_outstanding_qty": _sl_num(row.get("so_outstanding_qty")),
         "delivered_between": _sl_between(row.get("delivered_from"), row.get("delivered_to")),
     }
     fields = [

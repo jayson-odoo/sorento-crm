@@ -574,6 +574,12 @@ CATALOG: tuple[ToolSpec, ...] = (
             "OPTIONAL UUID FILTERS: `customer_ids`, `transporter_ids` (canonical UUIDs). "
             "Date window: actual_delivery_date_from / actual_delivery_date_to (YYYY-MM-DD). "
             "For 'any incoming for product X' use crm_incoming_stock_by_product instead.\n\n"
+            "QUANTITY ASK: pass `include_summary=true` when the user asks HOW MANY / how much a customer "
+            "took of a product - the response then carries `summary` (per product and per customer x "
+            "product delivered/pending quantity, counts, date spans). Add `include_pipeline=true` "
+            "alongside it to fold `so_outstanding_qty` (open SO lines not yet a DO, same "
+            "customer_ids/product_ids scope) into EVERY `summary.products` and `summary.groups` row; "
+            "default false, independent of `include_summary`. Omit both for a plain DO list.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
@@ -581,8 +587,8 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (
             "page", "limit", "product_ids", "customer_ids", "transporter_ids",
-            "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "include_summary", "sort", "dir",
-            "contact_id", "space_id",
+            "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "include_summary",
+            "include_pipeline", "sort", "dir", "contact_id", "space_id",
         ),
         domain="orders",
         related_tools=("crm_order_management_orders_list", "crm_incoming_stock_by_product"),

@@ -1526,3 +1526,57 @@ def test_qs_m0_summary_items_absent_unless_a_real_answer(monkeypatch):
     monkeypatch.setattr(_p, "summary_items", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("boom")))
     out2 = env("crm_order_management_orders_list", {**base, "summary": _SUM_M1})
     assert out2["items"] and "summary_items" not in out2 and out2["intro"] == "Here are the orders I found."
+
+
+# ------------------------------------------------ SO outstanding per row (by-product)
+
+_BP_ROW = {"product_code": "SRTWC286", "order_count": 2, "customer_count": 1,
+           "delivered_quantity": 10, "pending_quantity": 3, "so_outstanding_qty": 7}
+_BP_GRP = {"customer": "HENG SENG HARDWARE SDN BHD", **_BP_ROW}
+
+
+def test_by_product_so_outstanding_renders_per_row_after_pending_qty():
+    """Owner turn 98912914: the SO number rides on each products[]/groups[] row of the
+    by-product summary, never at the top level, and the presenter prints it as its own
+    field right after Pending Qty."""
+    out = env("crm_order_management_orders_by_product_list", {
+        "data": [{"order_number": "A1", "debtor_name": "HENG SENG HARDWARE SDN BHD"}],
+        "summary": {"scope": "filter", "row_count": 2, "order_count": 2, "delivered_count": 1,
+                    "pending_count": 1, "customers": ["HENG SENG HARDWARE SDN BHD"], "customer_count": 1,
+                    "products": [_BP_ROW], "groups": [_BP_GRP]},
+    })
+    items = out["summary_items"]
+    assert len(items) == 1
+    keys = [f["key"] for f in items[0]["fields"]]
+    assert keys.index("so_outstanding_qty") == keys.index("pending_quantity") + 1
+    so = next(f for f in items[0]["fields"] if f["key"] == "so_outstanding_qty")
+    assert so == {"key": "so_outstanding_qty", "label": "SO outstanding (not yet DO)", "value": 7}
+    # no top-level key -> the three-line pipeline is NOT prepended (that path would
+    # print DO counts as quantities on a multi-variant row)
+    assert [f["fields"][0]["label"] for f in items] != ["SO outstanding (not yet DO)"]
+
+
+def test_by_product_so_outstanding_zero_still_prints_and_the_total_item_gets_it_free():
+    grp_a = {**_BP_GRP, "so_outstanding_qty": 7}
+    grp_b = {"customer": "QUIET SDN BHD", **_BP_ROW, "so_outstanding_qty": 0}
+    total = {**_BP_ROW, "customer_count": 2, "so_outstanding_qty": 7}
+    out = env("crm_order_management_orders_by_product_list", {
+        "data": [{"order_number": "A1"}],
+        "summary": {"scope": "filter", "row_count": 3, "products": [total], "groups": [grp_a, grp_b]},
+    })
+    items = out["summary_items"]
+    assert items[0]["title"] == "All customers (2) · SRTWC286"
+    so_values = [next(f["value"] for f in it["fields"] if f["key"] == "so_outstanding_qty") for it in items]
+    assert so_values == [7, 7, 0]
+
+
+def test_by_product_summary_without_the_key_renders_no_so_field():
+    row = {k: v for k, v in _BP_ROW.items() if k != "so_outstanding_qty"}
+    out = env("crm_order_management_orders_by_product_list", {
+        "data": [{"order_number": "A1"}],
+        "summary": {"scope": "filter", "row_count": 2, "products": [row],
+                    "groups": [{"customer": "HENG SENG HARDWARE SDN BHD", **row}]},
+    })
+    for it in out["summary_items"]:
+        assert "so_outstanding_qty" not in [f["key"] for f in it["fields"]]
+        assert "SO outstanding (not yet DO)" not in [f["label"] for f in it["fields"]]

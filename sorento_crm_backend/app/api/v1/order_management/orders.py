@@ -733,6 +733,19 @@ async def get_orders_by_product(
             "Send it when the user asks HOW MANY / how much was taken; omit for a plain DO list."
         ),
     ),
+    include_pipeline: bool = Query(
+        False,
+        description=(
+            "true = also fold so_outstanding_qty (open SO lines for the same "
+            "customer_ids/product_ids scope) into EVERY `summary.products` and "
+            "`summary.groups` row, so a render presenter can show the SO outstanding "
+            "leg next to each customer x product's DO figures. Opt-in and independent of "
+            "`include_summary` on purpose: the CRM's own chatbot lane sets it alongside "
+            "`include_summary` on a quantity ask; a caller that only asks for "
+            "`include_summary` (every pre-existing caller, n8n included) gets exactly "
+            "the summary shape it got before this field existed."
+        ),
+    ),
     order_date_from: Optional[str] = Query(
         None,
         description=(
@@ -812,6 +825,7 @@ async def get_orders_by_product(
             has_actual_delivery_date=has_actual_delivery_date,
             order_status=order_status,
             include_summary=include_summary,
+            include_pipeline=include_pipeline,
             order_date_from=_parse_flex_date(order_date_from),
             order_date_to=_parse_flex_date(order_date_to, end_of_day=True),
             actual_delivery_date_from=_parse_flex_date(actual_delivery_date_from),

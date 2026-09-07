@@ -216,6 +216,83 @@ def so_outstanding_summary(
     }
 
 
+def stamp_so_outstanding_rows(
+    db, summary: dict, *, customer_ids: Optional[list[str]] = None, product_ids=None
+) -> None:
+    """Fold `so_outstanding_qty` into EVERY `summary["products"]` row (per product code)
+    and EVERY `summary["groups"]` row (per customer x product) - the by-product answer's
+    SO leg (owner turn 98912914, "how many did heng seng hardware take of srtwc286").
+
+    Per row ONLY, never at the top level of this summary: the MCP presenter's
+    `_pipeline_summary_items` keys on a top-level `so_outstanding_qty` and, with more
+    than one product variant in the row (the owner's case has 3), prints DO COUNTS as
+    "DO open" / "Delivered". `so_outstanding_summary` above stays the orders-list
+    route's top-level leg; this is the by-product route's.
+
+    One grouped query over open SO lines (`line_status='open'`, ordered - delivered > 0)
+    by (customer name, product code); the per-product figure is the sum of its groups.
+    Scoped by the SAME typed `customer_ids` / `product_ids` UUID filters
+    `stamp_order_summary` gets, under the same by-hand company predicates (see its
+    comment - a column-only query gets no listener criteria).
+
+    Group key: `stamp_order_summary` names a group by the DO's `debtor_name` (blank ->
+    the customer name); `SalesOrder` carries only `customer_id`, so this side joins
+    `Customer` and keys on `customer_name`. KNOWN GAP: a DO whose debtor_name differs
+    from its customer's name sits in a group this cannot match - that group reads 0
+    while the product total still carries the quantity
+    (`tests/test_order_by_product_so_outstanding.py`).
+
+    Best-effort like `stamp_order_summary`: any failure warns and leaves the rows as
+    they were, so a DO answer never dies because its SO leg could not be computed.
+    """
+    from app.models.order import SalesOrder, SalesOrderLine
+
+    products = summary.get("products") if isinstance(summary.get("products"), list) else []
+    groups = summary.get("groups") if isinstance(summary.get("groups"), list) else []
+    if not products and not groups:
+        return
+    pids = [str(p) for p in (product_ids or []) if p]
+    try:
+        _scope = get_company_scope(db)
+        _p_so = build_company_predicate(SalesOrder, _scope)
+        _p_line = build_company_predicate(SalesOrderLine, _scope)
+        _p_cust = build_company_predicate(Customer, _scope)
+        _scoped = lambda q, pred: q.filter(pred) if pred is not None else q  # noqa: E731
+
+        delta = SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered
+        name_col = func.btrim(Customer.customer_name)
+        _cust_on = Customer.id == SalesOrder.customer_id
+        if _p_cust is not None:
+            _cust_on = and_(_cust_on, _p_cust)
+        q = (
+            db.query(name_col, Product.product_code, func.sum(delta))
+            .select_from(SalesOrderLine)
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .join(Product, Product.id == SalesOrderLine.product_id)
+            .outerjoin(Customer, _cust_on)
+            .filter(SalesOrderLine.line_status == "open", delta > 0)
+        )
+        if customer_ids:
+            q = q.filter(SalesOrder.customer_id.in_([str(c) for c in customer_ids]))
+        if pids:
+            q = q.filter(SalesOrderLine.product_id.in_(pids))
+        q = _scoped(_scoped(q, _p_so), _p_line)
+        per_group: dict[tuple, Any] = {}
+        per_product: dict[str, Any] = {}
+        for cname, code, qty in q.group_by(name_col, Product.product_code).all():
+            n = _plain_number(qty) or 0
+            per_group[((cname or "").strip() or None, code)] = n
+            per_product[code] = (per_product.get(code) or 0) + n
+        for p in products:
+            if isinstance(p, dict) and p.get("product_code"):
+                p["so_outstanding_qty"] = per_product.get(p["product_code"], 0)
+        for g in groups:
+            if isinstance(g, dict) and g.get("product_code"):
+                g["so_outstanding_qty"] = per_group.get((g.get("customer"), g["product_code"]), 0)
+    except Exception as exc:  # pragma: no cover - best-effort by contract
+        logger.warning("stamp_so_outstanding_rows skipped: %s", exc)
+
+
 _ORDER_GROUP_AXIS_KEY: dict[str, str] = {
     "customer": "customer",
     "transporter": "transporter",
@@ -1457,8 +1534,13 @@ class OrderService:
         transporter_ids: Optional[list[str]] = None,
         order_status: Optional[str] = None,
         include_summary: bool = False,
+        include_pipeline: bool = False,
     ):
         """List distinct orders matched by product search.
+
+        ``include_pipeline`` (with ``include_summary``) adds ``so_outstanding_qty`` to
+        every ``summary.products`` / ``summary.groups`` row - see
+        ``stamp_so_outstanding_rows``. Alone it adds nothing.
 
         ``order_status`` is the same 'outstanding' | 'delivered' bucket as
         ``list_orders`` (canonical delivered predicate), so the two order tools
@@ -1840,6 +1922,13 @@ class OrderService:
                 summary_q,
                 product_ids=[*(_product_uuid_filter or []), *(product_ids or [])],
             )
+            if include_pipeline and isinstance(payload.get("summary"), dict):
+                stamp_so_outstanding_rows(
+                    self.db,
+                    payload["summary"],
+                    customer_ids=_customer_uuid_filter,
+                    product_ids=[*(_product_uuid_filter or []), *(product_ids or [])],
+                )
         # Per-company labelling when the lookup spans more than one company - on the
         # empty path too, so an empty answer can name the companies searched. Both
         # the typed uuid filter and the ids resolved from free-text product tokens
