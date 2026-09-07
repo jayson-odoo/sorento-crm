@@ -24,6 +24,7 @@ import {
   Sparkles,
   ImageIcon,
   Minus,
+  MoreHorizontal,
   Plus,
   Redo2,
   RectangleHorizontal,
@@ -34,7 +35,7 @@ import {
   Undo2,
   Ungroup,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -211,6 +212,12 @@ export function CanvasToolbar({
   selectionIsGroup,
   trailing,
 }: CanvasToolbarProps) {
+  // Controlled rather than left to Radix's own uncontrolled state: the trigger
+  // only listens for `pointerdown` by default (touch/mouse), so a plain
+  // `click` - keyboard activation via the accessibility tree, and how the
+  // component's own tests drive it - would otherwise never open it. `onClick`
+  // below opens it explicitly alongside Radix's own pointerdown handling.
+  const [trailingOverflowOpen, setTrailingOverflowOpen] = useState(false);
   return (
     // `relative` is load-bearing, not decoration (r4d): each button's label is
     // an `sr-only` span, which is `position: absolute`, and a static row is not
@@ -339,11 +346,46 @@ export function CanvasToolbar({
           {/* `ml-auto` pushes this group to the true right end (AC-S7-6)
               rather than sitting flush after Ungroup - the row scrolls
               (`overflow-x-auto` on the outer div) rather than clipping it
-              at 375px, same as every other group here. */}
-          <div className="ml-auto flex shrink-0 items-center gap-1">
+              at 375px, same as every other group here.
+
+              Below `md` this inline copy of `trailing` is hidden and the
+              single overflow trigger just after it (also `ml-auto`, so
+              whichever of the two is actually in flow still lands at the
+              right end) takes over instead - collapsing three-plus icon
+              buttons into one at a width this toolbar already scrolls
+              sideways to fit (S7, grill G3, AC-S7-3). Both render the SAME
+              `trailing` node - not a re-created copy - so the menu's
+              actions stay wired to the exact handlers the inline group
+              has. */}
+          <div
+            data-testid="toolbar-trailing-inline"
+            className="ml-auto hidden shrink-0 items-center gap-1 md:flex"
+          >
             <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
             {trailing}
           </div>
+          <DropdownMenu open={trailingOverflowOpen} onOpenChange={setTrailingOverflowOpen}>
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    data-testid="toolbar-trailing-overflow-trigger"
+                    className="ml-auto h-8 w-8 shrink-0 p-0 md:hidden"
+                    onClick={() => setTrailingOverflowOpen(true)}
+                  >
+                    <MoreHorizontal className="size-4" />
+                    <span className="sr-only">More actions</span>
+                  </Button>
+                </DropdownMenuTrigger>
+              </TooltipTrigger>
+              <TooltipContent side="bottom" className="text-xs">
+                More actions
+              </TooltipContent>
+            </Tooltip>
+            <DropdownMenuContent align="end">{trailing}</DropdownMenuContent>
+          </DropdownMenu>
         </>
       )}
     </div>
