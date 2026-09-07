@@ -22,7 +22,6 @@ The filename (without extension) is used as the **SPO number**. Each row in the 
 | **Location** / **Warehouse** / **Warehouse Code** | Yes | Looked up against the warehouse master. |
 | **Qty** / **Quantity** / **Allocated** / **Allocated Quantity** | Yes | Integer. |
 | **Loading Date** | Yes | Date of loading. The cell also carries the **shipping container number** (AutoCount's `Ref` field): a leading `F-` and a trailing `(vessel)` note are ignored and the container token (four letters, seven digits) is kept, for example `F-WHSU6476731 (MOCHA)` becomes `WHSU6476731`. If no such token is present, the text after the first space is used. |
-| **Transfer From** / **SPO Number** / **From Doc No.** / **From Document No.** | Optional | Used to override the SPO number per row, or to link a row to a specific source document. |
 
 Rows are grouped by `(SPO number, product, warehouse)` - duplicate rows for the same combination are summed into a single allocation.
 
