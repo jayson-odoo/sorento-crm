@@ -7,6 +7,15 @@ before the PR is opened, and once against PRODUCTION after the deploy; the outpu
 the PR (or the deploy note). A case that fails is a finding to fix or to explain - never one to
 soften.
 
+**Run it after EVERY deploy, not only a chatbot PR's own (LESSONS-LEARNT.md #103).** The
+chatbot's entity resolver is SHARED with every other admin-data reference table (`AttachmentType`,
+`Customer`, `Product`, ...), so a migration that seeds or edits a row in one of those tables can
+change chatbot resolution even when its own PR has no chatbot file in the diff - #707's
+`485_shipment_line_photo_type.py` (an unrelated SCM feature) deployed alongside #713 and broke
+"photo" resolution three minutes after the deploy, and `git diff` on #713's own files showed
+nothing wrong, because nothing in #713 was. A deploy that touches ANY reference table the
+resolver searches is chatbot-relevant.
+
 ```bash
 cd sorento_crm_backend
 venv/bin/python scripts/chatbot_console_check.py \
