@@ -32,13 +32,13 @@ row can be known retired retrospectively, and the two setters stamp it the
 next time the document is pushed.
 
 Revision ID: 488_spo_alloc_stated_received
-Revises: 487_chatbot_warehouse_cue
+Revises: 488_contact_field_reveals
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "488_spo_alloc_stated_received"
-down_revision = "487_chatbot_warehouse_cue"
+down_revision = "488_contact_field_reveals"
 branch_labels = None
 depends_on = None
 

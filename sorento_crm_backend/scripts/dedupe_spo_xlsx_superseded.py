@@ -151,6 +151,12 @@ def _retire_older_dockeys(rows: list[SPOAllocation], dry_run: bool) -> int:
     for row in rows:
         if row.retired_at is not None:
             continue
+        # The ingest's DocKey-change path runs right after the spo_number
+        # guard proved the older DocKey's rows are all closed; historical
+        # data gives this sweep no such guarantee, so it retires only a
+        # closed row and leaves an open one for its own push to settle.
+        if row.line_status != LINE_CLOSED:
+            continue
         marked += 1
         if dry_run:
             continue
