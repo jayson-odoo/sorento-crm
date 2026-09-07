@@ -1,6 +1,6 @@
 # PLAN - Chatbot growth r1: richer tools, one dialogue state, field reveal, trace
 
-Status: APPROVED by owner 7 Sep 2026 ("good to go"); lane 1 `feat/chatbot-growth-data` IN PROGRESS. UAC: `chatbot-growth-r1-acceptance-criteria.md`.
+Status: APPROVED by owner 7 Sep 2026 ("good to go"); lane 1 `feat/chatbot-growth-data` IN PROGRESS (A0-A9 + parser reachability + DOMAIN_SPEC + trace persistence landed; Slice C field reveal and the AC-990 console-pass artifact still open). UAC: `chatbot-growth-r1-acceptance-criteria.md`.
 Assumed, not picked: the order summary shape is the three-line pipeline (SO outstanding / DO open / delivered); the owner ended the review before choosing, so AC-905b ships that shape and the console pass will show it.
 Predecessor: `PLAN-chatbot-turn-engine.md` (parity port, LIVE on prod at 043e2a0be). This plan
 grows the engine along the "Growth axes" table that plan names, and stays at the **parity**
@@ -134,6 +134,76 @@ with `intents`, `axis`, `bare_entity_type`, `switch_words`, `tools`, `escalation
 `DEFAULT_UNSUPPORTED_DOMAINS` and the tool filter become views over it; a guardrail test
 asserts every `DOMAIN_HINTS` value has a row and every tool in `CHATBOT_READ_ONLY_TOOLS` is
 claimed by exactly one domain. The parser schema enums are generated from the same table.
+
+**As built (7 Sep 2026), three deviations, each with its reason:**
+
+* **No `axis` field, and `AXIS_BY_DOMAIN` is NOT a view.** That table and five others
+  (`DOMAIN_SUBJECT_AXIS`, `DOMAIN_SUBJECT_HINT`, `DOMAIN_BLOCKED_HINTS`,
+  `MEMBER_OFFER_FILTER_HINTS`, `DOMAIN_BROADEN_BLOCKED_HINTS`) carry a per-domain HAZARD,
+  not a per-domain fact: every row names the live turn that earned it (owner rulings K2 to
+  K4, C1, the 2026-08-09 promotion-brand leak). Folding them in keeps the shape and loses
+  the reason, which is the mistake `PRINCIPLES.md` calls copying a mechanism without its
+  justification. They stay in `head/output_exchange.py` beside their evidence, and
+  `test_domain_spec.py` asserts they stay there. Two views instead of the planned two plus
+  four: `BARE_ENTITY_TYPE_BY_DOMAIN` and `DOMAIN_SWITCH_WORDS`, plus `DOMAIN_HINTS`,
+  `INTENT_HINTS`, `DEFAULT_UNSUPPORTED_DOMAINS` and the tool pool.
+* **"Claimed by exactly one domain" is delivered as "claimed by exactly one domain OR
+  named in `UNDOMAINED_CHATBOT_TOOLS`".** Twelve of the thirty-seven read-only tools answer
+  surfaces the chatbot does not route to by `domain_hint` at all (projects, complaints,
+  SLA) or are helpers a lane reaches for by name (`crm_lookup_resolve`, `user_guides_read`,
+  `crm_system_tool_capabilities_summary`). Giving each one a domain would put twelve
+  members into `DOMAIN_HINTS` that the parser must never emit. The two sets are asserted
+  disjoint and exhaustive, so no tool is unaccounted for, and `CHATBOT_READ_ONLY_TOOLS` is
+  their union rather than a third list.
+* **The two CORE-side copies of `DEFAULT_UNSUPPORTED_DOMAINS` read the table through a
+  doorway, and the DDL `server_default` stays a literal.** AC-002 forbids core importing
+  `app/services/chatbot/` and `test_import_boundary.py` fails naming the importer, so
+  `SystemSetting.chatbot_unsupported_domains`' Python default and `settings.py`'s
+  null-reset table both call `app/modules/chatbot/lane_vocabulary.default_unsupported_domains()`
+  (the module's existing doorway, `completed_lane_kinds` is the precedent). The column's
+  `server_default` cannot be computed at DDL time and must equal what migration 488 wrote,
+  so it stays a string, pinned to the derived list by a test that names the migration a
+  change would need. Migration 488's own literal is frozen history and untouched.
+* **The FE fallback is deleted, not corrected.** `chatbotSettingsService.FALLBACKS`
+  carried a fifth copy, already stale at `['goods_receive', 'spo_allocation']`. It is now
+  `[]`: the column is NOT NULL with a server default, `GET /settings` omits the key only
+  when there is no settings row at all, and in that state `POST /settings/general` answers
+  404, so the screen can neither read a wrong default nor save an empty list over
+  anything.
+
+**Post-deploy, Slice A (mandatory, not optional).** Two steps, in this order, and neither
+happens by itself:
+
+1. **Seed the embeddings for the two new MCP tools.** Verified 7 Sep 2026:
+   `app/main.py`'s `startup_event` calls `mcp_tool_registry_service.sync_catalog`, which
+   writes/updates the `mcp_tools` ROW for every catalogue spec and writes NO embedding at
+   all. The chatbot picks its tool by cosine search over `embedding_chunks` where
+   `source_type = 'mcp_tool'`, so an unseeded tool is invisible to every turn no matter how
+   the customer phrases the question. The note stays.
+
+   ```bash
+   # in sorento_crm_backend/, against the target environment's DATABASE_URL
+   venv/bin/python -m app.scripts.seed_mcp_tool_capabilities \
+     --only crm_procurement_purchase_orders_placed_list --drain
+   venv/bin/python -m app.scripts.seed_mcp_tool_capabilities \
+     --only crm_procurement_spo_allocations_last_receipt_list --drain
+   ```
+
+   `--drain` processes the queued jobs in the same run, so no worker is required; drop it
+   and the RQ worker picks them up instead. Idempotent - a second run supersedes the prior
+   chunks rather than duplicating them. Verify with
+   `SELECT source_id FROM embedding_chunks WHERE source_type = 'mcp_tool' AND source_id
+   LIKE '%purchase_orders_placed%' OR source_id LIKE '%spo_allocations_last_receipt%';`
+   (two rows expected).
+
+2. **Move the `chatbot_semantic_parser` `production` label** onto the version migration
+   `490_chatbot_parser_growth` published, in Settings > AI Prompts. Until that move the
+   parser has no vocabulary for `so_outstanding`, `purchase_order` / `check_po`, the SPO
+   "last in" phrasing, `group_by` or `top_n`, so the new tools are reachable only by a
+   direct MCP call. PROD's label is on v1 = the FULL body and dev's is on the SLIM one;
+   the migration publishes BOTH texts unlabelled, so pick the one whose predecessor the
+   environment is currently on. Rolling back is the reverse label move.
+
 
 ### Slice B - Dialogue state: focus + open question, single writer
 

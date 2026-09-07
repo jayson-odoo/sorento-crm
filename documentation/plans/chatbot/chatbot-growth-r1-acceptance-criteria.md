@@ -132,6 +132,35 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
   `DEFAULT_UNSUPPORTED_DOMAINS` have no independent literal; each is derived from the table.
   Evidence: pytest asserting identity with the derived views; grep in review.
 
+  **As built 7 Sep 2026** (`tests/chatbot/test_domain_spec.py`, 39 assertions). Four
+  deviations, each argued in full in the plan's Slice A `DOMAIN_SPEC` block:
+
+  1. `AXIS_BY_DOMAIN` is NOT derived and keeps its literal, with five other per-domain
+     HAZARD tables. Each of their rows names the live turn that earned it; a uniform table
+     keeps the shape and loses the reason. A test asserts they stay in
+     `head/output_exchange.py`, so a later "finish the job" pass has to argue with it.
+     `BARE_ENTITY_TYPE_BY_DOMAIN`, `DOMAIN_SWITCH_WORDS`, `DEFAULT_UNSUPPORTED_DOMAINS`,
+     `DOMAIN_HINTS`, `INTENT_HINTS` and `CHATBOT_READ_ONLY_TOOLS` ARE derived, each
+     asserted equal to a hand-copied snapshot of the literal it replaced (taken before the
+     deletion, extended by the `purchase_order` entries).
+  2. AC-930's "claimed by exactly one domain" is delivered as "claimed by exactly one
+     domain OR named in `UNDOMAINED_CHATBOT_TOOLS`" - twelve of the thirty-seven tools
+     answer surfaces the chatbot does not route to by `domain_hint`. The two sets are
+     asserted disjoint and exhaustive.
+  3. The parser schema enums are NOT generated from the table. `domain_hint` and
+     `intent_hint` are `string_or_null` on the wire by an explicit, documented contract
+     (`head/parser._build_json_schema`): the parser legitimately emits values the enum does
+     not cover, `output_exchange` normalises several, and `coerce_domain_hint` is the one
+     guard. `contracts.DOMAIN_HINTS` / `INTENT_HINTS` - which the CODE is written against,
+     and which that guard reads - are the generated pair. `group_by`, a key with no legacy
+     emissions, IS a schema enum.
+  4. `SystemSetting.chatbot_unsupported_domains`' `server_default` stays a DDL literal
+     (it cannot be computed at DDL time and must equal migration 488's), pinned by test.
+     Its Python default and `settings.py`'s null-reset table read the table through
+     `app/modules/chatbot/lane_vocabulary.default_unsupported_domains()`, because AC-002
+     forbids core importing the package. The frontend's fifth copy is deleted rather than
+     corrected.
+
 ## D. Dialogue state
 
 - AC-940 A product asked at turn N with no product named at turn N+4 (TTL 3) does NOT carry;
@@ -202,6 +231,20 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
 - AC-970 `GET /system/chatbot/turns/{id}` returns `trace_detail` with stages, parse, decay,
   open_question, focus, tool, crossdomain, reveals and session diff; envelope truncated at
   8 KB with a truncation marker. Evidence: pytest on a real turn through the engine.
+
+  **Writer half delivered by this lane, 7 Sep 2026** (`tests/chatbot/test_trace_persistence.py`).
+  `TurnTrace.add`'s events were appended to a list nothing persisted, so the reader would
+  have shown empty `tool` / `crossdomain` / `reveals` sections on every real turn. They now
+  go into the SAME `chatbot.turns.trace` array, after every stage record, as
+  `{"kind": ..., "at": ..., **payload}` - the flat shape `trace_detail._kind_records` keys
+  on. The 8 KB envelope cap is applied at WRITE time and truncates on encoded BYTES with a
+  `truncated` marker, so the row cannot grow without bound and a multibyte envelope is
+  never cut mid-character. The test drives a real turn through `engine.run_turn`, reads the
+  column, and renders it with a verbatim copy of `trace_detail`'s `_tool` / `_reveals` /
+  `_cap_envelope` (PR #733 is not an ancestor of this branch; delete the copies and import
+  the module once it merges). `test_trace_legibility.py` now asserts prose of the entries
+  WITHOUT a `kind`, since a tool call's raw args and MCP envelope are technical detail by
+  design.
 - AC-971 Every focus rule that fires writes one `focus` trace entry naming the rule, slot,
   before and after; every decayed slot writes one `decay` entry. Evidence: pytest asserting
   the entries for the AC-940 to AC-946 worlds.
