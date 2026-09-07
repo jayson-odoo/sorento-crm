@@ -64,13 +64,13 @@ def _status_id(db, code: str) -> str:
 
 
 def _do(db, *, cust, prod, wh, qty, status_code, delivered_on: date | None, number=None,
-        company_id: str = DEFAULT_COMPANY_ID):
+        company_id: str = DEFAULT_COMPANY_ID, ordered_on: date | None = None):
     """One DO with one line of `qty` for `prod`."""
     o = order(db, company_id=company_id, customer_id=cust.id, number=number)
     o.debtor_name = cust.customer_name
     o.order_status_id = _status_id(db, status_code)
     o.actual_delivery_date = delivered_on
-    o.order_date = datetime(2026, 1, 1)
+    o.order_date = ordered_on or date(2026, 1, 1)
     order_line(db, company_id=company_id, order_id=o.id, product_id=prod.id,
                warehouse_id=wh.id, quantity=qty)
     db.flush()
@@ -108,7 +108,8 @@ def test_qs_c1_summary_is_filter_wide_and_canonically_delivered(db, scenario):
     assert s["delivered_from"] == "2026-03-02" and s["delivered_to"] == "2026-07-15"
     assert s["products"] == [
         {"product_code": "SRTWC8605", "order_count": 5, "customer_count": 1, "delivered_quantity": 48, "pending_quantity": 17,
-         "delivered_from": "2026-03-02", "delivered_to": "2026-07-15"}
+         "delivered_from": "2026-03-02", "delivered_to": "2026-07-15",
+         "order_date_from": "2026-01-01", "order_date_to": "2026-01-01"}
     ]
     # integral quantities are ints, not "48.0000"
     assert isinstance(s["products"][0]["delivered_quantity"], int)
@@ -116,7 +117,8 @@ def test_qs_c1_summary_is_filter_wide_and_canonically_delivered(db, scenario):
     assert s["groups"] == [
         {"customer": "ECO WORLD SDN BHD", "product_code": "SRTWC8605",
          "order_count": 5, "delivered_quantity": 48, "pending_quantity": 17,
-         "delivered_from": "2026-03-02", "delivered_to": "2026-07-15"}
+         "delivered_from": "2026-03-02", "delivered_to": "2026-07-15",
+         "order_date_from": "2026-01-01", "order_date_to": "2026-01-01"}
     ]
     assert "groups_truncated" not in s
 
@@ -177,10 +179,12 @@ def test_qs_c4_two_customers_are_counted_and_named(db, scenario):
     assert s["groups"] == [
         {"customer": "ECO WORLD SDN BHD", "product_code": "SRTWC8605",
          "order_count": 5, "delivered_quantity": 48, "pending_quantity": 17,
-         "delivered_from": "2026-03-02", "delivered_to": "2026-07-15"},
+         "delivered_from": "2026-03-02", "delivered_to": "2026-07-15",
+         "order_date_from": "2026-01-01", "order_date_to": "2026-01-01"},
         {"customer": "HANLIM TRADING SDN BHD", "product_code": "SRTWC8605",
          "order_count": 1, "delivered_quantity": 7, "pending_quantity": 0,
-         "delivered_from": "2026-08-01", "delivered_to": "2026-08-01"},
+         "delivered_from": "2026-08-01", "delivered_to": "2026-08-01",
+         "order_date_from": "2026-01-01", "order_date_to": "2026-01-01"},
     ]
 
 
@@ -216,7 +220,8 @@ def test_qs_c1b_delivered_bucket_and_summary_agree(db, scenario):
     s = result["summary"]
     assert s["order_count"] == 3 and s["delivered_count"] == 3 and s["pending_count"] == 0
     assert s["products"][0] == {"product_code": "SRTWC8605", "order_count": 3, "customer_count": 1, "delivered_quantity": 48,
-                                "pending_quantity": 0, "delivered_from": "2026-03-02", "delivered_to": "2026-07-15"}
+                                "pending_quantity": 0, "delivered_from": "2026-03-02", "delivered_to": "2026-07-15",
+                                "order_date_from": "2026-01-01", "order_date_to": "2026-01-01"}
 
 
 # ------------------------------------------------------- list_orders_by_product
@@ -232,8 +237,24 @@ def test_qs_c6_by_product_accepts_delivered_bucket(db, scenario):
     assert s["delivered_count"] == 3 and s["pending_count"] == 0
     assert s["products"] == [
         {"product_code": "SRTWC8605", "order_count": 3, "customer_count": 1, "delivered_quantity": 48, "pending_quantity": 0,
-         "delivered_from": "2026-03-02", "delivered_to": "2026-07-15"}
+         "delivered_from": "2026-03-02", "delivered_to": "2026-07-15",
+         "order_date_from": "2026-01-01", "order_date_to": "2026-01-01"}
     ]
+
+
+def test_qs_c10_order_date_span_covers_undelivered_too(db, scenario):
+    """AC4.2: order_date_from/to spans EVERY DO in the row, delivered or not - so
+    the earliest date can belong to an undelivered DO while delivered_from stays
+    later (the delivered subset)."""
+    cust, prod, wh = scenario
+    _do(db, cust=cust, prod=prod, wh=wh, qty=4, status_code="NEW", delivered_on=None,
+        ordered_on=date(2025, 12, 1))  # earliest order_date of the whole row, never delivered
+    db.commit()
+
+    s = OrderService(db).list_orders(include_summary=True, customer_ids=[cust.id], product_ids=[prod.id])["summary"]
+    assert s["products"][0]["delivered_from"] == "2026-03-02"  # unchanged - delivered subset only
+    assert s["products"][0]["order_date_from"] == "2025-12-01"  # the new undelivered DO's date
+    assert s["products"][0]["order_date_to"] == "2026-01-01"    # the rest of the scenario's DOs
 
 
 def test_qs_c7_by_product_outstanding_bucket_is_the_negation(db, scenario):
@@ -246,9 +267,11 @@ def test_qs_c7_by_product_outstanding_bucket_is_the_negation(db, scenario):
     assert s["delivered_count"] == 0 and s["pending_count"] == 2
     assert "delivered_from" not in s and "delivered_to" not in s
     assert s["products"] == [
-        {"product_code": "SRTWC8605", "order_count": 2, "customer_count": 1, "delivered_quantity": 0, "pending_quantity": 17}
+        {"product_code": "SRTWC8605", "order_count": 2, "customer_count": 1, "delivered_quantity": 0, "pending_quantity": 17,
+         "order_date_from": "2026-01-01", "order_date_to": "2026-01-01"}
     ]
     assert "delivered_from" not in s["groups"][0]  # nothing delivered -> no span on the group either
+    assert s["groups"][0]["order_date_from"] == "2026-01-01"  # order_date span present regardless
 
 
 def test_qs_c6b_by_product_summary_without_bucket_matches_list_orders(db, scenario):
@@ -307,6 +330,75 @@ def test_qs_c3b_null_status_with_a_date_is_pending_in_quantity_too(db, scenario)
     s = OrderService(db).list_orders(include_summary=True, customer_ids=[cust.id], product_ids=[prod.id])["summary"]
     assert s["order_count"] == 6 and s["delivered_count"] == 3 and s["pending_count"] == 3
     assert s["products"][0]["pending_quantity"] == 17 + 9
+
+
+# -------------------------------------------------------- product-code search
+
+def test_query_matches_line_product_code(db):
+    """AC1: the DO grid free-text search box matches a line's product code, and
+    existing order-number matching keeps working alongside it."""
+    cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ACME SDN BHD")
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID)
+    matching_prod = product(db, company_id=DEFAULT_COMPANY_ID, code="SRTWC8518-SH")
+    other_prod = product(db, company_id=DEFAULT_COMPANY_ID, code="SRTWC0001-XX")
+    with_match = _do(db, cust=cust, prod=matching_prod, wh=wh, qty=1, status_code="NEW", delivered_on=None)
+    without_match = _do(db, cust=cust, prod=other_prod, wh=wh, qty=1, status_code="NEW", delivered_on=None)
+    db.commit()
+
+    svc = OrderService(db)
+    by_code = svc.list_orders(query="srtwc8518")
+    assert {o.id for o in by_code["data"]} == {with_match.id}
+
+    by_number = svc.list_orders(query=without_match.order_number)
+    assert {o.id for o in by_number["data"]} == {without_match.id}
+
+
+def test_quick_search_via_list_query_matches_line_product_code(db):
+    """AC1.3: `POST /api/v1/list-query/search` resource `orders` with a
+    `quick_search` on a line's product code returns the same match as the plain
+    `query` param above. `ListQuerySearchService._search_orders` forwards
+    `quick_search` straight into `OrderService.list_orders(query=...)` (see
+    `app/services/list_query_search_service.py` ~line 62) - this pins that wiring
+    directly rather than through `.search()`, which needs a DB-seeded
+    `list_query_resources` row this blank scratch schema does not carry."""
+    from app.schemas.list_query import ListSearchRequest
+    from app.services.list_query_search_service import ListQuerySearchService
+
+    cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ACME SDN BHD")
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID)
+    matching_prod = product(db, company_id=DEFAULT_COMPANY_ID, code="SRTWC8518-SH")
+    other_prod = product(db, company_id=DEFAULT_COMPANY_ID, code="SRTWC0001-XX")
+    with_match = _do(db, cust=cust, prod=matching_prod, wh=wh, qty=1, status_code="NEW", delivered_on=None)
+    _do(db, cust=cust, prod=other_prod, wh=wh, qty=1, status_code="NEW", delivered_on=None)
+    db.commit()
+
+    req = ListSearchRequest(resource="orders", quick_search="srtwc8518")
+    svc = ListQuerySearchService(db)
+    result = svc._search_orders(req, clause=None, sort_field="created_at", sort_dir="asc")
+
+    assert {row.id for row in result["data"]} == {with_match.id}
+
+
+def test_query_product_code_match_respects_company_scope(db):
+    """AC1.4: a product-code match on another company's DO must not leak in."""
+    cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ACME SDN BHD")
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID)
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="SRTWC9999-ZZ")
+    ours = _do(db, cust=cust, prod=prod, wh=wh, qty=1, status_code="NEW", delivered_on=None)
+
+    m_cust = customer(db, company_id=MOCHA_ID, name="MOCHA BUYER SDN BHD")
+    m_wh = warehouse(db, company_id=MOCHA_ID)
+    m_prod = product(db, company_id=MOCHA_ID, code="SRTWC9999-ZZ")
+    _do(db, cust=m_cust, prod=m_prod, wh=m_wh, qty=1, status_code="NEW", delivered_on=None, company_id=MOCHA_ID)
+    db.commit()
+
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    result = OrderService(db).list_orders(query="srtwc9999")
+    assert {o.id for o in result["data"]} == {ours.id}
+
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID, MOCHA_ID}))
+    result2 = OrderService(db).list_orders(query="srtwc9999")
+    assert len(result2["data"]) == 2
 
 
 def test_qs_c9_company_scope_applies_inside_the_aggregate(db, scenario):

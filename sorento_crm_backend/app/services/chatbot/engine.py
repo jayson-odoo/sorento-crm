@@ -40,6 +40,7 @@ from app.services.chatbot.contracts import (
     SELF_CLOSING_BRANCH_KINDS,
     TURN_FAILURE_STAGES,
     Envelope,
+    coerce_domain_hint,
 )
 from app.services.chatbot.delegate import delegate_for, enabled_lanes_from
 from app.services.error_handler import AppException
@@ -378,6 +379,26 @@ def _inject_harness_session(
     if "referenced_result_set" in present:
         session_vars["referenced_result_set"] = _harness_value(envelope, "referenced_result_set")
     return {**session_block, "session_vars": session_vars}
+
+
+def _drop_unknown_carried_domain(variables: Any) -> None:
+    """F3: an out-of-enum `domain_hint` in the contact's MEMORY, dropped on the way in.
+
+    The emission guard in `output_exchange` is not enough on its own. Live turn
+    fca4aa5e-806b-4403-aa2e-fc2d0961fb2d parsed cleanly as `incoming` and still reached
+    the gate as `purchasing`: the carried `variables.domain_hint` was `"purchasing"` (a
+    TEAM name written by an earlier turn, or by n8n, before that guard existed), and
+    `resolve_gate.retype_shipment_miss` adopted it over this turn's own domain. Seven more
+    sites in `output_exchange` inherit the carried domain the same way, so the value is
+    cleaned ONCE here, where the stored state enters the turn, rather than at each of them.
+
+    Mutates in place, deliberately: this dict IS `session_block.session_vars.variables`,
+    which becomes both `parent_input.previous_conversation_state` and `ctx.session` - the
+    two objects every carried-domain reader in the turn holds.
+    """
+    if not isinstance(variables, dict) or "domain_hint" not in variables:
+        return
+    variables["domain_hint"] = coerce_domain_hint(variables.get("domain_hint"))
 
 
 def _pending_kind(variables: dict[str, Any]) -> str | None:
@@ -1145,6 +1166,7 @@ def _run_stages(  # noqa: PLR0915
         if dry_run:
             session_block = _inject_harness_session(session_block, envelope)
         variables = jsc.get(jsc.get(session_block, "session_vars"), "variables") or {}
+        _drop_unknown_carried_domain(variables)
         referenced_result_set = jsc.get(
             jsc.get(session_block, "session_vars"), "referenced_result_set"
         )

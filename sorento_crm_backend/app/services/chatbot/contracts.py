@@ -63,6 +63,31 @@ DOMAIN_HINTS = (
 )
 DomainHint = Literal[DOMAIN_HINTS]  # type: ignore[valid-type]
 
+
+def coerce_domain_hint(value: Any) -> Any:
+    """A `domain_hint` outside the enum above, coerced to null. THE one guard.
+
+    F3 (review, 7 Sep 2026). Evidence turn b5b19cec-dccc-4eda-b766-1aeb1362957b: the
+    parser tagged `domain_hint: "purchasing"` for "IBWB248什么时候会到仓库？" - "purchasing"
+    is a TEAM name (`SUGGESTED_TEAMS`), not a domain - and `select_tool`'s
+    `source_id LIKE '%purchasing%'` filter matched nothing (every incoming tool's
+    `source_id` is `implemented::crm_incoming_stock_*`), so the turn ended `not_found`.
+
+    A domain reaches a turn from exactly TWO places, and both call this:
+
+    * the parser's emission, at `head/output_exchange._post_process`;
+    * the contact's STORED memory, at `engine._drop_unknown_carried_domain` - which is what turn
+      fca4aa5e-806b-4403-aa2e-fc2d0961fb2d proved the emission guard alone does not
+      cover. That turn's parser emitted a clean `incoming`, and the carried
+      `variables.domain_hint: "purchasing"` (written by an earlier turn, or by n8n) was
+      adopted over it by `resolve_gate.retype_shipment_miss` - one of EIGHT sites that
+      inherit the carried domain verbatim.
+
+    Guarding the two entry points rather than the eight inheritors is what keeps this one
+    place: every reader downstream, `select_tool` included, is then trusted as-is.
+    """
+    return value if value in DOMAIN_HINTS else None
+
 SUGGESTED_TEAMS = (
     "purchasing",
     "purchasing_certification",

@@ -628,3 +628,38 @@ class TestStockDenialGateEndToEnd:
             session_factory=session_factory,
         )
         assert result.branch_kind == "stock_denied"
+
+
+class TestCarriedDomainHintGuard:
+    """F3, the carried half. `_drop_unknown_carried_domain` is what turn
+    fca4aa5e-806b-4403-aa2e-fc2d0961fb2d needed and the emission guard could not give it:
+    that turn parsed cleanly as `incoming` and still reached the gate as `purchasing`,
+    inherited from `variables.domain_hint` in the contact's stored memory (eight sites
+    across `output_exchange` and `resolve_gate.retype_shipment_miss` adopt a carried domain
+    verbatim). Cleaned once, where the stored state enters the turn.
+
+    `TestF3DomainHintNeverLeavesTheEnumEndToEnd` in `test_s6c_engine_paths.py` grades the
+    same guard through a whole turn; these pin the function's own edges.
+    """
+
+    def test_a_team_name_in_the_carried_memory_is_dropped(self) -> None:
+        variables = {"domain_hint": "purchasing", "intent_hint": "stock_check"}
+        engine_mod._drop_unknown_carried_domain(variables)
+        assert variables["domain_hint"] is None
+        assert variables["intent_hint"] == "stock_check", "only the domain is cleaned"
+
+    def test_a_declared_domain_in_the_carried_memory_survives(self) -> None:
+        variables = {"domain_hint": "inventory"}
+        engine_mod._drop_unknown_carried_domain(variables)
+        assert variables["domain_hint"] == "inventory"
+
+    def test_memory_that_carries_no_domain_is_untouched(self) -> None:
+        """The key is not INVENTED: a contact who has never had a domain must keep a
+        `variables` dict of exactly the keys it was stored with, because the tail
+        validates the write against `SessionVars(extra="forbid")`."""
+        variables = {"response": "hello"}
+        engine_mod._drop_unknown_carried_domain(variables)
+        assert variables == {"response": "hello"}
+
+    def test_the_guard_survives_a_non_dict(self) -> None:
+        engine_mod._drop_unknown_carried_domain(None)  # no raise: a contact with no memory

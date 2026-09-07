@@ -53,6 +53,7 @@ choice, made explicit so the coder can push back on it rather than silently drif
 """
 from __future__ import annotations
 
+import importlib.util
 import re
 from pathlib import Path
 from typing import Any
@@ -96,6 +97,22 @@ def _import_fetch_services():
     from app.services.chatbot.lanes.business.services import FetchServices
 
     return FetchServices
+
+
+def _import_migration_312():
+    """`312_container_status_checkpoints` starts with a digit, so it cannot be a
+    normal dotted import - load it straight off its path, same pattern as
+    `tests/test_container_status_checkpoints.py`."""
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "alembic"
+        / "versions"
+        / "312_container_status_checkpoints.py"
+    )
+    spec = importlib.util.spec_from_file_location("_mig_312", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)  # type: ignore[union-attr]
+    return module
 
 
 # --------------------------------------------------------------------------- #
@@ -161,6 +178,81 @@ class TestToolSearch:
             "fetch.py must not issue SQL directly - tool search stays behind "
             "EmbeddingReadService (H53)"
         )
+
+    # ----------------------------------------------------------------------- #
+    # F4 (review, 7 Sep 2026) - the incoming-shipments collapse moved from
+    # `fetch.tool_filter` to `services._tool_search`'s own CRM-policy seam, and
+    # narrowed: only `crm_incoming_stock_shipments` collapses, never `..._by_product`.
+    # ----------------------------------------------------------------------- #
+
+    def test_shipments_candidate_is_renamed_with_collapsed_from(self):
+        """Evidence turn 147d6888-d313-4612-a32f-364cec119ec4: the shipments tool's header
+        carries no clearance checkpoints and no `field_access` block, so it can never render
+        the container timeline - only the list tool can."""
+        from app.services.chatbot.lanes.business.services import _collapse_incoming_shipments
+
+        result = _collapse_incoming_shipments(
+            [{"name": "crm_incoming_stock_shipments", "similarity": 0.4675}]
+        )
+
+        assert result == [
+            {
+                "name": "crm_incoming_stock_list",
+                "similarity": 0.4675,
+                "collapsed_from": "crm_incoming_stock_shipments",
+            }
+        ]
+
+    def test_by_product_candidate_is_untouched(self):
+        """`crm_incoming_stock_by_product` renders batch numbers and the catalog routes
+        product asks to it on purpose - it is a real answer, not a stand-in for the list."""
+        from app.services.chatbot.lanes.business.services import _collapse_incoming_shipments
+
+        result = _collapse_incoming_shipments(
+            [{"name": "crm_incoming_stock_by_product", "similarity": 0.51}]
+        )
+
+        assert result == [{"name": "crm_incoming_stock_by_product", "similarity": 0.51}]
+
+    def test_list_candidate_is_untouched(self):
+        from app.services.chatbot.lanes.business.services import _collapse_incoming_shipments
+
+        result = _collapse_incoming_shipments(
+            [{"name": "crm_incoming_stock_list", "similarity": 0.9}]
+        )
+
+        assert result == [{"name": "crm_incoming_stock_list", "similarity": 0.9}]
+
+    def test_shipments_and_list_both_present_keeps_higher_similarity_under_list_name(self):
+        """When BOTH the shipments and list tools are candidates the same turn, the
+        collapsed name must never appear twice - the higher-similarity one wins under the
+        list name and the other is dropped."""
+        from app.services.chatbot.lanes.business.services import _collapse_incoming_shipments
+
+        result = _collapse_incoming_shipments(
+            [
+                {"name": "crm_incoming_stock_shipments", "similarity": 0.4675},
+                {"name": "crm_incoming_stock_list", "similarity": 0.4537},
+            ]
+        )
+
+        assert result == [
+            {
+                "name": "crm_incoming_stock_list",
+                "similarity": 0.4675,
+                "collapsed_from": "crm_incoming_stock_shipments",
+            }
+        ]
+
+        # And the reverse: the list tool already has the higher similarity, so it keeps
+        # its OWN row untouched (no `collapsed_from`) rather than the shipments row.
+        result_reversed = _collapse_incoming_shipments(
+            [
+                {"name": "crm_incoming_stock_shipments", "similarity": 0.30},
+                {"name": "crm_incoming_stock_list", "similarity": 0.9},
+            ]
+        )
+        assert result_reversed == [{"name": "crm_incoming_stock_list", "similarity": 0.9}]
 
     def test_tool_filter_picks_max_similarity_tiebreak_name(self):
         """AC-604: max `similarity` wins; an exact tie breaks on `name` ASC (deterministic)."""
@@ -525,6 +617,369 @@ class TestOutputStructurer:
         assert "eta delay" in plain_text.lower() or "can't share" in plain_text.lower(), (
             "requested_attributes without the sentinel must still emit the denial note"
         )
+
+    # ----------------------------------------------------------------------- #
+    # AC5 - a checkpoint ask expands backwards through the container's journey
+    # ----------------------------------------------------------------------- #
+
+    _ALL_CHECKPOINTS: dict[str, str] = {
+        "loading_date": "2026-01-01",
+        "etc_date": "2026-01-02",
+        "etd_date": "2026-01-03",
+        "estimated_arrival_date": "2026-01-04",
+        "eta_delay_date": "2026-01-05",
+        "inspection_date": "2026-01-06",
+        "approval_date": "2026-01-07",
+        "gatepass_date": "2026-01-08",
+        "warehouse_arrival_date": "2026-01-09",
+        "informed_collection_date": "2026-01-10",
+        "collection_date": "2026-01-11",
+    }
+
+    def _checkpoint_envelope(self, extra_fields: dict[str, str] | None = None) -> dict:
+        fields = [{"key": "product_code", "label": "Product Code", "value": "SRTWB7096"}]
+        for k, v in self._ALL_CHECKPOINTS.items():
+            fields.append({"key": k, "label": k, "value": v})
+        for k, v in (extra_fields or {}).items():
+            fields.append({"key": k, "label": k, "value": v})
+        return {
+            "result_type": "incoming_stock",
+            "intro": "Here is what I found.",
+            "items": [{"title": "row", "fields": fields}],
+            "has_result": True,
+            "field_access": None,
+        }
+
+    def test_checkpoint_ask_keeps_every_earlier_checkpoint(self):
+        """Asking for gatepass implies the whole journey UP TO gatepass - a customer who
+        asks "when is gatepass" wants the story so far, not one isolated date."""
+        fetch = _import_fetch()
+        envelope = self._checkpoint_envelope({"liner_code": "CMA"})
+        ctx = {"semantic_input": {"requested_attributes": ["gatepass_date"]}}
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        kept = {f["key"] for f in out["answers"][0]["fields"]}
+        for k in (
+            "loading_date", "etc_date", "etd_date", "estimated_arrival_date",
+            "eta_delay_date", "inspection_date", "approval_date", "gatepass_date",
+        ):
+            assert k in kept, f"{k} should be kept (earlier than or equal to gatepass)"
+        for k in ("warehouse_arrival_date", "informed_collection_date", "collection_date", "liner_code"):
+            assert k not in kept, f"{k} should be dropped (later than gatepass, or non-checkpoint)"
+
+    def test_checkpoint_ask_warehouse_arrival(self):
+        """Asking for warehouse arrival keeps everything through it, drops what comes after."""
+        fetch = _import_fetch()
+        envelope = self._checkpoint_envelope()
+        ctx = {"semantic_input": {"requested_attributes": ["warehouse_arrival_date"]}}
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        kept = {f["key"] for f in out["answers"][0]["fields"]}
+        for k in (
+            "loading_date", "etc_date", "etd_date", "estimated_arrival_date",
+            "eta_delay_date", "inspection_date", "approval_date", "gatepass_date",
+            "warehouse_arrival_date",
+        ):
+            assert k in kept, f"{k} should be kept (earlier than or equal to warehouse arrival)"
+        for k in ("informed_collection_date", "collection_date"):
+            assert k not in kept, f"{k} should be dropped (later than warehouse arrival)"
+
+    def test_non_checkpoint_ask_does_not_expand(self):
+        """`liner_code` is not a sequence key - asking for it must not pull in any
+        checkpoint beyond the ALWAYS-kept ETA."""
+        fetch = _import_fetch()
+        envelope = self._checkpoint_envelope({"liner_code": "CMA"})
+        ctx = {"semantic_input": {"requested_attributes": ["liner_code"]}}
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        kept = {f["key"] for f in out["answers"][0]["fields"]}
+        assert "liner_code" in kept
+        assert "product_code" in kept  # identity
+        assert "estimated_arrival_date" in kept  # ALWAYS_KEPT_KEYS, ships regardless
+        for k in (
+            "loading_date", "etc_date", "etd_date", "eta_delay_date", "inspection_date",
+            "approval_date", "gatepass_date", "warehouse_arrival_date",
+            "informed_collection_date", "collection_date",
+        ):
+            assert k not in kept, f"{k} must not be pulled in by a non-checkpoint ask"
+
+    def test_expansion_does_not_rewrite_requested_attributes(self):
+        """`requested_attributes` echoed in the output is still the ORIGINAL, single-key
+        list - only `keep_keys` (internal, not echoed) grows. The "not recorded yet" note
+        fires only for the key actually asked (gatepass), never for an absent inspection_date
+        that merely got pulled in by the expansion."""
+        fetch = _import_fetch()
+        fields = [
+            {"key": "product_code", "label": "Product Code", "value": "SRTWB7096"},
+            {"key": "loading_date", "label": "loading_date", "value": "2026-01-01"},
+            # inspection_date is ABSENT from this row entirely (not recorded on the CRM
+            # side) - it must not get a synthetic "not recorded yet" note.
+            # gatepass_date is also absent - it SHOULD get the note, since it was asked.
+        ]
+        envelope = {
+            "result_type": "incoming_stock",
+            "intro": "Here is what I found.",
+            "items": [{"title": "row", "fields": fields}],
+            "has_result": True,
+            "field_access": None,
+        }
+        ctx = {"semantic_input": {"requested_attributes": ["gatepass_date"]}}
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        assert out["requested_attributes"] == ["gatepass_date"]
+        notes = {f["key"]: f["value"] for f in out["answers"][0]["fields"] if f.get("key")}
+        assert notes.get("gatepass_date") == "not recorded yet"
+        assert "inspection_date" not in notes
+
+    def test_checkpoint_expansion_untouched_when_timeline(self):
+        """`['__all__']` already keeps everything (AC5.3) - the checkpoint expansion is
+        gated on `not timeline` and must not run (or matter) in that arm."""
+        fetch = _import_fetch()
+        envelope = self._checkpoint_envelope({"liner_code": "CMA"})
+        ctx = {"semantic_input": {"requested_attributes": ["__all__"]}}
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        kept = {f["key"] for f in out["answers"][0]["fields"]}
+        assert set(self._ALL_CHECKPOINTS) <= kept
+        assert "liner_code" in kept
+
+    def test_expanded_checkpoint_dates_read_chronologically(self):
+        """A checkpoint ask expands `keep_keys` backwards (AC5) without setting the
+        `timeline` sentinel - it is a PARTIAL timeline and must read the same way: the
+        dates chronological sort must fire on `expanded` too, not just on `timeline`, or
+        the kept dates render in the CRM's narrative order (ETA, inspection, approval,
+        gatepass, ... loading, ETC, ETD trailing) instead of by when they happened."""
+        fetch = _import_fetch()
+        fields = [
+            {"key": "product_code", "label": "Product Code", "value": "SRTWB7096"},
+            {"key": "estimated_arrival_date", "label": "estimated_arrival_date", "value": "2026-05-01"},
+            {"key": "inspection_date", "label": "inspection_date", "value": "2026-05-22"},
+            {"key": "approval_date", "label": "approval_date", "value": "2026-05-26"},
+            {"key": "gatepass_date", "label": "gatepass_date", "value": "2026-06-03"},
+            {"key": "warehouse_arrival_date", "label": "warehouse_arrival_date", "value": "2026-06-04"},
+            {"key": "loading_date", "label": "loading_date", "value": "2026-04-15"},
+            {"key": "etd_date", "label": "etd_date", "value": "2026-04-18"},
+        ]
+        envelope = {
+            "result_type": "incoming_stock",
+            "intro": "Here is what I found.",
+            "items": [{"title": "row", "fields": fields}],
+            "has_result": True,
+            "field_access": None,
+        }
+        ctx = {"semantic_input": {"requested_attributes": ["gatepass_date"]}}
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        out_fields = out["answers"][0]["fields"]
+        kept_dates = [f["key"] for f in out_fields if f["key"].endswith("_date")]
+        assert kept_dates == [
+            "loading_date", "etd_date", "estimated_arrival_date",
+            "inspection_date", "approval_date", "gatepass_date",
+        ]
+        assert "warehouse_arrival_date" not in kept_dates
+
+    def test_non_expanding_ask_leaves_single_date_in_place(self):
+        """A plain (non-checkpoint) ask never sets `expanded`, and `timeline` is False too
+        - the chronological sort must not run, so a lone date field stays exactly where the
+        CRM put it."""
+        fetch = _import_fetch()
+        fields = [
+            {"key": "product_code", "label": "Product Code", "value": "SRTWB7096"},
+            {"key": "estimated_arrival_date", "label": "estimated_arrival_date", "value": "2026-05-01"},
+            {"key": "liner_code", "label": "liner_code", "value": "CMA"},
+        ]
+        envelope = {
+            "result_type": "incoming_stock",
+            "intro": "Here is what I found.",
+            "items": [{"title": "row", "fields": fields}],
+            "has_result": True,
+            "field_access": None,
+        }
+        ctx = {"semantic_input": {"requested_attributes": ["liner_code"]}}
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        out_keys = [f["key"] for f in out["answers"][0]["fields"]]
+        assert out_keys.index("estimated_arrival_date") == 1
+
+    # ----------------------------------------------------------------------- #
+    # A bare container ask ("incoming TIIU6323920") is a timeline ask
+    # (live turn f07632b6-d56d-4036-944c-8200462caac3)
+    # ----------------------------------------------------------------------- #
+
+    def test_bare_container_ask_is_a_timeline(self):
+        """No `requested_attributes` at all, but the resolved entity is an
+        `inbound_shipment` - every recorded checkpoint comes out, chronologically, the
+        same as the `__all__` sentinel does."""
+        fetch = _import_fetch()
+        fields = [
+            {"key": "product_code", "label": "Product Code", "value": "SRTWB7096"},
+            {"key": "estimated_arrival_date", "label": "estimated_arrival_date", "value": "2026-01-04"},
+            {"key": "loading_date", "label": "loading_date", "value": "2026-01-01"},
+            {"key": "gatepass_date", "label": "gatepass_date", "value": "2026-01-08"},
+            {"key": "etc_date", "label": "etc_date", "value": "2026-01-02"},
+            {"key": "collection_date", "label": "collection_date", "value": "2026-01-11"},
+            {"key": "etd_date", "label": "etd_date", "value": "2026-01-03"},
+            {"key": "warehouse_arrival_date", "label": "warehouse_arrival_date", "value": "2026-01-09"},
+            {"key": "eta_delay_date", "label": "eta_delay_date", "value": "2026-01-05"},
+            {"key": "informed_collection_date", "label": "informed_collection_date", "value": "2026-01-10"},
+            {"key": "inspection_date", "label": "inspection_date", "value": "2026-01-06"},
+            {"key": "approval_date", "label": "approval_date", "value": "2026-01-07"},
+        ]
+        envelope = {
+            "result_type": "incoming_stock",
+            "intro": "Here is what I found.",
+            "items": [{"title": "row", "fields": fields}],
+            "has_result": True,
+            "field_access": None,
+        }
+        ctx = {
+            "semantic_input": {"requested_attributes": []},
+            "entities": [
+                {
+                    "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                    "entity_type": "inbound_shipment",
+                    "code": "TIIU6323920",
+                }
+            ],
+        }
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        out_fields = out["answers"][0]["fields"]
+        kept = [f["key"] for f in out_fields if f["key"] != "product_code"]
+        assert kept == list(fetch.CLEARANCE_CHECKPOINT_ORDER), (
+            "every checkpoint must be kept, in chronological order, exactly as the "
+            "'__all__' sentinel behaves"
+        )
+        assert out["requested_attributes"] == [], "the echoed ask itself is untouched"
+
+    def test_bare_product_ask_stays_eta_only(self):
+        """No `requested_attributes`, and the resolved entity is a `product` - a bare
+        product ask must NOT be widened into a timeline; only identity + ETA survive."""
+        fetch = _import_fetch()
+        envelope = self._checkpoint_envelope({"liner_code": "CMA"})
+        ctx = {
+            "semantic_input": {"requested_attributes": []},
+            "entities": [
+                {
+                    "uuid": "7136ea6b-1699-46ec-8e8e-f60c8bb64311",
+                    "entity_type": "product",
+                    "code": "SRTWB7096",
+                }
+            ],
+        }
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        kept = {f["key"] for f in out["answers"][0]["fields"]}
+        assert kept == {"product_code", "estimated_arrival_date"}, (
+            "a bare product ask keeps only identity + the always-kept ETA, never "
+            "widens into a full checkpoint timeline"
+        )
+
+    def test_container_ask_with_an_attribute_is_not_widened(self):
+        """An EXPLICIT attribute ask (`gatepass_date`) alongside an `inbound_shipment`
+        entity must still take the backward-expansion path, not the full timeline - the
+        new bare-container rule only fires when `requested_attributes` is empty."""
+        fetch = _import_fetch()
+        envelope = self._checkpoint_envelope({"liner_code": "CMA"})
+        ctx = {
+            "semantic_input": {"requested_attributes": ["gatepass_date"]},
+            "entities": [
+                {
+                    "uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310",
+                    "entity_type": "inbound_shipment",
+                    "code": "TIIU6323920",
+                }
+            ],
+        }
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        kept = {f["key"] for f in out["answers"][0]["fields"]}
+        for k in (
+            "loading_date", "etc_date", "etd_date", "estimated_arrival_date",
+            "eta_delay_date", "inspection_date", "approval_date", "gatepass_date",
+        ):
+            assert k in kept, f"{k} should be kept (earlier than or equal to gatepass)"
+        assert "warehouse_arrival_date" not in kept, (
+            "an explicit attribute ask must not be overridden into the full timeline "
+            "just because the entity is an inbound_shipment"
+        )
+        assert "informed_collection_date" not in kept
+        assert "collection_date" not in kept
+
+    def test_bare_container_ask_falls_back_to_parser_hint(self):
+        """`_names_a_shipment` checks the RESOLVED entity list first and only falls back to
+        the parser's own raw `hint` when the resolved list carries no type at all - this
+        pins that fallback branch directly rather than only through a resolved entity."""
+        fetch = _import_fetch()
+
+        timeline_envelope = self._checkpoint_envelope()
+        timeline_ctx = {
+            "semantic_input": {
+                "requested_attributes": [],
+                "entities": [{"raw": "TIIU6323920", "hint": "inbound_shipment"}],
+            },
+            "entities": [],
+        }
+        timeline_out = fetch.output_structurer(timeline_envelope, timeline_ctx)
+        timeline_kept = [f["key"] for f in timeline_out["answers"][0]["fields"] if f["key"] != "product_code"]
+        assert timeline_kept == list(fetch.CLEARANCE_CHECKPOINT_ORDER), (
+            "the raw parser hint 'inbound_shipment' must widen to the full timeline, "
+            "exactly as a resolved entity_type does"
+        )
+
+        eta_envelope = self._checkpoint_envelope()
+        eta_ctx = {
+            "semantic_input": {
+                "requested_attributes": [],
+                "entities": [{"raw": "SRTWB7096", "hint": "product"}],
+            },
+            "entities": [],
+        }
+        eta_out = fetch.output_structurer(eta_envelope, eta_ctx)
+        eta_kept = {f["key"] for f in eta_out["answers"][0]["fields"]}
+        assert eta_kept == {"product_code", "estimated_arrival_date"}, (
+            "a raw parser hint of 'product' must NOT widen into a timeline - only "
+            "identity + the always-kept ETA survive"
+        )
+
+
+def test_clearance_checkpoint_order_has_no_duplicates_and_matches_parser_vocabulary():
+    """The tuple is hardcoded (output_structurer is a pure function with no session) and
+    must mirror the same vocabulary the semantic parser already hardcodes - a checkpoint
+    the parser cannot name can never appear in `requested_attributes` in the first place,
+    and a duplicate would double-count in the expansion index lookup.
+
+    Also pinned against the migration's own `CHECKPOINTS` list (the seed for the real
+    `statuses` rows this timeline reads): a later migration that adds a checkpoint must
+    extend `CLEARANCE_CHECKPOINT_ORDER` in the same change, or the new checkpoint is seeded
+    but the fetch lane can never expand it."""
+    fetch = _import_fetch()
+    order = fetch.CLEARANCE_CHECKPOINT_ORDER
+    assert len(order) == len(set(order)), "CLEARANCE_CHECKPOINT_ORDER has a duplicate"
+
+    from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT
+
+    for key in order:
+        assert f'"{key}"' in SEMANTIC_PARSER_PROMPT or f"'{key}'" in SEMANTIC_PARSER_PROMPT, (
+            f"{key} is in CLEARANCE_CHECKPOINT_ORDER but not quoted in the parser prompt"
+        )
+
+    migration = _import_migration_312()
+    assert order == tuple(key for key, *_ in migration.CHECKPOINTS), (
+        "CLEARANCE_CHECKPOINT_ORDER has drifted from the seeded checkpoints in "
+        "312_container_status_checkpoints.py - a migration adding a checkpoint must "
+        "extend this tuple too"
+    )
 
 
 # --------------------------------------------------------------------------- #
