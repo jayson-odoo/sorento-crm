@@ -113,6 +113,12 @@ interface KonvaTagLayerProps {
    * resolves which BLOCK a hovered child belongs to.
    */
   onHoverChange?: (id: string, hovering: boolean) => void;
+  /**
+   * The GHOST pass draws a layer that overflows the artboard at 0.3 so it
+   * stays visible past the clip instead of vanishing (S4). Absent = 1, same
+   * as every layer before this.
+   */
+  opacity?: number;
 }
 
 /** Convert mm to canvas pixels. */
@@ -137,6 +143,7 @@ export function KonvaTagLayer({
   onDragMove,
   onDragEnd,
   onHoverChange,
+  opacity,
 }: KonvaTagLayerProps) {
   if (!layer.visible) return null;
 
@@ -187,6 +194,7 @@ export function KonvaTagLayer({
       width={w}
       height={h}
       rotation={layer.rotation_deg}
+      opacity={opacity}
       listening={listening}
       draggable={draggable && !layer.locked}
       onMouseDown={handleMouseDown}

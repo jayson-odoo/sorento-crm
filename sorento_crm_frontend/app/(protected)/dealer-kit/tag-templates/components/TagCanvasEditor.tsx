@@ -81,6 +81,7 @@ import {
   descendantsOf,
   fitView,
   hitLayerAt,
+  layerOverflowsArtboard,
   marqueeHits,
   moveLayers,
   refitAncestors,
@@ -2920,6 +2921,17 @@ export function TagCanvasEditor({
     [layers],
   );
 
+  /** Layers a resize left partly or wholly past the artboard edge (S4). */
+  const overflowingIds = useMemo(
+    () =>
+      new Set(
+        layers
+          .filter((layer) => layerOverflowsArtboard(layer, doc))
+          .map((layer) => layer.id),
+      ),
+    [layers, doc],
+  );
+
   const hasSelection = selectedIds.size > 0;
   const canEnterGroup = selectionIsGroup;
   const canSelectParent = insideGroupId !== null;
@@ -3042,6 +3054,7 @@ export function TagCanvasEditor({
                     onToggleVisibility={handleToggleVisibility}
                     onToggleLock={handleToggleLock}
                     onMoveLayer={handleMoveLayer}
+                    overflowingIds={overflowingIds}
                   />
                 </ResizablePanel>
               </ResizablePanelGroup>
@@ -3054,6 +3067,7 @@ export function TagCanvasEditor({
                   onToggleVisibility={handleToggleVisibility}
                   onToggleLock={handleToggleLock}
                   onMoveLayer={handleMoveLayer}
+                  overflowingIds={overflowingIds}
                 />
               </div>
             )}
@@ -3119,12 +3133,39 @@ export function TagCanvasEditor({
                       strokeWidth={1}
                     />
 
+                    {/* Ghost pass (S4): a layer a resize left partly or
+                        wholly past the artboard edge, drawn again here
+                        UNCLIPPED at 30% opacity so its outside part stays
+                        visible instead of vanishing behind the clip below.
+                        Purely decorative (`listening={false}`, and a Konva
+                        id distinct from the real layer's) - the clipped copy
+                        below is the ONE interactive node for this layer,
+                        completely unchanged by this slice, so a click still
+                        finds it exactly as before wherever the clip leaves it
+                        visible (its "inside" part, for a partial overflow). */}
+                    {sortedLayers
+                      .filter((layer) => overflowingIds.has(layer.id))
+                      .map((layer) => (
+                        <KonvaTagLayer
+                          key={`${layer.id}-ghost`}
+                          layer={{ ...withPolygonPreview(layer), id: `${layer.id}-ghost` }}
+                          scale={scale}
+                          display={layerDisplay(layer, dataOf(layer), library.assetUrls)}
+                          draggable={false}
+                          listening={false}
+                          opacity={0.3}
+                        />
+                      ))}
+
                     {/* Layers, clipped to the artboard (S9 review S4): a
                         layer dragged or resized past the tag's own edge is
                         hidden on screen exactly the way TagSheetRenderer's
                         `overflow: hidden` clips it on the printed sheet -
                         WYSIWYG after a shrink, not a canvas that still shows
-                        what the PDF will not. */}
+                        what the PDF will not. The ghost pass above adds back
+                        the outside part at reduced opacity for an overflowing
+                        layer; this copy is unchanged and stays the one
+                        interactive node. */}
                     <Group
                       clipFunc={(ctx) => {
                         ctx.rect(0, 0, canvasWidthPx, canvasHeightPx);
