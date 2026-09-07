@@ -664,6 +664,23 @@ def offer_is_open(state: Any) -> bool:
     )
 
 
+def _is_catalogue_team(team: Any) -> bool:
+    """Is this one of the eight teams the router can actually act on?
+
+    The parser may now answer with the customer's OWN team word when it maps to several
+    catalogue teams or to none (AC-821 / owner rule R-a), which is what lets the escalation
+    lane tell "escalate to marketing" from "I want to talk to a human". That word is for
+    the LANE to narrow (`escalation._catalogue_teams`); it must never be what this body
+    PERSISTS, because `variables.routing.suggested_team` is what the NEXT turn inherits and
+    what `escalation.run` assigns when that turn names no team of its own. Review of #713,
+    blocker B2: "escalate to marketing" then "I need a human" called `next_assignee` with
+    `team_code: "marketing"` and commented "Team: marketing".
+    """
+    from app.services.chatbot.contracts import SUGGESTED_TEAMS
+
+    return jsc.nullish_str(team).strip().lower() in SUGGESTED_TEAMS
+
+
 def _team_clarify_pick(state: Any, o: Any, llm_team_n: Any, parent_input: Any) -> Any:
     """The team an OPEN `team_clarify` was just answered with, or None (owner rule R-b).
 
@@ -2350,6 +2367,20 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # normalise a legacy suffixed promotion team to the single base team
     if _PROMO_TEAM_RE.match(jsc.lower_or_empty(o["routing"].get("suggested_team")) or ""):
         o["routing"]["suggested_team"] = "marketing_promotion"
+    # ... and NOTHING outside the catalogue is persisted (review of #713, B2). AFTER the
+    # promotion normalisation, so a legacy suffixed promo team is judged by what it
+    # becomes. The chain is simply re-run without the term that failed: a word the router
+    # cannot act on is no answer at all, so it must not outrank the domain's own routing,
+    # and a prior routing written before this shipped is held to the same test rather than
+    # trusted. The parser's raw word is untouched - `_parser_raw` is the frozen snapshot
+    # the lane narrows, and that is the whole discriminator R-a exists for.
+    if not _is_catalogue_team(o["routing"]["suggested_team"]):
+        prior_team_n = norm(jsc.get(prior_routing, "suggested_team"))
+        o["routing"]["suggested_team"] = _nullish(
+            norm(derived.get("suggested_team")),
+            prior_team_n if _is_catalogue_team(prior_team_n) else None,
+            DEFAULT_SUGGESTED_TEAM,
+        )
 
     # -- miss-company-routing: company-pick resolver ------------------------------------- #
     # The offer names companies; a SHORT reply that word-boundary-matches exactly ONE
@@ -2614,15 +2645,25 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         )
         has_filter_signal = fm_dates or fm_entities
 
-        if req_help and jsc.truthy(llm_team_n) and llm_team_n != prior_team:
+        # The catalogue member the parser's word names, or None when it names several or
+        # none (B2). Tier 1 DIRECT-ASSIGNS, so it may only fire on a word the router can
+        # act on; an ambiguous one falls through the ladder and reaches the escalation lane
+        # still typed `request_for_help`, where `_catalogue_teams` asks which of the members
+        # it named (R-a). Promotion normalisation first, as at the chain above.
+        retarget_promo = (
+            "marketing_promotion"
+            if _PROMO_TEAM_RE.match(jsc.js_string(llm_team_n) if llm_team_n is not None else "")
+            else None
+        )
+        retarget_team = retarget_promo or (llm_team_n if _is_catalogue_team(llm_team_n) else None)
+
+        if req_help and jsc.truthy(retarget_team) and retarget_team != prior_team:
             # Tier 1 - RETARGET: the LLM named a DIFFERENT team mid-offer -> abandon the CS
             # roster and direct-assign it.
             o["routing"] = {
-                "suggested_team": llm_team_n,
+                "suggested_team": retarget_team,
                 "suggested_agent": norm(llm_agent_raw) or "general_enquiries",
             }
-            if _PROMO_TEAM_RE.match(jsc.js_string(llm_team_n)):
-                o["routing"]["suggested_team"] = "marketing_promotion"
             o["escalation"] = {"is_escalation_confirmation": True, "retarget_team": True}
             o["message_type"] = "request_for_help"
             o["selection_context"] = None

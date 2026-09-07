@@ -126,3 +126,103 @@ class TestABareMarketingWordClarifiesOverOnlyTheThreeMarketingTeams:
         assert any("Team: warehouse" in (a.get("text") or "") for a in comments), (
             f"an unambiguous, valid team word must still assign directly: {comments!r}"
         )
+
+
+# --------------------------------------------------------------------------- #
+# Opus review of #713, blocker B2. `_catalogue_teams` narrowed the word only
+# INSIDE `_person_routing`, and the raw word went on flowing through the routing
+# chain into `variables.routing.suggested_team` and onto the `pending` marker's
+# `team`. On the FOLLOW-UP turn (parser team null, carried "marketing") the lane
+# assigned it verbatim: `next_assignee` called with `team_code: "marketing"` and
+# a comment reading "Team: marketing" - a team that does not exist. The ask was
+# right and the answer to it was still wrong.
+# --------------------------------------------------------------------------- #
+
+from app.services.chatbot.contracts import SUGGESTED_TEAMS  # noqa: E402
+from tests.chatbot.test_r3_pending_end_to_end import _session_of  # noqa: E402
+from tests.chatbot.test_s5_escalation_lane import _services  # noqa: E402
+
+
+@pytest.fixture()
+def stub_assignment_seams(monkeypatch):
+    """The round-robin draw and the SLA write, stubbed - see the same fixture in
+    `test_pass4_item1a_team_clarify_consumed.py` for why both turns run live."""
+    from app.services.chatbot.lanes import escalation_services
+
+    monkeypatch.setattr(escalation_services, "build", lambda db: _services())
+
+
+def _run_live(session_factory, monkeypatch, *, qf, text_body, msg_id):
+    _stub_parser(monkeypatch, qf)
+    envelope = _envelope(is_test=False)
+    envelope.contact["phone"] = "+60000000009"
+    envelope.message["contact"]["phone"] = "+60000000009"
+    envelope.message["message"]["messageId"] = msg_id
+    envelope.message["message"]["message"]["text"] = text_body
+    return engine_mod.run_turn(envelope, session_factory=session_factory)
+
+
+class TestANonCatalogueTeamWordIsNeverPersistedOrAssigned:
+    def test_a_later_turn_is_assigned_to_a_real_team_never_to_marketing(
+        self, seeded, session_factory, monkeypatch, stub_assignment_seams
+    ):
+        # -- turn 1: "escalate to marketing" -> the three-team menu ------------------- #
+        head1 = _run_live(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="request_for_help",
+                intent_hint=None,
+                domain_hint=None,
+                entities=[],
+                is_affirmative=True,
+                user_goal="trying to escalate to marketing",
+                routing={"suggested_team": "marketing", "suggested_agent": None},
+                escalation={"is_escalation_confirmation": False, "company_pick": None},
+            ),
+            text_body="escalate to marketing",
+            msg_id="ZZT-b2-t1",
+        )
+        assert head1.branch_kind == "out_of_scope", (head1.branch_kind, head1.error)
+        assert "Which team should I pass this to" in ((head1.reply or {}).get("text") or "")
+
+        stored1 = _session_of(session_factory)["variables"]
+        persisted = (stored1.get("routing") or {}).get("suggested_team")
+        assert persisted in SUGGESTED_TEAMS, (
+            "a team word the catalogue does not hold must never reach the persisted "
+            f"routing - the next turn assigns whatever is there: {persisted!r}"
+        )
+        marker_team = (stored1.get("pending") or {}).get("team")
+        assert marker_team is None or marker_team in SUGGESTED_TEAMS, (
+            f"nor the pending marker's own team: {marker_team!r}"
+        )
+
+        # -- turn 2: the customer gives up on the menu and asks for anyone ------------ #
+        # Parser team null, so the routing chain falls back to what turn 1 carried. That
+        # is exactly the shape that assigned "Team: marketing" before the fix.
+        head2 = _run_live(
+            session_factory,
+            monkeypatch,
+            qf=_parser_output(
+                message_type="request_for_help",
+                intent_hint=None,
+                domain_hint=None,
+                entities=[],
+                is_affirmative=None,
+                user_goal="trying to talk to a human",
+                routing={"suggested_team": None, "suggested_agent": None},
+                escalation={"is_escalation_confirmation": False, "company_pick": None},
+            ),
+            text_body="I need a human",
+            msg_id="ZZT-b2-t2",
+        )
+        assert head2.branch_kind == "out_of_scope", (head2.branch_kind, head2.error)
+        comments = [a for a in (head2.actions or []) if a.get("kind") == "add_comment"]
+        assert comments, f"the turn must assign, not ask again: {head2.actions!r}"
+        assigned = [a.get("text") or "" for a in comments]
+        assert not any("Team: marketing\n" in t for t in assigned), (
+            f"'marketing' is not one of the eight teams and must never be assigned: {assigned!r}"
+        )
+        assert any(
+            any(f"Team: {t}\n" in text for t in SUGGESTED_TEAMS) for text in assigned
+        ), f"the turn must be assigned to a REAL catalogue team: {assigned!r}"
