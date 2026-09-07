@@ -32,6 +32,7 @@ vi.mock('konva/lib/Global', () => ({ Konva: { dragButtons: [0, 1] } }));
 const capturedRects: { name?: string; x?: number; y?: number; width?: number; height?: number }[] =
   [];
 const capturedGroups: { clipFunc?: (ctx: { rect: (...args: number[]) => void }) => void }[] = [];
+const capturedStages: { width?: number; height?: number }[] = [];
 
 vi.mock('react-konva', () => {
   const passthrough = (name: string) =>
@@ -39,7 +40,10 @@ vi.mock('react-konva', () => {
       return <div data-konva={name}>{children}</div>;
     };
   return {
-    Stage: passthrough('stage'),
+    Stage: (props: { children?: React.ReactNode; width?: number; height?: number }) => {
+      capturedStages.push({ width: props.width, height: props.height });
+      return <div data-konva="stage">{props.children}</div>;
+    },
     Layer: passthrough('layer'),
     Group: (props: {
       children?: React.ReactNode;
@@ -248,6 +252,38 @@ describe('TagCanvasEditor ghost pass for off-artboard layers (S4, AC-S4-1/3)', (
     // whatever ends up rightmost instead of letting the name shrink first.
     // The panel is a plain overflow container now, not that primitive.
     expect(document.querySelector('[data-radix-scroll-area-viewport]')).toBeNull();
+  });
+
+  /**
+   * #726: the Versions sheet's View crashed the whole route with
+   * `InvalidStateError: Failed to execute 'drawImage' ... a canvas element
+   * with a width or height of 0`.
+   *
+   * The template page keeps this editor MOUNTED and merely `hidden` while the
+   * viewer is up, so `display:none` makes its ResizeObserver report 0x0 and
+   * the stage measures 0. A Konva stage sizes its BUFFER canvas from its own
+   * width/height, and the ghost pass above draws a fill + stroke shape at 30%
+   * opacity - which is exactly the case Konva composites through that buffer
+   * (`Shape._useBufferCanvas`) before calling `drawImage(bufferCanvas)`. A
+   * 0x0 buffer throws there.
+   *
+   * jsdom reports every container as 0x0, so this file mounts the editor in
+   * the very state the hidden template page leaves it in: whatever the
+   * container measures, the stage never asks Konva for a 0-size canvas.
+   */
+  it('never hands the Stage a 0 width or height, even with no measurable container (#726)', () => {
+    capturedStages.length = 0;
+
+    render(<TagCanvasEditor doc={overflowingLayerDoc()} onChange={vi.fn()} />);
+
+    // The ghost pass is up - the shape that makes a 0-size stage fatal.
+    expect(screen.getByTestId('layer-text-1-ghost')).toBeInTheDocument();
+
+    expect(capturedStages.length).toBeGreaterThan(0);
+    for (const stage of capturedStages) {
+      expect(stage.width).toBeGreaterThan(0);
+      expect(stage.height).toBeGreaterThan(0);
+    }
   });
 
   it('a fully-inside layer draws once - no ghost, no marker (AC-S4-5)', () => {

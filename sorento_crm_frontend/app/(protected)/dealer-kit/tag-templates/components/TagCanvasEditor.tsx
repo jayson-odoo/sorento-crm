@@ -3491,8 +3491,25 @@ export function TagCanvasEditor({
               >
                 <Stage
                   ref={stageRef as React.RefObject<Konva.Stage>}
-                  width={stageWidth}
-                  height={stageHeight}
+                  // Never 0 (#726). A Konva stage sizes its BUFFER canvas from
+                  // its own width/height, and any shape drawn with a fill, a
+                  // stroke and an absolute opacity below 1 composites through
+                  // that buffer (`Shape._useBufferCanvas`): Konva then calls
+                  // `drawImage(bufferCanvas)`, which throws `InvalidStateError:
+                  // the image argument is a canvas element with a width or
+                  // height of 0` and takes the whole route down through the
+                  // error boundary. The ghost pass (S4) draws exactly such a
+                  // shape - a translucent copy at 30% opacity - so any template
+                  // with a layer past the artboard edge crashed the moment the
+                  // stage measured 0. Which is not hypothetical: the template
+                  // page keeps this editor MOUNTED and merely `hidden` while
+                  // the version viewer is up (its own comment explains why),
+                  // and `display:none` makes the ResizeObserver report 0x0. So
+                  // Versions > View crashed every time on such a template.
+                  // `stageWidth`/`stageHeight` themselves stay honest - the
+                  // fit-to-view effects use `<= 0` to mean "not measured yet".
+                  width={Math.max(1, stageWidth)}
+                  height={Math.max(1, stageHeight)}
                   onMouseDown={handleStageMouseDown}
                   onMouseMove={handleStageMouseMove}
                   onMouseUp={handleStageMouseUp}
