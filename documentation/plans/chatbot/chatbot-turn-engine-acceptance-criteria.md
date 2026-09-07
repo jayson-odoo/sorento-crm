@@ -1687,3 +1687,35 @@ contact inside the synchronous request. Different contacts run in parallel.
   Together they leave every capture byte-equal; one new diagnostic key
   (`suggest_offer_pick_merged`) is registered field-scoped with its class. Closes #708.
   Evidence: `tests/chatbot/test_pass4_item4_issue708_partial_pick_scope.py`. (H76)
+- AC-825 `[BE][T]` **A customer the customer already PICKED is not re-resolved from a debtor
+  code other accounts share.** Owner console pass 4, item 2. Turns 5bb0426e ("3" ->
+  L.A.W. Transport (K.L.) Sdn. Bhd. (SRT)) then cc0075ae / 0d9332a0 ("last month"): the
+  reply header names L.A.W. and the rows are SILK CABINETS SDN BHD and a dozen other
+  accounts.
+
+  **Measured against the local prod-copy database** (throwaway harness, 7 Sep 2026: the
+  dump's own `request_item` through `run_turn` with its `_parser_raw` as the parse and the
+  MCP call captured). Both first-pass hypotheses are WRONG and are recorded so nobody
+  re-runs them: the date window is NOT dropped (`2026-08-01` / `2026-08-31` survive the
+  post-processor, `ctx.parse.output` and `semantic_input`, and every wrong row IS inside
+  it), and the resolver mis-ranks nothing - `gate_passed: true`, `require_specific: false`,
+  `gate_reason: "ok"`, `unresolved_tokens: []`, full coverage, so `REQUIRE_SPECIFIC_DOMAINS`
+  is not involved either.
+
+  What happens: `resolve_entity_body` sends `tokens: ["301-C001"]`, the carried entity's
+  `canonical_code`, and OMITS `entity_pins` because the resolver route refuses a pin in AND
+  mode by design (`references.py` ~:1652; PR #456's contract is OR-mode only). The uuid the
+  pick is made of (`bec07281-...`) is therefore discarded and a debtor code that **99 rows
+  share in production** is re-resolved from scratch. The resolver returns 15 of the 99 (its
+  own limit) without the picked row, and the gate passes the lot: `cust_pinned` is true, so
+  the "which company do you mean" ask is suppressed - the pin stops the QUESTION without
+  constraining the ANSWER.
+
+  **NOT fixed in this lane, deliberately.** The fix is AND-mode entity pins in
+  `resolve_references`, which is a contract change owned by issue sorento-crm-n8n#73 / PR
+  #456 (owner-gated, unmerged) and not a chatbot-lane change. The unit that proves the gap
+  is committed `xfail(strict=True)` so the day that lands, it announces itself - the same
+  mechanism the unpromoted B-HB-1 / B-TEAM-1' gates use. The end-to-end guard beside it is
+  green and stays green: at any scale a test can seed, `301-C001` names one customer, so
+  the code resolves correctly and the defect cannot be reproduced below production scale.
+  Evidence: `tests/chatbot/test_pass4_item2_last_month_keeps_customer_scope.py`. (H77)
