@@ -1316,11 +1316,25 @@ export function TagCanvasEditor({
         setEditingLayerId(target.id);
         return;
       }
-      // A shape has nothing a second click could mean any more: a polygon
-      // shows its corner handles on SELECTION (r4b, AC-S4-10), so a
-      // double-click is just the click that selected it, twice.
+      // A polygon enters edit-points mode (S5): select mode (a single click)
+      // already shows the Transformer's resize anchors, so the second click
+      // is what asks for the vertex/edge handles instead. Any other shape
+      // has nothing a second click could mean, so it is just the click that
+      // selected it, twice.
       if (target.props.kind === 'shape') {
         setSelectedIds(new Set([target.id]));
+        if (target.props.shape === 'polygon') setEditingPointsId(target.id);
+        return;
+      }
+      // A boxed list-only price badge is the same shape by another name
+      // (AC-S6-2, AC-S5-4) - the same two modes apply.
+      if (
+        target.props.kind === 'price_badge' &&
+        target.props.variant === 'list_only' &&
+        target.props.showBox === true
+      ) {
+        setSelectedIds(new Set([target.id]));
+        setEditingPointsId(target.id);
         return;
       }
       if (target.props.kind !== 'group') return;
@@ -1337,20 +1351,27 @@ export function TagCanvasEditor({
     [layers, resolveTarget, pointerMm],
   );
 
-  // -- Polygon corner handles (S4, r4b) --------------------------------------
+  // -- Polygon corner handles (S4, r4b; select vs edit-points modes, S5) -----
 
   /**
-   * The layer the corner handles belong to: the SOLE selection, whenever it
+   * Which layer is in edit-points mode (S5), if any - raw state, not
+   * derived, because ENTERING the mode is a real user action (double-click,
+   * Enter, the Inspector button) with no geometry to derive it from. Reading
+   * it is always through `editingPoints` below, which folds in eligibility.
+   */
+  const [editingPointsId, setEditingPointsId] = useState<string | null>(null);
+
+  /**
+   * The layer ELIGIBLE for corner handles: the SOLE selection, whenever it
    * is an unlocked, visible polygon - or a price badge drawing the flyer's
    * white callout, which is the same shape by another name (AC-S6-2).
    *
-   * Selection alone, no double-click (r4b, AC-S4-10). The user picked Polygon
-   * from the shape list and dragged at the corner they wanted to move;
-   * nothing on screen said a second click was needed first, and a handle
-   * nobody can find is a feature nobody has. Derived rather than held in
-   * state, so there is one source of truth: clicking empty canvas, selecting
-   * something else, locking it, switching the shape back to a rectangle or
-   * unticking Box all take the handles away without a single setter.
+   * Derived rather than held in state, so there is one source of truth:
+   * clicking empty canvas, selecting something else, locking it, switching
+   * the shape back to a rectangle or unticking Box all take the eligibility
+   * away without a single setter. `editingPointsId` below is what actually
+   * decides whether the handles show (S5) - this only says whether they
+   * COULD.
    */
   const cornerHandleLayer = useMemo((): CornerHandleLayer | null => {
     if (selectedIds.size !== 1) return null;
@@ -1370,9 +1391,22 @@ export function TagCanvasEditor({
     return null;
   }, [selectedIds, layers]);
 
-  /** Where every handle sits, in the layer's own pixel space. */
+  /**
+   * Whether the eligible layer is actually in EDIT-POINTS mode right now
+   * (S5): select mode (single click) shows the Transformer's full anchor
+   * set instead; double-click, Enter, or the Inspector's "Edit points"
+   * button flip `editingPointsId` to the layer's id. A derived guard, not an
+   * effect - selecting anything else, or the layer losing eligibility
+   * (locked, hidden, deselected, shape switched away from polygon), takes
+   * this back to false the instant `cornerHandleLayer` itself goes null or
+   * points elsewhere, with nothing having to clear the raw id.
+   */
+  const editingPoints = Boolean(cornerHandleLayer && cornerHandleLayer.id === editingPointsId);
+
+  /** Where every handle sits, in the layer's own pixel space. Edit-points
+   * mode only (S5) - select mode shows the Transformer's own anchors instead. */
   const polygonHandles = useMemo(() => {
-    if (!cornerHandleLayer) return null;
+    if (!cornerHandleLayer || !editingPoints) return null;
     const width = cornerHandleLayer.width_mm * scale;
     const height = cornerHandleLayer.height_mm * scale;
     const vertices = scalePolygonPoints(
@@ -1390,7 +1424,7 @@ export function TagCanvasEditor({
         return { x: (point.x + next.x) / 2, y: (point.y + next.y) / 2 };
       }),
     };
-  }, [cornerHandleLayer, polygonPreview, scale]);
+  }, [cornerHandleLayer, editingPoints, polygonPreview, scale]);
 
   const startPolygonDrag = useCallback(
     (kind: 'vertex' | 'edge', index: number) => {
@@ -2538,7 +2572,23 @@ export function TagCanvasEditor({
         // Before the deselect, which is what unmounts the handles and lets
         // Konva's last `dragend` through (r4d).
         cancelPolygonDrag();
+        // Edit-points mode (S5) drops back to select mode first, same as
+        // Illustrator/Figma - the shape stays selected, only the vertex/edge
+        // handles go away. Escape's older job (step out of a group, or
+        // deselect) only runs once there is no mode left to leave.
+        if (editingPoints) {
+          setEditingPointsId(null);
+          return;
+        }
         selectParentGroup();
+        return;
+      }
+      // Enter toggles edit-points mode (S5) on the eligible selection -
+      // in, if select mode is showing the Transformer's anchors; back out,
+      // if the vertex/edge handles are already up.
+      if (e.key === 'Enter' && cornerHandleLayer) {
+        e.preventDefault();
+        setEditingPointsId(editingPoints ? null : cornerHandleLayer.id);
         return;
       }
       if (!modifier && (e.key === 'v' || e.key === 'V')) {
@@ -2662,6 +2712,8 @@ export function TagCanvasEditor({
     handleFit,
     handleZoomReset,
     nudgeSelection,
+    cornerHandleLayer,
+    editingPoints,
   ]);
 
   // A window that loses focus while Space is down would otherwise stay in hand.
@@ -3281,10 +3333,14 @@ export function TagCanvasEditor({
                       listening={!handMode}
                       onTransform={handleTransform}
                       onTransformEnd={handleTransformEnd}
-                      // A polygon keeps the ROTATION anchor and nothing else
-                      // (r4b, AC-S4-10): a resize anchor sits exactly where a
-                      // corner handle sits, and the anchor would win every
-                      // click meant for the corner.
+                      // A polygon/boxed badge in EDIT-POINTS mode (S5) keeps
+                      // the ROTATION anchor and nothing else: a resize anchor
+                      // sits exactly where a corner handle sits, and the
+                      // anchor would win every click meant for the corner.
+                      // In SELECT mode `polygonHandles` is null (S5 gates it
+                      // on `editingPoints` too), so the full anchor set below
+                      // shows instead - points stay normalised 0-1, so a box
+                      // resize scales the shape with no maths change.
                       enabledAnchors={
                         polygonHandles
                           ? []
@@ -3377,6 +3433,14 @@ export function TagCanvasEditor({
                             onDragStart={() => startPolygonDrag('vertex', index)}
                             onDragMove={handlePolygonDragMove}
                             onDragEnd={handlePolygonDragEnd}
+                            onMouseEnter={(e) => {
+                              const stage = e.target.getStage();
+                              if (stage) stage.container().style.cursor = 'crosshair';
+                            }}
+                            onMouseLeave={(e) => {
+                              const stage = e.target.getStage();
+                              if (stage) stage.container().style.cursor = 'default';
+                            }}
                           />
                         ))}
                       </Group>
@@ -3679,6 +3743,10 @@ export function TagCanvasEditor({
               }
               onPreviewBlock={openBlockPreview}
               onClearBlockPreview={clearBlockPreview}
+              editingPoints={editingPoints}
+              onToggleEditPoints={(layerId) =>
+                setEditingPointsId((prev) => (prev === layerId ? null : layerId))
+              }
             />
           </ResizablePanel>
         </ResizablePanelGroup>

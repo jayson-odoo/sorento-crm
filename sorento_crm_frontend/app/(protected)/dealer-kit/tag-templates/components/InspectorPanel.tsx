@@ -206,6 +206,11 @@ interface InspectorPanelProps {
   previewBlockLabel?: string | null;
   onPreviewBlock?: (groupId: string) => void;
   onClearBlockPreview?: (groupId: string) => void;
+  /** Whether this layer is currently in edit-points mode (S5). */
+  editingPoints?: boolean;
+  /** Toggle edit-points mode for this layer (S5); a polygon or a boxed
+   * list-only price badge only. */
+  onToggleEditPoints?: (layerId: string) => void;
 }
 
 export function InspectorPanel({
@@ -227,6 +232,8 @@ export function InspectorPanel({
   previewBlockLabel,
   onPreviewBlock,
   onClearBlockPreview,
+  editingPoints,
+  onToggleEditPoints,
 }: InspectorPanelProps) {
   const usedColours = useMemo(() => tagColours(layers ?? []), [layers]);
 
@@ -258,6 +265,15 @@ export function InspectorPanel({
       </div>
     );
   }
+
+  // The same eligibility r4b's `cornerHandleLayer` already checks on the
+  // canvas side (S5): a polygon shape, or a price badge whose box IS its
+  // own shape (a plain rectangle badge has no corners of its own to edit).
+  const canEditPoints =
+    (layer.props.kind === 'shape' && layer.props.shape === 'polygon') ||
+    (layer.props.kind === 'price_badge' &&
+      layer.props.variant === 'list_only' &&
+      layer.props.showBox === true);
 
   return (
     <div className="flex h-full flex-col border-l">
@@ -333,6 +349,26 @@ export function InspectorPanel({
               Visible
             </label>
           </section>
+
+          {/* -- Edit points (S5): a polygon, or a boxed list-only price
+              badge - the same shape by another name - toggles between the
+              Transformer's resize anchors (select mode) and its own vertex
+              + edge handles (edit-points mode). Double-click the shape or
+              Enter does the same thing; this is the discoverable path for
+              anyone who never finds either. */}
+          {canEditPoints && onToggleEditPoints && (
+            <section>
+              <Button
+                type="button"
+                variant={editingPoints ? 'primary' : 'secondary'}
+                size="sm"
+                className="w-full"
+                onClick={() => onToggleEditPoints(layer.id)}
+              >
+                {editingPoints ? 'Done editing points' : 'Edit points'}
+              </Button>
+            </section>
+          )}
 
           {/* -- Slot binding -- */}
           <section>
