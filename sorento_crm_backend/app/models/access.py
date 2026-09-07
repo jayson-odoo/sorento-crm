@@ -671,10 +671,70 @@ class McpTool(Base):
     created_at = Column(
         DateTime(timezone=False), server_default=func.now(), nullable=False
     )
+    #: Field-reveal keys this tool's presenter marks `restricted=<key>`, one entry
+    #: per gated field: `[{"key": "inventory.sellable", "label": "Sellable stock"}]`.
+    #: Written by `sync_catalog` from `ToolSpec.restricted_fields` (a static
+    #: declaration, since sync reads the code catalog and never calls the tool).
+    #: `[]` for a tool with nothing restricted - the common case. This is what
+    #: `GET /system/chatbot/field-reveal-keys` reads, so a new restricted field
+    #: reaches the Contacts > Access checklist after a sync with no FE change.
+    restricted_fields = Column(
+        JSONB(astext_type=Text()), nullable=False, server_default=text("'[]'::jsonb")
+    )
 
     __table_args__ = (
         Index("ix_mcp_tools_module_key", "module_key"),
         Index("ix_mcp_tools_is_active", "is_active"),
+    )
+
+
+class ContactFieldReveal(Base):
+    """Per-contact permission to see one RESTRICTED field in a chatbot answer.
+
+    One mechanism for two owner requirements: sellable stock is off by default
+    for every contact (D3), and a PO's supplier must never reach a dealer (D4).
+    Both are just a field a presenter marked `restricted=<key>` in its
+    `field_vocabulary`; this table is the grant.
+
+    Default is HIDDEN: a contact with no row for a key never sees that field,
+    so a new restricted field ships invisible everywhere until an admin ticks
+    it, the same default-deny `agent_field_access` already established.
+
+    Unlike `agent_field_access` (owned by a FUNCTION, resolved through the
+    agents a contact holds), this is granted DIRECTLY on the contact - D4's
+    field reveal is not "which agent" but "which contact may see the
+    supplier", so there is no owning agent to route the grant through.
+
+    Enforcement lives in the chatbot's `output_structurer` only
+    (`ctx.access.attributes`, filled by `head/access.py::check_access`). The
+    MCP server itself stays unfiltered - the in-app assistant and n8n
+    operators are internal callers, not the customer-facing chatbot.
+    """
+
+    __tablename__ = "contact_field_reveals"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid.uuid4()))
+    respond_contact_id = Column(
+        Text, ForeignKey("respond_contacts.id", ondelete="CASCADE"), nullable=False
+    )
+    #: Matches a presenter's `field_vocabulary[key]["restricted"]` value, e.g.
+    #: "inventory.sellable", "purchase_orders.supplier".
+    field_key = Column(Text, nullable=False)
+    #: A row can exist and be revoked (rather than deleted) so a PUT full-list
+    #: replace has history to flip back to true instead of losing who granted
+    #: it and when. Absence of any row is still the same as `granted=False`.
+    granted = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+    created_by = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_contact_field_reveals_contact", "respond_contact_id"),
+        UniqueConstraint(
+            "respond_contact_id", "field_key", name="uq_contact_field_reveals_contact_key"
+        ),
     )
 
 

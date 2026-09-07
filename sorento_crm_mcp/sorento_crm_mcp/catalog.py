@@ -43,6 +43,13 @@ class ToolSpec:
     domain: str = ""  # Logical domain ("products", "orders", "procurement", ...).
     related_tools: tuple[str, ...] = ()  # Cross-references (surviving tools only).
     escalation_team: str = ""  # "sales" | "support" | "warehouse" | "procurement" | "".
+    # Field-reveal keys this tool's presenter marks `restricted=<key>` in
+    # `field_vocabulary`, one (key, label) pair per gated field - e.g.
+    # `(("inventory.sellable", "Sellable stock"),)`. Static, not read off a live
+    # response: `mcp_tool_registry_service.sync_catalog` copies this straight into
+    # `mcp_tools.restricted_fields` without ever calling the tool. Empty for a tool
+    # with nothing restricted (the common case).
+    restricted_fields: tuple[tuple[str, str], ...] = ()
 
 
 # Paths match [sorento_crm_backend/app/api/v1/__init__.py](sorento_crm_backend/app/api/v1/__init__.py) prefixes.
@@ -480,6 +487,13 @@ CATALOG: tuple[ToolSpec, ...] = (
         domain="inventory",
         related_tools=("crm_inventory_warehouses_list",),
         escalation_team="warehouse",
+        # A2 (chatbot-growth-r1): `open_so_qty` / `sellable` are `restricted="inventory.
+        # sellable"` in the presenter (`sorento_crm_mcp/presenters.py::_stock`); this is
+        # the STATIC declaration `mcp_tool_registry_service.sync_catalog` reads into
+        # `mcp_tools.restricted_fields`, which is what the Contacts > Access > Field
+        # reveals checklist (Slice C) lists and grants against. Without it the checklist
+        # has nothing to show and PUT refuses every key as unknown.
+        restricted_fields=(("inventory.sellable", "Sellable stock"),),
     ),
     ToolSpec(
         "crm_inventory_warehouses_list",
@@ -1021,6 +1035,11 @@ CATALOG: tuple[ToolSpec, ...] = (
         domain="purchase_order",
         related_tools=("crm_procurement_spo_allocations_last_receipt_list",),
         escalation_team="procurement",
+        # A5 (chatbot-growth-r1): `supplier` is `restricted="purchase_orders.supplier"` in
+        # the presenter; this is the static declaration the catalog sync reads into
+        # `mcp_tools.restricted_fields` for the Field reveals checklist (Slice C). See the
+        # matching note on `crm_inventory_stock_balance_list` above.
+        restricted_fields=(("purchase_orders.supplier", "PO supplier"),),
     ),
     # --- procurement: SPO last receipt (A6, chatbot-growth-r1) ---
     ToolSpec(

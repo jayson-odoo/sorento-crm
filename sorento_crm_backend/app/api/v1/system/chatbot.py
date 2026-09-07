@@ -47,7 +47,9 @@ from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 from app.models.chatbot_turn import ChatbotTurn
 from app.schemas.integration import IntegrationLogCreate
 from app.schemas.chatbot_turn import (
+    ChatbotTurnDetailResponse,
     ChatbotTurnListResponse,
+    ChatbotTurnResponse,
     ConsolePromptVersion,
     ConsoleTurnRequest,
     ConsoleTurnResponse,
@@ -56,6 +58,7 @@ from app.schemas.chatbot_turn import (
 )
 from app.services.chatbot import console_service
 from app.services.chatbot.contracts import TURN_STAGES
+from app.services.chatbot.trace_detail import compose_trace_detail
 from app.services.integration_service import IntegrationLogService
 from app.services.outbound_url_guard import OutboundUrlRejected
 from app.services.chatbot.dispatch import (
@@ -285,6 +288,28 @@ def failed_contacts(
             }
             for row in aggregates
         ]
+    )
+
+
+@router.get("/turns/{turn_id}", response_model=ChatbotTurnDetailResponse)
+def get_turn(
+    turn_id: str,
+    current_user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """One turn's row plus its normalised `trace_detail` (Slice D, AC-970).
+
+    Registered AFTER `/turns/failed-contacts` (a literal path) so that fixed route
+    still wins; this one only ever matches an actual turn id. Same `VIEW` slug as
+    the list: opening a row's detail is the same read the list already grants.
+    """
+    _ = current_user
+    row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Turn not found.")
+    return ChatbotTurnDetailResponse(
+        **ChatbotTurnResponse.model_validate(row).model_dump(),
+        trace_detail=compose_trace_detail(row),
     )
 
 

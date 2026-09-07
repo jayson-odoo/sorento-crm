@@ -204,11 +204,43 @@ class TestS4AlreadyRetiredRowsAreNotReAdopted:
         assert new_rows[0]["source_ref"] == new_line["source_ref"]
 
     def test_a_closed_ref_less_spo_row_is_not_adopted_by_a_new_dtlkey(self, env):
-        """S4 (shipping-order side). Mirror of the document case: a legacy
-        row this system already closed must not be resurrected by a new
-        DtlKey naming the same product - a fresh row is created, and the
-        closed row is left exactly as it was."""
+        """S4 (shipping-order side), REVISED for D25
+        (spo-xlsx-supersede, `PLAN-spo-xlsx-supersede.md` section 5 "Test
+        debt"). The original seed here was a PURE xlsx-era SPO - every row
+        ref-less - and under D25 that exact shape is now SUPERSEDED on its
+        first push rather than preserved untouched; that scenario moved to
+        `tests/test_spo_xlsx_supersede.py
+        ::TestAcX1FirstPushSupersedesAClosedXlsxRow`.
+
+        What is re-asserted HERE, with a REF row now seeded onto the same
+        `spo_number` (any DtlKey, ESB-era), is the property D25 carves an
+        explicit exception for: once a `spo_number` already holds at least
+        one ref row, a closed ref-less row on it is NOT a live adoption
+        candidate for a fresh DtlKey - it stays exactly as it was, and a
+        fresh row is created. Assertions are otherwise unchanged from the
+        original test.
+        """
+        from app.models.procurement import SPOAllocation
+
         number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        # An existing ESB-era row (any DtlKey) on the same spo_number - closed,
+        # so it cannot trip the S2 "open row under a different DocKey" guard.
+        ref_row = SPOAllocation(
+            company_id=env.company_a,
+            spo_number=number,
+            spo_line_number=5,
+            product_id=product_id,
+            allocated_quantity=3,
+            quantity_received=3,
+            line_status="closed",
+            source_system="autocount",
+            source_ref=f"{MARKER}:SPOL:{uuid.uuid4().hex[:8]}",
+            source_doc_ref=f"{MARKER}:SPO:{uuid.uuid4().hex[:8]}",
+        )
+        env.db.add(ref_row)
+        env.db.flush()
+
         legacy = _seed_legacy_row(
             env,
             spo_number=number,
@@ -229,11 +261,16 @@ class TestS4AlreadyRetiredRowsAreNotReAdopted:
         old_after = rows[str(legacy.id)]
         assert old_after["source_ref"] is None
         assert old_after["line_status"] == "closed"
-        new_rows = [r for r in rows.values() if str(r["id"]) != str(legacy.id)]
+        new_rows = [
+            r
+            for r in rows.values()
+            if str(r["id"]) not in {str(legacy.id), str(ref_row.id)}
+        ]
         assert len(new_rows) == 1
         assert new_rows[0]["source_ref"] == line["source_ref"]
-        # S1: the new row's number climbs past the legacy row's own number.
-        assert new_rows[0]["spo_line_number"] == 2
+        # S1: the new row's number climbs past every row this spo_number has
+        # ever carried - the legacy row (1) AND the seeded ref row (5).
+        assert new_rows[0]["spo_line_number"] == 6
 
 
 # ======================================================================= S5

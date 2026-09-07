@@ -5,6 +5,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useContact } from '../components/contact-context';
 import ContactMediaAccessSection from '../components/ContactMediaAccessSection';
 import ContactAccessAgentsTable from '../components/ContactAccessAgentsTable';
+import ContactFieldRevealsSection from '../components/ContactFieldRevealsSection';
 
 export default function ContactAccessPage() {
   const { isLoading, contactId } = useContact();
@@ -29,6 +30,15 @@ export default function ContactAccessPage() {
           <CardTitle>Access Agents</CardTitle>
         </CardHeader>
         <ContactAccessAgentsTable contactId={contactId} />
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Field reveals</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ContactFieldRevealsSection contactId={contactId} />
+        </CardContent>
       </Card>
     </div>
   );

@@ -18,7 +18,11 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "488_chatbot_unblock_spo_domain"
-down_revision = "487_chatbot_warehouse_cue"
+# Re-parented onto origin/main's head after merging PR #733 (contact field reveals) and
+# #737 (SPO xlsx supersede), both of which also claimed a "488" slot off
+# 487_chatbot_warehouse_cue. Chain: 487 -> 488_contact_field_reveals ->
+# 488_spo_alloc_stated_received -> 488_chatbot_unblock_spo_domain -> 489 -> 490.
+down_revision = "488_spo_alloc_stated_received"
 branch_labels = None
 depends_on = None
 

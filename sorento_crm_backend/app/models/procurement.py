@@ -518,6 +518,26 @@ class SPOAllocation(Base, CompanyScopedMixin):
     #: to a held `InboundShipment` - `inbound_shipment_id` is the resolved
     #: link, this is the raw fact so a later shipment can still be relinked.
     container_number = Column(String(100), nullable=True)
+    #: The receipt a DECLARER stated for this line, as opposed to the one a GRN
+    #: proves (spo-xlsx-supersede D28c, migration 488). Written only by AutoCount's
+    #: own `qty_received` (TransferedQty) on a push and by the supersede / dedupe
+    #: carry; never by the GRN recompute, which is exactly why it exists:
+    #: `quantity_received` alone cannot say whether a figure was stated or derived,
+    #: so deleting a GRN either erased AutoCount's own statement or stranded a
+    #: redistributed share on a sibling with nothing behind it. The group recompute
+    #: writes `max(stated_received, its share of the approved picking total)`.
+    #: NULL reads as 0: every row written before this column existed stated nothing.
+    stated_received = Column(Integer, nullable=True)
+    #: When the ESB stopped naming this line (spo-xlsx-supersede D28d, migration
+    #: 488). Set by the leftover sweep (a re-push of the same DocKey no longer
+    #: states it) and by the DocKey-change path (the document was re-created, so
+    #: the old DocKey's rows are history); cleared the moment a push names the
+    #: row again. Without it a retired line is indistinguishable from a live
+    #: fully received one - it rejoined its `(spo_number, product, location)`
+    #: group, took a share of a sibling's GRN, and could be REOPENED when a GRN
+    #: was deleted, showing 58 open units on a 29-unit order. The group
+    #: recompute skips a retired row entirely.
+    retired_at = Column(DateTime(timezone=True), nullable=True)
 
     inbound_shipment = relationship("InboundShipment", back_populates="spo_allocations")
     supplier = relationship("Supplier", foreign_keys=[supplier_id])
@@ -526,7 +546,17 @@ class SPOAllocation(Base, CompanyScopedMixin):
     storage_zone = relationship("StorageZone", back_populates="spo_allocations")
     product = relationship("Product", back_populates="spo_allocations")
     uom = relationship("UnitOfMeasure", foreign_keys=[uom_id])
-    picking_lines = relationship("PickingLine", back_populates="spo_allocation")
+    #: `passive_deletes=True` (spo-xlsx-supersede, reviewer cleanup): the FK is
+    #: `ON DELETE SET NULL`, and without this SQLAlchemy loads this collection
+    #: on `session.delete(allocation)` and NULLs each child's
+    #: `spo_allocation_id` ITSELF - which would undo a repoint the first-push
+    #: supersede has just made (D27) whenever the collection was already in the
+    #: identity map. Leaving it to the database makes the
+    #: repoint-then-delete ordering structural rather than a matter of which
+    #: rows happened to be loaded.
+    picking_lines = relationship(
+        "PickingLine", back_populates="spo_allocation", passive_deletes=True
+    )
     
     __table_args__ = (
         Index("ix_spo_allocations_inbound_shipment_id", "inbound_shipment_id"),
