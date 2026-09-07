@@ -43,6 +43,14 @@
 # not the data.
 #
 # The contact is the one whose stored envelope the script borrows; override with --contact.
+#
+# SETUP THE SCRIPT CANNOT DO (8 Sep 2026): the A7 zero-stock ladder cases assume the console
+# contact's stock visibility policy is DETAILED (`stock_visibility_policies.mode`). Under a
+# per-contact `compact` row the backend answers every code with a Total block (`*Total:* 0`)
+# and the miss ladder never runs, so those cases read "Stock summary..." and fail for a
+# reason that is not the lane's. The owner keeps a compact row on this contact for their own
+# grading; flip it to detailed for a graded run and restore it after. The PO rung also needs
+# the contact to hold `purchase_orders.placed` (Contacts > Access > Field reveals).
 contact: "437264483"
 
 cases:
