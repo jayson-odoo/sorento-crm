@@ -21,6 +21,7 @@ state; the tail (S2) is what fills it.
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 from contextlib import contextmanager
@@ -2580,6 +2581,13 @@ class _TurnSwitches:
     chatbot_completed_lanes: Any = None
     chatbot_business_lane_enabled: bool = False
     chatbot_ordering_enabled: bool = False
+    # A7 (chatbot-growth-r1). MISSING until 8 Sep 2026, and that single omission is why
+    # Foundre's rule never fired for a customer: `_crossdomain_ladder` reads this snapshot,
+    # `getattr` found no attribute, returned None, and `_next_crossdomain_rung` reads None
+    # as "no ladder configured = the pre-A7 single probe". Every unit test passed the
+    # ladder in by hand, so nothing saw it. This is the "a new DB column must reach every
+    # manual builder" lesson one builder further along than the two it usually names.
+    chatbot_crossdomain_ladder: Any = None
 
 
 def _read_switches(db: Session) -> _TurnSwitches:
@@ -2597,6 +2605,7 @@ def _read_switches(db: Session) -> _TurnSwitches:
             getattr(row, "chatbot_business_lane_enabled", False)
         ),
         chatbot_ordering_enabled=bool(getattr(row, "chatbot_ordering_enabled", False)),
+        chatbot_crossdomain_ladder=getattr(row, "chatbot_crossdomain_ladder", None),
     )
 
 
@@ -3235,6 +3244,7 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
     *,
     session_factory: SessionFactory,
     compose_send_action: bool = False,
+    lane_trace: Any = None,
 ) -> CompleteResult:
     """Run the tail of one turn: outcome -> member offer -> state -> compose -> persist.
 
@@ -3322,6 +3332,20 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
         branch_kind = row.branch_kind
         prior_actions = list(stored_response.get("actions") or [])
         turn_trace = trace_mod.TurnTrace.resume(row.trace)
+        # The events the LANE recorded after the head closed the row (A9): `run_fetch`
+        # runs in the head and its `tool` event is already on `row.trace`, but
+        # `run_crossdomain` runs inside `complete_answer` - AFTER the head wrote the row -
+        # so resuming from the row alone dropped every `crossdomain` and `reveals` event
+        # on the floor. The turn-detail screen then showed an empty cross-domain section
+        # for every business turn, and the console check could not tell a rung that never
+        # ran from one whose evidence was discarded. Carried explicitly rather than by
+        # sharing the object, because `resume` deliberately rebuilds from the persisted
+        # array and that is what makes the head/tail split one timeline.
+        if lane_trace is not None:
+            seen = {json.dumps(e, sort_keys=True, default=str) for e in turn_trace.events}
+            for event in getattr(lane_trace, "events", []) or []:
+                if json.dumps(event, sort_keys=True, default=str) not in seen:
+                    turn_trace.events.append(event)
         canned = copy_mod.resolve(db)
 
         # EVERY failure in the tail closes the turn, the way R4 promises for every

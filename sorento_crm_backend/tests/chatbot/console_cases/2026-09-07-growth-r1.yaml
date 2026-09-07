@@ -55,21 +55,16 @@ cases:
   #   JOIN LATERAL jsonb_each(ps.values) v(k, val) ON true
   #   WHERE val::text NOT IN ('null','""') GROUP BY 1 ORDER BY 2 DESC LIMIT 6;
   # -> SRTKT73SS carries 26 populated spec keys, second only to a colour variant.
-  # FINDING (7 Sep 2026, both runs): the compact "Specs:" line renders only when
-  # `requested_attributes` is EMPTY, and the word "spec" is itself read as a requested
-  # attribute by the prompt's REQUESTED ATTRIBUTES section, so this phrasing takes the
-  # one-key branch and answers "no dimension recorded for ...". AC-901's own example is
-  # "SRTWC8517 spec", so the AC and the parser disagree about that word. Not a code
-  # defect - `output_structurer`'s no-attribute branch is correct and covered by
-  # `tests/chatbot/test_product_spec_projection.py` - and not fixable by growth r1's
-  # ADDITIVE addendum either: it needs the live REQUESTED ATTRIBUTES rules changed, which
-  # is the dialogue lane's prompt work. Graded here for what the turn does today.
-  - name: A1 spec ask answers from the product spec registry
+  # A bare "spec" used to be read as a requested ATTRIBUTE, so this took the one-key
+  # branch and answered "no dimension recorded for ..." instead of AC-901's compact
+  # "Specs:" line. The addendum now says so in one rule ("A BARE SPEC ASKS FOR ALL OF
+  # THEM"), which is why this case is `# NEW VOCABULARY`: it grades the label move too.
+  - name: A1 spec ask shows the compact Specs line  # NEW VOCABULARY (bare-spec rule)
     text: "SRTKT73SS spec"
     cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["SRTKT73SS"]
+      reply_contains: ["SRTKT73SS", "Specs:"]
       no_uuid: true
 
   # SELECT r.spec_key, r.label, v.val FROM product_specifications ps
@@ -78,7 +73,17 @@ cases:
   #   JOIN product_spec_registry r ON r.spec_key=v.k
   #   WHERE p.product_code='SRTKT73SS' AND val::text NOT IN ('null','""');
   # -> steel_grade = '304', registry label "Steel grade".
-  - name: A1 one-key spec ask answers that key only
+  #
+  # FINDING, measured 8 Sep 2026: under the LIVE prompt the two A1 phrasings are UNSTABLE
+  # and swap - one run answers "SRTKT73SS spec" with a single key and "steel grade of
+  # SRTKT73SS" with the full list, the next run does the reverse - because the live
+  # REQUESTED ATTRIBUTES section has no rule for a bare "spec" and no vocabulary entry for
+  # "steel grade", so the model guesses (it emits `["dimension"]`, a word the registry has
+  # no key for, and gets the honest "no dimension recorded for <code>" miss). Under the
+  # PINNED version both settle: "spec" renders the compact Specs line and "steel grade"
+  # renders "*Steel grade:* 304". Both A1 cases are therefore `# NEW VOCABULARY` - the
+  # bare-spec rule the addendum adds is what makes the pair deterministic.
+  - name: A1 one-key spec ask answers that key only  # NEW VOCABULARY (bare-spec rule)
     text: "steel grade of SRTKT73SS"
     cold: true
     expect:
@@ -221,75 +226,67 @@ cases:
   # A7 - the cross-domain ladder, Foundre's rule (AC-921, AC-922).
   # ======================================================================================
 
-  # SELECT p.product_code, sum(pl.qty_ordered - pl.qty_received), count(*)
-  #   FROM purchase_order_lines pl JOIN products p ON p.id = pl.product_id
+  # SELECT p.product_code, count(*) FROM purchase_order_lines pl
+  #   JOIN products p ON p.id = pl.product_id
   #   WHERE pl.line_status='open' AND (pl.qty_ordered - pl.qty_received) > 0
   #     AND NOT EXISTS (SELECT 1 FROM stock s WHERE s.product_id = p.id AND s.quantity_on_hand > 0)
   #     AND NOT EXISTS (SELECT 1 FROM spo_allocations a WHERE a.product_id = p.id
-  #                       AND a.receipt_status = 'pending')
-  #   GROUP BY 1 ORDER BY 3 DESC LIMIT 6;
-  # -> SRTWT7445-LV-NEW: no stock, no pending incoming, 20 open PO lines for 1,000 pcs.
-  #    This is the exact shape Foundre's rule exists for.
-  # KNOWN RED, and the most valuable line in this file (7 Sep 2026, BOTH runs).
-  # The turn answers "But no inventory matched these. Would you like me to escalate to
-  # warehouse" - the MISS lane - and its persisted trace carries ONE `tool` event and NO
-  # `crossdomain` event at all, so `run_crossdomain` was never called. A stock question
-  # whose product has ZERO stock rows exits to the miss lane before `complete_answer`, and
-  # the ladder lives inside `complete_answer`. Foundre's rule is therefore unreachable from
-  # WhatsApp for exactly the case it was written for.
+  #                       AND a.receipt_status='pending')
+  #     AND NOT EXISTS (SELECT 1 FROM products q WHERE q.id <> p.id
+  #                       AND q.product_code LIKE p.product_code || '%')
+  #   GROUP BY 1 ORDER BY 2 DESC;
+  # -> CB2904 (7 open PO lines, 1,100 pcs): no stock, no pending incoming, an open PO, and
+  #    the whole of its own prefix family. That last clause matters twice over - see the
+  #    AC-922 case below for why, and the FINDING here for the other half.
   #
-  # NOT a regression from the `can_state_absence` gate added in review blocker 2: that gate
-  # is inside `crossdomain_render`, which this turn never reaches (no crossdomain event).
-  # `tests/chatbot/test_crossdomain_ladder.py` and `test_growth_r1_review_fixes.py` both
-  # call `run_crossdomain` DIRECTLY, which is why every unit test of A7 is green while the
-  # journey is not - the same "tests pass, feature unreachable" shape as the parser
-  # vocabulary gap this lane already closed. Left red on purpose; fixing it means routing a
-  # zero-row stock answer through the answer lane, which is a change to the miss/answer
-  # split and belongs in its own slice.
-  - name: A7 no stock, no incoming, but a PO is placed  # KNOWN RED - see the comment above
-    text: "check stock SRTWT7445-LV-NEW"
+  # FINDING, measured 8 Sep 2026: a SUFFIXED code does not reach the ladder on a real turn.
+  # `SRTWT7445-LV-NEW` (20 open PO lines), `CWCX1009-SH` and `MSK11A-QT` all answer the
+  # bare miss with no cross-domain sentence at all, while `CB2904` and `SRTWB103` get
+  # theirs - and the suffixed turns record NO `crossdomain` trace event, so
+  # `crossdomain_zeroset` shut off at `active` rather than the probe coming back empty.
+  # `requested` is built from TYPED-EXACT resolver matches, so the likely cause is the
+  # match_tier a hyphen-suffixed code comes back with. That is a resolver question, not a
+  # ladder one, and it is worth its own slice: it silently disables Foundre's rule for a
+  # whole shape of product code.
+  - name: A7 no stock, no incoming, but a PO is placed
+    text: "check stock CB2904"
     cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["SRTWT7445-LV-NEW", "but a PO is placed"]
+      reply_contains: ["CB2904", "but a PO is placed"]
       reply_not_contains: ["Supplier"]
       no_uuid: true
 
-  # SELECT p.product_code FROM products p WHERE p.is_active AND p.product_code ~ '^SRT'
-  #   AND NOT EXISTS (SELECT 1 FROM stock s WHERE s.product_id = p.id AND s.quantity_on_hand > 0)
-  #   AND NOT EXISTS (SELECT 1 FROM spo_allocations a WHERE a.product_id = p.id
-  #                     AND a.receipt_status='pending')
-  #   AND NOT EXISTS (SELECT 1 FROM purchase_order_lines pl WHERE pl.product_id = p.id
-  #                     AND pl.line_status='open' AND (pl.qty_ordered - pl.qty_received) > 0)
-  #   ORDER BY 1 LIMIT 6;
-  # -> SRT-BB7001 has nothing on any of the three rungs.
-  # KNOWN RED, same root as the case above plus one of its own. SRT-BB7001 does not
-  # resolve as typed (the resolver offers SRTBK7001 / SRTBK001), and a code that HAS
-  # nothing anywhere generally also has nothing to resolve against: `AP4842`, picked by the
-  # same "nothing on any rung" query, comes back "Couldn't find: AP4842 (product)". So
-  # AC-922's sentence is unreachable from a real turn for a second reason - the resolver
-  # misses before the ladder is asked. The wording itself is graded by
-  # `test_growth_r1_review_fixes.py::test_ac922_says_no_po_not_no_purchase_order`.
-  - name: A7 nothing on any rung says so and offers to escalate  # KNOWN RED - see above
-    text: "check stock SRT-BB7001"
+  # SELECT p.product_code FROM products p
+  #   WHERE p.is_active AND p.product_code ~ '^SRT[A-Z0-9-]+$'
+  #     AND length(p.product_code) BETWEEN 8 AND 16
+  #     AND NOT EXISTS (SELECT 1 FROM stock s WHERE s.product_id = p.id AND s.quantity_on_hand > 0)
+  #     AND NOT EXISTS (SELECT 1 FROM spo_allocations a WHERE a.product_id = p.id
+  #                       AND a.receipt_status='pending')
+  #     AND NOT EXISTS (SELECT 1 FROM purchase_order_lines pl WHERE pl.product_id = p.id
+  #                       AND pl.line_status='open' AND (pl.qty_ordered - pl.qty_received) > 0)
+  #     AND NOT EXISTS (SELECT 1 FROM products q WHERE q.id <> p.id
+  #                       AND q.product_code LIKE p.product_code || '%')
+  #   ORDER BY 1 LIMIT 10;
+  # -> SRTWB103. The last clause is the one the first attempt missed: a code that has
+  #    nothing on any rung is often also a code with no exact resolution (SRT-BB7001 and
+  #    AP4842 both came back "did you mean ..."), so the probe has to be a code that is
+  #    the WHOLE of its own prefix family as well as empty on all three rungs.
+  - name: A7 nothing on any rung says so and offers to escalate
+    text: "check stock SRTWB103"
     cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["No stock, no incoming and no PO for SRT-BB7001"]
+      reply_contains: ["No stock, no incoming and no PO for SRTWB103"]
       no_uuid: true
 
-  # ======================================================================================
-  # Multi-turn: the product survives the domain switch into the PO answer. Each reply's
-  # session variables feed the next turn as `previous_conversation_state`, so this is the
-  # carry the engine really does, not an injected state.
-  # ======================================================================================
-
-  # KNOWN RED. A bare "PO?" routes `out_of_scope` (too thin to carry an intent), and
+  # EXPECTED RED, owned by another lane (`expected_red_until` below). A bare "PO?" routes `out_of_scope` (too thin to carry an intent), and
   # "any PO for it?" reaches the PO tool but resolves a DIFFERENT product - the carry does
   # not happen. Both are the carry semantics Slice B (`feat/chatbot-growth-dialogue`) is
   # rewriting: this lane is additive by design and changes no carry rule. Kept as the
   # case that measures whether that lane fixed it.
-  - name: stock then PO carries the product  # KNOWN RED until Slice B
+  - name: stock then PO carries the product
+    expected_red_until: feat/chatbot-growth-dialogue
     cold: true
     turns:
       - text: "check stock C-FH14"

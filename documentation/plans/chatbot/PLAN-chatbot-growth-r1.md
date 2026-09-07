@@ -180,41 +180,47 @@ claimed by exactly one domain. The parser schema enums are generated from the sa
   404, so the screen can neither read a wrong default nor save an empty list over
   anything.
 
-**Console check (`documentation/agents/chatbot-verification.md`), 7 Sep 2026.**
+**Console check (`documentation/agents/chatbot-verification.md`), 8 Sep 2026.**
 `sorento_crm_backend/tests/chatbot/console_cases/2026-09-07-growth-r1.yaml`, 14 cases, run
 twice against a lane backend on :8004 (the second run pins the unpromoted prompt version
-migration 490 published, via the new `--prompt-version` flag, so nothing is promoted):
+migration 490 published, via the `--prompt-version` flag, so nothing is promoted):
 
 | run | parser prompt | result |
 |---|---|---|
-| 1 | the tenant's `production` label (v1, FULL) | **9 pass / 5 fail** |
-| 2 | pinned to v10 (FULL + growth r1 addendum) | **11 pass / 3 fail** |
+| 1 | the tenant's `production` label (v1, FULL) | **11 pass / 3 fail** |
+| 2 | pinned to the growth r1 body | **13 pass / 1 fail** (the 1 is an `XFAIL` another lane owns) |
 
-The two that move between the runs are the measurement of what the label move buys: "last
-in" and "last 3 received" reach `crm_procurement_spo_allocations_last_receipt_list` only
-under the new vocabulary, and PO placed answers without the domain having to be guessed.
-See the PR for the full output. Three cases stay red under both, each explained in the file:
+**Foundre's rule now works from a real turn, and it never did before.** The console check of
+7 Sep found it unreachable; the cause was one missing field. `engine._TurnSwitches` - the
+snapshot a turn reads its settings off - had no `chatbot_crossdomain_ladder`, so
+`_crossdomain_ladder` got `None` and `_next_crossdomain_rung` read that as "no ladder
+configured = the pre-A7 single probe". Every unit test passed the ladder in by hand, so
+nothing saw it. This is the "a new DB column must reach every manual builder" lesson one
+builder further along than the two it usually names. A second half went with it: the events
+`run_crossdomain` records happen INSIDE `complete_answer`, after the head closed the row, so
+`complete_turn`'s resume-from-row dropped every `crossdomain` and `reveals` event - which is
+why the first console run could not tell a rung that never ran from one whose evidence was
+discarded. Both are covered end to end by
+`tests/chatbot/test_foundre_rung_end_to_end.py` (AC-921 and AC-922 through `run_turn`, not
+through `run_crossdomain`).
 
-1. **Foundre's rule is unreachable from a real turn.** A stock question whose product has
-   ZERO stock rows exits to the MISS lane before `complete_answer`, and the ladder lives
-   inside `complete_answer` - the turn's persisted trace carries one `tool` event and NO
-   `crossdomain` event. Every A7 unit test calls `run_crossdomain` directly, which is why
-   they are green while the journey is not: the same "tests pass, feature unreachable"
-   shape as the parser vocabulary gap this lane closed. NOT a regression from the
-   `can_state_absence` gate (that code is never reached). Fixing it means changing where
-   the miss/answer split happens, which is its own slice.
-2. **AC-922's sentence has a second blocker**: a code with nothing on any rung generally
-   has nothing to resolve against either, so the resolver misses before the ladder is
-   asked (`SRT-BB7001` offers `SRTBK7001`; `AP4842`, picked by the same "nothing anywhere"
-   query, comes back "Couldn't find"). The wording itself is unit-tested.
-3. **The multi-turn carry into a PO question does not happen** - a bare "PO?" routes
-   `out_of_scope`, and "any PO for it?" reaches the PO tool but resolves a different
-   product. That is Slice B's carry rewrite; this lane changes no carry rule by design.
+What still stands red, and who owns it:
 
-One more finding, graded green because the case now grades what the turn does: a bare
-"<code> spec" is read as a requested ATTRIBUTE by the live REQUESTED ATTRIBUTES section, so
-it takes the one-key branch instead of AC-901's compact "Specs:" line. The additive
-addendum cannot settle that; it needs the live section changed.
+1. **The multi-turn carry into a PO follow-up** - marked `expected_red_until:
+   feat/chatbot-growth-dialogue` in the case file, so it reports `XFAIL` and will report
+   `XPASS` (a failure) the moment that lane fixes it. This lane changes no carry rule.
+2. **A suffixed product code does not reach the ladder.** `SRTWT7445-LV-NEW` (20 open PO
+   lines), `CWCX1009-SH` and `MSK11A-QT` answer the bare miss with no cross-domain sentence
+   and record NO `crossdomain` trace event, while `CB2904` and `SRTWB103` get theirs - so
+   `crossdomain_zeroset` shuts off at `active`, not at an empty probe. `requested` is built
+   from TYPED-EXACT resolver matches, so the suspect is the `match_tier` a hyphen-suffixed
+   code resolves with. That is a resolver slice, and it silently disables Foundre's rule for
+   a whole shape of product code - worth its own ticket.
+3. **The live prompt is unstable on the two A1 spec phrasings** and they swap between runs,
+   because the live REQUESTED ATTRIBUTES section has no rule for a bare "spec" and no entry
+   for "steel grade" (the model emits `["dimension"]`, which the registry has no key for).
+   The addendum's new bare-spec rule settles the pair under the pinned version; aligning the
+   live section's attribute words with `product_spec_registry`'s keys is its own slice.
 
 **Post-deploy, Slice A (mandatory, not optional).** Two steps, in this order, and neither
 happens by itself:

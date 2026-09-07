@@ -963,7 +963,7 @@ class TestErrorArmRendersTheMissLane:
             status = "done"
             stage = "remembered"
 
-        def _complete_turn(turn_id, fragments, *, session_factory, compose_send_action=False):
+        def _complete_turn(turn_id, fragments, *, session_factory, compose_send_action=False, lane_trace=None):
             captured["fragments"] = fragments
             return _Completed()
 
@@ -1045,7 +1045,7 @@ class TestErrorArmRendersTheMissLane:
             status = "done"
             stage = "remembered"
 
-        def _complete_turn(turn_id, fragments, *, session_factory, compose_send_action=False):
+        def _complete_turn(turn_id, fragments, *, session_factory, compose_send_action=False, lane_trace=None):
             captured["fragments"] = fragments
             return _Completed()
 

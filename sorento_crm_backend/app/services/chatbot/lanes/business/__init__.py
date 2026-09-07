@@ -664,6 +664,10 @@ def complete_answer(
         # It cannot be built before the tail the way S4's clarifier builds its own: the
         # words do not exist until the tail has composed them.
         compose_send_action=True,
+        # A9: the events THIS lane recorded (the cross-domain probes, the field reveals)
+        # were added after the head closed the row, so `complete_turn`'s resume-from-row
+        # cannot see them. Handed over explicitly, or they never reach the column.
+        lane_trace=trace,
     )
     return {
         "reply": completed.reply,

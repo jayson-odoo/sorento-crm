@@ -50,6 +50,13 @@ the pair says what the tenant gets today and what it would get after the label m
         print([(v.id, v.version, len(v.template)) for v in db.query(AIPromptVersion) \
         .filter(AIPromptVersion.name=='chatbot_semantic_parser').all()])"
 
+**`expected_red_until: <branch or slice>` marks a case another lane owns.** A case whose
+expectation this lane cannot meet is still worth keeping - it is what measures whether the
+lane that owns it did the job - but a permanent red teaches the reader to ignore the
+output. Such a case reports `XFAIL` and does NOT count as a failure while it fails, and
+reports `XPASS` and DOES count as a failure the moment it passes: the marker is now a lie
+and has to be removed. Never reach for it to quieten a case this lane owns.
+
 **The runner owns the lane switches.** `chatbot_business_lane_enabled` and
 `chatbot_completed_lanes` decide whether the CRM ANSWERS a turn or delegates it to n8n, and
 a delegated turn comes back with an empty reply - which would grade the handoff, not the
@@ -499,9 +506,19 @@ def _run_cases(cases, session, url, args, default_contact, run_id) -> int:
             prefix = f"turn {index + 1}: " if len(_turns_of(case)) > 1 else ""
             case_failures += [prefix + f for f in _grade(turn.get("expect") or {}, body, pending)]
             previous_state = _next_state(body)
-        verdict = "FAIL" if case_failures else "PASS"
-        failed += 1 if case_failures else 0
-        print(f"{verdict}  {name:<44} branch={last_branch}  {last_line!r}")
+        owned_by = str(case.get("expected_red_until") or "").strip()
+        if owned_by:
+            # Inverted on purpose (see the module docstring): failing is the expected
+            # state, passing is the news.
+            verdict = "XFAIL" if case_failures else "XPASS"
+            is_failure = not case_failures
+            suffix = f"  [{'expected red until ' + owned_by if case_failures else 'NOW PASSES - remove expected_red_until: ' + owned_by}]"
+        else:
+            verdict = "FAIL" if case_failures else "PASS"
+            is_failure = bool(case_failures)
+            suffix = ""
+        failed += 1 if is_failure else 0
+        print(f"{verdict}  {name:<44} branch={last_branch}  {last_line!r}{suffix}")
         for failure in case_failures:
             print(f"      - {failure}")
     return failed
