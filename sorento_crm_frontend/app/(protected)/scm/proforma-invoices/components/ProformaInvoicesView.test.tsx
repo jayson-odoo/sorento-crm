@@ -115,10 +115,13 @@ vi.mock('../../hooks/useFulfilment', () => ({
 // renders. `ConvertToPackingListDialog` is stubbed too - its OWN container-size select is
 // exercised where it renders un-stubbed, `ProformaInvoiceDetail.test.tsx` - and this stub
 // exposes ONE "Convert" button that fires `onConvert` with no size chosen (the default).
-vi.mock('./ProformaUploadDialog', () => ({
-  ProformaUploadDialog: ({ open }: { open: boolean }) =>
-    open ? <div data-testid="upload-dialog" /> : null,
-}));
+vi.mock(
+  '@/app/(protected)/procurement-management/packing-lists/components/PackingListUploadDialog',
+  () => ({
+    PackingListUploadDialog: ({ open }: { open: boolean }) =>
+      open ? <div data-testid="upload-dialog" /> : null,
+  }),
+);
 
 vi.mock('./ConvertToPackingListDialog', () => ({
   ConvertToPackingListDialog: ({
@@ -162,6 +165,7 @@ vi.mock('../../hooks/useProformaInvoices', () => ({
     mutateAsync: state.bulkDeleteInvoices,
     isPending: false,
   }),
+  useProformaInvoicesApplied: () => vi.fn(),
 }));
 
 import { ProformaInvoicesView } from './ProformaInvoicesView';

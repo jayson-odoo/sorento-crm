@@ -50,23 +50,30 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+/** The dropdown-menu stub renders children and, for an item, wires the click - that is
+ *  the whole surface this list touches, so it is typed rather than left as `any`. */
+type MenuSlotProps = { children?: React.ReactNode };
+type MenuItemProps = MenuSlotProps & { onClick?: () => void; disabled?: boolean };
+
 vi.mock('@/components/ui/dropdown-menu', () => ({
-  DropdownMenu: ({ children }: any) => <div>{children}</div>,
-  DropdownMenuTrigger: ({ children }: any) => <>{children}</>,
-  DropdownMenuContent: ({ children }: any) => <div data-testid="menu-content">{children}</div>,
-  DropdownMenuItem: ({ children, onClick, disabled }: any) => (
+  DropdownMenu: ({ children }: MenuSlotProps) => <div>{children}</div>,
+  DropdownMenuTrigger: ({ children }: MenuSlotProps) => <>{children}</>,
+  DropdownMenuContent: ({ children }: MenuSlotProps) => (
+    <div data-testid="menu-content">{children}</div>
+  ),
+  DropdownMenuItem: ({ children, onClick, disabled }: MenuItemProps) => (
     <button type="button" onClick={onClick} disabled={disabled}>
       {children}
     </button>
   ),
-  DropdownMenuCheckboxItem: ({ children }: any) => <div>{children}</div>,
-  DropdownMenuLabel: ({ children }: any) => <div>{children}</div>,
+  DropdownMenuCheckboxItem: ({ children }: MenuSlotProps) => <div>{children}</div>,
+  DropdownMenuLabel: ({ children }: MenuSlotProps) => <div>{children}</div>,
   DropdownMenuSeparator: () => <hr />,
-  DropdownMenuGroup: ({ children }: any) => <div>{children}</div>,
-  DropdownMenuPortal: ({ children }: any) => <>{children}</>,
-  DropdownMenuSub: ({ children }: any) => <div>{children}</div>,
-  DropdownMenuSubContent: ({ children }: any) => <div>{children}</div>,
-  DropdownMenuSubTrigger: ({ children }: any) => <div>{children}</div>,
+  DropdownMenuGroup: ({ children }: MenuSlotProps) => <div>{children}</div>,
+  DropdownMenuPortal: ({ children }: MenuSlotProps) => <>{children}</>,
+  DropdownMenuSub: ({ children }: MenuSlotProps) => <div>{children}</div>,
+  DropdownMenuSubContent: ({ children }: MenuSlotProps) => <div>{children}</div>,
+  DropdownMenuSubTrigger: ({ children }: MenuSlotProps) => <div>{children}</div>,
 }));
 
 // The list only needs a REAL react-query context because it calls `useQueryClient()`
@@ -261,7 +268,7 @@ describe('SPOAllocationsList - bulk delete (AC-8, AC-16b, review B4)', () => {
 
     fireEvent.click(screen.getByLabelText('Select all rows on this page'));
 
-    // Two secondaryActions (Import SPO, Delete selected) collapse into the
+    // Two secondaryActions (Create SPO Allocation, Delete selected) collapse into the
     // "Actions" dropdown - Radix opens it on pointerdown, not click.
     fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), { button: 0 });
     fireEvent.click(screen.getByRole('button', { name: /Delete selected/i }));
@@ -276,5 +283,34 @@ describe('SPOAllocationsList - bulk delete (AC-8, AC-16b, review B4)', () => {
     fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), { button: 0 });
     expect(screen.getByRole('button', { name: /Delete selected/i })).toBeDisabled();
     expect(bulkDeletionRun).not.toHaveBeenCalled();
+  });
+});
+
+// ── AC-C1: Upload SPO primary, Create SPO Allocation in the gear (R5) ───────
+
+describe('SPOAllocationsList - Upload SPO is primary, Create SPO Allocation in the gear (AC-C1)', () => {
+  it('shows Upload SPO as the primary button', () => {
+    mockList([row()]);
+    renderList();
+
+    expect(screen.getByRole('button', { name: /Upload SPO/i })).toBeInTheDocument();
+  });
+
+  it('puts Create SPO Allocation inside the Actions (gear) menu', () => {
+    mockList([row()]);
+    renderList();
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), { button: 0 });
+    expect(screen.getByRole('button', { name: /Create SPO Allocation/i })).toBeInTheDocument();
+  });
+
+  it('Create SPO Allocation in the gear routes to the manual form', () => {
+    mockList([row()]);
+    renderList();
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), { button: 0 });
+    fireEvent.click(screen.getByRole('button', { name: /Create SPO Allocation/i }));
+
+    expect(routerPush).toHaveBeenCalledWith('/procurement-management/spo-allocations/new');
   });
 });

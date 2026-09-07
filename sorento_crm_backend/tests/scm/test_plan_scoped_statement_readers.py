@@ -181,7 +181,7 @@ def test_the_ask_binds_through_this_plans_own_rows(monkeypatch):
 
         code_at = sheet.column_index("item_code")
         row = next(r for r in sheet.rows if r.cells[code_at].value == their_code)
-        assert row.cells[-1].value == 7
+        assert row.cells[sheet.qty_index].value == 7
         assert not any(r.appended for r in sheet.rows)
 
 

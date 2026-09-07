@@ -452,6 +452,18 @@ def seed_scm_module_data() -> None:
     module_440 = importlib.util.module_from_spec(spec_440)
     spec_440.loader.exec_module(module_440)
 
+    # 483 adds the Jiexia spellings (`箱号` / `封签号` / `客户` / `INVOICE NO.` / bare `日期` /
+    # `客户型号` / `洁厦型号` / `JIEXIA MODEL` / `单价` / `总金额` / `CARTONS` / `CBM`, weights)
+    # to BOTH `packing_list` and `proforma_invoice`. Same create_all gap as every alias
+    # migration above: `seal_no` and `consignee` are new columns nothing derives a header
+    # for without this row, and the container/seal split (`箱号:X / 封签号:Y`) is what makes
+    # the Jiexia packing list read as two containers instead of one.
+    spec_483 = importlib.util.spec_from_file_location(
+        "_scm_seed_483", versions / "483_supplier_doc_aliases.py"
+    )
+    module_483 = importlib.util.module_from_spec(spec_483)
+    spec_483.loader.exec_module(module_483)
+
     with engine.begin() as conn:
         aliases = module.seed_import_field_aliases(conn)
         policies = module.seed_priority_policy(conn)
@@ -465,6 +477,7 @@ def seed_scm_module_data() -> None:
         aliases += module_435.seed(conn)
         aliases += module_436.seed(conn)
         aliases += module_459.seed(conn)
+        aliases += module_483.seed(conn)
         module_440.seed_inbound_shipment_draft_rule(conn)
         for field, alias in module_347._ALIASES:
             conn.execute(_text(

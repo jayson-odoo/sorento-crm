@@ -386,3 +386,71 @@ def _reset_global_state():
 # StaticPool audit-cache pre-warm that used to live here are gone: no test
 # builds a sqlite engine any more, so nothing would ever trigger them. Every
 # test runs on Postgres via tests/_pg_fixture.py.
+
+# ---------------------------------------------------------------------------
+# No live LLM calls guard (review round 1, purchasing consolidation batch lane
+# C) - `.env` carries a real `OPENAI_API_KEY` for the app itself, and a test
+# that forgets its own `get_provider` stub reaches the real network the
+# moment its scenario hits a translation/AI-fill miss, exactly the incident
+# `test_translation_service.py`'s own module docstring names.
+#
+# NOT autouse: an autouse fixture here breaks every pre-existing test that
+# calls `get_provider`/`resolve_provider` with its own stub at another seam
+# (`test_ai_extract_service.py`, `test_llm_provider*.py`,
+# `test_media_extract_service.py`, `test_product_spec_understanding.py`), so
+# it is opt-in per module instead: `pytestmark = pytest.mark.usefixtures(
+# "no_live_llm")` (or an autouse fixture requesting it) in the lane C modules
+# that actually need it.
+# ---------------------------------------------------------------------------
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "allow_live_llm: opt this test out of the no_live_llm get_provider() guard "
+        "(a test that genuinely means to exercise a real provider call).",
+    )
+
+
+@pytest.fixture
+def no_live_llm(monkeypatch, request):
+    """Raise on any call to `get_provider()` unless the test stubs it back out.
+
+    `from app.services.llm_provider import get_provider` is a SEPARATE name
+    binding in the importing module, not the original attribute - patching
+    only `app.services.llm_provider.get_provider` misses every module that
+    already imported it by name (which is every AI-touching service module in
+    this codebase). Patched here instead: every module already in `sys.modules`
+    whose OWN `get_provider` attribute is still the real function, at the point
+    each test actually runs (by which time every test file's own imports have
+    already happened, so this reaches all of them).
+
+    A test that stubs `get_provider` itself (every existing AI-touching test
+    already does, e.g. `test_translation_service.py`'s `_stub_provider`) simply
+    overwrites this raising stub with its own fake - same `monkeypatch`
+    instance, so pytest still restores the true original at teardown either
+    way. Opt out with `@pytest.mark.allow_live_llm` for a test that means to
+    reach a real provider.
+    """
+    if request.node.get_closest_marker("allow_live_llm"):
+        yield
+        return
+
+    import sys
+
+    from app.services import llm_provider as _llm_provider
+
+    original = _llm_provider.get_provider
+
+    def _raise(*_args, **_kwargs):
+        raise RuntimeError(
+            "get_provider() was called with no test stub in place - this test would "
+            "make a real network call to an LLM provider. Stub it "
+            "(monkeypatch.setattr(<module>, 'get_provider', ...)) or mark the test "
+            "@pytest.mark.allow_live_llm."
+        )
+
+    for module in list(sys.modules.values()):
+        if module is not None and getattr(module, "get_provider", None) is original:
+            monkeypatch.setattr(module, "get_provider", _raise, raising=True)
+    yield

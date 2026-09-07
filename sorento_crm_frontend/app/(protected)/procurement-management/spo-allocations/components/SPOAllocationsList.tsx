@@ -293,10 +293,16 @@ export default function SPOAllocationsList() {
     onStarted: () => table.resetRowSelection(),
   });
 
+  // Upload is primary (R5): the SPO book is imported far more often than a single
+  // allocation is hand-created, so the toolbar leads with it and Create SPO Allocation
+  // moves into the Actions menu.
   const listPrimaryAction = (
-    <Button onClick={() => router.push('/procurement-management/spo-allocations/new')}>
-      <Plus className="size-4" />
-      Create SPO Allocation
+    <Button
+      onClick={() => setImportDialogOpen(true)}
+      data-guide-target="procurement.spo-allocations.import-options-button"
+    >
+      <Upload className="size-4" />
+      Upload SPO
     </Button>
   );
 
@@ -409,11 +415,10 @@ export default function SPOAllocationsList() {
             isRefreshing={isFetching}
             secondaryActions={[
               {
-                key: 'import',
-                label: 'Import SPO',
-                icon: Upload,
-                onClick: () => setImportDialogOpen(true),
-                dataGuideTarget: 'procurement.spo-allocations.import-options-button',
+                key: 'create',
+                label: 'Create SPO Allocation',
+                icon: Plus,
+                onClick: () => router.push('/procurement-management/spo-allocations/new'),
               },
               {
                 key: 'delete-selected',

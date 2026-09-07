@@ -130,6 +130,38 @@ def test_one_table_with_a_container_column_splits_into_blocks(resolver):
     assert [len(b.lines) for b in out.blocks] == [2, 1]
 
 
+def test_splitting_by_container_column_carries_seal_and_consignee_and_notes():
+    # S2, review round 1: `_split_by_container_column` used to rebuild each sub-block with
+    # only `container_no`/`bl_no`/`header_row` - a table-wide seal number, consignee or
+    # accessory note (stated once, above the whole table) silently disappeared from every
+    # block the column split it into.
+    #
+    # `seal_no`/`consignee` are migration 483's own aliases (not 311's, which the shared
+    # `resolver` fixture above is scoped to), so this test builds its own resolver rather
+    # than widening the fixture every other test here checks against migration 311 alone.
+    mapping: dict[str, str] = {}
+    for field, alias in _ALIASES + [("seal_no", "封签号"), ("consignee", "客户")]:
+        mapping.setdefault(normalize_header(alias), field)
+        mapping.setdefault(normalize_header(field), field)
+    resolver = AliasResolver(DOC_TYPE, mapping)
+
+    rows = [
+        ["封签号：SEAL-1"], ["客户：SORENTO SDN BHD"],
+        ["货柜号", "产品型号", "品名", "数量"],
+        ["ABCU1", "SRT-1", "座厕", 5],
+        [None, None, "水箱空瓷：1个", None],
+        ["ABCU2", "SRT-2", "座厕", 7],
+    ]
+
+    out = read_workbook(workbook(rows), resolver)
+
+    assert len(out.blocks) == 2
+    for block in out.blocks:
+        assert block.seal_no == "SEAL-1"
+        assert block.consignee == "SORENTO SDN BHD"
+        assert any("水箱空瓷" in n for n in block.notes)
+
+
 def test_a_single_container_reads_as_one_block_in_either_shape(resolver):
     # The two readings must not disagree about the simple case, or the same file imports as one
     # shipment or two depending on how the supplier chose to write it.
@@ -201,6 +233,72 @@ def test_blocks_remember_where_they_started(resolver):
 
     assert len(out.blocks) == 2
     assert out.blocks[0].header_row < out.blocks[1].header_row
+
+
+def test_a_bill_of_lading_with_slashes_reads_verbatim(resolver):
+    # B1, review round 1: `SZX/2026/001` has no whitespace around its slashes, so it is
+    # one value, not three - `_MULTI_SEP` used to split on a bare `/` and turned this into
+    # `SZX`, breaking the B/L number.
+    rows = [["提单号：SZX/2026/001"], HEADER, ["SRT-1", "座厕", 5, 1, 0.2]]
+
+    out = read_workbook(workbook(rows), resolver)
+
+    assert out.blocks[0].bl_no == "SZX/2026/001"
+
+
+def test_a_date_with_slashes_is_not_split_by_the_multi_sep(resolver):
+    # Same bug, a different field: `31/07/2026` (day-first, AC-P2.4) must survive whole.
+    from app.services.scm.packing_list_reader import _MULTI_SEP
+
+    assert _MULTI_SEP.split("31/07/2026") == ["31/07/2026"]
+    assert _MULTI_SEP.split("SZX/2026/001") == ["SZX/2026/001"]
+
+
+def test_a_slash_with_no_second_label_is_not_split(resolver):
+    # `_MULTI_SEP` still fires on a WHITESPACE-surrounded slash (`箱号:X / 封签号:Y` needs
+    # that) - the second guard is what refuses THIS split, because "just a note" carries no
+    # label of its own to split off.
+    from app.services.scm.packing_list_reader import _labelled
+
+    found = _labelled(["货柜号: ABCU1 / just a note"], resolver)
+
+    assert found == {"container_no": "ABCU1 / just a note"}
+
+
+def test_a_cell_stating_two_labelled_fields_still_splits(resolver):
+    from app.services.scm.packing_list_reader import _labelled
+
+    found = _labelled(["货柜号:ABCU1 / 提单号:BL-9"], resolver)
+
+    assert found == {"container_no": "ABCU1", "bl_no": "BL-9"}
+
+
+def test_a_note_row_between_a_labelled_container_and_its_header_does_not_steal_it(resolver):
+    # B2, review round 1: a non-line text row (a subtotal note, here) sits between the
+    # label for the SECOND container and the repeated header that actually starts its
+    # block. Draining `pending` for the note used to mint an empty, container-bearing block
+    # that the "no lines" filter then threw away - taking the container number with it, so
+    # the REAL second block ended up with none.
+    rows = [
+        ["货柜号：ABCU1000001"], HEADER, ["A1", "座厕", 5, 1, 0.2],
+        ["货柜号：ABCU1000002"], ["小计 SUBTOTAL"], HEADER, ["A2", "座厕", 6, 1, 0.2],
+    ]
+
+    out = read_workbook(workbook(rows), resolver)
+
+    assert [b.container_no for b in out.blocks] == ["ABCU1000001", "ABCU1000002"]
+    assert [len(b.lines) for b in out.blocks] == [1, 1]
+
+
+def test_a_totals_row_in_the_description_column_is_not_kept_as_a_note(resolver):
+    # Nit, review round 1: `SUB TOTAL 1*40HQ` (the Jiexia packing list's own words) sits in
+    # the description column of a row with no item code - the same shape as a real
+    # accessory note, but it is arithmetic about the block, not something inside it.
+    rows = [HEADER, ["SRT-1", "座厕", 5, 1, 0.2], [None, "SUB TOTAL 1*40HQ", None, None, None]]
+
+    out = read_workbook(workbook(rows), resolver)
+
+    assert out.blocks[0].notes == []
 
 
 def test_the_seeded_aliases_are_the_ones_this_suite_assumes():

@@ -9,10 +9,7 @@ import { useContainerSizes } from '@/app/(protected)/scm/hooks/useFulfilment';
 import { CLEARANCE_ATTRIBUTE_FIELDS } from '../forms/packing-list-schema';
 import { PackingListField } from './PackingListField';
 import { SupplierCombobox } from './SupplierCombobox';
-import {
-  CONTAINER_COST_FIELDS,
-  usePackingListRecord,
-} from '../[id]/components/packing-list-context';
+import { usePackingListRecord } from '../[id]/components/packing-list-context';
 
 /** The header field this checkpoint is already edited elsewhere, so it is not asked for
  *  twice. `loading_date` and `etd_date` are explicit fields in the Container card (AC-F5),
@@ -34,7 +31,7 @@ const CARD1_ATTRIBUTE_NAMES = new Set([
 ]);
 
 /**
- * Everything about the container itself: what it is, when it moves, what it costs to land.
+ * Everything about the container itself: what it is, when it moves, when it clears.
  *
  * View and edit are the SAME layout throughout - the same fields in the same order, and an
  * input where the value was. Every card and every row is rendered whether it has a value or
@@ -42,8 +39,12 @@ const CARD1_ATTRIBUTE_NAMES = new Set([
  * honest answer for a container that has not cleared yet.
  *
  * Card order and field order mirror the RMB workbook top to bottom (AC-F5, ruling 3): the
- * header block she reads first (Container), what the footer apportions (Costs), the
- * clearance trail, then the document-level fields the workbook does not print at all.
+ * header block she reads first (Container), then the clearance trail, then the document-level
+ * fields the workbook does not print at all.
+ *
+ * No Costs card (R17, purchasing consolidation batch 6 Sep 2026): clearance / freight /
+ * insurance are not needed on screen. The three columns stay in the DB untouched - the
+ * AutoCount ingest contract may still read them - only this view and the export drop them.
  */
 export function PackingListDetailsTab() {
   const {
@@ -243,32 +244,6 @@ export function PackingListDetailsTab() {
             containerLabel={packingList.container_size_code ?? null}
             unmeasuredLines={packingList.unmeasured_lines ?? 0}
           />
-        </CardContent>
-      </Card>
-
-      {/* What it costs to land this container. Typed per container, never per line: the
-          workbook apportions each figure between SORENTO and MOCHA by that company's share
-          of the volume (clearance, freight) or of the amount (insurance). */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Costs</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {CONTAINER_COST_FIELDS.map((f) => (
-              <PackingListField
-                key={f.name}
-                label={f.label}
-                name={f.name}
-                type="number"
-                step="0.0001"
-                editing={editing}
-                draft={draft}
-                onChange={setField}
-                view={text(record[f.name])}
-              />
-            ))}
-          </div>
         </CardContent>
       </Card>
 
