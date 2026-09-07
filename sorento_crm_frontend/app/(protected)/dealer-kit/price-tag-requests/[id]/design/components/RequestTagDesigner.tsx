@@ -970,6 +970,7 @@ export function RequestTagDesigner({
                 selectedLineId && setPickerLineId(selectedLineId)
               }
               hideSaveBar
+              docId={selectedTag.id}
             />
           ) : (
             <CanvasMessage text="Preparing this line..." />

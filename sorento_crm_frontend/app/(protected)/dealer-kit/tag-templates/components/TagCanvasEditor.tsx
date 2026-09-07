@@ -22,7 +22,15 @@
  * active; the right button starts nothing, because the context menu owns it.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
 
 import type Konva from 'konva';
 import { Konva as KonvaGlobal } from 'konva/lib/Global';
@@ -172,6 +180,11 @@ import {
   type PanelLayout,
 } from '@/lib/dealer-kit/canvas-panels';
 import { toggleBold, toggleTextFlag, type TextFormatFlag } from '@/lib/dealer-kit/text-format';
+import {
+  getTagClipboard,
+  setTagClipboard,
+  subscribeTagClipboard,
+} from '@/lib/dealer-kit/tag-clipboard';
 import { InlineTextEditor } from './InlineTextEditor';
 
 /** What a previewed block is showing, named the way a person reads it. */
@@ -372,6 +385,15 @@ interface TagCanvasEditorProps {
   onUseTemplate?: () => void;
   /** The host owns saving, so the built-in Save bar would be a second Save. */
   hideSaveBar?: boolean;
+  /**
+   * The template id (template editor) or the placed tag's id (request
+   * designer), so the clipboard (S3) can tell a paste back onto the SAME
+   * doc (offset by `CLONE_OFFSET_MM`, as before) from a paste onto a
+   * DIFFERENT one (land at the original x/y). Absent in a test render; every
+   * copy then reads as the same doc, matching the old single-editor
+   * behaviour.
+   */
+  docId?: string;
 }
 
 /** What the canvas is currently asking the user to pick. */
@@ -413,6 +435,7 @@ export function TagCanvasEditor({
   onLayersChange,
   onUseTemplate,
   hideSaveBar,
+  docId,
 }: TagCanvasEditorProps) {
   const [layers, setLayers] = useState<TagLayer[]>(doc.layers);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -440,9 +463,11 @@ export function TagCanvasEditor({
     width_mm: number;
     height_mm: number;
   } | null>(null);
-  const [clipboard, setClipboard] = useState<{ layers: TagLayer[]; roots: string[] } | null>(
-    null,
-  );
+  // Module-level, not `useState` (S3): the request designer remounts this
+  // whole component with a new `key` on every line switch, and a local
+  // clipboard would empty on that remount. `getTagClipboard` is stable across
+  // renders, so it doubles as the required "getServerSnapshot"-free selector.
+  const clipboard = useSyncExternalStore(subscribeTagClipboard, getTagClipboard);
   const [menuOnEmpty, setMenuOnEmpty] = useState(true);
   const [picker, setPicker] = useState<PickerState>({ kind: 'none' });
   const [pickerBusy, setPickerBusy] = useState(false);
@@ -2360,24 +2385,30 @@ export function TagCanvasEditor({
     for (const rootId of selectionRoots) {
       for (const childId of descendantsOf(layers, rootId)) ids.add(childId);
     }
-    setClipboard({
+    setTagClipboard({
       layers: structuredClone(layers.filter((layer) => ids.has(layer.id))),
       roots: [...selectionRoots],
+      sourceDocId: docId ?? null,
     });
-  }, [layers, selectionRoots]);
+  }, [layers, selectionRoots, docId]);
 
   const handlePaste = useCallback(() => {
     if (!clipboard || clipboard.layers.length === 0) return;
+    // Same doc (or neither side names one, as in a bare test render): offset
+    // like a duplicate, as before. A DIFFERENT doc - a copy carried across
+    // lines or from the template editor - lands at the original x/y instead,
+    // so a layout copied elsewhere reappears in the same place (S3).
+    const sameDoc = clipboard.sourceDocId === (docId ?? null);
     const cloned = cloneLayers(
       clipboard.layers,
       clipboard.roots,
       newLayerId,
-      CLONE_OFFSET_MM,
+      sameDoc ? CLONE_OFFSET_MM : 0,
       maxZ,
     );
     if (cloned.layers.length === 0) return;
     commit([...layers, ...cloned.layers], new Set(cloned.ids));
-  }, [clipboard, layers, maxZ, commit]);
+  }, [clipboard, layers, maxZ, commit, docId]);
 
   const handleCut = useCallback(() => {
     handleCopy();

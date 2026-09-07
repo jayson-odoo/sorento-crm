@@ -441,6 +441,7 @@ export default function TagTemplateEditorPage() {
             onChange={(doc) => setDraftLayers(doc.layers)}
             onLayersChange={setDraftLayers}
             hideSaveBar
+            docId={template.id}
           />
         </div>
         {viewing && (
