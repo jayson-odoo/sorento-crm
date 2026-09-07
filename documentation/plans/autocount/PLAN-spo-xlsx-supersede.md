@@ -115,8 +115,40 @@ once; then the dedupe runs on production by the captain with `--dry-run` first.
   GRN unlink / re-point / delete pass the allocations they detached so their receipt drops to what
   the remaining picking lines prove; every other picking-less allocation keeps its stored value.
 - Shared algorithm: `shipping_order_rules.plan_xlsx_supersede(incoming, refless_rows) ->
-  SupersedePlan` (pure), `carried_received`, `repoint_allocation_dependants`; the ingest creates
-  rows from the plan, `scripts/dedupe_spo_xlsx_superseded.py` updates existing ref rows from it.
+  SupersedePlan` (pure), `carried_received`, `distribute_received`, `repoint_allocation_dependants`;
+  the ingest creates rows from the plan, `scripts/dedupe_spo_xlsx_superseded.py` updates existing
+  ref rows from it, and D28a's group recompute reuses `distribute_received` for the same carry.
+- As built, round 2 (D25a to D30):
+  - `_has_ref_row` is replaced by `_esb_group_keys(payload)` - the `(product, upper(location))`
+    keys of this number's ref rows. A group not in that set is xlsx-era (D25a); an EMPTY set is
+    also D25's document-level first-push test, which the verdict's `created` reads.
+  - `SupersedePlan` gained `kept_groups` / `locked_groups` (D26a) plus `kept_row_ids` and
+    `groups_kept` properties, so the operator report can count GROUPS.
+  - Rows the plan leaves alone are handed to `already_closed`, not `pool`: that bucket already
+    means "reaches the leftover sweep, never an adoption candidate", which is what D25a/D26a want
+    for a row the supersede has already ruled on. Adoption now runs in the same push as a
+    supersede of a different group (AC-X13 needs it to).
+  - D30's `may_delete` is a constructor bool the route computes
+    (`ingest._principal_may_delete` -> `UserPermissionService`); it DEFAULTS TO TRUE, because the
+    default is for callers with no principal to check at all (a maintenance script, a test) and
+    every HTTP caller has its answer computed by the route. AC-X11 and SEC-1a both construct the
+    service directly and expect the removal.
+  - D27a's refresh runs in the route's own post-commit hook
+    (`_run_shipping_order_shipment_refresh_hook`, off `service.shipment_ids_touched`), NOT inside
+    `_supersede_xlsx_rows`: `refresh_shipment_line_statuses` COMMITS, and the supersede runs in a
+    per-record savepoint, so calling it there would land half a batch and make a dry run write.
+    The dedupe calls it per document after its own commit.
+  - S4's repoint reads under `company_scope(db, None)` with an explicit
+    `company_id = anchor OR IS NULL` predicate: the ambient filter compiles to `IN (anchor)` and
+    would drop a NULL-company dependant silently.
+- Test debt, round 2:
+  `tests/test_ingest_parity_security_fixes.py::TestSec1AdoptionPathReceivedGuard::
+  test_sec_1a_first_push_supersede_carries_the_received_quantity_forward` seeds its ref-less row
+  with NO `source_system`, which D25a (written after that test) excludes from supersede - so the
+  row takes the adoption path, the guard refuses it, and the new line reads 0 rather than the
+  carried 5 the test asserts. Its intent ("a ref-less xlsx-era row") needs
+  `source_system="scm_upload"` on the seed; verified out of band that the one-line change makes
+  every assertion in it pass. Not edited by the coder (tester's file).
 
 ## 6. Reviewer round cleanups (2026-09-07, not decisions)
 
