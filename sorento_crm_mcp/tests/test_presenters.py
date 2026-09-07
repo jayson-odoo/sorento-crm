@@ -1598,3 +1598,22 @@ def test_purchase_orders_placed_po_date_sits_before_expected_date():
                   "expected_date": "2026-07-01"}],
     })
     assert "PO Date" not in [f["label"] for f in without["items"][0]["fields"]]
+
+
+def test_purchase_orders_placed_source_names_the_kind_after_po_number():
+    """Item 5 (8 Sep 2026): rows carry `kind` ("po" / "spo"); the presenter prints it as
+    Source right after PO Number; absent -> nothing (byte identity for old envelopes)."""
+    out = env("crm_procurement_purchase_orders_placed_list", {
+        "data": [
+            {"po_number": "202607-S0031", "kind": "po", "product_code": "C-FH14", "outstanding_qty": 27},
+            {"po_number": "SPO-2026/09-0001", "kind": "spo", "product_code": "C-FH14", "outstanding_qty": 7},
+        ],
+    })
+    for item, expect in zip(out["items"], ("PO", "SPO")):
+        labels = [f["label"] for f in item["fields"]]
+        assert labels.index("Source") == labels.index("PO Number") + 1
+        assert next(f for f in item["fields"] if f["key"] == "kind")["value"] == expect
+    old = env("crm_procurement_purchase_orders_placed_list", {
+        "data": [{"po_number": "PO-1001", "product_code": "SRTWC8517", "outstanding_qty": 50}],
+    })
+    assert "Source" not in [f["label"] for f in old["items"][0]["fields"]]

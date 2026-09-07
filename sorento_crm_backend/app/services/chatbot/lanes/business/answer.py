@@ -927,10 +927,10 @@ def crossdomain_render(
 #: with an entry" shape `_CHATBOT_COLUMN_DEFAULTS` uses elsewhere.
 _CROSSDOMAIN_RUNG_TOOL: dict[str, str] = {"purchase_order": "crm_procurement_purchase_orders_placed_list"}
 _CROSSDOMAIN_RUNG_TEAM: dict[str, str] = {"purchase_order": "purchasing"}
-#: What the rung is CALLED in a sentence to a customer. Not `rung.replace("_", " ")`, which
-#: produced "no purchase order for X" where AC-922 asks for "no PO for X" - the customer's
-#: own word for the thing, and the same two letters the question used (review, item 9).
-_CROSSDOMAIN_RUNG_WORD: dict[str, str] = {"purchase_order": "PO"}
+#: Item 5 (8 Sep 2026): the rung's tool returns PO lines AND unshipped SPO allocations
+#: (`kind` "po" / "spo", presented as Source "PO" / "SPO"), so its sentences speak of
+#: what is ON ORDER rather than of a document type - `_CROSSDOMAIN_RUNG_WORD` ("no PO
+#: for X") went with that.
 #: The field-reveal key a contact must hold for the rung to run at all (8 Sep 2026). A rung
 #: with no row here is ungated.
 _CROSSDOMAIN_RUNG_GRANT: dict[str, str] = {"purchase_order": "purchase_orders.placed"}
@@ -999,13 +999,16 @@ def _crossdomain_rung_probe_args(
     }
 
 
-def _crossdomain_rung_rows(probe_result: Any, *, missing: list[dict[str, Any]]) -> dict[str, list[str]]:
+def _crossdomain_rung_rows(
+    probe_result: Any, *, missing: list[dict[str, Any]]
+) -> dict[str, list[tuple[str, str]]]:
     """Which of `missing`'s codes the rung answered, and the rendered line per row.
 
-    Returns `{CODE: ["<qty> pcs expected <date>", ...]}` - only codes the rung actually
-    found rows for, in the shape `run_crossdomain` folds into the reply. Never renders
-    `supplier`: the field template simply does not name it, which is what keeps a dealer
-    from ever seeing it here without threading the field-reveal grant into this probe.
+    Returns `{CODE: [(line, kind), ...]}` - only codes the rung actually found rows for,
+    `kind` "po" or "spo" (item 5; a row with no Source field is a PO row, today's shape).
+    Never renders `supplier`: the field template simply does not name it, which is what
+    keeps a dealer from ever seeing it here without threading the field-reveal grant into
+    this probe.
     """
     env: Any = probe_result if jsc.truthy(probe_result) else {}
     if jsc.truthy(env) and isinstance(jsc.get(env, "output"), dict):
@@ -1032,23 +1035,29 @@ def _crossdomain_rung_rows(probe_result: Any, *, missing: list[dict[str, Any]]) 
     return out
 
 
-def _crossdomain_rung_line(it: Any, field_by_key: Any) -> str:
-    """"{qty} pcs on PO {po_number} dated {po_date}, expected {expected_date}" - the PO
-    DOCUMENT date (owner ruling, 8 Sep 2026; `po_date` = `purchase_orders.issue_date`,
-    which the placed-list tool now carries per row), then the arrival estimate. Either
-    date part is omitted when its value is null rather than printed as "-": a PO with no
-    dates reads "12 pcs on PO 202607-S0031"."""
-    line = f"{_fmt_xd_value(field_by_key(it, 'outstanding_qty'))} pcs"
-    po_number = field_by_key(it, "po_number")
-    if po_number not in (None, ""):
-        line += f" on PO {_fmt_xd_value(po_number)}"
+def _crossdomain_rung_line(it: Any, field_by_key: Any) -> tuple[str, str]:
+    """One rung row as `(line, kind)`.
+
+    PO line: "{qty} pcs on PO {po_number} dated {po_date}, expected {expected_date}" - the
+    PO DOCUMENT date (owner ruling, 8 Sep 2026; `po_date` = `purchase_orders.issue_date`),
+    then the arrival estimate. Unshipped SPO allocation (item 5): "{qty} pcs on order from
+    supplier (SPO {spo_number} dated {issue_date}), expected {expected_date}". Every part
+    is omitted when its value is null rather than printed as "-".
+    """
+    kind = "spo" if jsc.js_string(field_by_key(it, "kind") or "").strip().upper() == "SPO" else "po"
+    qty = f"{_fmt_xd_value(field_by_key(it, 'outstanding_qty'))} pcs"
+    number = field_by_key(it, "po_number")
     po_date = field_by_key(it, "po_date")
-    if po_date not in (None, ""):
-        line += f" dated {_fmt_xd_value(po_date)}"
     expected = field_by_key(it, "expected_date")
+    dated = f" dated {_fmt_xd_value(po_date)}" if po_date not in (None, "") else ""
+    if kind == "spo":
+        doc = f" (SPO {_fmt_xd_value(number)}{dated})" if number not in (None, "") else dated
+        line = f"{qty} on order from supplier{doc}"
+    else:
+        line = qty + (f" on PO {_fmt_xd_value(number)}" if number not in (None, "") else "") + dated
     if expected not in (None, ""):
         line += f", expected {_fmt_xd_value(expected)}"
-    return line
+    return line, kind
 
 
 def _apply_crossdomain_rung(
@@ -1108,8 +1117,9 @@ def _apply_crossdomain_rung(
     if not lines_by_code:
         # The rung answered NOTHING either - AC-922's wording, one step further than the
         # existing "no X and no Y".
+        # Item 5: "nothing on order" - PO lines and unshipped SPO allocations alike.
         still_nothing_note = (
-            f"No stock, no incoming and no {_CROSSDOMAIN_RUNG_WORD[rung]} for {', '.join(nothing_codes)}."
+            f"No stock, no incoming and nothing on order for {', '.join(nothing_codes)}."
         )
         # No offer sentence: `crossdomain_compose` writes it once from `block["team"]`
         # (set to the rung's team below) - see the first probe's `nothing_note`.
@@ -1118,13 +1128,20 @@ def _apply_crossdomain_rung(
         found = [c for c in nothing_codes if c in lines_by_code]
         still_nothing = [c for c in nothing_codes if c not in lines_by_code]
         parts: list[str] = []
-        po_lines = "\n".join(line for c in found for line in lines_by_code[c])
-        parts.append(
-            f"No stock and no incoming for {', '.join(found)}, but a PO is placed:\n{po_lines}"
+        found_rows = [row for c in found for row in lines_by_code[c]]
+        po_lines = "\n".join(line for line, _kind in found_rows)
+        # The header names what the rows ARE: "a PO is placed" when any row is a PO line,
+        # "stock is on order from the supplier" when every row is an unshipped SPO
+        # allocation (item 5).
+        header = (
+            "but stock is on order from the supplier"
+            if found_rows and all(kind == "spo" for _line, kind in found_rows)
+            else "but a PO is placed"
         )
+        parts.append(f"No stock and no incoming for {', '.join(found)}, {header}:\n{po_lines}")
         if still_nothing:
             parts.append(
-                f"No stock, no incoming and no {_CROSSDOMAIN_RUNG_WORD[rung]} for {', '.join(still_nothing)}."
+                f"No stock, no incoming and nothing on order for {', '.join(still_nothing)}."
             )
         new_note = "\n\n".join(parts)
 

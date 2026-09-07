@@ -322,7 +322,7 @@ class TestShouldFix89TheRungSentenceAndTeam:
     def test_ac922_says_no_po_not_no_purchase_order(self) -> None:
         result, _ = _run_ladder(validator=TOTAL_MISS, ladder=DEFAULT_LADDER, po_response=NO_ROWS)
         block = result["render"]["_xdBlock"]["block"]
-        assert f"No stock, no incoming and no PO for {CODE}." in block
+        assert f"No stock, no incoming and nothing on order for {CODE}." in block
         assert "no purchase order" not in block
 
     def test_the_rung_that_answered_sets_the_turns_escalation_team(self) -> None:

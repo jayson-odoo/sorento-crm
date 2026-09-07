@@ -10,15 +10,31 @@ PO and SPO are never netted (`spo_allocations.po_line_id` is NULL on every row,
 decision 6 Aug 2026, see `PLAN-chatbot-growth-r1.md` A5), so `outstanding_qty`
 here is `qty_ordered - qty_received` ONLY - incoming SPO receipts never reduce
 it.
+
+Item 5 (8 Sep 2026): an UNSHIPPED SPO allocation is "on order from the supplier" too.
+Measured on the prod copy: 721 `spo_allocations` rows over 191 products with
+`receipt_status='pending'`, no `inbound_shipment_id` and `allocated_quantity -
+quantity_received > 0`, visible to no rung - this module read PO lines only and the
+last-receipt tool reads `fully_received` only. They now come back here as rows of the
+SAME shape with `kind = "spo"` (PO rows say `kind = "po"`): `po_number` is the SPO
+number, `po_date` its `issue_date`, `expected_date` its promised arrival,
+`outstanding_qty` the unreceived remainder, `supplier` from `supplier_id`.
+
+NO DOUBLE COUNT: an allocation whose `po_line_id` points at a PO line that is itself
+open with quantity outstanding is that PO line's shipment plan, not more supply, and is
+excluded (`_open_po_line_ids`). An allocation whose parent line is closed or absent is
+its own on-order fact and stays. The dedupe reads the open PO book under the same
+product scope, never the date window, so a windowed read cannot resurrect a child row
+whose parent merely falls outside the window.
 """
 from __future__ import annotations
 
 from typing import Any, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
+from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation, Supplier
 from app.models.product import Product
 
 PO_GROUP_BY_AXES: frozenset[str] = frozenset({"product", "supplier", "date"})
@@ -86,6 +102,7 @@ def purchase_orders_placed_rows(
         expected = line.expected_date or po.expected_date
         out.append(
             {
+                "kind": "po",
                 "po_number": po.po_number,
                 "product_id": str(product.id),
                 "product_code": product.product_code,
@@ -101,7 +118,118 @@ def purchase_orders_placed_rows(
                 "po_date": po.issue_date.isoformat() if po.issue_date else None,
             }
         )
-    return out
+
+    # Item 5: the unshipped SPO allocations, same scope and window, same shape.
+    spo_q = _unshipped_spo_query(db, product_ids=product_ids)
+    spo_q = _apply_spo_expected_date_window(spo_q, expected_date_from, expected_date_to)
+    spo_delta = _spo_delta()
+    spo_sort_col = {
+        "expected_date": SPOAllocation.expected_date,
+        "product": Product.product_code,
+        "supplier": Supplier.supplier_name,
+        "outstanding_qty": spo_delta,
+    }.get(sort, SPOAllocation.expected_date)
+    spo_order = spo_sort_col.desc() if dir == "desc" else spo_sort_col.asc()
+    spo_rows = (
+        spo_q.order_by(spo_order.nulls_last(), SPOAllocation.spo_number.asc()).limit(limit).all()
+    )
+    if not spo_rows:
+        return out  # PO-only data: the SQL order above is the answer, byte-identical
+    for alloc, product, supplier in spo_rows:
+        out.append(
+            {
+                "kind": "spo",
+                "po_number": alloc.spo_number,
+                "product_id": str(product.id),
+                "product_code": product.product_code,
+                "product_name": product.product_name,
+                "outstanding_qty": _plain_number(alloc.allocated_quantity - alloc.quantity_received),
+                "expected_date": alloc.expected_date.isoformat() if alloc.expected_date else None,
+                "supplier": supplier.supplier_name if supplier else None,
+                "po_date": alloc.issue_date.isoformat() if alloc.issue_date else None,
+            }
+        )
+    return _merge_sorted(out, sort=sort, dir=dir, limit=limit)
+
+
+_SORT_KEY_FIELD = {
+    "expected_date": "expected_date",
+    "product": "product_code",
+    "supplier": "supplier",
+    "outstanding_qty": "outstanding_qty",
+}
+
+
+def _merge_sorted(rows: list[dict], *, sort: str, dir: str, limit: int) -> list[dict]:
+    """Two SQL-sorted lists (PO lines, SPO allocations) folded into ONE order: the asked
+    key, nulls last whichever direction, then the document number ascending - the same
+    order each query took on its own. Each side was capped at `limit`, so the merged
+    top-`limit` is complete. Strings compare case-insensitively, the closest a Python sort
+    comes to the database collation the PO-only path still uses."""
+    field = _SORT_KEY_FIELD.get(sort, "expected_date")
+
+    def key_value(row: dict):
+        v = row.get(field)
+        return v.casefold() if isinstance(v, str) else v
+
+    with_value = [r for r in rows if row_has(r, field)]
+    without = [r for r in rows if not row_has(r, field)]
+    with_value.sort(key=lambda r: str(r.get("po_number") or ""))
+    without.sort(key=lambda r: str(r.get("po_number") or ""))
+    with_value.sort(key=key_value, reverse=(dir == "desc"))
+    return (with_value + without)[:limit]
+
+
+def row_has(row: dict, field: str) -> bool:
+    return row.get(field) is not None
+
+
+def _spo_delta():
+    return SPOAllocation.allocated_quantity - SPOAllocation.quantity_received
+
+
+def _open_po_line_ids(db: Session, *, product_ids: Optional[list[str]]):
+    """PO lines that ARE in the PO rows (open, quantity outstanding, same product scope) -
+    an SPO allocation pointing at one of these is that line's shipment plan, not supply."""
+    delta = PurchaseOrderLine.qty_ordered - PurchaseOrderLine.qty_received
+    q = db.query(PurchaseOrderLine.id).filter(PurchaseOrderLine.line_status == "open", delta > 0)
+    if product_ids:
+        q = q.filter(PurchaseOrderLine.product_id.in_(product_ids))
+    return q
+
+
+def _unshipped_spo_query(db: Session, *, product_ids: Optional[list[str]]):
+    """`(SPOAllocation, Product, Supplier)` for every allocation still on order from the
+    supplier: pending, not yet on a shipment, quantity unreceived, and not the shipment
+    plan of an open PO line (see the module docstring)."""
+    q = (
+        db.query(SPOAllocation, Product, Supplier)
+        .join(Product, Product.id == SPOAllocation.product_id)
+        .outerjoin(Supplier, Supplier.id == SPOAllocation.supplier_id)
+        .filter(
+            SPOAllocation.receipt_status == "pending",
+            SPOAllocation.inbound_shipment_id.is_(None),
+            _spo_delta() > 0,
+            or_(
+                SPOAllocation.po_line_id.is_(None),
+                SPOAllocation.po_line_id.not_in(_open_po_line_ids(db, product_ids=product_ids)),
+            ),
+        )
+    )
+    if product_ids:
+        q = q.filter(SPOAllocation.product_id.in_(product_ids))
+    return q
+
+
+def _apply_spo_expected_date_window(q, expected_date_from, expected_date_to):
+    """The SPO side of `_apply_expected_date_window`: the allocation's own promised date.
+    A null date passes when no window is asked for and fails one when it is - the same
+    rule the PO COALESCE gives."""
+    if expected_date_from is not None:
+        q = q.filter(SPOAllocation.expected_date >= expected_date_from)
+    if expected_date_to is not None:
+        q = q.filter(SPOAllocation.expected_date <= expected_date_to)
+    return q
 
 
 #: The effective expected date: the LINE's, else the header's. COALESCE rather than a
@@ -153,7 +281,18 @@ def purchase_orders_placed_summary(
         q = q.filter(PurchaseOrderLine.product_id.in_(product_ids))
     q = _apply_expected_date_window(q, expected_date_from, expected_date_to)
     qty, count = q.one()
-    return {"po_placed_qty": _plain_number(qty) or 0, "po_placed_count": int(count or 0)}
+    # Item 5: the unshipped SPO allocations count too, under the same scope, window and
+    # dedupe the rows take - a summary that counts fewer rows than the list under it is
+    # the one failure mode a summary has.
+    spo_q = _unshipped_spo_query(db, product_ids=product_ids).with_entities(
+        func.sum(_spo_delta()), func.count(SPOAllocation.id)
+    )
+    spo_q = _apply_spo_expected_date_window(spo_q, expected_date_from, expected_date_to)
+    spo_qty, spo_count = spo_q.one()
+    return {
+        "po_placed_qty": (_plain_number(qty) or 0) + (_plain_number(spo_qty) or 0),
+        "po_placed_count": int(count or 0) + int(spo_count or 0),
+    }
 
 
 def group_rows(rows: list[dict], *, group_by: str) -> list[dict]:

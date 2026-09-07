@@ -444,6 +444,9 @@ def _purchase_orders_placed(rows: list[dict], b: _Builder) -> None:
             [
                 ("company_name", "Company", r.get("company_name")),
                 ("po_number", "PO Number", r.get("po_number")),
+                # item 5 (8 Sep 2026): "po" = a PO line, "spo" = an unshipped SPO
+                # allocation; absent on an older row -> no field
+                ("kind", "Source", {"po": "PO", "spo": "SPO"}.get(r.get("kind"))),
                 ("product_code", "Product Code", r.get("product_code")),
                 ("outstanding_qty", "Outstanding Qty", _qty(r.get("outstanding_qty"))),
                 # the PO document date (8 Sep 2026); absent on an older row -> no field

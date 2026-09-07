@@ -18,7 +18,7 @@ from app.main import app  # noqa: E402
 
 from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
 from app.models.base import set_company_scope
-from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
+from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation, Supplier
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.company_scope_resolver import apply_company_scope
 from app.services.purchase_order_service import (
@@ -110,19 +110,19 @@ def test_placed_rows_only_open_positive_delta(db):
     assert rows[0]["expected_date"] == "2026-06-01"
 
 
-def test_placed_rows_never_nets_against_incoming():
-    """AC-907: PO and SPO are never netted - this function reads ONLY
-    purchase_order_lines, so an incoming SPO receipt (a different table)
-    cannot reduce outstanding_qty. Documented by construction: the ORM class
-    `SPOAllocation` is never imported into purchase_order_service.py (the
-    module's own docstring names the TABLE in prose, which is why this checks
-    the class, not the string)."""
-    import inspect
-
-    from app.services import purchase_order_service
-
-    src = inspect.getsource(purchase_order_service)
-    assert "SPOAllocation" not in src
+def test_placed_rows_never_nets_against_incoming(db):
+    """AC-907: PO and SPO are never netted - a PO row's `outstanding_qty` is
+    `qty_ordered - qty_received` of the PO LINE, and an SPO receipt booked against that
+    line (a different table) never reduces it. Was pinned by "the SPO class is never
+    imported"; item 5 (8 Sep 2026) reads the SPO table for its OWN unshipped rows, so
+    the contract is now pinned on behaviour: the receipt below changes nothing."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    _po_line(db, product_id=prod.id, ordered=10, received=0, po_number="PO-NET")
+    _spo(db, product_id=prod.id, allocated=10, received=6, status="fully_received",
+         number="SPO-RECEIVED-AGAINST-IT", po_line_id=_po_line_id(db, "PO-NET"))
+    db.commit()
+    rows = purchase_orders_placed_rows(db, product_ids=[prod.id])
+    assert [(r["po_number"], r["outstanding_qty"]) for r in rows] == [("PO-NET", 10)]
 
 
 def test_placed_rows_uses_header_expected_date_when_line_has_none(db):
@@ -339,5 +339,160 @@ def test_rows_carry_the_po_document_date(db):
     assert rows["PO-UNDATED"]["po_date"] is None
     assert set(rows["PO-DATED"]) == {
         "po_number", "product_id", "product_code", "product_name", "outstanding_qty",
-        "expected_date", "supplier", "po_date",
+        "expected_date", "supplier", "po_date", "kind",
     }
+
+
+# --------------------------------------- item 5: unshipped SPO allocations are on order
+
+def _spo(db, *, product_id, allocated, received=0, status="pending", shipment=None, number=None,
+         issue=None, expected=None, supplier_id=None, po_line_id=None):
+    row = SPOAllocation(
+        id=str(uuid.uuid4()),
+        company_id=DEFAULT_COMPANY_ID,
+        spo_number=number or unique_code("SPO")[:50],
+        product_id=product_id,
+        allocated_quantity=allocated,
+        quantity_received=received,
+        receipt_status=status,
+        inbound_shipment_id=shipment,
+        issue_date=issue,
+        expected_date=expected,
+        supplier_id=supplier_id,
+        po_line_id=po_line_id,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def _po_line_id(db, po_number: str) -> str:
+    return (
+        db.query(PurchaseOrderLine.id)
+        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+        .filter(PurchaseOrder.po_number == po_number)
+        .scalar()
+    )
+
+
+def test_po_only_rows_carry_kind_po_and_nothing_else_moves(db):
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    _po_line(db, product_id=prod.id, ordered=5, received=0, po_number="PO-ONLY")
+    db.commit()
+    rows = purchase_orders_placed_rows(db, product_ids=[prod.id])
+    assert [(r["po_number"], r["kind"]) for r in rows] == [("PO-ONLY", "po")]
+    assert set(rows[0]) == {
+        "po_number", "product_id", "product_code", "product_name", "outstanding_qty",
+        "expected_date", "supplier", "po_date", "kind",
+    }
+
+
+def test_spo_only_rows_are_on_order_from_the_supplier(db):
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    sup = _supplier(db, name="Foshan Works")
+    _spo(db, product_id=prod.id, allocated=10, received=3, number="SPO-2026/09-0001",
+         issue=date(2026, 8, 20), expected=date(2026, 10, 5), supplier_id=sup.id)
+    _spo(db, product_id=prod.id, allocated=4, received=4, number="SPO-DONE")          # nothing left
+    _spo(db, product_id=prod.id, allocated=9, status="fully_received", number="SPO-RECEIVED")
+    db.commit()
+    rows = purchase_orders_placed_rows(db, product_ids=[prod.id])
+    by_no = {r["po_number"]: r for r in rows}
+    assert "SPO-DONE" not in by_no and "SPO-RECEIVED" not in by_no
+    r = by_no["SPO-2026/09-0001"]
+    assert r["kind"] == "spo"
+    assert r["outstanding_qty"] == 7
+    assert r["po_date"] == "2026-08-20" and r["expected_date"] == "2026-10-05"
+    assert r["supplier"] == "Foshan Works"
+    assert r["product_code"] == prod.product_code
+
+
+def test_an_spo_already_on_a_shipment_is_incoming_not_on_order(db):
+    from app.models.procurement import InboundShipment
+
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    ship = InboundShipment(id=str(uuid.uuid4()), company_id=DEFAULT_COMPANY_ID, shipment_date=date(2026, 9, 1))
+    db.add(ship)
+    db.flush()
+    _spo(db, product_id=prod.id, allocated=10, number="SPO-ON-SHIP", shipment=ship.id)
+    _spo(db, product_id=prod.id, allocated=6, number="SPO-UNSHIPPED")
+    db.commit()
+    rows = purchase_orders_placed_rows(db, product_ids=[prod.id])
+    assert [r["po_number"] for r in rows] == ["SPO-UNSHIPPED"]
+
+
+def test_mixed_rows_sort_together_by_the_effective_expected_date(db):
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    _po_line(db, product_id=prod.id, ordered=5, received=0, po_number="PO-SEP", line_expected=date(2026, 9, 15))
+    _spo(db, product_id=prod.id, allocated=3, number="SPO-AUG", expected=date(2026, 8, 30))
+    _spo(db, product_id=prod.id, allocated=2, number="SPO-NODATE")
+    _po_line(db, product_id=prod.id, ordered=1, received=0, po_number="PO-NODATE")
+    db.commit()
+    asc = purchase_orders_placed_rows(db, product_ids=[prod.id])
+    assert [(r["po_number"], r["kind"]) for r in asc] == [
+        ("SPO-AUG", "spo"), ("PO-SEP", "po"), ("PO-NODATE", "po"), ("SPO-NODATE", "spo"),
+    ]
+    desc = purchase_orders_placed_rows(db, product_ids=[prod.id], dir="desc")
+    assert [r["po_number"] for r in desc] == ["PO-SEP", "SPO-AUG", "PO-NODATE", "SPO-NODATE"]
+    by_qty = purchase_orders_placed_rows(db, product_ids=[prod.id], sort="outstanding_qty", dir="desc")
+    assert [r["po_number"] for r in by_qty] == ["PO-SEP", "SPO-AUG", "SPO-NODATE", "PO-NODATE"]
+
+
+def test_an_spo_allocated_against_an_open_po_line_is_not_counted_twice(db):
+    """`po_line_id` set and pointing at an open PO line already in the PO rows: the PO row
+    is the on-order truth and the allocation is its shipment plan, not more supply."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    _po_line(db, product_id=prod.id, ordered=10, received=0, po_number="PO-PARENT")
+    _spo(db, product_id=prod.id, allocated=10, number="SPO-CHILD", po_line_id=_po_line_id(db, "PO-PARENT"))
+    _po_line(db, product_id=prod.id, ordered=4, received=4, po_number="PO-CLOSED-PARENT")
+    _spo(db, product_id=prod.id, allocated=4, number="SPO-ORPHAN", po_line_id=_po_line_id(db, "PO-CLOSED-PARENT"))
+    db.commit()
+    rows = purchase_orders_placed_rows(db, product_ids=[prod.id])
+    assert sorted(r["po_number"] for r in rows) == ["PO-PARENT", "SPO-ORPHAN"]
+    summary = purchase_orders_placed_summary(db, product_ids=[prod.id])
+    assert summary == {"po_placed_qty": 14, "po_placed_count": 2}
+
+
+def test_spo_rows_take_the_same_product_scope_and_window(db):
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    other = product(db, company_id=DEFAULT_COMPANY_ID)
+    _spo(db, product_id=prod.id, allocated=5, number="SPO-JUN", expected=date(2026, 6, 10))
+    _spo(db, product_id=prod.id, allocated=6, number="SPO-SEP", expected=date(2026, 9, 10))
+    _spo(db, product_id=prod.id, allocated=7, number="SPO-NODATE")
+    _spo(db, product_id=other.id, allocated=8, number="SPO-OTHER", expected=date(2026, 6, 12))
+    db.commit()
+    everything = purchase_orders_placed_rows(db, product_ids=[prod.id])
+    assert sorted(r["po_number"] for r in everything) == ["SPO-JUN", "SPO-NODATE", "SPO-SEP"]
+    june = purchase_orders_placed_rows(db, product_ids=[prod.id],
+                                       expected_date_from=date(2026, 6, 1), expected_date_to=date(2026, 6, 30))
+    assert [r["po_number"] for r in june] == ["SPO-JUN"]  # a null date fails a window, as PO rows do
+    assert purchase_orders_placed_summary(db, product_ids=[prod.id]) == {"po_placed_qty": 18, "po_placed_count": 3}
+    assert purchase_orders_placed_summary(db, product_ids=[prod.id], expected_date_from="2026-06-01",
+                                          expected_date_to="2026-06-30") == {"po_placed_qty": 5, "po_placed_count": 1}
+
+
+def test_summary_counts_both_kinds_and_group_by_spans_both(db):
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    sup = _supplier(db, name="Acme Supplies")
+    _po_line(db, product_id=prod.id, ordered=5, received=0, po_number="PO-A", supplier_id=sup.id)
+    _spo(db, product_id=prod.id, allocated=3, number="SPO-A", supplier_id=sup.id)
+    _spo(db, product_id=prod.id, allocated=2, number="SPO-B")
+    db.commit()
+    rows = purchase_orders_placed_rows(db, product_ids=[prod.id])
+    assert purchase_orders_placed_summary(db, product_ids=[prod.id]) == {"po_placed_qty": 10, "po_placed_count": 3}
+    groups = group_rows(rows, group_by="supplier")
+    assert {g["label"]: sorted(r["po_number"] for r in g["rows"]) for g in groups} == {
+        "Acme Supplies": ["PO-A", "SPO-A"], "Not specified": ["SPO-B"],
+    }
+
+
+def test_a_mocha_spo_never_reaches_a_sorento_read(db):
+    from tests._mc_lookup_seed import MOCHA_ID, seed_mocha
+
+    seed_mocha(db)
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    row = _spo(db, product_id=prod.id, allocated=5, number="SPO-MOCHA")
+    row.company_id = MOCHA_ID
+    db.commit()
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    assert purchase_orders_placed_rows(db, product_ids=[prod.id]) == []
+    assert purchase_orders_placed_summary(db, product_ids=[prod.id]) == {"po_placed_qty": 0, "po_placed_count": 0}

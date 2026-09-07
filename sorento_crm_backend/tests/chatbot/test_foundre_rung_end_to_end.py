@@ -248,7 +248,7 @@ class TestAC922NothingOnAnyRung:
         result, said, probes = _run_stock_turn(session_factory, monkeypatch, po_response=NO_ROWS)
         assert result.status == "done", result.error
         assert PO_TOOL in probes
-        assert f"No stock, no incoming and no PO for {CODE}." in said, said
+        assert f"No stock, no incoming and nothing on order for {CODE}." in said, said
         assert "no purchase order" not in said
         assert "escalate" in said.lower()
 
@@ -302,7 +302,7 @@ class TestTheSuffixedCodeShapeReachesTheRung:
         )
         stub_access(attributes=["purchase_orders.placed"])  # the rung is per contact
         _, said, _ = _run_stock_turn(session_factory, monkeypatch, po_response=NO_ROWS, code=code)
-        assert f"No stock, no incoming and no PO for {code}." in said, said
+        assert f"No stock, no incoming and nothing on order for {code}." in said, said
 
 
 class TestIssue736SeparatorInsensitiveRequestedSet:

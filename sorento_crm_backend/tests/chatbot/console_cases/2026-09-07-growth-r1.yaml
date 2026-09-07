@@ -299,7 +299,11 @@ cases:
     cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["No stock, no incoming and no PO for SRTWB103"]
+      # Item 5 (8 Sep 2026): the rung reads PO lines AND unshipped SPO allocations, so the
+      # three-way miss says "nothing on order" (was "no PO for"). No zero-stock product on
+      # the copy has an unshipped SPO (measured 7 Sep), so this reworded miss is the only
+      # console coverage; the on-order wording is pinned in pytest.
+      reply_contains: ["No stock, no incoming and nothing on order for SRTWB103"]
       no_uuid: true
 
   # THE SUFFIXED-CODE PROBE (8 Sep 2026). These three answer the bare miss with no

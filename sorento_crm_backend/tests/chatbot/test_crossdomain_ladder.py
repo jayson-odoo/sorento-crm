@@ -61,9 +61,14 @@ def _po_row(
     code: str = "SRTWC8517",
     po_number: str = "PO-1001",
     po_date: str | None = "2026-05-01",
+    kind: str | None = "PO",
 ) -> dict:
     fields = [
         {"key": "po_number", "label": "PO Number", "value": po_number},
+    ]
+    if kind is not None:
+        fields.append({"key": "kind", "label": "Source", "value": kind})
+    fields += [
         {"key": "product_code", "label": "Product Code", "value": code},
         {"key": "outstanding_qty", "label": "Outstanding Qty", "value": qty},
     ]
@@ -195,8 +200,11 @@ class TestAC922StockMissIncomingMissPOMiss:
         block = result["render"]["_xdBlock"]["block"]
         # AC-922's own wording: "no PO", the customer's two letters and the same word the
         # question used - not `rung.replace("_", " ")`, which spelled it out (review, item 9).
-        assert "No stock, no incoming and no PO for SRTWC8517." in block
-        assert "no purchase order" not in block
+        # Item 5 (8 Sep 2026): the rung reads PO lines AND unshipped SPO allocations, so
+        # the three-way miss says "nothing on order" - the customer's question, not a
+        # document type (was "no PO for").
+        assert "No stock, no incoming and nothing on order for SRTWC8517." in block
+        assert "no purchase order" not in block and "no PO for" not in block
         assert "escalate" not in block.lower()  # compose is the one offer writer
 
 
@@ -284,7 +292,7 @@ class TestOwner8SepTheOfferIsWrittenOnce:
         )
         text = _composed_text(result)
         assert text.count(self._PHRASE) == 1
-        assert "No stock, no incoming and no PO for SRTWC8517." in text
+        assert "No stock, no incoming and nothing on order for SRTWC8517." in text
 
     def test_first_probe_nothing(self) -> None:
         result, _ = _run(ladder=_LADDER_NO_PO, incoming_response={"answers": [], "has_result": False})
@@ -367,3 +375,43 @@ class TestOwner8SepThePORungIsPerContact:
             assert block["block"] == off["block"] and block["team"] == off["team"]
             assert "rung" not in block
             assert _composed_text(result).count("Would you like me to escalate") == 1
+
+
+class TestItem5UnshippedSPOIsOnOrderFromTheSupplier:
+    """Item 5 (8 Sep 2026): the PO placed tool now returns unshipped SPO allocations as
+    rows of the same shape with `kind` = "spo"; the rung words them as stock on order from
+    the supplier and picks its header by what the rows are."""
+
+    def _block(self, rows: list[dict]) -> str:
+        result, _ = _run(
+            ladder=_LADDER_WITH_PO,
+            incoming_response={"answers": [], "has_result": False},
+            po_response={"answers": rows, "has_result": True},
+        )
+        return result["render"]["_xdBlock"]["block"]
+
+    def test_an_spo_row_reads_on_order_from_supplier(self) -> None:
+        block = self._block([_po_row(7, "2026-10-05", po_number="SPO-2026/09-0001", po_date="2026-08-20", kind="SPO")])
+        assert "but stock is on order from the supplier:" in block
+        assert "7 pcs on order from supplier (SPO SPO-2026/09-0001 dated 2026-08-20), expected 2026-10-05" in block
+        assert "but a PO is placed" not in block
+
+    def test_spo_parts_are_omitted_when_null(self) -> None:
+        block = self._block([_po_row(7, None, po_number="SPO-1", po_date=None, kind="SPO")])
+        assert "7 pcs on order from supplier (SPO SPO-1)" in block
+        assert "dated" not in block and "expected" not in block
+
+    def test_a_mixed_set_keeps_the_po_header_and_words_each_row_by_kind(self) -> None:
+        block = self._block([
+            _po_row(50, "2026-07-01", kind="PO"),
+            _po_row(7, "2026-10-05", po_number="SPO-9", po_date="2026-08-20", kind="SPO"),
+        ])
+        assert "but a PO is placed:" in block
+        assert "50 pcs on PO PO-1001 dated 2026-05-01, expected 2026-07-01" in block
+        assert "7 pcs on order from supplier (SPO SPO-9 dated 2026-08-20), expected 2026-10-05" in block
+
+    def test_a_row_with_no_kind_is_read_as_a_po(self) -> None:
+        """An older envelope (no `kind` field) is today's PO row."""
+        block = self._block([_po_row(50, "2026-07-01", kind=None)])
+        assert "but a PO is placed:" in block
+        assert "50 pcs on PO PO-1001 dated 2026-05-01, expected 2026-07-01" in block
