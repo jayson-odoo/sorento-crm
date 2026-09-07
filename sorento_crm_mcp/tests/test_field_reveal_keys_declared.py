@@ -16,6 +16,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 from sorento_crm_mcp.catalog import CATALOG
 
 PRESENTERS_PATH = Path(__file__).resolve().parent.parent / "sorento_crm_mcp" / "presenters.py"
@@ -98,7 +100,14 @@ def test_the_two_growth_r1_keys_are_declared_exactly_where_expected():
 
 
 def test_every_lane_gated_key_names_a_seam_that_exists():
+    """Cross-tree on purpose (the seam is backend code), so it runs in the monorepo only:
+    the MCP docker image holds `sorento_crm_mcp` alone and CI's "Run MCP test suite"
+    executes there (PR #735, 8 Sep 2026). The backend side pins the same key from its
+    own tree - `tests/chatbot/test_crossdomain_ladder.py::TestThePORungGrantKey`."""
+    backend = Path(__file__).resolve().parents[2] / "sorento_crm_backend"
+    if not backend.is_dir():
+        pytest.skip("backend tree not present (MCP image)")
     for key, path in _LANE_GATED_KEYS.items():
-        seam = Path(__file__).resolve().parents[2] / "sorento_crm_backend" / path
+        seam = backend / path
         assert seam.is_file(), f"{key}: enforcing seam {path} not found"
         assert key in seam.read_text(encoding="utf-8"), f"{key}: {path} does not name the key"

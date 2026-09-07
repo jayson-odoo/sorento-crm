@@ -415,3 +415,42 @@ class TestItem5UnshippedSPOIsOnOrderFromTheSupplier:
         block = self._block([_po_row(50, "2026-07-01", kind=None)])
         assert "but a PO is placed:" in block
         assert "50 pcs on PO PO-1001 dated 2026-05-01, expected 2026-07-01" in block
+
+
+class TestThePORungGrantKey:
+    """The backend half of the lane-gated key guardrail (review round 2 / PR #735 CI):
+    the rung's grant key is pinned here from the backend's own tree, and matched against
+    the PO ToolSpec's declaration only where the MCP package is importable (it is
+    installed in the local venv; the backend CI image lacks it and skips that half)."""
+
+    def test_the_rung_key_is_purchase_orders_placed(self) -> None:
+        from app.services.chatbot.lanes.business.answer import _CROSSDOMAIN_RUNG_GRANT
+
+        assert _CROSSDOMAIN_RUNG_GRANT == {"purchase_order": "purchase_orders.placed"}
+
+    def test_the_key_is_declared_on_the_po_toolspec(self) -> None:
+        import importlib.util
+        import sys
+        from pathlib import Path
+
+        import pytest
+
+        # The SIBLING tree first when this is the monorepo: the venv's editable install of
+        # `sorento_crm_mcp` can point at another checkout (it does on the Mac mini), and a
+        # stale catalog would grade the wrong declaration. Outside the monorepo (the
+        # backend CI image) the package is absent and this half skips.
+        sibling = Path(__file__).resolve().parents[3] / "sorento_crm_mcp"
+        if sibling.is_dir() and str(sibling) not in sys.path:
+            sys.path.insert(0, str(sibling))
+            sys.modules.pop("sorento_crm_mcp", None)
+            sys.modules.pop("sorento_crm_mcp.catalog", None)
+        if importlib.util.find_spec("sorento_crm_mcp") is None:
+            pytest.skip("sorento_crm_mcp not importable (backend CI image)")
+        import sorento_crm_mcp.catalog as catalog
+
+        from app.services.chatbot.lanes.business.answer import _CROSSDOMAIN_RUNG_GRANT, _CROSSDOMAIN_RUNG_TOOL
+
+        specs = {spec.name: spec for spec in catalog.CATALOG}
+        for rung, key in _CROSSDOMAIN_RUNG_GRANT.items():
+            declared = dict(specs[_CROSSDOMAIN_RUNG_TOOL[rung]].restricted_fields)
+            assert key in declared, f"{key} is not declared on {_CROSSDOMAIN_RUNG_TOOL[rung]}"
