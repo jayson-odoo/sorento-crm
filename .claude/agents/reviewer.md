@@ -20,9 +20,15 @@ sequentially.
    "Lessons learned".
 3. Run the **kill test** on 2-3 of the tester's tests, picked against UAC lines that matter most:
    comment out (or temporarily revert) the implementing code branch the test is supposed to
-   guard, run that test, and confirm it goes red. Restore the code afterward. A test that stays
-   green with the implementation removed is a **blocker**: "test does not guard AC-x" -
-   name the UAC id, the test, and the code path you disabled.
+   guard, run that test, and confirm it goes red. A test that stays green with the
+   implementation removed is a **blocker**: "test does not guard AC-x" - name the UAC id, the
+   test, and the code path you disabled.
+   **Never mutate a file git can see in a worktree another agent commits from.** The coder and
+   tester are live in the same tree; a `git checkout --` restore interleaved with their
+   edit-then-commit put a `# KILLTEST` mutation on a lane branch (LESSONS-LEARNT 104). Copy the
+   file under test into the scratchpad, mutate the copy, and point pytest at it through a
+   temporary import overlay (`PYTHONPATH` shim or `monkeypatch`), or run the kill test in a
+   throwaway worktree of your own (`git worktree add <scratch> HEAD`).
 
 ## What to check
 **Correctness** - real bugs: logic errors, missing auth/RBAC, off-by-one (recall the SLA `<` vs `<=` family), naive-vs-aware datetime handling, idempotency, post-commit side effects that must be best-effort (catch+warn, never raise).
