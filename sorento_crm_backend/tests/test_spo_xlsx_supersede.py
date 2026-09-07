@@ -1846,23 +1846,32 @@ class TestAcX26ShipmentLineStatusRefreshedAfterSupersede:
 # ============================================================================ #
 class TestAcX28GroupFloorNeverDropsBelowTheStoredNonReleasedSum:
     def test_a_partial_pick_against_one_line_never_lowers_the_groups_stated_receipts(self, env):
-        """AC-X28 (D28a floor). Two `autocount` lines for P at L on SPO N
-        with ESB-stated receipts (line 1 allocated 29 / received 25, line
-        2 allocated 18 / received 18) and NO picking line at all; a
-        Sorento GRN approves one picking line of 5 against line 1. Running
-        `sync_grn_received_to_spo` (and separately `sync_received_for_
-        spo_number`) must leave line 1 at 25 and line 2 at 18 - the group
-        total is the MAX of the picking sum (5) and the stored sum of
-        non-released members (43), and since the picking sum does not
-        exceed it, neither member is lowered. A RELEASED member (its GRN
-        deleted) still drops to what its remaining picking lines prove (0
-        here, none left); the untouched sibling keeps its stored 18.
+        """AC-X28 (D28a floor), AMENDED round 4 (D28c, MB1, 2026-09-07). Two
+        `autocount` lines for P at L on SPO N with ESB-STATED receipts
+        (line 1 allocated 29 / received 25 / `stated_received` 25, line 2
+        allocated 18 / received 18 / `stated_received` 18) and NO picking
+        line at all; a Sorento GRN approves one picking line of 5 against
+        line 1. Running `sync_grn_received_to_spo` (and separately
+        `sync_received_for_spo_number`) must leave line 1 at 25 and line 2
+        at 18 - the group total is the MAX of the picking sum (5) and the
+        stated sum of non-released members (43), and since the picking
+        sum does not exceed it, neither member is lowered. THE RELEASE
+        CASE (MB1): deleting the only GRN against line 1 releases it - it
+        must return to its STATED 25 (`stated_received`, the ESB's own
+        TransferedQty), NOT drop to 0. The D28b stored-sum floor could not
+        tell "GRN-derived receipt" from "ESB-stated receipt" and zeroed a
+        real AutoCount receipt whenever its only GRN was ever deleted;
+        `stated_received` is the floor that survives the release. Line 2
+        (never touched by any GRN) keeps its stated 18.
 
-        RED today: `_sync_group_received` computes `group_total =
-        sum(computed.values())` - the PICKING sum ONLY (5), discarding
-        both members' own stated values entirely - then redistributes
-        THAT via `distribute_received`, landing line 1 at 5 and line 2 at
-        0 (the exact regression this AC pins).
+        RED today: `spo_allocations.stated_received` does not exist yet
+        (migration 488 / model column, D28c) - the raw SQL read below
+        raises `UndefinedColumn`. Once the column exists but before the
+        release path is rewritten to read it, `_sync_group_received`'s
+        release branch writes a released member from
+        `computed.get(str(member.id), 0)` (its own remaining picking
+        lines, 0 here) instead of `max(stated, its own remaining picking
+        lines)`, landing line 1 at 0, not 25.
         """
         from app.services.procurement_service import PickingHeaderService
 
@@ -1877,6 +1886,7 @@ class TestAcX28GroupFloorNeverDropsBelowTheStoredNonReleasedSum:
             allocated_quantity=29, quantity_received=25, line_status="open",
             receipt_status="pending", source_system="autocount",
             source_ref=f"{MARKER}:AC1:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+            stated_received=25,
         )
         line2 = SPOAllocation(
             id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
@@ -1884,6 +1894,7 @@ class TestAcX28GroupFloorNeverDropsBelowTheStoredNonReleasedSum:
             allocated_quantity=18, quantity_received=18, line_status="closed",
             receipt_status="fully_received", source_system="autocount",
             source_ref=f"{MARKER}:AC2:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+            stated_received=18,
         )
         env.db.add_all([line1, line2])
         env.db.flush()
@@ -1912,7 +1923,7 @@ class TestAcX28GroupFloorNeverDropsBelowTheStoredNonReleasedSum:
             env.db.expire_all()
             rows = env.db.execute(
                 text(
-                    "SELECT id, quantity_received FROM spo_allocations "
+                    "SELECT id, quantity_received, stated_received FROM spo_allocations "
                     "WHERE id IN (:id1, :id2)"
                 ),
                 {"id1": str(ids[0]), "id2": str(ids[1])},
@@ -1930,12 +1941,15 @@ class TestAcX28GroupFloorNeverDropsBelowTheStoredNonReleasedSum:
         assert by_id2[str(line1.id)] == 25, by_id2
         assert by_id2[str(line2.id)] == 18, by_id2
 
-        # The release case: deleting the GRN releases line 1 - it must
-        # drop to what its remaining picking lines prove (0, none left);
-        # line 2 (never touched by any GRN) keeps its stored 18.
+        # The release case (MB1, amended): deleting the GRN releases line 1
+        # - it must return to its STATED 25 (`stated_received`), never 0.
+        # Line 2 (never touched by any GRN) keeps its stated 18.
         svc.delete_grn(header.id)
         by_id3 = _received([line1.id, line2.id])
-        assert by_id3[str(line1.id)] == 0, by_id3
+        assert by_id3[str(line1.id)] == 25, (
+            f"a released member must return to its ESB-stated receipt (25), "
+            f"not zero - got {by_id3}"
+        )
         assert by_id3[str(line2.id)] == 18, by_id3
 
 
@@ -2393,13 +2407,16 @@ class TestAcX33GroupRecomputeKeepsLineStatusConsistent:
         assert row["line_status"] == "open", row
 
     def test_a_line_closed_by_the_leftover_sweep_is_never_reopened(self, env):
-        """AC-X33 (D28a status), regression guard. A member already
-        CLOSED (e.g. by a cancelled document / the leftover sweep) with
-        allocated 29, received 29; a sibling in the SAME group has a
-        picking line whose total, redistributed, leaves the closed
-        member's own share at 29 still (the D28b floor keeps the group
-        total at least the stored sum of non-released members) - it must
-        stay `closed`, never flip back to `open`.
+        """AC-X33 (D28a status), regression guard, AMENDED round 4 (D28c,
+        AC-X36/AC-X41): a member closed BY A RECEIPT (`receipt_status
+        fully_received`) is now DELIBERATELY reopenable when what closed it
+        goes away - that is AC-X35/AC-X36's own fix for MB2, not a
+        regression. What this guard actually pins is the OTHER kind of
+        closed row: one the leftover sweep retired by absence
+        (`receipt_status` stays `pending` - it was never received, only
+        retired), which must stay closed and untouched regardless of what a
+        sibling's picking line redistributes. See AC-X41 for the same shape
+        pinned as its own AC.
         """
         from app.services.procurement_service import PickingHeaderService
 
@@ -2411,9 +2428,10 @@ class TestAcX33GroupRecomputeKeepsLineStatusConsistent:
         closed_line = SPOAllocation(
             id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
             spo_line_number=1, product_id=product_id, location_code=wh_code,
-            allocated_quantity=29, quantity_received=29, line_status="closed",
-            receipt_status="fully_received", source_system="autocount",
+            allocated_quantity=29, quantity_received=0, line_status="closed",
+            receipt_status="pending", source_system="autocount",
             source_ref=f"{MARKER}:AC1:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+            stated_received=0,
         )
         sibling = SPOAllocation(
             id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
@@ -2453,3 +2471,617 @@ class TestAcX33GroupRecomputeKeepsLineStatusConsistent:
             "a member the leftover sweep already closed must never be "
             f"reopened by the group recompute - got {row}"
         )
+
+
+# ============================================================================ #
+# Round 4 (reviewer MB1 / MB2, 2026-09-07, PLAN D28c): `stated_received`
+# ============================================================================ #
+# Fixture vocabulary (UAC): "stated" = `spo_allocations.stated_received`, the
+# receipt an ESB push (TransferedQty) or a supersede / dedupe carry DECLARED
+# for an `autocount` line; NULL reads as 0.
+
+
+# ============================================================================ #
+# AC-X35 (D28c, MB2)
+# ============================================================================ #
+class TestAcX35ARedistributedShareLeavesWithTheGrnThatProducedIt:
+    def _seed(self, env):
+        """Two `autocount` lines allocated 29 / 18, stated 0 / 0, stored 0,
+        one approved GRN of 47 against line 1 - the exact shape a share of
+        18 lands on line 2 purely by redistribution, never by its own proof.
+        """
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        doc_ref = f"{MARKER}:ACDOC:{uuid.uuid4().hex[:8]}"
+
+        line1 = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=wh_code,
+            allocated_quantity=29, quantity_received=0, line_status="open",
+            receipt_status="pending", source_system="autocount",
+            source_ref=f"{MARKER}:AC1:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+            stated_received=0,
+        )
+        line2 = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=2, product_id=product_id, location_code=wh_code,
+            allocated_quantity=18, quantity_received=0, line_status="open",
+            receipt_status="pending", source_system="autocount",
+            source_ref=f"{MARKER}:AC2:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+            stated_received=0,
+        )
+        env.db.add_all([line1, line2])
+        env.db.flush()
+
+        header = PickingHeader(
+            id=str(uuid.uuid4()), company_id=env.company_a,
+            picking_number=unique_code(MARKER), picking_type="goods_received",
+            picking_status="approved", spo_number=number,
+        )
+        env.db.add(header)
+        env.db.flush()
+        env.db.add(
+            PickingLine(
+                id=str(uuid.uuid4()), company_id=env.company_a,
+                picking_header_id=header.id, spo_allocation_id=line1.id,
+                product_id=product_id, quantity_expected=47, quantity_picked=47,
+            )
+        )
+        env.db.flush()
+        env.db.commit()
+        return line1, line2, header
+
+    def _received(self, env, ids):
+        env.db.expire_all()
+        rows = env.db.execute(
+            text(
+                "SELECT id, quantity_received, line_status, receipt_status, "
+                "stated_received FROM spo_allocations WHERE id IN (:id1, :id2)"
+            ),
+            {"id1": str(ids[0]), "id2": str(ids[1])},
+        ).mappings().all()
+        return {str(r["id"]): r for r in rows}
+
+    def test_delete_grn_zeroes_and_reopens_both_lines(self, env):
+        """AC-X35 (D28c, MB2). After `sync_grn_received_to_spo` the lines
+        read 29 / 18 closed. After `delete_grn` BOTH must read 0,
+        `line_status open`, `receipt_status pending`: the share that
+        landed on line 2 leaves with the GRN that produced it, and a line
+        closed by a receipt that is gone reopens.
+
+        RED today (before migration 488 / the model column land):
+        `stated_received` does not exist, so the raw SQL read raises
+        `UndefinedColumn`.
+        """
+        from app.services.procurement_service import PickingHeaderService
+
+        line1, line2, header = self._seed(env)
+        svc = PickingHeaderService(env.db)
+        svc.sync_grn_received_to_spo(header.id)
+
+        by_id = self._received(env, [line1.id, line2.id])
+        assert by_id[str(line1.id)]["quantity_received"] == 29, by_id
+        assert by_id[str(line1.id)]["line_status"] == "closed", by_id
+        assert by_id[str(line2.id)]["quantity_received"] == 18, by_id
+        assert by_id[str(line2.id)]["line_status"] == "closed", by_id
+
+        svc.delete_grn(header.id)
+        by_id2 = self._received(env, [line1.id, line2.id])
+        assert by_id2[str(line1.id)]["quantity_received"] == 0, (
+            "the only GRN behind the group's whole 47 is gone - line 1 "
+            f"must drop to its (zero) stated receipt - got {by_id2}"
+        )
+        assert by_id2[str(line1.id)]["line_status"] == "open", by_id2
+        assert by_id2[str(line1.id)]["receipt_status"] == "pending", by_id2
+        assert by_id2[str(line2.id)]["quantity_received"] == 0, (
+            "line 2's 18 was only ever a redistributed SHARE of line 1's "
+            f"GRN, never its own proof - it must leave with the GRN that "
+            f"produced it - got {by_id2}"
+        )
+        assert by_id2[str(line2.id)]["line_status"] == "open", by_id2
+        assert by_id2[str(line2.id)]["receipt_status"] == "pending", by_id2
+
+    def test_the_same_shape_through_bulk_delete_grns(self, env):
+        """AC-X35, same shape through `bulk_delete_grns`."""
+        from app.services.procurement_service import PickingHeaderService
+
+        line1, line2, header = self._seed(env)
+        svc = PickingHeaderService(env.db)
+        svc.sync_grn_received_to_spo(header.id)
+
+        by_id = self._received(env, [line1.id, line2.id])
+        assert by_id[str(line1.id)]["quantity_received"] == 29, by_id
+        assert by_id[str(line2.id)]["quantity_received"] == 18, by_id
+
+        svc.bulk_delete_grns([header.id])
+        by_id2 = self._received(env, [line1.id, line2.id])
+        assert by_id2[str(line1.id)]["quantity_received"] == 0, by_id2
+        assert by_id2[str(line1.id)]["line_status"] == "open", by_id2
+        assert by_id2[str(line2.id)]["quantity_received"] == 0, by_id2
+        assert by_id2[str(line2.id)]["line_status"] == "open", by_id2
+
+
+# ============================================================================ #
+# AC-X36 (D28c)
+# ============================================================================ #
+class TestAcX36AStatedFloorNeverDropsAndCancelledIsNeverTouched:
+    def test_a_stated_29_line_never_drops_or_reopens_when_a_siblings_grn_is_deleted(
+        self, env
+    ):
+        """AC-X36 (D28c). A line whose stated receipt is 29 (closed) never
+        drops below 29 and never reopens when a SIBLING's GRN is deleted -
+        `_write_received` reopens ONLY a line closed by a receipt
+        (`receipt_status fully_received`) whose OWN new receipt is below
+        its allocation, never a line another member's release merely
+        redistributes around.
+        """
+        from app.services.procurement_service import PickingHeaderService
+
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        doc_ref = f"{MARKER}:ACDOC:{uuid.uuid4().hex[:8]}"
+
+        stated_line = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=wh_code,
+            allocated_quantity=29, quantity_received=29, line_status="closed",
+            receipt_status="fully_received", source_system="autocount",
+            source_ref=f"{MARKER}:AC1:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+            stated_received=29,
+        )
+        sibling = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=2, product_id=product_id, location_code=wh_code,
+            allocated_quantity=18, quantity_received=0, line_status="open",
+            receipt_status="pending", source_system="autocount",
+            source_ref=f"{MARKER}:AC2:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+            stated_received=0,
+        )
+        env.db.add_all([stated_line, sibling])
+        env.db.flush()
+
+        header = PickingHeader(
+            id=str(uuid.uuid4()), company_id=env.company_a,
+            picking_number=unique_code(MARKER), picking_type="goods_received",
+            picking_status="approved", spo_number=number,
+        )
+        env.db.add(header)
+        env.db.flush()
+        env.db.add(
+            PickingLine(
+                id=str(uuid.uuid4()), company_id=env.company_a,
+                picking_header_id=header.id, spo_allocation_id=sibling.id,
+                product_id=product_id, quantity_expected=5, quantity_picked=5,
+            )
+        )
+        env.db.flush()
+        env.db.commit()
+
+        PickingHeaderService(env.db).delete_grn(header.id)
+
+        env.db.expire_all()
+        row = env.db.execute(
+            text(
+                "SELECT quantity_received, line_status, receipt_status "
+                "FROM spo_allocations WHERE id = :id"
+            ),
+            {"id": stated_line.id},
+        ).mappings().first()
+        assert row["quantity_received"] == 29, (
+            f"a stated 29 must never drop when a SIBLING's GRN is deleted - got {row}"
+        )
+        assert row["line_status"] == "closed", row
+        assert row["receipt_status"] == "fully_received", row
+
+    def test_a_cancelled_member_is_never_touched_when_a_siblings_grn_is_deleted(self, env):
+        """AC-X36 (D28c), the `cancelled` guard. A member with
+        `line_status='cancelled'` must be skipped completely by the group
+        recompute - no share, no write - even when a sibling's GRN release
+        forces the group to recompute.
+        """
+        from app.services.procurement_service import PickingHeaderService
+
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        doc_ref = f"{MARKER}:ACDOC:{uuid.uuid4().hex[:8]}"
+
+        cancelled = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=wh_code,
+            allocated_quantity=29, quantity_received=7, line_status="cancelled",
+            receipt_status="pending", source_system="autocount",
+            source_ref=f"{MARKER}:AC1:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+            stated_received=7,
+        )
+        sibling = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=2, product_id=product_id, location_code=wh_code,
+            allocated_quantity=18, quantity_received=0, line_status="open",
+            receipt_status="pending", source_system="autocount",
+            source_ref=f"{MARKER}:AC2:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+            stated_received=0,
+        )
+        env.db.add_all([cancelled, sibling])
+        env.db.flush()
+
+        header = PickingHeader(
+            id=str(uuid.uuid4()), company_id=env.company_a,
+            picking_number=unique_code(MARKER), picking_type="goods_received",
+            picking_status="approved", spo_number=number,
+        )
+        env.db.add(header)
+        env.db.flush()
+        env.db.add(
+            PickingLine(
+                id=str(uuid.uuid4()), company_id=env.company_a,
+                picking_header_id=header.id, spo_allocation_id=sibling.id,
+                product_id=product_id, quantity_expected=5, quantity_picked=5,
+            )
+        )
+        env.db.flush()
+        env.db.commit()
+
+        PickingHeaderService(env.db).delete_grn(header.id)
+
+        env.db.expire_all()
+        row = env.db.execute(
+            text(
+                "SELECT quantity_received, line_status, receipt_status "
+                "FROM spo_allocations WHERE id = :id"
+            ),
+            {"id": cancelled.id},
+        ).mappings().first()
+        assert row["quantity_received"] == 7, (
+            f"a cancelled member must never be written by the group recompute - got {row}"
+        )
+        assert row["line_status"] == "cancelled", row
+        assert row["receipt_status"] == "pending", row
+
+
+# ============================================================================ #
+# AC-X37 (D28b draft gate, reviewer KB)
+# ============================================================================ #
+class TestAcX37DraftHeaderNeverRunsTheRecompute:
+    def test_a_draft_headers_picking_line_writes_nothing_and_updated_at_is_unchanged(
+        self, env
+    ):
+        """AC-X37. With the AC-X28 seed and the picking line on a DRAFT
+        `goods_received` header, neither `sync_grn_received_to_spo` nor
+        `sync_received_for_spo_number` writes either line (25 / 18
+        unchanged, `updated_at` unchanged). Approving the header is what
+        makes the recompute run.
+        """
+        from app.services.procurement_service import PickingHeaderService
+
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        doc_ref = f"{MARKER}:ACDOC:{uuid.uuid4().hex[:8]}"
+
+        line1 = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=wh_code,
+            allocated_quantity=29, quantity_received=25, line_status="open",
+            receipt_status="pending", source_system="autocount",
+            source_ref=f"{MARKER}:AC1:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+            stated_received=25,
+        )
+        line2 = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=2, product_id=product_id, location_code=wh_code,
+            allocated_quantity=18, quantity_received=18, line_status="closed",
+            receipt_status="fully_received", source_system="autocount",
+            source_ref=f"{MARKER}:AC2:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+            stated_received=18,
+        )
+        env.db.add_all([line1, line2])
+        env.db.flush()
+
+        header = PickingHeader(
+            id=str(uuid.uuid4()), company_id=env.company_a,
+            picking_number=unique_code(MARKER), picking_type="goods_received",
+            picking_status="draft", spo_number=number,
+        )
+        env.db.add(header)
+        env.db.flush()
+        env.db.add(
+            PickingLine(
+                id=str(uuid.uuid4()), company_id=env.company_a,
+                picking_header_id=header.id, spo_allocation_id=line1.id,
+                product_id=product_id, quantity_expected=5, quantity_picked=5,
+            )
+        )
+        env.db.flush()
+        env.db.commit()
+
+        def _row(alloc_id):
+            env.db.expire_all()
+            return env.db.execute(
+                text(
+                    "SELECT quantity_received, updated_at FROM spo_allocations "
+                    "WHERE id = :id"
+                ),
+                {"id": alloc_id},
+            ).mappings().first()
+
+        before1, before2 = _row(line1.id), _row(line2.id)
+
+        svc = PickingHeaderService(env.db)
+        svc.sync_grn_received_to_spo(header.id)
+        svc.sync_received_for_spo_number(number)
+
+        after1, after2 = _row(line1.id), _row(line2.id)
+        assert after1["quantity_received"] == 25, after1
+        assert after2["quantity_received"] == 18, after2
+        assert after1["updated_at"] == before1["updated_at"], (
+            "a DRAFT header's picking line must never trigger the recompute at all",
+            after1, before1,
+        )
+        assert after2["updated_at"] == before2["updated_at"], (after2, before2)
+
+
+# ============================================================================ #
+# AC-X38 (D28c writers)
+# ============================================================================ #
+class TestAcX38StatedReceivedWrittenByTheIngestWriterNeverByTheGrnRecompute:
+    def test_after_ac_x1_both_lines_carry_the_carried_share_as_stated_and_it_survives_a_repush(
+        self, env
+    ):
+        """AC-X38. `stated_received` is written by every declarer of an
+        AutoCount line's receipt - here, the first-push supersede carry
+        (each line's carried share, D26). After AC-X1's push both lines
+        must carry `stated_received` 29 / 18; after a second push of the
+        same DocKey with `qty_received 0` (AC-X9's shape) they must still
+        carry 29 / 18 - the GRN recompute is not involved in this test at
+        all, and the max rule never lowers a stated figure.
+        """
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        _seed_legacy_row(
+            env,
+            spo_number=number,
+            spo_line_number=1,
+            location_code=wh_code,
+            allocated_quantity=47,
+            quantity_received=47,
+            line_status="closed",
+        )
+
+        line1 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=29, qty_received=0, line_number=1
+        )
+        line2 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=18, qty_received=0, line_number=2
+        )
+        record = _spo_record(
+            env, number=number, lines=[line1, line2], supplier_ref=env.supplier_ref
+        )
+
+        res1 = env.post(INGEST_SPO, [record])
+        assert res1.status_code == 200, res1.text
+
+        rows = {r["source_ref"]: r for r in _spo_rows(env, number)}
+        first_id = rows[line1["source_ref"]]["id"]
+        second_id = rows[line2["source_ref"]]["id"]
+
+        def _stated():
+            env.db.expire_all()
+            found = env.db.execute(
+                text(
+                    "SELECT id, stated_received FROM spo_allocations "
+                    "WHERE id IN (:a, :b)"
+                ),
+                {"a": str(first_id), "b": str(second_id)},
+            ).mappings().all()
+            return {str(r["id"]): r["stated_received"] for r in found}
+
+        by_id = _stated()
+        assert by_id[str(first_id)] == 29, by_id
+        assert by_id[str(second_id)] == 18, by_id
+
+        res2 = env.post(INGEST_SPO, [record])
+        assert res2.status_code == 200, res2.text
+
+        by_id2 = _stated()
+        assert by_id2[str(first_id)] == 29, (
+            "a re-push with qty_received 0 must never lower a stated figure "
+            f"- got {by_id2}"
+        )
+        assert by_id2[str(second_id)] == 18, by_id2
+
+
+# ============================================================================ #
+# AC-X40 (D28c retirement freeze, reviewer F2)
+# ============================================================================ #
+class TestAcX40RetirementFreezesTheReceiptAGrnAloneProved:
+    def test_a_line_the_push_no_longer_names_freezes_its_receipt_and_never_reopens(
+        self, env
+    ):
+        """AC-X40. An `autocount` line closed by a GRN (allocated 29,
+        received 29 via one approved picking line, stated 0) that a later
+        push of the same DocKey no longer names (leftover sweep closes it)
+        must carry `stated_received 29` after that push; deleting the GRN
+        afterwards must leave it closed at 29, never reopened - a line
+        AutoCount retired is not demand again because the CRM receipt that
+        closed it went away. The SIBLING, still named by the push, behaves
+        per AC-X35 (its share was only ever a redistribution of the same
+        GRN, so it drops and reopens when that GRN is deleted).
+        """
+        from app.services.procurement_service import PickingHeaderService
+
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        doc_ref = f"{MARKER}:ACDOC:{uuid.uuid4().hex[:8]}"
+        dtl1 = f"{MARKER}:AC1:{uuid.uuid4().hex[:8]}"
+        dtl2 = f"{MARKER}:AC2:{uuid.uuid4().hex[:8]}"
+
+        line1 = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=wh_code,
+            allocated_quantity=29, quantity_received=0, line_status="open",
+            receipt_status="pending", source_system="autocount",
+            source_ref=dtl1, source_doc_ref=doc_ref, stated_received=0,
+        )
+        line2 = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=2, product_id=product_id, location_code=wh_code,
+            allocated_quantity=18, quantity_received=0, line_status="open",
+            receipt_status="pending", source_system="autocount",
+            source_ref=dtl2, source_doc_ref=doc_ref, stated_received=0,
+        )
+        env.db.add_all([line1, line2])
+        env.db.flush()
+
+        header = PickingHeader(
+            id=str(uuid.uuid4()), company_id=env.company_a,
+            picking_number=unique_code(MARKER), picking_type="goods_received",
+            picking_status="approved", spo_number=number,
+        )
+        env.db.add(header)
+        env.db.flush()
+        env.db.add(
+            PickingLine(
+                id=str(uuid.uuid4()), company_id=env.company_a,
+                picking_header_id=header.id, spo_allocation_id=line1.id,
+                product_id=product_id, quantity_expected=47, quantity_picked=47,
+            )
+        )
+        env.db.flush()
+        env.db.commit()
+
+        svc = PickingHeaderService(env.db)
+        svc.sync_grn_received_to_spo(header.id)
+
+        def _row(alloc_id):
+            env.db.expire_all()
+            return env.db.execute(
+                text(
+                    "SELECT quantity_received, line_status, receipt_status, "
+                    "stated_received FROM spo_allocations WHERE id = :id"
+                ),
+                {"id": alloc_id},
+            ).mappings().first()
+
+        pre = _row(line1.id)
+        assert pre["quantity_received"] == 29, pre
+        assert pre["line_status"] == "closed", pre
+
+        line2_push = _spo_line(
+            env, ref=dtl2, warehouse_ref=env.warehouse_ref, product_ref=env.product_ref,
+            qty_ordered=18, qty_received=0,
+        )
+        record = _spo_record(
+            env, ref=doc_ref, number=number, lines=[line2_push], supplier_ref=env.supplier_ref
+        )
+        res = env.post(INGEST_SPO, [record])
+        assert res.status_code == 200, res.text
+
+        after_push = _row(line1.id)
+        assert after_push["stated_received"] == 29, (
+            "retiring an AutoCount line must freeze the receipt it was "
+            f"retired with - got {after_push}"
+        )
+        assert after_push["line_status"] == "closed", after_push
+
+        svc.delete_grn(header.id)
+        after_delete = _row(line1.id)
+        assert after_delete["quantity_received"] == 29, after_delete
+        assert after_delete["line_status"] == "closed", (
+            "a line AutoCount retired must never reopen because the CRM "
+            f"receipt that closed it went away - got {after_delete}"
+        )
+        assert after_delete["receipt_status"] == "fully_received", after_delete
+
+        sibling_after = _row(line2.id)
+        assert sibling_after["quantity_received"] == 0, sibling_after
+        assert sibling_after["line_status"] == "open", sibling_after
+        assert sibling_after["receipt_status"] == "pending", sibling_after
+
+
+# ============================================================================ #
+# AC-X41 (D28c distribution members, reviewer F4)
+# ============================================================================ #
+class TestAcX41ARetiredByAbsenceMemberTakesNoShare:
+    def test_a_line_retired_by_absence_never_receives_a_share_remainder_goes_to_the_last_live_line(
+        self, env
+    ):
+        """AC-X41. Two `autocount` lines, L1 (Seq 1, allocated 29) retired
+        by absence at received 0 (closed, `receipt_status pending`, stated
+        0) and L2 (Seq 2, allocated 18, open) with one approved GRN of 40
+        against L2: after the recompute L1 still reads 0 closed and L2
+        reads 40 (the whole picking total, remainder on the last LIVE
+        line). A member closed with `receipt_status != fully_received`
+        (retired by absence, or `cancelled`) takes no share; a member
+        closed BY receipt still does (and may reopen, AC-X35).
+        """
+        from app.services.procurement_service import PickingHeaderService
+
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        doc_ref = f"{MARKER}:ACDOC:{uuid.uuid4().hex[:8]}"
+
+        retired = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=wh_code,
+            allocated_quantity=29, quantity_received=0, line_status="closed",
+            receipt_status="pending", source_system="autocount",
+            source_ref=f"{MARKER}:AC1:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+            stated_received=0,
+        )
+        live_line = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=2, product_id=product_id, location_code=wh_code,
+            allocated_quantity=18, quantity_received=0, line_status="open",
+            receipt_status="pending", source_system="autocount",
+            source_ref=f"{MARKER}:AC2:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+            stated_received=0,
+        )
+        env.db.add_all([retired, live_line])
+        env.db.flush()
+
+        header = PickingHeader(
+            id=str(uuid.uuid4()), company_id=env.company_a,
+            picking_number=unique_code(MARKER), picking_type="goods_received",
+            picking_status="approved", spo_number=number,
+        )
+        env.db.add(header)
+        env.db.flush()
+        env.db.add(
+            PickingLine(
+                id=str(uuid.uuid4()), company_id=env.company_a,
+                picking_header_id=header.id, spo_allocation_id=live_line.id,
+                product_id=product_id, quantity_expected=40, quantity_picked=40,
+            )
+        )
+        env.db.flush()
+        env.db.commit()
+
+        PickingHeaderService(env.db).sync_grn_received_to_spo(header.id)
+
+        env.db.expire_all()
+        rows = env.db.execute(
+            text(
+                "SELECT id, quantity_received, line_status, receipt_status "
+                "FROM spo_allocations WHERE id IN (:a, :b)"
+            ),
+            {"a": str(retired.id), "b": str(live_line.id)},
+        ).mappings().all()
+        by_id = {str(r["id"]): r for r in rows}
+
+        assert by_id[str(retired.id)]["quantity_received"] == 0, (
+            f"a line retired by absence must take NO share - got {by_id}"
+        )
+        assert by_id[str(retired.id)]["line_status"] == "closed", by_id
+        assert by_id[str(retired.id)]["receipt_status"] == "pending", by_id
+
+        assert by_id[str(live_line.id)]["quantity_received"] == 40, (
+            "the whole picking total must land on the last LIVE line, "
+            f"since the retired member takes no share - got {by_id}"
+        )
+        assert by_id[str(live_line.id)]["line_status"] == "closed", by_id
+        assert by_id[str(live_line.id)]["receipt_status"] == "fully_received", by_id
