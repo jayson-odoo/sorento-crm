@@ -506,15 +506,25 @@ CATALOG: tuple[ToolSpec, ...] = (
             "  • `product_ids` - orders containing any of these products\n"
             "  • `transporter_ids` - transporters (Order.transporter_id, text fallback for legacy rows)\n"
             "Date window: actual_delivery_date_from / actual_delivery_date_to.\n"
-            "DELIVERY BUCKET: `order_status` = 'outstanding' | 'delivered' (omit for all). "
+            "DELIVERY BUCKET: `order_status` = 'outstanding' | 'delivered' | 'so_outstanding' (omit for "
+            "all, over `orders`). 'so_outstanding' is a DIFFERENT bucket over `sales_order_lines` "
+            "(qty_ordered - qty_delivered > 0, still open, no DO created yet AT ALL) - rows carry "
+            "so_number/product_code/outstanding_qty/order_date/customer/requested_delivery_date instead "
+            "of the usual order fields. Use for 'SO outstanding', 'ordered but no DO', 'belum DO', "
+            "'还没出DO'.\n"
             "QUANTITY ASK: pass `include_summary=true` when the user asks HOW MANY / how much a customer "
             "took of a product — the response then carries `summary` (filter-wide delivered/pending "
-            "quantity per product, counts, customers, delivered date span, and the span of DO dates over "
-            "every DO in the row, delivered or not). Omit for a plain DO list. "
+            "quantity per product, counts, customers, delivered date span, the span of DO dates over "
+            "every DO in the row delivered or not, plus so_outstanding_qty/so_outstanding_count over open "
+            "SO lines for the same customer_ids/product_ids scope). Omit for a plain DO list. "
             "'outstanding' = NOT yet delivered (New Order, Processing, In Transit, Cancelled, or a "
             "delivery date under a non-delivered status); 'delivered' = status delivered/completed AND "
             "actual_delivery_date set. Use for 'outstanding/pending/undelivered orders', 'belum hantar', "
             "'not delivered yet'. AND'd with the other filters.\n\n"
+            "GROUPING: `group_by` = customer | transporter | date | product renders headed sections "
+            "instead of (alongside) the flat list - use for 'DO by transporter this week', 'open DO by "
+            "customer'. Applies to every bucket. `sort`/`dir`/`limit` narrow and order the rows before "
+            "grouping.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
@@ -522,7 +532,8 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         (
             "page", "limit", "order_ids", "customer_ids", "product_ids", "transporter_ids",
-            "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "include_summary", "sort", "dir",
+            "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "include_summary",
+            "group_by", "sort", "dir",
             "contact_id", "space_id",
         ),
         domain="orders",

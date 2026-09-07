@@ -384,6 +384,21 @@ ORDER_TOOLS: frozenset[str] = frozenset(
     {"crm_order_management_orders_list", "crm_order_management_orders_by_product_list"}
 )
 
+# A3/A5/A6 (chatbot-growth-r1): the tools whose `group_by` this transformer
+# passes straight through as a query param (the backend validates the axis;
+# see `ORDER_GROUP_BY_AXES` / each route's own set - not re-validated here).
+GROUP_BY_TOOLS: frozenset[str] = frozenset(
+    {
+        "crm_order_management_orders_list",
+        "crm_procurement_purchase_orders_placed_list",
+    }
+)
+
+# A6: the one tool with its OWN `top_n` param (default 1, "last 3 in"); every
+# other GROUP_BY_TOOLS/ORDER_TOOLS member aliases `top_n` to `limit` instead
+# (above), since it has no `top_n` param of its own.
+TOP_N_DIRECT_TOOLS: frozenset[str] = frozenset({"crm_procurement_spo_last_receipt_list"})
+
 # n8n hard-codes this and OVERRIDES the `semantic_input` value with it (which carried the
 # identical string in all 24 sampled executions). D5 says the respond.io space id comes
 # from the default respond workspace row, and it scopes to the VALUE, not to a list of
@@ -493,10 +508,12 @@ def entity_ids_transformer(
         if jsc.has(semantic_input, key):
             out[key] = semantic_input[key]
 
-    # order_status (order tools only): "outstanding" | "delivered"; omitted when null.
+    # order_status (order tools only): "outstanding" | "delivered" | "so_outstanding"
+    # (A3, AC-905); omitted when null.
     if tool_name in ORDER_TOOLS and jsc.get(semantic_input, "order_status") in (
         "outstanding",
         "delivered",
+        "so_outstanding",
     ):
         out["order_status"] = jsc.get(semantic_input, "order_status")
 
@@ -511,6 +528,20 @@ def entity_ids_transformer(
         jsc.nullish_str(a).strip() == "quantity" for a in req_attrs
     ):
         out["include_summary"] = True
+
+    # group_by / top_n (A3, AC-909/AC-910): additive parser keys, uniform across
+    # every list tool this plan touches. `top_n` aliases to `limit` for the
+    # order tools (the tool has no `top_n` param of its own); A6's SPO tool
+    # reads `top_n` directly (see `TOP_N_DIRECT_TOOLS`).
+    group_by = jsc.get(semantic_input, "group_by")
+    if tool_name in GROUP_BY_TOOLS and jsc.truthy(group_by):
+        out["group_by"] = jsc.js_string(group_by)
+    top_n = jsc.get(semantic_input, "top_n")
+    if jsc.truthy(top_n):
+        if tool_name in TOP_N_DIRECT_TOOLS:
+            out["top_n"] = top_n
+        elif tool_name in ORDER_TOOLS or tool_name in GROUP_BY_TOOLS:
+            out["limit"] = top_n
 
     # COERCE, THEN TRIM, and the ORDER is the whole point. `contact_id` arrives as BOTH an
     # int and a SPACE-PADDED string in production, in adjacent executions: five spine call
@@ -1265,18 +1296,13 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     if len(action_links):
         msg += "\n"
 
-    # A quantity ask prints the SUMMARY ONLY: the two order perspectives are separate
-    # questions and the parser already separates them. The ROWS are suppressed from the
-    # MESSAGE, never from the STATE - `answers` below is untouched, so a positional pick
-    # still resolves against the same page rows. And ONLY the numbered list goes: the
-    # multi-company note reads `e.items` for attribution and must keep seeing the real rows.
-    for i, it in enumerate([] if qs_render else (e.get("items") or [])):
+    def _item_line(position: int, it: Any) -> str:
         field_lines = "\n".join(
             f"*{jsc.js_string(jsc.get(f, 'label', jsc.UNDEFINED))}:* "
             f"{_fmt_value(jsc.get(f, 'value'))}"
             for f in (jsc.get(it, "fields") or [])
         )
-        line = f"{i + 1}. {field_lines}"
+        line = f"{position}. {field_lines}"
         flags = jsc.get(it, "flags")
         if jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "discontinued")):
             line += "\n⚠️  *(PRODUCT DISCONTINUED)*"
@@ -1286,7 +1312,36 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             line += "\n\U0001f6a9  *(PENDING ALLOCATION)*"
         elif jsc.truthy(flags) and jsc.truthy(jsc.get(flags, "partially_allocated")):
             line += "\n\U0001f6a9  *(PARTIAL ALLOCATION)*"
-        msg += line + "\n\n"
+        return line
+
+    # A3 (AC-905/AC-906): grouped sections, ONE generic branch for every tool - the
+    # presenter already mapped `groups[].rows` through the same row->item builder
+    # the flat list uses (`sorento_crm_mcp.presenters`), so this only adds a
+    # heading per bucket and keeps the running item number global across groups
+    # (a positional pick still resolves against `answers`, which stays the FLAT
+    # `e.get("items")` below - grouping is presentation only, never carried state).
+    groups_render = bool(
+        isinstance(e.get("groups"), list) and len(e["groups"]) and not qs_render
+    )
+    if groups_render:
+        position = 0
+        for grp in e["groups"]:
+            if not isinstance(grp, dict) or not isinstance(grp.get("items"), list):
+                continue
+            label = jsc.js_string(grp.get("label") or grp.get("key") or "").strip()
+            if label:
+                msg += f"*{label}*\n"
+            for it in grp["items"]:
+                position += 1
+                msg += _item_line(position, it) + "\n\n"
+
+    # A quantity ask prints the SUMMARY ONLY: the two order perspectives are separate
+    # questions and the parser already separates them. The ROWS are suppressed from the
+    # MESSAGE, never from the STATE - `answers` below is untouched, so a positional pick
+    # still resolves against the same page rows. And ONLY the numbered list goes: the
+    # multi-company note reads `e.items` for attribution and must keep seeing the real rows.
+    for i, it in enumerate([] if (qs_render or groups_render) else (e.get("items") or [])):
+        msg += _item_line(i + 1, it) + "\n\n"
 
     # -- multi-company: name the companies that came back EMPTY --------------- #
     # A FOUND row already says which company it belongs to. What the customer cannot see is
@@ -1354,6 +1409,8 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # Spread-in, not defaulted: a reply with no summary keeps EXACTLY the keys it has today.
     if qs_render:
         out["summary_items"] = e["summary_items"]
+    if groups_render:
+        out["groups"] = e["groups"]
     out.update(
         {
             "attachments": e.get("attachments") or [],

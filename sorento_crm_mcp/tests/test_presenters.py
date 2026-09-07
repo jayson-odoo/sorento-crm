@@ -277,6 +277,97 @@ def test_stock_uses_relabelled_location_fields():
     assert out["last_updated_at"] == "2026-06-12T09:28:56+08:00"
 
 
+def test_orders_so_outstanding_bucket_renders_so_shaped_rows():
+    out = env("crm_order_management_orders_list", {
+        "order_status": "so_outstanding",
+        "data": [{
+            "so_number": "SO-1001", "product_code": "SRTWC8517",
+            "outstanding_qty": 7, "order_date": "2026-06-01",
+            "customer": "ABC SDN BHD", "requested_delivery_date": "2026-06-15",
+        }],
+    })
+    assert out["result_type"] == "so_outstanding"
+    f = {x["label"]: x["value"] for x in out["items"][0]["fields"]}
+    assert f["SO Number"] == "SO-1001"
+    assert f["Outstanding Qty"] == "7"
+    assert f["Customer"] == "ABC SDN BHD"
+    assert out["has_result"] is True
+
+
+def test_orders_groups_render_same_shape_as_flat_list():
+    row_a = {"order_number": "A1", "debtor_name": "ABC", "order_date": "2026-06-01"}
+    row_b = {"order_number": "B1", "debtor_name": "XYZ", "order_date": "2026-06-02"}
+    out = env("crm_order_management_orders_list", {
+        "data": [row_a, row_b],
+        "groups": [
+            {"key": "ABC", "label": "ABC", "rows": [row_a]},
+            {"key": "XYZ", "label": "XYZ", "rows": [row_b]},
+        ],
+    })
+    assert [g["key"] for g in out["groups"]] == ["ABC", "XYZ"]
+    assert out["groups"][0]["items"][0]["fields"]
+    labels = {f["label"]: f["value"] for f in out["groups"][0]["items"][0]["fields"]}
+    assert labels["Customer"] == "ABC"
+
+
+def test_orders_groups_absent_when_backend_did_not_group():
+    out = env("crm_order_management_orders_list", {
+        "data": [{"order_number": "A1", "debtor_name": "ABC"}],
+    })
+    assert "groups" not in out
+
+
+def test_pipeline_summary_prepended_for_single_product_ask():
+    out = env("crm_order_management_orders_list", {
+        "data": [{"order_number": "A1", "debtor_name": "ABC",
+                   "lines": [{"quantity": 3, "product": {"product_code": "SRTWC8517"}}]}],
+        "summary": {
+            "row_count": 5, "order_count": 5, "delivered_count": 4, "pending_count": 1,
+            "customers": ["ABC"], "customer_count": 1,
+            "so_outstanding_qty": 7, "so_outstanding_count": 1,
+            "products": [{"product_code": "SRTWC8517", "order_count": 5, "customer_count": 1,
+                          "delivered_quantity": 12, "pending_quantity": 3,
+                          "delivered_from": "2026-06-01", "delivered_to": "2026-06-10"}],
+        },
+    })
+    items = out["summary_items"]
+    labels = [f["fields"][0]["label"] for f in items[:3]]
+    assert labels[0] == "SO outstanding (not yet DO)"
+    assert items[0]["fields"][0]["value"] == 7
+    assert labels[1] == "DO open (not yet delivered)"
+    assert items[1]["fields"][0]["value"] == 3
+    assert "Delivered" in labels[2]
+    assert items[2]["fields"][0]["value"] == 12
+
+
+def test_pipeline_summary_absent_when_no_so_outstanding_key():
+    """AC-905b: 'list DO for <customer>' (no quantity ask) never carries the
+    so_outstanding leg, so the plain per-customer/product summary is unaffected."""
+    out = env("crm_order_management_orders_list", {
+        "data": [{"order_number": "A1", "debtor_name": "ABC",
+                   "lines": [{"quantity": 3, "product": {"product_code": "SRTWC8517"}}]}],
+        "summary": {
+            "row_count": 5, "order_count": 5, "delivered_count": 4, "pending_count": 1,
+            "customers": ["ABC"], "customer_count": 1,
+            "products": [{"product_code": "SRTWC8517", "order_count": 5, "customer_count": 1,
+                          "delivered_quantity": 12, "pending_quantity": 3}],
+        },
+    })
+    labels = [f["fields"][0]["label"] for f in out["summary_items"]]
+    assert "SO outstanding (not yet DO)" not in labels
+
+
+def test_pipeline_summary_absent_on_so_outstanding_bucket_own_summary():
+    """The `so_outstanding` bucket's OWN include_summary=true carries no DO
+    data at all - must not synthesize a fake '0 DO open' line."""
+    out = env("crm_order_management_orders_list", {
+        "order_status": "so_outstanding",
+        "data": [{"so_number": "SO-1", "product_code": "SRTWC8517", "outstanding_qty": 7}],
+        "summary": {"scope": "filter", "row_count": 1, "so_outstanding_qty": 7, "so_outstanding_count": 1},
+    })
+    assert "summary_items" not in out
+
+
 def test_stock_omits_sellable_when_backend_did_not_send_it():
     """AC-903: byte-identical when the backend answered with no `sellable` at all."""
     out = env("crm_inventory_stock_balance_list", {

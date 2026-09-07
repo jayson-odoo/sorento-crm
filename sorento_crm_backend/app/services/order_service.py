@@ -126,6 +126,133 @@ def _plain_number(v):
 
 GROUPS_CEILING = 500
 
+# A3 (chatbot-growth-r1): the axes `group_by` accepts on the orders list route,
+# for BOTH buckets (`outstanding`/`delivered`/omitted over `orders`, and
+# `so_outstanding` over `sales_order_lines`). One set for both rather than a
+# per-bucket list - a request naming an axis the bucket has no data for (e.g.
+# `transporter` on `so_outstanding`, which has none) simply groups everything
+# under "Not specified" rather than 422ing on a name the OTHER bucket accepts.
+ORDER_GROUP_BY_AXES: frozenset[str] = frozenset({"customer", "transporter", "date", "product"})
+
+
+def so_outstanding_rows(
+    db,
+    *,
+    customer_ids: Optional[list[str]] = None,
+    product_ids: Optional[list[str]] = None,
+    limit: int = 500,
+) -> list[dict]:
+    """Open SO lines (A3, AC-905): `qty_ordered - qty_delivered > 0`, `line_status='open'`.
+
+    One row per line - SO number, product, outstanding qty, order date, customer,
+    requested delivery date. Company-scoped the same way every other owned-table
+    query is (the session's `do_orm_execute` listener), so no explicit predicate
+    is built here unlike `stamp_order_summary` (which scopes hand-built column
+    queries the listener cannot reach).
+    """
+    from app.models.order import SalesOrder, SalesOrderLine
+
+    delta = SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered
+    q = (
+        db.query(SalesOrderLine, SalesOrder, Product, Customer)
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .join(Product, Product.id == SalesOrderLine.product_id)
+        .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
+        .filter(SalesOrderLine.line_status == "open", delta > 0)
+    )
+    if customer_ids:
+        q = q.filter(SalesOrder.customer_id.in_(customer_ids))
+    if product_ids:
+        q = q.filter(SalesOrderLine.product_id.in_(product_ids))
+    rows = (
+        q.order_by(SalesOrder.order_date.asc().nulls_last(), SalesOrder.so_number.asc())
+        .limit(limit)
+        .all()
+    )
+    out: list[dict] = []
+    for line, so, product, customer in rows:
+        out.append(
+            {
+                "so_number": so.so_number,
+                "product_id": str(product.id),
+                "product_code": product.product_code,
+                "product_name": product.product_name,
+                "outstanding_qty": _plain_number(line.qty_ordered - line.qty_delivered),
+                "order_date": so.order_date.isoformat() if so.order_date else None,
+                "customer": (customer.customer_name if customer else None) or so.debtor_code,
+                "requested_delivery_date": (
+                    so.requested_delivery_date.isoformat() if so.requested_delivery_date else None
+                ),
+            }
+        )
+    return out
+
+
+def so_outstanding_summary(
+    db, *, customer_ids: Optional[list[str]] = None, product_ids: Optional[list[str]] = None
+) -> dict:
+    """The "SO outstanding" leg of AC-905b's three-line pipeline.
+
+    Scoped by the SAME `customer_ids`/`product_ids` UUID filters the DO summary
+    (`stamp_order_summary`) uses - not by `debtor_name`, which is `Order`'s own
+    legacy fallback and has no equivalent on `SalesOrder`.
+    """
+    from app.models.order import SalesOrder, SalesOrderLine
+
+    delta = SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered
+    q = (
+        db.query(func.sum(delta), func.count(SalesOrderLine.id))
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .filter(SalesOrderLine.line_status == "open", delta > 0)
+    )
+    if customer_ids:
+        q = q.filter(SalesOrder.customer_id.in_(customer_ids))
+    if product_ids:
+        q = q.filter(SalesOrderLine.product_id.in_(product_ids))
+    qty, count = q.one()
+    return {
+        "so_outstanding_qty": _plain_number(qty) or 0,
+        "so_outstanding_count": int(count or 0),
+    }
+
+
+_ORDER_GROUP_AXIS_KEY: dict[str, str] = {
+    "customer": "customer",
+    "transporter": "transporter",
+    "date": "order_date",
+    "product": "product_code",
+}
+
+
+def group_rows(rows: list[dict], *, group_by: str, value_fn=None) -> list[dict]:
+    """Bucket a flat row list into `[{key, label, rows}]` (A3, AC-905/AC-906).
+
+    Python-side, not SQL: every row this groups already came back over a bounded
+    filter (`GROUPS_CEILING` / the tool's own limit), so a second aggregate
+    query buys nothing a `dict` walk does not already give for free. Order is
+    first-seen - the rows already arrive sorted the way the caller asked
+    (`sort`/`dir`), and grouping must not silently re-sort them.
+
+    `value_fn(row) -> str | None` overrides the default lookup
+    (`_ORDER_GROUP_AXIS_KEY[group_by]`) for a row shape that does not carry the
+    axis under its usual key (a DO row has no single `product_code` - many
+    lines per order - so the orders route builds its own extractor per axis).
+    """
+    if value_fn is None:
+        axis_key = _ORDER_GROUP_AXIS_KEY.get(group_by)
+        if axis_key is None:
+            return []
+        value_fn = lambda row: row.get(axis_key)  # noqa: E731
+    order: list[str] = []
+    buckets: dict[str, list[dict]] = {}
+    for row in rows:
+        label = value_fn(row) or "Not specified"
+        if label not in buckets:
+            buckets[label] = []
+            order.append(label)
+        buckets[label].append(row)
+    return [{"key": label, "label": label, "rows": buckets[label]} for label in order]
+
 
 def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> None:
     """Stamp ``payload["summary"]`` - measures over the WHOLE filter, never the page.

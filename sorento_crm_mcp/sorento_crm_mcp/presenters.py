@@ -378,6 +378,28 @@ def _orders_list(rows: list[dict], b: _Builder) -> None:
         )
 
 
+def _orders_so_outstanding(rows: list[dict], b: _Builder) -> None:
+    """A3 (AC-905): `order_status=so_outstanding` - open SO lines, a DIFFERENT
+    row shape from `_orders_list` (SO number, not order number; no lines[])."""
+    for r in rows:
+        b.item(
+            r.get("so_number"),
+            [
+                ("company_name", "Company", r.get("company_name")),
+                ("so_number", "SO Number", r.get("so_number")),
+                ("product_code", "Product Code", r.get("product_code")),
+                ("outstanding_qty", "Outstanding Qty", _qty(r.get("outstanding_qty"))),
+                ("order_date", "Order Date", r.get("order_date")),
+                ("customer", "Customer", r.get("customer")),
+                (
+                    "requested_delivery_date",
+                    "Requested Delivery Date",
+                    r.get("requested_delivery_date"),
+                ),
+            ],
+        )
+
+
 def _orders_by_product(rows: list[dict], b: _Builder) -> None:
     for o in rows:
         prods = ", ".join(
@@ -527,6 +549,52 @@ def summary_items(summary: Any) -> list[dict]:
             if solo:
                 items.append(solo)
     return items
+
+
+def _pipeline_summary_items(summary: Any) -> list[dict]:
+    """AC-905b: the three-line pipeline (SO outstanding / DO open / delivered),
+    prepended ahead of `summary_items()`'s per-customer/product breakdown.
+
+    Gated on `so_outstanding_qty` being PRESENT in the raw summary - the plain
+    DO-summary shape (`stamp_order_summary`) never sets it; the orders route
+    adds it only when the caller asked (`include_summary=true`), so an old
+    caller's envelope is unaffected (the key is simply absent).
+
+    "DO open" / "Delivered" read a QUANTITY when the filter narrowed to exactly
+    one product (`summary.products` has one entry - the literal AC-905b case,
+    "how many did X take of Y"); otherwise they read the DO COUNT, because the
+    top-level summary carries no cross-product quantity total (nothing sums
+    across products - "Amendment 4"). Flagged in the PLAN as the owner's
+    review-page assumption, not a confirmed final shape.
+    """
+    # Both legs required: the `so_outstanding` BUCKET's own summary carries
+    # `so_outstanding_qty` too (its one number) but never `pending_count` - it
+    # has no DO data to report, so this must not synthesize a fake "0 DO open".
+    if not isinstance(summary, dict) or "so_outstanding_qty" not in summary or "pending_count" not in summary:
+        return []
+    so_qty = _sl_num(summary.get("so_outstanding_qty")) or 0
+    products = summary.get("products") if isinstance(summary.get("products"), list) else []
+    single = products[0] if len(products) == 1 else None
+    if single is not None:
+        do_open = _sl_num(single.get("pending_quantity")) or 0
+        delivered = _sl_num(single.get("delivered_quantity")) or 0
+        window = _sl_between(single.get("delivered_from"), single.get("delivered_to"))
+    else:
+        do_open = _sl_num(summary.get("pending_count")) or 0
+        delivered = _sl_num(summary.get("delivered_count")) or 0
+        window = _sl_between(summary.get("delivered_from"), summary.get("delivered_to"))
+    delivered_label = f"Delivered ({window})" if window else "Delivered"
+    return [
+        {"title": None, "fields": [
+            {"key": "so_outstanding", "label": "SO outstanding (not yet DO)", "value": so_qty},
+        ]},
+        {"title": None, "fields": [
+            {"key": "do_open", "label": "DO open (not yet delivered)", "value": do_open},
+        ]},
+        {"title": None, "fields": [
+            {"key": "delivered", "label": delivered_label, "value": delivered},
+        ]},
+    ]
 
 
 def summary_intro(summary: Any, n_items: int) -> Optional[str]:
@@ -1281,15 +1349,27 @@ def present_response(tool_name: str, raw: str) -> str:
 
     b = _Builder()
     stock_mode = _stock_mode(tool_name, data)
+    # A3 (AC-905): a bucket swap on the SAME tool, not a second tool - the
+    # backend echoes `order_status` back on the payload (rows carry no other
+    # marker a presenter that never sees the query params could key on).
+    so_outstanding = (
+        tool_name == "crm_order_management_orders_list"
+        and data.get("order_status") == "so_outstanding"
+    )
+    # The row->item builder for THIS tool/bucket, reused below for `groups[]`
+    # (A3, AC-905/AC-906) so a grouped section renders identically to the flat
+    # list - one mapping, never a second one that could drift from it.
+    row_builder = _orders_so_outstanding if so_outstanding else _BUILDERS.get(tool_name, _generic)
     if tool_name == "crm_portal_link_get":
         _portal_link(data, b)
     elif stock_mode == "compact":
         _stock_compact(data, b)
     elif stock_mode == "availability":
         _stock_availability(data, b)
+    elif so_outstanding:
+        _orders_so_outstanding(rows, b)
     else:
-        builder = _BUILDERS.get(tool_name, _generic)
-        builder(rows, b)
+        row_builder(rows, b)
 
     # de-dupe attachments by (url, filename). The `url` is the DB `file_path` and is
     # the ONLY resolvable object key - return it verbatim. Do NOT rewrite its last
@@ -1323,12 +1403,17 @@ def present_response(tool_name: str, raw: str) -> str:
         intro = _STOCK_COMPACT_INTRO
     elif stock_mode == "availability":
         intro = _availability_intro(data)
+    elif so_outstanding:
+        intro = "Here is the outstanding SO I found."
     else:
         intro = _DEFAULT_INTRO.get(tool_name, "Here are the results I found.")
 
     envelope: dict[str, Any] = {
-        "result_type": _STOCK_MODE_RESULT_TYPE.get(stock_mode)
-        or _RESULT_TYPE.get(tool_name, "result"),
+        "result_type": (
+            "so_outstanding"
+            if so_outstanding
+            else _STOCK_MODE_RESULT_TYPE.get(stock_mode) or _RESULT_TYPE.get(tool_name, "result")
+        ),
         "intro": intro,
         "items": b.items,
         "attachments": attachments,
@@ -1345,7 +1430,7 @@ def present_response(tool_name: str, raw: str) -> str:
     # must cost the summary, never the envelope the rows already rendered into.
     if has_result and b.items and isinstance(data.get("summary"), dict):
         try:
-            _sitems = summary_items(data["summary"])
+            _sitems = _pipeline_summary_items(data["summary"]) + summary_items(data["summary"])
             _sintro = summary_intro(data["summary"], len(b.items))
         except Exception as _exc:  # pragma: no cover - by contract
             logger.warning("summary_items skipped: %s", _exc)
@@ -1356,5 +1441,27 @@ def present_response(tool_name: str, raw: str) -> str:
                 envelope["intro"] = _sintro
     if b.restricted_fields:
         envelope["restricted_fields"] = dict(b.restricted_fields)
+    # Uniform group_by (A3, AC-905/AC-906): the backend already bucketed the
+    # rows into `groups: [{key, label, rows}]`; render each bucket's `rows`
+    # through the SAME row->item mapping the flat list used, so a grouped
+    # section is never a different shape from the ungrouped answer.
+    raw_groups = data.get("groups")
+    if isinstance(raw_groups, list) and raw_groups:
+        rendered_groups: list[dict[str, Any]] = []
+        for grp in raw_groups:
+            if not isinstance(grp, dict):
+                continue
+            grp_rows = grp.get("rows") if isinstance(grp.get("rows"), list) else []
+            gb = _Builder()
+            try:
+                row_builder(grp_rows, gb)
+            except Exception as _exc:  # pragma: no cover - one bad group must not cost the rest
+                logger.warning("group render skipped: %s", _exc)
+                continue
+            rendered_groups.append(
+                {"key": grp.get("key"), "label": grp.get("label"), "items": gb.items}
+            )
+        if rendered_groups:
+            envelope["groups"] = rendered_groups
     _annotate_field_access(envelope, tool_name)
     return json.dumps(envelope)
