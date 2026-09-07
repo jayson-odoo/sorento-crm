@@ -682,8 +682,8 @@ class ShippingOrderIngestService(MasterRefResolver):
     def _esb_group_keys(
         self, payload: CanonicalShippingOrder
     ) -> set[shipping_order_rules.SupersedeKey]:
-        """The `(product, location)` groups of this `spo_number` that already
-        carry a DtlKey (D25a).
+        """The `(product, warehouse-or-location)` groups of this `spo_number`
+        that already carry a DtlKey (D25a, keyed per D25c).
 
         Asked as its own query rather than read off `_existing_rows`: that
         query deliberately excludes another DocKey's rows (S1/S2), and a ref
@@ -693,7 +693,11 @@ class ShippingOrderIngestService(MasterRefResolver):
         is what the verdict's `created` reads.
         """
         rows = (
-            self.db.query(SPOAllocation.product_id, SPOAllocation.location_code)
+            self.db.query(
+                SPOAllocation.product_id,
+                SPOAllocation.warehouse_id,
+                SPOAllocation.location_code,
+            )
             .filter(
                 SPOAllocation.company_id == self.company_id,
                 SPOAllocation.spo_number == payload.spo_number,
@@ -702,8 +706,14 @@ class ShippingOrderIngestService(MasterRefResolver):
             .all()
         )
         return {
-            shipping_order_rules.supersede_group_key(product_id, location_code)
-            for product_id, location_code in rows
+            key
+            for product_id, warehouse_id, location_code in rows
+            # EVERY identity the ref row answers to (D25c): a ref row resolves
+            # both halves, an Excel row beside it may carry only one, and S4's
+            # exclusion must hold whichever way that row is keyed.
+            for key in shipping_order_rules.supersede_match_keys(
+                product_id, warehouse_id, location_code
+            )
         }
 
     def _split_rows(
@@ -725,24 +735,23 @@ class ShippingOrderIngestService(MasterRefResolver):
 
         `already_closed` (S4 review fix): a ref-less row this system already
         closed - by an earlier absence, or the deletion endpoint - is not a
-        live xlsx-era adoption candidate any more; matching a NEW DtlKey onto
+        live Excel-era adoption candidate any more; matching a NEW DtlKey onto
         it would resurrect demand that was correctly retired. It still flows
         into `_apply`'s final leftover sweep unchanged.
 
-        `supersede_pool` (D25/D25a): an xlsx-era row - ref-less AND
-        `source_system = 'scm_upload'` - whose `(product_id,
-        upper(location_code))` group carries no DtlKey yet, open OR closed.
-        Those rows are the xlsx-era representation of that group and are
-        superseded by the AutoCount line-set instead of adopted: adoption
-        pairs ONE row with ONE line, and an xlsx row is an AGGREGATE of N
-        lines, which neither adoption nor S4's exclusion can express.
+        `supersede_pool` (D25/D25a/D25c): an Excel-era row - ref-less, and
+        `source_system` either `scm_upload` or NULL, since all three writers
+        of those rows load an aggregate - whose `(product, warehouse-or-
+        location)` group carries no DtlKey yet, open OR closed. Those rows are
+        the Excel-era representation of that group and are superseded by the
+        AutoCount line-set instead of adopted: adoption pairs ONE row with ONE
+        line, and an aggregate stands for N, which neither adoption nor S4's
+        exclusion can express.
 
-        Everything else keeps the pre-D25 buckets, and D25a is what draws the
-        line: a ref-less row the CRM UI or the n8n packing-list route wrote
-        (`source_system` NULL) states one real line, not an aggregate, so it
-        stays an adoption candidate and is never removed; and once a group
-        carries a DtlKey it is ESB-era, where S4 was earned - a closed
-        ref-less row beside a ref row was retired on purpose.
+        A row with a `source_ref` keeps its own bucket, and S4 still draws the
+        other line: once a group carries a DtlKey it is ESB-era, where S4 was
+        earned - a closed ref-less row beside a ref row was retired on
+        purpose, so it goes to `already_closed`, not to the supersede pool.
         """
         keys = esb_group_keys or set()
         by_ref: dict[str, SPOAllocation] = {}
@@ -754,7 +763,7 @@ class ShippingOrderIngestService(MasterRefResolver):
                 by_ref[row.source_ref] = row
                 continue
             group_key = shipping_order_rules.supersede_group_key(
-                row.product_id, row.location_code
+                row.product_id, row.warehouse_id, row.location_code
             )
             if shipping_order_rules.is_xlsx_era_row(row) and group_key not in keys:
                 supersede_pool.append(row)
@@ -928,11 +937,13 @@ class ShippingOrderIngestService(MasterRefResolver):
         container_number: Optional[str] = None,
         warnings: Optional[list[str]] = None,
     ) -> list[SPOAllocation]:
-        """D25a/D26/D26a/D27/D30: an xlsx-era group REPLACED by the pushed lines.
+        """D25a/D25c/D26/D26a/D27/D30: an Excel-era group REPLACED by the pushed lines.
 
-        Grouped by `(product_id, upper(location_code))` - the pair the upload
-        itself dedups on, and the only pair that can pair an xlsx AGGREGATE
-        row with the N AutoCount lines it stands for. Per group the plan
+        Grouped by `(product_id, warehouse_id)` when both sides carry a
+        warehouse and by `(product_id, upper(location_code))` otherwise
+        (`shipping_order_rules.supersede_group_key`) - the destination an
+        aggregate row and the N AutoCount lines it stands for must agree on.
+        Per group the plan
         allows: the lines are created as new rows in Seq order, the group's
         received quantity is carried across them (each up to its own
         allocated quantity, remainder onto the last), whatever pointed at the
@@ -1001,6 +1012,11 @@ class ShippingOrderIngestService(MasterRefResolver):
                     # booked against, which is the only record of it left
                     # once that row is gone.
                     row.inbound_shipment_id = line_plan.inbound_shipment_id
+                if not row.storage_zone_id and line_plan.storage_zone_id:
+                    # D25c: same rule for the bin. The ESB states no zone at
+                    # all, so the upload's is the only one there has ever
+                    # been, and it would be lost with the row.
+                    row.storage_zone_id = line_plan.storage_zone_id
                 if row.inbound_shipment_id:
                     self.shipment_ids_touched.add(str(row.inbound_shipment_id))
                 counts["created"] += 1

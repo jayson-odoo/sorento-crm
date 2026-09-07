@@ -240,6 +240,32 @@ once; then the dedupe runs on production by the captain with `--dry-run` first.
     it already holds (`_spo_allocation_group_key`, one definition shared with the visit-once
     set), and passes that as the gate's third way in. Nothing else about the retired row changes:
     it takes no share and is never written.
+- Round 6 as-built, D25c (2026-09-08, coder on Opus): `is_xlsx_era_row` takes `source_system` in
+  (`scm_upload`, NULL); the dedupe's own page query takes the same pair in SQL
+  (`or_(source_system == 'scm_upload', source_system IS NULL)`), which is the line that had made
+  the production sweep skip SPO-2026/09-0028. `supersede_group_key(product_id, warehouse_id,
+  location_code)` returns `(product, 'wh:<id>')` when the side carries a warehouse and
+  `(product, 'loc:<UPPER CODE>')` otherwise, tagged so an id can never be compared against a code,
+  and `(product, None)` when the side carries neither (the pre-D25c product-only grouping, which
+  several documents still rely on).
+  - ADDED beyond the ruling, and required by it: `supersede_match_keys(...)`, the tuple of EVERY
+    identity a side answers to. A per-side key alone does not group the two sides when they name
+    the destination differently, and that is the common case, not the corner: an AutoCount line
+    always resolves both halves, while the Procurement / n8n rows carry a warehouse and no
+    location and the SCM upload carries both with a free-text code ("brw"). So the INCOMING lines
+    are indexed under both of their identities and each Excel row under its own one, with
+    warehouse-keyed row groups considered first and a claimed line never offered twice (otherwise
+    two row groups naming one destination differently would both create it). `_esb_group_keys`
+    uses the same function, so S4's "no supersede once the group carries a DtlKey" holds whichever
+    way the Excel row beside it is keyed. Measured basis for preferring the id: all 68,537
+    AutoCount rows on the lane database carry a warehouse whose `warehouse_code` equals
+    `upper(location_code)`.
+  - `storage_zone_id` carries exactly like `inbound_shipment_id` (group's first non-null, onto a
+    line that resolved none), in the ingest and in the dedupe.
+  - `_adopt_lines`' own coarse key is deliberately untouched (product + location): adoption is a
+    different rule with a different failure mode, and D25b already stops its positional pass in a
+    supersede push.
+  - Retirement and the receipt freeze are unchanged: both only ever touch `autocount` rows.
 - Scope note on D28 / D28c, documented boundary: the floor only ever over-states, never
   under-states. A carried floor on a NON-RELEASED sibling is not clawed back when the GRN behind
   the original xlsx receipt is later deleted - the carry was a statement about that line at
