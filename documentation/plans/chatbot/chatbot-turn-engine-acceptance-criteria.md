@@ -1542,3 +1542,52 @@ contact inside the synchronous request. Different contacts run in parallel.
   Evidence: `tests/chatbot/test_s6c_answer_lane.py::TestAZeroStockCodeIsNamedBeforeTheIncomingBlock`
   (four cases, two of them guards). Console case: "a code with no stock is named before the
   incoming block". (H72)
+- AC-821 `[BE][T]` **The team menu fires only when the customer's OWN request names an
+  ambiguous team, and it lists only the teams that word names.** Owner rules R-a, R-b and
+  R-c (help-crm, 7 Sep 2026), from a production regression #706 introduced: turns 1f0428cb
+  and 9089ef88 (n8n execs 15501799 / 15502378, `turns-lane3` round 12) said "I want to talk
+  to a human" after an unrelated product browse and were answered "Which team should I pass
+  this to - purchasing, purchasing certification, customer service, marketing product,
+  marketing form, warehouse, marketing promotion or it admin?" instead of being assigned to
+  anybody.
+
+  The cause is that AC-815's own premise could not tell its case from that one. Both
+  arrived at the lane with `routing.suggested_team` null and a non-default team carried
+  from an earlier turn: "escalate to marketing" (must ask) and "I want to talk to a human"
+  (must assign) were IDENTICAL in structured state, and D11 forbids the lane reading the
+  two messages to tell them apart. So the discriminator moves to the PARSER, where reading
+  the message is the job.
+
+  * **Parser contract.** `routing.suggested_team` carries the customer's own team word
+    verbatim and lowercased when that word names several catalogue teams or none
+    ("marketing", "sales"); an enum member when it names exactly one ("warehouse", "CS");
+    and null ONLY when the customer named no team at all. Amended in
+    `SEMANTIC_PARSER_PROMPT_SLIM`'s ROUTING section and stated on the wire schema
+    (`head/parser._build_json_schema`), which stays `string_or_null` for that reason.
+  * **Given** a turn whose parser team is null, **then** the lane assigns the routing
+    table's default and never clarifies, whatever an earlier turn carried (R-a). The D1
+    open-offer premise and the `is_escalation_confirmation` short-circuit both stand.
+  * **Given** a parser team that is an exact catalogue member, **then** the lane assigns
+    THAT team, never an unrelated carried one (R-c).
+  * **Given** a parser team that names several catalogue members ("marketing" - the three
+    `marketing_*` teams), **then** the lane asks over exactly those members: the sentence,
+    the quick replies and the persisted marker are built from one list, so a tap can never
+    name a team the ask did not offer. A word that names none asks over the whole
+    vocabulary, which is the only honest list when nothing matched.
+  * **Given** an answer to that ask, **then** the escalation resolves to the team named
+    (R-b) - see AC-822.
+
+  The word-to-catalogue test (`escalation._catalogue_teams`) is D11-clean and inventoried
+  in the plan's text-sniffing table: its input is a parser output field and it is matched
+  against `SUGGESTED_TEAMS`, our own eight-slug routing vocabulary. Nothing reads `ctx.text`
+  or a previous reply.
+
+  **How it reaches production.** The prompt registry, not the fallback file: version 1 (the
+  live 46,906-character body) carries the `production` label, so migration
+  `480_chatbot_parser_team_word` publishes the amended slim text as a new UNLABELLED
+  version and the owner promotes it with one label move. Until then production parses
+  "escalate to marketing" to a null team and the lane assigns the default - the pre-#706
+  behaviour, not the #706 regression, which the lane half removes under either prompt.
+  Evidence: `tests/chatbot/test_pass4_item5_no_team_named_keeps_default_routing.py`,
+  `tests/chatbot/test_pass4_item1b_marketing_ambiguous_clarify.py`,
+  `tests/chatbot/test_s5_escalation_lane.py::TestAnAcceptanceIsNeverAskedWhichTeam`. (H73)

@@ -1504,6 +1504,10 @@ class TestPersonMentionEscalationRoutesByStaffLookup:
         ctx = _ctx(
             routing={"suggested_team": None, "suggested_agent": None},
             person_mention=None,
+            # The parser's own word for this message under the amended contract (R-a,
+            # console pass 4): "marketing" is not one of the eight catalogue teams, so it
+            # is exactly the "explicit but unmapped" word this test is named for.
+            parser_raw={"routing": {"suggested_team": "marketing", "suggested_agent": None}},
             # Not an acceptance - nothing was offered. `_ctx`'s default escalation says
             # confirmed, which the lane did not read until B1 (review of #706) and now
             # reads first; an "acceptance" is assigned, so the default would grade nothing.
@@ -1852,15 +1856,28 @@ class TestEveryClarifyIsSomethingTheCustomerReceives:
         assert sends[0]["dry_run"] is True
 
     def test_the_no_team_clarify_is_sent_too(self) -> None:
-        """The other clarify branch: no team this turn, but one carried, so the lane asks
-        which rather than inheriting the previous subject's team."""
+        """The other clarify branch: no team this turn and an OPEN offer, so the lane asks
+        which team rather than letting the stale offer swallow the request (D1).
+
+        The premise moved with owner rule R-a (console pass 4, 7 Sep 2026): it used to be
+        "a previous turn carried a non-default team", which also fired on a request that
+        named no team and no offer, and that is the regression `test_pass4_item5_*` grades.
+        What this class exists to grade is unchanged - a clarify the lane DECIDES on is a
+        clarify the customer RECEIVES, with tappable teams."""
         from app.services.chatbot.lanes.escalation import run
 
         ctx = _ctx(
             routing={"suggested_team": None, "suggested_agent": "general_enquiries"},
             # Not an acceptance (see the B1 note on the AC-815 unmapped-team test).
             escalation={"is_escalation_confirmation": False, "company_pick": None},
-            prev_variables={"routing": {"suggested_team": "purchasing"}},
+            prev_variables={
+                "routing": {"suggested_team": "purchasing"},
+                "pending": {
+                    "kind": "escalation_offer",
+                    "team": "purchasing",
+                    "domain": "inventory",
+                },
+            },
         )
         result = run(ctx, _item(team=None), services=_services())
         assert result["pending"]["kind"] == "team_clarify"
@@ -1887,7 +1904,15 @@ class TestEveryClarifyIsSomethingTheCustomerReceives:
 
 
 class TestAnAcceptanceIsNeverAskedWhichTeam:
-    def _run(self, *, text: str, offered: str | None, confirmed: bool, prev_team: str):
+    def _run(
+        self,
+        *,
+        text: str,
+        offered: str | None,
+        confirmed: bool,
+        prev_team: str,
+        parser_team: str | None = None,
+    ):
         from app.services.chatbot.lanes.escalation import run
 
         prev: dict = {
@@ -1898,9 +1923,10 @@ class TestAnAcceptanceIsNeverAskedWhichTeam:
             prev["response"] = f"Would you like me to escalate to {offered} team?"
         ctx = _ctx(
             # The DERIVED routing has already inherited the previous team (output_exchange's
-            # nullish chain); the parser's OWN snapshot named nothing.
+            # nullish chain); the parser's OWN snapshot named `parser_team`, which is null
+            # for every case here except the one whose message names a team (R-a).
             routing={"suggested_team": prev_team, "suggested_agent": "general_enquiries"},
-            parser_raw={"routing": {"suggested_team": None, "suggested_agent": None}},
+            parser_raw={"routing": {"suggested_team": parser_team, "suggested_agent": None}},
             escalation={"is_escalation_confirmation": confirmed, "company_pick": None},
             prev_variables=prev,
             text=text,
@@ -2000,16 +2026,46 @@ class TestAnAcceptanceIsNeverAskedWhichTeam:
         assert result["pending"] == {"kind": "team_clarify"}, result["pending"]
         services.next_assignee.assert_not_called()
 
-    def test_an_inherited_specialised_team_with_no_offer_still_asks(self) -> None:
-        """H64 / AC-815 kept beside D1: the owner's "escalate to marketing" turn had NO
-        offer open and a `purchasing` routing carried from the previous turn. Scoping the
-        arm to an open offer alone would assign it to purchasing again, which is the
-        complaint AC-815 was written for."""
+    def test_an_ambiguous_team_word_with_no_offer_still_asks(self) -> None:
+        """H64 / AC-815, restated on the amended parser contract (owner rules R-a / R-c,
+        console pass 4, 7 Sep 2026). The owner's "escalate to marketing" turn had NO offer
+        open and a `purchasing` routing carried from the previous turn; assigning it to
+        purchasing is the complaint AC-815 was written for, and it must still not happen.
+
+        What MOVED is the stub, not the assertion. The premise the lane used to reach this
+        by - "the carried team is not the hard default" - could not tell this turn apart
+        from "I want to talk to a human" over the same carried team (both arrived with a
+        null parser routing), so it also fired on the second, which is the regression
+        production showed (mt-r2, `test_pass4_item5_*`). Under the amended contract the
+        parser is what tells them apart: it carries the customer's own word, `"marketing"`,
+        which names three catalogue teams and is therefore asked about. A message naming no
+        team still arrives null and is assigned, which is the sibling test below."""
         result, services = self._run(
-            text="escalate to marketing", offered=None, confirmed=False, prev_team="purchasing"
+            text="escalate to marketing",
+            offered=None,
+            confirmed=False,
+            prev_team="purchasing",
+            parser_team="marketing",
         )
         assert result["arm"] == "clarify", result["arm"]
+        assert result["clarify"]["clarify_text"].count("marketing") == 3, (
+            "an ambiguous word asks over the members it names, not the whole catalogue: "
+            f"{result['clarify']['clarify_text']!r}"
+        )
         services.next_assignee.assert_not_called()
+
+    def test_a_request_naming_no_team_is_assigned_not_asked(self) -> None:
+        """The turn the premise above used to break (owner rule R-a): same carried
+        `purchasing`, same null parser routing at the OLD contract, but the message names
+        no team at all. It keeps the default routing rather than being handed the menu."""
+        result, services = self._run(
+            text="I want to talk to a human",
+            offered=None,
+            confirmed=False,
+            prev_team="purchasing",
+        )
+        assert result["arm"] == "human-intervention", result["arm"]
+        services.next_assignee.assert_called_once()
 
     def test_a_domain_that_routes_itself_is_not_inherited(self) -> None:
         """Guard on the inheritance test: a turn whose DOMAIN derives a team is routed by
