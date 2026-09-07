@@ -38,7 +38,7 @@ import logging
 from alembic import op
 from sqlalchemy.orm import Session
 
-from app.models.ai_prompt import AIPromptVersion
+from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 from app.services.ai_prompt_registry import PROMPT_KEYS
 from app.services.ai_prompt_seed import seed_prompt_registry
 
@@ -110,19 +110,47 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop the unlabelled amended version. A labelled one is never touched."""
+    """Drop the amended version, UNLESS a label points at it.
+
+    The label check is the whole of this function's care, and it is not theoretical:
+    `ai_prompt_labels.version_id` is `ON DELETE CASCADE` (`app/models/ai_prompt.py`), so
+    once the owner has moved `production` onto this version - which is the entire point of
+    publishing it - a blind delete by name plus template would take the LABEL with it and
+    leave the key with no production version at all. Every turn would then fall back to the
+    fallback file, silently, on a downgrade whose stated job is "undo the publish".
+
+    Skipping is the right answer rather than re-pointing the label somewhere: a downgrade
+    that would destroy a promotion the owner made is a decision for the owner, and leaving
+    the version in place is inert (it is one immutable row) where guessing a new target is
+    not. Reviewer nit on #713.
+    """
     bind = op.get_bind()
     template = _slim_text()
     session = Session(bind=bind)
     try:
-        (
+        row = (
             session.query(AIPromptVersion)
             .filter(
                 AIPromptVersion.name == PROMPT_NAME,
                 AIPromptVersion.template == template,
             )
-            .delete(synchronize_session=False)
+            .first()
         )
+        if row is None:
+            return
+        labelled = (
+            session.query(AIPromptLabel).filter(AIPromptLabel.version_id == row.id).count()
+        )
+        if labelled:
+            logger.warning(
+                "chatbot parser team-word prompt v%s carries %s label(s); leaving it in "
+                "place - deleting it would cascade the label away and leave the key with "
+                "no published version",
+                row.version,
+                labelled,
+            )
+            return
+        session.delete(row)
         session.commit()
     except Exception:
         session.rollback()

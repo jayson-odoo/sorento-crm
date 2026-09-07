@@ -1598,6 +1598,12 @@ contact inside the synchronous request. Different contacts run in parallel.
   against `SUGGESTED_TEAMS`, our own eight-slug routing vocabulary. Nothing reads `ctx.text`
   or a previous reply.
 
+  **What the owner is signing up for when they move the label.** After the promotion, any
+  team word the model returns that matches NO catalogue member yields the eight-team menu:
+  `_catalogue_teams` returns `[]` for "human", "support" and "sales" alike, and the honest
+  list when nothing matched is the whole vocabulary. A word matching several (the three
+  `marketing_*` teams) yields those three, and a word matching exactly one is assigned.
+
   **How it reaches production.** The prompt registry, not the fallback file: version 1 (the
   live 46,906-character body) carries the `production` label, so migration
   `480_chatbot_parser_team_word` publishes the amended slim text as a new UNLABELLED
@@ -1741,8 +1747,12 @@ contact inside the synchronous request. Different contacts run in parallel.
   constraining the ANSWER.
 
   **NOT fixed in this lane, deliberately.** The fix is AND-mode entity pins in
-  `resolve_references`, which is a contract change owned by issue sorento-crm-n8n#73 / PR
-  #456 (owner-gated, unmerged) and not a chatbot-lane change. The unit that proves the gap
+  `resolve_references`, a change to that route's own contract rather than a chatbot-lane
+  change - and NOT a lane waiting to merge: PR #456 is MERGED (9f04a3205) and it is what
+  AUTHORED the refusal (`references.py:1650-1655`), deliberately and for two stated
+  reasons (an AND-mode intersection has no per-token view to narrow, and a zero-intersection
+  AND request retries under `force_mode="or"`, where a pin would suddenly start applying).
+  Closing the gap means ruling on how a pin behaves in both, which is **issue #715**. The unit that proves the gap
   is committed `xfail(strict=True)` so the day that lands, it announces itself - the same
   mechanism the unpromoted B-HB-1 / B-TEAM-1' gates use. The end-to-end guard beside it is
   green and stays green: at any scale a test can seed, `301-C001` names one customer, so

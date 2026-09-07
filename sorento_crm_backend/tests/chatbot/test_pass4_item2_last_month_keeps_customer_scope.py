@@ -49,8 +49,12 @@ the pin stops the QUESTION without constraining the ANSWER. The header renders `
 (right) while the rows are 15 other customers' orders (wrong).
 
 **Not fixed here, deliberately.** The fix is AND-mode entity pins in the resolver route,
-which is owner-gated in another lane (issue sorento-crm-n8n#73 / PR #456) and is a change to
-`resolve_references`' contract, not to this lane. The unit test below is `xfail(strict=True)`
+which is a change to `resolve_references`' own contract, not to this lane - and not a lane
+merely waiting to land: PR #456 is MERGED (9f04a3205) and it is what AUTHORED the refusal
+(`references.py:1650-1655`), for two stated reasons (an intersection has no per-token view
+to narrow, and a zero-intersection AND request retries under `force_mode="or"` where a pin
+would suddenly start applying). Closing the gap means deciding how a pin behaves in both,
+which is issue #715. The unit test below is `xfail(strict=True)`
 so the day that lands it announces itself instead of having to be remembered - the same
 mechanism `test_s5_escalation_lane.py` uses for the unpromoted B-HB-1 / B-TEAM-1' gates.
 """
@@ -267,10 +271,15 @@ class TestACarriedCustomerPickIsSentToTheResolverAsAPin:
     @pytest.mark.xfail(
         strict=True,
         reason=(
-            "AND-mode entity pins are refused by the resolver route by design "
-            "(references.py ~:1652); the fix is owner-gated in PR #456 / "
-            "sorento-crm-n8n#73. Until it lands, a carried customer pick is re-resolved "
-            "from a debtor code 99 production rows share. AC-825 / H77."
+            "The resolver route refuses `entity_pins` in AND mode BY DESIGN and that "
+            "refusal is already shipped: PR #456 is MERGED (9f04a3205) and it AUTHORED "
+            "the rule (references.py:1650-1655) for two stated reasons - an AND-mode "
+            "intersection has no per-token view to narrow, and a zero-intersection AND "
+            "request retries under `force_mode='or'`, where a pin would suddenly start "
+            "applying. So this is not a lane waiting to merge; it is a deliberate gap "
+            "somebody has to decide how to close. Tracked as issue #715. Until it does, "
+            "a carried customer pick is re-resolved from a debtor code 99 production rows "
+            "share. AC-825 / H77."
         ),
     )
     def test_the_picked_uuid_is_pinned_so_a_shared_debtor_code_cannot_widen_the_scope(self):

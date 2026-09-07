@@ -45,3 +45,16 @@ Two limits worth knowing before reading a red line as a defect:
 - **Access is decided before routing.** A turn whose agent the contact has no grant for (or whose
   `access_agents` row does not exist at all) comes back `access_denied` whatever the lane does.
   That is a data prerequisite, and the check naming it is the check working.
+- **`tests/chatbot/test_replay.py` SKIPS the whole corpus in silence** when
+  `CHATBOT_FIXTURES_DIR` is unset and the sibling n8n checkout cannot be resolved
+  (`tests/chatbot/_corpus.py`). The run says `passed` with a skip count nobody reads, so a
+  kill test aimed at a replay fixture proves nothing unless the variable is set
+  EXPLICITLY - a reviewer who reverts a hunk and sees green may only be seeing an absent
+  corpus. Set it and confirm the fixture actually ran:
+
+  ```bash
+  CHATBOT_FIXTURES_DIR=<n8n checkout>/n8n-workflows-init/tests/fixtures \
+    venv/bin/pytest "tests/chatbot/test_replay.py::test_full_corpus_replay[output_exchange/sub-semantic-parser/parser-15157067]" -q
+  ```
+
+  A skip there means the path is wrong, not that the fixture agrees.
