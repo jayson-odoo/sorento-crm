@@ -113,6 +113,33 @@ def test_default_directory_round_trips_through_create_update_list(db, client):
 # --------------------------------------------------------------------------- #
 
 
+# --------------------------------------------------------------------------- #
+# `code` (Upload CTA reversal, 7 Sep) - list/read responses carry the stable
+# machine key so the FE can resolve "the Packing List type" without matching
+# on the editable `type_name` label.
+# --------------------------------------------------------------------------- #
+
+
+def test_code_is_on_the_list_and_read_response(db, client):
+    att_type = AttachmentType(
+        id=str(uuid.uuid4()),
+        type_name=unique_code("Packing List"),
+        allowed_extensions="xlsx,xls",
+        code="packing_list",
+    )
+    db.add(att_type)
+    db.commit()
+
+    single = client.get(f"{_URL}{att_type.id}")
+    assert single.status_code == 200, single.text
+    assert single.json()["code"] == "packing_list"
+
+    listing = client.get(_URL, params={"limit": 200})
+    assert listing.status_code == 200, listing.text
+    row = next(r for r in listing.json()["data"] if r["id"] == att_type.id)
+    assert row["code"] == "packing_list"
+
+
 def test_no_default_directory_reads_back_null(client):
     created = client.post(
         _URL,

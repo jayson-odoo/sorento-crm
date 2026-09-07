@@ -67,6 +67,9 @@ export type FieldLinkageEntityType =
 export interface AttachmentType {
   id: string;
   type_name: string;
+  /** Stable machine key (e.g. 'packing_list'), distinct from the editable `type_name`
+   *  label. Null for types that predate the column. Read-only from the FE. */
+  code?: string | null;
   description?: string | null;
   allowed_extensions: string;
   max_file_size_mb: number;

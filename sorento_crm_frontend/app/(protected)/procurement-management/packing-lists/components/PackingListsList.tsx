@@ -42,6 +42,8 @@ import { PackingListUploadDialog } from './PackingListUploadDialog';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
+import AttachmentUploadDialog from '@/app/(protected)/resource-management/attachments/components/AttachmentUploadDialog';
+import { useAttachmentTypesList } from '@/app/(protected)/resource-management/attachments/hooks/useAttachments';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { useHasAnyPermission } from '@/hooks/usePermissions';
@@ -53,13 +55,15 @@ export default function PackingListsList() {
   const qc = useQueryClient();
   const [importDialogOpen, setImportDialogOpen] = useState(false);
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+  const [attachmentUploadOpen, setAttachmentUploadOpen] = useState(false);
 
   // The reader route (`POST /api/v1/scm/packing-lists/apply`) is gated on
   // `scm.reorder.run`, an `scm`-module permission - a tenant with `procurement` but not
   // `scm` (or a user without that permission) can view this list but cannot reach that
   // route. Gating on the page's OWN `procurement` permission would not have caught that
   // (review B4): the CTA needs the WRITE route's own permission and module, not the
-  // page's.
+  // page's. As of the 7 Sep reversal this only gates the reader's gear-menu entry -
+  // the primary CTA is the Drive-style Upload below.
   const canUploadPackingList = useHasAnyPermission(['scm.reorder.run']);
   const { enabledModuleKeys, isLoading: modulesLoading } = useTenantModules();
   // null/loading reads as enabled, same convention the sidebar filter and
@@ -67,6 +71,19 @@ export default function PackingListsList() {
   const scmModuleEnabled =
     modulesLoading || enabledModuleKeys == null || enabledModuleKeys.has('scm');
   const showUploadPackingListCta = canUploadPackingList && scmModuleEnabled;
+
+  // The Drive-style Upload button fires the create-attachment write route directly
+  // (`POST /api/v1/resource-management/attachments`), gated on its own permission -
+  // same pattern as `canUploadPackingList` above, the write route's permission rather
+  // than the page's own.
+  const canUploadAttachment = useHasAnyPermission(['resource.attachments.upload']);
+  const { data: attachmentTypes = [] } = useAttachmentTypesList();
+  // `code` is the stable machine key (falls back to the editable `type_name` label for
+  // a tenant whose seed predates the column) - either miss leaves the dialog unpreset
+  // and unlocked rather than blocking the button.
+  const packingListAttachmentType =
+    attachmentTypes.find((type) => type.code === 'packing_list') ||
+    attachmentTypes.find((type) => type.type_name === 'Packing List');
 
   // The "no container status imported yet" empty state on a packing list detail page
   // links back here with ?import=container-status so the CTA lands on the upload
@@ -383,15 +400,19 @@ export default function PackingListsList() {
   // The one offer this listing makes, in both places it belongs: the
   // toolbar, and the empty state's next step (S5-06).
   //
-  // Upload is primary (R3): reading a supplier's file straight into a shipment is how a
-  // packing list is filed today, and the manual form is the fallback for the container it
-  // never covers. Create Packing List moves into the gear menu beside Import Container
-  // Status - EXCEPT when the reader route is out of reach (review B4), where Create
-  // Packing List is the only offer this user has and stays primary.
-  const listPrimaryAction = showUploadPackingListCta ? (
-    <Button onClick={() => setUploadDialogOpen(true)}>
+  // Upload is primary (R3, REVERSED 7 Sep 2026): the Drive-style Create Attachment
+  // dialog, preset and locked to the Packing List type, is now how a packing list is
+  // filed - same n8n intake as any Files upload, filed under that type's default
+  // folder. The reader (`Upload supplier documents`, formerly primary) moves into the
+  // gear: its n8n payload is header + quantities only, and on an unreceived draft its
+  // supplier-less update path replaces lines wholesale - which would have wiped out
+  // dimensions, prices and photos the Drive upload had just filed, had the two paths
+  // shared one button. Create Packing List is the fallback primary when the write
+  // route for Upload is out of reach.
+  const listPrimaryAction = canUploadAttachment ? (
+    <Button onClick={() => setAttachmentUploadOpen(true)}>
       <Upload />
-      Upload supplier documents
+      Upload
     </Button>
   ) : (
     <Button onClick={() => router.push('/procurement-management/packing-lists/new')}>
@@ -437,10 +458,22 @@ export default function PackingListsList() {
                 icon: RefreshCw,
                 onClick: () => void refetch(),
               },
-              // Only offered here when Upload is the primary action - when the reader
-              // route is out of reach, Create Packing List already IS the primary
-              // button above and would otherwise appear twice (review B4).
+              // The reader, demoted to the gear on 7 Sep - still gated on the write
+              // route's own permission/module (`showUploadPackingListCta`, unchanged).
               ...(showUploadPackingListCta
+                ? [
+                    {
+                      key: 'upload-supplier-documents',
+                      label: 'Upload supplier documents',
+                      icon: Upload,
+                      onClick: () => setUploadDialogOpen(true),
+                    },
+                  ]
+                : []),
+              // Only offered here when Upload is the primary action - when the write
+              // route for Upload is out of reach, Create Packing List already IS the
+              // primary button above and would otherwise appear twice.
+              ...(canUploadAttachment
                 ? [
                     {
                       key: 'create-packing-list',
@@ -503,6 +536,16 @@ export default function PackingListsList() {
         open={uploadDialogOpen}
         onOpenChange={setUploadDialogOpen}
         onImported={() => {
+          void qc.invalidateQueries({ queryKey: ['packing-lists'] });
+        }}
+      />
+      <AttachmentUploadDialog
+        open={attachmentUploadOpen}
+        onOpenChange={setAttachmentUploadOpen}
+        defaultTypeId={packingListAttachmentType?.id}
+        lockType={!!packingListAttachmentType}
+        defaultDirectoryId={packingListAttachmentType?.default_directory_id ?? null}
+        onSuccess={() => {
           void qc.invalidateQueries({ queryKey: ['packing-lists'] });
         }}
       />

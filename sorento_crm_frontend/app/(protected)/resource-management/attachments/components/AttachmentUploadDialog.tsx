@@ -37,6 +37,12 @@ interface AttachmentUploadDialogProps {
   entityId?: string;
   /** When opening from browser with a folder selected, uploads go to this directory. */
   defaultDirectoryId?: string | null;
+  /** Pre-select this attachment type on open (e.g. Packing List's Upload CTA, 7 Sep
+   *  reversal) - same n8n-backed Create Attachment flow, just pointed at one type. */
+  defaultTypeId?: string;
+  /** Disable the type select once `defaultTypeId` is seeded - the caller has decided
+   *  the type, the user only supplies files. */
+  lockType?: boolean;
 }
 
 export default function AttachmentUploadDialog({
@@ -46,6 +52,8 @@ export default function AttachmentUploadDialog({
   entityType: propEntityType,
   entityId: propEntityId,
   defaultDirectoryId,
+  defaultTypeId,
+  lockType,
 }: AttachmentUploadDialogProps) {
   const [selectedTypeId, setSelectedTypeId] = useState<string>('');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -101,7 +109,9 @@ export default function AttachmentUploadDialog({
     showFieldLinkageSection && targetEntityType ? targetEntityType : null,
   );
 
-  // Reset form when dialog closes
+  // Reset form when dialog closes; re-seed `defaultTypeId` (Packing List's Upload CTA,
+  // 7 Sep reversal) every time it opens instead - a caller that presets the type wants
+  // that fresh on each open, not just the first mount.
   useEffect(() => {
     if (!open) {
       setSelectedTypeId('');
@@ -116,8 +126,19 @@ export default function AttachmentUploadDialog({
       setTargetFieldKeys([]);
       setSelectedDirectoryId('');
       setFolderTouched(false);
+      return;
     }
-  }, [open, propEntityType, propEntityId, defaultAccessLevels.join(',')]);
+    if (defaultTypeId) setSelectedTypeId(defaultTypeId);
+  }, [open, propEntityType, propEntityId, defaultAccessLevels.join(','), defaultTypeId]);
+
+  // Seed the folder from the preset type's own default (same rule the type-select
+  // onChange handler applies) once the type list has loaded - `attachmentTypes` arrives
+  // async, so this can't be folded into the open-effect above.
+  useEffect(() => {
+    if (!open || !defaultTypeId || !showFolderPicker || folderTouched) return;
+    const picked = attachmentTypes.find((type: AttachmentType) => type.id === defaultTypeId);
+    if (picked) setSelectedDirectoryId(picked.default_directory_id ?? '');
+  }, [open, defaultTypeId, showFolderPicker, folderTouched, attachmentTypes]);
 
   // When the user changes target_entity_type, clear any stale field selection.
   useEffect(() => {
@@ -344,7 +365,7 @@ export default function AttachmentUploadDialog({
                 description: type.description || undefined,
               }))}
               placeholder="Select attachment type"
-              disabled={isLoadingTypes}
+              disabled={isLoadingTypes || lockType}
             />
             {selectedType && (
               <p className="text-xs text-muted-foreground mt-1">

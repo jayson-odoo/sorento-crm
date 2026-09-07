@@ -87,13 +87,16 @@ vi.mock('@/components/upload-activity', () => ({
 
 import AttachmentUploadDialog from './AttachmentUploadDialog';
 
-function renderDialog(defaultDirectoryId?: string | null) {
+function renderDialog(
+  defaultDirectoryId?: string | null,
+  extra?: { defaultTypeId?: string; lockType?: boolean },
+) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const props =
     defaultDirectoryId === undefined ? {} : { defaultDirectoryId };
   return render(
     <QueryClientProvider client={qc}>
-      <AttachmentUploadDialog open onOpenChange={() => {}} {...props} />
+      <AttachmentUploadDialog open onOpenChange={() => {}} {...props} {...extra} />
     </QueryClientProvider>,
   );
 }
@@ -146,6 +149,19 @@ describe('AttachmentUploadDialog - type pick pre-selects the folder (R4)', () =>
 
     const select = folderSelect()!;
     expect(within(select).getByText(/No folder/)).toBeInTheDocument();
+  });
+});
+
+describe('AttachmentUploadDialog - defaultTypeId + lockType (Packing List Upload CTA, 7 Sep reversal)', () => {
+  it('preselects the type, locks the select, and seeds the type\'s own default folder', () => {
+    renderDialog(null, { defaultTypeId: 'type-pl', lockType: true });
+
+    const typeSelect = screen.getByLabelText(/Attachment Type/i);
+    expect(within(typeSelect).getByText('Packing List')).toBeInTheDocument();
+    expect(typeSelect).toBeDisabled();
+
+    const select = folderSelect()!;
+    expect(within(select).getByText('Packing Lists')).toBeInTheDocument();
   });
 });
 

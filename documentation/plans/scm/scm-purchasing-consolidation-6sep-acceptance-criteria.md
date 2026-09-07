@@ -51,15 +51,28 @@ Actor: purchasing (Ms Tee), desktop, and the supplier receiving the request.
 
 ## B. Upload packing list CTA (section 2)
 
-- AC-B1. Packing Lists toolbar: primary `Upload packing list` (lane A label; lane C relabels to
-  `Upload supplier documents`), gear holds Create Packing List and Import Container Status.
-- AC-B2. Confirming an upload creates the shipment(s), stores the file as an attachment of type
-  Packing List in that type's default folder, binds `attachment_id`, and writes NO
-  `integration_log` row for n8n.
+- AC-B1 (CAPTAIN REVERSED 7 Sep). Packing Lists toolbar: primary `Upload` opens the generic
+  Create Attachment dialog, preset AND locked to the Packing List attachment type, with that
+  type's default folder preselected; gear holds `Upload supplier documents` (the reader),
+  `Create Packing List`, and `Import Container Status`. When the Packing List type cannot be
+  resolved (no `code`/`type_name` match), `Upload` opens the dialog unpreset and unlocked
+  instead of blocking the button. When the write route behind `Upload` is out of reach,
+  `Create Packing List` is the primary button and drops from the gear (unchanged B4 shape,
+  now keyed off the attachment-upload permission instead of the reader's).
+- AC-B2 (CAPTAIN REVERSED 7 Sep - now describes the reader, reached from the gear).
+  Confirming an upload via `Upload supplier documents` creates the shipment(s), stores the
+  file as an attachment of type Packing List in that type's default folder, binds
+  `attachment_id`, and writes NO `integration_log` row for n8n.
+- AC-B2b (CAPTAIN REVERSED 7 Sep, NEW). The primary `Upload` button fires the n8n intake
+  webhook the same way a Files upload does - an `integration_log` row IS written (success or
+  failure), unlike AC-B2's reader path.
 - AC-B3. Attachment type form has a clearable `Default folder` select; the Create Attachment
   dialog pre-selects it when that type is chosen and the user can change it.
 - AC-B4. A type with no default folder behaves as today.
 - AC-B5. New column appears in the attachment type read and list serializers (asserted).
+- AC-B6 (CAPTAIN REVERSED 7 Sep, NEW). `AttachmentTypeResponse` carries `code` (read-only,
+  not settable via create/update) so the FE can resolve "the Packing List type" by its stable
+  key; asserted on the list and single-read responses.
 
 ## C. Upload SPO CTA (section 3)
 

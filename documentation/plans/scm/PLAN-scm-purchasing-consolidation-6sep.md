@@ -128,6 +128,16 @@ the column the n8n path already fills) and does NOT fire the n8n webhook for tha
 reader already produced the shipment; firing would create a second one through the external
 route). `Create Packing List` moves into the gear menu.
 
+**CAPTAIN REVERSED 7 Sep 2026.** The primary button is now `Upload`, the Drive-style Create
+Attachment dialog preset and locked to the Packing List type - the same flow as a Files upload,
+fired from the Packing Lists page. `Upload supplier documents` (the reader above) moves into
+the gear instead, as the alternative for reading a file's lines by hand. Reason: the n8n path's
+payload is header + product quantities only (no dimensions, no prices, no photos), and on an
+already-received shipment its update-in-place logic replaces the shipment's lines wholesale -
+so had the two paths shared one button, a later Drive-style upload of the same file would wipe
+out dimensions/prices/photos the reader had filed on those lines. Kept as two separate buttons,
+that risk does not exist: each path only ever touches what it itself created.
+
 **R4. Default folder is a column on the attachment type.** `attachment_types.default_directory_id`
 (nullable FK -> `attachment_directories`, SET NULL), editable on the attachment type form as a
 folder select. Used by this upload and pre-selected in the generic Create Attachment dialog
@@ -482,6 +492,12 @@ No open questions remain. Waiting for GO.
 - **`consolidated_packing_list.build()` keeps emitting `costs` in its JSON payload.** The plan
   offered either choice ("may keep emitting costs ... or drop it; pick the smaller diff"); keeping
   it is the smaller diff and harmless - only `to_xlsx()` (the export) stops reading it.
+- **CAPTAIN REVERSED 7 Sep 2026: R3's CTA assignment flipped.** `Upload` (Drive-style Create
+  Attachment dialog, preset+locked to the Packing List type) is now the primary button;
+  `Upload supplier documents` (the reader) moved to the gear. `AttachmentTypeResponse` gained a
+  `code` field (read-only, not on the shared Base) so the FE can resolve the Packing List type by
+  its stable key instead of only the editable `type_name` label - the same pair the backend
+  lookup at step 10 above already checks. See R3's own entry for the reasoning.
 
 ## Deviations (lane D)
 

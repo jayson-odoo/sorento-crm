@@ -1,13 +1,14 @@
 /**
- * PackingListsList - Upload packing list CTA, gated on the reader route's own
- * permission/module rather than the page's (AC-B1, review round 1 B4).
+ * PackingListsList - Upload becomes the Drive-style packing list CTA, the reader (Upload
+ * supplier documents) moves to the gear (R3, CAPTAIN REVERSED 7 Sep 2026).
  *
- * `POST /api/v1/scm/packing-lists/apply` is gated on `scm.reorder.run`, an `scm`-module
- * permission - a different module from the one that gates viewing this list
- * (`procurement`). A tenant with `procurement` but not `scm` (or a user without that
- * permission) can see this list but cannot reach the reader route the CTA opens, so the
- * primary button falls back to `Create Packing List` and the reader is dropped from the
- * gear menu (it would otherwise duplicate the primary).
+ * Upload opens the generic Create Attachment dialog preset and locked to the Packing List
+ * type, gated on the write route's own permission (`resource.attachments.upload`) rather
+ * than the page's own - same pattern as the reader route below. The reader
+ * (`POST /api/v1/scm/packing-lists/apply`) is gated on `scm.reorder.run`, an `scm`-module
+ * permission - a tenant with `procurement` but not `scm` (or a user without that
+ * permission) can see this list but cannot reach the reader route, so it drops from the
+ * gear (review round 1 B4, preserved through the reversal).
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -77,12 +78,39 @@ vi.mock('../services/packingListService', () => ({
   getLatestContainerStatusDocument: vi.fn(),
 }));
 
-// The reader dialog (opened only when the CTA is reachable) sources its own supplier list -
+// The reader dialog (opened only when it's reachable) sources its own supplier list -
 // irrelevant to gating, stubbed so opening it never reaches the network.
 vi.mock('@/app/(protected)/scm/services/fulfilmentService', () => ({
   previewSupplierDocuments: vi.fn(),
   applySupplierDocuments: vi.fn(),
   getFulfilmentSuppliers: vi.fn(async () => []),
+}));
+
+const useAttachmentTypesList = vi.fn();
+vi.mock('@/app/(protected)/resource-management/attachments/hooks/useAttachments', () => ({
+  useAttachmentTypesList: (...a: unknown[]) => useAttachmentTypesList(...a),
+}));
+
+// The Drive upload dialog itself is out of scope here (covered by its own test file) -
+// stubbed to a marker that exposes the props this list passed it, so gating/preset
+// behaviour is asserted without dragging in its type list / directory tree / upload
+// mutation network.
+type AttachmentUploadDialogProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  defaultTypeId?: string;
+  lockType?: boolean;
+  defaultDirectoryId?: string | null;
+};
+vi.mock('@/app/(protected)/resource-management/attachments/components/AttachmentUploadDialog', () => ({
+  default: ({ open, defaultTypeId, lockType, defaultDirectoryId }: AttachmentUploadDialogProps) =>
+    open ? (
+      <div data-testid="attachment-upload-dialog">
+        <span data-testid="default-type-id">{defaultTypeId ?? ''}</span>
+        <span data-testid="lock-type">{String(!!lockType)}</span>
+        <span data-testid="default-directory-id">{defaultDirectoryId ?? ''}</span>
+      </div>
+    ) : null,
 }));
 
 const useHasAnyPermission = vi.fn();
@@ -132,24 +160,45 @@ function renderList() {
   );
 }
 
+const PACKING_LIST_TYPE = {
+  id: 'pl-type',
+  code: 'packing_list',
+  type_name: 'Packing List',
+  default_directory_id: 'dir-1',
+};
+
 beforeEach(() => {
   cleanup();
   vi.clearAllMocks();
   mockList([row()]);
   useTenantModules.mockReturnValue({ enabledModuleKeys: new Set(['procurement', 'scm']), isLoading: false });
+  // Both write routes reachable by default - `scm.reorder.run` for the reader,
+  // `resource.attachments.upload` for the Drive upload.
   useHasAnyPermission.mockReturnValue(true);
+  useAttachmentTypesList.mockReturnValue({ data: [PACKING_LIST_TYPE], isLoading: false });
 });
 
-describe('PackingListsList - Upload supplier documents is primary when reachable (AC-B1)', () => {
-  it('shows Upload supplier documents as the primary button', () => {
+describe('PackingListsList - Upload is the primary CTA (AC-B1, CAPTAIN REVERSED 7 Sep)', () => {
+  it('shows Upload as the primary button', () => {
     renderList();
-    expect(screen.getByRole('button', { name: /Upload supplier documents/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Upload$/i })).toBeInTheDocument();
   });
 
-  it('puts Create Packing List and Import Container Status in the gear menu', () => {
+  it('clicking Upload opens the Create Attachment dialog preset and locked to Packing List', () => {
+    renderList();
+    fireEvent.click(screen.getByRole('button', { name: /^Upload$/i }));
+
+    expect(screen.getByTestId('attachment-upload-dialog')).toBeInTheDocument();
+    expect(screen.getByTestId('default-type-id')).toHaveTextContent('pl-type');
+    expect(screen.getByTestId('lock-type')).toHaveTextContent('true');
+    expect(screen.getByTestId('default-directory-id')).toHaveTextContent('dir-1');
+  });
+
+  it('puts Upload supplier documents, Create Packing List and Import Container Status in the gear', () => {
     renderList();
     fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), { button: 0 });
 
+    expect(screen.getByRole('button', { name: /Upload supplier documents/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Create Packing List/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Import Container Status/i })).toBeInTheDocument();
   });
@@ -161,31 +210,69 @@ describe('PackingListsList - Upload supplier documents is primary when reachable
 
     expect(routerPush).toHaveBeenCalledWith('/procurement-management/packing-lists/new');
   });
+
+  it('Upload supplier documents in the gear opens the reader dialog', () => {
+    renderList();
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), { button: 0 });
+    fireEvent.click(screen.getByRole('button', { name: /Upload supplier documents/i }));
+
+    // The reader is a real (unmocked) dialog - its own title is the signal it opened.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
 });
 
-describe('PackingListsList - falls back to Create Packing List when the reader is out of reach (review B4)', () => {
-  it('without scm.reorder.run: Create Packing List is primary, Upload is gone entirely', () => {
-    useHasAnyPermission.mockReturnValue(false);
+describe('PackingListsList - falls back to unpreset Upload when the type cannot be resolved', () => {
+  it('opens the dialog unpreset and unlocked when no attachment type matches', () => {
+    useAttachmentTypesList.mockReturnValue({ data: [], isLoading: false });
+    renderList();
+    fireEvent.click(screen.getByRole('button', { name: /^Upload$/i }));
+
+    expect(screen.getByTestId('default-type-id')).toHaveTextContent('');
+    expect(screen.getByTestId('lock-type')).toHaveTextContent('false');
+  });
+});
+
+describe('PackingListsList - review B4: the reader drops from the gear when its write route is out of reach', () => {
+  it('without scm.reorder.run: Upload supplier documents is gone, Upload stays primary', () => {
+    useHasAnyPermission.mockImplementation((slugs: string[]) =>
+      slugs.includes('scm.reorder.run') ? false : true,
+    );
     renderList();
 
-    expect(screen.getByRole('button', { name: /^Create Packing List$/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Upload supplier documents/i })).not.toBeInTheDocument();
-
+    expect(screen.getByRole('button', { name: /^Upload$/i })).toBeInTheDocument();
     fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), { button: 0 });
-    // Not duplicated in the gear now that it is the primary action - exactly one on screen.
-    expect(screen.getAllByText('Create Packing List')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: /Upload supplier documents/i })).not.toBeInTheDocument();
   });
 
   it('without the scm module enabled: same fallback, even with the permission', () => {
     useTenantModules.mockReturnValue({ enabledModuleKeys: new Set(['procurement']), isLoading: false });
     renderList();
 
-    expect(screen.getByRole('button', { name: /^Create Packing List$/i })).toBeInTheDocument();
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), { button: 0 });
     expect(screen.queryByRole('button', { name: /Upload supplier documents/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Upload$/i })).toBeInTheDocument();
+  });
+});
+
+describe('PackingListsList - falls back to Create Packing List when the Drive upload is out of reach', () => {
+  it('without resource.attachments.upload: Create Packing List is primary, Upload is gone entirely', () => {
+    useHasAnyPermission.mockImplementation((slugs: string[]) =>
+      slugs.includes('resource.attachments.upload') ? false : true,
+    );
+    renderList();
+
+    expect(screen.getByRole('button', { name: /^Create Packing List$/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Upload$/i })).not.toBeInTheDocument();
+
+    fireEvent.pointerDown(screen.getByRole('button', { name: /^Actions/i }), { button: 0 });
+    // Not duplicated in the gear now that it is the primary action - exactly one on screen.
+    expect(screen.getAllByText('Create Packing List')).toHaveLength(1);
   });
 
   it('primary Create Packing List routes to the manual form', () => {
-    useHasAnyPermission.mockReturnValue(false);
+    useHasAnyPermission.mockImplementation((slugs: string[]) =>
+      slugs.includes('resource.attachments.upload') ? false : true,
+    );
     renderList();
 
     fireEvent.click(screen.getByRole('button', { name: /^Create Packing List$/i }));

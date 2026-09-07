@@ -101,7 +101,11 @@ class AttachmentTypeResponse(AttachmentTypeBase):
 
     id: str
     created_at: datetime
-    
+    # Stable machine key (e.g. 'packing_list'), distinct from the editable
+    # `type_name` label. Read-only: not on AttachmentTypeBase, so create/update
+    # payloads cannot set it. NULL for types that predate the column.
+    code: Optional[str] = None
+
     @field_validator('id', mode='before')
     @classmethod
     def convert_uuid_to_string(cls, v):
