@@ -284,6 +284,7 @@ def _run_ladder(*, validator, ladder, po_response=NO_ROWS, parser=None):
         contact_id="437264483",
         space_id="364817",
         crossdomain_ladder=ladder,
+        granted=["purchase_orders.placed"],  # the PO rung is per contact (8 Sep 2026)
     )
     return result, calls
 
@@ -336,7 +337,8 @@ class TestShouldFix89TheRungSentenceAndTeam:
         )
         block = result["render"]["_xdBlock"]
         assert "but a PO is placed" in block["block"]
-        assert "escalate to purchasing team" in block["block"]
+        # the offer itself is compose's (8 Sep 2026); the TEAM it will name is the block's
+        assert "escalate" not in block["block"].lower()
         assert block["team"] == "purchasing"
         assert escalation_team(parser, None) == "purchasing"
         assert parser["crossdomain_rung_team"] == "purchasing"

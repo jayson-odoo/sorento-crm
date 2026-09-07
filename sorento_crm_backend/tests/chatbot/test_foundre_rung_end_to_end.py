@@ -182,7 +182,8 @@ def stock_parse(stub_parser, stub_access):
             entities=[{"raw": CODE, "hint": "product", "current_message": True}],
         )
     )
-    stub_access()
+    # The PO rung is per contact (8 Sep 2026): on-order info needs `purchase_orders.placed`.
+    stub_access(attributes=["purchase_orders.placed"])
 
 
 class TestAC921ThePORungReachesTheCustomer:
@@ -279,7 +280,7 @@ class TestTheSuffixedCodeShapeReachesTheRung:
                 entities=[{"raw": code, "hint": "product", "current_message": True}],
             )
         )
-        stub_access()
+        stub_access(attributes=["purchase_orders.placed"])  # the rung is per contact
         result, said, probes = _run_stock_turn(
             session_factory, monkeypatch, po_response=PO_ROWS, code=code
         )
@@ -299,7 +300,7 @@ class TestTheSuffixedCodeShapeReachesTheRung:
                 entities=[{"raw": code, "hint": "product", "current_message": True}],
             )
         )
-        stub_access()
+        stub_access(attributes=["purchase_orders.placed"])  # the rung is per contact
         _, said, _ = _run_stock_turn(session_factory, monkeypatch, po_response=NO_ROWS, code=code)
         assert f"No stock, no incoming and no PO for {code}." in said, said
 
@@ -381,3 +382,53 @@ class TestIssue736SeparatorInsensitiveRequestedSet:
         xd = self._zeroset_for("SRTWT7445LVNEW", "SRTWB103")["_xd"]
         assert xd["active"] is False
         assert xd["requested"] == []
+
+
+class TestOwner8SepTheRungIsPerContactAndOffersOnce:
+    """Turns 0184d84d / 5f73ddb0 / 90a1637a (8 Sep 2026): the escalate question was said
+    twice; and on-order information is a per-contact reveal (`purchase_orders.placed`)."""
+
+    def test_with_the_grant_the_reply_carries_the_document_date_and_one_offer(
+        self, session_factory, seeded, stock_parse, system_settings_row, monkeypatch
+    ) -> None:
+        po_row = {
+            "fields": [
+                {"key": "po_number", "label": "PO Number", "value": "202607-S0031"},
+                {"key": "product_code", "label": "Product Code", "value": CODE},
+                {"key": "outstanding_qty", "label": "Outstanding Qty", "value": 27},
+                {"key": "po_date", "label": "PO Date", "value": "2026-06-30"},
+                {"key": "expected_date", "label": "Expected Date", "value": "2027-02-01"},
+            ]
+        }
+        result, said, probes = _run_stock_turn(
+            session_factory, monkeypatch, po_response={"answers": [po_row], "has_result": True}
+        )
+        assert result.status == "done", result.error
+        assert PO_TOOL in probes
+        assert "27 pcs on PO 202607-S0031 dated 2026-06-30, expected 2027-02-01" in said, said
+        # `said` joins the reply with every send action's copy of it; the count is on the
+        # reply text alone.
+        text = (result.reply or {}).get("text") or ""
+        assert text.count("Would you like me to escalate") == 1, text
+        assert "escalate to purchasing team" in text
+
+    def test_without_the_grant_no_probe_and_the_ladder_off_note(
+        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        stub_parser(
+            _parser_output(
+                intent_hint="check_stock",
+                domain_hint="inventory",
+                entities=[{"raw": CODE, "hint": "product", "current_message": True}],
+            )
+        )
+        stub_access()  # no grants at all
+        result, said, probes = _run_stock_turn(
+            session_factory, monkeypatch, po_response={"answers": [{"fields": []}], "has_result": True}
+        )
+        assert result.status == "done", result.error
+        assert PO_TOOL not in probes, "the PO rung must not probe without purchase_orders.placed"
+        assert f"No stock and no incoming for {CODE}." in said, said
+        assert "PO" not in said.replace("No stock and no incoming", "")
+        text = (result.reply or {}).get("text") or ""
+        assert text.count("Would you like me to escalate") == 1, text

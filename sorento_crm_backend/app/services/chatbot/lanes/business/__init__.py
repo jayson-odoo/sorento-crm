@@ -596,6 +596,13 @@ def complete_answer(
             dry_run=dry_run,
             crossdomain_ladder=crossdomain_ladder,
             trace=trace,
+            # the contact's granted field-reveal keys - the PO rung needs
+            # `purchase_orders.placed` (8 Sep 2026); same set the field drop reads
+            granted=(
+                (ctx.get("access") or {}).get("attributes")
+                if isinstance(ctx.get("access"), dict)
+                else None
+            ),
         )
         result_item = answer_mod.build_result(
             promo,

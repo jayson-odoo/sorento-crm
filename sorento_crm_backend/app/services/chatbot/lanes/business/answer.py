@@ -869,17 +869,15 @@ def crossdomain_render(
     if only_other and can_state_absence:
         only_other_note = f"No {primary_word} for {', '.join(only_other)}."
 
+    # NO OFFER SENTENCE HERE (8 Sep 2026, turns 0184d84d / 5f73ddb0 / 90a1637a): the block
+    # used to end "...Would you like me to escalate to X team?" and `tail/compose.
+    # crossdomain_compose` appended the LOCKED phrase again from `block["team"]`, so the
+    # customer read the question twice. Compose is the one writer of the offer, on the
+    # partial-answer branch from `team` below and on the total-miss branch from the miss
+    # sentence it slots this block above; this render only states what is absent.
     nothing_note = ""
     if nothing and can_state_absence:
-        team = zs.get("team")
-        offer = (
-            f" Would you like me to escalate to {jsc.js_string(team)} team?"
-            if jsc.truthy(team)
-            else " Would you like me to escalate this?"
-        )
-        nothing_note = (
-            f"No {primary_word} and no {other_word} for {', '.join(nothing)}.{offer}"
-        )
+        nothing_note = f"No {primary_word} and no {other_word} for {', '.join(nothing)}."
 
     body = (lead + "\n\n" + "\n\n".join(blocks) + silent_note + mention) if blocks else ""
     if body and only_other_note:
@@ -933,6 +931,9 @@ _CROSSDOMAIN_RUNG_TEAM: dict[str, str] = {"purchase_order": "purchasing"}
 #: produced "no purchase order for X" where AC-922 asks for "no PO for X" - the customer's
 #: own word for the thing, and the same two letters the question used (review, item 9).
 _CROSSDOMAIN_RUNG_WORD: dict[str, str] = {"purchase_order": "PO"}
+#: The field-reveal key a contact must hold for the rung to run at all (8 Sep 2026). A rung
+#: with no row here is ungated.
+_CROSSDOMAIN_RUNG_GRANT: dict[str, str] = {"purchase_order": "purchase_orders.placed"}
 
 
 def _next_crossdomain_rung(origin_domain: Any, *, ladder: dict[str, list[str]] | None) -> str | None:
@@ -1027,12 +1028,27 @@ def _crossdomain_rung_rows(probe_result: Any, *, missing: list[dict[str, Any]]) 
         rows = by_code.get(code.upper(), [])
         if not rows:
             continue
-        out[code] = [
-            f"{_fmt_xd_value(field_by_key(it, 'outstanding_qty'))} pcs expected "
-            f"{_fmt_xd_value(field_by_key(it, 'expected_date'))}"
-            for it in rows
-        ]
+        out[code] = [_crossdomain_rung_line(it, field_by_key) for it in rows]
     return out
+
+
+def _crossdomain_rung_line(it: Any, field_by_key: Any) -> str:
+    """"{qty} pcs on PO {po_number} dated {po_date}, expected {expected_date}" - the PO
+    DOCUMENT date (owner ruling, 8 Sep 2026; `po_date` = `purchase_orders.issue_date`,
+    which the placed-list tool now carries per row), then the arrival estimate. Either
+    date part is omitted when its value is null rather than printed as "-": a PO with no
+    dates reads "12 pcs on PO 202607-S0031"."""
+    line = f"{_fmt_xd_value(field_by_key(it, 'outstanding_qty'))} pcs"
+    po_number = field_by_key(it, "po_number")
+    if po_number not in (None, ""):
+        line += f" on PO {_fmt_xd_value(po_number)}"
+    po_date = field_by_key(it, "po_date")
+    if po_date not in (None, ""):
+        line += f" dated {_fmt_xd_value(po_date)}"
+    expected = field_by_key(it, "expected_date")
+    if expected not in (None, ""):
+        line += f", expected {_fmt_xd_value(expected)}"
+    return line
 
 
 def _apply_crossdomain_rung(
@@ -1045,6 +1061,7 @@ def _apply_crossdomain_rung(
     space_id: Any,
     ladder: dict[str, list[str]] | None,
     trace: Any = None,
+    granted: Any = None,
 ) -> None:
     """Mutates `render["_xdBlock"]` in place: tries the ladder's next rung for the codes
     the first probe found NOTHING for, and swaps the "no X and no Y" sentence for the
@@ -1064,6 +1081,18 @@ def _apply_crossdomain_rung(
     rung = _next_crossdomain_rung(xd.get("origin_domain"), ladder=ladder)
     if rung is None:
         return
+    # PER-CONTACT GATE (8 Sep 2026): on-order information is a field reveal, key
+    # `purchase_orders.placed`, granted on Contacts > Access. `granted` is the contact's
+    # granted key list (`ctx["access"]["attributes"]`, the same set `fetch.py`'s field drop
+    # reads; None is the empty set, as there). Without the grant the rung does not run
+    # at all - no probe, no PO lines - and the block stays the ladder-off shape. The
+    # DIRECT PO ask is not gated by this key; it keeps its supplier-only gating.
+    need = _CROSSDOMAIN_RUNG_GRANT.get(rung)
+    granted_set = set(granted) if isinstance(granted, (list, tuple, set, frozenset)) else set()
+    if need and need not in granted_set:
+        if trace is not None:
+            trace.add("crossdomain", {"rung": rung, "skipped": "not_granted", "needs": need})
+        return
     missing = block.get("nothing_missing") or []
     args = _crossdomain_rung_probe_args(
         missing, rung=rung, parser=parser, contact_id=contact_id, space_id=space_id
@@ -1082,13 +1111,9 @@ def _apply_crossdomain_rung(
         still_nothing_note = (
             f"No stock, no incoming and no {_CROSSDOMAIN_RUNG_WORD[rung]} for {', '.join(nothing_codes)}."
         )
-        team = _CROSSDOMAIN_RUNG_TEAM.get(rung)
-        offer = (
-            f" Would you like me to escalate to {jsc.js_string(team)} team?"
-            if team
-            else " Would you like me to escalate this?"
-        )
-        new_note = still_nothing_note + offer
+        # No offer sentence: `crossdomain_compose` writes it once from `block["team"]`
+        # (set to the rung's team below) - see the first probe's `nothing_note`.
+        new_note = still_nothing_note
     else:
         found = [c for c in nothing_codes if c in lines_by_code]
         still_nothing = [c for c in nothing_codes if c not in lines_by_code]
@@ -1097,18 +1122,10 @@ def _apply_crossdomain_rung(
         parts.append(
             f"No stock and no incoming for {', '.join(found)}, but a PO is placed:\n{po_lines}"
         )
-        team = _CROSSDOMAIN_RUNG_TEAM.get(rung)
-        offer = (
-            f" Would you like me to escalate to {jsc.js_string(team)} team?"
-            if team
-            else " Would you like me to escalate this?"
-        )
         if still_nothing:
             parts.append(
-                f"No stock, no incoming and no {_CROSSDOMAIN_RUNG_WORD[rung]} for {', '.join(still_nothing)}.{offer}"
+                f"No stock, no incoming and no {_CROSSDOMAIN_RUNG_WORD[rung]} for {', '.join(still_nothing)}."
             )
-        else:
-            parts[-1] = parts[-1] + offer
         new_note = "\n\n".join(parts)
 
     old_note = block.get("nothing_note") or ""
@@ -1173,6 +1190,7 @@ def run_crossdomain(
     dry_run: bool = False,
     crossdomain_ladder: dict[str, list[str]] | None = None,
     trace: Any = None,
+    granted: Any = None,
 ) -> dict[str, Any]:
     """`crossdomain-zeroset -> crossdomain-gate -> crossdomain-probe -> crossdomain-render`,
     then A7's further ladder rung (`_apply_crossdomain_rung`) when the first probe still
@@ -1230,6 +1248,7 @@ def run_crossdomain(
         space_id=space_id,
         ladder=crossdomain_ladder,
         trace=trace,
+        granted=granted,
     )
     return {"zeroset": zeroset, "render": render}
 

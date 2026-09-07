@@ -32,6 +32,16 @@ _PRESENTER_FUNCTIONS_BY_TOOL = {
 
 _RESTRICT_CALL_RE = re.compile(r'b\.restrict\([^,]+,\s*"([^"]+)"\)')
 
+# Keys a CRM LANE enforces rather than a presenter: the field never reaches an envelope
+# because the lane does not make the call without the grant. They are declared on the
+# ToolSpec (so the grant card lists them) and enforced where named here, so the reverse
+# test below does not read them as orphans. Add a row only with the enforcing seam.
+_LANE_GATED_KEYS = {
+    # 8 Sep 2026: on-order info is per contact; `lanes/business/answer.
+    # _apply_crossdomain_rung` skips the PO rung entirely without it.
+    "purchase_orders.placed": "app/services/chatbot/lanes/business/answer.py",
+}
+
 
 def _function_body(source: str, func_name: str) -> str:
     match = re.search(rf"^def {re.escape(func_name)}\(.*?(?=^def |\Z)", source, re.S | re.M)
@@ -64,6 +74,8 @@ def test_every_declared_restricted_field_is_actually_used_by_a_presenter():
     all_used_keys = set(_RESTRICT_CALL_RE.findall(source))
     for spec in CATALOG:
         for key, _label in spec.restricted_fields:
+            if key in _LANE_GATED_KEYS:
+                continue
             assert key in all_used_keys, (
                 f"{spec.name}: restricted_fields declares {key!r} but no presenter calls "
                 f"b.restrict(..., {key!r}) - granting it would change nothing"
@@ -79,4 +91,12 @@ def test_the_two_growth_r1_keys_are_declared_exactly_where_expected():
     }
     assert dict(specs_by_name["crm_procurement_purchase_orders_placed_list"].restricted_fields) == {
         "purchase_orders.supplier": "PO supplier",
+        "purchase_orders.placed": "PO placed (on order) on stock answers",
     }
+
+
+def test_every_lane_gated_key_names_a_seam_that_exists():
+    for key, path in _LANE_GATED_KEYS.items():
+        seam = Path(__file__).resolve().parents[2] / "sorento_crm_backend" / path
+        assert seam.is_file(), f"{key}: enforcing seam {path} not found"
+        assert key in seam.read_text(encoding="utf-8"), f"{key}: {path} does not name the key"

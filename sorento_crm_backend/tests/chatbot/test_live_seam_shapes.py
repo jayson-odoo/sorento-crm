@@ -263,8 +263,11 @@ class TestCrossDomainProbeCrossesTheRealSeam:
             "the probe answered as a string and the render degraded to no_envelope, so "
             f"the code with nothing on either side went unmentioned: {block!r}"
         )
-        assert "escalate" in block.lower(), (
-            f"the escalation offer is missing from the cross-domain block: {block!r}"
+        # The block states what is absent and nothing more: the escalate offer is written
+        # ONCE by `tail/compose.crossdomain_compose` from `block["team"]` (8 Sep 2026,
+        # turns 0184d84d / 5f73ddb0 / 90a1637a carried it twice).
+        assert "escalate" not in block.lower(), (
+            f"the cross-domain block must not carry the offer itself: {block!r}"
         )
 
     def test_the_unfiltered_list_shape_is_not_read_as_an_envelope(self, monkeypatch) -> None:

@@ -1378,9 +1378,10 @@ class TestThirdCodeWithNoStockAndNoIncomingIsNamedWithEscalation:
         assert "no stock" in block.lower() and "no incoming" in block.lower(), (
             f"MSK11A-QT must be stated as having no stock and no incoming: {block!r}"
         )
-        assert "escalate" in block.lower(), (
-            "an escalation offer must be present for the code with nothing on either "
-            f"side: {block!r}"
+        # The offer is written ONCE by `tail/compose.crossdomain_compose` from
+        # `block["team"]` (8 Sep 2026): the block itself names the absence only.
+        assert "escalate" not in block.lower(), (
+            f"the cross-domain block must not carry the offer itself: {block!r}"
         )
 
 
@@ -2750,7 +2751,7 @@ class TestAZeroStockCodeIsNamedBeforeTheIncomingBlock:
         assert "No stock for MSK11A-QT." not in block, (
             f"the both-empty case must not also emit the one-sided line: {block!r}"
         )
-        assert "escalate" in block.lower(), block
+        assert "escalate" not in block.lower(), block  # compose writes the offer (8 Sep 2026)
 
     def test_a_code_the_primary_render_did_echo_is_not_called_missing(self) -> None:
         """Guard: `missing` means "the primary render did not echo this code", which is

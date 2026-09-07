@@ -93,6 +93,12 @@ def purchase_orders_placed_rows(
                 "outstanding_qty": _plain_number(line.qty_ordered - line.qty_received),
                 "expected_date": expected.isoformat() if expected else None,
                 "supplier": supplier.supplier_name if supplier else None,
+                # The PO DOCUMENT date (`purchase_orders.issue_date`, the header's own
+                # date; `expected_date` above is the line's else the header's arrival
+                # estimate). Owner ruling 8 Sep 2026: the chatbot's PO rung says when the
+                # PO was raised, not only when the goods are due. Additive; every field
+                # above is byte-identical.
+                "po_date": po.issue_date.isoformat() if po.issue_date else None,
             }
         )
     return out

@@ -64,11 +64,13 @@ def _po_line(
     line_expected=None,
     header_expected=None,
     po_number=None,
+    header_issue=None,
 ):
     po = PurchaseOrder(
         id=str(uuid.uuid4()),
         po_number=po_number or unique_code("PO"),
         supplier_id=supplier_id,
+        issue_date=header_issue,
         expected_date=header_expected,
         company_id=DEFAULT_COMPANY_ID,
     )
@@ -319,3 +321,23 @@ def test_a_mocha_scoped_read_returns_no_sorento_po_lines(db):
 
     set_company_scope(db, frozenset({MOCHA_ID}))
     assert purchase_orders_placed_rows(db) == []
+
+
+def test_rows_carry_the_po_document_date(db):
+    """Owner ruling (8 Sep 2026): the chatbot's PO rung shows the PO DOCUMENT date -
+    `purchase_orders.issue_date` - beside the expected date, so each row carries it as
+    `po_date` (ISO, None when the header has none). Every existing field is untouched."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    _po_line(db, product_id=prod.id, ordered=5, received=0, po_number="PO-DATED",
+             header_issue=date(2026, 5, 1), header_expected=date(2026, 7, 1))
+    _po_line(db, product_id=prod.id, ordered=3, received=0, po_number="PO-UNDATED")
+    db.commit()
+
+    rows = {r["po_number"]: r for r in purchase_orders_placed_rows(db, product_ids=[prod.id])}
+    assert rows["PO-DATED"]["po_date"] == "2026-05-01"
+    assert rows["PO-DATED"]["expected_date"] == "2026-07-01"
+    assert rows["PO-UNDATED"]["po_date"] is None
+    assert set(rows["PO-DATED"]) == {
+        "po_number", "product_id", "product_code", "product_name", "outstanding_qty",
+        "expected_date", "supplier", "po_date",
+    }

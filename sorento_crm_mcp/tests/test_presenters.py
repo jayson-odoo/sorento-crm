@@ -1580,3 +1580,21 @@ def test_by_product_summary_without_the_key_renders_no_so_field():
     for it in out["summary_items"]:
         assert "so_outstanding_qty" not in [f["key"] for f in it["fields"]]
         assert "SO outstanding (not yet DO)" not in [f["label"] for f in it["fields"]]
+
+
+def test_purchase_orders_placed_po_date_sits_before_expected_date():
+    """Owner ruling (8 Sep 2026): the PO document date rides on the row as `po_date`;
+    absent -> no field, so every pre-existing envelope is byte-identical."""
+    out = env("crm_procurement_purchase_orders_placed_list", {
+        "data": [{"po_number": "PO-1001", "product_code": "SRTWC8517", "outstanding_qty": 50,
+                  "po_date": "2026-05-01", "expected_date": "2026-07-01"}],
+    })
+    fields = out["items"][0]["fields"]
+    labels = [f["label"] for f in fields]
+    assert labels.index("PO Date") == labels.index("Expected Date") - 1
+    assert next(f for f in fields if f["key"] == "po_date")["value"] == "2026-05-01"
+    without = env("crm_procurement_purchase_orders_placed_list", {
+        "data": [{"po_number": "PO-1001", "product_code": "SRTWC8517", "outstanding_qty": 50,
+                  "expected_date": "2026-07-01"}],
+    })
+    assert "PO Date" not in [f["label"] for f in without["items"][0]["fields"]]

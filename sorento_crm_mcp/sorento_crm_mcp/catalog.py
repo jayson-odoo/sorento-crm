@@ -1047,7 +1047,15 @@ CATALOG: tuple[ToolSpec, ...] = (
         # the presenter; this is the static declaration the catalog sync reads into
         # `mcp_tools.restricted_fields` for the Field reveals checklist (Slice C). See the
         # matching note on `crm_inventory_stock_balance_list` above.
-        restricted_fields=(("purchase_orders.supplier", "PO supplier"),),
+        restricted_fields=(
+            ("purchase_orders.supplier", "PO supplier"),
+            # 8 Sep 2026: on-order information is per contact. Enforced by the CRM's
+            # chatbot lane (`lanes/business/answer._apply_crossdomain_rung` skips the PO
+            # rung of a stock answer without it), NOT by a presenter `restrict` - the
+            # direct PO ask keeps its own (supplier-only) gating. Declared here so the
+            # Contacts > Access > Field reveals card lists it.
+            ("purchase_orders.placed", "PO placed (on order) on stock answers"),
+        ),
     ),
     # --- procurement: SPO last receipt (A6, chatbot-growth-r1) ---
     ToolSpec(
