@@ -206,3 +206,10 @@ or a supersede / dedupe carry declared for an `autocount` line; NULL reads as 0.
 - **AC-X39 [BE]** Migration `488_spo_alloc_stated_received` adds the nullable integer column and
   backfills `stated_received = quantity_received` for `source_system = 'autocount'` rows only;
   `alembic heads` stays single; the migration id is under 32 characters.
+
+- **AC-X40 [BE][T]** (D28c retirement freeze, reviewer F2) An `autocount` line closed by a GRN
+  (allocated 29, received 29 via one approved picking line, stated 0) that a later push of the same
+  DocKey no longer names (leftover sweep closes it) carries `stated_received 29` after that push;
+  deleting the GRN afterwards leaves it closed at 29, never reopened: a line AutoCount retired is
+  not demand again because the CRM receipt that closed it went away. A sibling still named by the
+  push behaves per AC-X35 (drops and reopens).
