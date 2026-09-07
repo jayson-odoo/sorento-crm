@@ -130,3 +130,27 @@ shipping_orders` with one record whose lines carry `source_ref` (DtlKey), `produ
 
 - **AC-X27 [S][T]** The dedupe's operator report prints ref-less GROUPS kept (not rows), and a dry
   run ends with a rollback so no transaction stays open across the sweep.
+
+## Delta round (security re-review, 2026-09-07)
+
+- **AC-X28 [BE][T]** (D28a floor) Given two `autocount` lines for P at L on SPO N with ESB-stated
+  receipts (line 1 allocated 29 / received 25, line 2 allocated 18 / received 18) and no picking
+  line; when a Sorento GRN approves one picking line of 5 against line 1 and
+  `sync_grn_received_to_spo` runs, line 1 still reads 25 and line 2 still reads 18 (the group
+  total is the max of the picking sum and the stored sum of non-released members). A released
+  member (GRN deleted) still drops to what its remaining picking lines prove.
+
+- **AC-X29 [BE][T]** (pass 3 gated) Given SPO N holds an xlsx row for P at L (open, 10) and a
+  NULL-source (n8n / CRM) row for Q at M (open, 5, with a `storage_zone_id` and an
+  `order_inquiry_links` placement); a push names (P, L) qty 10 and an unrelated (R, S) qty 5.
+  After the push the Q row still describes product Q at M with its zone and placement, the (R, S)
+  line is a new row, and `lines.adopted` is absent. Positional adoption never runs in a push that
+  superseded a group.
+
+- **AC-X30 [BE][T]** `ShippingOrderIngestService(may_delete=...)` defaults to False: constructing
+  the service without the flag and pushing AC-X1's shape closes the xlsx row (`superseded_closed_only`)
+  rather than deleting it; the route passes the resolved permission, the dedupe passes True.
+
+- **AC-X31 [BE][T]** `repoint_allocation_dependants` requires `company_id` (a call without it is a
+  TypeError); `scripts/backfill_grn_spo_allocation_links.py` registers the company-scope listeners
+  and pins one company so its closing recompute reads rows again.
