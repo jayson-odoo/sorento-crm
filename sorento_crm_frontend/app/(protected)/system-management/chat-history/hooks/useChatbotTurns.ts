@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import {
+  getChatbotTurn,
   getChatbotTurns,
   getFailedChatbotContacts,
   indexTurnsByMessageId,
@@ -78,6 +79,19 @@ export function useFailedChatbotContacts(filters: FailedContactFilters, enabled:
   const contactIds = useMemo(() => [...byContactId.keys()], [byContactId]);
 
   return { ...query, byContactId, contactIds };
+}
+
+/**
+ * One turn's full `trace_detail` (Slice D). `enabled` on `turnId`: the drawer this
+ * feeds only mounts once a turn is picked, and there is no "all turns" caller.
+ */
+export function useChatbotTurn(turnId: string | null) {
+  return useQuery({
+    queryKey: [...CHATBOT_TURNS_KEY, 'detail', turnId],
+    queryFn: () => getChatbotTurn(turnId as string),
+    enabled: Boolean(turnId),
+    staleTime: 15_000,
+  });
 }
 
 /**
