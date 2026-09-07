@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from app.services.chatbot_parser_prompt import (
+    GROWTH_R1_ADDENDUM,
     LIVE_SYSTEM_MESSAGE_SHA256,
     SEMANTIC_PARSER_PROMPT,
 )
@@ -43,13 +44,38 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # ("incoming TIIU6323920") reads as the full timeline and an explicit ETA ask about a
 # container ("ETA of X") still resolves to `estimated_arrival_date` alone. All four edits
 # are intentional content, not drift from this guard.
+#
+# Growth r1 (migration 490) adds a fifth: `GROWTH_R1_ADDENDUM`, appended WHOLE at the end
+# rather than woven in, so it is subtracted rather than sliced - see
+# `_without_growth_r1_addendum`. CONSTANT_CHARS is the body BEFORE that append, which is
+# what keeps this number a guard against drift in the live-derived text rather than a
+# number that moves every time growth r1's vocabulary is edited.
 CONSTANT_CHARS = 47744
+
+
+def _without_growth_r1_addendum(text: str) -> str:
+    """The body as it was before growth r1 appended its vocabulary block (migration 490).
+
+    An APPENDED block, so it comes off with a `removesuffix` rather than the index slice the
+    warehouse-arrival edit needs - that one sits INSIDE the requested-attributes section. The
+    assertion that it really is a suffix lives in
+    `test_parser_growth_r1_reachability.py::test_the_addendum_is_appended_to_both_bodies`.
+    """
+    assert text.endswith(GROWTH_R1_ADDENDUM), (
+        "GROWTH_R1_ADDENDUM is no longer the tail of the prompt. It is appended rather than "
+        "woven in on purpose (the FULL body has to stay a mechanical derivation of the live "
+        "n8n message); moving it into the body means this file needs a second slice-out, not "
+        "a bigger character count."
+    )
+    return text[: -len(GROWTH_R1_ADDENDUM)]
 
 
 def test_the_constant_has_the_live_size_not_the_export_size() -> None:
     """The export is 49,318 characters. Anything near that is the wrong body."""
-    assert len(SEMANTIC_PARSER_PROMPT) == CONSTANT_CHARS, (
-        f"parser prompt is {len(SEMANTIC_PARSER_PROMPT)} chars, expected {CONSTANT_CHARS}. "
+    body = _without_growth_r1_addendum(SEMANTIC_PARSER_PROMPT)
+    assert len(body) == CONSTANT_CHARS, (
+        f"parser prompt is {len(body)} chars before the growth r1 addendum, expected "
+        f"{CONSTANT_CHARS}. "
         "The live body is 46,942 chars before the two mechanical edits; the working-tree "
         "export is 49,318 and carries the unpromoted B-TEAM-1' lane change."
     )
@@ -133,13 +159,14 @@ def test_the_constant_is_reproducible_from_the_live_file() -> None:
     assert raw.count(DATE_EXPR) == 1
     derived = raw[1:].replace(DATE_EXPR, "{{current_date}}")
 
+    body = _without_growth_r1_addendum(SEMANTIC_PARSER_PROMPT)
     d_start, d_end = _requested_attributes_block(derived)
-    c_start, c_end = _requested_attributes_block(SEMANTIC_PARSER_PROMPT)
-    assert derived[:d_start] == SEMANTIC_PARSER_PROMPT[:c_start], (
+    c_start, c_end = _requested_attributes_block(body)
+    assert derived[:d_start] == body[:c_start], (
         "everything BEFORE the requested-attributes block must still be a pure mechanical "
         "derivation of the live file"
     )
-    assert derived[d_end:] == SEMANTIC_PARSER_PROMPT[c_end:], (
-        "everything AFTER the requested-attributes block must still be a pure mechanical "
-        "derivation of the live file"
+    assert derived[d_end:] == body[c_end:], (
+        "everything AFTER the requested-attributes block, and before the growth r1 addendum, "
+        "must still be a pure mechanical derivation of the live file"
     )

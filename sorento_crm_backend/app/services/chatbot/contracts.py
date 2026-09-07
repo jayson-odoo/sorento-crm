@@ -44,6 +44,10 @@ INTENT_HINTS = (
     "check_goods_receive",
     "check_spo",
     "submit_idea",
+    # Growth r1 A5 (AC-907): what WE ordered from a supplier. Its own intent rather than a
+    # sense of `check_order`, because the two answer from different tables and route to
+    # different teams - a customer's DO is `customer_service`, a PO is `purchasing`.
+    "check_po",
 )
 IntentHint = Literal[INTENT_HINTS]  # type: ignore[valid-type]
 
@@ -60,6 +64,10 @@ DOMAIN_HINTS = (
     "goods_receive",
     "spo_allocation",
     "ideate",
+    # Growth r1 A5 (AC-907). Named here so `coerce_domain_hint` stops nulling it (the
+    # b5b19cec class) and so `search_tool_chunks`' `source_id LIKE '%<domain>%'` filter can
+    # retrieve `crm_procurement_purchase_orders_placed_list`, whose name contains it.
+    "purchase_order",
 )
 DomainHint = Literal[DOMAIN_HINTS]  # type: ignore[valid-type]
 

@@ -291,7 +291,7 @@ class TestAnExplicitNullResetsRatherThanCrashes:
         [
             ("chatbot_completed_lanes", []),
             # A6 (chatbot-growth-r1, AC-911, migration 488): `spo_allocation` was
-            # removed from the shipped default - crm_procurement_spo_last_receipt_list
+            # removed from the shipped default - crm_procurement_spo_allocations_last_receipt_list
             # answers it now.
             ("chatbot_unsupported_domains", ["goods_receive"]),
             ("chatbot_stock_denial_enabled", False),

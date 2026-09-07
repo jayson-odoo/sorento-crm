@@ -130,6 +130,12 @@ def derive_routing(out: dict) -> dict:
     # separately (query_brands / brand entity), never in the team name.
     if domain == "promotion":
         return {"suggested_team": "marketing_promotion", "suggested_agent": "general_enquiries"}
+    # Growth r1 A5 (AC-907). A PO question is a PURCHASING question, the same team
+    # `master_products` and `incoming` already route to - a supplier order is what that team
+    # placed. Replay-safe by construction: `purchase_order` is a domain this plan invents, so
+    # no captured turn can carry it and no fixture's routing can move.
+    if domain == "purchase_order":
+        return {"suggested_team": "purchasing", "suggested_agent": "general_enquiries"}
     # ideate: no CS team (an idea is captured, never escalated) but its OWN access agent.
     # This is the SINGLE source of truth for the ideate agent: check-access keys on
     # suggested_agent and the no-access message renders from the SAME field.
@@ -181,6 +187,11 @@ AXIS_BY_DOMAIN: dict[str, dict[str, str]] = {
         "certificate": "attachment_scope",
         "attachment": "attachment_scope",
     },
+    # NO `purchase_order` row (growth r1 A5), deliberately. `inventory` - the biggest domain
+    # in the corpus - has none either: a domain absent from this map falls through to
+    # `HINT_AXIS_DEFAULT`, which already sends `product` to `product_scope`, and that is the
+    # right answer for a PO question whose only entity is a product code. A row here could
+    # only differ by inventing a private `po_scope`, which is the island C1 below warns about.
 }
 
 HINT_AXIS_DEFAULT: dict[str, str] = {
@@ -217,6 +228,11 @@ DOMAIN_SUBJECT_AXIS: dict[str, str] = {
     "promotion": "promo_scope",
     "order": "order_scope",
     "spo_allocation": "order_scope",
+    # Growth r1 A5: the SUBJECT of a PO question is the product it is a PO for, so an
+    # unrecognised hint under this domain falls back to the product axis - the same answer
+    # `inventory` and `master_products` give. NOT a private `po_scope`: C1 above is the note
+    # that a private axis is an island nothing evicts.
+    "purchase_order": "product_scope",
     "goods_receive": "doc",
     "forms": "doc",
     "portal_link": "doc",
@@ -236,6 +252,10 @@ DOMAIN_SUBJECT_HINT: dict[str, str] = {
     "forms": "form",
     "order": "order",
     "promotion": "promotion",
+    # Growth r1 A5: `crm_procurement_purchase_orders_placed_list` narrows by `product_ids`
+    # and nothing else, so the hint a bare subject takes under this domain is `product` -
+    # the same answer `inventory` and `incoming` give, for the same reason.
+    "purchase_order": "product",
 }
 
 MENU_LABELS: dict[str, dict[str, str]] = {
@@ -349,7 +369,19 @@ DOMAIN_BLOCKED_HINTS: dict[str, list[str]] = {
     # no brand or category param, so these can only pollute a document lookup.
     "resource_attachment": ["forms", "form", "product", "promotion", "customer", "transporter", "order", "customer_order", "order_number", "spo", "grn", "goods_receive", "inbound_shipment", "access_levels", "attachment_type", "flyer", "brand", "category"],
     "goods_receive": ["forms", "form", "product", "attachment", "promotion", "customer", "transporter", "order", "customer_order", "order_number", "spo", "grn", "goods_receive", "inbound_shipment", "access_levels", "category", "brand", "attachment_type", "flyer"],
-    "spo_allocation": ["forms", "form", "product", "attachment", "promotion", "customer", "transporter", "order", "customer_order", "order_number", "spo", "grn", "goods_receive", "inbound_shipment", "access_levels", "category", "brand", "attachment_type", "flyer"],
+    # 'product' removed by growth r1 A6 (AC-908). This row was written while the domain was
+    # in `DEFAULT_UNSUPPORTED_DOMAINS` and every spo turn was refused before an entity
+    # mattered, so blocking the subject cost nothing. A6 unblocked the domain and gave it
+    # `crm_procurement_spo_allocations_last_receipt_list`, whose ONLY narrowing parameter is
+    # `product_ids` - with 'product' still blocked, "last in for SRTWC8517" dropped the code
+    # here and asked the tool for the last receipt of ANYTHING. 'spo' stays blocked: the tool
+    # takes no SPO number.
+    "spo_allocation": ["forms", "form", "attachment", "promotion", "customer", "transporter", "order", "customer_order", "order_number", "spo", "grn", "goods_receive", "inbound_shipment", "access_levels", "category", "brand", "attachment_type", "flyer"],
+    # Growth r1 A5. Same shape as `incoming` (a product-narrowed read with a date window),
+    # minus `warehouse` because a PO line has no warehouse, plus the order words: a customer,
+    # a DO number or an SO number under a PO question is a topic switch, not a filter -
+    # `crm_procurement_purchase_orders_placed_list` has no parameter that could use one.
+    "purchase_order": ["forms", "form", "attachment", "promotion", "customer", "transporter", "order", "customer_order", "order_number", "spo", "grn", "goods_receive", "inbound_shipment", "warehouse", "access_levels", "category", "brand", "attachment_type", "flyer", "resource_attachment"],
 }
 
 # OWNER RULING K, rule 3 (2026-09-06): which entity types are a FILTER on a carried
@@ -366,6 +398,10 @@ DOMAIN_BLOCKED_HINTS: dict[str, list[str]] = {
 MEMBER_OFFER_FILTER_HINTS: dict[str, frozenset[str]] = {
     "order": frozenset({"customer", "product"}),
     "inventory": frozenset({"product"}),
+    # NO `purchase_order` row (growth r1 A5): the trigger this comment names is a MEASURED
+    # turn where an entity reply to a pending member offer in that domain is read as a new
+    # query, and there is no such turn - a member offer is a customer-family roster, and
+    # nothing in a supplier-order answer builds one. Add the row when a turn shows it.
 }
 
 # OWNER RULING K, rule 4 (2026-09-06): what a BARE entity IS, under a carried domain.
@@ -387,6 +423,11 @@ BARE_ENTITY_TYPE_BY_DOMAIN: dict[str, str] = {
     "incoming": "product",
     "promotion": "product",
     "order": "customer",
+    # NO `purchase_order` row (growth r1 A5), by the rule this comment already states: the
+    # trigger for a fifth row is a MEASURED turn where a bare token under that domain is
+    # mis-hinted, and the domain has answered no live turn yet. A bare code under a carried
+    # `purchase_order` therefore keeps the model's own hint, and the resolver decides - which
+    # is the pre-ruling behaviour, not a regression.
 }
 
 # Broaden-only blocked: hints that NARROW the result and therefore contradict an
@@ -402,6 +443,9 @@ DOMAIN_BROADEN_BLOCKED_HINTS: dict[str, list[str]] = {
     "resource_attachment": ["attachment"],
     "goods_receive": ["goods_receive"],
     "spo_allocation": ["spo"],
+    # Growth r1 A5: "show me every PO" widens off the product, exactly as `inventory` and
+    # `master_products` do off theirs.
+    "purchase_order": ["product"],
 }
 
 # C2's guard list is deliberately WIDER than the parser's declared enum: these eight are
@@ -817,7 +861,17 @@ def output_exchange(json_item: dict, parent_input: dict) -> dict:
 #
 # Imported rather than restated: one list of required keys, in the file that declares the
 # schema the provider is held to.
-_EXEMPT_FROM_REQUIRED = frozenset({"broaden_axis"})
+#
+# Growth r1 (AC-909 / AC-910) joins `group_by` and `top_n` to the exemption for the SAME
+# reason, one step further along: they are declared in the schema so the provider is HELD
+# to emitting them, but no prompt version before `490_chatbot_parser_growth_r1` asks for
+# them, so not one of the 481 captured emissions carries either. Requiring them would fail
+# every replayed fixture in the corpus and every live turn still answered by the published
+# (unlabelled-successor) prompt. Both readers - `_fetch_semantic_input` (`.get`) and
+# `fetch.entity_ids_transformer` (`jsc.get`) - already read absence as null, and nothing
+# here WRITES either key, so an absent one cannot raise and never lands in the emission
+# (which is what keeps every captured `output_exchange` fixture byte-equal).
+_EXEMPT_FROM_REQUIRED = frozenset({"broaden_axis", "group_by", "top_n"})
 _EMISSION_ARRAY_KEYS = ("entities", "access_levels", "requested_attributes", "reference_positions")
 _EMISSION_OBJECT_KEYS = ("routing", "escalation")
 

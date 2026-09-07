@@ -637,7 +637,7 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     # `SystemSetting`'s own (`app/models/user.py`), which is the source of truth.
     _CHATBOT_COLUMN_DEFAULTS: dict[str, object] = {
         # A6 (chatbot-growth-r1, AC-911, migration 488): `spo_allocation` removed -
-        # crm_procurement_spo_last_receipt_list answers it now.
+        # crm_procurement_spo_allocations_last_receipt_list answers it now.
         "chatbot_unsupported_domains": ["goods_receive"],
         "chatbot_completed_lanes": [],
         "chatbot_stock_denial_enabled": False,

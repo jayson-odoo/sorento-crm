@@ -999,7 +999,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "purchase_orders.supplier).\n\n"
             "NEVER NETTED against incoming: `spo_allocations.po_line_id` is NULL on every row, "
             "so this tool NEVER subtracts what has already arrived - for that use "
-            "crm_procurement_spo_last_receipt_list, and for Foundre's rule ('no stock, no "
+            "crm_procurement_spo_allocations_last_receipt_list, and for Foundre's rule ('no stock, no "
             "incoming, but a PO is placed') the CRM probes this tool itself.\n\n"
             "FILTER BY UUID: `product_ids` (canonical product UUIDs, csv / JSON / repeated). "
             "Date window: expected_date_from / expected_date_to.\n\n"
@@ -1014,12 +1014,12 @@ CATALOG: tuple[ToolSpec, ...] = (
             "group_by", "include_summary", "sort", "dir",
         ),
         domain="purchase_order",
-        related_tools=("crm_procurement_spo_last_receipt_list",),
+        related_tools=("crm_procurement_spo_allocations_last_receipt_list",),
         escalation_team="procurement",
     ),
     # --- procurement: SPO last receipt (A6, chatbot-growth-r1) ---
     ToolSpec(
-        "crm_procurement_spo_last_receipt_list",
+        "crm_procurement_spo_allocations_last_receipt_list",
         (
             "Most recently RECEIVED SPO allocation(s) for a product - 'last in for X', "
             "'last incoming qty', '上次进货', 'last 3 in'. Each row carries spo_number, "

@@ -62,8 +62,52 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
   the allowed axes. Evidence: pytest parametrised over the three tools.
 - AC-910 The parser emits `group_by` and `top_n`; "last 3 incoming" yields `top_n=3`,
   "by customer" yields `group_by=customer`. Evidence: replay on new captures.
+
+  **Delivered 7 Sep 2026 as a REACHABILITY chain, not a replay on new captures.** There
+  are no new captures to replay: the new prompt version is published UNLABELLED (migration
+  `490_chatbot_parser_growth`, the same immutable-versions-plus-movable-labels split as
+  475 / 480 / 487), so no live turn has run under it and none can until the owner moves the
+  `production` label. Grading it on captures would need captures that cannot exist yet.
+  What is graded instead, by
+  `tests/chatbot/test_parser_growth_r1_reachability.py`, is every link a customer's
+  sentence travels between the prompt and the tool's own arguments: the addendum teaches
+  each cue in `documentation/plans/chatbot/samples/parser-growth-r1-phrases.json`, the
+  strict schema requires `group_by` / `top_n` so the provider must emit them, the
+  post-processor exempts both from its required-key check so all 481 captured emissions
+  still grade (`test_replay.py` stays green, no new divergence), `_fetch_semantic_input`
+  carries them, and `entity_ids_transformer` turns them into `group_by` / `limit` /
+  `top_n` on the right tool. Whether the MODEL obeys the vocabulary is the shadow window's
+  question (AC-952), not this one's.
 - AC-911 `spo_allocation` is no longer in `DEFAULT_UNSUPPORTED_DOMAINS`; `goods_receive`
   still is. Evidence: pytest on `route.decide`.
+
+  **Two further blockers found and fixed 7 Sep 2026**, both of which left the domain
+  unblocked and still unanswerable:
+
+  1. `EmbeddingReadService.search_tool_chunks` narrows the tool pool with
+     `source_id LIKE '%<domain_hint>%'` over `implemented::<tool name>`, a substring match
+     on the NAME (`ToolSpec.domain` in the MCP catalogue is documentation and nothing reads
+     it at retrieval time). `crm_procurement_spo_allocations_last_receipt_list` does not contain
+     "spo_allocation", so the filter matched nothing and every "last in" ended `not_found`.
+     The tool is renamed `crm_procurement_spo_allocations_last_receipt_list`, which does.
+     `crm_procurement_purchase_orders_placed_list` already contains "purchase_order" and
+     needed no rename. Pinned for every domain by
+     `test_parser_growth_r1_reachability.py::test_every_domain_can_retrieve_at_least_one_of_its_own_tools`.
+  2. `DOMAIN_BLOCKED_HINTS["spo_allocation"]` blocked `product` - harmless while the domain
+     was refused before an entity mattered, fatal once it answers, because `product_ids` is
+     the tool's only narrowing parameter. "last in for SRTWC8517" dropped the code and
+     asked for the last receipt of anything. `product` removed; `spo` stays blocked (the
+     tool takes no SPO number).
+- AC-912 (added 7 Sep 2026, growth r1 Slice A) A `purchase_order` turn is reachable: the
+  domain is in `DOMAIN_HINTS` (so `coerce_domain_hint` does not null it), `check_po` is in
+  `INTENT_HINTS`, the domain is supported by default, `derive_routing` sends it to
+  `purchasing` / `general_enquiries`, and it carries its own rows in `DOMAIN_SUBJECT_AXIS`,
+  `DOMAIN_SUBJECT_HINT`, `DOMAIN_BLOCKED_HINTS` and `DOMAIN_BROADEN_BLOCKED_HINTS`. It
+  deliberately has NO row in `AXIS_BY_DOMAIN` (the `HINT_AXIS_DEFAULT` fallback already
+  sends `product` to `product_scope`, as it does for `inventory`), none in
+  `BARE_ENTITY_TYPE_BY_DOMAIN` and none in `MEMBER_OFFER_FILTER_HINTS` (both tables state
+  a MEASURED turn as the trigger for a new row, and the domain has answered none yet).
+  Evidence: `tests/chatbot/test_parser_growth_r1_reachability.py`.
 
 ## B. Cross-domain ladder
 

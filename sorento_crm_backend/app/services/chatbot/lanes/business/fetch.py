@@ -398,7 +398,7 @@ GROUP_BY_TOOLS: frozenset[str] = frozenset(
 # A6: the one tool with its OWN `top_n` param (default 1, "last 3 in"); every
 # other GROUP_BY_TOOLS/ORDER_TOOLS member aliases `top_n` to `limit` instead
 # (above), since it has no `top_n` param of its own.
-TOP_N_DIRECT_TOOLS: frozenset[str] = frozenset({"crm_procurement_spo_last_receipt_list"})
+TOP_N_DIRECT_TOOLS: frozenset[str] = frozenset({"crm_procurement_spo_allocations_last_receipt_list"})
 
 # n8n hard-codes this and OVERRIDES the `semantic_input` value with it (which carried the
 # identical string in all 24 sampled executions). D5 says the respond.io space id comes
@@ -651,7 +651,15 @@ CHATBOT_READ_ONLY_TOOLS: frozenset[str] = frozenset(
         "crm_order_management_orders_list",
         "crm_portal_link_get",
         "crm_procurement_purchase_orders_placed_list",
-        "crm_procurement_spo_last_receipt_list",
+        # `..._spo_allocations_...`, not `..._spo_...`, and the extra word is load-bearing
+        # (growth r1, AC-908). `EmbeddingReadService.search_tool_chunks` narrows the tool
+        # pool with `source_id LIKE '%<domain_hint>%'` over `implemented::<tool name>`, so a
+        # `spo_allocation` turn can only ever retrieve a tool whose NAME contains
+        # "spo_allocation". Under the shorter name the domain filter matched nothing and
+        # every "last in for X" ended `not_found` - the same failure mode as the
+        # b5b19cec "purchasing" turn, from the other end. `ToolSpec.domain` in the MCP
+        # catalogue is documentation only; nothing reads it at retrieval time.
+        "crm_procurement_spo_allocations_last_receipt_list",
         "crm_project_detail",
         "crm_project_forecast",
         "crm_project_quotations_list",

@@ -53,7 +53,7 @@ def test_top_n_aliases_to_limit_for_orders_tool():
 def test_top_n_stays_top_n_for_spo_last_receipt_tool():
     trigger = {
         "entities": [],
-        "tool": "crm_procurement_spo_last_receipt_list",
+        "tool": "crm_procurement_spo_allocations_last_receipt_list",
         "semantic_input": {"top_n": 3, "contact_id": "1", "space_id": "s"},
     }
     out = fetch.entity_ids_transformer(trigger)

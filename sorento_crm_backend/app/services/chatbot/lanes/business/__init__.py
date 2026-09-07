@@ -112,7 +112,7 @@ def _fetch_semantic_input(
     contact_id: Any,
     space_id: str | None,
 ) -> dict[str, Any]:
-    """`Call 'sub-get-results'`'s `semantic_input`, all thirteen fields.
+    """`Call 'sub-get-results'`'s `semantic_input`, all thirteen fields plus growth r1's two.
 
     It was `{}`, and that was not a small omission: `access_levels`, `is_active`,
     `date_mode`, `order_status`, `requested_attributes` and both date filters all reach the
@@ -150,6 +150,15 @@ def _fetch_semantic_input(
             if parse_output.get("requested_attributes") is not None
             else []
         ),
+        # Growth r1 (AC-909 / AC-910). Fifteen fields now, and these two are the reason the
+        # docstring above says an empty object is not a small omission: `entity_ids_
+        # transformer` reads `group_by` and `top_n` off THIS object, so without them the
+        # transformer's grouping and top-n arms were unreachable from a live turn no matter
+        # what the parser emitted. `.get` reads a pre-growth-r1 emission (which carries
+        # neither key, see `output_exchange._EXEMPT_FROM_REQUIRED`) as null, and the
+        # transformer omits a null rather than sending one.
+        "group_by": parse_output.get("group_by"),
+        "top_n": parse_output.get("top_n"),
     }
 
 

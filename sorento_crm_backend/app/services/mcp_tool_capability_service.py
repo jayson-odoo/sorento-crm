@@ -1175,6 +1175,54 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         typical_user_questions=("Admin: group raw allocations by SPO number.",),
         aliases=("admin raw spo by number",),
     ),
+    # Growth r1 A5 / A6 (AC-907, AC-908). Both are CUSTOMER-FACING reads the chatbot picks by
+    # cosine similarity, so their retrieval text is what decides whether "PO for SRTWC8517"
+    # and "last in for SRTWC8517" reach a tool at all - `_fallback_intent` would have derived
+    # something from the path and nothing from the customer's actual words. Both still need
+    # `python -m app.scripts.seed_mcp_tool_capabilities` after deploy: the startup
+    # `sync_catalog` writes the `mcp_tools` ROW and no embedding.
+    "crm_procurement_purchase_orders_placed_list": ToolIntent(
+        category="general_enquiries.incoming_stock",
+        intent="Purchase orders WE placed with a supplier that are not fully received yet.",
+        description=(
+            "Open purchase order LINES (qty_ordered - qty_received > 0, line still open) with "
+            "po_number, product_code, outstanding_qty, expected_date and supplier (supplier is "
+            "restricted - a dealer never sees it). Use this for what WE ordered from a SUPPLIER, "
+            "never for what a customer ordered from us (that is crm_order_management_orders_list). "
+            "NEVER netted against incoming shipments: a PO and an SPO are two separate answers. "
+            "group_by = product | supplier | date; include_summary adds the placed quantity and "
+            "line count."
+        ),
+        typical_user_questions=(
+            "Is there a PO for SRTWC8517?",
+            "PO placed but not yet shipped for this item?",
+            "What did we order from the supplier and when is it expected?",
+            "Any purchase order for this product?",
+            "\u91c7\u8d2d\u5355\u4e0b\u4e86\u5417\uff1f",
+        ),
+        aliases=("po placed", "purchase order outstanding", "supplier order", "po for product"),
+    ),
+    "crm_procurement_spo_allocations_last_receipt_list": ToolIntent(
+        category="general_enquiries.incoming_stock",
+        intent="The most recently RECEIVED SPO allocation for a product - 'last in', 'last received'.",
+        description=(
+            "Most recent received SPO allocation rows for a product: spo_number, "
+            "quantity_received, the date actually recorded plus a date_label naming which "
+            "column answered ('Arrived', 'Arrived (port)', 'Received (recorded)'), and "
+            "warehouse. Use this for 'when did we last receive this and how much'. NOT for "
+            "current stock on hand (crm_inventory_stock_balance_list) and NOT for what is still "
+            "on the way (crm_incoming_stock_by_product). top_n defaults to 1; 'last 3 in' is "
+            "top_n=3."
+        ),
+        typical_user_questions=(
+            "Last in for SRTWC8517?",
+            "What was the last incoming qty for this product?",
+            "When did we last receive this item?",
+            "Show me the last 3 receipts for this product.",
+            "\u4e0a\u6b21\u8fdb\u8d27\u591a\u5c11\uff1f",
+        ),
+        aliases=("last in", "last received", "last incoming qty", "last receipt"),
+    ),
     "crm_procurement_spo_allocations_list": ToolIntent(
         category="internal_admin.procurement",
         intent="ADMIN ONLY - flat list of raw SPO allocation rows with receipt_status and received/rejected quantities.",

@@ -585,7 +585,7 @@ DIVERGENCES: list[Divergence] = [
         ),
     ),
     # A6 (chatbot-growth-r1, AC-911): `spo_allocation` is no longer in
-    # `DEFAULT_UNSUPPORTED_DOMAINS` - `crm_procurement_spo_last_receipt_list` answers
+    # `DEFAULT_UNSUPPORTED_DOMAINS` - `crm_procurement_spo_allocations_last_receipt_list` answers
     # "last in" now, so a turn asking about it routes to `business_query` instead of
     # `not_supported`. This capture is exactly that case (test_run_id
     # "rs1b4-01-notsupported"), so the whole item diverges (branch_kind and the

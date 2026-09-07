@@ -205,7 +205,7 @@ class TestAC924ThirdCodeNeverDeclaredAbsentWithoutBeingAsked:
 class TestAC911SPOAllocationDomainNoLongerUnsupported:
     def test_spo_allocation_removed_goods_receive_stays(self) -> None:
         """AC-911: `spo_allocation` is no longer in `DEFAULT_UNSUPPORTED_DOMAINS`;
-        `goods_receive` still is - `crm_procurement_spo_last_receipt_list` (A6)
+        `goods_receive` still is - `crm_procurement_spo_allocations_last_receipt_list` (A6)
         answers "last in" now, nothing in this plan reads GRN data."""
         from app.services.chatbot.head.route import DEFAULT_UNSUPPORTED_DOMAINS
 
