@@ -84,7 +84,15 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
   brands. Evidence: pytest per rule `reset_on_topic`.
 - AC-944 A picker of 3 products is offered; "2" resolves to the second frozen option even if
   the product list would resolve differently today; "2" again after the pick, with no open
-  question alive, is treated as a new message, not a pick. Evidence: world.
+  question alive, is treated as a new message, not a pick. Evidence: world
+  `owner-pick-then-next-pick`.
+  **Amended 7 Sep 2026 (review deviation 5, owner accepted): a pick does not consume the
+  roster.** Owner ruling K rule 1, shipped a month earlier from a production transcript,
+  says an offer the customer can still SEE survives being answered - "1", then "2", then
+  "3" all resolve against the same list. So the second clause holds only once the question
+  is no longer ALIVE, which is what the TTL decides and what the decay worlds grade; a
+  second "2" against a list still on screen is still a pick. The two rules cannot both
+  hold and the ruling is the later and more specific one.
 - AC-945 Escalate offer, then "yes" runs the escalation lane; "no" renders the declined copy;
   "SRTWC8517 stock?" instead of yes/no leaves the offer unanswered, answers the stock, and
   the offer is cleared with a trace line after its TTL. Evidence: three worlds.

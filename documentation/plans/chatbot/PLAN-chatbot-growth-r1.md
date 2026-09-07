@@ -246,6 +246,21 @@ persisting a wall clock would break AC-206 (a dry run's `session_patch` is byte-
 what a live run persists). The trace carries it: every `focus` and `decay` entry is stamped
 `at` by `trace.TurnTrace.add`.
 
+**Deviation 5, and it is a BEHAVIOUR reversal the owner accepted (review, 7 Sep 2026).**
+AC-944's second clause reads: "'2' again after the pick, with no open question alive, is
+treated as a new message, not a pick". It is not, and the reason is owner ruling K rule 1,
+which this plan's predecessor shipped a month earlier: an offer roster the customer can
+still SEE survives the answer, so "1", then "2", then "3" all resolve against the same
+list. A pick does not consume the roster; the TTL does. So a second "2" against a list
+still on screen is still a pick, and only once the question has aged out (or a new roster
+has replaced it) does it become a new message.
+
+The two rules cannot both hold, and the ruling is the later and more specific one - it was
+made from a production transcript where the second pick had nothing to resolve against.
+The clause is therefore read as "once the question is no longer alive", which is exactly
+what `owner-pick-then-next-pick` and the decay worlds grade. The owner accepted this in the
+7 Sep review.
+
 **`is_active` gets no focus slot.** The nine axes above do not include it, and it is not one
 of them: "discontinued" is a property of the records being asked about rather than of what
 the conversation is about. `reuse_alive` carries it from the previous state, exactly as the

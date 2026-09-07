@@ -700,6 +700,12 @@ class OwnerWorld:
     # The focus TTL this world runs under. Named per world because the TTL is what two of
     # them are about.
     ttl_turns: int = 3
+    # Which LANE this world lets run for real, through the seam fakes the s6a and s5 tests
+    # already use. `None` composes with the `not_supported` fragments, which is right for a
+    # world about memory and scope; `"business"` runs the real resolve+gate and the exit
+    # contract; `"escalation"` runs `route.decide` into the real arm and stubs the lane
+    # itself at the function boundary, so the world grades that the answer REACHED it.
+    lane: str | None = None
     # Which parser CONTRACT this conversation runs under. False is the PROMOTED one (v1):
     # 26 keys, no `Focus:` line, the three growth-r1 signals inert. A world about a pick,
     # an anaphora or a topic reset needs v3 and says so, which also documents which of
@@ -755,13 +761,18 @@ _CONTINUATION: dict[str, Any] = {
 OWNER_WORLDS: tuple[OwnerWorld, ...] = (
     OwnerWorld(
         world_id="owner-pick-then-next-pick",
+        lane="business",
         emits_v3=True,
         acs=("AC-944",),
         why=(
             "A picker of three products is offered. '2' resolves to the SECOND FROZEN "
-            "option, and a second pick against the same list still resolves - the roster "
-            "is on the customer's screen until it ages out, which is owner ruling K rule "
-            "1 seen from the dialogue side."
+            "option, and a second pick against the same list still resolves. That second "
+            "half is deviation 5 in the plan and the UAC, accepted by the owner on 7 Sep "
+            "2026: AC-944 as written says a repeat pick becomes a new message, and owner "
+            "ruling K rule 1 - shipped a month earlier from a production transcript where "
+            "the second pick had nothing to resolve against - says an offer the customer "
+            "can still SEE survives being answered. A pick does not consume the roster; "
+            "the TTL does, which the decay worlds grade."
         ),
         turns=(
             OwnerTurn(
@@ -791,6 +802,9 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
                     "answered": "product_pick",
                     "focus_products": ["SRTKS8091-B"],
                     "qf": {"entity_op": "replace"},
+                    "branch_kind": "business_query",
+                    "lane_ran": True,
+                    "exit_kind_declared": True,
                 },
             ),
             OwnerTurn(
@@ -809,6 +823,7 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
     OwnerWorld(
         world_id="owner-escalate-declined-after-a-result",
         emits_v3=True,
+        lane="escalation",
         acs=("AC-945",),
         why=(
             "An escalation offer, then 'no'. The declined copy is the lane's; what this "
@@ -836,7 +851,54 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
                     "is_affirmative": False,
                     "answers_open_question": _answers(resolved=True, yes_no="no"),
                 },
-                expect={"answered": "escalate_yes_no", "qf": {"is_affirmative": False}},
+                expect={
+                    "answered": "escalate_yes_no",
+                    "branch_kind": "escalation_declined",
+                    "lane_ran": False,
+                    "qf": {"is_affirmative": False},
+                },
+            ),
+        ),
+    ),
+    OwnerWorld(
+        world_id="owner-escalate-yes-runs-the-escalation-lane",
+        acs=("AC-945",),
+        emits_v3=True,
+        lane="escalation",
+        why=(
+            "The other half of AC-945, and the one that hands a conversation to a person: "
+            "an offer, then 'yes'. The handler has to reach `route.decide` as an "
+            "escalation CONFIRMATION and the turn has to land on the `out_of_scope` arm "
+            "with the lane actually called - a decline that merely failed to route would "
+            "pass a test that only looked at the parse."
+        ),
+        turns=(
+            OwnerTurn(
+                message="SRTWC8517 stock?",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "inventory",
+                    "intent_hint": "check_stock",
+                    "entities": [_product("SRTWC8517")],
+                },
+                expect={"focus_products": ["SRTWC8517"]},
+            ),
+            OwnerTurn(
+                message="yes please",
+                arm={"pending": {"kind": "escalation_offer", "team": "warehouse"}},
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "entities": [],
+                    "is_affirmative": True,
+                    "answers_open_question": _answers(resolved=True, yes_no="yes"),
+                },
+                expect={
+                    "answered": "escalate_yes_no",
+                    "branch_kind": "out_of_scope",
+                    "lane_ran": True,
+                    "qf": {"message_type": "request_for_help"},
+                },
             ),
         ),
     ),
@@ -1109,6 +1171,7 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
     ),
     OwnerWorld(
         world_id="owner-partial-miss-pick-resolves-the-dym-roster",
+        lane="business",
         acs=("AC-944", "AC-948"),
         emits_v3=True,
         why=(
@@ -1166,6 +1229,9 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
                     # The second SUGGESTION, and the sibling that already resolved.
                     "qf_entity_codes": ["SRTKS8091-B", "SRTKS6091"],
                     "focus_products": ["SRTKS8091-B", "SRTKS6091"],
+                    "branch_kind": "business_query",
+                    "lane_ran": True,
+                    "exit_kind_declared": True,
                 },
             ),
         ),

@@ -389,15 +389,20 @@ def _owner_emission(overrides: dict) -> dict:
     return emission
 
 
-def _owner_fragments() -> dict:
+def _owner_fragments(world: worlds_mod.OwnerWorld) -> dict:
     """The `sub-output` trigger contract, minimal, so the TAIL runs and writes the session.
 
-    `not_supported` because these worlds grade memory and scope, not the answer: any lane
-    that composes a reply would drag its own copy, its own roster and its own offer
-    lifecycle into a test about which product is in scope.
+    The item's branch kind follows the world's lane: a `business` world has just run the
+    real resolve+gate and delegates as `business_query`, so feeding the tail
+    `not_supported` would compose the wrong arm over a real lane result. A world with no
+    lane grades memory and scope, and `not_supported` keeps a reply builder's own copy,
+    roster and offer lifecycle out of a test about which product is in scope.
     """
     return {
-        "item": {"branch_kind": "not_supported", "allowed": True},
+        "item": {
+            "branch_kind": "business_query" if world.lane == "business" else "not_supported",
+            "allowed": True,
+        },
         "result": None,
         "resolved": None,
         "gate": None,
@@ -464,6 +469,27 @@ def _codes(entities: Any) -> list[str] | None:
     return [e.get("canonical_code") or e.get("raw") for e in entities if isinstance(e, dict)]
 
 
+def _owner_resolve_gate_bundle(calls: list[str]):
+    """The three off-box reads the resolve+gate makes, faked exactly as s6a fakes them."""
+    from app.services.chatbot.lanes.business.services import ResolveGateServices
+
+    def _access_types(*, contact_id, space_id):
+        calls.append("access_types")
+        return [{"name": "Sorento Dealer"}]
+
+    def _resolve_entity(body):
+        calls.append("resolve_entity")
+        return {"tokens": [], "resolutions": [], "unresolved_tokens": []}
+
+    def _probe(**kwargs):
+        calls.append("probe")
+        return None
+
+    return ResolveGateServices(
+        access_types=_access_types, resolve_entity=_resolve_entity, probe=_probe
+    )
+
+
 def _assert_owner_expectations(
     world: worlds_mod.OwnerWorld,
     turn: worlds_mod.OwnerTurn,
@@ -472,6 +498,8 @@ def _assert_owner_expectations(
     variables: dict,
     qf: dict,
     trace: list,
+    result: Any,
+    lane_calls: list[str],
 ) -> None:
     where = f"{world.world_id} turn {index + 1} ({turn.message!r})"
     focus = variables.get("focus") or {}
@@ -518,6 +546,20 @@ def _assert_owner_expectations(
         # product they stopped talking about four turns ago.
         codes = _codes(qf.get("entities")) or []
         assert codes == expect["qf_entity_codes"], f"{where}: the scope that reached the lane"
+    if "branch_kind" in expect:
+        assert result.branch_kind == expect["branch_kind"], f"{where}: the lane it routed to"
+    if "lane_ran" in expect:
+        assert bool(lane_calls) is expect["lane_ran"], (
+            f"{where}: whether the lane actually ran (calls: {lane_calls})"
+        )
+    if expect.get("exit_kind_declared"):
+        # The business lane's own contract: it resumes on this, so a world that claims to
+        # have run the lane must show the exit it produced.
+        from app.services.chatbot.contracts import EXIT_KINDS
+
+        assert (result.delegate_payload or {}).get("_exit_kind") in EXIT_KINDS, (
+            f"{where}: the resolve+gate produced no exit contract"
+        )
     for key, value in (expect.get("qf") or {}).items():
         assert qf.get(key) == value, f"{where}: qf.{key}"
 
@@ -530,6 +572,7 @@ def test_owner_world(world, owner_stubs, session_factory, monkeypatch) -> None:
     from app.models.chatbot_turn import ChatbotTurn
     from app.models.user import SystemSetting
 
+    lane_calls: list[str] = []
     db = session_factory()
     db.execute(text("DELETE FROM respond_contacts WHERE respond_io_id = :c"), {"c": OWNER_CONTACT})
     db.execute(
@@ -544,7 +587,32 @@ def test_owner_world(world, owner_stubs, session_factory, monkeypatch) -> None:
         settings_row = SystemSetting()
         db.add(settings_row)
     settings_row.chatbot_focus_ttl_turns = world.ttl_turns
+    if world.lane == "business":
+        # The real resolve+gate, through the SAME seam bundle `test_s6a_gate_dry_run_and_
+        # seams.py` uses: the resolver, the entity gate and the exit contract all run, and
+        # only the three off-box reads are faked.
+        settings_row.chatbot_business_lane_enabled = True
+    if world.lane == "escalation":
+        lanes = list(settings_row.chatbot_completed_lanes or [])
+        if "out_of_scope" not in lanes:
+            settings_row.chatbot_completed_lanes = [*lanes, "out_of_scope"]
     db.commit()
+
+    if world.lane == "business":
+        monkeypatch.setattr(
+            engine_mod.business_services,
+            "production_services",
+            lambda db, *, space_id=None: _owner_resolve_gate_bundle(lane_calls),
+        )
+    if world.lane == "escalation":
+        # Stubbed at the FUNCTION boundary, not at the branch: `route.decide` runs for
+        # real, so the world grades that the answer actually reached the arm rather than
+        # that the parse looked right.
+        def _fake_escalation(ctx, item, *, dry_run=False, session_factory=None):
+            lane_calls.append("escalation")
+            return {"arm": "human-intervention", "clarify": None, "actions": [], "pending": None}
+
+        monkeypatch.setattr(engine_mod, "run_escalation_lane", _fake_escalation)
 
     for index, turn in enumerate(world.turns):
         if turn.arm:
@@ -571,13 +639,15 @@ def test_owner_world(world, owner_stubs, session_factory, monkeypatch) -> None:
         envelope = _owner_envelope(
             turn.message, index, quoted="ZZT-owner-quoted" if turn.quoted_rows else None
         )
+        lane_calls.clear()
         result = engine_mod.run_turn(Envelope(**envelope), session_factory=session_factory)
         assert result.status != "failed", (
             f"{world.world_id} turn {index + 1} failed at {result.stage}: {result.error}"
         )
-        engine_mod.complete_turn(
-            result.turn_id, _owner_fragments(), session_factory=session_factory
-        )
+        if result.delegate is not None:
+            engine_mod.complete_turn(
+                result.turn_id, _owner_fragments(world), session_factory=session_factory
+            )
         row = (
             session_factory()
             .query(ChatbotTurn)
@@ -591,6 +661,8 @@ def test_owner_world(world, owner_stubs, session_factory, monkeypatch) -> None:
             variables=_owner_session(session_factory),
             qf=((result.ctx or {}).get("parse") or {}).get("output") or {},
             trace=list(row.trace or []),
+            result=result,
+            lane_calls=list(lane_calls),
         )
         if turn.quoted_rows is not None:
             monkeypatch.undo()
