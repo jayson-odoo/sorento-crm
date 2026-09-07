@@ -173,6 +173,25 @@ def test_incoming_shipments_excludes_draft_shipment_but_keeps_a_real_one(db):
     assert f"{MARKER}-SHIP-REAL-5" in numbers
 
 
+def test_incoming_shipments_query_also_matches_the_forwarder_order_ref(db):
+    # S3, review round 1: `提单号` lands in `forwarder_order_ref` (the SO field) on an
+    # upload made through the supplier-documents dialog (Q1 ruling) - a query search on
+    # the B/L alone missed every container uploaded that way.
+    p = _product(db, f"{MARKER}-SKU-SO")
+    real = _shipment(db, number=f"{MARKER}-SHIP-SO", status="in_transit")
+    shipment = db.query(InboundShipment).filter(InboundShipment.id == real).one()
+    shipment.forwarder_order_ref = f"{MARKER}-SOREF-9001"
+    _line(db, real, p, shipped=6)
+    db.commit()
+
+    res = IncomingStockService(db).incoming_shipments(
+        eta_from=date(2026, 1, 1), eta_to=date(2026, 12, 31), query=f"{MARKER}-SOREF-9001",
+    )
+
+    numbers = [row["shipment_number"] for row in res["data"]]
+    assert f"{MARKER}-SHIP-SO" in numbers
+
+
 def test_shipment_attachment_returns_none_for_a_draft_shipment(db):
     draft = _shipment(db, number=f"{MARKER}-SHIP-DRAFT-6", status="draft")
     db.commit()

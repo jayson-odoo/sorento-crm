@@ -20,10 +20,12 @@ import {
   Info,
   LayoutGrid,
   LoaderCircle,
+  Pencil,
   Plus,
   RefreshCw,
   Table2,
   Trash2,
+  X,
 } from 'lucide-react';
 import {
   AlertDialog,
@@ -62,10 +64,13 @@ import {
   useCreateSpo,
   useDeleteSpo,
   useDownloadSpoWorksheet,
+  useReviseSpo,
+  useSpoPlannerState,
   useSpoSuggestion,
 } from '@/app/(protected)/scm/hooks/useFulfilment';
 import { purchaseOrderStatusPill } from '@/app/(protected)/scm/lib/purchaseOrderStatus';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { spoDetailHref } from '@/lib/spo-detail';
 import type {
   SpoConfirmLine,
   SpoCoverageLine,
@@ -144,6 +149,16 @@ type LineState = {
   poTakeIds: string[];
   /** Which demand this SPO is pointed at - `SpoCoverageLine.key`s (Q4, AC-G3). */
   soKeys: string[];
+  /** The user's own Take number, by `key` (R19, AC-I2) - present only for a row she typed
+   *  into; every other ticked row still follows the cascade default. Editing a row clears
+   *  every override AFTER it in the coverage list's own order ("re-runs the remainder"),
+   *  never the ones before it - see `setSoTake`. */
+  soTakeOverrides: Record<string, number>;
+  /** The order the SO-covered picker is currently SHOWING this line's rows in (S7, review
+   *  round 1) - project tab then retail tab, each in its own active sort. The Take cascade
+   *  walks this, so "the rows after the one she edited" means the rows after it on screen.
+   *  Empty until the picker has been opened, and the server's own walk stands until then. */
+  soOrder: string[];
 };
 type ScheduleView = 'po' | 'so';
 
@@ -215,9 +230,61 @@ function coverageTakes(
   return out;
 }
 
+/**
+ * `coverageTakes`, with the operator's own edits layered on top (R19, AC-I2).
+ *
+ * A ticked row with no override still follows the waterfall (`coverageTakes`'s own walk,
+ * against whatever the ROW BEFORE it left over); a row the operator typed a number into
+ * takes exactly that instead, whether or not it fits. This is why `setSoTake` clears every
+ * override AFTER the row she just edited (`resolvedSoTakes` never bounds the OVERRIDE
+ * itself, only the rows still following the cascade) - a stale override further down the
+ * list would otherwise disagree with a total that just changed above it.
+ */
+function orderedCoverage(ln: SpoSuggestionLine, order?: string[]): SpoCoverageLine[] {
+  const rows = ln.so_coverage ?? [];
+  if (!order?.length) return rows;
+  const rank = new Map(order.map((key, i) => [key, i] as const));
+  return rows
+    .map((entry, i) => ({ entry, i }))
+    .sort((x, y) => {
+      // A row the picker is not currently showing (filtered out of both tabs) keeps the
+      // server's own place, at the end - it is still ticked, and dropping it from the walk
+      // would change what a search box is allowed to do.
+      const rx = rank.get(x.entry.key) ?? Number.MAX_SAFE_INTEGER;
+      const ry = rank.get(y.entry.key) ?? Number.MAX_SAFE_INTEGER;
+      return rx - ry || x.i - y.i;
+    })
+    .map((x) => x.entry);
+}
+
+function resolvedSoTakes(
+  ln: SpoSuggestionLine,
+  soKeys: string[],
+  overrides: Record<string, number>,
+  qty: number,
+  order?: string[],
+): { entry: SpoCoverageLine; take: number }[] {
+  const out: { entry: SpoCoverageLine; take: number }[] = [];
+  let left = Math.max(qty, 0);
+  for (const entry of orderedCoverage(ln, order)) {
+    if (!soKeys.includes(entry.key)) continue;
+    const override = overrides[entry.key];
+    const take = override !== undefined ? override : Math.max(Math.min(entry.qty, left), 0);
+    out.push({ entry, take });
+    left -= take;
+  }
+  return out;
+}
+
 /** What the ticks cover between them - what the SO-covered cell states. */
-function tickedQty(ln: SpoSuggestionLine, soKeys: string[], qty: number): number {
-  return coverageTakes(ln, soKeys, qty).reduce((sum, t) => sum + t.take, 0);
+function tickedQty(
+  ln: SpoSuggestionLine,
+  soKeys: string[],
+  overrides: Record<string, number>,
+  qty: number,
+  order?: string[],
+): number {
+  return resolvedSoTakes(ln, soKeys, overrides, qty, order).reduce((sum, t) => sum + t.take, 0);
 }
 
 /**
@@ -245,12 +312,14 @@ function defaultSoKeys(ln: SpoSuggestionLine, qty: number): string[] {
 function splitsFromTicks(
   ln: SpoSuggestionLine,
   soKeys: string[],
+  overrides: Record<string, number>,
   qty: number,
+  order?: string[],
 ): SplitState[] {
   if (ln.cannot_convert || qty <= 0) return [];
   const byWarehouse = new Map<string, number>();
   let claimed = 0;
-  for (const { entry, take } of coverageTakes(ln, soKeys, qty)) {
+  for (const { entry, take } of resolvedSoTakes(ln, soKeys, overrides, qty, order)) {
     if (take <= 0) continue;
     const warehouse = entry.warehouse_id ?? ln.suggested_warehouse_id;
     if (!warehouse) continue;
@@ -274,11 +343,31 @@ function splitsTotal(splits: SplitState[]): number {
   return splits.reduce((sum, s) => sum + (s.qty || 0), 0);
 }
 
-export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
+export function SpoPlannerTable({
+  shipmentId,
+  initialEditPurchaseOrderId = null,
+}: {
+  shipmentId: string;
+  /** `?edit=<purchase_order_id>` on the URL (R24, AC-K5) - how the SPO document's own
+   *  "Edit in planner" action lands here already in edit mode. Read in the page, not here,
+   *  so this component stays free of `useSearchParams` and testable on its own. */
+  initialEditPurchaseOrderId?: string | null;
+}) {
   const suggestion = useSpoSuggestion(shipmentId);
   const create = useCreateSpo(shipmentId);
   const deleteSpo = useDeleteSpo(shipmentId);
   const worksheet = useDownloadSpoWorksheet(shipmentId);
+  /**
+   * Which SPO is being EDITED (R24, AC-K1), or null in the ordinary create-mode planner.
+   *
+   * One flag, not a second component: every cell, every walk and the whole confirm payload
+   * are the same in both modes - the difference is only WHICH lines the grid holds and what
+   * seeds their state. A parallel edit table would be the same 600 lines with one field
+   * changed, and the two would drift the first time a cell was fixed in only one of them.
+   */
+  const [editPoId, setEditPoId] = useState<string | null>(initialEditPurchaseOrderId ?? null);
+  const plannerState = useSpoPlannerState(shipmentId, editPoId);
+  const revise = useReviseSpo(shipmentId, editPoId);
   /** Which row of the Created SPOs grid Delete was pressed on (R1: one row per SPO, not one
    *  confirm for the whole shipment). */
   const [deleteTarget, setDeleteTarget] = useState<SpoRef | null>(null);
@@ -311,9 +400,34 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   >(null);
 
   useEffect(() => {
+    // EDIT MODE (R24, AC-K1): the row is seeded from what was PERSISTED, never from the
+    // suggestion walk - the operator is looking at what this SPO already is, and a default
+    // recomputed over it would silently propose a different SPO the moment the screen opened.
+    if (!editPoId) return;
+    const next: Record<string, LineState> = {};
+    for (const ln of plannerState.data?.lines ?? []) {
+      next[ln.shipment_line_id] = {
+        qty: ln.spo_qty,
+        // Typed, so unticking a PO take can never pull the SPO's own persisted quantity
+        // down underneath the operator - the figure on file is a decision somebody made.
+        typedQty: ln.spo_qty,
+        poTakeIds: ln.po_take_ids,
+        soKeys: ln.so_takes.map((t) => t.key),
+        soTakeOverrides: Object.fromEntries(ln.so_takes.map((t) => [t.key, t.qty])),
+        soOrder: [],
+        splits: ln.location_splits
+          .filter((s) => s.warehouse_id)
+          .map((s) => ({ warehouseId: s.warehouse_id, qty: s.qty })),
+      };
+    }
+    setState(next);
+  }, [plannerState.data, editPoId]);
+
+  useEffect(() => {
     // A fresh suggestion replaces whatever she had edited - "refresh" looks again, it does
     // not keep edits made against a now-stale suggestion (same rule ContainerRequestSection
     // applies to its own qty overrides).
+    if (editPoId) return; // edit mode seeds off `plannerState` above, never the suggestion
     const next: Record<string, LineState> = {};
     for (const ln of suggestion.data?.lines ?? []) {
       // Every take ticked and the server's own demand walk pre-ticked: the default IS the
@@ -326,16 +440,38 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         typedQty: null,
         poTakeIds,
         soKeys,
-        splits: splitsFromTicks(ln, soKeys, ln.suggested_qty),
+        soTakeOverrides: {},
+        soOrder: [],
+        splits: splitsFromTicks(ln, soKeys, {}, ln.suggested_qty),
       };
     }
     setState(next);
-  }, [suggestion.data]);
+  }, [suggestion.data, editPoId]);
 
-  const lines = useMemo(() => suggestion.data?.lines ?? [], [suggestion.data]);
+  /** The grid's rows: the shipment's REMAINDER in create mode, and ONLY the SPO being
+   *  edited in edit mode (R24, AC-K1). */
+  const lines: SpoSuggestionLine[] = useMemo(
+    () => (editPoId ? plannerState.data?.lines ?? [] : suggestion.data?.lines ?? []),
+    [editPoId, plannerState.data, suggestion.data],
+  );
   // R1: every SPO this shipment has ever produced, oldest first - always populated, never
   // gating the planner below it (a container is routinely converted in more than one pass).
   const existingSpos = useMemo(() => suggestion.data?.existing_spos ?? [], [suggestion.data]);
+
+  /** What each line of the SPO being edited has already RECEIVED (AC-K3), by shipment line.
+   *  Empty in create mode - nothing has arrived against an SPO that does not exist yet. */
+  const receivedByLine = useMemo(() => {
+    const out: Record<string, number> = {};
+    if (!editPoId) return out;
+    for (const ln of plannerState.data?.lines ?? []) out[ln.shipment_line_id] = ln.received_qty;
+    return out;
+  }, [editPoId, plannerState.data]);
+  /** Read inside the identity-stable `columns` memo - see `stateRef` for why cells cannot
+   *  close over state directly. */
+  const receivedRef = useRef(receivedByLine);
+  receivedRef.current = receivedByLine;
+  const editingRef = useRef(!!editPoId);
+  editingRef.current = !!editPoId;
 
   const stateFor = (ln: SpoSuggestionLine): LineState => {
     const held = stateRef.current[ln.shipment_line_id];
@@ -346,13 +482,18 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
       typedQty: null,
       poTakeIds: tickablePoTakeIds(ln),
       soKeys,
-      splits: splitsFromTicks(ln, soKeys, ln.suggested_qty),
+      soTakeOverrides: {},
+      soOrder: [],
+      splits: splitsFromTicks(ln, soKeys, {}, ln.suggested_qty),
     };
   };
   const qtyFor = (ln: SpoSuggestionLine) => stateFor(ln).qty;
   const splitsFor = (ln: SpoSuggestionLine) => stateFor(ln).splits;
   const takeIdsFor = (ln: SpoSuggestionLine) => stateFor(ln).poTakeIds;
   const soKeysFor = (ln: SpoSuggestionLine) => stateFor(ln).soKeys;
+  const soTakeOverridesFor = (ln: SpoSuggestionLine) => stateFor(ln).soTakeOverrides;
+  /** The order the picker is showing this line in (S7) - the cascade's walk order. */
+  const soOrderFor = (ln: SpoSuggestionLine) => stateFor(ln).soOrder;
 
   const patch = (ln: SpoSuggestionLine, next: Partial<LineState>) =>
     setState((prev) => ({
@@ -364,11 +505,14 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     const current = stateFor(ln);
     // The split follows the quantity, because it is derived from the ticks against it -
     // leaving a stale split behind is how Create SPO refuses with "the split has to add up"
-    // on a screen where nothing looks wrong.
+    // on a screen where nothing looks wrong. The SO-take overrides are cleared too: they
+    // were typed against the OLD total, and re-running the cascade fresh against the new
+    // one is less surprising than a stale number nobody chose for this total.
     patch(ln, {
       qty,
       typedQty: qty,
-      splits: splitsFromTicks(ln, current.soKeys, qty),
+      soTakeOverrides: {},
+      splits: splitsFromTicks(ln, current.soKeys, {}, qty, current.soOrder),
     });
   };
 
@@ -398,13 +542,36 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     // simply pulls less and writes the rest without a pull. Only an UNTYPED (still default)
     // quantity follows the takes.
     const qty = current.typedQty === null ? covered : current.typedQty;
+    // The PO takes changing moves the total (`qty`) underneath the SO-take overrides, the
+    // same reason `setQty` clears them - a number typed against the old total has nothing
+    // to say about the new one.
     patch(ln, {
       poTakeIds: nextIds,
       qty,
       soKeys: current.soKeys,
-      splits: splitsFromTicks(ln, current.soKeys, qty),
+      soTakeOverrides: {},
+      splits: splitsFromTicks(ln, current.soKeys, {}, qty, current.soOrder),
     });
   };
+
+  /** Every override at or after this key's position in the order the picker is SHOWING
+   *  (S7, review round 1) - cleared by `setSoKeys`/`setSoTake`, both of which are "a
+   *  change AT this row", per R19's "re-runs the remainder for rows after it" (the row
+   *  itself never keeps a STALE override once it has just been ticked, unticked or
+   *  retyped). Walks the same order the cascade does, or the two disagree about which
+   *  rows come "after" the edited one. */
+  function clearOverridesFrom(
+    ln: SpoSuggestionLine,
+    key: string,
+    overrides: Record<string, number>,
+  ): Record<string, number> {
+    const coverage = orderedCoverage(ln, soOrderFor(ln));
+    const idx = coverage.findIndex((c) => c.key === key);
+    if (idx < 0) return overrides;
+    const next = { ...overrides };
+    for (let i = idx; i < coverage.length; i++) delete next[coverage[i].key];
+    return next;
+  }
 
   /** Tick the demand this SPO is for; the split follows (AC-G3, AC-G4). */
   const setSoKeys = (ln: SpoSuggestionLine, soKeys: string[]) => {
@@ -415,7 +582,42 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     );
     const nextKeys = soKeys.filter((key) => !takenKeys.has(key));
     const current = stateFor(ln);
-    patch(ln, { soKeys: nextKeys, splits: splitsFromTicks(ln, nextKeys, current.qty) });
+    // The picker toggles exactly one row per call - its own key is the one whose override
+    // (if unticking) or whose seeded default (if ticking) must not survive the change, and
+    // R19 asks the SAME of every row after it.
+    const changedKey =
+      nextKeys.find((key) => !current.soKeys.includes(key)) ??
+      current.soKeys.find((key) => !nextKeys.includes(key));
+    const nextOverrides = changedKey
+      ? clearOverridesFrom(ln, changedKey, current.soTakeOverrides)
+      : current.soTakeOverrides;
+    patch(ln, {
+      soKeys: nextKeys,
+      soTakeOverrides: nextOverrides,
+      splits: splitsFromTicks(ln, nextKeys, nextOverrides, current.qty, current.soOrder),
+    });
+  };
+
+  /**
+   * The operator types a Take number (R19, AC-I2/AC-I3): the row she edited keeps exactly
+   * that number, and every row AFTER it in the coverage list's own order re-runs the
+   * cascade against whatever is left - never the rows before it, which already answered
+   * for a total this edit does not change.
+   */
+  const setSoTake = (ln: SpoSuggestionLine, key: string, qty: number) => {
+    const current = stateFor(ln);
+    const nextOverrides = clearOverridesFrom(ln, key, current.soTakeOverrides);
+    nextOverrides[key] = Math.max(qty, 0);
+    patch(ln, {
+      soTakeOverrides: nextOverrides,
+      splits: splitsFromTicks(ln, current.soKeys, nextOverrides, current.qty, current.soOrder),
+    });
+  };
+
+  /** The picker reports what it is SHOWING (S7): the cascade follows the screen. */
+  const setSoOrder = (ln: SpoSuggestionLine, soOrder: string[]) => {
+    if (soOrder.join('|') === stateFor(ln).soOrder.join('|')) return;
+    patch(ln, { soOrder });
   };
 
   const confirmLines: SpoConfirmLine[] = useMemo(
@@ -428,13 +630,20 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           warehouse_id: s.warehouseId,
           qty: s.qty,
         }));
+        // R19: every TICKED key, at the take `resolvedSoTakes` gives it - the operator's
+        // own override where she typed one, the cascade default everywhere else.
+        const so_takes = resolvedSoTakes(
+          ln, soKeysFor(ln), soTakeOverridesFor(ln), qty, soOrderFor(ln),
+        ).map(
+          (t) => ({ key: t.entry.key, qty: t.take }),
+        );
         return {
           shipment_line_id: ln.shipment_line_id,
           qty: include ? qty : 0,
           include,
           location_splits,
           po_take_ids: takeIdsFor(ln),
-          so_line_ids: soKeysFor(ln),
+          so_takes,
         };
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -462,12 +671,85 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   const splitMismatchRef = useRef(splitMismatch);
   splitMismatchRef.current = splitMismatch;
 
-  const renderQtyCell = (ln: SpoSuggestionLine) => (
+  // AC-I2: a Take above its own row's outstanding, or the total above the SPO qty, disables
+  // Create SPO exactly like `splitMismatch` does - checked here so the round-trip never has
+  // to refuse what the screen could have said itself.
+  const soTakeMismatch = useMemo(() => {
+    const bad = new Set<string>();
+    for (const ln of lines) {
+      if (!(ln.so_coverage ?? []).length) continue;
+      const takes = resolvedSoTakes(
+        ln, soKeysFor(ln), soTakeOverridesFor(ln), qtyFor(ln), soOrderFor(ln),
+      );
+      const total = takes.reduce((sum, t) => sum + t.take, 0);
+      const overRow = takes.some((t) => t.take > t.entry.qty);
+      if (overRow || total > qtyFor(ln)) bad.add(ln.shipment_line_id);
+    }
+    return bad;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines, state]);
+
+  /**
+   * B4 (review round 1): a line ticked against sales orders with no location chosen. Every
+   * link the confirm writes hangs off an allocation, and a line with no split writes none -
+   * so the server refuses it (422), and the screen says so first, in the same words.
+   */
+  const takesWithoutLocation = useMemo(() => {
+    const bad = new Set<string>();
+    for (const item of confirmLines) {
+      if (!item.include) continue;
+      if (!(item.so_takes ?? []).some((t) => t.qty > 0)) continue;
+      if ((item.location_splits ?? []).some((s) => s.qty > 0)) continue;
+      bad.add(item.shipment_line_id);
+    }
+    return bad;
+  }, [confirmLines]);
+
+  /**
+   * A line of the SPO being edited whose new quantity is below what its allocations have
+   * already RECEIVED (AC-K3) - the one thing the save cannot do, so it is stated here as
+   * well as refused server-side, rather than only after the round trip.
+   *
+   * Only in edit mode: `receivedByLine` is empty otherwise, because nothing has arrived
+   * against an SPO that has not been created yet.
+   */
+  const receivedMismatch = useMemo(() => {
+    const bad = new Set<string>();
+    for (const ln of lines) {
+      const received = receivedByLine[ln.shipment_line_id] ?? 0;
+      if (received > 0 && qtyFor(ln) < received - 1e-6) bad.add(ln.shipment_line_id);
+    }
+    return bad;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines, receivedByLine, state]);
+
+  const renderQtyCell = (ln: SpoSuggestionLine) => {
+    const received = receivedRef.current[ln.shipment_line_id] ?? 0;
+    const short = received > 0 && qtyFor(ln) < received - 1e-6;
+    return (
+      <div className="flex min-w-0 flex-col gap-0.5">
+        {renderQtyInput(ln, short)}
+        {received > 0 ? (
+          <span
+            className={short ? 'text-2xs font-medium text-destructive' : 'text-2xs text-muted-foreground'}
+          >
+            {fmtInt(received)} received
+          </span>
+        ) : null}
+      </div>
+    );
+  };
+
+  const renderQtyInput = (ln: SpoSuggestionLine, short: boolean) => (
     <Input
       type="number"
       min={0}
       step={1}
-      className="h-8 w-24 tabular-nums"
+      className={
+        short
+          ? 'h-8 w-24 border-destructive tabular-nums focus-visible:ring-destructive/40'
+          : 'h-8 w-24 tabular-nums'
+      }
       value={qtyFor(ln)}
       disabled={ln.cannot_convert}
       aria-label="SPO qty"
@@ -493,7 +775,11 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
    * stated, because it is the difference between goods promised to an order and free stock.
    */
   const unassignedFor = (ln: SpoSuggestionLine) =>
-    Math.max(qtyFor(ln) - tickedQty(ln, soKeysFor(ln), qtyFor(ln)), 0);
+    Math.max(
+      qtyFor(ln) -
+        tickedQty(ln, soKeysFor(ln), soTakeOverridesFor(ln), qtyFor(ln), soOrderFor(ln)),
+      0,
+    );
 
   /**
    * What goes INSIDE the one lightbox, by which figure was clicked (R21).
@@ -542,10 +828,18 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
             onChange={(keys) => setSoKeys(ln, keys)}
             unassigned={unassignedFor(ln)}
             // Take per row off the SAME walk the cell, the split and the banner read, so
-            // the dialog cannot say one thing while the row says another.
+            // the dialog cannot say one thing while the row says another (R19).
             takes={Object.fromEntries(
-              coverageTakes(ln, soKeysFor(ln), qtyFor(ln)).map((t) => [t.entry.key, t.take]),
+              resolvedSoTakes(
+                ln, soKeysFor(ln), soTakeOverridesFor(ln), qtyFor(ln), soOrderFor(ln),
+              ).map((t) => [
+                t.entry.key,
+                t.take,
+              ]),
             )}
+            onTakeChange={(key, qty) => setSoTake(ln, key, qty)}
+            onOrderChange={(keys) => setSoOrder(ln, keys)}
+            spoQty={qtyFor(ln)}
             bucketHits={bucketHits}
           />
         );
@@ -619,21 +913,26 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   };
 
   /** The Created SPOs grid (R1, AC-H6) - every SPO this shipment has ever produced, each a
-   *  link to its own PO detail (which carries the Plan card, AC-H7) and its own Delete. */
+   *  link to its own SPO allocation view (R22, purchasing consolidation batch 6 Sep 2026:
+   *  the SPO document, never the PO) and its own Delete. A row with no `po_number` yet has
+   *  nothing to link to, so it prints plain text instead. */
   const createdSpoColumns = useMemo<ColumnDef<SpoRef>[]>(
     () => [
       {
         id: 'po_number',
         header: 'SPO',
-        cell: ({ row }) => (
-          <Link
-            href={`/scm/purchase-orders/${row.original.purchase_order_id}`}
-            className="font-medium text-primary hover:underline"
-            title={`Open ${row.original.po_number ?? EM_DASH}`}
-          >
-            {row.original.po_number ?? EM_DASH}
-          </Link>
-        ),
+        cell: ({ row }) =>
+          row.original.po_number ? (
+            <Link
+              href={spoDetailHref(row.original.po_number)}
+              className="font-medium text-primary hover:underline"
+              title={`Open ${row.original.po_number}`}
+            >
+              {row.original.po_number}
+            </Link>
+          ) : (
+            <span className="text-muted-foreground">{EM_DASH}</span>
+          ),
         size: 160,
         enableSorting: false,
       },
@@ -692,21 +991,37 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         enableSorting: false,
       },
       {
-        id: 'delete',
+        id: 'actions',
         header: '',
         cell: ({ row }) => (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="size-8 text-muted-foreground hover:text-destructive"
-            aria-label={`Delete ${row.original.po_number ?? 'this SPO'}`}
-            onClick={() => setDeleteTarget(row.original)}
-          >
-            <Trash2 className="size-4" aria-hidden />
-          </Button>
+          <div className="flex items-center justify-end gap-0.5">
+            {/* R24, AC-K1: the same planner, loaded with what this SPO already is - not a
+                second editor. Beside Delete, because "change it" and "scrap it" are the two
+                things one can do to an SPO that exists. */}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8 text-muted-foreground hover:text-foreground"
+              aria-label={`Edit ${row.original.po_number ?? 'this SPO'} in planner`}
+              title="Edit in planner"
+              onClick={() => setEditPoId(row.original.purchase_order_id)}
+            >
+              <Pencil className="size-4" aria-hidden />
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="size-8 text-muted-foreground hover:text-destructive"
+              aria-label={`Delete ${row.original.po_number ?? 'this SPO'}`}
+              onClick={() => setDeleteTarget(row.original)}
+            >
+              <Trash2 className="size-4" aria-hidden />
+            </Button>
+          </div>
         ),
-        size: 56,
+        size: 96,
         enableSorting: false,
       },
     ],
@@ -751,8 +1066,10 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         cell: ({ row }) => {
           const ln = row.original;
           // R1: nothing left on this line for THIS shipment to convert - a prior `create`
-          // run already claimed it all, so there is no tick to make any more.
-          if (ln.remaining_qty <= 0) {
+          // run already claimed it all, so there is no tick to make any more. It never
+          // fires in EDIT mode (R24): the SPO whose takes are on screen IS the run that
+          // claimed them, and locking its own row would make the edit unreachable.
+          if (!editingRef.current && ln.remaining_qty <= 0) {
             return <span className="text-2xs text-muted-foreground">Done</span>;
           }
           if (!ln.po_takes.length) {
@@ -822,7 +1139,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         header: ({ column }) => <DataGridColumnHeader title="SO covered" column={column} />,
         cell: ({ row }) => {
           const ln = row.original;
-          if (ln.remaining_qty <= 0) {
+          if (!editingRef.current && ln.remaining_qty <= 0) {
             return <span className="text-2xs text-muted-foreground">Done</span>;
           }
           if (ln.cannot_convert || !(ln.so_coverage ?? []).length) {
@@ -831,7 +1148,7 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
           const keys = soKeysFor(ln);
           return (
             <PlanNumberButton
-              value={fmtInt(tickedQty(ln, keys, qtyFor(ln)))}
+              value={fmtInt(tickedQty(ln, keys, soTakeOverridesFor(ln), qtyFor(ln), soOrderFor(ln)))}
               label="Which demand this SPO is for - project by need-by date, then retail"
               onClick={() => setDialog({ kind: 'so_coverage', line: ln })}
             />
@@ -943,13 +1260,12 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
       const rowKey = ln.item_code ? `item:${ln.item_code}` : `line:${ln.shipment_line_id}`;
       const rowLabel = ln.item_code ?? ln.product_name ?? 'Unresolved';
       const keys = soKeysFor(ln);
-      let left = qtyFor(ln);
-      for (const entry of ln.so_coverage ?? []) {
-        if (left <= 0) break;
-        if (!keys.includes(entry.key)) continue;
-        const take = Math.min(entry.qty, left);
+      // R19: the SAME resolved walk the cell, the dialog and the confirm payload read - a
+      // row the operator retyped shows up here at HER number, not the raw cascade.
+      for (const { entry, take } of resolvedSoTakes(
+        ln, keys, soTakeOverridesFor(ln), qtyFor(ln), soOrderFor(ln),
+      )) {
         if (take <= 0) continue;
-        left -= take;
         entries.push({
           row_key: rowKey,
           row_label: rowLabel,
@@ -998,11 +1314,29 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lines, state]);
 
-  if (suggestion.isLoading) {
+  if (suggestion.isLoading || (editPoId && plannerState.isLoading)) {
     return (
       <Card className="p-4">
         <Skeleton className="h-6 w-64" />
         <Skeleton className="mt-3 h-40 w-full rounded-lg" />
+      </Card>
+    );
+  }
+
+  // An SPO that cannot be opened for editing (deleted since the link was made, or a
+  // purchase order Create SPO never minted) says so and offers the way back to the
+  // planner, rather than an empty grid with a Save button over it.
+  if (editPoId && plannerState.isError) {
+    return (
+      <Card className="flex flex-col items-center gap-3 p-8 text-center">
+        <p className="text-sm font-medium text-destructive">
+          {plannerState.error instanceof Error
+            ? plannerState.error.message
+            : 'Failed to open this SPO in the planner.'}
+        </p>
+        <Button variant="outline" size="sm" onClick={() => setEditPoId(null)}>
+          Back to the planner
+        </Button>
       </Card>
     );
   }
@@ -1032,6 +1366,17 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
   }
 
   const deleteTargetName = deleteTarget?.po_number ?? 'this SPO';
+  const editingName = plannerState.data?.po_number ?? 'this SPO';
+  const cancelEdit = () => setEditPoId(null);
+  const receivedRowNames = lines
+    .filter((ln) => receivedMismatch.has(ln.shipment_line_id))
+    .map((ln) => ln.item_code ?? ln.product_name ?? 'One line')
+    .join(', ');
+  // B4: the server's own sentence, said before the round trip.
+  const noLocationRowNames = lines
+    .filter((ln) => takesWithoutLocation.has(ln.shipment_line_id))
+    .map((ln) => ln.item_code ?? ln.product_name ?? 'One line')
+    .join(', ');
 
   return (
     <div className="flex flex-col gap-4">
@@ -1043,8 +1388,10 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
 
       {/* R1 (AC-H6): every SPO this container has ever produced, oldest first - a container is
           routinely converted in more than one pass, so this sits above the remainder planner
-          rather than replacing it. */}
-      {existingSpos.length ? (
+          rather than replacing it. Gone while one of them is being EDITED (R24): the screen
+          is about that one SPO then, and leaving the grid up offers a second Edit and a
+          Delete for work already open below it. */}
+      {existingSpos.length && !editPoId ? (
         <Card>
           <CardHeader className="flex flex-row items-center justify-between py-3">
             <h3 className="text-sm font-semibold">Created SPOs</h3>
@@ -1077,23 +1424,65 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         <Card>
         <CardHeader className="flex flex-col gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold">SPO planner</h3>
+          <h3 className="truncate text-sm font-semibold">
+            {editPoId ? `Editing ${editingName}` : 'SPO planner'}
+          </h3>
         </div>
-        <Button
-          size="sm"
-          // Creates on the click (captain, 4 Sep): the server caps every line at its own
-          // remainder and writes the uncovered part without a PO pull, so there is nothing
-          // to confirm - no review dialog.
-          onClick={() => create.mutate(confirmLines)}
-          disabled={!includedCount || splitMismatch.size > 0 || create.isPending}
-        >
-          {create.isPending ? (
-            <LoaderCircle className="size-4 animate-spin" aria-hidden />
-          ) : (
-            <Check className="size-4" aria-hidden />
-          )}
-          Create SPO
-        </Button>
+        {editPoId ? (
+          /* R24, AC-K1: the same payload Create SPO builds, sent as a revision of the SPO
+             already on file - the number and its header row are untouched. */
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" onClick={cancelEdit} disabled={revise.isPending}>
+              <X className="size-4" aria-hidden />
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={() =>
+                revise.mutate(confirmLines, { onSuccess: () => setEditPoId(null) })
+              }
+              disabled={
+                // S5: an SPO cannot be emptied by a revision - Delete is the action for
+                // that, and the server refuses it (422) for the same reason.
+                !includedCount ||
+                splitMismatch.size > 0 ||
+                soTakeMismatch.size > 0 ||
+                takesWithoutLocation.size > 0 ||
+                receivedMismatch.size > 0 ||
+                revise.isPending
+              }
+            >
+              {revise.isPending ? (
+                <LoaderCircle className="size-4 animate-spin" aria-hidden />
+              ) : (
+                <Check className="size-4" aria-hidden />
+              )}
+              Save changes
+            </Button>
+          </div>
+        ) : (
+          <Button
+            size="sm"
+            // Creates on the click (captain, 4 Sep): the server caps every line at its own
+            // remainder and writes the uncovered part without a PO pull, so there is nothing
+            // to confirm - no review dialog.
+            onClick={() => create.mutate(confirmLines)}
+            disabled={
+              !includedCount ||
+              splitMismatch.size > 0 ||
+              soTakeMismatch.size > 0 ||
+              takesWithoutLocation.size > 0 ||
+              create.isPending
+            }
+          >
+            {create.isPending ? (
+              <LoaderCircle className="size-4 animate-spin" aria-hidden />
+            ) : (
+              <Check className="size-4" aria-hidden />
+            )}
+            Create SPO
+          </Button>
+        )}
       </CardHeader>
 
       <div className="flex flex-col gap-3 border-t border-border px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
@@ -1171,6 +1560,32 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
               to the SPO qty
             </span>
           ) : null}
+          {soTakeMismatch.size > 0 ? (
+            <span className="text-2xs text-end font-medium text-destructive">
+              {soTakeMismatch.size} line{soTakeMismatch.size === 1 ? '' : 's'} - a Take exceeds
+              what is left, or the total exceeds the SPO qty
+            </span>
+          ) : null}
+          {/* B4: the same sentence the server refuses with, naming the row. */}
+          {takesWithoutLocation.size > 0 ? (
+            <span className="text-2xs text-end font-medium text-destructive">
+              {noLocationRowNames} needs a location before it can cover sales orders
+            </span>
+          ) : null}
+          {/* S5: an SPO with no line left is a document that says nothing - the planner
+              says which action that is instead of refusing after the round trip. */}
+          {editPoId && !includedCount ? (
+            <span className="text-2xs text-end font-medium text-destructive">
+              An SPO has to keep at least one line - delete it instead
+            </span>
+          ) : null}
+          {/* AC-K3: names the ROW, because "some line is short" is not something the
+              operator can act on across a container's worth of them. */}
+          {receivedMismatch.size > 0 ? (
+            <span className="text-2xs text-end font-medium text-destructive">
+              {receivedRowNames} - the qty is below what has already been received
+            </span>
+          ) : null}
           {view === 'schedule' ? (
             <div className="flex items-center gap-2">
               <Label htmlFor="spo-schedule-mode" className="text-xs text-muted-foreground">
@@ -1245,7 +1660,9 @@ export function SpoPlannerTable({ shipmentId }: { shipmentId: string }) {
         </div>
       )}
       <CardFooter className="justify-end text-2xs text-muted-foreground">
-        {includedCount} of {lines.length} line{lines.length === 1 ? '' : 's'} will create an SPO
+        {editPoId
+          ? `${includedCount} of ${lines.length} line${lines.length === 1 ? '' : 's'} stay on this SPO`
+          : `${includedCount} of ${lines.length} line${lines.length === 1 ? '' : 's'} will create an SPO`}
       </CardFooter>
 
       {dialog ? (

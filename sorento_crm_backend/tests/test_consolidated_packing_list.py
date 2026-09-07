@@ -285,6 +285,21 @@ def _line(factory: dict, code_suffix: str) -> dict:
 # --------------------------------------------------------------------------- #
 
 
+def test_bl_no_falls_back_to_the_so_field_when_the_bl_is_unstated(db):
+    # S3, review round 1: `提单号` lands in `forwarder_order_ref` (the SO field) on an
+    # upload made through the supplier-documents dialog (Q1 ruling), never
+    # `bill_of_lading_number` - the export used to print a blank B/L for every container
+    # uploaded that way even though the shipment itself carries the number.
+    w = World(db)
+    w.costed()  # sets `forwarder_order_ref`; leaves `bill_of_lading_number` from __init__
+    w.shipment.bill_of_lading_number = None
+    db.flush()
+
+    out = svc.build(db, str(w.shipment.id))
+
+    assert out["bl_no"] == w.shipment.forwarder_order_ref == "CNH1098313"
+
+
 def test_the_container_is_grouped_by_factory_with_the_unknown_one_last(db):
     # The header of a mixed container names nobody, so the factory has to come off the line.
     w = World(db)
@@ -713,6 +728,10 @@ def test_the_grand_total_sums_the_subtotals_and_never_the_lines_twice(db):
 
 
 def test_the_footer_splits_the_container_between_the_two_companies(db):
+    """R17 / AC-H2 (purchasing consolidation batch, 6 Sep 2026): costs are not needed on
+    screen or in the export any more - CLEARANCE / INSURANCE / CHINA FREIGHT are gone
+    from the footer, even for a container whose costs ARE typed (`.costed()`). CBM and
+    TOTAL AMOUNT stay - they are what the container holds and is worth, not a cost."""
     w = World(db)
     w.costed()
     payload = svc.build(db, str(w.shipment.id))
@@ -722,30 +741,29 @@ def test_the_footer_splits_the_container_between_the_two_companies(db):
     mocha = _row_of(ws, "L", "MOCHA")
     total = _row_of(ws, "A", "-") + 1
 
-    # Clearance and China freight follow the VOLUME, insurance follows the AMOUNT: that is
-    # how the forwarder bills them.
-    assert ws[f"N{sorento}"].value == f"=M{sorento}/M{total}*2700.0"
-    assert ws[f"O{sorento}"].value == f"=U{sorento}/U{total}*1.0"
-    assert ws[f"P{sorento}"].value == f"=M{sorento}/M{total}*13950.0"
+    assert ws[f"M{sorento}"].value.startswith("=SUM(M")
+    for column in "NOP":
+        assert ws[f"{column}{sorento}"].value is None
     assert ws[f"U{mocha}"].value.startswith("=SUM(U")
 
     grand = mocha + 1
     assert ws[f"M{grand}"].value == f"=M{sorento}+M{mocha}"
     assert ws[f"U{grand}"].value == f"=U{sorento}+U{mocha}"
+    for column in "NOP":
+        assert ws[f"{column}{grand}"].value is None
 
     labels = grand + 1
-    assert [ws[f"{c}{labels}"].value for c in "MNOP"] == [
-        "CBM", "CLEARANCE", "INSURANCE", "CHINA FREIGHT",
-    ]
+    assert [ws[f"{c}{labels}"].value for c in "NOP"] == [None, None, None]
+    assert ws[f"M{labels}"].value == "CBM"
     assert ws[f"U{labels}"].value == "TOTAL AMOUNT"
     assert ws[f"C{labels}"].value == "订单号:CNH1098313"
     assert ws[f"C{labels + 1}"].value == f"柜号:{w.shipment.shipping_container_number}"
     assert ws[f"C{labels + 2}"].value == "封号:J0713349"
+    assert total > 0  # the ratio denominator still exists, just unused for costs now
 
 
 def test_a_container_with_no_costs_typed_prints_the_split_and_no_apportionment(db):
-    # The split is what the sheet is for; the costs are typed later, and a zero in their
-    # place would read as a container that cost nothing to clear.
+    # The split is what the sheet is for; costs are never apportioned any more (R17).
     w = World(db)
     payload = svc.build(db, str(w.shipment.id))
 
@@ -761,6 +779,34 @@ def test_a_container_with_no_costs_typed_prints_the_split_and_no_apportionment(d
     assert ws[f"M{grand}"].value is not None
     assert ws[f"N{grand}"].value is None
     assert ws[f"P{grand}"].value is None
+
+
+def test_a_costed_export_has_no_clearance_freight_or_insurance_cell_anywhere(db):
+    """AC-H2, literally: no cell in the whole workbook names a cost, and the RMB /
+    TOTAL RM line columns are unaffected. `costed()` sets `clearance_cost` /
+    `china_freight_cost` / `insurance_rate` on the DB row - untouched, per R17 (the
+    export just stops apportioning them; the columns stay in the DB for the AutoCount
+    ingest contract)."""
+    w = World(db)
+    w.costed()
+    payload = svc.build(db, str(w.shipment.id))
+    ws = _sheet(payload)
+
+    strings = [
+        str(cell.value)
+        for row in ws.iter_rows()
+        for cell in row
+        if isinstance(cell.value, str)
+    ]
+    for banned in ("Clearance", "clearance", "Freight", "freight", "Insurance", "insurance"):
+        assert not any(banned in s for s in strings), f"found {banned!r} in the export"
+
+    header = [ws.cell(row=15, column=c).value for c in range(1, 23)]
+    assert "RMB" in header
+    assert "TOTAL RM" in header
+    assert w.shipment.clearance_cost == 2700
+    assert w.shipment.china_freight_cost == 13950
+    assert w.shipment.insurance_rate == 1
 
 
 def test_the_workbook_writes_quantities_as_numbers_not_text(db):

@@ -24,7 +24,7 @@ columns (`A40:A43` sits inside `H40:H50`). So every cell carries its own `rowspa
 the row carrying one family number, and `family_span` is simply the 序号 column's span - the
 alternative invents families the supplier did not write.
 
-**Without a retained file we build the same eleven columns from what we know** (AC-D6): no
+**Without a retained file we build the same twelve columns from what we know** (AC-D6): no
 merges, because we hold no family information and inventing one would be wrong on the first
 product with two sizes; 商标 = the company letter the product belongs to; their holdings off
 the stock snapshot, which is their own latest statement about their own warehouse.
@@ -54,6 +54,15 @@ QTY_TO_LOAD_LABEL_ZH = "需装数量"
 QTY_TO_LOAD_LABEL_EN = "Qty to load"
 QTY_TO_LOAD_HEADER = f"{QTY_TO_LOAD_LABEL_ZH} / {QTY_TO_LOAD_LABEL_EN}"
 
+#: Column L (R11, purchasing consolidation 6 Sep): OUR remark on the line, next to the qty
+#: edit - not the same thing as their own 备注 column (`DEFAULT_COLUMNS` below, the supplier's
+#: note on their own stock), which stays where it always was. Same Chinese/English wording
+#: because it is, in both languages, literally "remarks" - the two columns differ in whose
+#: remark they carry, not in what to call the idea.
+LINE_REMARK_LABEL_ZH = "备注"
+LINE_REMARK_LABEL_EN = "Remarks"
+LINE_REMARK_HEADER = f"{LINE_REMARK_LABEL_ZH} / {LINE_REMARK_LABEL_EN}"
+
 #: The title line of a document we draw ourselves. Theirs names their factory and the date
 #: their list was taken; ours can only name what the document IS.
 NO_FILE_TITLE = "配柜要求 / Container request"
@@ -66,7 +75,13 @@ NOT_ON_LIST_REMARK = "不在库存表 / Not on your list"
 #: full-width colon and sometimes trailing spaces.
 TOTALS_PREFIX = "合计"
 
+#: R10 (purchasing consolidation, 6 Sep): OUR highlight, painted on every cell of a row whose
+#: qty to load is > 0 - the only mark left on the document, replacing whatever the supplier's
+#: own file had (`_apply_highlight`, called once by `build` regardless of which branch built
+#: the model). `YELLOW` survives as a value only because a notice sent BEFORE this batch
+#: still carries it in its frozen `sheet_json` - nothing new ever emits it.
 YELLOW = "yellow"
+HIGHLIGHT = "highlight"
 
 #: Their ten columns as the July file writes them, with the field each resolves to. Used for
 #: the no-file document (AC-D6) and as the English second line on every document, so the page
@@ -136,12 +151,18 @@ class Row:
     #: Where this row sits in their workbook (1-based), so the xlsx renderer can write column
     #: K into their file rather than rebuilding it. None for an appended row.
     source_row: Optional[int] = None
+    #: The plan row this line was asked for (R11) - the SAME `row_key`
+    #: `container_request_service.build` keys its grid on, so an edit made against this sheet
+    #: (the preview) can write back to `plan.line_edits[row_key]`. None for a row of theirs
+    #: that matched no line in the ask - there is nothing to attribute an edit to.
+    row_key: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {
             "cells": [c.to_dict() for c in self.cells],
             "family_span": self.family_span,
             "appended": self.appended,
+            "row_key": self.row_key,
         }
 
 
@@ -179,12 +200,18 @@ class SheetModel:
 
     @property
     def qty_index(self) -> int:
-        return len(self.columns) - 1
+        """The qty-to-load column's position. Used to be simply the last column - true until
+        R11 added a remark column after it, so this now looks the field up rather than
+        assuming it is last."""
+        pos = self.column_index("qty_to_load")
+        return pos if pos >= 0 else len(self.columns) - 1
 
     def to_dict(self) -> dict:
         return {
             "title": self.title,
-            "columns": [{"label": c.label, "label_en": c.label_en} for c in self.columns],
+            "columns": [
+                {"label": c.label, "label_en": c.label_en, "field": c.field} for c in self.columns
+            ],
             "rows": [r.to_dict() for r in self.rows],
             "totals": self.totals.to_dict() if self.totals else None,
         }
@@ -215,13 +242,15 @@ def build(
     raw = _retained_stock_list(db, supplier_id, loading_plan_id=loading_plan_id)
     if raw:
         try:
-            return _from_their_sheet(
+            model = _from_their_sheet(
                 raw,
                 db=db,
                 supplier_id=supplier_id,
                 lines=lines,
                 loading_plan_id=loading_plan_id,
             )
+            _apply_highlight(model)
+            return model
         except Exception as exc:  # noqa: BLE001 - a stored file is not the caller's fault
             logger.warning(
                 "supplier document: supplier %s has a retained stock list that could not be "
@@ -229,9 +258,27 @@ def build(
                 supplier_id,
                 exc,
             )
-    return _from_our_data(
+    model = _from_our_data(
         db, supplier_id=supplier_id, lines=lines, loading_plan_id=loading_plan_id
     )
+    _apply_highlight(model)
+    return model
+
+
+def _apply_highlight(model: SheetModel) -> None:
+    """R10: our highlight, not theirs. Every mark a row's cells carried - a source file's own
+    yellow/red, or the no-file document's own placeholder yellow - is replaced by ONE fill on
+    every cell of a row whose qty to load is > 0; every other row is left plain. The title and
+    header are untouched (they are not `Row` objects at all); the totals row is untouched too
+    (it is a sum, not an ask, and keeps whatever style it already draws with).
+    """
+    qty_at = model.qty_index
+    for row in model.rows:
+        qty = row.cells[qty_at].value if qty_at < len(row.cells) else None
+        lit = isinstance(qty, (int, float)) and not isinstance(qty, bool) and qty > 0
+        for cell in row.cells:
+            cell.fill = HIGHLIGHT if lit else None
+            cell.red = False
 
 
 def _retained_stock_list(
@@ -343,6 +390,9 @@ def _from_their_sheet(
     columns.append(
         Column(label=QTY_TO_LOAD_LABEL_ZH, label_en=QTY_TO_LOAD_LABEL_EN, field="qty_to_load")
     )
+    columns.append(
+        Column(label=LINE_REMARK_LABEL_ZH, label_en=LINE_REMARK_LABEL_EN, field="line_remark")
+    )
 
     spans, covered = _merge_map(ws)
     totals_row = _totals_row(ws, header_row)
@@ -376,13 +426,16 @@ def _from_their_sheet(
         if all(c.value is None for c in cells) and not any(c.covered for c in cells):
             continue
         code = _text(ws.cell(row=r, column=code_col).value)
-        cells.append(Cell(value=_qty(asks.take(code))))
+        matched = asks.take(code)
+        cells.append(Cell(value=_qty(matched.get("qty") if matched else None)))
+        cells.append(Cell(value=_text(matched.get("remark")) if matched else None))
         first = cells[0]
         model.rows.append(
             Row(
                 cells=cells,
                 family_span=0 if first.covered else first.rowspan,
                 source_row=r,
+                row_key=matched.get("row_key") if matched else None,
             )
         )
 
@@ -428,6 +481,9 @@ def _from_their_values(
     columns.append(
         Column(label=QTY_TO_LOAD_LABEL_ZH, label_en=QTY_TO_LOAD_LABEL_EN, field="qty_to_load")
     )
+    columns.append(
+        Column(label=LINE_REMARK_LABEL_ZH, label_en=LINE_REMARK_LABEL_EN, field="line_remark")
+    )
 
     code_col = next(c for c, f in fields.items() if f == "item_code")
     asks = _Asks(
@@ -442,9 +498,13 @@ def _from_their_values(
         if all(v is None for v in padded):
             continue
         code = _text(padded[code_col])
+        matched = asks.take(code)
         cells = [Cell(value=_plain(v)) for v in padded]
-        cells.append(Cell(value=_qty(asks.take(code))))
-        model.rows.append(Row(cells=cells))
+        cells.append(Cell(value=_qty(matched.get("qty") if matched else None)))
+        cells.append(Cell(value=_text(matched.get("remark")) if matched else None))
+        model.rows.append(
+            Row(cells=cells, row_key=matched.get("row_key") if matched else None)
+        )
 
     _append_unlisted(model, asks.left_over(), serial=_next_serial(model))
     model.totals = _computed_totals(model, [c.field for c in model.columns])
@@ -567,6 +627,7 @@ def _totals_of(model: SheetModel, *, ws, totals_row: Optional[int], ncols: int) 
     for pos in totalled:
         label_cells[pos].value = _sum_of(model, pos)
     label_cells.append(Cell(value=_sum_of(model, model.qty_index)))
+    label_cells.append(Cell())  # R11: no total for a free-text remark column
     return Row(cells=label_cells, family_span=0, source_row=totals_row)
 
 
@@ -611,7 +672,7 @@ def _from_our_data(
     lines: list[dict],
     loading_plan_id: Optional[str] = None,
 ) -> SheetModel:
-    """The same eleven columns, built from what we hold (AC-D6).
+    """The same twelve columns, built from what we hold (AC-D6).
 
     Their holdings come off the snapshot rather than off a file, because on this branch there
     is no file - and a row with no snapshot behind it (a product they have never listed) still
@@ -621,11 +682,18 @@ def _from_our_data(
     columns.append(
         Column(label=QTY_TO_LOAD_LABEL_ZH, label_en=QTY_TO_LOAD_LABEL_EN, field="qty_to_load")
     )
+    columns.append(
+        Column(label=LINE_REMARK_LABEL_ZH, label_en=LINE_REMARK_LABEL_EN, field="line_remark")
+    )
     model = SheetModel(columns=columns, title=NO_FILE_TITLE)
 
     held = _snapshot(db, supplier_id, loading_plan_id)
     letters = _company_letters(db, [ln.get("product_id") for ln in lines])
 
+    # The `fill=YELLOW` / `red=` marks below are superseded by `_apply_highlight` (R10) the
+    # moment `build` returns this model - left in place because they cost nothing and this
+    # branch has no other use for the marker; the highlight pass repaints every one of these
+    # rows off the qty-to-load cell alone.
     for serial, line in enumerate(lines, start=1):
         code = _text(line.get("item_code"))
         stock = held.get(code or "", {})
@@ -650,8 +718,9 @@ def _from_our_data(
             ),
             Cell(value=stock.get("remark"), fill=YELLOW),
             Cell(value=_qty(line.get("qty"))),
+            Cell(value=_text(line.get("remark"))),
         ]
-        model.rows.append(Row(cells=cells))
+        model.rows.append(Row(cells=cells, row_key=line.get("row_key")))
 
     model.totals = _computed_totals(model, [c.field for c in model.columns])
     return model
@@ -756,12 +825,14 @@ class _Asks:
         )
         self._taken: set[int] = set()
 
-    def take(self, their_code: Optional[str]) -> Optional[float]:
+    def take(self, their_code: Optional[str]) -> Optional[dict]:
+        """The matched line WHOLE - qty, remark and row_key (R11) - or None when nothing on
+        the ask matched this code."""
         pos = self._match(their_code)
         if pos is None:
             return None
         self._taken.add(pos)
-        return self._lines[pos].get("qty")
+        return self._lines[pos]
 
     def _match(self, their_code: Optional[str]) -> Optional[int]:
         key = _key(their_code)
@@ -824,8 +895,13 @@ def _append_unlisted(model: SheetModel, lines: list[dict], *, serial: int) -> No
             cells[name_at] = Cell(value=line.get("product_name"), fill=YELLOW)
         if remark_at >= 0:
             cells[remark_at] = Cell(value=NOT_ON_LIST_REMARK, fill=YELLOW)
-        cells[-1] = Cell(value=_qty(line.get("qty")))
-        model.rows.append(Row(cells=cells, appended=True))
+        cells[model.qty_index] = Cell(value=_qty(line.get("qty")))
+        # R11: OUR line remark, always the last column - a different cell from the supplier's
+        # own 备注 column above (`remark_at`, when their sheet has one).
+        cells[-1] = Cell(value=_text(line.get("remark")))
+        model.rows.append(
+            Row(cells=cells, appended=True, row_key=line.get("row_key"))
+        )
 
 
 def _next_serial(model: SheetModel) -> int:

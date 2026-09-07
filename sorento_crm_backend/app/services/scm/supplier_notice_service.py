@@ -290,7 +290,10 @@ def _document_html(*, supplier: dict, plan: Optional[LoadingPlan], pack: list[di
                                     vertical-align: middle; }}
   table.sheet tr {{ page-break-inside: avoid; }}
   table.sheet th.doc-title {{ font-size: 13pt; }}
-  table.sheet td.fill {{ background: #ffff00; }}
+  /* R10 (purchasing consolidation, 6 Sep): our own highlight on a row whose qty to load is
+     > 0, replacing the source yellow every render from now on emits `fill='highlight'`
+     rather than `'yellow'` for. */
+  table.sheet td.fill {{ background: #fff2cc; }}
   table.sheet td.red, table.sheet tr.totals td {{ color: #ff0000; }}
   table.sheet tr.totals td {{ font-weight: 600; }}
   table.sheet span.en {{ display: block; color: #555; font-size: 7pt; font-weight: 400; }}
@@ -588,7 +591,49 @@ def _set_catalogue(db: Session, set_ids: list) -> dict[str, dict]:
     }
 
 
-def _request_pack(db: Session, lines: list[dict]) -> list[dict]:
+def _line_row_key(ln: dict) -> Optional[str]:
+    """The plan row this reviewed line came from, in the SAME key
+    `container_request_service.build` keys its grid on (bare product id for a product row,
+    `set:<id>` for a set row) - so a remark typed against that row (R11) travels onto its
+    line here, and the sheet's own `Row.row_key` can point back to it (preview editing)."""
+    if ln.get("product_set_id"):
+        return f"set:{ln['product_set_id']}"
+    if ln.get("product_id"):
+        return str(ln["product_id"])
+    return None
+
+
+def _line_remarks(db: Session, loading_plan_id: Optional[str]) -> dict[str, str]:
+    """`row_key -> remark`, off the plan's own `line_edits` (R11). Empty when this call names
+    no plan (the download route's callers that predate a plan, service-level tests) or a
+    plan another company's caller could not otherwise open.
+
+    Goes through `container_request_service._plan_or_404` (review round 1, S4) rather than a
+    second inline `LoadingPlan` lookup, so there is ONE company-scoped plan lookup in this
+    module family, not two that could drift; a plan `_plan_or_404` cannot find (missing,
+    malformed id, or out of the caller's company scope) reads the same as "no plan" here.
+    """
+    if not loading_plan_id:
+        return {}
+    from app.services.scm import container_request_service
+
+    try:
+        plan = container_request_service._plan_or_404(db, str(loading_plan_id))
+    except ValueError:
+        return {}
+    if not plan.line_edits:
+        return {}
+    out: dict[str, str] = {}
+    for key, raw in plan.line_edits.items():
+        remark = raw.get("remark") if isinstance(raw, dict) else None
+        if remark:
+            out[key] = str(remark)
+    return out
+
+
+def _request_pack(
+    db: Session, lines: list[dict], *, loading_plan_id: Optional[str] = None
+) -> list[dict]:
     """The reviewed lines with the catalogue's own words on them, or a 422 naming what is not ours.
 
     A line names a product OR one of our product SETS (R19). A set line carries NO product
@@ -628,6 +673,8 @@ def _request_pack(db: Session, lines: list[dict]) -> list[dict]:
             return sets.get(str(ln["product_set_id"])) or {}
         return catalogue.get(str(ln.get("product_id"))) or {}
 
+    remarks = _line_remarks(db, loading_plan_id)
+
     return [
         {
             # None on a set line: the ask is the whole set, and naming one member on the
@@ -638,6 +685,10 @@ def _request_pack(db: Session, lines: list[dict]) -> list[dict]:
             "po_number": None,
             "qty": ln.get("qty"),
             "cbm": None,
+            # R11: the sheet's own remark column; row_key is what lets the PREVIEW write an
+            # edit back to `line_edits`.
+            "row_key": _line_row_key(ln),
+            "remark": remarks.get(_line_row_key(ln) or ""),
         }
         for ln in lines
     ]
@@ -684,6 +735,24 @@ def _render_request_pdf(
     )
 
 
+def preview_request_sheet(
+    db: Session,
+    *,
+    supplier_id: str,
+    lines: list[dict],
+    loading_plan_id: Optional[str] = None,
+) -> dict:
+    """The exact `SheetModel` this send would freeze, without writing anything (R9, AC-E2).
+
+    Same two calls `request_and_notify` makes before it writes a single row - `_request_pack`
+    then `_request_sheet` - so the preview and the notice's own frozen `sheet_json` can never
+    disagree, and editing the plan afterwards leaves an already-sent document alone (AC-E6).
+    """
+    pack = _request_pack(db, lines, loading_plan_id=loading_plan_id)
+    sheet = _request_sheet(db, str(supplier_id), pack, loading_plan_id=loading_plan_id)
+    return sheet.to_dict()
+
+
 def request_document(
     db: Session,
     *,
@@ -706,7 +775,7 @@ def request_document(
         raise AppException(422, f"Unknown document format: {fmt}")
 
     supplier = _supplier(db, supplier_id)
-    pack = _request_pack(db, lines)
+    pack = _request_pack(db, lines, loading_plan_id=loading_plan_id)
     sheet = _request_sheet(db, str(supplier_id), pack, loading_plan_id=loading_plan_id)
 
     if fmt == "xlsx":
@@ -1027,7 +1096,7 @@ def request_and_notify(
     # The lines first: a request naming a product that is not ours is a mistake about THIS
     # request, and reporting it before the addressing keeps that 422 the same one it always
     # was for every caller that never passes a channel.
-    pack = _request_pack(db, lines)
+    pack = _request_pack(db, lines, loading_plan_id=loading_plan_id)
 
     to: list[str] = []
     contact = None

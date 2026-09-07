@@ -25,17 +25,20 @@ from io import BytesIO
 
 import pytest
 
+from app.models.entity_attachment import EntityAttachmentLink
 from app.models.import_alias import ImportFieldAlias
 from app.models.procurement import InboundShipment, InboundShipmentLine, Supplier
 from app.models.product import Product, ProductCategory, UnitOfMeasure
+from app.models.resources import Attachment, AttachmentType
 from app.schemas.procurement import (
     InboundShipmentCreate,
     InboundShipmentLineCreate,
     InboundShipmentUpdate,
 )
+from app.services.entity_attachment_service import EntityAttachmentService
 from app.services.error_handler import AppException
 from app.services.procurement_service import InboundShipmentService
-from app.services.scm import packing_list_service
+from app.services.scm import packing_list_service, shipment_line_photos
 from tests._pg_fixture import blank_session
 
 MARKER = "ZZMS"
@@ -181,6 +184,134 @@ class World:
 
 def _by_product(lines) -> dict[str, InboundShipmentLine]:
     return {str(ln.product_id): ln for ln in lines}
+
+
+def _photo_type(db) -> AttachmentType:
+    t = AttachmentType(
+        id=str(uuid.uuid4()),
+        type_name="Shipment Line Photo",
+        code="shipment_line_photo",
+        allowed_extensions="jpg,jpeg,png,webp,gif",
+        max_file_size_mb=10,
+    )
+    db.add(t)
+    db.flush()
+    return t
+
+
+def _attach_photo(db, *, line_id) -> Attachment:
+    """A photo linked to a line WITHOUT going through the upload endpoint - same
+    shorthand `test_shipment_line_photos.py`'s own `_link_photo` uses."""
+    att = Attachment(
+        id=str(uuid.uuid4()),
+        original_filename="photo.png",
+        stored_filename="photo.png",
+        file_path="https://cdn.test/photo.png",
+        mime_type="image/png",
+        storage_provider="r2",
+    )
+    db.add(att)
+    db.flush()
+    EntityAttachmentService(db).link_existing_attachment(
+        entity_type=shipment_line_photos.ENTITY_TYPE,
+        entity_id=str(line_id),
+        attachment_id=str(att.id),
+    )
+    return att
+
+
+def _links_for(db, line_id) -> list[EntityAttachmentLink]:
+    return (
+        db.query(EntityAttachmentLink)
+        .filter(
+            EntityAttachmentLink.entity_type == shipment_line_photos.ENTITY_TYPE,
+            EntityAttachmentLink.entity_id == str(line_id),
+        )
+        .all()
+    )
+
+
+# --------------------------------------------------------------------------- #
+# create_shipment - a re-upload REUSES line rows, so a line's photo survives it #
+# (browser-test round, finding 1)                                               #
+# --------------------------------------------------------------------------- #
+
+
+def test_a_reupload_of_the_same_file_keeps_the_lines_photo(db):
+    """The line row is UPDATED in place, not deleted and recreated, so the photo linked
+    to it (`entity_attachment_links`, no real FK onto the line) is never orphaned."""
+    w = World(db)
+    _photo_type(db)
+    first = w.upload(supplier_id=str(w.kailu.id), lines=[(w.tap, 10, None)])
+    db.commit()
+    line_before = w.lines(first.id)[0]
+    photo = _attach_photo(db, line_id=line_before.id)
+    db.commit()
+
+    second = w.upload(supplier_id=str(w.kailu.id), lines=[(w.tap, 12, None)])
+    db.commit()
+
+    assert second.id == first.id
+    lines_after = w.lines(second.id)
+    assert len(lines_after) == 1
+    line_after = lines_after[0]
+    assert str(line_after.id) == str(line_before.id)  # same row, reused
+    assert line_after.quantity_shipped == 12
+
+    links = _links_for(db, line_after.id)
+    assert [str(link.attachment_id) for link in links] == [str(photo.id)]
+    assert db.query(Attachment).filter(Attachment.id == photo.id).first() is not None
+
+
+def test_a_product_dropped_from_the_reupload_loses_its_photo_with_no_orphan(db):
+    """A product the new file no longer carries has its line - and that line's photo and
+    attachment - deleted outright, never left as a link naming an id nothing resolves."""
+    w = World(db)
+    _photo_type(db)
+    first = w.upload(
+        supplier_id=str(w.kailu.id), lines=[(w.tap, 10, None), (w.sink, 4, None)]
+    )
+    db.commit()
+    sink_line = _by_product(w.lines(first.id))[str(w.sink.id)]
+    photo = _attach_photo(db, line_id=sink_line.id)
+    db.commit()
+    sink_line_id = sink_line.id
+
+    second = w.upload(supplier_id=str(w.kailu.id), lines=[(w.tap, 10, None)])
+    db.commit()
+
+    lines_after = w.lines(second.id)
+    assert {str(ln.product_id) for ln in lines_after} == {str(w.tap.id)}
+    assert _links_for(db, sink_line_id) == []
+    assert db.query(Attachment).filter(Attachment.id == photo.id).first() is None
+
+
+def test_a_corrected_lists_photo_survives_while_the_other_suppliers_is_untouched(db):
+    """The multi-factory case: Kailu's line is reused (photo kept); Caizhou's line, out
+    of this upload's scope entirely, is not even considered for deletion."""
+    w = World(db)
+    _photo_type(db)
+    w.upload(supplier_id=str(w.kailu.id), lines=[(w.tap, 10, None)])
+    db.commit()
+    shipment = w.upload(supplier_id=str(w.caizhou.id), lines=[(w.sink, 5, None)])
+    db.commit()
+    lines = _by_product(w.lines(shipment.id))
+    kailu_photo = _attach_photo(db, line_id=lines[str(w.tap.id)].id)
+    caizhou_photo = _attach_photo(db, line_id=lines[str(w.sink.id)].id)
+    db.commit()
+
+    corrected = w.upload(supplier_id=str(w.kailu.id), lines=[(w.tap, 42, None)])
+    db.commit()
+
+    assert corrected.id == shipment.id
+    lines_after = _by_product(w.lines(shipment.id))
+    assert lines_after[str(w.tap.id)].quantity_shipped == 42
+    assert [str(l.attachment_id) for l in _links_for(db, lines_after[str(w.tap.id)].id)] == [
+        str(kailu_photo.id)
+    ]
+    assert [str(l.attachment_id) for l in _links_for(db, lines_after[str(w.sink.id)].id)] == [
+        str(caizhou_photo.id)
+    ]
 
 
 # --------------------------------------------------------------------------- #

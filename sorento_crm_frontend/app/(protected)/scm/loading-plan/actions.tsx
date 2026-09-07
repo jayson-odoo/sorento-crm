@@ -24,6 +24,7 @@ import {
   CalendarDays,
   Download,
   Eye,
+  FileSearch,
   FileText,
   Link2,
   RefreshCw,
@@ -49,6 +50,9 @@ export interface UseLoadingPlanActionsOptions {
   /** Opens the Send dialog - a row navigates to the record and opens it there; the record
    *  opens it in place. Every caller supplies this (AC-A1 and AC-A2 both list it). */
   send?: ActionInput;
+  /** Switches the record into the document view (R9). Record-only - a row has no built lines
+   *  to preview. */
+  previewRequest?: ActionInput;
   /** Only present when the plan has a stored copy of the supplier's own file. */
   viewUploadedList?: ActionInput;
   refreshMatching?: ActionInput;
@@ -69,6 +73,7 @@ export function useLoadingPlanActions(
     onCancelled,
     surface = 'inline',
     send,
+    previewRequest,
     viewUploadedList,
     refreshMatching,
     refreshSuggestion,
@@ -163,6 +168,14 @@ export function useLoadingPlanActions(
       label: 'Download PDF',
       icon: FileText,
       ...downloadPdf,
+    });
+  }
+  if (previewRequest) {
+    actions.push({
+      key: 'loading_plan.preview_request',
+      label: 'Preview request',
+      icon: FileSearch,
+      ...previewRequest,
     });
   }
   if (send) {

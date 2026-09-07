@@ -11,7 +11,7 @@ That is the change from the first version, which replayed their VALUES into a wo
 and lost every merge and every fill on the way (a family's volume printed nine times reads as
 nine times the volume), and which fell back to five columns of our own naming when there was no
 file to answer in - so a supplier's document changed shape because of a file WE failed to keep.
-The five-column sheet is gone (AC-D6): with no retained file the SAME eleven columns are drawn
+The five-column sheet is gone (AC-D6): with no retained file the SAME twelve columns are drawn
 fresh, in their styling, with no merges (we hold no family information and inventing one would
 be wrong on the first product with two sizes).
 
@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 
 from app.services.scm import supplier_document_model as sheet_model
 from app.services.scm.supplier_document_model import (  # re-exported: one spelling, one place
+    LINE_REMARK_HEADER,
     NO_FILE_TITLE,
     QTY_TO_LOAD_HEADER,
     SheetModel,
@@ -44,7 +45,8 @@ from app.services.scm.supplier_document_model import (  # re-exported: one spell
 logger = logging.getLogger(__name__)
 
 #: Their own measurements, off the July file, for the document we draw ourselves. Column K
-#: repeats column J's width, which is also the rule the in-place path applies.
+#: repeats column J's width, which is also the rule the in-place path applies; column L (R11)
+#: falls through to `DEFAULT_WIDTH` since there are only eleven measurements to copy.
 NO_FILE_WIDTHS = [
     6.0,
     28.7109375,
@@ -67,7 +69,11 @@ TOTALS_HEIGHT = 22.5
 
 DATA_FONT = "宋体"
 HEADER_FONT = "Calibri"
-YELLOW_RGB = "FFFFFF00"
+#: R10 (purchasing consolidation, 6 Sep): our own highlight, painted on a row whose qty to
+#: load is > 0 - replacing whatever fill the supplier's file had on that row. The old
+#: `YELLOW_RGB` this module drew with is retired: nothing here ever paints a source colour
+#: any more.
+HIGHLIGHT_RGB = "FFFFF2CC"
 RED_RGB = "FFFF0000"
 
 
@@ -96,7 +102,7 @@ def render(model: SheetModel) -> bytes:
 
     Never raises. `supplier_notice_service.request_document` calls this bare, so a shape of
     theirs this module has not met yet (a merge that reaches into column K, a merge that runs
-    down into 合计) must degrade to our own eleven columns rather than 500 the download and
+    down into 合计) must degrade to our own twelve columns rather than 500 the download and
     stop the ask going out. The model is the same either way, so the supplier still receives
     every line that was asked for; what is lost is their styling, not their document.
     """
@@ -116,9 +122,20 @@ def render(model: SheetModel) -> bytes:
 
 
 def _with_qty_to_load(model: SheetModel) -> bytes:
-    """Their file, with column K written into it. Nothing else in the sheet is touched."""
+    """Their file, with column K (qty to load) and column L (our remark, R11) written into
+    it, and R10's highlight replacing whatever fill each data row had - the title and header
+    rows are untouched, and so is the 合计 row (a sum, not an ask)."""
     import openpyxl
+    from openpyxl.styles import Font, PatternFill
     from openpyxl.utils import get_column_letter
+
+    def _clear_red(cell) -> None:
+        """R10: a red figure is one of their two marks, same as the yellow fill - both go."""
+        f = cell.font
+        if f is not None and f.color is not None:
+            cell.font = Font(
+                name=f.name, sz=f.sz, b=f.b, i=f.i, u=f.u, strike=f.strike, color=None
+            )
 
     src = model.source
     assert src is not None  # `render` guards it; this keeps the type checker honest
@@ -128,9 +145,14 @@ def _with_qty_to_load(model: SheetModel) -> bytes:
         raise ValueError("the retained workbook has no sheet")
 
     qty_col = src.qty_col
+    remark_col = qty_col + 1
     like_col = qty_col - 1  # column J: the last column they styled themselves
     qty_letter = get_column_letter(qty_col)
+    remark_letter = get_column_letter(remark_col)
     like_letter = get_column_letter(like_col)
+    qty_at = model.qty_index
+    highlight = PatternFill(fill_type="solid", fgColor=HIGHLIGHT_RGB)
+    no_fill = PatternFill(fill_type=None)
 
     _free_our_column(ws, qty_col)
 
@@ -141,7 +163,7 @@ def _with_qty_to_load(model: SheetModel) -> bytes:
     # The 合计 row moves down BEFORE the appended rows are written, because they are written
     # over the rows it used to occupy.
     if src.totals_row is not None and shift:
-        _move_row(ws, src.totals_row, src.totals_row + shift, last_col=qty_col)
+        _move_row(ws, src.totals_row, src.totals_row + shift, last_col=remark_col)
 
     header = ws.cell(row=src.header_row, column=qty_col)
     _copy_style(ws.cell(row=src.header_row, column=like_col), header)
@@ -150,20 +172,42 @@ def _with_qty_to_load(model: SheetModel) -> bytes:
         ws.column_dimensions[like_letter].width or DEFAULT_WIDTH
     )
 
+    remark_header = ws.cell(row=src.header_row, column=remark_col)
+    _copy_style(ws.cell(row=src.header_row, column=like_col), remark_header)
+    remark_header.value = LINE_REMARK_HEADER
+    ws.column_dimensions[remark_letter].width = (
+        ws.column_dimensions[like_letter].width or DEFAULT_WIDTH
+    )
+
     for row in model.rows:
         if row.source_row is None:
             continue
+        qty_val = row.cells[qty_at].value
+        lit = isinstance(qty_val, (int, float)) and not isinstance(qty_val, bool) and qty_val > 0
         cell = ws.cell(row=row.source_row, column=qty_col)
         _copy_style(ws.cell(row=row.source_row, column=like_col), cell)
-        cell.value = row.cells[-1].value
+        cell.value = qty_val
+        remark_cell = ws.cell(row=row.source_row, column=remark_col)
+        _copy_style(ws.cell(row=row.source_row, column=like_col), remark_cell)
+        remark_cell.value = row.cells[-1].value
+        # R10: their own mark on this data row - yellow fill, red figure or plain - is
+        # cleared and replaced by ours only when there is something asked of it.
+        for pos in range(1, remark_col + 1):
+            data_cell = ws.cell(row=row.source_row, column=pos)
+            data_cell.fill = highlight if lit else no_fill
+            _clear_red(data_cell)
 
     for offset, row in enumerate(appended):
         target = src.last_data_row + 1 + offset
-        for pos in range(1, qty_col + 1):
+        qty_val = row.cells[qty_at].value
+        lit = isinstance(qty_val, (int, float)) and not isinstance(qty_val, bool) and qty_val > 0
+        for pos in range(1, remark_col + 1):
             style_from = ws.cell(row=src.last_data_row, column=min(pos, like_col))
             cell = ws.cell(row=target, column=pos)
             _copy_style(style_from, cell)
             cell.value = row.cells[pos - 1].value
+            cell.fill = highlight if lit else no_fill
+            _clear_red(cell)
         ws.row_dimensions[target].height = ws.row_dimensions[src.last_data_row].height
 
     if src.totals_row is not None:
@@ -177,6 +221,8 @@ def _with_qty_to_load(model: SheetModel) -> bytes:
         total.value = (
             f"=SUM({qty_letter}{src.first_data_row}:{qty_letter}{new_last_data_row})"
         )
+        remark_total = ws.cell(row=totals_at, column=remark_col)
+        _copy_style(ws.cell(row=totals_at, column=like_col), remark_total)
 
     return _bytes(wb)
 
@@ -276,7 +322,7 @@ def _widen(formula: str, old_last: int, new_last: int) -> str:
 
 
 def _fresh(model: SheetModel) -> bytes:
-    """The same eleven columns, drawn in their styling, when there is no file to answer in."""
+    """The same twelve columns, drawn in their styling, when there is no file to answer in."""
     import openpyxl
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
@@ -289,7 +335,10 @@ def _fresh(model: SheetModel) -> bytes:
     thin = Side(style="thin")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     centre = Alignment(horizontal="center", vertical="center")
-    yellow = PatternFill(fill_type="solid", fgColor=YELLOW_RGB)
+    # R10: by the time `render` sees this model, `_apply_highlight` has already replaced
+    # every row's `fill` with either `'highlight'` or nothing - so the only colour a data
+    # cell here ever paints with is ours, never the old source-yellow.
+    highlight_fill = PatternFill(fill_type="solid", fgColor=HIGHLIGHT_RGB)
 
     for pos in range(1, ncols + 1):
         width = NO_FILE_WIDTHS[pos - 1] if pos <= len(NO_FILE_WIDTHS) else DEFAULT_WIDTH
@@ -305,7 +354,12 @@ def _fresh(model: SheetModel) -> bytes:
 
     for pos, column in enumerate(model.columns, start=1):
         cell = ws.cell(row=2, column=pos)
-        cell.value = QTY_TO_LOAD_HEADER if pos == ncols else column.label
+        if column.field == "qty_to_load":
+            cell.value = QTY_TO_LOAD_HEADER
+        elif column.field == "line_remark":
+            cell.value = LINE_REMARK_HEADER
+        else:
+            cell.value = column.label
         cell.font = Font(name=HEADER_FONT, sz=14, b=True)
         cell.alignment = centre
         cell.border = border
@@ -323,7 +377,7 @@ def _fresh(model: SheetModel) -> bytes:
             cell.alignment = centre
             cell.border = border
             if source.fill:
-                cell.fill = yellow
+                cell.fill = highlight_fill
         ws.row_dimensions[r].height = DATA_HEIGHT
 
     last_data_row = first_data_row + len(model.rows) - 1

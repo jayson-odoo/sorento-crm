@@ -59,13 +59,6 @@ export interface DraftLine {
   remarks: string;
 }
 
-/** The header fields the Details tab types, beyond the clearance ones. */
-export const CONTAINER_COST_FIELDS = [
-  { name: 'clearance_cost', label: 'Clearance cost' },
-  { name: 'china_freight_cost', label: 'China freight cost' },
-  { name: 'insurance_rate', label: 'Insurance rate' },
-] as const;
-
 interface PackingListContextValue {
   packingListId: string;
   packingList: PackingListDetail | undefined;
@@ -182,7 +175,6 @@ export function PackingListProvider({
       // convention every other clearable id field here uses.
       container_size_id: packingList.container_size_id ?? '',
     };
-    for (const f of CONTAINER_COST_FIELDS) next[f.name] = toInput(record[f.name]);
     for (const cp of checkpoints) next[cp.field] = toDateInput(record[cp.field]);
     for (const f of CLEARANCE_ATTRIBUTE_FIELDS) next[f.name] = toInput(record[f.name]);
     setDraft(next);
@@ -354,12 +346,10 @@ export function PackingListProvider({
     const extra = payload as unknown as Record<string, unknown>;
     for (const cp of checkpoints) extra[cp.field] = orNull(draft[cp.field]);
     for (const f of CLEARANCE_ATTRIBUTE_FIELDS) extra[f.name] = orNull(draft[f.name]);
-    // A cost cleared back to blank is null, not 0: nobody has priced this container yet
-    // and a zero would be apportioned across the companies as a real figure. Unparseable
-    // text is treated the same as blank, not sent as NaN-turned-null-turned-422.
-    for (const f of CONTAINER_COST_FIELDS) {
-      extra[f.name] = orUndefined(draft[f.name] ?? '') ?? null;
-    }
+    // Costs are neither shown nor sent any more (R17, purchasing consolidation batch
+    // 6 Sep 2026): the card is gone from the Details tab, so the draft never carries
+    // `clearance_cost` / `china_freight_cost` / `insurance_rate` and the PUT omits them,
+    // leaving whatever the DB already holds untouched.
     try {
       await updateMutation.mutateAsync({ id: packingListId, data: payload });
       cancelEdit();

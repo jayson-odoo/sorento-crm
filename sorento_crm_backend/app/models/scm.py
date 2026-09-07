@@ -1159,6 +1159,12 @@ class OrderLinkClaim(Base, CompanyScopedMixin):
         ),
         nullable=True,
     )
+    #: How much of this pairing a `source='planner'` claim promises (migration 482, R20,
+    #: AC-I5) - the ONE writer that states a quantity at write time rather than reading it
+    #: off the link/allocation it sits beside. Null for every other source: a book claim's
+    #: quantity is not yet known until `resolve()` fills in both ends, and a placement
+    #: claim's own qty already lives on the `order_inquiry_links` row beside it.
+    qty = Column(Numeric(15, 4), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
@@ -1176,10 +1182,11 @@ class OrderLinkClaim(Base, CompanyScopedMixin):
         # rule); `order_inquiry` is the audit row `_write_link` writes in lockstep with
         # a link, which therefore names a quantity that link already accounts for;
         # `autocount` is the ESB naming a pairing via `from_so_numbers` on a pushed
-        # document (V4, migration 473).
+        # document (V4, migration 473); `planner` is the SPO planner's SO-covered dialog
+        # writing a RETAIL tick with its own qty (R20, migration 482).
         CheckConstraint(
             "source IN ('po_history', 'order_inquiry', 'so_upload', 'po_upload', "
-            "'manual', 'crm_supply', 'autocount')",
+            "'manual', 'crm_supply', 'autocount', 'planner')",
             name="ck_scm_order_link_claim_source",
         ),
         {"schema": "scm"},

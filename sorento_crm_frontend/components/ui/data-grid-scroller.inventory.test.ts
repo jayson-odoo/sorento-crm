@@ -190,10 +190,13 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
   ],
   [
     'app/(protected)/scm/components/PlanRowDialog.tsx',
-    // 3 direct DataGrid instances (OnHandTable, PoTakesPicker, SoCoveragePicker) + 7 calls
-    // to this file's own exported DrillTable (ProjectRetailTabs x2, SpoTabs x2,
-    // IncomingPlTable x1, PoTabs x2) - every one is inside PlanRowDialog's own DialogBody.
-    10,
+    // 2 direct DataGrid instances (OnHandTable, PoTakesPicker) + 7 calls to this file's
+    // own exported DrillTable (ProjectRetailTabs x2, SpoTabs x2, IncomingPlTable x1,
+    // PoTabs x2) + `SoCoveragePicker`'s own 2 (R18, purchasing consolidation batch: the
+    // "SO covered" picker split into a project/retail tab pair, same shape
+    // `ProjectRetailTabs` already uses, so its one grid became two) - every one is
+    // inside PlanRowDialog's own DialogBody.
+    11,
   ],
   [
     'app/(protected)/scm/reorder/components/PlanRowDialogs.tsx',

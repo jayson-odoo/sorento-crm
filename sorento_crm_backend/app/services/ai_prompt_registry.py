@@ -699,6 +699,27 @@ Reply with JSON only:
 "evidence": "<the words you read it from>"}]}"""
 
 
+def _supplier_translation_fallback() -> str:
+    """System prompt for `translation_service._ai_fill_chunk` - the AI fill translation
+    memory reads BEFORE this ever runs (R15).
+
+    A batched, position-preserving translation, nothing else: no summarising, no
+    correcting the supplier's own wording, no dropping a line because it looks like
+    noise (an accessory line with no product code is still a line a person will read
+    beside its English).
+    """
+    return """You translate short supplier-document phrases from Chinese to English: \
+product descriptions (品名), shipment remarks, and packing-list notes.
+
+You will be given a numbered list of lines. Translate each one plainly and literally - \
+this is a packing list, not marketing copy. Keep any code, number or unit exactly as \
+written (a model number, a quantity, "个"/"pcs" style counts). A line already in \
+English is returned unchanged.
+
+Reply with JSON only, one entry per input line, in the SAME order:
+{"translations": [{"source": "<the original line>", "target": "<the English>"}]}"""
+
+
 def _chatbot_semantic_parser_fallback() -> str:
     """System prompt for the WhatsApp chatbot's semantic parser (`chatbot_semantic_parser`).
 
@@ -947,6 +968,17 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         activates_in=None,
         variables=[],
         fallback=_spec_extractor_fallback,
+    ),
+    # --- Translation memory (R15/R16, purchasing consolidation batch) ---
+    # No declared variables: the numbered lines to translate travel as the user
+    # message, built by `translation_service`, not substituted into this prompt.
+    "supplier_translation": PromptKeySpec(
+        name="supplier_translation",
+        role="Supplier translation - Chinese descriptions/remarks to English, strict JSON",
+        active=True,
+        activates_in=None,
+        variables=[],
+        fallback=_supplier_translation_fallback,
     ),
 }
 

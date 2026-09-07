@@ -901,6 +901,24 @@ register(
 )
 
 
+def _delete_translation(db: Session, payload: dict):
+    from app.services import translation_service
+
+    return translation_service.delete_memory(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="translation_memory.delete",
+        entity_types=("translation_memory",),
+        execute=_delete_translation,
+        window=WINDOW_DESTRUCTIVE,
+        permission="system.translations.edit",
+        label="Delete translation",
+    )
+)
+
+
 # ----- Dealer kit -----------------------------------------------------------------------
 #
 # One slug for all five, `dealer_kit.page.edit`, because that is the single grant every
@@ -1306,6 +1324,35 @@ register(
         window=WINDOW_REVERSIBLE,
         permission="scm.reorder.run",
         label="Forget supplier-code match",
+    )
+)
+
+
+def _delete_shipment_line_photo(db: Session, payload: dict):
+    from app.services.scm import shipment_line_photos
+
+    # `shipment_id`/`line_id` scope the delete (review round 1, item 1) - the route
+    # puts both there, same as `entity_id`; without them a photo id under another
+    # shipment would be reachable off a guess.
+    return shipment_line_photos.delete_photo(
+        db,
+        str(payload.get("shipment_id") or ""),
+        str(payload.get("line_id") or ""),
+        _entity_id(payload),
+    )
+
+
+register(
+    FormAction(
+        key="shipment_line_photo.delete",
+        entity_types=("shipment_line_photo",),
+        execute=_delete_shipment_line_photo,
+        # Destructive: the file itself is removed (link, attachment row and object),
+        # same as every other file delete in this registry - re-adding it means
+        # uploading it again, not undoing a link.
+        window=WINDOW_DESTRUCTIVE,
+        permission="scm.reorder.run",
+        label="Delete shipment line photo",
     )
 )
 

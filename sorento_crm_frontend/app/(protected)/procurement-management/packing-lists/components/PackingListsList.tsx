@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useQueryClient } from '@tanstack/react-query';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import {
@@ -37,16 +38,35 @@ import { formatStatusLabel } from '@/lib/status-badge';
 import PackingListDeleteDialog from './packing-list-delete-dialog';
 import PackingListBulkDeleteDialog from './PackingListBulkDeleteDialog';
 import ContainerStatusImportDialog from './ContainerStatusImportDialog';
+import { PackingListUploadDialog } from './PackingListUploadDialog';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
+import { useHasAnyPermission } from '@/hooks/usePermissions';
+import { useTenantModules } from '@/hooks/useTenantModules';
 
 export default function PackingListsList() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const qc = useQueryClient();
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+
+  // The reader route (`POST /api/v1/scm/packing-lists/apply`) is gated on
+  // `scm.reorder.run`, an `scm`-module permission - a tenant with `procurement` but not
+  // `scm` (or a user without that permission) can view this list but cannot reach that
+  // route. Gating on the page's OWN `procurement` permission would not have caught that
+  // (review B4): the CTA needs the WRITE route's own permission and module, not the
+  // page's.
+  const canUploadPackingList = useHasAnyPermission(['scm.reorder.run']);
+  const { enabledModuleKeys, isLoading: modulesLoading } = useTenantModules();
+  // null/loading reads as enabled, same convention the sidebar filter and
+  // `PromotionsList` use - it avoids a flash of "no access" before the query settles.
+  const scmModuleEnabled =
+    modulesLoading || enabledModuleKeys == null || enabledModuleKeys.has('scm');
+  const showUploadPackingListCta = canUploadPackingList && scmModuleEnabled;
 
   // The "no container status imported yet" empty state on a packing list detail page
   // links back here with ?import=container-status so the CTA lands on the upload
@@ -362,12 +382,19 @@ export default function PackingListsList() {
 
   // The one offer this listing makes, in both places it belongs: the
   // toolbar, and the empty state's next step (S5-06).
-  const listPrimaryAction = (
-    <Button
-      onClick={() =>
-        router.push('/procurement-management/packing-lists/new')
-      }
-    >
+  //
+  // Upload is primary (R3): reading a supplier's file straight into a shipment is how a
+  // packing list is filed today, and the manual form is the fallback for the container it
+  // never covers. Create Packing List moves into the gear menu beside Import Container
+  // Status - EXCEPT when the reader route is out of reach (review B4), where Create
+  // Packing List is the only offer this user has and stays primary.
+  const listPrimaryAction = showUploadPackingListCta ? (
+    <Button onClick={() => setUploadDialogOpen(true)}>
+      <Upload />
+      Upload supplier documents
+    </Button>
+  ) : (
+    <Button onClick={() => router.push('/procurement-management/packing-lists/new')}>
       <Plus />
       Create Packing List
     </Button>
@@ -410,6 +437,19 @@ export default function PackingListsList() {
                 icon: RefreshCw,
                 onClick: () => void refetch(),
               },
+              // Only offered here when Upload is the primary action - when the reader
+              // route is out of reach, Create Packing List already IS the primary
+              // button above and would otherwise appear twice (review B4).
+              ...(showUploadPackingListCta
+                ? [
+                    {
+                      key: 'create-packing-list',
+                      label: 'Create Packing List',
+                      icon: Plus,
+                      onClick: () => router.push('/procurement-management/packing-lists/new'),
+                    },
+                  ]
+                : []),
               {
                 key: 'preview-container-status',
                 label: 'Preview Container Status (latest)',
@@ -458,6 +498,13 @@ export default function PackingListsList() {
       <ContainerStatusImportDialog
         open={importDialogOpen}
         onOpenChange={setImportDialogOpen}
+      />
+      <PackingListUploadDialog
+        open={uploadDialogOpen}
+        onOpenChange={setUploadDialogOpen}
+        onImported={() => {
+          void qc.invalidateQueries({ queryKey: ['packing-lists'] });
+        }}
       />
       <AttachmentPreviewModal
         open={previewOpen}

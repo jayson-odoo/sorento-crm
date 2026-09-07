@@ -27,8 +27,12 @@ Two moves, two functions:
   no open need names nothing worth asking about or holding, so it is left out exactly as it
   always was.
 
-  `suggested_qty` is NETTED (captain decision) against `on_hand` and `incoming_spo` only -
-  `open_so_need - on_hand - incoming_spo`, floored at zero. `outstanding_po` (placed with a
+  `suggested_qty` is NETTED (captain decision) against `on_hand`, `incoming_spo` and, since R6
+  (purchasing consolidation, 6 Sep), `incoming_pl_unallocated` -
+  `open_so_need - on_hand - incoming_spo - incoming_pl_unallocated`, floored at zero.
+  `incoming_pl_unallocated` is the part of `incoming_pl` NOT already turned into an SPO - the
+  full `incoming_pl` would double-subtract a container that already has its SPO, since the
+  same units would then be netted twice (see `_stock_context`'s docstring). `outstanding_po` (placed with a
   supplier but not yet allocated to a shipment, `scm.po_ordered_v`) is deliberately NOT
   subtracted (captain, 20 Aug follow-up, CWCY604 worked example): "don't need to deduct
   outstanding PO, need to deduct outstanding SPO" - an outstanding PO is not supply this
@@ -109,6 +113,21 @@ OPEN_PO_SQL = (
 #: What is still to land on one packing-list line, floored at zero.
 PL_REMAINING_SQL = (
     "GREATEST(COALESCE(l.quantity_shipped, 0) - COALESCE(l.quantity_received, 0), 0)"
+)
+
+#: R6 (purchasing consolidation, 6 Sep): the part of one line still to land that has NOT
+#: already been turned into an SPO. Always <= `PL_REMAINING_SQL` (an allocated unit is also
+#: a received-or-not-yet unit), which is why filtering rows on `PL_REMAINING_SQL > 0` never
+#: drops a line this figure would otherwise count.
+#: CAVEAT: `l.spo_allocated_quantity` is written by
+#: `InboundShipmentService.refresh_shipment_line_statuses`, which sums SPO allocations for the
+#: SHIPMENT grouped by PRODUCT and stamps that same product total onto every line of that
+#: product on the shipment - not the allocation for that one line. A shipment with more than
+#: one line for the same product would over-subtract here; every shipment measured so far has
+#: had at most one line per product, so this has not yet been observed to matter.
+PL_UNALLOCATED_SQL = (
+    "GREATEST(COALESCE(l.quantity_shipped, 0) - COALESCE(l.spo_allocated_quantity, 0) "
+    "- COALESCE(l.quantity_received, 0), 0)"
 )
 
 #: "Has not arrived" - BOTH halves. A shipment that has landed is already counted in
@@ -906,6 +925,9 @@ def _empty_context() -> dict:
         "incoming_spo": 0.0,
         "incoming_spo_group": 0.0,
         "incoming_pl": 0.0,
+        # R6: the part of `incoming_pl` not yet turned into an SPO - what the formula
+        # actually subtracts.
+        "incoming_pl_unallocated": 0.0,
         "outstanding_po": 0.0,
         "sites": [],
         "group_locations": {
@@ -947,9 +969,10 @@ def _pool_warehouses(db: Session) -> list[str]:
 def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
     """What we already hold or have coming, per product - SITE POOLS ONLY for the netting.
 
-    THE NETTING RULE THIS FUNCTION IS THE RECORD OF (F2, captain 26 Aug):
+    THE NETTING RULE THIS FUNCTION IS THE RECORD OF (F2, captain 26 Aug; R6, 6 Sep):
 
         suggested_qty = open_so_need - on_hand(site pools) - incoming_spo(site pools)
+                         - incoming_pl_unallocated
 
     and nothing else is ever subtracted.
 
@@ -960,9 +983,14 @@ def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
       ask this container needed. That stock is not hidden - it travels as `on_hand_group` /
       `incoming_spo_group` and is shown, muted, in the row breakdown.
     * `incoming_pl` (unreceived packing-list quantity on shipments that have not arrived) is
-      REFERENCE ONLY and is never subtracted (Q1): a packing list names no destination, so
-      there is no way to tell whether it lands in a pool or in a group bin, and netting it
-      would be a guess. It is shown beside the ask, with the shipments behind it.
+      shown beside the ask, with the shipments behind it, exactly as before Q1 - a packing
+      list names no destination, so there is no way to tell whether it lands in a pool or in
+      a group bin, and netting the WHOLE figure would be a guess.
+    * `incoming_pl_unallocated` (R6) is the part of `incoming_pl` NOT already turned into an
+      SPO on that same shipment line (`GREATEST(quantity_shipped - spo_allocated_quantity -
+      quantity_received, 0)`) - THIS is what actually nets against the ask, because a unit
+      already counted in `incoming_spo` would otherwise be subtracted twice: once as the SPO,
+      once again as the packing list it came off.
     * `outstanding_po` is likewise shown and never subtracted (captain, 20 Aug, CWCY604): a PO
       placed but not yet allocated to a shipment is often the very demand this request is
       asking the supplier to pack.
@@ -1043,8 +1071,9 @@ def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
 
     for pid, incoming in _incoming_packing_lists(db, product_ids).items():
         ctx = out.setdefault(pid, _empty_context())
-        ctx["incoming_pl_shipments"] = incoming
-        ctx["incoming_pl"] = sum(s["qty"] for s in incoming)
+        ctx["incoming_pl_shipments"] = incoming["shipments"]
+        ctx["incoming_pl"] = sum(s["qty"] for s in incoming["shipments"])
+        ctx["incoming_pl_unallocated"] = incoming["unallocated"]
 
     for pid, lines in _outstanding_po_lines(db, product_ids).items():
         ctx = out.setdefault(pid, _empty_context())
@@ -1063,8 +1092,9 @@ def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
     return out
 
 
-def _incoming_packing_lists(db: Session, product_ids: list[str]) -> dict[str, list[dict]]:
-    """Unreceived packing-list quantity per product, by shipment - the Incoming PL reference.
+def _incoming_packing_lists(db: Session, product_ids: list[str]) -> dict[str, dict]:
+    """Unreceived packing-list quantity per product, by shipment - the Incoming PL reference,
+    plus the part of it not yet turned into an SPO (R6).
 
     "Not arrived" is BOTH `actual_arrival_date IS NULL` and a status that is not a finished
     one: a shipment that has landed is already counted in `on_hand`, and counting it here too
@@ -1072,17 +1102,25 @@ def _incoming_packing_lists(db: Session, product_ids: list[str]) -> dict[str, li
 
     A draft carries no number yet; it is emitted as a null so the screen can say "draft"
     rather than invent one.
+
+    Returns ``{product_id: {"shipments": [...], "unallocated": float}}`` - `shipments` is
+    the SAME per-shipment breakdown the Incoming PL lightbox has always shown (unchanged
+    shape, so that dialog and the AC-B4 test are untouched); `unallocated` is the new R6
+    figure the netting formula subtracts, summed once per product rather than per shipment
+    since nothing on screen breaks it down further.
     """
     if not product_ids:
         return {}
     scope, params = company_sql_predicate(db, "s.company_id", param_prefix="ipl")
     remaining = PL_REMAINING_SQL
+    unallocated = PL_UNALLOCATED_SQL
     sql = f"""
         SELECT l.product_id::text AS product_id,
                s.id::text AS shipment_id,
                s.shipment_number,
                s.estimated_arrival_date,
-               SUM({remaining}) AS qty
+               SUM({remaining}) AS qty,
+               SUM({unallocated}) AS qty_unallocated
         FROM inbound_shipment_lines l
         JOIN inbound_shipments s ON s.id = l.shipment_id
         WHERE l.product_id::text = ANY(:pids)
@@ -1093,9 +1131,10 @@ def _incoming_packing_lists(db: Session, product_ids: list[str]) -> dict[str, li
         ORDER BY s.estimated_arrival_date NULLS LAST, s.shipment_number NULLS FIRST
     """
     rows = db.execute(text(sql), {"pids": product_ids, **params}).mappings().all()
-    out: dict[str, list[dict]] = {}
+    out: dict[str, dict] = {}
     for r in rows:
-        out.setdefault(r["product_id"], []).append(
+        entry = out.setdefault(r["product_id"], {"shipments": [], "unallocated": 0.0})
+        entry["shipments"].append(
             {
                 "shipment_id": r["shipment_id"],
                 "shipment_number": r["shipment_number"],
@@ -1107,6 +1146,7 @@ def _incoming_packing_lists(db: Session, product_ids: list[str]) -> dict[str, li
                 "qty": float(r["qty"] or 0),
             }
         )
+        entry["unallocated"] += float(r["qty_unallocated"] or 0)
     return out
 
 
@@ -1289,8 +1329,12 @@ def build_for_plan(db: Session, *, plan_id: str, include_lines: bool = False) ->
     total_cbm = 0.0
     for row in out["rows"]:
         row["engine_qty"] = row["suggested_qty"]
-        if row["row_key"] in edits:
-            row["suggested_qty"] = float(edits[row["row_key"]])
+        # R11: `edit_value` reads a bare number (every plan saved before remarks existed,
+        # and still what a qty-only edit is stored as) as `{qty: n}`.
+        edit = loading_plan_service.edit_value(edits.get(row["row_key"]))
+        if edit.get("qty") is not None:
+            row["suggested_qty"] = float(edit["qty"])
+        row["remark"] = edit.get("remark")
         total_qty += row["suggested_qty"]
         if row.get("cbm_per_unit") is not None:
             total_cbm += row["suggested_qty"] * float(row["cbm_per_unit"])
@@ -1508,9 +1552,15 @@ def build(
             unclassified_qty = float(getattr(n, "unclassified_qty", 0) or 0) if n else 0.0
             project_qty = p["qty"] if p else 0.0
             open_so_need = retail_qty + unclassified_qty + project_qty
-            # Site pools only, and neither the packing list nor the outstanding PO is
-            # subtracted - `_stock_context`'s docstring is the record of that rule.
-            suggested_qty = max(open_so_need - ctx["on_hand"] - ctx["incoming_spo"], 0.0)
+            # Site pools only; the outstanding PO and the ALLOCATED half of incoming_pl are
+            # not subtracted - `_stock_context`'s docstring is the record of that rule (R6).
+            suggested_qty = max(
+                open_so_need
+                - ctx["on_hand"]
+                - ctx["incoming_spo"]
+                - ctx["incoming_pl_unallocated"],
+                0.0,
+            )
             need_by = _earliest_need_by(n, p["needed"] if p else None)
             prepared.append(
                 {
@@ -1541,6 +1591,10 @@ def build(
                     "rank_score": scores[row_key],
                     "rank_factors": [f.as_dict() for f in factors_by_row[row_key]],
                     "has_demand": True,
+                    # R11: overwritten by `build_for_plan` off `plan.line_edits`; `None` here
+                    # (the no-plan build the service-level tests use) because there is no
+                    # plan to read a remark off.
+                    "remark": None,
                     **_identity(info, entry),
                 }
             )
@@ -1574,6 +1628,7 @@ def build(
                 "rank_score": None,
                 "rank_factors": [],
                 "has_demand": False,
+                "remark": None,
                 **_identity(info, entry),
             }
         )

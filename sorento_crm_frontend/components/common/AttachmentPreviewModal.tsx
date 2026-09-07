@@ -6,6 +6,7 @@ import {
   ExternalLink,
   FileQuestion,
   LoaderCircle,
+  Trash2,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
@@ -96,6 +97,18 @@ interface AttachmentPreviewModalProps {
    * Download button then stays hidden rather than shipping one that 401s.
    */
   fetchBytes?: FetchBytes;
+  /**
+   * Optional per-item delete, rendered as a destructive button beside
+   * Open/Download. Omitted by every existing caller (additive only) - added for
+   * `ShipmentLinePhotosCell` (R25 review round 1, item 8), whose overflow photos
+   * (beyond the visible thumbnail strip) have no OTHER delete affordance: the
+   * carousel already reaches every item, so this is the smaller change over a
+   * second, duplicate overflow-thumbnail popover.
+   */
+  onDelete?: (item: AttachmentPreviewItem) => void;
+  /** The item currently counting down its own deferred delete - disables its
+   *  Delete button so a second click cannot park a second action on it. */
+  deletingItemId?: string | null;
 }
 
 type Kind = 'image' | 'video' | 'excel' | 'pdf' | 'other';
@@ -119,6 +132,8 @@ export default function AttachmentPreviewModal({
   items,
   startIndex = 0,
   fetchBytes,
+  onDelete,
+  deletingItemId,
 }: AttachmentPreviewModalProps) {
   const resolvedFetchBytes = fetchBytes ?? defaultFetchBytes;
   const [api, setApi] = useState<CarouselApi>();
@@ -274,6 +289,18 @@ export default function AttachmentPreviewModal({
               >
                 <Download className="size-4 mr-1" />
                 Download
+              </Button>
+            )}
+            {onDelete && activeItem && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                onClick={() => onDelete(activeItem)}
+                disabled={deletingItemId === activeItem.id}
+              >
+                <Trash2 className="size-4 mr-1" />
+                Delete
               </Button>
             )}
           </div>

@@ -18,6 +18,7 @@ import {
   Link as LinkIcon,
   ListOrdered,
   LoaderCircleIcon,
+  Pencil,
   RotateCcw,
   SquarePen,
   Trash2,
@@ -49,6 +50,11 @@ import { parseDetailSearch } from '@/lib/listNavQuery';
 import DetailActions from '@/components/common/DetailActions';
 import { useBackToListHref } from '@/components/common/BackToList';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
+import {
+  PlanRowDialog,
+  SoCoveragePicker,
+  type SoCoverageRow,
+} from '@/app/(protected)/scm/components/PlanRowDialog';
 import { WarehouseCombobox } from './WarehouseCombobox';
 import { useSPODocument, spoDocumentsPagerQuery } from '../hooks/useSPODocuments';
 import { useUpdateSPOAllocation, useDeleteSPOAllocation } from '../hooks/useSPOAllocations';
@@ -159,6 +165,14 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
   // Popover, matching the apple-alignment "popups = lightbox" standard) - which
   // line's GRNs are showing, or null when closed.
   const [grnDialogReceipts, setGrnDialogReceipts] = useState<LinkedGRNRef[] | null>(null);
+  // The SO covered lightbox (R23, AC-J2) - which line's `so_covered` list is open, or null.
+  // Read-only: it lists what this allocation already covers, never ticks anything - the
+  // SAME `so_coverage` kind the SPO planner opens (`PlanRowDialog`), so a reader never has
+  // to learn two lightboxes for the one question.
+  const [soCoverageLine, setSoCoverageLine] = useState<SPODocumentLine | null>(null);
+  // The header linkage strip's own "SO covered" chip (R23, AC-J3) opens the SAME dialog,
+  // over every line's `so_covered` combined rather than one line's.
+  const [soCoverageAggregateOpen, setSoCoverageAggregateOpen] = useState(false);
   // Rejected and Overdue start hidden (UAT AC-23) - available through the Columns
   // toggle, same DataGridColumnVisibility control the Purchase Order form view uses
   // for its own line table.
@@ -335,6 +349,29 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
     const names = new Set<string>();
     for (const l of visibleLines) if (l.supplier_name) names.add(l.supplier_name);
     return [...names];
+  }, [visibleLines]);
+
+  /**
+   * "Edit in planner" (R24, AC-K5): the same screen the Created SPOs grid opens, reached
+   * from the document itself so both entry points meet at one editor.
+   *
+   * Rendered ONLY when this document's lines agree on one packing list AND one purchase
+   * order - which is what a CRM SPO always is (one `create` run, one header per supplier,
+   * one container). Anything else is an imported document, or a document split across
+   * containers, and the planner has no single SPO to load for it; the action is hidden
+   * rather than shown pointing at whichever half the query met first.
+   */
+  const editInPlannerHref = useMemo(() => {
+    const shipmentIds = new Set(
+      visibleLines.map((l) => l.inbound_shipment?.id).filter(Boolean) as string[],
+    );
+    const poIds = new Set(
+      visibleLines.map((l) => l.po?.purchase_order_id).filter(Boolean) as string[],
+    );
+    if (shipmentIds.size !== 1 || poIds.size !== 1) return null;
+    const [shipmentId] = [...shipmentIds];
+    const [poId] = [...poIds];
+    return `/procurement-management/packing-lists/${shipmentId}/spo?edit=${encodeURIComponent(poId)}`;
   }, [visibleLines]);
 
   const columns = useMemo<ColumnDef<SPODocumentLine>[]>(
@@ -681,6 +718,56 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
         meta: { headerTitle: 'Packing List' },
       },
       {
+        // R23, AC-J2: which PURCHASE order line this SPO line pulled from - the SPO's own
+        // "supply" side, not to be confused with the Packing List column above (the SHIPMENT
+        // this allocation landed off).
+        id: 'po',
+        header: ({ column }) => <DataGridColumnHeader title="PO" column={column} />,
+        accessorFn: (l) => l.po?.po_number ?? '',
+        cell: ({ row }) => {
+          const po = row.original.po;
+          if (!po) return <span className="text-muted-foreground">-</span>;
+          return (
+            <Link
+              href={`/scm/purchase-orders/${po.purchase_order_id}`}
+              className="flex items-center gap-1 text-primary hover:underline"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <LinkIcon className="size-3 shrink-0" />
+              <span className="truncate">{po.po_number}</span>
+            </Link>
+          );
+        },
+        size: 140,
+        meta: { headerTitle: 'PO' },
+      },
+      {
+        // R23, AC-J2: which sales orders this line's allocation already covers - opens the
+        // SAME read-only lightbox the planner's own "SO covered" cell does.
+        id: 'so_covered',
+        header: ({ column }) => <DataGridColumnHeader title="SO covered" column={column} />,
+        accessorFn: (l) => l.so_covered?.length ?? 0,
+        cell: ({ row }) => {
+          const covered = row.original.so_covered ?? [];
+          if (!covered.length) return <span className="text-muted-foreground">-</span>;
+          const qty = covered.reduce((sum, c) => sum + c.qty, 0);
+          return (
+            <button
+              type="button"
+              className="text-primary hover:underline"
+              onClick={(e) => {
+                e.stopPropagation();
+                setSoCoverageLine(row.original);
+              }}
+            >
+              {`${covered.length} SO${covered.length === 1 ? '' : 's'} · ${fmtQty(qty)}`}
+            </button>
+          );
+        },
+        size: 140,
+        meta: { headerTitle: 'SO covered' },
+      },
+      {
         id: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
@@ -811,10 +898,22 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
                 ]}
                 pendingAction={deletion.countdown}
                 primary={
-                  <Button variant="primary" size="sm" className="gap-1.5" onClick={() => beginEdit(doc)}>
-                    <SquarePen className="size-4" />
-                    Edit
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    {/* R24, AC-K5 - beside Edit, because both are "change this document",
+                        one field by field and one through the planner that made it. */}
+                    {editInPlannerHref ? (
+                      <Button variant="outline" size="sm" className="gap-1.5" asChild>
+                        <Link href={editInPlannerHref}>
+                          <Pencil className="size-4" />
+                          Edit in planner
+                        </Link>
+                      </Button>
+                    ) : null}
+                    <Button variant="primary" size="sm" className="gap-1.5" onClick={() => beginEdit(doc)}>
+                      <SquarePen className="size-4" />
+                      Edit
+                    </Button>
+                  </div>
                 }
               />
             )}
@@ -835,6 +934,52 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
         </TabsList>
 
         <TabsContent value="header" className="mt-0 space-y-4 focus-visible:outline-none">
+          {/* R23, AC-J3: PO / SPO lines / SO covered / Packing list / GRN, in one row - each
+              a link when the document has one, muted text when it does not. Absent in
+              Phase 1 until the backend computes `linkage` (Phase 2). */}
+          {doc.linkage ? (
+            <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-muted-foreground">
+              <span>{`PO ${fmtQty(doc.linkage.po_count)}`}</span>
+              <span aria-hidden>·</span>
+              <span>{`SPO lines ${fmtQty(doc.linkage.line_count)}`}</span>
+              <span aria-hidden>·</span>
+              {doc.linkage.so_count > 0 ? (
+                <button
+                  type="button"
+                  className="text-primary hover:underline"
+                  onClick={() => setSoCoverageAggregateOpen(true)}
+                >
+                  {`SO covered ${fmtQty(doc.linkage.so_count)} · ${fmtQty(doc.linkage.so_qty)}`}
+                </button>
+              ) : (
+                <span>{`SO covered ${fmtQty(doc.linkage.so_count)}`}</span>
+              )}
+              <span aria-hidden>·</span>
+              {doc.linkage.packing_list ? (
+                <Link
+                  href={`/procurement-management/packing-lists/${doc.linkage.packing_list.id}`}
+                  className="flex items-center gap-1 text-primary hover:underline"
+                >
+                  <LinkIcon className="size-3 shrink-0" />
+                  {`Packing list ${doc.linkage.packing_list.container ?? ''}`}
+                </Link>
+              ) : (
+                <span>Packing list -</span>
+              )}
+              <span aria-hidden>·</span>
+              {doc.linked_grns.length === 1 ? (
+                <Link
+                  href={`/procurement-management/grn/${doc.linked_grns[0].id}`}
+                  className="flex items-center gap-1 text-primary hover:underline"
+                >
+                  <LinkIcon className="size-3 shrink-0" />
+                  GRN 1
+                </Link>
+              ) : (
+                <span>{`GRN ${fmtQty(doc.linkage.grn_count)}`}</span>
+              )}
+            </div>
+          ) : null}
           <Card>
             <CardHeader>
               <CardHeading>
@@ -988,6 +1133,50 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
           </DialogBody>
         </DialogContent>
       </Dialog>
+
+      {/* SO covered (R23, AC-J2/AC-J3) - read-only: what an allocation already covers, never
+          a tick list. Same `so_coverage` kind and shell the SPO planner opens; the shape
+          here is the document's own flatter list (document/customer/class/qty), lifted
+          into `SoCoverageRow` with the fields this reader has no equivalent for left null.
+          One line's own cell opens it scoped to that line; the header strip's chip opens
+          the SAME dialog over every line's list combined. */}
+      <PlanRowDialog
+        kind="so_coverage"
+        productCode={soCoverageLine?.product?.product_code ?? (soCoverageAggregateOpen ? doc.spo_number : '')}
+        productName={soCoverageLine?.product?.product_name}
+        open={soCoverageLine !== null || soCoverageAggregateOpen}
+        onOpenChange={(next) => {
+          if (!next) {
+            setSoCoverageLine(null);
+            setSoCoverageAggregateOpen(false);
+          }
+        }}
+      >
+        {soCoverageLine || soCoverageAggregateOpen ? (
+          <SoCoveragePicker
+            readOnly
+            coverage={(
+              soCoverageLine ? (soCoverageLine.so_covered ?? []) : doc.lines.flatMap((l) => l.so_covered ?? [])
+            ).map(
+              (c, i): SoCoverageRow => ({
+                key: `${soCoverageLine?.id ?? 'doc'}-${i}`,
+                kind: c.demand_class,
+                demand_class: c.demand_class,
+                document: c.document,
+                customer_name: c.customer,
+                required_date: null,
+                qty: c.qty,
+                warehouse_code: null,
+                taken_qty: 0,
+                taken_by: [],
+              }),
+            )}
+            tickedKeys={[]}
+            onChange={() => {}}
+            unassigned={0}
+          />
+        ) : null}
+      </PlanRowDialog>
     </div>
   );
 }

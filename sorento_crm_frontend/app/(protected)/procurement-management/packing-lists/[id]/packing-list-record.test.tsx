@@ -143,6 +143,20 @@ vi.mock('@/app/(protected)/scm/hooks/useFulfilment', () => ({
     data: [{ id: 'size-40hq', code: '40HQ', label: '40ft high cube', cbm: 65, is_default: true }],
     isLoading: false,
   }),
+  // R25 (lane C, slice C3): the Lines tab reads every line's photos in one call, and
+  // `ShipmentLinePhotosCell` uploads through its own mutation - neither is this
+  // suite's concern, so both settle on an empty/no-op default.
+  useShipmentLinePhotos: () => ({
+    data: {},
+    isLoading: false,
+    isError: false,
+    error: null,
+  }),
+  useUploadShipmentLinePhotos: () => ({
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
 }));
 
 // The Lines grid carries a real `listingKey` (S7); a live column-preferences query has
@@ -666,13 +680,10 @@ describe('the edit draft, which now lives above every tab', () => {
     fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
 
     expect(screen.getByLabelText('Container no')).toHaveValue('FSCU8103365');
-    // The three the container workbook prints, and the costs it apportions.
+    // The three the container workbook prints.
     expect(screen.getByLabelText('Seal no')).toBeInTheDocument();
     expect(screen.getByLabelText('Shipper')).toBeInTheDocument();
     expect(screen.getByLabelText('SO')).toBeInTheDocument();
-    expect(screen.getByLabelText('Clearance cost')).toBeInTheDocument();
-    expect(screen.getByLabelText('China freight cost')).toBeInTheDocument();
-    expect(screen.getByLabelText('Insurance rate')).toBeInTheDocument();
     // The fill gauge moved here from the proforma invoice (S5, ruling 1) - a select in
     // edit mode, the size code in view. Not `getByLabelText`: like `Supplier` above it, the
     // field is a bespoke block with the label as plain text, not a `<label htmlFor>`.
@@ -682,40 +693,41 @@ describe('the edit draft, which now lives above every tab', () => {
     expect(screen.getByText('Source sheet')).toBeInTheDocument();
   });
 
-  it('renders the Costs card whether or not anything is priced', async () => {
+  // R17 / AC-H1 (purchasing consolidation batch, 6 Sep 2026): the Costs card is gone in
+  // both view and edit mode. The three columns stay in the DB untouched - only the UI (and
+  // the export, covered on the backend) drops them.
+  it('has no Costs card, in view or edit mode', async () => {
     await renderTab(<DetailsPage />);
 
-    expect(screen.getByText('Costs')).toBeInTheDocument();
+    expect(screen.queryByText('Costs')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Clearance cost')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('China freight cost')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Insurance rate')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+
+    expect(screen.queryByText('Costs')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Clearance cost')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('China freight cost')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Insurance rate')).not.toBeInTheDocument();
   });
 
-  it('saves the header and the lines in one PUT', async () => {
+  it('saves the header and the lines in one PUT, with no cost field on the payload', async () => {
     await renderTab(<DetailsPage />);
     fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
 
     fireEvent.change(screen.getByLabelText('Seal no'), { target: { value: 'J0713349' } });
-    fireEvent.change(screen.getByLabelText('Clearance cost'), { target: { value: '2700' } });
     fireEvent.click(screen.getByRole('button', { name: /^Save packing list$/i }));
 
     await waitFor(() => expect(updatePackingList).toHaveBeenCalledTimes(1));
     const { id, data } = updatePackingList.mock.calls[0][0];
     expect(id).toBe('pl-1');
     expect(data.seal_number).toBe('J0713349');
-    expect(data.clearance_cost).toBe(2700);
     expect(data.shipment_lines).toHaveLength(3);
-  });
-
-  it('sends null for a cleared cost, never a zero that would be apportioned', async () => {
-    state.packingList = mixedContainer({ clearance_cost: '2700.00' });
-    await renderTab(<DetailsPage />);
-    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
-
-    fireEvent.change(screen.getByLabelText('Clearance cost'), { target: { value: '' } });
-    fireEvent.click(screen.getByRole('button', { name: /^Save packing list$/i }));
-
-    await waitFor(() => expect(updatePackingList).toHaveBeenCalledTimes(1));
-    const { data } = updatePackingList.mock.calls[0][0];
-    expect(data.clearance_cost).toBeNull();
-    expect(Object.keys(data)).toContain('clearance_cost');
+    // Not shown, not sent - whatever the DB already holds for these three is left alone.
+    expect(Object.keys(data)).not.toContain('clearance_cost');
+    expect(Object.keys(data)).not.toContain('china_freight_cost');
+    expect(Object.keys(data)).not.toContain('insurance_rate');
   });
 
   it('edits the measurements on the lines tab and sends them', async () => {

@@ -113,7 +113,7 @@ def test_a_retail_line_covered_by_one_spo_reads_one_spo_link():
             [_confirm(
                 lines[0], 30,
                 location_splits=[{"warehouse_id": str(wh.id), "qty": 30}],
-                so_line_ids=[f"retail:{retail.id}"],
+                so_takes=[{"key": f"retail:{retail.id}", "qty": 30}],
             )],
         )
         spo_number = created["created_spos"][0]["po_number"]
@@ -143,13 +143,15 @@ def test_covered_by_two_containers_reads_two_links_in_spo_number_order():
         w.po("A", supplier, [("A", 100, 0)])
         retail, so = _retail_demand(db, w, "A", wh, qty=50, required=date(2026, 9, 1))
 
+        # 50 wanted, split across two containers - each ticks only what IT can place
+        # (`_validate_so_takes` refuses a take above the line's own SPO qty), 20 then 30.
         first, first_lines = w.shipment([("A", 20, supplier)])
         first_created = svc.create(
             db, str(first.id),
             [_confirm(
                 first_lines[0], 20,
                 location_splits=[{"warehouse_id": str(wh.id), "qty": 20}],
-                so_line_ids=[f"retail:{retail.id}"],
+                so_takes=[{"key": f"retail:{retail.id}", "qty": 20}],
             )],
         )
         first_spo = first_created["created_spos"][0]["po_number"]
@@ -160,7 +162,7 @@ def test_covered_by_two_containers_reads_two_links_in_spo_number_order():
             [_confirm(
                 second_lines[0], 30,
                 location_splits=[{"warehouse_id": str(wh.id), "qty": 30}],
-                so_line_ids=[f"retail:{retail.id}"],
+                so_takes=[{"key": f"retail:{retail.id}", "qty": 30}],
             )],
         )
         second_spo = second_created["created_spos"][0]["po_number"]
@@ -186,7 +188,7 @@ def test_after_unwind_the_line_reads_none_again():
             [_confirm(
                 lines[0], 30,
                 location_splits=[{"warehouse_id": str(wh.id), "qty": 30}],
-                so_line_ids=[f"retail:{retail.id}"],
+                so_takes=[{"key": f"retail:{retail.id}", "qty": 30}],
             )],
         )
         assert _linked_to(db, str(so.id), str(retail.id)) is not None
@@ -216,7 +218,7 @@ def test_a_line_with_an_inquiry_row_keeps_its_oi_links_first_then_the_spo_links(
             [_confirm(
                 lines[0], 30,
                 location_splits=[{"warehouse_id": str(wh.id), "qty": 30}],
-                so_line_ids=[f"retail:{retail.id}"],
+                so_takes=[{"key": f"retail:{retail.id}", "qty": 30}],
             )],
         )
         spo_number = created["created_spos"][0]["po_number"]
@@ -244,7 +246,7 @@ def test_the_route_carries_the_spo_link(scm_app):
         [_confirm(
             lines[0], 30,
             location_splits=[{"warehouse_id": str(wh.id), "qty": 30}],
-            so_line_ids=[f"retail:{retail.id}"],
+            so_takes=[{"key": f"retail:{retail.id}", "qty": 30}],
         )],
     )
     spo_number = created["created_spos"][0]["po_number"]
