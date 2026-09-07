@@ -336,3 +336,23 @@ with `po_line_id` set and `source_system` NULL (`spo_conversion_service._write_a
   incoming line whose warehouse code resolves to no warehouse cannot match a warehouse-keyed row
   (unreachable on measured data: every AutoCount row carries a warehouse). Symmetrising would
   reintroduce two groups claiming one row. Accepted.
+
+## Round 8 (security round 7, 2026-09-08): `crm_spo` at every "CRM-raised" predicate
+
+`CRM_RAISED_SOURCE_SYSTEMS = {None, 'crm_spo'}` in `shipping_order_rules`; every predicate that read
+`source_system IS NULL` as "a row this system raised" uses it.
+
+- **AC-X56 [BE][T]** External GRN ingest (`app/api/v1/external/grn.py`) resolves a `crm_spo`
+  allocation by `(spo_number, product_id, warehouse_id)` exactly as it resolves a NULL-source one.
+
+- **AC-X57 [BE][T]** n8n packing-list bulk create (`app/api/v1/external/spo_allocations.py`) refuses
+  a duplicate `(spo_number, product_id, warehouse_id)` against an existing `crm_spo` row exactly as
+  against a NULL-source one.
+
+- **AC-X58 [BE][T]** `upsert_allocation` (Upload SPO path) matches an existing `crm_spo` row and
+  corrects its quantity instead of appending; after the correction the row still reads
+  `source_system 'crm_spo'` (the "last writer wins" clearing applies only to `scm_upload` /
+  AutoCount stamps, never to `crm_spo`).
+
+- **AC-X59 [BE]** No `SPOAllocation.source_system.is_(None)` predicate remains outside the named
+  set (grep-clean in `app/`).
