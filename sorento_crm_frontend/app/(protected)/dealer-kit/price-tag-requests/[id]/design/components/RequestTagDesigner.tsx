@@ -87,10 +87,7 @@ import {
 } from '@/lib/dealer-kit/request-tags';
 import { formatTagPrice } from '@/lib/dealer-kit/price-badge';
 import { TagCanvasEditor } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
-import {
-  ToolbarButton,
-  ToolbarDropdownButton,
-} from '@/app/(protected)/dealer-kit/tag-templates/components/CanvasToolbar';
+import type { ToolbarTrailingAction } from '@/app/(protected)/dealer-kit/tag-templates/components/CanvasToolbar';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { useKitLibrary } from '@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings';
 import { TagSizeControl } from '@/app/(protected)/dealer-kit/components/TagSizeControl';
@@ -919,33 +916,42 @@ export function RequestTagDesigner({
   // arrange mode keeps its own Full screen + Save in the request bar
   // below, since ArrangeSheetView has no canvas toolbar of its own to
   // move them into (AC-S7-5 holds for free the same way).
-  const toolbarTrailing = (
-    <>
-      <ToolbarButton
-        icon={focus ? Minimize2 : Maximize2}
-        label={focus ? 'Exit full screen' : 'Full screen'}
-        onClick={() => setFocus(!focus)}
-        active={focus}
-      />
-      <ToolbarDropdownButton icon={LayoutTemplate} label="Template" disabled={!selectedTag}>
-        {updateEligibleTemplate && (
-          <DropdownMenuItem onSelect={() => setUpdateTemplateOpen(true)}>
-            Update &quot;{updateEligibleTemplate.name}&quot;
+  const toolbarTrailing: ToolbarTrailingAction[] = [
+    {
+      id: 'full-screen',
+      icon: focus ? Minimize2 : Maximize2,
+      label: focus ? 'Exit full screen' : 'Full screen',
+      onClick: () => setFocus(!focus),
+      active: focus,
+    },
+    {
+      id: 'template',
+      kind: 'menu',
+      icon: LayoutTemplate,
+      label: 'Template',
+      disabled: !selectedTag,
+      items: (
+        <>
+          {updateEligibleTemplate && (
+            <DropdownMenuItem onSelect={() => setUpdateTemplateOpen(true)}>
+              Update &quot;{updateEligibleTemplate.name}&quot;
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuItem onSelect={() => setSaveTemplateOpen(true)}>
+            Save as new template
           </DropdownMenuItem>
-        )}
-        <DropdownMenuItem onSelect={() => setSaveTemplateOpen(true)}>
-          Save as new template
-        </DropdownMenuItem>
-      </ToolbarDropdownButton>
-      <ToolbarButton
-        icon={saving ? Loader2 : Save}
-        iconClassName={saving ? 'animate-spin' : undefined}
-        label={saving ? 'Saving...' : 'Save'}
-        onClick={save}
-        disabled={saving || transitioning}
-      />
-    </>
-  );
+        </>
+      ),
+    },
+    {
+      id: 'save',
+      icon: saving ? Loader2 : Save,
+      iconClassName: saving ? 'animate-spin' : undefined,
+      label: saving ? 'Saving...' : 'Save',
+      onClick: save,
+      disabled: saving || transitioning,
+    },
+  ];
 
   const rail = (
     <>

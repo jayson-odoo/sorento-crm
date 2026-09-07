@@ -20,6 +20,11 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  ToolbarButton,
+  ToolbarDropdownButton,
+  type ToolbarTrailingAction,
+} from '@/app/(protected)/dealer-kit/tag-templates/components/CanvasToolbar';
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 import { toast } from '@/lib/toast';
@@ -56,7 +61,11 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor',
     doc: TagTemplateDoc;
     onLayersChange?: (layers: TagLayer[]) => void;
     leftRail?: React.ReactNode;
-    toolbarTrailing?: React.ReactNode;
+    // S2 review turned `toolbarTrailing` into a data array (real arrow-key
+    // nav + the menu closing itself once an item is picked) - the stand-in
+    // renders it through the SAME real `ToolbarButton`/`ToolbarDropdownButton`
+    // `CanvasToolbar` itself uses, rather than reinventing it.
+    toolbarTrailing?: ToolbarTrailingAction[];
   }) => {
     canvasDocs.push({ lineId: currentLineId, doc });
     const [layers, setLayers] = React.useState<TagLayer[]>(doc.layers);
@@ -68,7 +77,30 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor',
       <div data-testid="canvas-editor">
         canvas: {layers.length} layers
         {leftRail}
-        <div data-testid="toolbar-trailing">{toolbarTrailing}</div>
+        <div data-testid="toolbar-trailing">
+          {toolbarTrailing?.map((action) =>
+            action.kind === 'menu' ? (
+              <ToolbarDropdownButton
+                key={action.id}
+                icon={action.icon}
+                label={action.label}
+                disabled={action.disabled}
+              >
+                {action.items}
+              </ToolbarDropdownButton>
+            ) : (
+              <ToolbarButton
+                key={action.id}
+                icon={action.icon}
+                iconClassName={action.iconClassName}
+                label={action.label}
+                onClick={action.onClick}
+                disabled={action.disabled}
+                active={action.active}
+              />
+            ),
+          )}
+        </div>
         <button
           type="button"
           onClick={() => {

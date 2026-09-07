@@ -8,15 +8,15 @@
  * (the row scrolls itself, its buttons never shrink to fit); the visual
  * check is a real browser at 375px.
  */
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { Maximize2, Save } from 'lucide-react';
 
-import { CanvasToolbar, ToolbarButton } from './CanvasToolbar';
+import { CanvasToolbar, type ToolbarTrailingAction } from './CanvasToolbar';
 
 function noop() {}
 
-function renderToolbar(trailing?: React.ReactNode) {
+function renderToolbar(trailing?: ToolbarTrailingAction[]) {
   return render(
     <CanvasToolbar
       tool="select"
@@ -100,12 +100,17 @@ describe('CanvasToolbar overflow at narrow viewports (r4c)', () => {
 // is VISUALLY showing at 375px vs 1280px) is a real-browser check.
 // ---------------------------------------------------------------------------
 
-function trailingActions() {
-  return (
-    <>
-      <ToolbarButton icon={Save} label="Save" onClick={() => {}} />
-      <ToolbarButton icon={Maximize2} label="Full screen" onClick={() => {}} />
-    </>
+function trailingActions(onSave: () => void = () => {}): ToolbarTrailingAction[] {
+  return [
+    { id: 'save', icon: Save, label: 'Save', onClick: onSave },
+    { id: 'full-screen', icon: Maximize2, label: 'Full screen', onClick: () => {} },
+  ];
+}
+
+function openOverflowMenu() {
+  fireEvent.pointerDown(
+    screen.getByTestId('toolbar-trailing-overflow-trigger'),
+    new MouseEvent('pointerdown', { bubbles: true, button: 0 }),
   );
 }
 
@@ -140,14 +145,34 @@ describe('trailing group collapses into an overflow menu below md (S7, AC-S7-3)'
     // `onClick` of its own to fake that: adding one double-toggles a real
     // mouse click (pointerdown opens it, the click that follows would close
     // it right back).
-    fireEvent.pointerDown(
-      screen.getByTestId('toolbar-trailing-overflow-trigger'),
-      new MouseEvent('pointerdown', { bubbles: true, button: 0 }),
-    );
+    openOverflowMenu();
 
     const menu = screen.getByRole('menu');
     expect(within(menu).getByText('Save')).toBeInTheDocument();
     expect(within(menu).getByText('Full screen')).toBeInTheDocument();
+  });
+
+  it('renders each action as a real DropdownMenuItem - arrow-key navigable, closes itself once picked (S2)', async () => {
+    const onSave = vi.fn();
+    renderToolbar(trailingActions(onSave));
+
+    openOverflowMenu();
+    const menu = screen.getByRole('menu');
+    // A raw <button> dropped into DropdownMenuContent is invisible to
+    // Radix's own item list (no role, no arrow-key nav) - the S2 fix renders
+    // real DropdownMenuItems instead.
+    expect(within(menu).getByRole('menuitem', { name: 'Save' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'Full screen' })).toBeInTheDocument();
+
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Save' }));
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    // Picking a real DropdownMenuItem closes the whole menu tree on its own
+    // (Radix's own default) - the r6 review bug was a raw button staying
+    // open after Save because it was never part of that item list. Radix's
+    // own close animation unmounts it a tick after the click, not
+    // synchronously with it.
+    await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument());
   });
 
   it('renders neither the inline group nor the overflow trigger when trailing is absent', () => {

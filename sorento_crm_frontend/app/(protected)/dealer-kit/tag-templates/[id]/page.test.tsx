@@ -13,6 +13,11 @@
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  ToolbarButton,
+  ToolbarDropdownButton,
+  type ToolbarTrailingAction,
+} from '../components/CanvasToolbar';
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 import { toast } from '@/lib/toast';
@@ -66,11 +71,38 @@ vi.mock('../components/TagCanvasEditor', () => ({
     // actually render them (not just accept and drop them) for a test to
     // reach the buttons/control living inside either one.
     leftRail?: React.ReactNode;
-    toolbarTrailing?: React.ReactNode;
+    // S2 review turned `toolbarTrailing` into a data array (real arrow-key
+    // nav + the menu closing itself once an item is picked) - the stand-in
+    // renders it through the SAME real `ToolbarButton`/`ToolbarDropdownButton`
+    // `CanvasToolbar` itself uses, rather than reinventing it.
+    toolbarTrailing?: ToolbarTrailingAction[];
   }) => (
     <div data-testid="canvas-editor">
       <div data-testid="left-rail">{leftRail}</div>
-      <div data-testid="toolbar-trailing">{toolbarTrailing}</div>
+      <div data-testid="toolbar-trailing">
+        {toolbarTrailing?.map((action) =>
+          action.kind === 'menu' ? (
+            <ToolbarDropdownButton
+              key={action.id}
+              icon={action.icon}
+              label={action.label}
+              disabled={action.disabled}
+            >
+              {action.items}
+            </ToolbarDropdownButton>
+          ) : (
+            <ToolbarButton
+              key={action.id}
+              icon={action.icon}
+              iconClassName={action.iconClassName}
+              label={action.label}
+              onClick={action.onClick}
+              disabled={action.disabled}
+              active={action.active}
+            />
+          ),
+        )}
+      </div>
       editor: {doc.layers.length} layers
       {/* Simulates an in-canvas edit that has NOT been Saved yet - the same
           stream the real canvas sends on every layer change (B1, S1). */}

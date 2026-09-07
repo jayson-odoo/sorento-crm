@@ -77,7 +77,7 @@ import { TemplateVersionsSheet } from '../components/TemplateVersionsSheet';
 import { FocusShell } from '../../components/FocusMode';
 import { AutosaveIndicator } from '../../components/AutosaveIndicator';
 import { TagSizeControl } from '../../components/TagSizeControl';
-import { ToolbarButton } from '../components/CanvasToolbar';
+import type { ToolbarTrailingAction } from '../components/CanvasToolbar';
 import { useAutosave } from '@/hooks/useAutosave';
 import { useDeleteTagSizePreset, useTagSizesQuery } from '../../tag-sizes/hooks/useTagSizes';
 import { SaveAsSizeDialog } from '../../price-tag-requests/[id]/design/components/SaveAsSizeDialog';
@@ -395,29 +395,30 @@ export default function TagTemplateEditorPage() {
 
   // The canvas toolbar's own right-end group (S7): Versions, Save, Full
   // screen. Publish stays the page header's one action button.
-  const toolbarTrailing = (
-    <>
-      <ToolbarButton
-        icon={History}
-        label="Versions"
-        onClick={() => setVersionsOpen(true)}
-        disabled={viewingLoading}
-      />
-      <ToolbarButton
-        icon={saving ? Loader2 : SaveIcon}
-        iconClassName={saving ? 'animate-spin' : undefined}
-        label={saving ? 'Saving...' : 'Save'}
-        onClick={handleSave}
-        disabled={saving || Boolean(viewing)}
-      />
-      <ToolbarButton
-        icon={focus ? Minimize2 : Maximize2}
-        label={focus ? 'Exit full screen' : 'Full screen'}
-        onClick={() => setFocus(!focus)}
-        active={focus}
-      />
-    </>
-  );
+  const toolbarTrailing: ToolbarTrailingAction[] = [
+    {
+      id: 'versions',
+      icon: History,
+      label: 'Versions',
+      onClick: () => setVersionsOpen(true),
+      disabled: viewingLoading,
+    },
+    {
+      id: 'save',
+      icon: saving ? Loader2 : SaveIcon,
+      iconClassName: saving ? 'animate-spin' : undefined,
+      label: saving ? 'Saving...' : 'Save',
+      onClick: handleSave,
+      disabled: saving || Boolean(viewing),
+    },
+    {
+      id: 'full-screen',
+      icon: focus ? Minimize2 : Maximize2,
+      label: focus ? 'Exit full screen' : 'Full screen',
+      onClick: () => setFocus(!focus),
+      active: focus,
+    },
+  ];
 
   return (
     <FocusShell active={focus} onExit={() => setFocus(false)}>

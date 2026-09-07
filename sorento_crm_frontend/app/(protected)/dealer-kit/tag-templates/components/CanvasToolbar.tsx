@@ -39,11 +39,55 @@ import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
 
 /** Which pointer tool is active (D35). */
 export type CanvasTool = 'select' | 'hand';
+
+/**
+ * One `trailing` entry (S7, S2 review): a plain button by default, or a
+ * `kind: 'menu'` one for the Template dropdown - its `items` are the same
+ * `DropdownMenuItem`s `ToolbarDropdownButton` already takes as children.
+ *
+ * An array of these, not `ReactNode`, because the SAME action set has to
+ * render twice - once as `ToolbarButton`s inline, once as real
+ * `DropdownMenuItem`s in the overflow menu below `md` - and a raw `<button>`
+ * dropped into a `DropdownMenuContent` is invisible to Radix's own item
+ * list: no arrow-key navigation, and selecting it never closes the menu
+ * (S2 review).
+ */
+export interface ToolbarTrailingButtonAction {
+  kind?: 'button';
+  id: string;
+  icon: React.ComponentType<{ className?: string }>;
+  /** Extra classes on the icon itself - `animate-spin` while Save is in flight. */
+  iconClassName?: string;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  active?: boolean;
+}
+
+export interface ToolbarTrailingMenuAction {
+  kind: 'menu';
+  id: string;
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  disabled?: boolean;
+  /** `DropdownMenuItem`s - the menu's own options. */
+  items: ReactNode;
+}
+
+export type ToolbarTrailingAction = ToolbarTrailingButtonAction | ToolbarTrailingMenuAction;
 
 interface CanvasToolbarProps {
   tool: CanvasTool;
@@ -79,9 +123,10 @@ interface CanvasToolbarProps {
    * Right-aligned actions, one more `ToolbarButton` group at the right end
    * (S7, AC-S7-6) - Full screen / the Template dropdown / Save for the
    * request designer, Versions / Save / Full screen for the template page.
-   * Absent renders nothing extra, same toolbar as before this round.
+   * Absent (or empty) renders nothing extra, same toolbar as before this
+   * round.
    */
-  trailing?: ReactNode;
+  trailing?: ToolbarTrailingAction[];
 }
 
 /**
@@ -335,7 +380,7 @@ export function CanvasToolbar({
         disabled={!selectionIsGroup}
       />
 
-      {trailing && (
+      {trailing && trailing.length > 0 && (
         <>
           {/* `ml-auto` pushes this group to the true right end (AC-S7-6)
               rather than sitting flush after Ungroup - the row scrolls
@@ -348,15 +393,37 @@ export function CanvasToolbar({
               right end) takes over instead - collapsing three-plus icon
               buttons into one at a width this toolbar already scrolls
               sideways to fit (S7, grill G3, AC-S7-3). Both render the SAME
-              `trailing` node - not a re-created copy - so the menu's
-              actions stay wired to the exact handlers the inline group
-              has. */}
+              `trailing` actions, as real `DropdownMenuItem`s in the overflow
+              case (not a raw button dropped into `DropdownMenuContent`, S2
+              review) - so the menu gets arrow-key navigation and closes
+              itself once an item is picked, same as every other menu. */}
           <div
             data-testid="toolbar-trailing-inline"
             className="ml-auto hidden shrink-0 items-center gap-1 md:flex"
           >
             <Separator orientation="vertical" className="mx-1 h-5 shrink-0" />
-            {trailing}
+            {trailing.map((action) =>
+              action.kind === 'menu' ? (
+                <ToolbarDropdownButton
+                  key={action.id}
+                  icon={action.icon}
+                  label={action.label}
+                  disabled={action.disabled}
+                >
+                  {action.items}
+                </ToolbarDropdownButton>
+              ) : (
+                <ToolbarButton
+                  key={action.id}
+                  icon={action.icon}
+                  iconClassName={action.iconClassName}
+                  label={action.label}
+                  onClick={action.onClick}
+                  disabled={action.disabled}
+                  active={action.active}
+                />
+              ),
+            )}
           </div>
           <DropdownMenu>
             <Tooltip delayDuration={300}>
@@ -377,7 +444,32 @@ export function CanvasToolbar({
                 More actions
               </TooltipContent>
             </Tooltip>
-            <DropdownMenuContent align="end">{trailing}</DropdownMenuContent>
+            <DropdownMenuContent align="end">
+              {trailing.map((action) => {
+                const Icon = action.icon;
+                if (action.kind === 'menu') {
+                  return (
+                    <DropdownMenuSub key={action.id}>
+                      <DropdownMenuSubTrigger disabled={action.disabled}>
+                        <Icon className="size-4" />
+                        {action.label}
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent>{action.items}</DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  );
+                }
+                return (
+                  <DropdownMenuItem
+                    key={action.id}
+                    onSelect={action.onClick}
+                    disabled={action.disabled}
+                  >
+                    <Icon className={cn('size-4', action.iconClassName)} />
+                    {action.label}
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuContent>
           </DropdownMenu>
         </>
       )}

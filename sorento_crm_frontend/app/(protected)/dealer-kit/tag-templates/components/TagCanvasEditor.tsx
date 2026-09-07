@@ -159,7 +159,7 @@ import { ProductPickDialog, type PickMode } from './ProductPickDialog';
 import { cn } from '@/lib/utils';
 import { useKitLibrary, useTagBindings } from './useTagBindings';
 import { getProductTagData } from '../../services/tagDataService';
-import { CanvasToolbar, type CanvasTool } from './CanvasToolbar';
+import { CanvasToolbar, type CanvasTool, type ToolbarTrailingAction } from './CanvasToolbar';
 import { CanvasRulers, RULER_THICKNESS } from './CanvasRulers';
 import { LayersPanel } from './LayersPanel';
 import { InspectorPanel } from './InspectorPanel';
@@ -414,7 +414,7 @@ interface TagCanvasEditorProps {
    * Full screen for the template page - passed straight through to
    * `CanvasToolbar`'s own `trailing` slot. Absent renders no trailing group.
    */
-  toolbarTrailing?: ReactNode;
+  toolbarTrailing?: ToolbarTrailingAction[];
 }
 
 /** What the canvas is currently asking the user to pick. */

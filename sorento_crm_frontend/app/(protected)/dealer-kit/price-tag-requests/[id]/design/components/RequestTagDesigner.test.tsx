@@ -16,6 +16,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PRODUCT_BLOCK_SIZE } from '@/lib/dealer-kit/product-block';
 import type { TagLayer, TagTemplateDoc } from '@/lib/dealer-kit/tag-template-types';
+import {
+  ToolbarButton,
+  ToolbarDropdownButton,
+  type ToolbarTrailingAction,
+} from '@/app/(protected)/dealer-kit/tag-templates/components/CanvasToolbar';
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 import { toast } from '@/lib/toast';
@@ -72,8 +77,12 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor',
     leftRail?: React.ReactNode;
     // S7 moved Full screen / the Template dropdown / Save INTO the toolbar's
     // own trailing group - the stand-in has to actually render it (not just
-    // accept and drop it) for a test to reach those buttons.
-    toolbarTrailing?: React.ReactNode;
+    // accept and drop it) for a test to reach those buttons. S2 review
+    // turned `toolbarTrailing` into a data array (real arrow-key nav + the
+    // menu closing itself once an item is picked, S2), so the stand-in
+    // renders it through the SAME real `ToolbarButton`/`ToolbarDropdownButton`
+    // `CanvasToolbar` itself uses for its inline group, rather than reinventing it.
+    toolbarTrailing?: ToolbarTrailingAction[];
   }) => {
     canvasDocs.push({ doc });
     const [layers, setLayers] = React.useState<TagLayer[]>(doc.layers);
@@ -89,7 +98,30 @@ vi.mock('@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor',
       <div data-testid="canvas-editor">
         canvas open
         {leftRail}
-        <div data-testid="toolbar-trailing">{toolbarTrailing}</div>
+        <div data-testid="toolbar-trailing">
+          {toolbarTrailing?.map((action) =>
+            action.kind === 'menu' ? (
+              <ToolbarDropdownButton
+                key={action.id}
+                icon={action.icon}
+                label={action.label}
+                disabled={action.disabled}
+              >
+                {action.items}
+              </ToolbarDropdownButton>
+            ) : (
+              <ToolbarButton
+                key={action.id}
+                icon={action.icon}
+                iconClassName={action.iconClassName}
+                label={action.label}
+                onClick={action.onClick}
+                disabled={action.disabled}
+                active={action.active}
+              />
+            ),
+          )}
+        </div>
         <button
           type="button"
           onClick={() => {
