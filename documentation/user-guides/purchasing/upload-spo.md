@@ -37,6 +37,15 @@ AutoCount integration writes the same container number and gets the same linking
 created by this upload is adopted rather than duplicated if the integration later restates the
 same SPO number, product and warehouse, and the reverse holds too.
 
+The first time the AutoCount integration pushes a shipping order that was uploaded from Excel,
+its own lines REPLACE the uploaded rows for that document: AutoCount states one line per order
+line, where the upload held one summed row per product and warehouse, so the uploaded rows are
+removed and the received quantities they carried are spread across the AutoCount lines in line
+order, keeping the container link. Anything already attached to an uploaded row - a GRN receipt,
+a sales-order link, an order-inquiry placement - moves to the first AutoCount line for that
+product and warehouse, so nothing is lost; a product and warehouse AutoCount states no line for
+keeps its uploaded row, closed.
+
 ## How you'll see progress
 
 Once a job is queued, the **SPO Allocations** page shows a **Latest SPO import** panel above the table. It updates with the job status (queued, running, completed, failed) and row counts in real time. Refresh the page if you don't see it.
