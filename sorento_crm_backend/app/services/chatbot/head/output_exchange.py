@@ -1469,6 +1469,10 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
                 prev=parent_input.get("previous_conversation_state") or {},
                 explicit=explicit,
                 switch_domain=switch_domain,
+                topic_reset=v3_signals(
+                    parser_raw_snapshot,
+                    emits_v3=parent_input.get("parser_emits_v3") is True,
+                )["topic_reset"],
             )
         else:  # 'modify' | 'replace' | 'replace_combine' | anything else
             current_axes = {axis_of(e) for e in current}

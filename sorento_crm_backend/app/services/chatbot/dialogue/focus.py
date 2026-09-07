@@ -151,6 +151,10 @@ class Outputs:
     focus: dict[str, Any] = field(default_factory=dict)
     entries: list[dict[str, Any]] = field(default_factory=list)
     drop_carried_entities: bool = False
+    # `reset_on_topic` fired on the customer's OWN "something else" this turn. The two
+    # rules that would otherwise put a domain straight back read it: a reset that ends
+    # with the domain it just cleared still alive has reset nothing a customer can see.
+    topic_reset: bool = False
 
 
 # --------------------------------------------------------------------------- #
@@ -250,34 +254,41 @@ def replace_same_axis(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
         return
 
     source = "pick" if turn.answered_by_pick else "current_message"
-    products = [e for e in current if jsc.lower_or_empty(jsc.get(e, "hint")) == "product"]
-    if products and _may_replace(focus, "products", products, turn):
+    products = _confident_enough(
+        focus, "products", [e for e in current if _is_product(e)], turn
+    )
+    if products:
         _set(focus, "products", products, turn, out, rule="replace_same_axis", source=source)
 
     for hint, name in _SLOT_BY_HINT.items():
         named = next((e for e in current if jsc.lower_or_empty(jsc.get(e, "hint")) == hint), None)
-        if named is not None and _may_replace(focus, name, [named], turn):
+        if named is not None and _confident_enough(focus, name, [named], turn):
             _set(focus, name, named, turn, out, rule="replace_same_axis", source=source)
 
 
-def _may_replace(focus: dict[str, Any], name: str, entities: list, turn: Turn) -> bool:
-    """AC-953: a `confident=false` entity never replaces an ALIVE slot without a picker.
+def _confident_enough(
+    focus: dict[str, Any], name: str, entities: list, turn: Turn
+) -> list[Any]:
+    """AC-953, PER ENTITY: the confident ones replace, the unconfident ones do not.
 
     The parser sets `confident=false` when it had to cram more than one untyped concept
     into one `raw` because the customer gave nothing to split on ("one siew srtkt72ss").
     Acting on that against a slot the customer is still talking about narrows the question
-    to something nobody asked, and says nothing about having done so. Two ways it still
-    replaces: the slot is EMPTY, so there is nothing to lose and a guess beats no scope at
-    all; or a PICKER is open, so the value came from rows we showed the customer and they
-    chose one.
+    to something nobody asked, and says nothing about having done so.
+
+    **Per entity, not per turn**, which is the difference the review caught: "SRTWC8517 and
+    one siew srtkt72ss" is one clean code and one unsplittable phrase, and dropping the
+    whole replacement because of the second throws away the first as well - so the turn
+    answers about the PREVIOUS product, which is worse than either reading of this one.
+
+    Two things still let an unconfident entity through. An EMPTY slot: there is nothing to
+    lose, and a guess beats having no scope at all. And an open PICKER: the value came from
+    rows we showed the customer and they chose one, so there is nothing left to be unsure
+    about.
     """
-    if turn.has_picker:
-        return True
-    if not _has_values(value_of(focus, name)) and value_of(focus, name) is None:
-        return True
-    if value_of(focus, name) in (None, [], {}):
-        return True
-    return not any(jsc.get(e, "confident") is False for e in entities)
+    if turn.has_picker or _is_empty(value_of(focus, name)):
+        return list(entities)
+    return [e for e in entities if jsc.get(e, "confident") is not False]
 
 
 def reset_on_topic(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
@@ -307,11 +318,23 @@ def reset_on_topic(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
         and len(this_turn) > 0
         and topic.changed(jsc.get(turn.prev, "domain_hint") or None, turn.o.get("domain_hint"))
     )
-    if not (ruling_k2 or turn.signals.get("topic_reset") is True):
+    said_so = turn.signals.get("topic_reset") is True
+    if not (ruling_k2 or said_so):
         return
 
     # DEFERRED, not applied: see `Outputs.drop_carried_entities`.
     out.drop_carried_entities = True
+    out.topic_reset = said_so
+    if said_so and not jsc.truthy(jsc.get(turn.parser_raw, "domain_hint")):
+        # THE DOMAIN GOES TOO, when the customer named none of their own. "别的" that ends
+        # with `domain_hint: inventory` still alive has reset nothing anybody can see: the
+        # next turn inherits it, the lane routes on it, and the reply answers about the
+        # subject the customer just said they were finished with. Only under the customer's
+        # OWN reset - owner ruling K rule 2 fires on an explicit NEW-domain query, where
+        # the domain is the new one and must stand.
+        turn.o["domain_hint"] = None
+        turn.o["intent_hint"] = None
+        turn.o["domain_cleared_on_topic_reset"] = True
 
     for name in list(focus):
         if name in RESET_KEEPS:
@@ -347,7 +370,12 @@ def drop_carried_entities_on_topic_change(o: dict[str, Any], *, is_carried: Call
 
 
 def reuse_domain_entityless(
-    o: dict[str, Any], *, prev: Any, explicit: bool, switch_domain: Any
+    o: dict[str, Any],
+    *,
+    prev: Any,
+    explicit: bool,
+    switch_domain: Any,
+    topic_reset: bool = False,
 ) -> bool:
     """"and the price?" inherits the domain. Called from INSIDE the entity executor.
 
@@ -368,6 +396,11 @@ def reuse_domain_entityless(
     if o.get("message_type") in ("casual", "request_for_help"):
         return False
     if explicit or switch_domain:  # a domain switch beats the carry
+        return False
+    if topic_reset:
+        # The customer said "something else". This runs inside the entity executor, before
+        # `reset_on_topic` is evaluated, so it takes the signal directly rather than
+        # carrying a domain the rule two steps later is about to clear.
         return False
     prev_domain = jsc.get(prev, "domain_hint")
     prev_intent = jsc.get(prev, "intent_hint")
@@ -415,7 +448,7 @@ def reuse_alive(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
     # entirely - therefore carries nothing, which is also what happens today.
     continuation = o.get("entity_op_applied") == "reuse"
 
-    if o.get("message_type") not in ("casual", "request_for_help"):
+    if o.get("message_type") not in ("casual", "request_for_help") and not out.topic_reset:
         if not turn.explicit and not turn.switch_domain:
             _reuse_domain(focus, turn, out, continuation=continuation)
 
@@ -641,6 +674,11 @@ def _record_domain(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
     domain = turn.o.get("domain_hint")
     if not jsc.truthy(domain):
         return
+    if out.topic_reset and not jsc.truthy(jsc.get(turn.parser_raw, "domain_hint")):
+        # `reset_on_topic` just cleared this axis and the customer named no domain of
+        # their own, so anything left in `domain_hint` is a carry from the subject they
+        # said they were finished with. Recording it would undo the reset one line later.
+        return
     if _set_this_turn(focus, "domain", turn):
         return
     _set(
@@ -762,6 +800,15 @@ def _reusing_scope(o: dict[str, Any]) -> bool:
 
 def _has_values(value: Any) -> bool:
     return isinstance(value, list) and len(value) > 0
+
+
+def _is_empty(value: Any) -> bool:
+    """Nothing in the slot. `[]` and `{}` count, the same way `decay` counts them."""
+    return value is None or value == [] or value == {} or value == ""
+
+
+def _is_product(entity: Any) -> bool:
+    return jsc.lower_or_empty(jsc.get(entity, "hint")) == "product"
 
 
 def _norm(value: Any) -> Any:

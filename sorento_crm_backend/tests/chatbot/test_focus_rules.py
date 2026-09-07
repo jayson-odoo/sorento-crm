@@ -117,6 +117,35 @@ class TestReplaceSameAxis:
         assert [e["raw"] for e in fr.value_of(focus, "products")] == ["SRTWC8517"]
         assert out.entries == []
 
+    def test_the_confident_half_of_a_mixed_turn_still_replaces(self) -> None:
+        """PER ENTITY, not per turn. "SRTWC8517 and one siew srtkt72ss" is one clean code
+        and one unsplittable phrase; dropping the whole replacement because of the second
+        throws away the first as well, and the turn then answers about the PREVIOUS
+        product - worse than either reading of this one."""
+        focus = {"products": _slot([_entity("OLD-CODE")])}
+        out = fr.Outputs(focus=focus)
+        turn = _turn(
+            {
+                "entities": [
+                    _entity("SRTWC8517"),
+                    _entity("one siew srtkt72ss", confident=False),
+                ]
+            }
+        )
+
+        fr.replace_same_axis(focus, turn, out)
+
+        assert [e["raw"] for e in fr.value_of(focus, "products")] == ["SRTWC8517"]
+
+    def test_a_wholly_unconfident_turn_leaves_the_alive_slot_alone(self) -> None:
+        focus = {"customer": _slot(_entity("ABC", "customer"))}
+        out = fr.Outputs(focus=focus)
+        turn = _turn({"entities": [_entity("something vague", "customer", confident=False)]})
+
+        fr.replace_same_axis(focus, turn, out)
+
+        assert fr.value_of(focus, "customer")["raw"] == "ABC"
+
     def test_an_unconfident_entity_does_fill_an_empty_slot(self) -> None:
         """There is nothing to lose, and a guess beats having no scope at all."""
         focus: dict[str, Any] = {}
@@ -243,6 +272,104 @@ class TestResetOnTopic:
 # --------------------------------------------------------------------------- #
 # 3. reuse_alive
 # --------------------------------------------------------------------------- #
+
+
+class TestATopicResetActuallySticks:
+    """Item 5 of the 7 Sep review, tested through `apply` because that is where it broke.
+
+    Each rule was right on its own: `reset_on_topic` cleared the domain slot and
+    `_record_domain` recorded what the turn concluded. Run in order, the second wrote back
+    the domain the first had just dropped - measured, "别的" ended with `inventory` alive -
+    so the customer's "something else" reset nothing anybody could see.
+    """
+
+    def _focus(self) -> dict[str, Any]:
+        return {
+            "products": _slot([_entity("SRTWC8517")]),
+            "customer": _slot(_entity("ABC", "customer")),
+            "domain": _slot("inventory"),
+            "tier": _slot(["dealer"]),
+            "brands": _slot(["sorento"]),
+        }
+
+    def _reset_turn(self, **over: Any) -> fr.Turn:
+        o = {
+            "entities": [],
+            "domain_hint": "inventory",
+            "intent_hint": "check_stock",
+            "message_type": "business_query",
+            "entity_op_applied": "reuse",
+        }
+        o.update(over.pop("o", {}))
+        kwargs: dict[str, Any] = {
+            "prev": {"domain_hint": "inventory", "intent_hint": "check_stock"},
+            "signals": {"topic_reset": True},
+            "parser_raw": {"domain_hint": None},
+        }
+        kwargs.update(over)
+        return _turn(o, **kwargs)
+
+    def test_the_domain_is_gone_from_the_focus_after_apply(self) -> None:
+        out = fr.apply(self._focus(), self._reset_turn())
+
+        assert sorted(out.focus) == ["brands", "tier"]
+
+    def test_the_domain_is_gone_from_the_emission_too(self) -> None:
+        """The slot alone is not enough: the lane routes on `qf.domain_hint` and the next
+        turn inherits it."""
+        turn = self._reset_turn()
+
+        fr.apply(self._focus(), turn)
+
+        assert turn.o["domain_hint"] is None
+        assert turn.o["intent_hint"] is None
+        assert turn.o["domain_cleared_on_topic_reset"] is True
+
+    def test_a_reset_that_names_its_own_domain_keeps_that_one(self) -> None:
+        """"别的, any promotions?" is a reset AND a new subject."""
+        turn = self._reset_turn(
+            o={"domain_hint": "promotion", "intent_hint": "check_promotion"},
+            parser_raw={"domain_hint": "promotion"},
+        )
+
+        out = fr.apply(self._focus(), turn)
+
+        assert turn.o["domain_hint"] == "promotion"
+        assert fr.value_of(out.focus, "domain") == "promotion"
+
+    def test_owner_ruling_k2_never_clears_the_domain(self) -> None:
+        """K2 fires on an EXPLICIT new-domain query, where the domain is the new one."""
+        turn = _turn(
+            {
+                "entities": [_entity("SRTKS6091")],
+                "domain_hint": "promotion",
+                "message_type": "business_query",
+            },
+            prev={"domain_hint": "order"},
+            explicit=True,
+            is_carried=lambda e: False,
+        )
+
+        out = fr.apply(self._focus(), turn)
+
+        assert turn.o["domain_hint"] == "promotion"
+        assert out.topic_reset is False
+
+    def test_the_entityless_carry_stands_down_on_a_reset(self) -> None:
+        """It runs inside the entity executor, before `reset_on_topic` is evaluated, so it
+        takes the signal directly rather than carrying a domain about to be cleared."""
+        o = {"message_type": "business_query", "domain_hint": None, "intent_hint": None}
+
+        fired = fr.reuse_domain_entityless(
+            o,
+            prev={"domain_hint": "inventory", "intent_hint": "check_stock"},
+            explicit=False,
+            switch_domain=None,
+            topic_reset=True,
+        )
+
+        assert fired is False
+        assert o["domain_hint"] is None
 
 
 class TestReuseAlive:
