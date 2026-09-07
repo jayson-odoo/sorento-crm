@@ -1759,15 +1759,84 @@ contact inside the synchronous request. Different contacts run in parallel.
   the "which company do you mean" ask is suppressed - the pin stops the QUESTION without
   constraining the ANSWER.
 
-  **NOT fixed in this lane, deliberately.** The fix is AND-mode entity pins in
-  `resolve_references`, a change to that route's own contract rather than a chatbot-lane
-  change - and NOT a lane waiting to merge: PR #456 is MERGED (9f04a3205) and it is what
-  AUTHORED the refusal (`references.py:1650-1655`), deliberately and for two stated
-  reasons (an AND-mode intersection has no per-token view to narrow, and a zero-intersection
-  AND request retries under `force_mode="or"`, where a pin would suddenly start applying).
-  Closing the gap means ruling on how a pin behaves in both, which is **issue #715**. The unit that proves the gap
-  is committed `xfail(strict=True)` so the day that lands, it announces itself - the same
-  mechanism the unpromoted B-HB-1 / B-TEAM-1' gates use. The end-to-end guard beside it is
-  green and stays green: at any scale a test can seed, `301-C001` names one customer, so
-  the code resolves correctly and the defect cannot be reproduced below production scale.
-  Evidence: `tests/chatbot/test_pass4_item2_last_month_keeps_customer_scope.py`. (H77)
+  **Fixed at `gate.py`, not at the resolver route (issue #715, closed console pass 5, 7
+  Sep 2026).** AND-mode `entity_pins` stays refused, exactly as PR #456 shipped it
+  (`references.py:1650-1655`) - the two reasons the refusal was authored for (no per-token
+  view in an intersection, and a zero-intersection AND retry under `force_mode="or"` where
+  a pin would suddenly apply) are unchanged and `resolve_entity_body` is untouched. The
+  pre-existing "A PINNED PICK WINS OVER FUZZY RE-RESOLUTION" mechanism already re-seated a
+  carried pick's uuid into `compatible_entities` (exec 13705266's own fix widened its ENTRY
+  gate to `pin_uuids_all`, carried-or-current) but its FILTER half - `pin_types` /
+  `pin_bases` / `pin_codes` and `_keep`'s own uuid check - stayed built from `pins` /
+  `pin_uuids` (this-turn pins only), so a carried pick with no current-turn pin left
+  `pin_types` empty and `_keep`'s first line (`if t not in pin_types: return True`) kept
+  every resolver row "untouched": the pin stopped the QUESTION without constraining the
+  ANSWER. Widened all four reads to `pins_all` / `pin_uuids_all`, the same set the entry
+  gate already used - the resolver's own wrong rows for the shared debtor code are now
+  REPLACED by the picked uuid, never merged with it. The unit is now a plain (non-xfail)
+  test against `run_gate` directly, at the fix's own layer, with a companion assertion that
+  `resolve_entity_body` still sends no `entity_pins` in AND mode (so nobody mistakes this
+  for the resolver-route fix that was ruled out). Closes #715. Evidence:
+  `tests/chatbot/test_pass4_item2_last_month_keeps_customer_scope.py::TestACarriedCustomerPickIsPinnedAtTheGateNotAtTheResolver`.
+  (H77)
+- AC-827 `[BE][T]` **`product_attachment` attachment-type resolution is domain-scoped, so a
+  migration-seeded internal document type never collides with a customer-facing one.**
+  Owner console pass 5, item 1 (7 Sep 2026, prod regression against #713). "send me the
+  photo of SRTWC8517-SH-UF" (turns a5317cf4 / b4369aba) stopped resolving deterministically
+  the moment migration `485_shipment_line_photo_type.py` seeded "Shipment Line Photo" -
+  it shares the substring "photo" with the pre-existing "Product Photos" row, and
+  `gate.py`'s own non-product ambiguity handler had no per-type narrowing, so the customer
+  got a silent wrong pick or a did-you-mean for a document type they never asked about,
+  never the file that DOES exist.
+
+  **Given** a `product_attachment` domain query whose attachment-type token Tier 2
+  substring-matches more than one `attachment_types` row, **when** only one of those rows
+  is ever used on a PRODUCT-entity attachment (measured against the `attachments` table
+  itself, not a hardcoded denylist), **then** only that row is a candidate - Tier 1 exact
+  stays untouched, so a customer who types the internal type's own exact code still
+  resolves it, and the domain scoping applies only when `domain_hint == "product_attachment"`,
+  leaving every other caller of the shared resolver unaffected.
+
+  Kill test: seed "Shipment Line Photo" without the domain scoping and the ambiguity comes
+  back. Two committed reds stay `xfail(strict=True)` rather than fixed here (tracked as
+  issue #727): `product_attachment` has no deterministic fetch path that skips the MCP
+  tool-search-then-call pipeline, and building one duplicates or reroutes the access-level
+  / company-scope logic `/api/v1/master-data/product-attachments` already carries - a
+  materially larger, security-relevant change outside this item's own scope. Evidence:
+  `tests/chatbot/test_pass5_item1_photo_attachment_alias.py`. (H79)
+- AC-828 `[BE][T]` **A "last month" that set a concrete date this turn is not wiped by its
+  own `broaden_axis`.** Owner console pass 5, item B1 (7 Sep 2026). Turns e4381b0d /
+  98526b81 under an open `member_offer`: the parser's SAME output sets
+  `date_filter_start`/`date_filter_end` AND `broaden_axis: "date"` in the same breath, and
+  the entity-op executor's `reuse` arm read `broaden_axis == "date"` as an unconditional
+  "the customer wants the window gone" and nulled the dates it had just been given, before
+  ever checking `has_current_date` (computed one line above, read only by the sibling arm).
+
+  **Given** a `reuse` turn whose `broaden_axis` is `"date"` AND whose own parser output
+  already carries a concrete `date_filter_start` / `date_filter_end`, **then** the wipe does
+  not fire and the turn's own date survives post-process, unchanged from what the parser
+  said. Pre-existing (not part of #713's diff, confirmed by line range). Evidence:
+  `tests/chatbot/test_pass5_item2_member_offer_business_query_filter_route.py::TestB1LastMonthUnderMemberOfferKeepsTheParsersOwnDateFilter`.
+  (H80)
+- AC-829 `[BE][T]` **A bare product code under an open member offer narrows the product
+  half of the carried pair.** Owner console pass 5, item B2 (7 Sep 2026, D11 inventory row
+  R-b). Turn 6ea9fd1a: "rpacc" after a working "last month" (hanlim/srtwc286) is never
+  extracted as an entity by the parser at all, so the reply kept naming the OLD product
+  ("Product: srtwc286") - a genuine gap, not a wrong branch: nothing read a bare reply
+  against `prev_state.routing_companies[].codes`, where product variant codes like
+  "SRTWC286-SH-RPACC" live.
+
+  **Given** an open `member_offer` whose `routing_companies[].codes` carry a product
+  variant code, and a bare one-word reply, **when** that word EQUALS one segment of a code
+  whose FIRST segment equals the carried product entity's own token, **then** the product
+  entity is replaced (the customer half and the date window survive unchanged) and the turn
+  is answered, not reprompted. D11-compliant by construction: equality against segments of a
+  string this codebase itself persisted, never a substring or regex scan of the customer's
+  message - the same class of tap `_team_clarify_pick` is inventoried under. A second-order
+  fix travels with it: the narrowed entity's `current_message: True` left `message_type` at
+  `"casual"`, which routed the rest of the turn as an unanswered CS-member-offer instead of
+  the answer it had just become; `message_type` now promotes to `"business_query"` the same
+  way the pre-existing "bare entity under an open member roster" block (AC-816 rule 3)
+  already does. Evidence:
+  `tests/chatbot/test_pass5_item2_member_offer_business_query_filter_route.py::TestB2ABareProductCodeUnderTheOfferNarrowsTheProduct`.
+  (H81)
