@@ -842,13 +842,16 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
     ),
     OwnerWorld(
         world_id="owner-escalate-offer-left-unanswered-then-decays",
-        emits_v3=True,
         acs=("AC-945",),
+        emits_v3=True,
         why=(
             "The offer is neither accepted nor declined: the customer asks a stock "
-            "question instead. It is ANSWERED, the offer is left open, and the offer is "
-            "cleared by its own TTL with a `decay` trace line rather than being answered "
-            "silently by a later 'yes' about something else."
+            "question instead. That turn is ANSWERED and the offer is left OPEN - it "
+            "survives the disappearance of the `pending` marker that made it, which is "
+            "what gives it a lifetime of its own at all - and on the next turn, past its "
+            "TTL, it is cleared with a `decay` line naming the slot, the age in turns and "
+            "the reason. Never answered silently by a 'yes' about something else three "
+            "turns later, which is the hazard AC-816 rule 1 is named after."
         ),
         turns=(
             OwnerTurn(
@@ -861,7 +864,11 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
                     "entities": [_product("MSK11A-QT")],
                     "answers_open_question": _answers(resolved=False),
                 },
-                expect={"answered": None, "focus_products": ["MSK11A-QT"]},
+                expect={
+                    "answered": None,
+                    "focus_products": ["MSK11A-QT"],
+                    "open_question_kind": "escalate_yes_no",
+                },
             ),
             OwnerTurn(
                 message="and SRTWC8517",
@@ -870,16 +877,14 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
                     "domain_hint": None,
                     "entities": [_product("SRTWC8517")],
                 },
-                expect={"focus_products": ["SRTWC8517"]},
-            ),
-            OwnerTurn(
-                message="and SRTKS6091",
-                emission={
-                    "message_type": "business_query",
-                    "domain_hint": None,
-                    "entities": [_product("SRTKS6091")],
+                # Age 2 against a TTL of 1, counted from the reply that made the offer.
+                # Cleared at intake, with the line that says which slot, how old and why.
+                expect={
+                    "focus_products": ["SRTWC8517"],
+                    "open_question_gone": True,
+                    "decayed": ("open_question",),
+                    "decay_reason_contains": "answered silently",
                 },
-                expect={"focus_products": ["SRTKS6091"], "open_question_gone": True},
             ),
         ),
     ),

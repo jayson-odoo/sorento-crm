@@ -155,7 +155,52 @@ def ask(
     }
 
 
-def from_state(variables: Any, *, asked_at_turn: int) -> dict[str, Any] | None:
+def same_question(a: Any, b: Any) -> bool:
+    """Is this the same question the previous turn left open, or a fresh one?
+
+    Same KIND and the same option IDENTITIES, in the same order. The identity of a row is
+    its uuid where it has one and its code or label where it does not, because those are
+    what a customer can point at; `idx` is deliberately not in it, since a roster whose
+    numbering is identical and whose contents changed is a DIFFERENT list.
+
+    This is what gives an open question a real lifetime. `compile_state` re-derives the
+    mirror on every turn, so stamping `asked_at_turn` each time would make the age
+    permanently 1 and the TTL unreachable - which is the same class of defect the focus
+    projection had, in the other half of the dialogue state.
+    """
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return False
+    if a.get("kind") != b.get("kind"):
+        return False
+    return _identities(a.get("options")) == _identities(b.get("options"))
+
+
+def _identities(options: Any) -> list[str]:
+    out: list[str] = []
+    for row in jsc.array(options):
+        if not isinstance(row, dict):
+            continue
+        out.append(
+            jsc.nullish_str(
+                row.get("uuid")
+                or row.get("code")
+                or row.get("team")
+                or row.get("value")
+                or row.get("label")
+            )
+            .strip()
+            .lower()
+        )
+    return out
+
+
+def from_state(
+    variables: Any,
+    *,
+    asked_at_turn: int,
+    previous: Any = None,
+    answered: bool = False,
+) -> dict[str, Any] | None:
     """The MIRROR: the open question the legacy session keys describe.
 
     `selection_context` says which roster is on screen and `last_result_set` is that
@@ -189,7 +234,20 @@ def from_state(variables: Any, *, asked_at_turn: int) -> dict[str, Any] | None:
     if kind is None:
         kind = KIND_BY_PENDING_KIND.get(jsc.nullish_str(pending.get("kind") or ""))
     if kind is None:
-        return None
+        # THE QUESTION OUTLIVES THE LEGACY MARKER, and that is what makes its TTL real.
+        # `pending.derive` re-emits an escalation offer only on the turn a lane offers one,
+        # so a customer who asks something else instead would otherwise have the question
+        # vanish on the very next turn - answered by nothing, cleared by nothing, and never
+        # traced. AC-945 is explicit that an unanswered offer survives to its TTL and is
+        # then cleared with a `decay` line, so it is carried here and killed by `decay`,
+        # which is the one place that ages anything (D11).
+        #
+        # NOT carried once it has been ANSWERED: the handler consumed it this turn, and
+        # re-arming a question the customer has already replied to is the hazard
+        # `_picker_carry` names - a later bare "yes" assigning a human off an offer that
+        # was closed. Nor is it carried when the legacy keys describe a different question,
+        # because that branch returned above.
+        return None if answered else (previous if isinstance(previous, dict) else None)
 
     ttl = pending.get("ttl") if kind == "member_offer" else None
     payload = {
@@ -211,13 +269,23 @@ def from_state(variables: Any, *, asked_at_turn: int) -> dict[str, Any] | None:
         # A team clarify offers a NARROWED set (owner rule R-a), and `selection_context`
         # alone cannot say which - the marker's own list is the roster.
         rows = [r for r in pending["options"] if isinstance(r, dict)]
-    return ask(
+    question = ask(
         kind,
         options=rows,
         turn_no=at,
         ttl_turns=int(ttl) if isinstance(ttl, int) and ttl > 0 else None,
         payload=payload,
     )
+    # THE CLOCK DOES NOT RESTART ON A CARRY. The legacy lifecycle keeps `selection_context`
+    # and `last_result_set` alive across turns that build no offer of their own (owner
+    # ruling K rule 1), so re-deriving the mirror stamps a fresh `asked_at_turn` on a
+    # question nobody has answered - and the age is 1 forever. A question is NEW only when
+    # its kind or its rows changed; otherwise it keeps the turn it was actually asked on.
+    if same_question(question, previous):
+        question["asked_at_turn"] = int(
+            previous.get("asked_at_turn", question["asked_at_turn"])
+        )
+    return question
 
 
 def resolve(

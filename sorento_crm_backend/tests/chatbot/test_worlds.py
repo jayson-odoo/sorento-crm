@@ -498,6 +498,10 @@ def _assert_owner_expectations(
         )
     if expect.get("open_question_gone"):
         assert variables.get("open_question") is None, f"{where}: the offer should be closed"
+    if "open_question_kind" in expect:
+        assert (variables.get("open_question") or {}).get("kind") == expect[
+            "open_question_kind"
+        ], f"{where}: what the bot is still waiting for"
     if "decayed" in expect:
         decayed = tuple(r["slot"] for r in trace if r.get("kind") == "decay")
         assert decayed == expect["decayed"], f"{where}: what decayed at intake"

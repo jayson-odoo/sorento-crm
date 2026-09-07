@@ -972,9 +972,21 @@ def compile_current_state(  # noqa: PLR0912, PLR0915 - a line-by-line port; spli
     # many words that rewriting it to call a shared function would be a behaviour change
     # smuggled in as a tidy-up. AC-951's purpose - every existing world still grades - is
     # met either way. `dialogue/open_question.py` carries the full note.
+    # `previous` is what stops the clock restarting: the legacy lifecycle carries a roster
+    # across turns that build no offer of their own, so a question re-derived from it every
+    # turn would be permanently one turn old and its TTL would never be reached.
     variables["open_question"] = pending_open_question.from_state(
         variables,
         asked_at_turn=int(jsc.js_number(jsc.get(jsc.get(ctx, "parse"), "_turn_no")) or 0),
+        # The question that was open when the turn STARTED, off the head's own read. Not
+        # `prev.open_question`: a session written before this key existed has none, and the
+        # head derives one from the legacy marker in that case - which is exactly the
+        # situation where a carried question must not be lost.
+        previous=jsc.get(jsc.get(ctx, "parse"), "_open_question_before")
+        or jsc.get(prev, "open_question"),
+        # `output_exchange._apply_open_question` stamps this when a handler resolved the
+        # question this turn. A consumed question is never re-armed.
+        answered=jsc.truthy(jsc.get(qf, "open_question_answered")),
     )
 
     sanitize_em_dash(output)

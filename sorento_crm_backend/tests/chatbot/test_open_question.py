@@ -599,3 +599,81 @@ class TestTheAnsweredStepOnARealTurn:
 
         qf = (result.ctx or {}).get("parse", {}).get("output", {})
         assert "open_question_answered" not in qf
+
+
+class TestTheClockDoesNotRestartOnACarry:
+    """Blocker 4 of the 7 Sep review: a TTL that is re-stamped every turn is not a TTL.
+
+    `compile_state` re-derives the mirror on every turn, and the legacy lifecycle keeps a
+    roster alive across turns that build no offer of their own (owner ruling K rule 1). So
+    without `same_question` the age was permanently 1 and nothing could ever expire.
+    """
+
+    def test_the_same_roster_keeps_the_turn_it_was_actually_asked_on(self) -> None:
+        session = {"selection_context": "disambiguation", "last_result_set": _rows("A", "B")}
+        first = oq.from_state(session, asked_at_turn=4)
+
+        second = oq.from_state(session, asked_at_turn=5, previous=first)
+        third = oq.from_state(session, asked_at_turn=6, previous=second)
+
+        assert first["asked_at_turn"] == 4
+        assert second["asked_at_turn"] == 4
+        assert third["asked_at_turn"] == 4
+
+    def test_a_changed_roster_is_a_new_question(self) -> None:
+        first = oq.from_state(
+            {"selection_context": "disambiguation", "last_result_set": _rows("A", "B")},
+            asked_at_turn=4,
+        )
+
+        second = oq.from_state(
+            {"selection_context": "disambiguation", "last_result_set": _rows("C", "D")},
+            asked_at_turn=6,
+            previous=first,
+        )
+
+        assert second["asked_at_turn"] == 6
+
+    def test_a_changed_KIND_is_a_new_question_even_on_the_same_rows(self) -> None:
+        rows = [{"idx": 1, "label": "ABC", "uuid": "u1", "entity_type": "customer"}]
+        first = oq.from_state(
+            {"selection_context": "disambiguation", "last_result_set": rows}, asked_at_turn=4
+        )
+        second = oq.from_state(
+            {"selection_context": "team_clarify", "last_result_set": rows},
+            asked_at_turn=6,
+            previous=first,
+        )
+
+        assert first["kind"] == "customer_pick"
+        assert second["kind"] == "team_pick"
+        assert second["asked_at_turn"] == 6
+
+    def test_identity_is_the_row_not_its_number(self) -> None:
+        """A list whose numbering is identical and whose CONTENTS changed is a different
+        list, and a customer answering "2" is answering about a different thing."""
+        assert oq.same_question(
+            {"kind": "product_pick", "options": _rows("A", "B")},
+            {"kind": "product_pick", "options": _rows("A", "B")},
+        )
+        assert not oq.same_question(
+            {"kind": "product_pick", "options": _rows("A", "B")},
+            {"kind": "product_pick", "options": _rows("A", "C")},
+        )
+
+    def test_an_unanswered_question_outlives_the_marker_that_made_it(self) -> None:
+        """`pending.derive` re-emits an escalation offer only on the turn a lane offers
+        one, so without this the question would vanish on the next turn - answered by
+        nothing, cleared by nothing, and never traced."""
+        asked = oq.ask("escalate_yes_no", turn_no=4, options=[])
+
+        carried = oq.from_state({}, asked_at_turn=5, previous=asked)
+
+        assert carried is asked
+
+    def test_an_ANSWERED_question_is_never_re_armed(self) -> None:
+        """The hazard `_picker_carry` names: a later bare "yes" assigning a human off an
+        offer the customer already replied to."""
+        asked = oq.ask("escalate_yes_no", turn_no=4, options=[])
+
+        assert oq.from_state({}, asked_at_turn=5, previous=asked, answered=True) is None

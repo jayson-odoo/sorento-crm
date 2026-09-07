@@ -1351,6 +1351,7 @@ def _run_stages(  # noqa: PLR0915
     # The tail needs the counter to date the question it arms this turn, and it only has
     # `ctx`. Same channel as `_focus`, for the same reason.
     parse_block["_turn_no"] = turn_no
+    parse_block["_open_question_before"] = dialogue_out.get("open_question_before")
     for entry in dialogue_out.get("trace") or []:
         turn_trace.add("focus", entry)
     if dialogue_out.get("open_question"):

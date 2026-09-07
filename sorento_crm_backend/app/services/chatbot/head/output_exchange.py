@@ -2105,6 +2105,12 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         "focus": focus_out.focus,
         "trace": focus_out.entries,
         "open_question": answered_entry,
+        # The question that was open when this turn STARTED, as the head derived it. The
+        # tail needs it to decide whether the one it re-derives is the same question still
+        # waiting or a fresh one, and it cannot recompute it: by then `pending` and
+        # `selection_context` have been rebuilt from THIS turn's outcome, so the marker
+        # that described the open question is already gone.
+        "open_question_before": open_question,
     }
 
     # -- B2' POST-MERGE ENTITY RECONCILIATION -------------------------------------------- #
