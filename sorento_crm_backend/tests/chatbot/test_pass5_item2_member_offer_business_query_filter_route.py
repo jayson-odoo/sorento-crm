@@ -80,8 +80,19 @@ from typing import Any
 import pytest
 from sqlalchemy import text
 
+from app.models.access import RespondContact
+from app.models.company import Company, RespondContactCompany
+from app.models.order import Customer
+from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.services.chatbot import engine as engine_mod
+from tests._pg_fixture import unique_code
+from tests.chatbot.conftest import set_chatbot_switches
 from tests.chatbot.test_engine import CONTACT_ID, _envelope, _parser_output
+from tests.chatbot.test_engine_company_scope import (
+    _wire_answer_services,
+    _wire_answered_fetch,
+    _wire_real_resolve_entity,
+)
 from tests.chatbot.test_r3_pending_end_to_end import _stub_parser
 
 ROSTER = [
@@ -184,6 +195,88 @@ def _seed_member_offer(
     db.commit()
 
 
+def _seed_real_hanlim_and_srtwc286(session_factory) -> str:
+    """The two entities the carried pair names, as REAL rows - `_probe_customer`
+    exact-matches `customer_code` and `_probe_product` exact-matches `product_code`,
+    both whitespace/case-insensitive, so the lowercase raws the parser carries
+    ("hanlim" / "srtwc286") resolve cleanly. Also seeds the "SRTWC286-SH-RPACC" variant
+    B2's own bare-code narrowing (`ROUTING_COMPANIES`) names - `_prefix_probe_product`
+    substring-matches "rpacc" against it (Tier 2), so once the narrowing swaps the
+    entity's `raw` to "rpacc" the resolver has a real row to land on and the header
+    (`tail/compile_state.py::_search_scope_header`, built from the GATE's resolved
+    entities, never the parser's raw hint alone) can print it. Returns the company id
+    so the caller can scope the contact and the resolver to it."""
+    db = session_factory()
+    company = Company(name=unique_code("ZZTHanlim"), code=unique_code("ZZTH")[:50])
+    db.add(company)
+    db.flush()
+    category = ProductCategory(
+        category_code=unique_code("CAT")[:50], category_name="ZZT item2 category", company_id=company.id
+    )
+    uom = UnitOfMeasure(uom_code=unique_code("UOM")[:20], uom_name="Each", company_id=company.id)
+    db.add_all([category, uom])
+    db.flush()
+    product = Product(
+        product_code="SRTWC286",
+        product_name="ZZT item2 product SRTWC286",
+        category_id=category.id,
+        base_uom_id=uom.id,
+        list_price=10,
+        is_active=True,
+        company_id=company.id,
+    )
+    variant = Product(
+        product_code="SRTWC286-SH-RPACC",
+        product_name="ZZT item2 product SRTWC286-SH-RPACC",
+        category_id=category.id,
+        base_uom_id=uom.id,
+        list_price=10,
+        is_active=True,
+        company_id=company.id,
+    )
+    customer = Customer(
+        customer_code="hanlim",
+        customer_name="ZZT Hanlim Trading",
+        is_active=True,
+        company_id=company.id,
+    )
+    db.add_all([product, variant, customer])
+    db.commit()
+    return company.id
+
+
+def _wire_business_lane(session_factory, monkeypatch) -> None:
+    """The business lane switched ON and wired to complete deterministically against
+    REAL rows, the same setup `test_r3_pending_end_to_end.py` uses for a
+    `business_query` turn that has to reach `resolve-entity` and answer, rather than
+    delegate at `routed` for want of the switch (`chatbot_business_lane_enabled` /
+    `chatbot_completed_lanes`, AC-810) or answer "couldn't find" for want of a real
+    customer/product row behind the carried "hanlim" / "srtwc286" text - production's
+    own reply header names both, which needs them to actually resolve. B1 and B2 both
+    complete a business_query turn under the member offer and need it; B3 does not (it
+    never leaves the escalation/reprompt ladder) and is left alone.
+    """
+    company_id = _seed_real_hanlim_and_srtwc286(session_factory)
+    db = session_factory()
+    contact_row = db.query(RespondContact).filter(RespondContact.respond_io_id == CONTACT_ID).one()
+    db.add(RespondContactCompany(respond_contact_id=contact_row.id, company_id=company_id))
+    db.commit()
+    monkeypatch.setattr(
+        engine_mod, "_contact_company_scope", lambda factory, cid: frozenset({company_id})
+    )
+
+    set_chatbot_switches(session_factory, business_lane=True)
+    db = session_factory()
+    db.execute(
+        text("UPDATE system_settings SET chatbot_completed_lanes = CAST(:l AS jsonb)"),
+        {"l": '["business_query"]'},
+    )
+    db.commit()
+    _wire_real_resolve_entity(monkeypatch)
+    _wire_answer_services(monkeypatch)
+    _wire_answered_fetch(monkeypatch)
+
+
 class TestB1LastMonthUnderMemberOfferKeepsTheParsersOwnDateFilter:
     """e4381b0d / 98526b81: the parser SET a concrete date this turn - post-process must
     not wipe what it just gave."""
@@ -192,6 +285,7 @@ class TestB1LastMonthUnderMemberOfferKeepsTheParsersOwnDateFilter:
         self, seeded, session_factory, monkeypatch
     ):
         _seed_member_offer(session_factory)
+        _wire_business_lane(session_factory, monkeypatch)
 
         # `_parser_raw` verbatim (entities, dates, broaden_axis) from
         # tests/fixtures/chatbot/e4381b0d-ab89-4be0-b336-631632bdb482.json.
@@ -235,6 +329,7 @@ class TestB2ABareProductCodeUnderTheOfferNarrowsTheProduct:
         _seed_member_offer(
             session_factory, date_filter_start="2026-08-01", date_filter_end="2026-08-31"
         )
+        _wire_business_lane(session_factory, monkeypatch)
 
         # `_parser_raw` verbatim from
         # tests/fixtures/chatbot/6ea9fd1a-86e8-461e-a56e-a7865beb6cfc.json.
