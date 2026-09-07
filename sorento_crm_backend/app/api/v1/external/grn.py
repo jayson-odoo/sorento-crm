@@ -10,6 +10,7 @@ from app.dependencies import get_external_api_user
 from app.schemas.external.procurement import GRNRequest
 from app.schemas.procurement import PickingHeaderCreate, PickingLineCreate, PickingHeaderResponse
 from app.services.procurement_service import PickingHeaderService
+from app.services.rules import shipping_order_rules
 from app.models.procurement import SPOAllocation
 from app.models.inventory import Warehouse
 from app.api.v1.external.utils import (
@@ -124,7 +125,16 @@ def create_grn(
                         # path built for it; letting this triple lookup reach one as well
                         # would give a GRN two different answers depending on which route
                         # it arrived by.
-                        SPOAllocation.source_system.is_(None),
+                        #
+                        # "Raised here" is NULL or `crm_spo`, not NULL alone (security
+                        # round 7): the two SCM writers stamp the rows they raise per
+                        # purchase-order line, and a bare NULL test would make every one
+                        # of them invisible to an incoming GRN.
+                        or_(
+                            SPOAllocation.source_system.is_(None),
+                            SPOAllocation.source_system
+                            == shipping_order_rules.CRM_SPO_SOURCE_SYSTEM,
+                        ),
                     )
                     # The triple stopped being unique at migration 420: one SPO can state
                     # the same product at the same location on two lines, two containers

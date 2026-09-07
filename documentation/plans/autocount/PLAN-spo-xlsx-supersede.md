@@ -304,6 +304,49 @@ once; then the dedupe runs on production by the captain with `--dry-run` first.
     candidate until it is stamped. Both guards miss it only for rows written before this change;
     superseding one loses nothing but its id and `created_by`, since the receipt, shipment, zone,
     uom, rejection and notes all carry.
+- Round 8 as-built, security round 7 (2026-09-08, coder on Opus): the `crm_spo` stamp round 7
+  introduced falsified every predicate that spelled "a row this system raised" as
+  `source_system IS NULL`. `CRM_RAISED_SOURCE_SYSTEMS` now names that concept in
+  `shipping_order_rules`, deliberately a separate name from `COMPUTED_RECEIPT_SOURCE_SYSTEMS`
+  (which it aliases today) because one answers "who raised this row" and the other "who states
+  its receipt", and a future value could join one without joining the other. Each SQL site keeps
+  the two-arm spelling `or_(col.is_(None), col == CRM_SPO_SOURCE_SYSTEM)`, because `IN (NULL,
+  'crm_spo')` never matches a NULL row in SQL.
+  - `app/api/v1/external/grn.py` (allocation resolution by spo_number + product + warehouse):
+    without the second arm every SCM-raised allocation became invisible to an incoming GRN, which
+    would have fallen through to the number-plus-capacity path or to no match at all.
+  - `app/api/v1/external/spo_allocations.py` (n8n bulk-create duplicate check): without it the
+    endpoint stops seeing a `crm_spo` row and creates a SECOND allocation beside it, the same
+    duplicate-supply shape this whole lane exists to remove.
+  - `app/services/procurement_service.py::upsert_allocation`: `crm_spo` joins the match `or_`
+    (NULL, `crm_spo`, `scm_upload`, `autocount`), and the "last writer wins" line right below it
+    now clears the stamp only when it is NOT `crm_spo`. That stamp is not a writer's claim on the
+    row, it is the marker that the allocation belongs to a purchase-order line, and clearing it
+    would hand the row straight back to the supersede sweep, which reads an unstamped ref-less row
+    as Excel-era (D25c). A quantity correction does not change what the row IS.
+  - The stamp is a SERVICE argument, not a request field (reviewer nit, same round).
+    `source_system` came off `SPOAllocationCreate` and `create_allocation` gained a
+    keyword-only `source_system: Optional[str] = None` that only the two SCM writers pass.
+    As a request field it was settable through `POST /api/v1/procurement/spo-allocations` by
+    any authenticated user, and this column decides which rows the first-push supersede
+    replaces and whose receipts the group recompute pools: posting `autocount` would have
+    joined a hand-made row to a document's group receipt, and posting nothing on a row that
+    should carry `crm_spo` would have offered it to the sweep. `create_allocation` now writes
+    the column itself, so the screen, the n8n packing-list route and the Excel import get NULL
+    by construction rather than by trust.
+  - `allocation_suggestion_service` imports `CRM_SPO_SOURCE_SYSTEM` from the rules module
+    directly instead of through `spo_conversion_service`'s re-export (reviewer nit): it has no
+    other reason to depend on that module, and the stamp is a shipping-order rule.
+  - AC-X59 audit, every other `source_system` read on `SPOAllocation` in `app/`, all left alone
+    with the reason: `shipping_order_ingest_service.py:625`, `procurement_service.py:4195`, `:4354`
+    and `:4359` test `== autocount` (retirement and the group recompute), which `crm_spo` must not
+    join; `scm/outstanding_import_service.py:1607` tests
+    `in_([scm_upload, autocount])`, the upload channel's own writer set, which already excluded
+    NULL and must keep excluding `crm_spo`; `rules/shipping_order_rules.py:414`
+    (`is_xlsx_era_row`) excludes `crm_spo` on purpose, that is round 7's guard. The other
+    `source_system IS NULL` predicates in `app/` are on different tables (`SalesOrder`,
+    `PurchaseOrderLine`, project order inquiries) and no writer stamps `crm_spo` on those. No raw
+    SQL reads `spo_allocations.source_system`.
 - Scope note on D28 / D28c, documented boundary: the floor only ever over-states, never
   under-states. A carried floor on a NON-RELEASED sibling is not clawed back when the GRN behind
   the original xlsx receipt is later deleted - the carry was a statement about that line at

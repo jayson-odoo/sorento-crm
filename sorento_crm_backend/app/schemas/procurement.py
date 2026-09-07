@@ -468,14 +468,6 @@ class SPOAllocationCreate(SPOAllocationBase):
     # to be compared against (AC-C3.2).
     # Optional: 860 pre-existing allocations have no PO, and stock can arrive against none.
     po_line_id: Optional[str] = None
-    # WHO raised the row (spo-xlsx-supersede D25c, security round 6). `create_allocation`
-    # stamped nothing, so five different writers all produced NULL-source rows and the
-    # first-push supersede could not tell an Excel AGGREGATE (which it replaces) from a
-    # CRM row raised one-per-PO-line (which it must never touch). The two SCM writers
-    # state `crm_spo` here; the n8n packing-list route and the screen state nothing, and
-    # those rows are aggregates. Optional and defaulting to None so no existing caller
-    # changes shape.
-    source_system: Optional[str] = None
     # REQUIRED on the create path, where the base relaxed them. Only an IMPORTED shipping
     # order legitimately has no shipment or no warehouse (migration 420, and the import
     # writes those rows directly); somebody allocating a container through the API or the

@@ -238,6 +238,20 @@ CRM_SPO_SOURCE_SYSTEM = "crm_spo"
 #: `scm_po_history`) and an `autocount` line state their own.
 COMPUTED_RECEIPT_SOURCE_SYSTEMS = frozenset({None, CRM_SPO_SOURCE_SYSTEM})
 
+#: `source_system` values that mean "a row THIS system raised", the ownership
+#: question every writer of `spo_allocations` asks before it matches an
+#: existing row (external GRN triple resolution, the n8n bulk-create duplicate
+#: check, `upsert_allocation`). Historically that question was spelled
+#: `source_system IS NULL`, which stopped being true the moment the SCM writers
+#: began stamping `crm_spo` (security round 7): an unstamped row and a
+#: `crm_spo` row are the same kind of row asked about differently.
+#:
+#: Deliberately a SEPARATE name from `COMPUTED_RECEIPT_SOURCE_SYSTEMS` even
+#: though the members coincide today. One answers "who raised this row", the
+#: other "who states its receipt", and a future value could join one set
+#: without joining the other.
+CRM_RAISED_SOURCE_SYSTEMS = COMPUTED_RECEIPT_SOURCE_SYSTEMS
+
 
 @dataclass(frozen=True)
 class SupersedeLinePlan:

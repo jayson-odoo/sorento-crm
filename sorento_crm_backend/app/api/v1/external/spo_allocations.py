@@ -2,6 +2,7 @@
 from collections import defaultdict
 from dataclasses import dataclass
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -9,6 +10,7 @@ from app.dependencies import get_external_api_user
 from app.schemas.external.procurement import SPOAllocationRequest
 from app.models.procurement import SPOAllocation, InboundShipment, InboundShipmentLine
 from app.services.grn_spo_matching import forward_match_grn_lines_for_spo_best_effort
+from app.services.rules import shipping_order_rules
 from app.services.procurement_service import (
     InboundShipmentService,
     next_spo_line_number,
@@ -227,11 +229,18 @@ def create_spo_allocations(
             SPOAllocation.spo_number == spo_number,
             SPOAllocation.product_id == product_id,
             SPOAllocation.warehouse_id == warehouse_id,
-            # Unstamped rows only. Since migration 420 this table also holds the IMPORTED
-            # SPO documents, and refusing an integration's allocation because a 2023
-            # history line names the same product at the same location would reject a
-            # perfectly good write for a document that closed years ago.
-            SPOAllocation.source_system.is_(None),
+            # Rows this system raised only. Since migration 420 this table also holds
+            # the IMPORTED SPO documents, and refusing an integration's allocation
+            # because a 2023 history line names the same product at the same location
+            # would reject a perfectly good write for a document that closed years ago.
+            #
+            # NULL or `crm_spo` (security round 7): the SCM writers stamp the rows they
+            # raise per purchase-order line, so a bare NULL test would stop seeing them
+            # and this endpoint would happily create a second allocation beside one.
+            or_(
+                SPOAllocation.source_system.is_(None),
+                SPOAllocation.source_system == shipping_order_rules.CRM_SPO_SOURCE_SYSTEM,
+            ),
         ).first()
         if existing:
             first = items[0]

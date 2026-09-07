@@ -2255,14 +2255,15 @@ def _write_allocations(
                 warehouse_id=target["warehouse_id"],
                 allocated_quantity=int(round(target["qty"])),
                 po_line_id=target["po_line_id"],
-                # D25c (security round 6): ONE row per PO line, not an Excel
-                # aggregate - stamped so the first-push supersede never
-                # mistakes it for one and severs the PO linkage.
-                source_system=SOURCE_SYSTEM,
             ),
             created_by=actor_user_id,
             forward_match=False,
             commit=commit,
+            # D25c (security round 6): ONE row per PO line, not an Excel
+            # aggregate - stamped so the first-push supersede never mistakes it
+            # for one and severs the PO linkage. A service argument, not a
+            # request field (security round 7).
+            source_system=SOURCE_SYSTEM,
         )
         company_id = str(allocation.company_id) if allocation.company_id is not None else None
         written.append({
