@@ -13,6 +13,12 @@ handler each, and a dispatcher that never guesses:
 | `tier_pick`      | pick    | tiers                            | focus.tier, promotion rerun   |
 | `member_offer`   | yes_no  | family members                   | yes: business lane over them  |
 
+**WHICH rows, on a partial-miss turn.** Two rosters can be live at once and they are not
+interchangeable: the numbered suggestions the reply printed are `dym_last_result_set` and
+`last_result_set` holds the ANSWER's own rows for the code that DID resolve. `_roster_of`
+picks the one the legacy ladder resolves numbered picks against, by the same
+discriminator.
+
 **A position means the row the customer SAW.** `options` is frozen when the question is
 asked - uuid, code and label carried verbatim - and `resolve` indexes into it. It is never
 re-resolved, and that is the whole point of freezing it: "2" must mean the second row the
@@ -172,7 +178,7 @@ def from_state(variables: Any, *, asked_at_turn: int) -> dict[str, Any] | None:
 
     at = max(0, int(asked_at_turn))
     context = jsc.nullish_str(stored.get("selection_context") or "")
-    rows = [r for r in jsc.array(stored.get("last_result_set")) if isinstance(r, dict)]
+    rows = _roster_of(stored, context)
     pending = stored.get("pending") if isinstance(stored.get("pending"), dict) else {}
     dym_offer = stored.get("dym_offer") if isinstance(stored.get("dym_offer"), dict) else {}
 
@@ -473,6 +479,28 @@ def _code_key(entity: Any) -> str:
     if not isinstance(entity, dict):
         return ""
     return jsc.nullish_str(entity.get("canonical_code") or entity.get("raw")).strip().lower()
+
+
+def _roster_of(stored: dict, context: str) -> list[dict[str, Any]]:
+    """WHICH list the customer is looking at, decided the way the legacy ladder decides it.
+
+    On a partial-miss / did-you-mean turn the numbered rows the reply printed are
+    `dym_last_result_set`, and `last_result_set` holds the ANSWER's own rows - the stock
+    lines for the code that DID resolve. `output_exchange`'s `dym_numbered_multi_select`
+    resolves a numbered pick against the dym set on exactly those turns, and the "all over
+    an active offer" block keys on the same array. Freezing `last_result_set` instead would
+    make "2" the second stock line rather than the second suggestion: the wrong product,
+    with no error anywhere.
+
+    Same discriminator as the ladder - a non-empty `dym_last_result_set` under the
+    `suggest_offer` label - and the same one `_siblings_to_keep` below already used, which
+    is what made the mismatch visible: one half of this module was reading the dym shape
+    and the other half was not.
+    """
+    dym_rows = [r for r in jsc.array(stored.get("dym_last_result_set")) if isinstance(r, dict)]
+    if context == "suggest_offer" and dym_rows:
+        return dym_rows
+    return [r for r in jsc.array(stored.get("last_result_set")) if isinstance(r, dict)]
 
 
 def _siblings_to_keep(stored: dict, context: str, dym_offer: dict) -> list[dict[str, Any]]:

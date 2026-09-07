@@ -423,6 +423,43 @@ class TestTheMirrorOffTheLegacyKeys:
             "marketing_form",
         ]
 
+    def test_a_partial_miss_freezes_the_SUGGESTIONS_not_the_answer_rows(self) -> None:
+        """Two rosters are live at once and they are not interchangeable: `last_result_set`
+        holds the stock lines for the code that DID resolve, and the numbered rows the
+        reply printed are `dym_last_result_set`. The legacy ladder resolves a numbered
+        pick against the second, so this must too."""
+        question = oq.from_state(
+            {
+                "selection_context": "suggest_offer",
+                "last_result_set": [{"idx": 1, "label": "SRTKS6091 - 12 in KL"}],
+                "dym_last_result_set": _rows("SRTKS8091-A", "SRTKS8091-B"),
+            },
+            asked_at_turn=3,
+        )
+
+        assert [r["label"] for r in question["options"]] == ["SRTKS8091-A", "SRTKS8091-B"]
+
+    def test_an_ordinary_picker_still_freezes_the_last_result_set(self) -> None:
+        question = oq.from_state(
+            {"selection_context": "disambiguation", "last_result_set": _rows("A", "B")},
+            asked_at_turn=3,
+        )
+
+        assert [r["label"] for r in question["options"]] == ["A", "B"]
+
+    def test_a_suggest_offer_with_no_dym_rows_falls_back(self) -> None:
+        """Same discriminator the ladder uses: the dym array has to be NON-EMPTY."""
+        question = oq.from_state(
+            {
+                "selection_context": "suggest_offer",
+                "last_result_set": _rows("A", "B"),
+                "dym_last_result_set": [],
+            },
+            asked_at_turn=3,
+        )
+
+        assert [r["label"] for r in question["options"]] == ["A", "B"]
+
     def test_nothing_open_is_none(self) -> None:
         assert oq.from_state({}, asked_at_turn=1) is None
         assert oq.from_state({"selection_context": None}, asked_at_turn=1) is None

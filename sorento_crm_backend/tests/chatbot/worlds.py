@@ -1103,6 +1103,69 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
         ),
     ),
     OwnerWorld(
+        world_id="owner-partial-miss-pick-resolves-the-dym-roster",
+        acs=("AC-944", "AC-948"),
+        emits_v3=True,
+        why=(
+            "The partial miss: one code resolved and the other got a did-you-mean, so TWO "
+            "numbered lists are live at once. The rows the customer is LOOKING at are the "
+            "suggestions (`dym_last_result_set`); `last_result_set` holds the stock lines "
+            "for the code that resolved. '2' has to mean the second SUGGESTION, and the "
+            "sibling that already resolved has to survive the pick (issue #708)."
+        ),
+        turns=(
+            OwnerTurn(
+                message="SRTKS6091 and SRTKS8091 got stock?",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "inventory",
+                    "intent_hint": "check_stock",
+                    "entities": [_product("SRTKS6091"), _product("SRTKS8091")],
+                },
+                expect={"focus_products": ["SRTKS6091", "SRTKS8091"]},
+            ),
+            OwnerTurn(
+                message="2",
+                arm={
+                    "selection_context": "suggest_offer",
+                    # The ANSWER's own rows for the code that resolved. Freezing these
+                    # would make "2" a stock line.
+                    "last_result_set": [
+                        {"idx": 1, "label": "SRTKS6091 - 12 in KL", "entity_type": "product"}
+                    ],
+                    # The rows the reply actually numbered.
+                    "dym_last_result_set": _roster("SRTKS8091-A", "SRTKS8091-B"),
+                    "dym_offer": {
+                        "candidates": [
+                            {
+                                "code": "SRTKS8091-A",
+                                "for_raw": "SRTKS8091",
+                                "for_canonical": "SRTKS8091",
+                            },
+                            {
+                                "code": "SRTKS8091-B",
+                                "for_raw": "SRTKS8091",
+                                "for_canonical": "SRTKS8091",
+                            },
+                        ]
+                    },
+                },
+                emission={
+                    "message_type": "casual",
+                    "domain_hint": None,
+                    "entities": [],
+                    "answers_open_question": _answers(resolved=True, picks=[2]),
+                },
+                expect={
+                    "answered": "product_pick",
+                    # The second SUGGESTION, and the sibling that already resolved.
+                    "qf_entity_codes": ["SRTKS8091-B", "SRTKS6091"],
+                    "focus_products": ["SRTKS8091-B", "SRTKS6091"],
+                },
+            ),
+        ),
+    ),
+    OwnerWorld(
         world_id="owner-quoted-reply-pick",
         emits_v3=True,
         acs=("AC-947",),
