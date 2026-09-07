@@ -325,13 +325,13 @@ cases:
       reply_contains: ["CWCX1009-SH", "but a PO is placed"]
       no_uuid: true
 
-  # EXPECTED RED, owned by another lane (`expected_red_until` below). A bare "PO?" routes `out_of_scope` (too thin to carry an intent), and
-  # "any PO for it?" reaches the PO tool but resolves a DIFFERENT product - the carry does
-  # not happen. Both are the carry semantics Slice B (`feat/chatbot-growth-dialogue`) is
-  # rewriting: this lane is additive by design and changes no carry rule. Kept as the
-  # case that measures whether that lane fixed it.
+  # WAS `expected_red_until: feat/chatbot-growth-dialogue`, and the marker is GONE because
+  # the run reported XPASS - which is the flag doing its job: a marker that outlives its
+  # fix is a lie. The 8 Sep escalation-confirmation guard is what fixed it. The turn-2 ask
+  # used to be read as a "yes" to the pending escalate offer (`request_for_help` +
+  # `is_escalation_confirmation: true`), so it never reached the PO tool at all; with the
+  # guard it is a business ask and the carried product answers it.
   - name: stock then PO carries the product
-    expected_red_until: feat/chatbot-growth-dialogue
     cold: true
     turns:
       - text: "check stock C-FH14"
@@ -343,4 +343,31 @@ cases:
         expect:
           branch_kind: business_query
           reply_contains: ["C-FH14"]
+          no_uuid: true
+
+  # OWNER REPORT, 8 Sep 2026 (the :8080 hands-on run), both defects in one conversation.
+  # Turn 1 ends with "Would you like me to escalate to Mocha warehouse team?". Turn 2 then
+  # hit BOTH: the code was typed as an ORDER entity (dropped by the purchase_order
+  # blocklist, so the lane answered about a product carried from an earlier turn), and the
+  # message was read as an answer to the pending offer - first as a YES (out_of_scope),
+  # then, once that was defused, as a NO ("Escalation declined."). A new business ask is
+  # neither. Turn 3 checks the same typing fix on the SPO tool.
+  - name: owner 8 Sep - stock, then PO for another code, then last in
+    cold: true
+    turns:
+      - text: "check stock srtwc286"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["SRTWC286"]
+          no_uuid: true
+      - text: "PO for SRTWC8517"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["SRTWC8517"]
+          reply_not_contains: ["Escalation declined", "out of the scope", "Supplier"]
+          no_uuid: true
+      - text: "last in for SRTWC8517"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["SRTWC8517"]
           no_uuid: true

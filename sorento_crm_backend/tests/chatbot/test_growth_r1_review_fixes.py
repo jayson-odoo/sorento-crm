@@ -385,3 +385,220 @@ class TestNit10ABlankRequestedAttributeDoesNotShiftTheLabel:
         assert "304" in response
         assert "no flange width recorded for SRTKT73SS" in response
         assert "no steel grade recorded" not in response
+
+
+# --------------------------------------------------------------------------- #
+# Owner report, 8 Sep 2026 (the :8080 hands-on run). Two defects on the same
+# three messages: "check stock srtwc286" -> "PO for SRTWC8517" -> "last in ...".
+# --------------------------------------------------------------------------- #
+
+
+def _emission(**over):
+    """A parser emission with every key `_assert_emission` requires."""
+    base = {
+        "message_type": "business_query", "intent_hint": None, "domain_hint": None,
+        "scope_intent": None, "is_affirmative": None, "user_goal": None,
+        "access_levels": [], "date_mode": None, "date_filter_start": None,
+        "date_filter_end": None, "match_mode": "and", "demand_qty": None, "entities": [],
+        "entity_op": None, "scope_exclusive": None, "requested_attributes": [],
+        "contains_flyer": None, "reference_positions": [], "reference_target": None,
+        "person_mention": None, "is_active": None, "order_status": None,
+        "correction": None, "routing": {"suggested_team": None, "suggested_agent": None},
+        "escalation": {"is_escalation_confirmation": False, "company_pick": None},
+    }
+    base.update(over)
+    return base
+
+
+def _post(emission, previous=None, latest="PO for SRTWC8517"):
+    from app.services.chatbot.head.output_exchange import output_exchange
+
+    # `_unwrap` returns `json_item["output"]` when it is a dict, and `_post_process`
+    # then reads `.output` off THAT - so the node's own item shape is doubly wrapped.
+    return output_exchange(
+        {"output": {"output": emission}},
+        {
+            "previous_conversation_state": previous or {},
+            "latest_user_message": latest,
+            "previous_response": "",
+        },
+    )["output"]
+
+
+class TestOwner8SepPOAskTypesTheCodeAsAProduct:
+    """Defect 1. `broaden_dropped: ["order:SRTWC8517"]` - the code the customer typed was
+    hinted `order`, `DOMAIN_BLOCKED_HINTS["purchase_order"]` threw it away, and the lane
+    answered about a product CARRIED from an earlier turn."""
+
+    @pytest.mark.parametrize("hint", ["order", "order_number", "customer_order"])
+    @pytest.mark.parametrize("domain", ["purchase_order", "spo_allocation"])
+    def test_an_order_hinted_product_code_is_retyped(self, hint, domain) -> None:
+        out = _post(
+            _emission(
+                intent_hint="check_po" if domain == "purchase_order" else "check_spo",
+                domain_hint=domain,
+                entities=[{"raw": "SRTWC8517", "hint": hint, "current_message": True}],
+            )
+        )
+        assert [e["hint"] for e in out["entities"]] == ["product"]
+        assert out["order_hint_retyped_to_product"] == ["SRTWC8517"]
+        assert "broaden_dropped" not in out
+
+    def test_a_real_document_number_is_not_retyped(self) -> None:
+        """The negative that keeps this narrow: `202602-S0002` is a PO number, and a rule
+        that retyped it would make every document ask a product ask."""
+        out = _post(
+            _emission(
+                intent_hint="check_po",
+                domain_hint="purchase_order",
+                entities=[{"raw": "202602-S0002", "hint": "order", "current_message": True}],
+            )
+        )
+        assert "order_hint_retyped_to_product" not in out
+
+    def test_the_order_domain_is_untouched(self) -> None:
+        """Scoped to the two domains whose tools take `product_ids` and no order id. Under
+        `order`, an order-hinted code is exactly what it says."""
+        out = _post(
+            _emission(
+                intent_hint="check_order",
+                domain_hint="order",
+                entities=[{"raw": "SRTWC8517", "hint": "order", "current_message": True}],
+            )
+        )
+        assert "order_hint_retyped_to_product" not in out
+
+    def test_a_carried_code_is_refused_rather_than_answered(self) -> None:
+        """Defect 1(c), the owner's complaint in its purest form: every entity the customer
+        named this turn was dropped and a CARRIED one survived, so the PO tool would have
+        answered about a code they never typed. Refuse the scope instead."""
+        out = _post(
+            _emission(
+                intent_hint="check_po",
+                domain_hint="purchase_order",
+                entities=[
+                    # Not product-shaped, so the retype above cannot save it.
+                    {"raw": "my order", "hint": "order", "current_message": True},
+                ],
+            ),
+            # The carried product arrives the way it does live: off the PREVIOUS state,
+            # merged back by the entity-op executor, not typed into this turn's emission.
+            previous={
+                "domain_hint": "purchase_order",
+                "entities": [
+                    {"raw": "SRTKS7547-BL-NEW", "hint": "product", "current_message": False}
+                ],
+            },
+        )
+        assert out["entities"] == []
+        assert out["entities_emptied_by_filter"] is True
+        assert out["carried_scope_refused"] == ["SRTKS7547-BL-NEW"]
+
+    def test_a_surviving_current_entity_keeps_the_carried_one(self) -> None:
+        """The other side: reuse is what this engine is built on, so a carried entity only
+        goes when NOTHING the customer named this turn survived."""
+        out = _post(
+            _emission(
+                intent_hint="check_po",
+                domain_hint="purchase_order",
+                entities=[
+                    {"raw": "SRTWC8517", "hint": "product", "current_message": True},
+                ],
+            ),
+            previous={
+                "domain_hint": "purchase_order",
+                "entities": [
+                    {"raw": "SRTKS7547-BL-NEW", "hint": "product", "current_message": False}
+                ],
+            },
+        )
+        assert "SRTWC8517" in [e["raw"] for e in out["entities"]]
+        assert "carried_scope_refused" not in out
+
+
+class TestOwner8SepANewAskIsNeverAnEscalationYes:
+    """Defect 2. After a stock answer offering to escalate, "PO for SRTWC8517" came back
+    `request_for_help` with `is_escalation_confirmation: true`, so a fresh product question
+    confirmed an offer the customer had ignored."""
+
+    _OFFERED = {
+        "response": "Would you like me to escalate to Mocha warehouse team?",
+        "pending": {"kind": "escalation_offer", "team": "warehouse"},
+    }
+
+    def test_a_business_ask_over_an_open_offer_is_not_a_confirmation(self) -> None:
+        out = _post(
+            _emission(
+                message_type="request_for_help",
+                intent_hint="check_po",
+                domain_hint="purchase_order",
+                entities=[{"raw": "SRTWC8517", "hint": "product", "current_message": True}],
+                escalation={"is_escalation_confirmation": True, "company_pick": None},
+            ),
+            previous=self._OFFERED,
+        )
+        assert out["escalation"]["is_escalation_confirmation"] is False
+
+    def test_a_bare_yes_is_still_a_confirmation(self) -> None:
+        """The half that must NOT move: an acceptance names no product, which is what lets
+        the flag carry it."""
+        out = _post(
+            _emission(
+                message_type="request_for_help",
+                intent_hint=None,
+                entities=[],
+                is_affirmative=True,
+                escalation={"is_escalation_confirmation": True, "company_pick": None},
+            ),
+            previous=self._OFFERED,
+            latest="yes escalate",
+        )
+        assert out["escalation"]["is_escalation_confirmation"] is True
+
+    def test_a_carried_entity_alone_does_not_defuse_the_confirmation(self) -> None:
+        """Both halves are required. A confirmation turn often still carries the previous
+        product, and that must not be read as a new ask."""
+        out = _post(
+            _emission(
+                message_type="request_for_help",
+                intent_hint="check_stock",
+                entities=[{"raw": "srtwc286", "hint": "product", "current_message": False}],
+                is_affirmative=True,
+                escalation={"is_escalation_confirmation": True, "company_pick": None},
+            ),
+            previous=self._OFFERED,
+            latest="yes",
+        )
+        assert out["escalation"]["is_escalation_confirmation"] is True
+
+    def test_a_business_ask_over_an_open_offer_is_not_a_decline_either(self) -> None:
+        """The second half of the same turn. With the false YES defused, the model's own
+        `is_affirmative: false` sent "PO for SRTWC8517" down the DECLINE arm instead, which
+        answers "Escalation declined." and drops the question. Ignoring an offer is neither
+        answer."""
+        out = _post(
+            _emission(
+                message_type="business_query",
+                intent_hint="check_po",
+                domain_hint="purchase_order",
+                is_affirmative=False,
+                entities=[{"raw": "SRTWC8517", "hint": "product", "current_message": True}],
+            ),
+            previous=self._OFFERED,
+        )
+        assert out["escalation"].get("escalation_declined") is not True
+        assert out["message_type"] == "business_query"
+
+    def test_a_bare_no_still_declines(self) -> None:
+        out = _post(
+            _emission(
+                message_type="clarification",
+                intent_hint=None,
+                is_affirmative=False,
+                entities=[],
+            ),
+            previous=self._OFFERED,
+            latest="no thanks",
+        )
+        assert out["escalation"].get("escalation_declined") is True
+        assert out["message_type"] == "casual"

@@ -397,6 +397,43 @@ MEMBER_OFFER_FILTER_HINTS: dict[str, frozenset[str]] = {
 # `DOMAIN_SPEC[domain].bare_entity_type` (D9, AC-931), and is imported at the top of this
 # module. The ruling's evidence stays here, with the readers it constrains.
 
+# OWNER REPORT, 8 Sep 2026 (the :8080 hands-on run). "PO for SRTWC8517" came back with
+# the code typed as an ORDER: the derived emission carried
+# `broaden_dropped: ["order:SRTWC8517"]`, so `DOMAIN_BLOCKED_HINTS["purchase_order"]` threw
+# the only thing the customer had named away, and the lane answered with a product CARRIED
+# from an earlier turn (`current_message: false`) - a PO answer about SRTKS7547-BL-NEW, a
+# code the owner never typed. That is "the product from two turns ago" in its purest form.
+#
+# The parser prompt is where the typing is fixed (`GROWTH_R1_ADDENDUM` gained the rule);
+# this is the deterministic backstop, and it is deliberately NARROW - the same shape as the
+# K4 bare-entity retype, which also prefers the DOMAIN's own evidence over the model's
+# guess at a token. In these two domains an order-shaped hint is never a real order: the
+# PO tool takes `product_ids` and no order id, and the SPO tool takes `product_ids` and
+# `warehouse_ids`. So an `order`-family hint whose raw looks like a PRODUCT CODE is retyped
+# to `product` before the blocklist runs.
+#
+# NOT a `DOMAIN_SPEC` field: that table carries per-domain FACTS, and this is a per-domain
+# HAZARD with a live turn behind it - the same reason `DOMAIN_BLOCKED_HINTS` and the K4
+# table stayed here rather than moving in D9.
+ORDER_HINT_RETYPED_TO_PRODUCT: frozenset[str] = frozenset({"purchase_order", "spo_allocation"})
+_ORDER_FAMILY_HINTS: frozenset[str] = frozenset({"order", "order_number", "customer_order"})
+# A PO / SO number on this install is `202602-S0002`: six digits, a hyphen, then a letter.
+# A product code starts with a letter. Both halves are required - the positive shape so a
+# free-text token is not retyped, and the negative so a real document number never is.
+_PRODUCT_CODE_SHAPE = re.compile(r"^[A-Za-z][A-Za-z0-9 ._/-]*$")
+_DOCUMENT_NUMBER_SHAPE = re.compile(r"^\d{4,8}\s*-\s*[A-Za-z]")
+
+
+def _looks_like_product_code(raw: Any) -> bool:
+    """A token the resolver would accept as a product code, not a document number."""
+    text = jsc.nullish_str(raw).strip()
+    if not text or len(text) < 3:
+        return False
+    if _DOCUMENT_NUMBER_SHAPE.match(text):
+        return False
+    return bool(_PRODUCT_CODE_SHAPE.match(text)) and any(c.isdigit() for c in text)
+
+
 # Broaden-only blocked: hints that NARROW the result and therefore contradict an
 # "all / everything" request. Brand/access stay - they are context, not a subset filter.
 DOMAIN_BROADEN_BLOCKED_HINTS: dict[str, list[str]] = {
@@ -2136,6 +2173,26 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     if not jsc.truthy(o.get("is_menu_label")) and ce_unknown_hints:
         o["unknown_entity_hints"] = sorted(ce_unknown_hints)
 
+    # -- PO / SPO: an order-hinted PRODUCT CODE is a product (owner report, 8 Sep 2026) -- #
+    # BEFORE the blocklist, because the blocklist is what threw it away. See
+    # `ORDER_HINT_RETYPED_TO_PRODUCT` for the turn behind this.
+    if (
+        jsc.truthy(o.get("entities"))
+        and jsc.is_array(o.get("entities"))
+        and jsc.js_string(o.get("domain_hint")) in ORDER_HINT_RETYPED_TO_PRODUCT
+    ):
+        po_retyped: list[str] = []
+        for e in o["entities"]:
+            if (
+                jsc.lower_or_empty(jsc.get(e, "hint")) in _ORDER_FAMILY_HINTS
+                and _looks_like_product_code(jsc.get(e, "raw"))
+            ):
+                e["hint"] = "product"
+                po_retyped.append(jsc.js_string(jsc.get(e, "raw")))
+        if po_retyped:
+            # Stamped only when a type actually MOVED, same rule as `bare_entity_retyped`.
+            o["order_hint_retyped_to_product"] = po_retyped
+
     # -- domain-aware entity-type blocklist ---------------------------------------------- #
     if jsc.truthy(o.get("entities")) and jsc.is_array(o.get("entities")):
         domain = o.get("domain_hint")
@@ -2150,11 +2207,13 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         if len(blocked) > 0:
             before = len(o["entities"])
             dropped = []
+            dropped_objs = []
             kept = []
             for e in o["entities"]:
                 hit = jsc.lower_or_empty(jsc.get(e, "hint")) in blocked
                 if hit:
                     dropped.append(f"{jsc.get(e, 'hint')}:{jsc.get(e, 'raw')}")
+                    dropped_objs.append(e)
                 else:
                     kept.append(e)
             o["entities"] = kept
@@ -2163,6 +2222,27 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             o["entities_emptied_by_filter"] = before > 0 and after == 0
             if dropped:
                 o["broaden_dropped"] = dropped
+
+            # ANSWERING FOR A CARRIED CODE IS WORSE THAN NOT ANSWERING (owner report,
+            # 8 Sep 2026). When the blocklist has dropped EVERY entity the customer named
+            # THIS turn and only carried ones survive, the PO / SPO tools would answer
+            # confidently about a product from an earlier turn - which is exactly the
+            # complaint ("a PO answer for a code I never typed"), and the customer has no
+            # way to tell. The carried entities go too, so the gate refuses (neither domain
+            # is in `gate.ALLOWS_EMPTY`) and the MISS lane speaks instead. Scoped to these
+            # two domains: everywhere else a carried entity surviving a filter is the reuse
+            # this engine is built on.
+            if jsc.js_string(domain) in ORDER_HINT_RETYPED_TO_PRODUCT:
+                asked_dropped = [
+                    e for e in dropped_objs if jsc.get(e, "current_message") is True
+                ]
+                asked_kept = any(jsc.get(e, "current_message") is True for e in kept)
+                if asked_dropped and not asked_kept and kept:
+                    o["entities"] = []
+                    o["entities_emptied_by_filter"] = True
+                    o["carried_scope_refused"] = [
+                        jsc.js_string(jsc.get(e, "raw")) for e in kept
+                    ]
 
     # -- OWNER RULING K, rule 2: CARRIED ENTITIES DIE ON A TOPIC CHANGE ------------------- #
     # The entity-op executor keeps every prior entity whose axis this turn did not name,
@@ -2264,6 +2344,37 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     parser_said_confirm = (
         jsc.get(jsc.get(parser_raw_snapshot, "escalation"), "is_escalation_confirmation") is True
     )
+    # A NEW BUSINESS ASK IS NEVER AN ACCEPTANCE (owner report, 8 Sep 2026). After a stock
+    # answer ending "Would you like me to escalate to Mocha warehouse team?", the owner
+    # typed "PO for SRTWC8517" and the model emitted `is_escalation_confirmation: true`.
+    # No arm below fires on that shape, so the model's `true` reached the emission
+    # untouched and `route.decide` sent a fresh product question to `out_of_scope`.
+    #
+    # The test is structural, not a word list (D11): a DECISIVE business intent plus an
+    # entity the customer named THIS TURN. Both halves are required - a decisive intent
+    # alone would catch "yes, escalate to the order team", a current entity alone would
+    # catch a bare code answering a picker - and an acceptance names no product, which is
+    # exactly why `is_affirmative` and the model's own flag can carry one.
+    #
+    # Applied ONLY where the model said `true`: this narrows nothing else, so a turn that
+    # was not going to be read as an acceptance is byte-identical. (The first cut ran as
+    # its own arm over every offered turn and moved 56 captures for no behaviour change.)
+    #
+    # PARITY-SAFE BACKSTOP: `feat/chatbot-growth-dialogue`'s `open_question` step owns this
+    # properly, where an offer is a typed question a non-answer leaves standing. This keeps
+    # the wrong answer off a customer's screen until that lands.
+    business_ask_now = (
+        jsc.js_string(o.get("intent_hint")) in DECISIVE_INTENTS
+        and jsc.is_array(o.get("entities"))
+        and any(jsc.get(e, "current_message") is True for e in o["entities"])
+    )
+    if parser_said_confirm and business_ask_now:
+        parser_said_confirm = False
+        esc_now = o.get("escalation")
+        o["escalation"] = {
+            **(esc_now if isinstance(esc_now, dict) else {}),
+            "is_escalation_confirmation": False,
+        }
     # And NOTHING behind that. The model's flag is wrong on one capture in the corpus
     # (parser-15074293, "YES ESCALTE" - a typo of ESCALATE - came back
     # `is_escalation_confirmation: false`), and the first cut of this rule put an
@@ -2289,7 +2400,19 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
             o["escalation"]["retargeted_team"] = llm_team_n  # diagnostic: no reader
     elif offered_escalation and is_affirmative:
         o["escalation"] = {"is_escalation_confirmation": True}
-    elif offered_escalation and is_decline and not is_position_pick and not req_help:
+    elif (
+        offered_escalation
+        and is_decline
+        and not is_position_pick
+        and not req_help
+        # ... AND NOT A DECLINE EITHER (same owner report). "PO for SRTWC8517" over an open
+        # offer first came back as a false YES; with that defused the model's
+        # `is_affirmative: false` sent the very same turn down the DECLINE arm, which
+        # answers "Escalation declined." and drops the question on the floor. Ignoring an
+        # offer is neither answer: the ask is what the customer wants, and the offer's own
+        # TTL is what should end it.
+        and not business_ask_now
+    ):
         o["escalation"] = {"is_escalation_confirmation": False, "escalation_declined": True}
         o["message_type"] = "casual"
 
