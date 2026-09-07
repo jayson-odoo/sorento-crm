@@ -1661,10 +1661,25 @@ class TestAcX22RecomputeNeverCrossesCompanyScope:
 # ============================================================================ #
 class TestAcX23DistributionFollowsLineNumberNotPayloadPosition:
     def test_reverse_payload_order_still_distributes_by_line_number(self, env):
-        """AC-X23 (D26 Seq order, reviewer kill test). The AC-X1 push with
-        its two lines sent in REVERSE payload order (line_number 2 first,
-        then line_number 1) must still yield line 1 = 29 and line 2 = 18 -
-        distribution follows `line_number`, not payload position.
+        """AC-X23 (D26 Seq order, reviewer kill test; seed fixed 2026-09-07
+        - functional delta review). The AC-X1 push with its two lines sent
+        in REVERSE payload order (line_number 2 first, then line_number 1)
+        must still yield line 1 = 29 and line 2 = 1 - distribution follows
+        `line_number`, not payload position.
+
+        Seeded at received 30 (not 47, the original seed), on purpose: at
+        47 (exactly `29 + 18`), Seq order (line 1 first, remainder 18 on
+        line 2 last) and PAYLOAD order (line 2 first, remainder 29 on line
+        1 last - the bug this AC guards against) both land on the SAME
+        29 / 18 split, so the seed could not actually tell the two apart -
+        a payload-order bug would have passed this test silently. At 30,
+        Seq order gives 29 / 1 (line 1 takes its own 29, line 2 the 1 left
+        over) while payload order would give 12 / 18 (line 2 takes its own
+        18 first, line 1 the 12 left over) - the two orders now disagree,
+        so a regression to payload order fails this test's own assertions,
+        not just its docstring's claim. (Manually confirmed against the
+        current, correct implementation: distribution is keyed on
+        `line_number`, giving 29 / 1 as asserted below.)
         """
         wh_code = _warehouse_code(env, env.warehouse_ref)
         number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
@@ -1674,8 +1689,8 @@ class TestAcX23DistributionFollowsLineNumberNotPayloadPosition:
             spo_line_number=1,
             location_code=wh_code,
             allocated_quantity=47,
-            quantity_received=47,
-            line_status="closed",
+            quantity_received=30,
+            line_status="open",
         )
 
         line1 = _spo_line(
@@ -1696,13 +1711,14 @@ class TestAcX23DistributionFollowsLineNumberNotPayloadPosition:
         first = rows[line1["source_ref"]]
         second = rows[line2["source_ref"]]
         assert first["quantity_received"] == 29, (
-            "line_number 1 must carry 29 regardless of payload position", first
+            "line_number 1 must carry its own 29 regardless of payload position", first
         )
         assert first["line_status"] == "closed"
-        assert second["quantity_received"] == 18, (
-            "line_number 2 must carry 18 regardless of payload position", second
+        assert second["quantity_received"] == 1, (
+            "line_number 2 must carry only the 1 left over (30 - 29), not 18 - "
+            "a payload-order bug would instead read 12 / 18 here", second
         )
-        assert second["line_status"] == "closed"
+        assert second["line_status"] == "open"
 
 
 # ============================================================================ #
@@ -2132,4 +2148,306 @@ class TestAcX31BackfillScriptRegistersCompanyScopeListeners:
         assert "register_company_scope_listeners" in source, (
             "the backfill script must call register_company_scope_listeners() "
             "before its closing recompute, same as the dedupe script does"
+        )
+
+
+# ============================================================================ #
+# AC-X32 (D26 remainder, both writers)
+# ============================================================================ #
+class TestAcX32RemainderOnTheLastLineInBothWriters:
+    def test_supersede_puts_the_remainder_on_the_last_line(self, env):
+        """AC-X32 (D26 remainder), supersede half. An xlsx row received 50
+        against AutoCount lines allocated 29 and 18 (group total 50 is
+        ABOVE the allocated sum 47); after the supersede line 1 reads 29
+        (its own allocated) and line 2 reads 21 (the remainder, 50 - 29),
+        both closed.
+        """
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        _seed_legacy_row(
+            env,
+            spo_number=number,
+            spo_line_number=1,
+            location_code=wh_code,
+            allocated_quantity=47,
+            quantity_received=50,
+            line_status="closed",
+        )
+
+        line1 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=29, qty_received=0, line_number=1
+        )
+        line2 = _spo_line(
+            env, warehouse_ref=env.warehouse_ref, qty_ordered=18, qty_received=0, line_number=2
+        )
+        record = _spo_record(
+            env, number=number, lines=[line1, line2], supplier_ref=env.supplier_ref
+        )
+
+        res = env.post(INGEST_SPO, [record])
+
+        assert res.status_code == 200, res.text
+        rows = {r["source_ref"]: r for r in _spo_rows(env, number)}
+        first = rows[line1["source_ref"]]
+        second = rows[line2["source_ref"]]
+        assert first["quantity_received"] == 29, first
+        assert first["line_status"] == "closed"
+        assert second["quantity_received"] == 21, (
+            "the remainder (50 - 29) belongs on the LAST line, not capped at "
+            "its own allocated 18", second
+        )
+        assert second["line_status"] == "closed"
+
+    def test_group_recompute_puts_the_remainder_on_the_last_line(self, env):
+        """AC-X32 (D28a group recompute), same shape. Two `autocount`
+        lines allocated 29 / 18 with a picking total of 50 (one approved
+        picking line against line 1) - the group recompute must land line
+        1 at 29 and line 2 at 21, same remainder rule as the supersede
+        half.
+        """
+        from app.services.procurement_service import PickingHeaderService
+
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        doc_ref = f"{MARKER}:ACDOC:{uuid.uuid4().hex[:8]}"
+
+        line1 = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=wh_code,
+            allocated_quantity=29, quantity_received=0, line_status="open",
+            receipt_status="pending", source_system="autocount",
+            source_ref=f"{MARKER}:AC1:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+        )
+        line2 = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=2, product_id=product_id, location_code=wh_code,
+            allocated_quantity=18, quantity_received=0, line_status="open",
+            receipt_status="pending", source_system="autocount",
+            source_ref=f"{MARKER}:AC2:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+        )
+        env.db.add_all([line1, line2])
+        env.db.flush()
+
+        header = PickingHeader(
+            id=str(uuid.uuid4()), company_id=env.company_a,
+            picking_number=unique_code(MARKER), picking_type="goods_received",
+            picking_status="approved", spo_number=number,
+        )
+        env.db.add(header)
+        env.db.flush()
+        env.db.add(
+            PickingLine(
+                id=str(uuid.uuid4()), company_id=env.company_a,
+                picking_header_id=header.id, spo_allocation_id=line1.id,
+                product_id=product_id, quantity_expected=50, quantity_picked=50,
+            )
+        )
+        env.db.flush()
+        env.db.commit()
+
+        PickingHeaderService(env.db).sync_grn_received_to_spo(header.id)
+
+        env.db.expire_all()
+        rows = env.db.execute(
+            text(
+                "SELECT id, quantity_received, line_status FROM spo_allocations "
+                "WHERE id IN (:id1, :id2)"
+            ),
+            {"id1": str(line1.id), "id2": str(line2.id)},
+        ).mappings().all()
+        by_id = {str(r["id"]): r for r in rows}
+        assert by_id[str(line1.id)]["quantity_received"] == 29, by_id
+        assert by_id[str(line1.id)]["line_status"] == "closed", by_id
+        assert by_id[str(line2.id)]["quantity_received"] == 21, (
+            "the remainder (50 - 29) belongs on the LAST line", by_id
+        )
+        assert by_id[str(line2.id)]["line_status"] == "closed", by_id
+
+
+# ============================================================================ #
+# AC-X33 (D28a status consistency)
+# ============================================================================ #
+class TestAcX33GroupRecomputeKeepsLineStatusConsistent:
+    def test_a_line_reaching_its_allocation_is_marked_closed(self, env):
+        """AC-X33 (D28a status). A single-member AutoCount group, open,
+        allocated 10, received 0; one approved picking line of 10 fully
+        covers it. The group recompute must leave it `quantity_received
+        10`, `receipt_status fully_received` AND `line_status closed` -
+        never `closed` numerically (`receipt_status`) but still `open`
+        (`line_status`).
+
+        RED today: `_write_received` sets `quantity_received` and
+        `receipt_status` only - it never touches `line_status` at all, so
+        a line that reaches its allocation through the group recompute
+        stays `open` forever, even though `receipt_status` already reads
+        `fully_received`.
+        """
+        from app.services.procurement_service import PickingHeaderService
+
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+
+        line = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=wh_code,
+            allocated_quantity=10, quantity_received=0, line_status="open",
+            receipt_status="pending", source_system="autocount",
+            source_ref=f"{MARKER}:AC1:{uuid.uuid4().hex[:8]}",
+            source_doc_ref=f"{MARKER}:ACDOC:{uuid.uuid4().hex[:8]}",
+        )
+        env.db.add(line)
+        env.db.flush()
+
+        header = PickingHeader(
+            id=str(uuid.uuid4()), company_id=env.company_a,
+            picking_number=unique_code(MARKER), picking_type="goods_received",
+            picking_status="approved", spo_number=number,
+        )
+        env.db.add(header)
+        env.db.flush()
+        env.db.add(
+            PickingLine(
+                id=str(uuid.uuid4()), company_id=env.company_a,
+                picking_header_id=header.id, spo_allocation_id=line.id,
+                product_id=product_id, quantity_expected=10, quantity_picked=10,
+            )
+        )
+        env.db.flush()
+        env.db.commit()
+
+        PickingHeaderService(env.db).sync_grn_received_to_spo(header.id)
+
+        env.db.expire_all()
+        row = env.db.execute(
+            text(
+                "SELECT quantity_received, receipt_status, line_status "
+                "FROM spo_allocations WHERE id = :id"
+            ),
+            {"id": line.id},
+        ).mappings().first()
+        assert row["quantity_received"] == 10, row
+        assert row["receipt_status"] == "fully_received", row
+        assert row["line_status"] == "closed", (
+            "a line whose receipt reaches its allocation must read closed, "
+            f"not stay open - got {row}"
+        )
+        # The invariant this AC names directly: never closed + pending.
+        assert not (row["line_status"] == "closed" and row["receipt_status"] == "pending"), row
+
+    def test_a_line_below_its_allocation_and_open_stays_open(self, env):
+        """AC-X33 (D28a status), regression guard. A single-member group,
+        open, allocated 10, received 0; a picking line of 4 leaves it
+        under-received - it must stay `line_status open`,
+        `receipt_status pending`.
+        """
+        from app.services.procurement_service import PickingHeaderService
+
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+
+        line = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=wh_code,
+            allocated_quantity=10, quantity_received=0, line_status="open",
+            receipt_status="pending", source_system="autocount",
+            source_ref=f"{MARKER}:AC1:{uuid.uuid4().hex[:8]}",
+            source_doc_ref=f"{MARKER}:ACDOC:{uuid.uuid4().hex[:8]}",
+        )
+        env.db.add(line)
+        env.db.flush()
+
+        header = PickingHeader(
+            id=str(uuid.uuid4()), company_id=env.company_a,
+            picking_number=unique_code(MARKER), picking_type="goods_received",
+            picking_status="approved", spo_number=number,
+        )
+        env.db.add(header)
+        env.db.flush()
+        env.db.add(
+            PickingLine(
+                id=str(uuid.uuid4()), company_id=env.company_a,
+                picking_header_id=header.id, spo_allocation_id=line.id,
+                product_id=product_id, quantity_expected=4, quantity_picked=4,
+            )
+        )
+        env.db.flush()
+        env.db.commit()
+
+        PickingHeaderService(env.db).sync_grn_received_to_spo(header.id)
+
+        env.db.expire_all()
+        row = env.db.execute(
+            text(
+                "SELECT quantity_received, receipt_status, line_status "
+                "FROM spo_allocations WHERE id = :id"
+            ),
+            {"id": line.id},
+        ).mappings().first()
+        assert row["quantity_received"] == 4, row
+        assert row["receipt_status"] == "pending", row
+        assert row["line_status"] == "open", row
+
+    def test_a_line_closed_by_the_leftover_sweep_is_never_reopened(self, env):
+        """AC-X33 (D28a status), regression guard. A member already
+        CLOSED (e.g. by a cancelled document / the leftover sweep) with
+        allocated 29, received 29; a sibling in the SAME group has a
+        picking line whose total, redistributed, leaves the closed
+        member's own share at 29 still (the D28b floor keeps the group
+        total at least the stored sum of non-released members) - it must
+        stay `closed`, never flip back to `open`.
+        """
+        from app.services.procurement_service import PickingHeaderService
+
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        doc_ref = f"{MARKER}:ACDOC:{uuid.uuid4().hex[:8]}"
+
+        closed_line = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=wh_code,
+            allocated_quantity=29, quantity_received=29, line_status="closed",
+            receipt_status="fully_received", source_system="autocount",
+            source_ref=f"{MARKER}:AC1:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+        )
+        sibling = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=2, product_id=product_id, location_code=wh_code,
+            allocated_quantity=18, quantity_received=0, line_status="open",
+            receipt_status="pending", source_system="autocount",
+            source_ref=f"{MARKER}:AC2:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+        )
+        env.db.add_all([closed_line, sibling])
+        env.db.flush()
+
+        header = PickingHeader(
+            id=str(uuid.uuid4()), company_id=env.company_a,
+            picking_number=unique_code(MARKER), picking_type="goods_received",
+            picking_status="approved", spo_number=number,
+        )
+        env.db.add(header)
+        env.db.flush()
+        env.db.add(
+            PickingLine(
+                id=str(uuid.uuid4()), company_id=env.company_a,
+                picking_header_id=header.id, spo_allocation_id=sibling.id,
+                product_id=product_id, quantity_expected=5, quantity_picked=5,
+            )
+        )
+        env.db.flush()
+        env.db.commit()
+
+        PickingHeaderService(env.db).sync_grn_received_to_spo(header.id)
+
+        env.db.expire_all()
+        row = env.db.execute(
+            text("SELECT line_status FROM spo_allocations WHERE id = :id"),
+            {"id": closed_line.id},
+        ).mappings().first()
+        assert row["line_status"] == "closed", (
+            "a member the leftover sweep already closed must never be "
+            f"reopened by the group recompute - got {row}"
         )
