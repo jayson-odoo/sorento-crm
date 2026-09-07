@@ -17,9 +17,9 @@ import { useEffect, useState } from 'react';
 import { Ellipse, Group, Image as KonvaImage, Line, Path, Rect, Text } from 'react-konva';
 import type Konva from 'konva';
 import JsBarcode from 'jsbarcode';
-import type { TagLayer, TagLayerProps } from '@/lib/dealer-kit/tag-template-types';
+import type { LayerPadding, TagLayer, TagLayerProps } from '@/lib/dealer-kit/tag-template-types';
 import type { PriceBadgeInput, PriceBadgeTypography } from '@/lib/dealer-kit/price-badge';
-import { priceBadgeParts, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
+import { priceBadgeInsets, priceBadgeParts, priceBadgeTypography } from '@/lib/dealer-kit/price-badge';
 import type { TagLayerDisplay } from '@/lib/dealer-kit/product-block';
 import {
   barcodePlateGeometry,
@@ -319,11 +319,13 @@ function LayerContent({
       );
 
     case 'price_badge': {
-      // Padding insets the whole badge (S3, AC-S3-2): the figure AND, for a
-      // boxed variant, the callout itself - the callout IS the badge (r4b,
-      // AC-S6-2), so `PriceBadgeContent` never needs to know padding exists,
-      // it just gets a smaller box to draw the same way it always has.
-      const inset = paddedBox(w, h, props.padding, scale);
+      // Margin insets the callout (S3b, AC-7/8): the whole badge - callout AND
+      // figure - moves in from the layer box. `PriceBadgeContent` never needs
+      // to know margin exists, it just gets a smaller box to draw the same
+      // way it always has; `padding` is a SEPARATE inset it applies itself,
+      // to the figure only.
+      const insets = priceBadgeInsets(props);
+      const inset = paddedBox(w, h, insets.margin, scale);
       return (
         <Group x={inset.x} y={inset.y}>
           <PriceBadgeContent
@@ -331,6 +333,7 @@ function LayerContent({
             h={inset.height}
             scale={scale}
             props={props}
+            padding={insets.padding}
             input={display?.price ?? { listPrice: null, offerPrice: null }}
           />
         </Group>
@@ -484,7 +487,7 @@ function ImageContent({
   w: number;
   h: number;
   url: string | null;
-  fit: 'cover' | 'contain';
+  fit: 'cover' | 'contain' | 'stretch';
   maskShape: 'none' | 'circle';
 }) {
   const image = useHtmlImage(url);
@@ -508,12 +511,20 @@ function ImageContent({
 
   // `contain` letterboxes inside the box, `cover` fills it and overflows; the
   // clip below is what turns overflow into a crop rather than a picture spilling
-  // over the layer next to it.
-  const ratio = image.width / image.height;
-  const boxRatio = w / h;
-  const wide = fit === 'contain' ? ratio > boxRatio : ratio < boxRatio;
-  const drawW = wide ? w : h * ratio;
-  const drawH = wide ? w / ratio : h;
+  // over the layer next to it. `stretch` draws at the box's own size - nothing
+  // to letterbox or crop, so it needs neither the ratio math nor a clip.
+  let drawW: number;
+  let drawH: number;
+  if (fit === 'stretch') {
+    drawW = w;
+    drawH = h;
+  } else {
+    const ratio = image.width / image.height;
+    const boxRatio = w / h;
+    const wide = fit === 'contain' ? ratio > boxRatio : ratio < boxRatio;
+    drawW = wide ? w : h * ratio;
+    drawH = wide ? w / ratio : h;
+  }
 
   const body = (
     <KonvaImage
@@ -750,12 +761,15 @@ function PriceBadgeContent({
   h,
   scale,
   props,
+  padding,
   input,
 }: {
   w: number;
   h: number;
   scale: number;
   props: Extract<TagLayerProps, { kind: 'price_badge' }>;
+  /** The figure's own inset from the callout's edge (S3b, AC-7). In mm. */
+  padding: LayerPadding;
   input: PriceBadgeInput;
 }) {
   const parts = priceBadgeParts(props, input);
@@ -766,10 +780,13 @@ function PriceBadgeContent({
   const plainFont = badgeFontSize(typo, scale, Math.min(h * 0.6, w / 6));
 
   if (!parts.boxed) {
+    const figure = paddedBox(w, h, padding, scale);
     return (
       <Text
-        width={w}
-        height={h}
+        x={figure.x}
+        y={figure.y}
+        width={figure.width}
+        height={figure.height}
         text={parts.plainText}
         align={typo.align}
         verticalAlign="middle"
@@ -786,8 +803,11 @@ function PriceBadgeContent({
 
   // The flyer's white callout: the badge IS the box (r4b, AC-S6-2), drawn
   // from the layer's own corners through the SAME builder a polygon shape
-  // uses, so a slanted edge looks the same here and in the PDF.
+  // uses, so a slanted edge looks the same here and in the PDF. It keeps the
+  // FULL margin-inset box (S3b, AC-7) - only the figure inside it moves for
+  // `padding`.
   if (parts.polygonBox) {
+    const figure = paddedBox(w, h, padding, scale);
     return (
       <>
         <Path
@@ -798,8 +818,10 @@ function PriceBadgeContent({
           fill={props.fill === 'transparent' ? undefined : props.fill}
         />
         <Text
-          width={w}
-          height={h}
+          x={figure.x}
+          y={figure.y}
+          width={figure.width}
+          height={figure.height}
           text={parts.plainText}
           align={typo.align}
           verticalAlign="middle"
@@ -816,7 +838,9 @@ function PriceBadgeContent({
   }
 
   // Struck list price on top, filled box under it. A third of the height for
-  // the strike keeps the figure dominant at every layer size.
+  // the strike keeps the figure dominant at every layer size. The filled box
+  // itself is the callout and keeps the FULL width/height (S3b, AC-7); the
+  // SP/figure/NETT row inside it is the part `padding` insets.
   const strikeH = parts.struckText ? h * 0.3 : 0;
   const boxY = strikeH;
   const boxH = h - strikeH;
@@ -825,6 +849,7 @@ function PriceBadgeContent({
   // custom size moves the whole block together rather than only its middle.
   const smallFont = Math.max(4, bigFont * 0.56);
   const struckFont = Math.max(4, bigFont * 0.6);
+  const figure = paddedBox(w, boxH, padding, scale);
 
   return (
     <>
@@ -848,49 +873,51 @@ function PriceBadgeContent({
         fill={props.fill}
         cornerRadius={mm2px(props.cornerRadius, scale)}
       />
-      {parts.spLabel && (
+      <Group x={figure.x} y={boxY + figure.y}>
+        {parts.spLabel && (
+          <Text
+            x={figure.width * 0.04}
+            y={figure.height * 0.1}
+            width={figure.width * 0.2}
+            height={figure.height * 0.4}
+            text={parts.spLabel}
+            fontFamily={typo.fontFamily ?? undefined}
+            fontSize={smallFont}
+            fontStyle="bold"
+            fill={props.textColor}
+            verticalAlign="middle"
+          />
+        )}
         <Text
-          x={w * 0.04}
-          y={boxY + boxH * 0.1}
-          width={w * 0.2}
-          height={boxH * 0.4}
-          text={parts.spLabel}
-          fontFamily={typo.fontFamily ?? undefined}
-          fontSize={smallFont}
-          fontStyle="bold"
-          fill={props.textColor}
-          verticalAlign="middle"
-        />
-      )}
-      <Text
-        y={boxY + boxH * 0.15}
-        width={w}
-        height={boxH * 0.55}
-        text={parts.amountText}
-        align={typo.align}
-        verticalAlign="middle"
-        fontFamily={typo.fontFamily ?? undefined}
-        fontSize={bigFont}
-        fontStyle={badgeFontStyle(typo)}
-        textDecoration={badgeTextDecoration(typo)}
-        lineHeight={typo.lineHeight ?? undefined}
-        letterSpacing={typo.letterSpacing * scale * 0.1}
-        fill={props.textColor}
-      />
-      {parts.nettLabel && (
-        <Text
-          y={boxY + boxH * 0.7}
-          width={w}
-          height={boxH * 0.28}
-          text={parts.nettLabel}
-          align="center"
+          y={figure.height * 0.15}
+          width={figure.width}
+          height={figure.height * 0.55}
+          text={parts.amountText}
+          align={typo.align}
           verticalAlign="middle"
           fontFamily={typo.fontFamily ?? undefined}
-          fontSize={smallFont}
-          fontStyle="bold"
+          fontSize={bigFont}
+          fontStyle={badgeFontStyle(typo)}
+          textDecoration={badgeTextDecoration(typo)}
+          lineHeight={typo.lineHeight ?? undefined}
+          letterSpacing={typo.letterSpacing * scale * 0.1}
           fill={props.textColor}
         />
-      )}
+        {parts.nettLabel && (
+          <Text
+            y={figure.height * 0.7}
+            width={figure.width}
+            height={figure.height * 0.28}
+            text={parts.nettLabel}
+            align="center"
+            verticalAlign="middle"
+            fontFamily={typo.fontFamily ?? undefined}
+            fontSize={smallFont}
+            fontStyle="bold"
+            fill={props.textColor}
+          />
+        )}
+      </Group>
     </>
   );
 }

@@ -623,6 +623,66 @@ describe('bound text and pictures on the print page', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Image fit on the print page (S3b, AC-3/5)
+// ---------------------------------------------------------------------------
+
+describe('image fit on the print page (S3b, AC-3/5)', () => {
+  it('draws stretch as object-fit: fill (AC-3)', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'img',
+            type: 'image',
+            props: {
+              kind: 'image',
+              source: { type: 'asset', assetId: 'a1' },
+              fit: 'stretch',
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+        assets={{ a1: 'https://cdn.test/photo.png' }}
+      />,
+    );
+
+    expect(container.querySelector('img')).toHaveStyle({ objectFit: 'fill' });
+  });
+
+  it('keeps cover and contain exactly as before (AC-5)', () => {
+    const { container: coverContainer } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'img',
+            type: 'image',
+            props: { kind: 'image', source: { type: 'asset', assetId: 'a1' }, fit: 'cover' },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+        assets={{ a1: 'https://cdn.test/photo.png' }}
+      />,
+    );
+    expect(coverContainer.querySelector('img')).toHaveStyle({ objectFit: 'cover' });
+
+    const { container: containContainer } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            id: 'img',
+            type: 'image',
+            props: { kind: 'image', source: { type: 'asset', assetId: 'a1' }, fit: 'contain' },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+        assets={{ a1: 'https://cdn.test/photo.png' }}
+      />,
+    );
+    expect(containContainer.querySelector('img')).toHaveStyle({ objectFit: 'contain' });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Barcode layer on the print page (AC-S7-3, AC-S7-4, AC-S7-6)
 // ---------------------------------------------------------------------------
 
@@ -1079,5 +1139,128 @@ describe('padding on text and price badge layers (S3, AC-S3-1/2/3/4)', () => {
     // amount span -> filled box div -> the padded text container.
     const content = screen.getByText('RM 599').parentElement?.parentElement;
     expect(content).toHaveStyle({ padding: '1mm 1mm 1mm 1mm', boxSizing: 'border-box' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Price badge margin (S3b, AC-7/8/9)
+// ---------------------------------------------------------------------------
+
+describe('price badge margin on the print page (S3b, AC-7/8)', () => {
+  it('insets the callout by margin and the figure further by padding, independently', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            width_mm: 40,
+            height_mm: 20,
+            props: {
+              ...defaultPriceBadgeProps('list_only'),
+              showBox: true,
+              cornerRadius: 0,
+              margin: { top: 2, right: 2, bottom: 2, left: 2 },
+              padding: { top: 1, right: 1, bottom: 1, left: 1 },
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    // The callout sits 2mm in from the 40x20 layer box on every side.
+    const svg = container.querySelector('svg');
+    expect(svg?.getAttribute('viewBox')).toBe('0 0 36 16');
+    expect(svg).toHaveStyle({ left: '2mm', top: '2mm', width: '36mm', height: '16mm' });
+
+    // The figure sits a further 1mm in from the callout's own edge.
+    const figure = screen.getByText('RM 1,599');
+    expect(figure).toHaveStyle({ padding: '1mm 1mm 1mm 1mm', boxSizing: 'border-box' });
+    expect(figure.parentElement).toHaveStyle({
+      padding: '2mm 2mm 2mm 2mm',
+      boxSizing: 'border-box',
+    });
+  });
+
+  it('reads a legacy padding-only badge as margin, figure flush inside (AC-9)', () => {
+    const { container } = render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            width_mm: 40,
+            height_mm: 20,
+            props: {
+              ...defaultPriceBadgeProps('list_only'),
+              showBox: true,
+              cornerRadius: 0,
+              padding: { top: 2, right: 2, bottom: 2, left: 2 },
+            },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    const svg = container.querySelector('svg');
+    expect(svg?.getAttribute('viewBox')).toBe('0 0 36 16');
+
+    const figure = screen.getByText('RM 1,599');
+    // padding resolves to 0 under the legacy rule - the figure has no inset
+    // of its own beyond the margin the callout already carries.
+    expect(figure).toHaveStyle({ padding: '0mm 0mm 0mm 0mm', boxSizing: 'border-box' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Price badge currency (S3c, AC-14/15)
+// ---------------------------------------------------------------------------
+
+describe('price badge currency on the print page (S3c, AC-14/15)', () => {
+  it('keeps RM when the badge names no currency flag (AC-15)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({ type: 'price_badge', props: defaultPriceBadgeProps('list_only') }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    expect(screen.getByText('RM 1,599')).toBeInTheDocument();
+  });
+
+  it('drops RM when the badge switches currency off (AC-14)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            props: { ...defaultPriceBadgeProps('list_only'), showCurrency: false },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    expect(screen.getByText('1,599')).toBeInTheDocument();
+    expect(screen.queryByText('RM 1,599')).not.toBeInTheDocument();
+  });
+
+  it('drops RM from both promo lines the same way (AC-14)', () => {
+    render(
+      <TagSheetRenderer
+        doc={docWith([
+          layer({
+            type: 'price_badge',
+            props: { ...defaultPriceBadgeProps('promo'), showCurrency: false },
+          }),
+        ])}
+        resolvedData={{ [LINE_ID]: resolved() }}
+      />,
+    );
+
+    expect(screen.getByText('LP: 1,599')).toBeInTheDocument();
+    expect(screen.getByText('599')).toBeInTheDocument();
   });
 });
