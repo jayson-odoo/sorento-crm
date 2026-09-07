@@ -181,7 +181,18 @@ interface PreviewChoice {
 }
 
 // This component is loaded with ssr:false by the page, so direct imports are safe.
-import { Stage, Layer as KonvaLayer, Circle, Group, Rect, Line, Transformer } from 'react-konva';
+import {
+  Stage,
+  Layer as KonvaLayer,
+  Circle,
+  Group,
+  Rect,
+  Line,
+  Transformer,
+  Label as KonvaLabel,
+  Tag as KonvaLabelTag,
+  Text as KonvaText,
+} from 'react-konva';
 import { KonvaTagLayer } from './KonvaTagLayer';
 
 // ---------------------------------------------------------------------------
@@ -197,6 +208,38 @@ let idCounter = 0;
 function newLayerId(): string {
   idCounter += 1;
   return `layer-${Date.now()}-${idCounter}`;
+}
+
+/**
+ * Whether Shift is held, tracked live rather than read once at keydown (S9).
+ *
+ * A rotate or resize drag runs its own mousemove loop inside Konva, and the
+ * user can press or release Shift mid-drag ("pressing it mid-drag snaps
+ * again"), so the Transformer's `rotationSnaps`/`keepRatio` props need a
+ * value that keeps updating for the length of the drag, not a snapshot taken
+ * when the drag started. Blur resets it so a Shift held when the window
+ * loses focus (e.g. an OS shortcut) does not stay stuck on.
+ */
+function useShiftKey(): boolean {
+  const [shift, setShift] = useState(false);
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setShift(true);
+    };
+    const up = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setShift(false);
+    };
+    const blur = () => setShift(false);
+    window.addEventListener('keydown', down);
+    window.addEventListener('keyup', up);
+    window.addEventListener('blur', blur);
+    return () => {
+      window.removeEventListener('keydown', down);
+      window.removeEventListener('keyup', up);
+      window.removeEventListener('blur', blur);
+    };
+  }, []);
+  return shift;
 }
 
 /**
@@ -273,6 +316,12 @@ const MARQUEE_SLOP_PX = 3;
 const CLONE_OFFSET_MM = 5;
 /** Arrow-key nudge distances in mm: plain, Shift, Alt/Option. */
 const NUDGE_MM = { base: 0.25, shift: 1, alt: 0.1 };
+/** Rotation snap steps, degrees, ONLY while Shift is held (S9). */
+const ROTATION_SNAPS = Array.from({ length: 24 }, (_, i) => i * 15);
+/** How close to a snap step (degrees) counts as snapped, Shift held. */
+const ROTATION_SNAP_TOLERANCE_DEG = 7;
+/** How far above the rotate handle the live angle pill sits, screen px. */
+const ROTATION_LABEL_OFFSET_PX = 24;
 
 /**
  * Polygon corner-editing handles, in SCREEN pixels (S4).
@@ -456,6 +505,13 @@ export function TagCanvasEditor({
   const railPanelRef = useRef<ImperativePanelHandle>(null);
   const stageRef = useRef<Konva.Stage | null>(null);
   const transformerRef = useRef<Konva.Transformer>(null);
+  const shiftHeld = useShiftKey();
+  /** The live angle pill shown while dragging the rotate handle (S9). */
+  const [rotationLabel, setRotationLabel] = useState<{
+    x: number;
+    y: number;
+    text: string;
+  } | null>(null);
   const dragRef = useRef<DragSession | null>(null);
   /**
    * What a polygon handle drag started from (S4), so it can move by a delta.
@@ -1674,6 +1730,26 @@ export function TagCanvasEditor({
 
     const transformer = transformerRef.current;
     if (!transformer) return;
+
+    // Live angle pill while dragging the ROTATE handle (S9): one decimal
+    // free, whole degrees once Shift is snapping. Cleared on every other
+    // anchor's tick and on `handleTransformEnd` below.
+    if (transformer.getActiveAnchor?.() === 'rotater') {
+      const rotaterNode = transformer.findOne('.rotater');
+      if (rotaterNode) {
+        const abs = rotaterNode.getAbsolutePosition();
+        const rotationDeg = transformer.rotation();
+        const text = `${shiftHeld ? Math.round(rotationDeg) : Math.round(rotationDeg * 10) / 10}°`;
+        setRotationLabel({
+          x: abs.x - view.panX,
+          y: abs.y - view.panY - ROTATION_LABEL_OFFSET_PX,
+          text,
+        });
+      }
+    } else {
+      setRotationLabel(null);
+    }
+
     for (const node of transformer.nodes()) {
       const layer = layers.find((l) => l.id === node.id());
       if (!layer || layer.props.kind !== 'text') continue;
@@ -1703,9 +1779,10 @@ export function TagCanvasEditor({
       }
     }
     transformer.getLayer()?.batchDraw();
-  }, [layers, scale]);
+  }, [layers, scale, shiftHeld, view]);
 
   const handleTransformEnd = useCallback(() => {
+    setRotationLabel(null);
     const transformer = transformerRef.current;
     if (!transformer) return;
 
@@ -3123,7 +3200,12 @@ export function TagCanvasEditor({
                     <Transformer
                       ref={transformerRef}
                       rotateEnabled
-                      keepRatio={false}
+                      // Shift keeps a corner drag's aspect ratio (side
+                      // anchors are unaffected by `keepRatio` regardless);
+                      // Shift also arms the rotation snap list below (S9).
+                      keepRatio={shiftHeld}
+                      rotationSnaps={shiftHeld ? ROTATION_SNAPS : []}
+                      rotationSnapTolerance={ROTATION_SNAP_TOLERANCE_DEG}
                       listening={!handMode}
                       onTransform={handleTransform}
                       onTransformEnd={handleTransformEnd}
@@ -3158,6 +3240,25 @@ export function TagCanvasEditor({
                         return newBox;
                       }}
                     />
+
+                    {/* Live angle pill while dragging the rotate handle
+                        (S9); gone as soon as the drag ends or moves to a
+                        different anchor. */}
+                    {rotationLabel && (
+                      <KonvaLabel
+                        x={rotationLabel.x}
+                        y={rotationLabel.y}
+                        listening={false}
+                      >
+                        <KonvaLabelTag fill="#3b82f6" cornerRadius={4} />
+                        <KonvaText
+                          text={rotationLabel.text}
+                          fontSize={11}
+                          padding={4}
+                          fill="#ffffff"
+                        />
+                      </KonvaLabel>
+                    )}
 
                     {/* Polygon corner handles (S4): a circle on every
                         corner and a smaller square on every edge midpoint,
