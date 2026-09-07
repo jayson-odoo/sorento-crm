@@ -223,3 +223,99 @@ def test_route_include_summary(client, db):
     summary = resp.json()["summary"]
     assert summary["po_placed_qty"] == 6
     assert summary["po_placed_count"] == 1
+
+
+# ------------------------------------------- should-fix 6: the summary takes the window
+
+
+def test_placed_summary_honours_the_expected_date_window(db):
+    """The summary counted the whole open book while the LIST showed one month, so "PO for
+    X arriving in June" answered with two contradictory numbers in one message."""
+    from datetime import date
+
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P-WINDOW")
+    _po_line(db, product_id=prod.id, ordered=10, received=0, line_expected=date(2026, 6, 1))
+    _po_line(db, product_id=prod.id, ordered=25, received=0, line_expected=date(2026, 9, 1))
+    db.commit()
+
+    everything = purchase_orders_placed_summary(db, product_ids=[prod.id])
+    assert everything == {"po_placed_qty": 35, "po_placed_count": 2}
+
+    june = purchase_orders_placed_summary(
+        db,
+        product_ids=[prod.id],
+        expected_date_from="2026-06-01",
+        expected_date_to="2026-06-30",
+    )
+    assert june == {"po_placed_qty": 10, "po_placed_count": 1}
+
+
+def test_placed_summary_window_reads_the_header_date_when_the_line_has_none(db):
+    """Same COALESCE the rows use, through the shared `_apply_expected_date_window` - a
+    second hand-written window is how the two drift again."""
+    from datetime import date
+
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P-HEADER")
+    _po_line(db, product_id=prod.id, ordered=8, received=0, header_expected=date(2026, 6, 15))
+    db.commit()
+
+    assert purchase_orders_placed_summary(
+        db, product_ids=[prod.id], expected_date_from="2026-06-01", expected_date_to="2026-06-30"
+    ) == {"po_placed_qty": 8, "po_placed_count": 1}
+    assert purchase_orders_placed_summary(
+        db, product_ids=[prod.id], expected_date_from="2026-07-01"
+    ) == {"po_placed_qty": 0, "po_placed_count": 0}
+
+
+def test_route_summary_matches_the_rows_it_sits_under(client, db):
+    from datetime import date
+
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P-ROUTE-WINDOW")
+    _po_line(db, product_id=prod.id, ordered=10, received=0, line_expected=date(2026, 6, 1))
+    _po_line(db, product_id=prod.id, ordered=25, received=0, line_expected=date(2026, 9, 1))
+    db.commit()
+
+    resp = client.get(
+        f"{BASE}/placed",
+        params={
+            "product_ids": prod.id,
+            "include_summary": "true",
+            "expected_date_from": "2026-06-01",
+            "expected_date_to": "2026-06-30",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert len(body["data"]) == 1
+    assert body["summary"]["po_placed_count"] == len(body["data"])
+    assert body["summary"]["po_placed_qty"] == 10
+
+
+# ------------------------------------- blocker 3: the company scope actually narrows
+
+
+def test_a_mocha_scoped_read_returns_no_sorento_po_lines(db):
+    """AC-F7 for the new tool, backend half. See the SPO twin of this test for why the
+    defect was MCP-side: `purchase_order_lines` is `CompanyScopedMixin` and narrows
+    correctly, but the ToolSpec never declared `contact_id` / `space_id`, so the params
+    never reached the request the scope resolver reads."""
+    from tests._mc_lookup_seed import MOCHA_ID, seed_mocha
+
+    seed_mocha(db)
+    sup = _supplier(db)
+    sorento_product = product(db, company_id=DEFAULT_COMPANY_ID, code="SRT-PO-SCOPE")
+    _po_line(
+        db,
+        supplier_id=sup.id,
+        product_id=sorento_product.id,
+        ordered=10,
+        received=0,
+        po_number="PO-SORENTO",
+    )
+    db.commit()
+
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    assert [r["po_number"] for r in purchase_orders_placed_rows(db)] == ["PO-SORENTO"]
+
+    set_company_scope(db, frozenset({MOCHA_ID}))
+    assert purchase_orders_placed_rows(db) == []

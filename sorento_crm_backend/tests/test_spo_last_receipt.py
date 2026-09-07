@@ -210,3 +210,29 @@ def test_route_last_receipt_top_n_three(client, db):
     resp = client.get(f"{BASE}/last-receipt", params={"product_ids": prod.id, "top_n": 3})
     assert resp.status_code == 200, resp.text
     assert len(resp.json()["data"]) == 3
+
+
+# ------------------------------------- blocker 3: the company scope actually narrows
+
+
+def test_a_mocha_scoped_read_returns_no_sorento_receipts(db):
+    """AC-F7 for the new tool. `spo_allocations` is `CompanyScopedMixin`, so the session
+    scope narrows the read - what was missing was the MCP forwarding `contact_id` /
+    `space_id` at all (the ToolSpec did not declare them, so FastMCP dropped them under
+    `extra="ignore"` and `_resolve_api_key_scope` fell through to EVERY company). This
+    pins the backend half: given the scope, a Mocha contact sees no Sorento row.
+    """
+    from tests._mc_lookup_seed import MOCHA_ID, seed_mocha
+
+    seed_mocha(db)
+    sorento_product = product(db, company_id=DEFAULT_COMPANY_ID, code="SRT-SCOPE")
+    _allocation(db, product_id=sorento_product.id, qty_received=99, spo_number="SPO-SORENTO")
+    db.commit()
+
+    # Sorento sees its own row.
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    assert [r["spo_number"] for r in last_receipt_rows(db, top_n=10)] == ["SPO-SORENTO"]
+
+    # Mocha sees nothing of it.
+    set_company_scope(db, frozenset({MOCHA_ID}))
+    assert last_receipt_rows(db, top_n=10) == []

@@ -1005,13 +1005,16 @@ CATALOG: tuple[ToolSpec, ...] = (
             "Date window: expected_date_from / expected_date_to.\n\n"
             "GROUPING: `group_by` = product | supplier | date renders headed sections. "
             "`include_summary=true` adds `summary` (po_placed_qty/po_placed_count over the "
-            "filtered lines)."
+            "filtered lines).\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/procurement/purchase-orders/placed",
         (),
         (
             "limit", "product_ids", "expected_date_from", "expected_date_to",
             "group_by", "include_summary", "sort", "dir",
+            "contact_id", "space_id",
         ),
         domain="purchase_order",
         related_tools=("crm_procurement_spo_allocations_last_receipt_list",),
@@ -1028,11 +1031,13 @@ CATALOG: tuple[ToolSpec, ...] = (
             "arrival, 'Arrived (port)' = the shipment's port arrival, 'Received (recorded)' = "
             "no shipment date at all, just when the receipt was recorded), and warehouse.\n\n"
             "FILTER BY UUID: `product_ids`, `warehouse_ids` (canonical UUIDs, csv / JSON / "
-            "repeated), both optional. `top_n` (default 1) - 'last 3 in' -> top_n=3."
+            "repeated), both optional. `top_n` (default 1) - 'last 3 in' -> top_n=3.\n\n"
+            "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
+            "results to that contact's company/companies; omit both for all-company results."
         ),
         "/api/v1/procurement/spo-allocations/last-receipt",
         (),
-        ("product_ids", "warehouse_ids", "top_n"),
+        ("product_ids", "warehouse_ids", "top_n", "contact_id", "space_id"),
         domain="spo_allocation",
         related_tools=("crm_procurement_purchase_orders_placed_list", "crm_incoming_stock_by_product"),
         escalation_team="procurement",
