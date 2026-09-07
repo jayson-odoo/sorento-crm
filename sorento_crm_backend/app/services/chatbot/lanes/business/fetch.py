@@ -685,6 +685,15 @@ IDENTITY_KEYS: frozenset[str] = frozenset(
 # and the cross-domain renderer sorts incoming rows on it.
 ALWAYS_KEPT_KEYS: frozenset[str] = frozenset({"estimated_arrival_date"})
 
+# Chronological order of an inbound container's clearance checkpoints. Mirrors the
+# admin-editable `statuses` rows (entity_type "inbound_shipment", by sort_order) as they
+# stand on prod; hardcoded because output_structurer is a pure function with no session.
+CLEARANCE_CHECKPOINT_ORDER: tuple[str, ...] = (
+    "loading_date", "etc_date", "etd_date", "estimated_arrival_date", "eta_delay_date",
+    "inspection_date", "approval_date", "gatepass_date", "warehouse_arrival_date",
+    "informed_collection_date", "collection_date",
+)
+
 
 def _safe_json(value: Any) -> Any:
     try:
@@ -967,6 +976,19 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
         kk = jsc.nullish_str(k).strip()
         if kk:
             keep_keys.add(kk)
+
+    # A checkpoint ask ("when is gatepass?") implies every EARLIER checkpoint in the
+    # container's journey - a customer asking about gatepass wants the whole story up to
+    # it, not one isolated date. `req_attrs` itself is untouched (echoed back, and drives
+    # the "not recorded yet" notes below): only `keep_keys` grows.
+    if not timeline:
+        checkpoint_idx = [
+            CLEARANCE_CHECKPOINT_ORDER.index(kk)
+            for k in req_attrs
+            if (kk := jsc.nullish_str(k).strip()) in CLEARANCE_CHECKPOINT_ORDER
+        ]
+        if checkpoint_idx:
+            keep_keys.update(CLEARANCE_CHECKPOINT_ORDER[: max(checkpoint_idx) + 1])
 
     # SCOPE GUARD: projection touches the CLEARANCE-gated incoming envelope ONLY. Gate on
     # what the envelope IS, not on whether keys happen to be present - resource attachments

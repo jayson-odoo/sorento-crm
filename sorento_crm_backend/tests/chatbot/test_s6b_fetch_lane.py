@@ -526,6 +526,153 @@ class TestOutputStructurer:
             "requested_attributes without the sentinel must still emit the denial note"
         )
 
+    # ----------------------------------------------------------------------- #
+    # AC5 - a checkpoint ask expands backwards through the container's journey
+    # ----------------------------------------------------------------------- #
+
+    _ALL_CHECKPOINTS: dict[str, str] = {
+        "loading_date": "2026-01-01",
+        "etc_date": "2026-01-02",
+        "etd_date": "2026-01-03",
+        "estimated_arrival_date": "2026-01-04",
+        "eta_delay_date": "2026-01-05",
+        "inspection_date": "2026-01-06",
+        "approval_date": "2026-01-07",
+        "gatepass_date": "2026-01-08",
+        "warehouse_arrival_date": "2026-01-09",
+        "informed_collection_date": "2026-01-10",
+        "collection_date": "2026-01-11",
+    }
+
+    def _checkpoint_envelope(self, extra_fields: dict[str, str] | None = None) -> dict:
+        fields = [{"key": "product_code", "label": "Product Code", "value": "SRTWB7096"}]
+        for k, v in self._ALL_CHECKPOINTS.items():
+            fields.append({"key": k, "label": k, "value": v})
+        for k, v in (extra_fields or {}).items():
+            fields.append({"key": k, "label": k, "value": v})
+        return {
+            "result_type": "incoming_stock",
+            "intro": "Here is what I found.",
+            "items": [{"title": "row", "fields": fields}],
+            "has_result": True,
+            "field_access": None,
+        }
+
+    def test_checkpoint_ask_keeps_every_earlier_checkpoint(self):
+        """Asking for gatepass implies the whole journey UP TO gatepass - a customer who
+        asks "when is gatepass" wants the story so far, not one isolated date."""
+        fetch = _import_fetch()
+        envelope = self._checkpoint_envelope({"liner_code": "CMA"})
+        ctx = {"semantic_input": {"requested_attributes": ["gatepass_date"]}}
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        kept = {f["key"] for f in out["answers"][0]["fields"]}
+        for k in (
+            "loading_date", "etc_date", "etd_date", "estimated_arrival_date",
+            "eta_delay_date", "inspection_date", "approval_date", "gatepass_date",
+        ):
+            assert k in kept, f"{k} should be kept (earlier than or equal to gatepass)"
+        for k in ("warehouse_arrival_date", "informed_collection_date", "collection_date", "liner_code"):
+            assert k not in kept, f"{k} should be dropped (later than gatepass, or non-checkpoint)"
+
+    def test_checkpoint_ask_warehouse_arrival(self):
+        """Asking for warehouse arrival keeps everything through it, drops what comes after."""
+        fetch = _import_fetch()
+        envelope = self._checkpoint_envelope()
+        ctx = {"semantic_input": {"requested_attributes": ["warehouse_arrival_date"]}}
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        kept = {f["key"] for f in out["answers"][0]["fields"]}
+        for k in (
+            "loading_date", "etc_date", "etd_date", "estimated_arrival_date",
+            "eta_delay_date", "inspection_date", "approval_date", "gatepass_date",
+            "warehouse_arrival_date",
+        ):
+            assert k in kept, f"{k} should be kept (earlier than or equal to warehouse arrival)"
+        for k in ("informed_collection_date", "collection_date"):
+            assert k not in kept, f"{k} should be dropped (later than warehouse arrival)"
+
+    def test_non_checkpoint_ask_does_not_expand(self):
+        """`liner_code` is not a sequence key - asking for it must not pull in any
+        checkpoint beyond the ALWAYS-kept ETA."""
+        fetch = _import_fetch()
+        envelope = self._checkpoint_envelope({"liner_code": "CMA"})
+        ctx = {"semantic_input": {"requested_attributes": ["liner_code"]}}
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        kept = {f["key"] for f in out["answers"][0]["fields"]}
+        assert "liner_code" in kept
+        assert "product_code" in kept  # identity
+        assert "estimated_arrival_date" in kept  # ALWAYS_KEPT_KEYS, ships regardless
+        for k in (
+            "loading_date", "etc_date", "etd_date", "eta_delay_date", "inspection_date",
+            "approval_date", "gatepass_date", "warehouse_arrival_date",
+            "informed_collection_date", "collection_date",
+        ):
+            assert k not in kept, f"{k} must not be pulled in by a non-checkpoint ask"
+
+    def test_expansion_does_not_rewrite_requested_attributes(self):
+        """`requested_attributes` echoed in the output is still the ORIGINAL, single-key
+        list - only `keep_keys` (internal, not echoed) grows. The "not recorded yet" note
+        fires only for the key actually asked (gatepass), never for an absent inspection_date
+        that merely got pulled in by the expansion."""
+        fetch = _import_fetch()
+        fields = [
+            {"key": "product_code", "label": "Product Code", "value": "SRTWB7096"},
+            {"key": "loading_date", "label": "loading_date", "value": "2026-01-01"},
+            # inspection_date is ABSENT from this row entirely (not recorded on the CRM
+            # side) - it must not get a synthetic "not recorded yet" note.
+            # gatepass_date is also absent - it SHOULD get the note, since it was asked.
+        ]
+        envelope = {
+            "result_type": "incoming_stock",
+            "intro": "Here is what I found.",
+            "items": [{"title": "row", "fields": fields}],
+            "has_result": True,
+            "field_access": None,
+        }
+        ctx = {"semantic_input": {"requested_attributes": ["gatepass_date"]}}
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        assert out["requested_attributes"] == ["gatepass_date"]
+        notes = {f["key"]: f["value"] for f in out["answers"][0]["fields"] if f.get("key")}
+        assert notes.get("gatepass_date") == "not recorded yet"
+        assert "inspection_date" not in notes
+
+    def test_checkpoint_expansion_untouched_when_timeline(self):
+        """`['__all__']` already keeps everything (AC5.3) - the checkpoint expansion is
+        gated on `not timeline` and must not run (or matter) in that arm."""
+        fetch = _import_fetch()
+        envelope = self._checkpoint_envelope({"liner_code": "CMA"})
+        ctx = {"semantic_input": {"requested_attributes": ["__all__"]}}
+
+        out = fetch.output_structurer(envelope, ctx)
+
+        kept = {f["key"] for f in out["answers"][0]["fields"]}
+        assert set(self._ALL_CHECKPOINTS) <= kept
+        assert "liner_code" in kept
+
+
+def test_clearance_checkpoint_order_has_no_duplicates_and_matches_parser_vocabulary():
+    """The tuple is hardcoded (output_structurer is a pure function with no session) and
+    must mirror the same vocabulary the semantic parser already hardcodes - a checkpoint
+    the parser cannot name can never appear in `requested_attributes` in the first place,
+    and a duplicate would double-count in the expansion index lookup."""
+    fetch = _import_fetch()
+    order = fetch.CLEARANCE_CHECKPOINT_ORDER
+    assert len(order) == len(set(order)), "CLEARANCE_CHECKPOINT_ORDER has a duplicate"
+
+    from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT
+
+    for key in order:
+        assert f'"{key}"' in SEMANTIC_PARSER_PROMPT or f"'{key}'" in SEMANTIC_PARSER_PROMPT, (
+            f"{key} is in CLEARANCE_CHECKPOINT_ORDER but not quoted in the parser prompt"
+        )
+
 
 # --------------------------------------------------------------------------- #
 # Owner console defect I (owner ruling: "label it"). `output_structurer`'s
