@@ -32,7 +32,7 @@ import {
   scalePolygonPoints,
 } from '@/lib/dealer-kit/polygon-path';
 import { paddedBox } from '@/lib/dealer-kit/text-reflow';
-import { cropPixels, type CropRect } from '@/lib/dealer-kit/image-crop';
+import { cropPixels, fittedCropDraw, type CropRect } from '@/lib/dealer-kit/image-crop';
 import { useHtmlImage } from './useHtmlImage';
 
 // `TagLayerDisplay` is resolved by whoever owns the data (the editor, the
@@ -492,36 +492,21 @@ function ImageContent({
   }
 
   // Crop applies BEFORE fit (S8): `crop` tells Konva which source pixels to
-  // draw, and the ratio below uses the CROPPED width/height so `fit` places
-  // the cropped region, not the whole picture. Absent `cropRect` resolves to
-  // the whole image, so this is a no-op for anything saved before S8.
+  // draw, and `fittedCropDraw` (shared with the canvas crop-mode overlay,
+  // `TagCanvasEditor.tsx` - r6 S8 review, #723) places the CROPPED region,
+  // not the whole picture. Absent `cropRect` resolves to the whole image, so
+  // this is a no-op for anything saved before S8.
   const crop = cropPixels(cropRect, image);
-
-  // `contain` letterboxes inside the box, `cover` fills it and overflows; the
-  // clip below is what turns overflow into a crop rather than a picture spilling
-  // over the layer next to it. `stretch` draws at the box's own size - nothing
-  // to letterbox or crop, so it needs neither the ratio math nor a clip.
-  let drawW: number;
-  let drawH: number;
-  if (fit === 'stretch') {
-    drawW = w;
-    drawH = h;
-  } else {
-    const ratio = crop.width / crop.height;
-    const boxRatio = w / h;
-    const wide = fit === 'contain' ? ratio > boxRatio : ratio < boxRatio;
-    drawW = wide ? w : h * ratio;
-    drawH = wide ? w / ratio : h;
-  }
+  const draw = fittedCropDraw(cropRect, image, fit, w, h);
 
   const body = (
     <KonvaImage
       image={image}
       crop={crop}
-      x={(w - drawW) / 2}
-      y={(h - drawH) / 2}
-      width={drawW}
-      height={drawH}
+      x={draw.x}
+      y={draw.y}
+      width={draw.width}
+      height={draw.height}
     />
   );
 

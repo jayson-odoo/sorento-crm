@@ -125,6 +125,76 @@ export function cropPixels(
 }
 
 /**
+ * Where the CROPPED region draws inside the layer's own box, per `fit`
+ * (S8) - the SAME maths `KonvaTagLayer.tsx`'s `ImageContent` uses to place
+ * its `KonvaImage`. Exported so the canvas crop-mode overlay
+ * (`TagCanvasEditor.tsx`) can derive its own placement from this ONE
+ * function too, rather than a second copy that can drift from it (r6 S8
+ * review, #723): the reported bug was exactly that drift - the overlay
+ * fit the WHOLE source always CONTAIN while the real layer fits the
+ * CROPPED region per its own `fit`, so the two disagreed on scale and
+ * centring and the picture looked doubled.
+ */
+export function fittedCropDraw(
+  cropRect: CropRect | null | undefined,
+  natural: { width: number; height: number },
+  fit: 'cover' | 'contain' | 'stretch',
+  w: number,
+  h: number,
+): { x: number; y: number; width: number; height: number } {
+  const crop = cropPixels(cropRect, natural);
+  let drawW: number;
+  let drawH: number;
+  if (fit === 'stretch' || crop.width <= 0 || crop.height <= 0) {
+    drawW = w;
+    drawH = h;
+  } else {
+    const ratio = crop.width / crop.height;
+    const boxRatio = w / h;
+    const wide = fit === 'contain' ? ratio > boxRatio : ratio < boxRatio;
+    drawW = wide ? w : h * ratio;
+    drawH = wide ? w / ratio : h;
+  }
+  return { x: (w - drawW) / 2, y: (h - drawH) / 2, width: drawW, height: drawH };
+}
+
+/**
+ * The crop-mode overlay's own layout (S8, r6 S8 review, #723): `window` is
+ * the crop selection's on-screen rect - `fittedCropDraw` above, so it is
+ * EXACTLY where the real layer will draw the cropped region once this
+ * commits. `source` is the WHOLE source image at that SAME scale, offset so
+ * the sub-rectangle `cropRect` selects lands exactly under `window` - draw
+ * the source ONCE at `source` (dimmed), then the SAME image again at the
+ * SAME `source` transform (opaque, clipped to `window`) and the two can
+ * never disagree, because they share one transform instead of two
+ * independently-derived ones.
+ */
+export function cropOverlayLayout(
+  cropRect: CropRect | null | undefined,
+  natural: { width: number; height: number },
+  fit: 'cover' | 'contain' | 'stretch',
+  w: number,
+  h: number,
+): {
+  window: { x: number; y: number; width: number; height: number };
+  source: { x: number; y: number; width: number; height: number };
+} {
+  const window = fittedCropDraw(cropRect, natural, fit, w, h);
+  const crop = cropPixels(cropRect, natural);
+  const scaleX = crop.width > 0 ? window.width / crop.width : 1;
+  const scaleY = crop.height > 0 ? window.height / crop.height : 1;
+  return {
+    window,
+    source: {
+      x: window.x - crop.x * scaleX,
+      y: window.y - crop.y * scaleY,
+      width: natural.width * scaleX,
+      height: natural.height * scaleY,
+    },
+  };
+}
+
+/**
  * The print path's crop-window layout (S8): a wrapper carrying the
  * CROPPED region's own aspect ratio (which only equals the crop fraction's
  * own W:H ratio when the source happens to be square - `natural` is what

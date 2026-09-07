@@ -49,6 +49,10 @@ vi.mock('react-konva', async () => {
 
   interface HandleProps {
     name?: string;
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
     children?: React.ReactNode;
     onDragStart?: (e: { target: FakeCropNode }) => void;
     onDragMove?: (e: { target: FakeCropNode }) => void;
@@ -82,6 +86,10 @@ vi.mock('react-konva', async () => {
       <div
         data-konva="rect"
         data-name={props.name}
+        data-x={props.x}
+        data-y={props.y}
+        data-w={props.width}
+        data-h={props.height}
         onMouseDown={(e) => {
           moveTo(e);
           props.onDragStart?.({ target: node });
@@ -118,15 +126,67 @@ vi.mock('react-konva', async () => {
     return <div data-konva="stage">{children}</div>;
   }
 
+  // Exposes x/y/width/height/opacity as data attributes (S8 review, #723):
+  // the dimmed-vs-bright alignment tests need to read the SAME numbers
+  // TagCanvasEditor hands each `KonvaImage`, which the old `passthrough`
+  // stand-in dropped entirely.
+  function ImageStandIn(props: {
+    x?: number;
+    y?: number;
+    width?: number;
+    height?: number;
+    opacity?: number;
+  }) {
+    return (
+      <div
+        data-konva="image"
+        data-x={props.x}
+        data-y={props.y}
+        data-w={props.width}
+        data-h={props.height}
+        data-opacity={props.opacity}
+      />
+    );
+  }
+
+  // A real `clipFunc` runs against a canvas 2D context at paint time; this
+  // stand-in hands it a fake that only records `.rect(...)` calls, so the
+  // bright group's own clip window is readable the same way its `Image`
+  // child's geometry is (S8 review, #723) - every OTHER `Group` in this
+  // file (the crop-mode wrapper, the artboard clip) has no `clipFunc` and
+  // renders exactly as `passthrough` already did.
+  function GroupStandIn(props: {
+    children?: React.ReactNode;
+    clipFunc?: (ctx: { rect: (x: number, y: number, w: number, h: number) => void }) => void;
+  }) {
+    let clip: { x: number; y: number; width: number; height: number } | undefined;
+    props.clipFunc?.({
+      rect: (x, y, width, height) => {
+        clip = { x, y, width, height };
+      },
+    });
+    return (
+      <div
+        data-konva="group"
+        data-clip-x={clip?.x}
+        data-clip-y={clip?.y}
+        data-clip-w={clip?.width}
+        data-clip-h={clip?.height}
+      >
+        {props.children}
+      </div>
+    );
+  }
+
   return {
     Stage: StageStandIn,
     Layer: passthrough('layer'),
-    Group: passthrough('group'),
+    Group: GroupStandIn,
     Rect: DraggableRect,
     Circle: passthrough('circle'),
     Line: passthrough('line'),
     Transformer: passthrough('transformer'),
-    Image: passthrough('image'),
+    Image: ImageStandIn,
     Label: passthrough('label'),
     Tag: passthrough('tag'),
     Text: passthrough('text'),
@@ -205,14 +265,17 @@ beforeEach(() => {
 // `cropFrame` fills the box with no letterboxing - the frame's origin is
 // (0, 0) in the layer's own local pixel space, which keeps the drag maths
 // in this file simple.
-function imageLayer(cropRect?: { x: number; y: number; width: number; height: number }): TagLayer {
+function imageLayer(
+  cropRect?: { x: number; y: number; width: number; height: number },
+  options: { width_mm?: number; height_mm?: number; fit?: 'cover' | 'contain' | 'stretch' } = {},
+): TagLayer {
   return {
     id: 'img1',
     type: 'image',
     x_mm: 5,
     y_mm: 5,
-    width_mm: 20,
-    height_mm: 10,
+    width_mm: options.width_mm ?? 20,
+    height_mm: options.height_mm ?? 10,
     rotation_deg: 0,
     z_index: 1,
     locked: false,
@@ -222,7 +285,7 @@ function imageLayer(cropRect?: { x: number; y: number; width: number; height: nu
     props: {
       kind: 'image',
       source: { type: 'asset', assetId: 'a1' },
-      fit: 'contain',
+      fit: options.fit ?? 'contain',
       maskShape: 'none',
       cropRect,
     },
@@ -304,8 +367,14 @@ describe('TagCanvasEditor crop mode - commit and cancel (S8, AC-S8-3)', () => {
     );
     await enterCropMode(container);
 
-    // Pan the window: drag INSIDE it (not on a handle) by 0.1 of the frame
-    // on both axes (6px of 60, 3px of 30).
+    // Pan the window: drag INSIDE it (not on a handle), 6px/3px of raw
+    // pointer movement (r6 S8 review, #723: normalised against the WHOLE
+    // SOURCE's own on-screen footprint at the CURRENT crop's scale, not a
+    // fixed whole-image-fit frame that never matched what is on screen).
+    // A 0.5x0.5 crop out of a 2:1 source shown fit-CONTAIN in a matching
+    // 2:1, 60x30px box is "zoomed in" 2x - the source spans 120x60px at
+    // that scale - so 6px is 6/120 = 0.05 of the source fraction, not
+    // 6/60 = 0.1 (what the OLD, always-whole-image-contain frame gave).
     const window_ = cropHandle(container, 'crop-window');
     fireEvent.mouseDown(window_, { clientX: 0, clientY: 0 });
     fireEvent.mouseUp(window_, { clientX: 6, clientY: 3 });
@@ -314,8 +383,8 @@ describe('TagCanvasEditor crop mode - commit and cancel (S8, AC-S8-3)', () => {
 
     const committed = latest.find((l) => l.id === 'img1')!;
     expect(committed.props.kind === 'image' ? committed.props.cropRect : null).toEqual({
-      x: 0.1,
-      y: 0.1,
+      x: 0.05,
+      y: 0.05,
       width: 0.5,
       height: 0.5,
     });
@@ -348,6 +417,118 @@ describe('TagCanvasEditor crop mode - commit and cancel (S8, AC-S8-3)', () => {
       );
     }
     expect(container.querySelector('[data-name="crop-window"]')).toBeNull();
+  });
+});
+
+describe('TagCanvasEditor crop mode - dimmed source and bright window share one transform (S8 review, #723)', () => {
+  /**
+   * A wide (2:1) source in a SQUARE (1:1) box is exactly where the old bug
+   * showed most: the dimmed pass fit the WHOLE source always CONTAIN while
+   * the bright window carved a fraction out of that SAME fixed frame, which
+   * agreed with itself but not with what the layer's own `fit` actually
+   * draws. `cropOverlayLayout` (`lib/dealer-kit/image-crop.ts`) is now the
+   * ONE function both the dimmed and bright `KonvaImage` read their
+   * x/y/width/height from, so they cannot disagree - and the crop window
+   * Rect/handles read the SAME `window` the clip uses, so a dragged handle
+   * never strands the bright region off the dimmed source underneath it.
+   */
+  it('contain: dimmed and bright images are identical, the clip equals the crop window', async () => {
+    const { container } = await renderReady(
+      docWith(
+        imageLayer(
+          { x: 0, y: 0.25, width: 1, height: 0.5 },
+          { width_mm: 20, height_mm: 20, fit: 'contain' },
+        ),
+      ),
+    );
+    await enterCropMode(container);
+
+    const images = Array.from(
+      container.querySelectorAll('[data-konva="image"]'),
+    ) as HTMLElement[];
+    expect(images).toHaveLength(2);
+    const [dimmed, bright] = images;
+    expect(bright.dataset).toEqual(
+      expect.objectContaining({
+        x: dimmed.dataset.x,
+        y: dimmed.dataset.y,
+        w: dimmed.dataset.w,
+        h: dimmed.dataset.h,
+      }),
+    );
+    // 20x20mm box -> 60x60px. A 0.5-tall, full-width crop out of a 2:1
+    // source is itself 4:1 - CONTAIN fits it to the box's own 60px width,
+    // 15px tall, centred: window {0, 22.5, 60, 15}. The source at that same
+    // scale (0.2x) is 60x30, offset up 7.5px so the crop's y=0.25 lands
+    // exactly under the window's own top edge.
+    expect(dimmed.dataset).toEqual(
+      expect.objectContaining({ x: '0', y: '15', w: '60', h: '30' }),
+    );
+
+    const windowRect = cropHandle(container, 'crop-window');
+    expect(windowRect.dataset).toEqual(
+      expect.objectContaining({ x: '0', y: '22.5', w: '60', h: '15' }),
+    );
+
+    // Scoped to the crop-mode overlay's own Group, not the artboard-wide
+    // clip every layer already renders inside.
+    const clip = windowRect.parentElement!.querySelector('[data-clip-w]') as HTMLElement;
+    expect(clip.dataset).toEqual(
+      expect.objectContaining({
+        clipX: windowRect.dataset.x,
+        clipY: windowRect.dataset.y,
+        clipW: windowRect.dataset.w,
+        clipH: windowRect.dataset.h,
+      }),
+    );
+  });
+
+  it('cover: dimmed and bright images are identical, the clip equals the crop window', async () => {
+    const { container } = await renderReady(
+      docWith(
+        imageLayer(
+          { x: 0, y: 0.25, width: 1, height: 0.5 },
+          { width_mm: 20, height_mm: 20, fit: 'cover' },
+        ),
+      ),
+    );
+    await enterCropMode(container);
+
+    const images = Array.from(
+      container.querySelectorAll('[data-konva="image"]'),
+    ) as HTMLElement[];
+    expect(images).toHaveLength(2);
+    const [dimmed, bright] = images;
+    expect(bright.dataset).toEqual(
+      expect.objectContaining({
+        x: dimmed.dataset.x,
+        y: dimmed.dataset.y,
+        w: dimmed.dataset.w,
+        h: dimmed.dataset.h,
+      }),
+    );
+    // COVER fills the 60x60 box instead of letterboxing it: the 4:1 crop
+    // overflows sideways, drawn 240px wide, 60 tall, centred (x: -90). The
+    // source at that same 0.8x scale is 240x120, offset so y=0.25 still
+    // lands under the window's own top edge.
+    expect(dimmed.dataset).toEqual(
+      expect.objectContaining({ x: '-90', y: '-30', w: '240', h: '120' }),
+    );
+
+    const windowRect = cropHandle(container, 'crop-window');
+    expect(windowRect.dataset).toEqual(
+      expect.objectContaining({ x: '-90', y: '0', w: '240', h: '60' }),
+    );
+
+    const clip = windowRect.parentElement!.querySelector('[data-clip-w]') as HTMLElement;
+    expect(clip.dataset).toEqual(
+      expect.objectContaining({
+        clipX: windowRect.dataset.x,
+        clipY: windowRect.dataset.y,
+        clipW: windowRect.dataset.w,
+        clipH: windowRect.dataset.h,
+      }),
+    );
   });
 });
 

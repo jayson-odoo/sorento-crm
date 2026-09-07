@@ -213,6 +213,7 @@ import { KonvaTagLayer } from './KonvaTagLayer';
 import { useHtmlImage } from './useHtmlImage';
 import {
   CROP_HANDLE_ANCHORS,
+  cropOverlayLayout,
   cropRectFromDrag,
   panCropRect,
   resolvedCropRect,
@@ -1684,21 +1685,33 @@ export function TagCanvasEditor({
     : null;
   const cropImage = useHtmlImage(cropImageUrl ?? null);
 
-  /** The WHOLE source drawn "in its fitted position" (AC-S8-2): always
-   * CONTAIN, regardless of the layer's own `fit` - cropping needs the whole
-   * picture on screen to choose a window from, not whatever `fit` would
-   * otherwise letterbox or crop away. */
-  const cropFrame = useMemo(() => {
-    if (!cropEditingLayer || !cropImage) return null;
-    const w = cropEditingLayer.width_mm * scale;
-    const h = cropEditingLayer.height_mm * scale;
-    const ratio = cropImage.width / cropImage.height;
-    const boxRatio = w / h;
-    const wide = ratio > boxRatio;
-    const fitW = wide ? w : h * ratio;
-    const fitH = wide ? w / ratio : h;
-    return { x: (w - fitW) / 2, y: (h - fitH) / 2, width: fitW, height: fitH };
-  }, [cropEditingLayer, cropImage, scale]);
+  /**
+   * The overlay's own layout for an ARBITRARY crop rect, not just the
+   * current `cropDraft` (r6 S8 review, #723): `cropRectFromEvent` and
+   * `positionCropHandle` below need it for `drag.base` (the STABLE rect a
+   * drag started from) and for the in-flight `next` rect a tick just
+   * computed, not only for what has already committed to state.
+   *
+   * `cropOverlayLayout` (`lib/dealer-kit/image-crop.ts`) fits the CROPPED
+   * region per the layer's own `fit` - the SAME maths `KonvaTagLayer`'s
+   * `ImageContent` draws the committed layer with - rather than the old
+   * always-CONTAIN whole-image frame this replaced: that frame agreed with
+   * itself (the dimmed pass and the bright window both derived from it) but
+   * never with what the layer actually draws, so the two disagreed on scale
+   * and centring and the picture looked doubled.
+   */
+  const layoutForCropRect = useCallback(
+    (rect: CropRect) => {
+      if (!cropEditingLayer || !cropImage) return null;
+      const w = cropEditingLayer.width_mm * scale;
+      const h = cropEditingLayer.height_mm * scale;
+      if (w <= 0 || h <= 0) return null;
+      return cropOverlayLayout(rect, cropImage, cropEditingLayer.props.fit, w, h);
+    },
+    [cropEditingLayer, cropImage, scale],
+  );
+
+  const cropLayout = cropDraft ? layoutForCropRect(cropDraft) : null;
 
   const enterCropMode = useCallback(() => {
     if (selectedIds.size !== 1) return;
@@ -1738,15 +1751,26 @@ export function TagCanvasEditor({
   const cropRectFromEvent = useCallback(
     (e: Konva.KonvaEventObject<DragEvent>): CropRect | null => {
       const drag = cropDragRef.current;
-      if (!drag || !cropFrame || cropFrame.width <= 0 || cropFrame.height <= 0) return null;
+      if (!drag) return null;
+      // Normalised against the BASE rect's own layout, read ONCE per drag
+      // rather than the in-flight `next` rect's (r6 S8 review, #723): the
+      // source's own on-screen footprint changes AS the crop rect resizes
+      // (shrinking the selection zooms in), so re-deriving the scale every
+      // tick would make the same pointer distance mean a different amount
+      // of crop mid-drag - the same "read the base once" reasoning
+      // `startPolygonDrag` already uses above.
+      const baseLayout = layoutForCropRect(drag.base);
+      if (!baseLayout || baseLayout.source.width <= 0 || baseLayout.source.height <= 0) {
+        return null;
+      }
       const node = e.target;
-      const normDx = (node.x() - drag.origin.x) / cropFrame.width;
-      const normDy = (node.y() - drag.origin.y) / cropFrame.height;
+      const normDx = (node.x() - drag.origin.x) / baseLayout.source.width;
+      const normDy = (node.y() - drag.origin.y) / baseLayout.source.height;
       return drag.anchor
         ? cropRectFromDrag(drag.base, drag.anchor, normDx, normDy)
         : panCropRect(drag.base, normDx, normDy);
     },
-    [cropFrame],
+    [layoutForCropRect],
   );
 
   /**
@@ -1758,24 +1782,28 @@ export function TagCanvasEditor({
    * middle-left only x) never gets its OTHER axis corrected once Konva's
    * own free drag has already moved it there on a diagonal pointer move -
    * it strands off to the side instead of tracking the window.
-   */
-  /**
+   *
    * Takes `anchor` as an explicit argument rather than reading
    * `cropDragRef.current.anchor` itself: `handleCropDragEnd` below clears
    * that ref before this runs (its own `cancelled` guard needs the drag
    * gone from the ref first), so reading it in here landed on the fallback
    * `{ fx: 0, fy: 0 }` for every drag END and repositioned every handle
-   * onto the window's top-left corner instead of its own anchor.
+   * onto the window's top-left corner instead of its own anchor. Positions
+   * against `rect`'s OWN layout (the in-flight/just-committed crop), unlike
+   * `cropRectFromEvent`'s base-pinned normalisation above - the handle has
+   * to land where THIS tick's window actually is, not where the drag
+   * started (r6 S8 review, #723).
    */
   const positionCropHandle = useCallback(
     (e: Konva.KonvaEventObject<DragEvent>, rect: CropRect, anchor: { fx: number; fy: number }) => {
-      if (!cropFrame) return;
+      const layout = layoutForCropRect(rect);
+      if (!layout) return;
       e.target.position({
-        x: cropFrame.x + (rect.x + anchor.fx * rect.width) * cropFrame.width,
-        y: cropFrame.y + (rect.y + anchor.fy * rect.height) * cropFrame.height,
+        x: layout.window.x + anchor.fx * layout.window.width,
+        y: layout.window.y + anchor.fy * layout.window.height,
       });
     },
-    [cropFrame],
+    [layoutForCropRect],
   );
 
   const handleCropDragMove = useCallback(
@@ -3495,7 +3523,10 @@ export function TagCanvasEditor({
                             !handMode &&
                             !(layer.props.kind === 'group' && entered.has(layer.id))
                           }
-                          opacity={0.3}
+                          // Crop mode (S8, r6 S8 review, #723): same reason
+                          // as the clipped copy below - its own overlay
+                          // already draws this layer, correctly.
+                          opacity={layer.id === cropEditingLayerId ? 0 : 0.3}
                           interactionId={layer.id}
                           onSelect={handleCanvasSelect}
                           onDoubleClick={handleLayerDoubleClick}
@@ -3532,6 +3563,12 @@ export function TagCanvasEditor({
                             !handMode &&
                             !(layer.props.kind === 'group' && entered.has(layer.id))
                           }
+                          // Crop mode (S8, r6 S8 review, #723) draws its own
+                          // overlay for this SAME layer, at the correct
+                          // transform - the layer's own render has to hide
+                          // for as long as that is up, or the two show at
+                          // once and the picture looks doubled.
+                          opacity={layer.id === cropEditingLayerId ? 0 : undefined}
                           onSelect={handleCanvasSelect}
                           onDoubleClick={handleLayerDoubleClick}
                           onDragStart={handleDragStart}
@@ -3747,15 +3784,23 @@ export function TagCanvasEditor({
                       </Group>
                     )}
 
-                    {/* Crop mode (S8): the whole source at 40% opacity in
-                        its fitted (always CONTAIN) position, the crop
-                        window bright on top of it - the SAME image drawn a
-                        second time, opaque, clipped to the window; the
-                        opaque draw always wins there regardless of paint
-                        order (S4 review used the same reasoning for the
-                        ghost pass), so the two never fight over how that
-                        part looks. */}
-                    {cropEditingLayer && cropImage && cropFrame && cropDraft && (
+                    {/* Crop mode (S8, r6 S8 review, #723): the whole source
+                        at 40% opacity, the crop window bright on top of it -
+                        the SAME image drawn a second time at the SAME
+                        transform (`cropLayout.source`), opaque, clipped to
+                        the window (`cropLayout.window`); the opaque draw
+                        always wins there regardless of paint order (S4
+                        review used the same reasoning for the ghost pass),
+                        so the two never fight over how that part looks. One
+                        shared layout for both passes is the whole fix here -
+                        two independently-derived ones (the old always-
+                        CONTAIN whole-image frame the bright window carved a
+                        fraction out of) agreed with each other but not with
+                        what the layer actually draws, so the picture looked
+                        doubled. The layer's own render is hidden below
+                        (`opacity={0}` on its `KonvaTagLayer`) for as long as
+                        this is up, so the two never both show at once. */}
+                    {cropEditingLayer && cropImage && cropLayout && cropDraft && (
                       <Group
                         x={cropEditingLayer.x_mm * scale}
                         y={cropEditingLayer.y_mm * scale}
@@ -3763,37 +3808,37 @@ export function TagCanvasEditor({
                       >
                         <KonvaImage
                           image={cropImage}
-                          x={cropFrame.x}
-                          y={cropFrame.y}
-                          width={cropFrame.width}
-                          height={cropFrame.height}
+                          x={cropLayout.source.x}
+                          y={cropLayout.source.y}
+                          width={cropLayout.source.width}
+                          height={cropLayout.source.height}
                           opacity={0.4}
                           listening={false}
                         />
                         <Group
                           clipFunc={(ctx) => {
                             ctx.rect(
-                              cropFrame.x + cropDraft.x * cropFrame.width,
-                              cropFrame.y + cropDraft.y * cropFrame.height,
-                              cropDraft.width * cropFrame.width,
-                              cropDraft.height * cropFrame.height,
+                              cropLayout.window.x,
+                              cropLayout.window.y,
+                              cropLayout.window.width,
+                              cropLayout.window.height,
                             );
                           }}
                         >
                           <KonvaImage
                             image={cropImage}
-                            x={cropFrame.x}
-                            y={cropFrame.y}
-                            width={cropFrame.width}
-                            height={cropFrame.height}
+                            x={cropLayout.source.x}
+                            y={cropLayout.source.y}
+                            width={cropLayout.source.width}
+                            height={cropLayout.source.height}
                             listening={false}
                           />
                         </Group>
                         <Rect
-                          x={cropFrame.x + cropDraft.x * cropFrame.width}
-                          y={cropFrame.y + cropDraft.y * cropFrame.height}
-                          width={cropDraft.width * cropFrame.width}
-                          height={cropDraft.height * cropFrame.height}
+                          x={cropLayout.window.x}
+                          y={cropLayout.window.y}
+                          width={cropLayout.window.width}
+                          height={cropLayout.window.height}
                           stroke="#3b82f6"
                           strokeWidth={1.5}
                           listening={false}
@@ -3804,10 +3849,10 @@ export function TagCanvasEditor({
                             a handle wins an overlapping click. */}
                         <Rect
                           name="crop-window"
-                          x={cropFrame.x + cropDraft.x * cropFrame.width}
-                          y={cropFrame.y + cropDraft.y * cropFrame.height}
-                          width={cropDraft.width * cropFrame.width}
-                          height={cropDraft.height * cropFrame.height}
+                          x={cropLayout.window.x}
+                          y={cropLayout.window.y}
+                          width={cropLayout.window.width}
+                          height={cropLayout.window.height}
                           fill="transparent"
                           draggable={!handMode}
                           onDragStart={(e) => startCropDrag(null, { x: e.target.x(), y: e.target.y() })}
@@ -3815,12 +3860,8 @@ export function TagCanvasEditor({
                           onDragEnd={handleCropDragEnd}
                         />
                         {CROP_HANDLE_ANCHORS.map((anchor) => {
-                          const hx =
-                            cropFrame.x +
-                            (cropDraft.x + anchor.fx * cropDraft.width) * cropFrame.width;
-                          const hy =
-                            cropFrame.y +
-                            (cropDraft.y + anchor.fy * cropDraft.height) * cropFrame.height;
+                          const hx = cropLayout.window.x + anchor.fx * cropLayout.window.width;
+                          const hy = cropLayout.window.y + anchor.fy * cropLayout.window.height;
                           return (
                             <Rect
                               key={`crop-handle-${anchor.name}`}
