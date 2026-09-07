@@ -42,13 +42,20 @@ export interface ConsoleTurnResponse {
   /** What was read/heard, for the muted "Read from image: ..." / "Heard: ..." line. */
   media_text: string | null;
   media_error: string | null;
+  /** Item 6: the parser prompt version this turn actually ran (the trace's own
+   * `understood` fact); null when the turn never reached the parser. */
+  prompt_version: number | null;
 }
+
+export type ConsolePromptBase = 'full' | 'compact' | 'other';
 
 export interface ConsolePromptVersion {
   id: string;
   version: number;
   label: string | null;
   chars: number;
+  /** Item 6: the lineage of the body. The console defaults to the newest `full`. */
+  base: ConsolePromptBase;
 }
 
 export interface ConsoleMediaStatusResponse {
@@ -68,6 +75,9 @@ export interface ChatbotConsoleMessage {
    * the customer's own typed messages. */
   turnId?: string | null;
   branchKind?: string | null;
+  /** Item 6: the parser prompt version the turn ran - the small "v18" pill on a bot
+   * bubble. Absent/null = no pill. */
+  promptVersion?: number | null;
   /** Only the LAST bot bubble of a turn carries these - chips send that text on click. */
   quickReplies?: string[];
   /** Media status/preview, wired in commit 2. */

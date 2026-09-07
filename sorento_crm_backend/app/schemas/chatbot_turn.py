@@ -155,6 +155,10 @@ class ConsoleTurnResponse(BaseModel):
     # What was read/heard, for the muted "Read from image: ..." / "Heard: ..." line.
     media_text: str | None = None
     media_error: str | None = None
+    # Item 6 (8 Sep 2026): the parser prompt version this turn actually ran (the
+    # `understood` stage's own fact, the same value the trace screen shows), so each bot
+    # bubble can wear it. None when the turn never reached the parser.
+    prompt_version: int | None = None
 
 
 class ConsolePromptVersion(BaseModel):
@@ -162,6 +166,10 @@ class ConsolePromptVersion(BaseModel):
     version: int
     label: str | None = None
     chars: int
+    # Item 6: which lineage the body is - "full" (the live-derived body), "compact" (the
+    # S1b slim rewrite) or "other". Read off the opening of the template, see
+    # `console_service.prompt_base`. The console defaults to the newest "full".
+    base: str = "other"
 
 
 class ConsoleMediaStatusResponse(BaseModel):

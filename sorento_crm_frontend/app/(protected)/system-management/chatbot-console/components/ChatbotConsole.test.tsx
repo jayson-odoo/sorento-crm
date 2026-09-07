@@ -213,8 +213,8 @@ describe('ChatbotConsole - errors', () => {
 describe('ChatbotConsole - prompt version select', () => {
   it('passes the picked version id as prompt_version_id on the next turn', async () => {
     getConsolePromptVersions.mockResolvedValue([
-      { id: 'v-2', version: 2, label: null, chars: 120 },
-      { id: 'v-1', version: 1, label: 'production', chars: 100 },
+      { id: 'v-2', version: 2, label: null, chars: 120, base: 'compact' },
+      { id: 'v-1', version: 1, label: 'production', chars: 100, base: 'compact' },
     ]);
     postConsoleTurn.mockResolvedValue({
       turn_id: 't1',
@@ -232,7 +232,7 @@ describe('ChatbotConsole - prompt version select', () => {
     const triggers = document.querySelectorAll('[data-slot="searchable-select-trigger"]');
     // [0] = contact, [1] = prompt version.
     fireEvent.click(triggers[1]);
-    const option = await screen.findByText((text) => text.startsWith('v2 -'));
+    const option = await screen.findByText('v2 \u00b7 compact');
     fireEvent.click(option);
 
     fireEvent.change(textarea(), { target: { value: 'hello' } });
@@ -240,5 +240,103 @@ describe('ChatbotConsole - prompt version select', () => {
 
     await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(1));
     expect(postConsoleTurn.mock.calls[0][0]).toMatchObject({ prompt_version_id: 'v-2' });
+  });
+});
+
+const PROMPT_STORAGE_KEY = 'chatbot-console:prompt-version';
+
+const VERSIONS = [
+  { id: 'v-19', version: 19, label: 'production', chars: 35301, base: 'compact' as const },
+  { id: 'v-18', version: 18, label: null, chars: 53704, base: 'full' as const },
+  { id: 'v-17', version: 17, label: null, chars: 34513, base: 'compact' as const },
+  { id: 'v-16', version: 16, label: null, chars: 52919, base: 'full' as const },
+];
+
+function okTurn(promptVersion: number | null) {
+  return {
+    turn_id: 't1',
+    branch_kind: 'business_query',
+    reply_text: 'ok',
+    quick_replies: [],
+    send_messages: [],
+    session_vars: {},
+    trace_summary: { tool: null, args_short: null, crossdomain_rungs: [], reveals_dropped: [] },
+    prompt_version: promptVersion,
+  };
+}
+
+function promptTrigger(): Element {
+  // [0] = contact, [1] = prompt version.
+  return document.querySelectorAll('[data-slot="searchable-select-trigger"]')[1];
+}
+
+describe('ChatbotConsole - item 6, the prompt version defaults to the newest FULL body', () => {
+  it('a fresh load pins the newest full version, not the newest overall and not the label', async () => {
+    getConsolePromptVersions.mockResolvedValue(VERSIONS);
+    postConsoleTurn.mockResolvedValue(okTurn(18));
+    renderConsole();
+
+    await waitFor(() => expect(promptTrigger().textContent).toContain('v18 \u00b7 full'));
+
+    fireEvent.change(textarea(), { target: { value: 'hello' } });
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+    await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(1));
+    expect(postConsoleTurn.mock.calls[0][0]).toMatchObject({ prompt_version_id: 'v-18' });
+  });
+
+  it('the option label reads version, base and label, never a UUID', async () => {
+    getConsolePromptVersions.mockResolvedValue(VERSIONS);
+    renderConsole();
+    await waitFor(() => expect(promptTrigger().textContent).toContain('v18'));
+    fireEvent.click(promptTrigger());
+    expect(await screen.findByText('v19 \u00b7 compact \u00b7 production')).toBeInTheDocument();
+    expect(screen.queryByText(/v-19/)).not.toBeInTheDocument();
+  });
+
+  it('a stored explicit choice is restored when it still exists', async () => {
+    window.localStorage.setItem(PROMPT_STORAGE_KEY, JSON.stringify({ id: 'v-17' }));
+    getConsolePromptVersions.mockResolvedValue(VERSIONS);
+    renderConsole();
+    await waitFor(() => expect(promptTrigger().textContent).toContain('v17 \u00b7 compact'));
+  });
+
+  it('a stored choice for a version that no longer exists falls back to the default', async () => {
+    window.localStorage.setItem(PROMPT_STORAGE_KEY, JSON.stringify({ id: 'v-gone' }));
+    getConsolePromptVersions.mockResolvedValue(VERSIONS);
+    renderConsole();
+    await waitFor(() => expect(promptTrigger().textContent).toContain('v18 \u00b7 full'));
+  });
+
+  it('picking a version persists it for the next visit', async () => {
+    getConsolePromptVersions.mockResolvedValue(VERSIONS);
+    renderConsole();
+    await waitFor(() => expect(promptTrigger().textContent).toContain('v18'));
+    fireEvent.click(promptTrigger());
+    fireEvent.click(await screen.findByText('v16 \u00b7 full'));
+    await waitFor(() =>
+      expect(JSON.parse(window.localStorage.getItem(PROMPT_STORAGE_KEY) as string)).toEqual({ id: 'v-16' }),
+    );
+  });
+});
+
+describe('ChatbotConsole - item 6, the version pill', () => {
+  it('a bot bubble wears the version its turn ran; user bubbles and null wear none', async () => {
+    getConsolePromptVersions.mockResolvedValue(VERSIONS);
+    postConsoleTurn.mockResolvedValueOnce(okTurn(18)).mockResolvedValueOnce(okTurn(null));
+    renderConsole();
+    await waitFor(() => expect(promptTrigger().textContent).toContain('v18'));
+
+    fireEvent.change(textarea(), { target: { value: 'hello' } });
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+    await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(1));
+    const pills = await screen.findAllByTestId('chatbot-console-prompt-pill');
+    expect(pills).toHaveLength(1);
+    expect(pills[0].textContent).toBe('v18');
+
+    fireEvent.change(textarea(), { target: { value: 'again' } });
+    fireEvent.keyDown(textarea(), { key: 'Enter' });
+    await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(2));
+    await screen.findByText('again');
+    expect(screen.getAllByTestId('chatbot-console-prompt-pill')).toHaveLength(1);
   });
 });

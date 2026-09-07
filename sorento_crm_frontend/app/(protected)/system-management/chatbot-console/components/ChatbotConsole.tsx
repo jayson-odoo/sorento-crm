@@ -27,9 +27,9 @@ async function fetchContactOptions(query: string): Promise<SearchableSelectOptio
     }));
 }
 
-function promptVersionLabel(version: { version: number; label: string | null; chars: number }): string {
-  const base = `v${version.version} - ${version.chars} chars`;
-  return version.label ? `${base} (${version.label})` : base;
+/** "v18 · full · production": version, lineage, label when any - never a UUID. */
+function promptVersionLabel(version: { version: number; label: string | null; base: string }): string {
+  return [`v${version.version}`, version.base, version.label].filter(Boolean).join(' \u00b7 ');
 }
 
 function MediaPreview({ message }: { message: ChatbotConsoleMessage }) {
@@ -90,11 +90,22 @@ function MessageBubble({
             </button>
           </div>
         ) : null}
-        {message.branchKind ? (
+        {message.branchKind || (!isUser && message.promptVersion != null) ? (
           <div className="mt-1.5 flex flex-wrap items-center gap-2">
-            <Badge variant="secondary" size="sm">
-              {message.branchKind}
-            </Badge>
+            {message.branchKind ? (
+              <Badge variant="secondary" size="sm">
+                {message.branchKind}
+              </Badge>
+            ) : null}
+            {!isUser && message.promptVersion != null ? (
+              <span
+                className="rounded-full border border-border/60 px-1.5 py-0.5 text-2xs leading-none text-muted-foreground"
+                title="Parser prompt version this reply ran"
+                data-testid="chatbot-console-prompt-pill"
+              >
+                v{message.promptVersion}
+              </span>
+            ) : null}
             {message.turnId ? (
               <Link
                 href={`/system-management/chat-history?turn=${encodeURIComponent(message.turnId)}`}

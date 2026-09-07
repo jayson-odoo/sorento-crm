@@ -95,6 +95,8 @@ class ConsoleTurnResult:
         "media_id",
         "media_text",
         "media_error",
+        # Item 6: the parser prompt version the turn ran, off the `understood` stage.
+        "prompt_version",
     )
 
     def __init__(self, **kwargs: Any) -> None:
@@ -316,6 +318,54 @@ def _empty_trace_summary() -> dict[str, Any]:
     return {"tool": None, "args_short": None, "crossdomain_rungs": [], "reveals_dropped": []}
 
 
+def trace_prompt_version(trace: Any) -> int | None:
+    """The parser prompt version a turn ran: the `understood` stage record's
+    `facts.prompt_version` (engine.py writes it from `parser_config.prompt_version`; the
+    trace screen's `trace_detail._parse` reads the same field). None when the turn never
+    reached the parser or the record carries no version."""
+    for record in trace or []:
+        if not isinstance(record, dict) or record.get("kind") is not None:
+            continue
+        if record.get("stage") == "understood":
+            facts = record.get("facts") if isinstance(record.get("facts"), dict) else {}
+            value = facts.get("prompt_version")
+            return int(value) if isinstance(value, int) and not isinstance(value, bool) else None
+    return None
+
+
+def _turn_prompt_version(db: Session, turn_id: str | None) -> int | None:
+    if not turn_id:
+        return None
+    row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+    return trace_prompt_version(row.trace if row else None)
+
+
+_BASE_PROBE_CHARS = 200
+
+
+def prompt_base(template: Any) -> str:
+    """Which lineage a parser prompt version belongs to: "full" (the live-derived body,
+    `SEMANTIC_PARSER_PROMPT`), "compact" (the S1b slim rewrite, `SEMANTIC_PARSER_PROMPT_SLIM`)
+    or "other". The two bodies diverge inside their first 200 characters ("...last
+    message to the user (may be" against "...last message (may be"), and every published
+    version of either lineage is that body with rules appended or woven in further down,
+    so the opening is the lineage. Item 6 (8 Sep 2026): the console defaults to the newest
+    "full" rather than to the production label, which locally sits on the compact one."""
+    from app.services.chatbot_parser_prompt import (
+        SEMANTIC_PARSER_PROMPT,
+        SEMANTIC_PARSER_PROMPT_SLIM,
+    )
+
+    head = template[:_BASE_PROBE_CHARS] if isinstance(template, str) else ""
+    if not head:
+        return "other"
+    if head == SEMANTIC_PARSER_PROMPT[:_BASE_PROBE_CHARS]:
+        return "full"
+    if head == SEMANTIC_PARSER_PROMPT_SLIM[:_BASE_PROBE_CHARS]:
+        return "compact"
+    return "other"
+
+
 def run_console_turn(
     db: Session,
     *,
@@ -380,6 +430,7 @@ def run_console_turn(
         send_messages=send_messages,
         session_vars=_next_state(body),
         trace_summary=_trace_summary(db, body.get("turn_id")),
+        prompt_version=_turn_prompt_version(db, body.get("turn_id")),
     )
 
 

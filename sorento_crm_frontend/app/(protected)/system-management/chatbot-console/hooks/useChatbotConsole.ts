@@ -14,10 +14,14 @@ import {
   CONSOLE_GREETING_MESSAGES,
   type ChatbotConsoleMessage,
   type ConsoleMediaInput,
+  type ConsolePromptVersion,
   type ConsoleTurnResponse,
 } from '../types/chatbotConsole.types';
 
 const LAST_CONTACT_STORAGE_KEY = 'chatbot-console:last-contact';
+// Item 6: the operator's EXPLICIT prompt-version choice, next to the stored contact. Same
+// helper shape; `{ id: null }` is a real choice too (the live production label).
+export const PROMPT_VERSION_STORAGE_KEY = 'chatbot-console:prompt-version';
 // How often the "still reading/transcribing" poll checks back, once a media turn's own
 // synchronous wait already timed out server-side. Matches the plan's own "every 2 s".
 const MEDIA_POLL_INTERVAL_MS = 2000;
@@ -67,6 +71,42 @@ function writeStoredContact(contact: StoredContact): void {
   }
 }
 
+interface StoredPromptChoice {
+  id: string | null;
+}
+
+function readStoredPromptChoice(): StoredPromptChoice | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(PROMPT_VERSION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<StoredPromptChoice>;
+    if (parsed.id === null || typeof parsed.id === 'string') return { id: parsed.id };
+  } catch {
+    // Ignored - a corrupt value is the same as absent.
+  }
+  return null;
+}
+
+function writeStoredPromptChoice(choice: StoredPromptChoice): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(PROMPT_VERSION_STORAGE_KEY, JSON.stringify(choice));
+  } catch {
+    // Storage can be full or disabled; the console still works, it just forgets next visit.
+  }
+}
+
+/** Item 6: the version the console pins when the operator has not chosen one - the NEWEST
+ * `full` body, never the newest overall and never the production label (which locally
+ * sits on the compact lineage: the owner's turns ran the compact base twice unnoticed).
+ * Null when no full version exists. */
+export function defaultPromptVersionId(versions: ConsolePromptVersion[]): string | null {
+  const full = versions.filter((v) => v.base === 'full');
+  if (full.length === 0) return null;
+  return full.reduce((best, v) => (v.version > best.version ? v : best)).id;
+}
+
 /** A contact row's display label, the same "no UUIDs in the UI" rule every other picker
  * follows - falls back to the phone, then to the id only when NEITHER name nor phone is on
  * file (a respond.io id is a short reference number, not an internal UUID). */
@@ -85,6 +125,7 @@ function turnBubbles(result: ConsoleTurnResponse, fallbackId: string): ChatbotCo
     text: body,
     turnId: result.turn_id,
     branchKind: index === 0 ? result.branch_kind : undefined,
+    promptVersion: result.prompt_version ?? null,
     quickReplies: index === bodies.length - 1 ? result.quick_replies : undefined,
   }));
 }
@@ -100,7 +141,11 @@ function mediaStatusLine(kind: 'image' | 'audio'): string {
 export function useChatbotConsole() {
   const [contactId, setContactIdState] = useState<string | null>(null);
   const [contactLabelState, setContactLabelState] = useState<string>('');
-  const [promptVersionId, setPromptVersionId] = useState<string | null>(null);
+  const [promptVersionId, setPromptVersionIdState] = useState<string | null>(null);
+  // Item 6: set once the versions have loaded - the stored choice when it still exists,
+  // else the newest full body. A later explicit clear (null = live label) must not be
+  // re-defaulted, which is what this flag guards.
+  const promptChoiceApplied = useRef(false);
   const [runId, setRunId] = useState<string>(() => newRunId());
   const [sessionVars, setSessionVars] = useState<Record<string, unknown> | null>({});
   const [messages, setMessages] = useState<ChatbotConsoleMessage[]>(() => greetingMessages());
@@ -116,6 +161,29 @@ export function useChatbotConsole() {
     queryFn: getConsolePromptVersions,
     staleTime: 60_000,
   });
+
+  const promptVersions = promptVersionsQuery.data;
+  useEffect(() => {
+    if (promptChoiceApplied.current || !promptVersions) return;
+    promptChoiceApplied.current = true;
+    const stored = readStoredPromptChoice();
+    if (stored) {
+      // An explicit "live label" choice (null) stands; a stored id must still exist - a
+      // deleted version falls back to the default rather than pinning a ghost.
+      if (stored.id === null) return;
+      if (promptVersions.some((v) => v.id === stored.id)) {
+        setPromptVersionIdState(stored.id);
+        return;
+      }
+    }
+    setPromptVersionIdState(defaultPromptVersionId(promptVersions));
+  }, [promptVersions]);
+
+  const setPromptVersionId = useCallback((id: string | null) => {
+    promptChoiceApplied.current = true;
+    setPromptVersionIdState(id);
+    writeStoredPromptChoice({ id });
+  }, []);
 
   // Default contact: last used from localStorage, else the contact of the most recent
   // LIVE turn (excludes test/console turns by construction - `getChatbotTurns` defaults

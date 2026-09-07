@@ -541,6 +541,7 @@ def console_turn(
         media_id=result.media_id,
         media_text=result.media_text,
         media_error=result.media_error,
+        prompt_version=result.prompt_version,
     )
 
 
@@ -591,6 +592,7 @@ def console_prompt_versions(
             version=int(row.version),
             label=label_by_version_id.get(str(row.id)),
             chars=len(row.template or ""),
+            base=console_service.prompt_base(row.template),
         )
         for row in rows
     ]

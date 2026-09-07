@@ -304,3 +304,63 @@ class TestConsolePromptVersions:
         assert by_version[2]["label"] is None
         assert by_version[1]["chars"] == 10
         assert by_version[2]["chars"] == 25
+
+
+class TestConsolePromptVersionBase:
+    """Item 6 (8 Sep 2026): the owner's turns silently ran the compact base twice because
+    the console's null choice meant "the production label", which locally sits on the
+    compact lineage. Every version now says which base it is, so the FE can default to
+    the newest FULL one."""
+
+    def test_base_is_read_off_the_first_200_chars(self):
+        from app.services.chatbot_parser_prompt import (
+            SEMANTIC_PARSER_PROMPT,
+            SEMANTIC_PARSER_PROMPT_SLIM,
+        )
+
+        assert console_service.prompt_base(SEMANTIC_PARSER_PROMPT) == "full"
+        assert console_service.prompt_base(SEMANTIC_PARSER_PROMPT_SLIM) == "compact"
+        # an edit further down the body keeps its lineage
+        assert console_service.prompt_base(SEMANTIC_PARSER_PROMPT + "\nADDED") == "full"
+        assert console_service.prompt_base(SEMANTIC_PARSER_PROMPT_SLIM[:5000] + "x") == "compact"
+        assert console_service.prompt_base("You are something else entirely.") == "other"
+        assert console_service.prompt_base("") == "other"
+        assert console_service.prompt_base(None) == "other"
+
+    def test_the_list_carries_base_per_version(self, client, session_factory):
+        from app.services.chatbot_parser_prompt import (
+            SEMANTIC_PARSER_PROMPT,
+            SEMANTIC_PARSER_PROMPT_SLIM,
+        )
+
+        db = session_factory()
+        db.add_all(
+            [
+                AIPromptVersion(name=console_service.PARSER_PROMPT_KEY, version=1, template=SEMANTIC_PARSER_PROMPT, variables=[]),
+                AIPromptVersion(name=console_service.PARSER_PROMPT_KEY, version=2, template=SEMANTIC_PARSER_PROMPT_SLIM, variables=[]),
+                AIPromptVersion(name=console_service.PARSER_PROMPT_KEY, version=3, template="something else", variables=[]),
+            ]
+        )
+        db.commit()
+        resp = client.get(PROMPT_VERSIONS_URL)
+        assert resp.status_code == 200, resp.text
+        assert {row["version"]: row["base"] for row in resp.json()} == {1: "full", 2: "compact", 3: "other"}
+
+
+class TestConsoleTurnCarriesThePromptVersion:
+    def test_prompt_version_is_read_off_the_understood_stage(self):
+        trace = [
+            {"stage": "received", "status": "ok", "facts": {}},
+            {"stage": "understood", "status": "ok", "facts": {"prompt_version": 18, "model": None}},
+            {"kind": "tool", "payload": {"name": "x"}},
+        ]
+        assert console_service.trace_prompt_version(trace) == 18
+        assert console_service.trace_prompt_version([{"stage": "received", "facts": {}}]) is None
+        assert console_service.trace_prompt_version([]) is None
+        assert console_service.trace_prompt_version(None) is None
+
+    def test_the_turn_response_declares_prompt_version(self, client, stub_console_seams):
+        from app.schemas.chatbot_turn import ConsoleTurnResponse
+
+        assert "prompt_version" in ConsoleTurnResponse.model_fields
+        assert ConsoleTurnResponse(trace_summary=console_service._empty_trace_summary()).prompt_version is None
