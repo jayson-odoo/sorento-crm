@@ -45,7 +45,7 @@ class ToolSpec:
     escalation_team: str = ""  # "sales" | "support" | "warehouse" | "procurement" | "".
     # Field-reveal keys this tool's presenter marks `restricted=<key>` in
     # `field_vocabulary`, one (key, label) pair per gated field - e.g.
-    # `(("inventory.sellable", "Sellable stock"),)`. Static, not read off a live
+    # `(("inventory.sellable", "Open SO and Available on stock answers"),)`. Static, not read off a live
     # response: `mcp_tool_registry_service.sync_catalog` copies this straight into
     # `mcp_tools.restricted_fields` without ever calling the tool. Empty for a tool
     # with nothing restricted (the common case).
@@ -493,7 +493,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         # `mcp_tools.restricted_fields`, which is what the Contacts > Access > Field
         # reveals checklist (Slice C) lists and grants against. Without it the checklist
         # has nothing to show and PUT refuses every key as unknown.
-        restricted_fields=(("inventory.sellable", "Sellable stock"),),
+        restricted_fields=(("inventory.sellable", "Open SO and Available on stock answers"),),
     ),
     ToolSpec(
         "crm_inventory_warehouses_list",
