@@ -73,11 +73,12 @@ CATALOG: tuple[ToolSpec, ...] = (
             "spec sentence) and `sources` (per key: derived | human | category, i.e. where the "
             "value came from). Null on a product with no derived specs, which means 'not recorded', never "
             "'does not have it'. Default false; omit it for a plain price/dimension listing.\n\n"
-            "SPEC LIST (A1, chatbot-growth-r1): `include_specs` (always sent by the render presenter) adds "
+            "SPEC LIST (A1, chatbot-growth-r1): pass `include_specs=true` to add "
             "`specs: [{key, label, value, unit, rank_weight}]` - only populated keys, ordered by "
-            "rank_weight desc then label. Distinct from `include_specifications` above (this is the "
-            "ranked-list shape the render presenter appends as fields; that one is the sentence/values "
-            "block for a catalogue editor).\n\n"
+            "rank_weight desc then label. Default false; omit it for a plain price/dimension listing. "
+            "Distinct from `include_specifications` above (this is the ranked-list shape the render "
+            "presenter appends as fields; that one is the sentence/values block for a catalogue "
+            "editor).\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),
@@ -463,10 +464,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "'50' after being asked how many), pass that number as `requested_qty`. Some contacts are "
             "answered yes/no against it instead of with quantities, and without it the reply can only "
             "ask how many units they need.\n\n"
-            "SELLABLE: `include_sellable=true` (always sent by the render presenter) adds `open_so_qty` "
-            "(open sales-order quantity not yet a delivery order) and `sellable` (on_hand minus "
-            "open_so_qty, negative when oversold) per row. Field-reveal gated downstream, not by this "
-            "tool.\n\n"
+            "SELLABLE: pass `include_sellable=true` to add `open_so_qty` (open sales-order quantity "
+            "not yet a delivery order) and `sellable` (on_hand minus open_so_qty, negative when "
+            "oversold) per row. Default false. Field-reveal gated downstream, not by this tool.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results. "
             "Pass BOTH or NEITHER: `contact_id` without `space_id` returns no rows."
@@ -520,9 +520,11 @@ CATALOG: tuple[ToolSpec, ...] = (
             "QUANTITY ASK: pass `include_summary=true` when the user asks HOW MANY / how much a customer "
             "took of a product — the response then carries `summary` (filter-wide delivered/pending "
             "quantity per product, counts, customers, delivered date span, the span of DO dates over "
-            "every DO in the row delivered or not, plus so_outstanding_qty/so_outstanding_count over open "
-            "SO lines for the same customer_ids/product_ids scope). Omit for a plain DO list. "
-            "'outstanding' = NOT yet delivered (New Order, Processing, In Transit, Cancelled, or a "
+            "every DO in the row delivered or not). Add `include_pipeline=true` alongside it for the "
+            "three-line SO outstanding / DO open / delivered pipeline (so_outstanding_qty/"
+            "so_outstanding_count over open SO lines for the same customer_ids/product_ids scope, folded "
+            "into `summary`); default false, independent of `include_summary`. Omit both for a plain DO "
+            "list. 'outstanding' = NOT yet delivered (New Order, Processing, In Transit, Cancelled, or a "
             "delivery date under a non-delivered status); 'delivered' = status delivered/completed AND "
             "actual_delivery_date set. Use for 'outstanding/pending/undelivered orders', 'belum hantar', "
             "'not delivered yet'. AND'd with the other filters.\n\n"
@@ -538,7 +540,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         (
             "page", "limit", "order_ids", "customer_ids", "product_ids", "transporter_ids",
             "actual_delivery_date_from", "actual_delivery_date_to", "order_status", "include_summary",
-            "group_by", "sort", "dir",
+            "include_pipeline", "group_by", "sort", "dir",
             "contact_id", "space_id",
         ),
         domain="orders",

@@ -355,10 +355,22 @@ async def get_orders(
         False,
         description=(
             "true = also return `summary`: filter-wide measures (order/delivered/pending "
-            "counts, customers, delivered date span, per-product delivered/pending quantity "
-            "when product_ids is given, plus so_outstanding_qty/so_outstanding_count over "
-            "open SO lines for the same customer_ids/product_ids scope). Send it when the "
-            "user asks HOW MANY / how much was taken; omit for a plain DO list."
+            "counts, customers, delivered date span, per-product delivered/pending "
+            "quantity when product_ids is given). Send it when the user asks HOW MANY / "
+            "how much was taken; omit for a plain DO list."
+        ),
+    ),
+    include_pipeline: bool = Query(
+        False,
+        description=(
+            "true = also fold so_outstanding_qty/so_outstanding_count (open SO lines for "
+            "the same customer_ids/product_ids scope) into `summary`, so a render "
+            "presenter can show the three-line SO outstanding / DO open / delivered "
+            "pipeline (AC-905b). Opt-in and independent of `include_summary` on purpose "
+            "(fix, 7 Sep 2026): the CRM's own chatbot lane sets it alongside "
+            "`include_summary` on a quantity ask; a caller that only asks for "
+            "`include_summary` (every pre-existing caller, n8n included) gets exactly "
+            "the summary shape it got before this field existed."
         ),
     ),
     group_by: Optional[str] = Query(
@@ -550,7 +562,18 @@ async def get_orders(
                     value_fn=(lambda o, _k=axis_source: o.get(_k) if _k else None),
                 )
                 body["groups"] = groups
-            if include_summary and isinstance(body.get("summary"), dict):
+            # `include_pipeline` (fix, 7 Sep 2026): gated SEPARATELY from
+            # `include_summary` above - folding `so_outstanding_qty` in unconditionally
+            # on every `include_summary=true` call put it in front of every existing
+            # caller that never asked for it, n8n's quantity-ask workflow included, and
+            # its presence alone is what `sorento_crm_mcp/presenters.py`'s
+            # `_pipeline_summary_items` renders on. A caller that wants the three-line
+            # pipeline now has to ask for it by name.
+            if (
+                include_summary
+                and include_pipeline
+                and isinstance(body.get("summary"), dict)
+            ):
                 body["summary"].update(
                     so_outstanding_summary(
                         db, customer_ids=_resolved_customer_ids, product_ids=_resolved_product_ids

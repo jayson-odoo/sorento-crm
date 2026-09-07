@@ -533,6 +533,39 @@ def entity_ids_transformer(
         jsc.nullish_str(a).strip() == "quantity" for a in req_attrs
     ):
         out["include_summary"] = True
+        # `include_pipeline` (fix, 7 Sep 2026): opt-in, separately from
+        # `include_summary` above, for the SAME reason `include_specs` /
+        # `include_sellable` below are opt-in rather than a server-level default - the
+        # MCP server is shared with n8n, and n8n's own quantity-ask workflow already
+        # sends `include_summary=true` today. The CRM asks for the three-line pipeline
+        # by name; a caller that only asks `include_summary` gets the summary shape it
+        # got before this plan.
+        out["include_pipeline"] = True
+
+    # A1/A2 (chatbot-growth-r1), opt-in from THIS caller (fix, 7 Sep 2026): these two
+    # used to be defaulted ON in `sorento_crm_mcp/server.py`'s
+    # `TOOL_DEFAULT_QUERY_PARAMS` for every caller of the shared MCP server - n8n
+    # included, which never asked for either and has no field-reveal filter of its
+    # own. Moved here so only the CRM's own turn opts in, per the reason that turn
+    # actually has:
+    #   - `include_specs`: a product SPEC question ("SRTWC8517 spec", "wattage of
+    #     X") - `check_product` intent or the `master_products` domain, the same
+    #     pair A1's presenter branch reads.
+    #   - `include_sellable`: only when the contact's OWN access grants
+    #     `inventory.sellable` (Slice C's `contact_field_reveals`, read off `ctx.access`
+    #     the same way A2's restricted-field drop reads it) - asking for a number the
+    #     renderer would then have to hide is pointless, and every other contact's call
+    #     stays the pre-A2 shape.
+    if tool_name == "crm_master_products_list" and (
+        jsc.get(semantic_input, "intent_hint") == "check_product"
+        or jsc.get(semantic_input, "domain_hint") == "master_products"
+    ):
+        out["include_specs"] = True
+    if tool_name == "crm_inventory_stock_balance_list":
+        access = trig.get("access") if isinstance(trig.get("access"), dict) else {}
+        attributes = access.get("attributes") if isinstance(access.get("attributes"), list) else []
+        if "inventory.sellable" in attributes:
+            out["include_sellable"] = True
 
     # group_by / top_n (A3, AC-909/AC-910): additive parser keys, uniform across
     # every list tool this plan touches. `top_n` aliases to `limit` for the

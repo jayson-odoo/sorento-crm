@@ -207,9 +207,12 @@ def test_route_do_bucket_group_by_customer(client, db):
     assert {g["key"] for g in groups} == {"ABC", "XYZ"}
 
 
-def test_route_include_summary_adds_so_outstanding_pipeline_leg(client, db):
-    """AC-905b: `include_summary=true` on the plain DO bucket also carries the
-    SO-outstanding leg of the three-line pipeline, scoped by the same filters."""
+def test_route_include_summary_and_include_pipeline_adds_so_outstanding_pipeline_leg(client, db):
+    """AC-905b: `include_summary=true` PLUS `include_pipeline=true` on the plain DO
+    bucket carries the SO-outstanding leg of the three-line pipeline, scoped by the
+    same filters. `include_pipeline` is opt-in and separate from `include_summary`
+    (fix, 7 Sep 2026, see the next test) - the CRM's chatbot lane sends both together
+    on a quantity ask; nothing else in this codebase sends `include_pipeline`."""
     cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ABC")
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
     wh = warehouse(db, company_id=DEFAULT_COMPANY_ID)
@@ -221,12 +224,44 @@ def test_route_include_summary_adds_so_outstanding_pipeline_leg(client, db):
 
     resp = client.get(
         BASE,
-        params={"customer_ids": cust.id, "product_ids": prod.id, "include_summary": "true"},
+        params={
+            "customer_ids": cust.id,
+            "product_ids": prod.id,
+            "include_summary": "true",
+            "include_pipeline": "true",
+        },
     )
     assert resp.status_code == 200, resp.text
     summary = resp.json()["summary"]
     assert summary["so_outstanding_qty"] == 7
     assert summary["so_outstanding_count"] == 1
+
+
+def test_route_include_summary_alone_never_adds_the_pipeline_leg(client, db):
+    """Fix, 7 Sep 2026: `include_summary=true` WITHOUT `include_pipeline=true` must
+    stay exactly the pre-A3 shape - this is what an old caller (n8n's own
+    quantity-ask workflow, which already sends `include_summary=true` and has never
+    heard of `include_pipeline`) gets today, and it must not gain a new field it
+    never asked for. `so_outstanding_qty`'s presence alone is what
+    `sorento_crm_mcp/presenters.py::_pipeline_summary_items` renders on, so leaking
+    it here would show every DO caller a pipeline it did not ask for."""
+    cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ABC")
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID)
+    o1 = order(db, company_id=DEFAULT_COMPANY_ID, customer_id=cust.id)
+    o1.debtor_name = "ABC"
+    order_line(db, company_id=DEFAULT_COMPANY_ID, order_id=o1.id, product_id=prod.id, warehouse_id=wh.id)
+    _so_line(db, customer_id=cust.id, product_id=prod.id, ordered=9, delivered=2)
+    db.commit()
+
+    resp = client.get(
+        BASE,
+        params={"customer_ids": cust.id, "product_ids": prod.id, "include_summary": "true"},
+    )
+    assert resp.status_code == 200, resp.text
+    summary = resp.json()["summary"]
+    assert "so_outstanding_qty" not in summary
+    assert "so_outstanding_count" not in summary
 
 
 def test_route_list_do_without_include_summary_has_no_pipeline(client, db):
