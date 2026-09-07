@@ -235,7 +235,8 @@ cases:
 
   # ======================================================================================
   # A6 - the SPO last receipt (AC-908). The date LABEL names the column that answered;
-  # on this database that is always "Received (recorded)" (A0's measurement: both shipment
+  # on this database that is always "Received" - the recorded timestamp, the label lost its
+  # "(recorded)" on 8 Sep 2026 (owner, D5) - (A0's measurement: both shipment
   # date columns are populated on 1 of 79,747 received rows).
   # ======================================================================================
 

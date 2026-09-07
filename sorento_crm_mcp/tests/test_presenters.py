@@ -439,11 +439,11 @@ def test_spo_last_receipt_fallback_label_when_no_shipment_date():
     out = env("crm_procurement_spo_allocations_last_receipt_list", {
         "data": [{
             "spo_number": "SPO-2026-02", "product_code": "P1",
-            "quantity_received": 5, "date": "2026-06-01", "date_label": "Received (recorded)",
+            "quantity_received": 5, "date": "2026-06-01", "date_label": "Received",
         }],
     })
     f = {x["label"]: x["value"] for x in out["items"][0]["fields"]}
-    assert f["Received (recorded)"] == "2026-06-01"
+    assert f["Received"] == "2026-06-01"
 
 
 def test_stock_omits_sellable_when_backend_did_not_send_it():

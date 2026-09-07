@@ -1208,7 +1208,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         description=(
             "Most recent received SPO allocation rows for a product: spo_number, "
             "quantity_received, the date actually recorded plus a date_label naming which "
-            "column answered ('Arrived', 'Arrived (port)', 'Received (recorded)'), and "
+            "column answered ('Arrived', 'Arrived (port)', 'Received'), and "
             "warehouse. Use this for 'when did we last receive this and how much'. NOT for "
             "current stock on hand (crm_inventory_stock_balance_list) and NOT for what is still "
             "on the way (crm_incoming_stock_by_product). top_n defaults to 1; 'last 3 in' is "

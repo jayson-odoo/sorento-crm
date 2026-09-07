@@ -1064,7 +1064,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "'last incoming qty', '上次进货', 'last 3 in'. Each row carries spo_number, "
             "product_code, quantity_received, date (the most recent one actually recorded - "
             "see date_label), date_label (which column answered: 'Arrived' = warehouse "
-            "arrival, 'Arrived (port)' = the shipment's port arrival, 'Received (recorded)' = "
+            "arrival, 'Arrived (port)' = the shipment's port arrival, 'Received' = "
             "no shipment date at all, just when the receipt was recorded), and warehouse.\n\n"
             "FILTER BY UUID: `product_ids`, `warehouse_ids` (canonical UUIDs, csv / JSON / "
             "repeated), both optional. `top_n` (default 1) - 'last 3 in' -> top_n=3.\n\n"

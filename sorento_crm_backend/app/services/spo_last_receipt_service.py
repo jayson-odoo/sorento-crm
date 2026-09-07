@@ -77,7 +77,9 @@ def last_receipt_rows(
             date_label = "Arrived (port)"
         else:
             date_value = alloc.created_at.date() if alloc.created_at else None
-            date_label = "Received (recorded)"
+            # The column is the allocation's recorded timestamp (`created_at`); the
+            # customer-facing label lost its "(recorded)" on 8 Sep 2026 (owner, D5).
+            date_label = "Received"
         out.append(
             {
                 "spo_number": alloc.spo_number,

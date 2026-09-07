@@ -117,7 +117,7 @@ def test_last_receipt_falls_back_to_created_at_when_no_shipment_dates(db):
     db.refresh(alloc)
 
     rows = last_receipt_rows(db, product_ids=[prod.id])
-    assert rows[0]["date_label"] == "Received (recorded)"
+    assert rows[0]["date_label"] == "Received"  # D5: no "(recorded)" for the customer
     assert rows[0]["date"] == alloc.created_at.date().isoformat()
 
 
