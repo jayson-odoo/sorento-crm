@@ -30,7 +30,12 @@ import re
 from typing import Any
 
 from app.services.chatbot import jsc, topic
-from app.services.chatbot.contracts import DEFAULT_SUGGESTED_TEAM, ENTITY_HINTS, INTENT_HINTS
+from app.services.chatbot.contracts import (
+    DEFAULT_SUGGESTED_TEAM,
+    ENTITY_HINTS,
+    INTENT_HINTS,
+    coerce_domain_hint,
+)
 
 
 class ParserOutputError(ValueError):
@@ -983,6 +988,13 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     #     so it mis-fires the domain->business_query clobber. Coerce to real null here.
     o["domain_hint"] = norm(o.get("domain_hint"))
     o["intent_hint"] = norm(o.get("intent_hint"))
+    # (c) F3 (review, 7 Sep 2026, evidence turn b5b19cec-dccc-4eda-b766-1aeb1362957b): a
+    #     `domain_hint` outside the prompt's own enum - "purchasing", a TEAM name - zeroed
+    #     `select_tool`'s `source_id LIKE '%purchasing%'` filter and ended the turn
+    #     `not_found`. Coerced here, the same place the literal string "null" already is,
+    #     so every downstream reader sees one clean signal. `coerce_domain_hint` carries
+    #     the evidence and is the SAME guard the engine puts on the carried domain.
+    o["domain_hint"] = coerce_domain_hint(o["domain_hint"])
 
     # reuse means "no new value this turn" - but if the parser emitted current entities it
     # contradicts itself. Promote to additive replace_combine so the new value survives.

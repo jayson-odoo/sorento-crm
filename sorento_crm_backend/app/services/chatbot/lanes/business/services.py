@@ -247,6 +247,48 @@ def _embed(db: Session) -> EmbedFn:
     return call
 
 
+# F4 (review, 7 Sep 2026, evidence turn 147d6888-d313-4612-a32f-364cec119ec4): "incoming
+# TIIU6323920" picked `crm_incoming_stock_shipments` (0.4675) over `crm_incoming_stock_list`
+# (0.4537). The shipments tool's header carries no clearance checkpoints and no
+# `field_access` block, so the container timeline can never render from it -
+# `apply_field_access` (`app/api/v1/incoming_stock.py` `/list`) is the only place clearance
+# gating is wired, and the n8n spine this engine replaced called only the list tool.
+# `crm_incoming_stock_by_product` is DELIBERATELY untouched: it renders batch numbers and
+# the catalog routes product asks to it on purpose, so it is a real answer, not a stand-in.
+_INCOMING_SHIPMENTS_TOOL = "crm_incoming_stock_shipments"
+_INCOMING_LIST_TOOL = "crm_incoming_stock_list"
+
+
+def _tool_similarity(tool: dict[str, Any]) -> float:
+    try:
+        return float(tool.get("similarity", float("-inf")))
+    except (TypeError, ValueError):
+        return float("-inf")
+
+
+def _collapse_incoming_shipments(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rename `crm_incoming_stock_shipments` to `crm_incoming_stock_list` in place, keeping
+    its similarity and recording `collapsed_from` on the renamed candidate.
+
+    Renaming rather than appending a second row means the collapsed name never duplicates:
+    when BOTH tools are candidates in the same turn, whichever has the HIGHER similarity
+    wins and keeps the list tool's name; the other is dropped. Every other tool (including
+    `crm_incoming_stock_by_product`) passes through unchanged.
+    """
+    by_name: dict[str, dict[str, Any]] = {}
+    for tool in tools:
+        name = tool.get("name")
+        if name == _INCOMING_SHIPMENTS_TOOL:
+            candidate = {**tool, "name": _INCOMING_LIST_TOOL, "collapsed_from": name}
+            name = _INCOMING_LIST_TOOL
+        else:
+            candidate = tool
+        existing = by_name.get(name)
+        if existing is None or _tool_similarity(candidate) > _tool_similarity(existing):
+            by_name[name] = candidate
+    return list(by_name.values())
+
+
 def _tool_search(db: Session) -> ToolSearchFn:
     def call(
         embedding: list[float], *, query: str, domain: str | None
@@ -273,6 +315,11 @@ def _tool_search(db: Session) -> ToolSearchFn:
         yields fewer than five candidates and can end at `not_found` - which is an
         answerable outcome (H11), and the right one: the chatbot has nothing to say about a
         question whose only matches were actions it may not take.
+
+        **F4: the incoming-shipments collapse also lives here, right after the read-only
+        filter.** This is the CRM policy seam this docstring already names for exactly this
+        kind of rule - `tool_filter` (`fetch.py`) stays a byte-for-byte ported node with no
+        CRM-specific knowledge grafted onto it.
         """
         from app.services.embedding_service import EmbeddingReadService
 
@@ -284,11 +331,12 @@ def _tool_search(db: Session) -> ToolSearchFn:
         rows = EmbeddingReadService(db).search_tool_chunks(
             embedding, source_type="mcp_tool", limit=5, domain=domain
         )
-        return [
+        read_only = [
             tool
             for tool in collapse_tool_rows(rows)
             if tool.get("name") in CHATBOT_READ_ONLY_TOOLS
         ]
+        return _collapse_incoming_shipments(read_only)
 
     return call
 

@@ -102,6 +102,11 @@ def tool_filter(candidates: Any, *, has_product: bool | None) -> ToolPick:
     Emitting exactly one item is structural, not incidental: the per-tool fan-out that used
     to sit downstream is deleted, so two items here would run the whole fetch, compile and
     send chain twice - two WhatsApp messages to one customer.
+
+    F4 (review, 7 Sep 2026): the incoming-shipments-to-list collapse used to live here. It
+    moved to `services._tool_search` (the CRM-policy seam next to the read-only filter) so
+    this function stays a byte-for-byte ported node with no CRM-specific rule grafted onto
+    it - by the time a candidate list reaches this function it is already final.
     """
     raw_tools = jsc.array(candidates)
     # `sort((a,b) => cmp(score(b), score(a)) || cmp(label(a), label(b)))`, and Python's
@@ -112,13 +117,15 @@ def tool_filter(candidates: Any, *, has_product: bool | None) -> ToolPick:
         # the difference visible (H11); the item list stays empty for parity.
         return ToolPick(items=[], outcome="not_found")
     best = ordered[0]
+    picked_name = _label(best)
     return ToolPick(
         items=[
             {
                 "json": {
                     **(best if isinstance(best, dict) else {}),
+                    "name": picked_name,
                     "_tool_pick": {
-                        "chosen": _label(best),
+                        "chosen": picked_name,
                         "rejected": [
                             {"name": _label(t), "similarity": _score(t)} for t in ordered[1:]
                         ],
@@ -184,6 +191,15 @@ def select_tool(db: Any, *, query: str, domain: str | None, services: Any) -> li
     `services.py`, and taking the parameter keeps the call site honest about the fact that a
     session existed - while this function itself holds none across the embedding call
     (the plan's capacity rule).
+
+    A `domain` outside the parser's own declared enum must never reach this call in the
+    first place (evidence turn b5b19cec-dccc-4eda-b766-1aeb1362957b: `domain_hint:
+    "purchasing"`, a TEAM name, zeroed `search_tool_chunks`'s `source_id LIKE
+    '%purchasing%'` filter and the turn ended `not_found`) - `contracts.coerce_domain_hint`
+    guards both ways in: the parser's emission in `output_exchange.py`, and the contact's
+    carried memory in `engine.py` (turn fca4aa5e-806b-4403-aa2e-fc2d0961fb2d parsed as
+    `incoming` and still arrived here as `purchasing` before the second guard existed). So
+    `domain` here is trusted as-is with no retry.
     """
     _ = db
     embedding = services.embed(query)
@@ -685,6 +701,15 @@ IDENTITY_KEYS: frozenset[str] = frozenset(
 # and the cross-domain renderer sorts incoming rows on it.
 ALWAYS_KEPT_KEYS: frozenset[str] = frozenset({"estimated_arrival_date"})
 
+# Chronological order of an inbound container's clearance checkpoints. Mirrors the
+# admin-editable `statuses` rows (entity_type "inbound_shipment", by sort_order) as they
+# stand on prod; hardcoded because output_structurer is a pure function with no session.
+CLEARANCE_CHECKPOINT_ORDER: tuple[str, ...] = (
+    "loading_date", "etc_date", "etd_date", "estimated_arrival_date", "eta_delay_date",
+    "inspection_date", "approval_date", "gatepass_date", "warehouse_arrival_date",
+    "informed_collection_date", "collection_date",
+)
+
 
 def _safe_json(value: Any) -> Any:
     try:
@@ -934,6 +959,38 @@ def _date_window_phrase(semantic_input: Any) -> str:
     return ""
 
 
+def _names_a_shipment(ctx: dict[str, Any]) -> bool:
+    """A bare container ask ("incoming TIIU6323920") is a timeline ask, not an ETA-only one.
+
+    Evidence: live turn f07632b6-d56d-4036-944c-8200462caac3 - "incoming TIIU6323920" parses
+    to `requested_attributes: []` with entity `{"raw": "TIIU6323920", "hint":
+    "inbound_shipment", "confident": true}`. A question that names a specific container and
+    asks for no particular attribute is a timeline ask: every recorded checkpoint comes out,
+    chronologically, exactly as the `__all__` sentinel does today.
+
+    Checked against the RESOLVED entity list first - `entity_type` is the field
+    `gate.run_gate` stamps and `entity_ids_transformer`'s `TYPE_TO_PARAM` keys on - and only
+    falls back to the parser's own `hint` when the resolved list carries no type at all (the
+    gate ran empty, so there is nothing else to check).
+    """
+    entities = ctx.get("entities") if isinstance(ctx.get("entities"), list) else []
+    typed = [e for e in entities if jsc.truthy(e) and jsc.truthy(jsc.get(e, "entity_type"))]
+    if typed:
+        return any(
+            jsc.js_string(jsc.get(e, "entity_type")).strip() == "inbound_shipment" for e in typed
+        )
+    semantic_input = ctx.get("semantic_input")
+    if isinstance(semantic_input, str):
+        semantic_input = _safe_json(semantic_input)
+    parsed_entities = (
+        jsc.get(semantic_input, "entities") if isinstance(semantic_input, dict) else None
+    )
+    return any(
+        jsc.truthy(e) and jsc.js_string(jsc.get(e, "hint")).strip() == "inbound_shipment"
+        for e in jsc.array(parsed_entities)
+    )
+
+
 def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]:
     """The MCP render envelope becomes a WhatsApp message. Deterministic, no LLM (H7).
 
@@ -961,12 +1018,27 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # H46: CONTAINS the sentinel, not IS it. `contracts.is_timeline` is the one declaration
     # (S6a put it there for exactly this consumer); re-deriving it here is what let a
     # mutation test "prove" the `not timeline` guard below was redundant.
-    timeline = is_timeline(req_attrs)
+    timeline = is_timeline(req_attrs) or (not req_attrs and _names_a_shipment(ctx))
     keep_keys = set(ALWAYS_KEPT_KEYS)
     for k in req_attrs:
         kk = jsc.nullish_str(k).strip()
         if kk:
             keep_keys.add(kk)
+
+    # A checkpoint ask ("when is gatepass?") implies every EARLIER checkpoint in the
+    # container's journey - a customer asking about gatepass wants the whole story up to
+    # it, not one isolated date. `req_attrs` itself is untouched (echoed back, and drives
+    # the "not recorded yet" notes below): only `keep_keys` grows.
+    expanded = False
+    if not timeline:
+        checkpoint_idx = [
+            CLEARANCE_CHECKPOINT_ORDER.index(kk)
+            for k in req_attrs
+            if (kk := jsc.nullish_str(k).strip()) in CLEARANCE_CHECKPOINT_ORDER
+        ]
+        if checkpoint_idx:
+            keep_keys.update(CLEARANCE_CHECKPOINT_ORDER[: max(checkpoint_idx) + 1])
+            expanded = True
 
     # SCOPE GUARD: projection touches the CLEARANCE-gated incoming envelope ONLY. Gate on
     # what the envelope IS, not on whether keys happen to be present - resource attachments
@@ -1021,8 +1093,9 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
     # value-ordered. Only the SEQUENCE within the date block is this node's business:
     # LAYOUT belongs to the CRM, and an earlier version that re-emitted `[...facts,
     # ...dates]` dragged the ETA below the quantity and undid a merged CRM change.
-    # A field counts as a date by its VALUE, never by its key name.
-    if timeline:
+    # A field counts as a date by its VALUE, never by its key name. An expanded checkpoint
+    # ask is a partial timeline and reads the same way.
+    if timeline or expanded:
 
         def _date_of(f: Any) -> str | None:
             v = jsc.get(f, "value") if jsc.truthy(f) else None
