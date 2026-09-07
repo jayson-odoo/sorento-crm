@@ -45,7 +45,7 @@ from app.models.procurement import (
     Supplier,
 )
 from app.models.certificate import Certificate, CertificateRevision
-from app.models.product import Product, chat_searchable_products
+from app.models.product import Product, ProductAttachment, chat_searchable_products
 from app.models.resources import Attachment, AttachmentType
 # Imported rather than redefined, so the value cannot drift between the two modules. A
 # draft (proforma-created) shipment must not be resolvable by container/BOL/invoice number
@@ -2486,6 +2486,41 @@ def _prefix_probe_attachment_type(db: Session, token: str) -> list[ResolvedEntit
     return out[:PREFIX_LIMIT]
 
 
+def _product_attachment_type_ids(db: Session) -> frozenset[str]:
+    """AttachmentType ids a PRODUCT actually carries a file of, via `product_attachments`.
+
+    Chatbot pass 5, item 1 (H78/AC-827, production regression against #713, migration 485's
+    `attachment_types` seed): "photo" Tier-2 substring-matches BOTH "Product Photos" and
+    "Shipment Line Photo" (`entity_type='inbound_shipment_line'` ALWAYS -
+    `app/services/scm/shipment_line_photos.py`, never on a product) - an internal SCM
+    document type that happens to share the substring "photo". `gate.py`'s own
+    non-product ambiguity handling (`run_gate`, the OR-mode `non_products` branch)
+    has no per-type narrowing, so the two collided and the customer got a did-you-mean
+    for a document type they never asked about, or a silent wrong pick.
+
+    **A product's own file is linked via `product_attachments` (`product_id` ->
+    `attachment_id`), never via `attachments.entity_type`.** Measured against the local
+    prod-copy database, read-only, review of this item's first cut: `attachments.entity_type`
+    distribution is 4302 NULL / 77 `dealer_kit_asset` / 41 `stock_list` / 9
+    `supplier_stock_list` / 1 `project` - ZERO rows carry `entity_type='product'`, so the
+    first cut's own filter matched nothing and the frozenset it returned was EMPTY in
+    production, leaving "photo" exactly as ambiguous as before the fix. Joining through
+    `product_attachments` instead returns the real four types product files use today
+    (2108 Product Photos / 1033 Technical Specifications / 569 Certification / 1
+    Promotion) - measured, not invented, so a type stays a candidate exactly when a
+    product photo / document of that type genuinely exists, no hardcoded denylist of
+    codes a future internal type could silently miss.
+    """
+    rows = (
+        db.query(Attachment.attachment_type_id)
+        .join(ProductAttachment, ProductAttachment.attachment_id == Attachment.id)
+        .filter(Attachment.attachment_type_id.isnot(None))
+        .distinct()
+        .all()
+    )
+    return frozenset(str(r[0]) for r in rows if r[0])
+
+
 def _prefix_probe_certificate(db: Session, token: str) -> list[ResolvedEntity]:
     """Prefix → substring on the certificate number and on scheme + number.
 
@@ -4658,6 +4693,17 @@ def resolve_references(
             return frozenset({paired}) if paired else frozenset()
         return allowed
 
+    # `product_attachment` is the ONE domain this filters: a customer asking for a
+    # document ABOUT a product must never land on an internal SCM document type
+    # (Shipment Line Photo, Proforma Invoice, ...) that happens to share a substring
+    # with the word they used ("photo"). Opt-in by domain, same pattern as
+    # `attachment_coverage` in `resolve_references_intersection` - every other
+    # caller's attachment_type resolution (resource_attachment browsing, admin
+    # search, ...) is unaffected. Computed once, lazily, only if a Tier-2
+    # attachment_type candidate is actually produced.
+    _scope_attachment_types = (domain_hint or "").strip().lower() == "product_attachment"
+    _product_attachment_type_id_cache: frozenset[str] | None = None
+
     # ----- Tier 1: exact -----
     per_token: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
     ambiguous_tokens: set[str] = set()
@@ -4721,6 +4767,17 @@ def resolve_references(
             if per_token[tok]:
                 continue
             candidates = _tier2_fuzzy_lookup(db, tok, allowed_entity_types=tok_allowed)
+            if _scope_attachment_types and any(
+                c.entity_type == "attachment_type" for c in candidates
+            ):
+                if _product_attachment_type_id_cache is None:
+                    _product_attachment_type_id_cache = _product_attachment_type_ids(db)
+                candidates = [
+                    c
+                    for c in candidates
+                    if c.entity_type != "attachment_type"
+                    or c.uuid in _product_attachment_type_id_cache
+                ]
             if not candidates:
                 continue
             if len(candidates) == 1:

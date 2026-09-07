@@ -121,3 +121,48 @@ class TestUnicodeDashNormalisation:
         """`isinstance(..., str)` guards the substitution - a non-string raw is untouched."""
         entities = _run([{"raw": None, "hint": "product", "current_message": True}])
         assert entities[0]["raw"] is None
+
+
+def _domain_hint_out(domain_hint) -> str | None:
+    """`post_process`'s output for a bare emission with the given `domain_hint`, nothing
+    else about the turn varied."""
+    json_item = {"output": json.dumps(_parser_output(domain_hint=domain_hint))}
+    parent_input = {
+        "latest_user_message": "IBWB248什么时候会到仓库？",
+        "contact_id": "ZZT-domain-hint-1",
+        "previous_conversation_state": {},
+    }
+    parsed = output_exchange(json_item, parent_input)
+    return parsed["output"]["domain_hint"]
+
+
+class TestDomainHintEnumGuard:
+    """F3 (review, 7 Sep 2026, evidence turn b5b19cec-dccc-4eda-b766-1aeb1362957b): the
+    parser tagged `domain_hint: "purchasing"` - a TEAM name, not one of its own declared
+    domains - and `select_tool`'s `source_id LIKE '%purchasing%'` filter matched nothing,
+    ending the turn `not_found`. A `domain_hint` outside the prompt's own enum must be
+    coerced to null here, not retried downstream.
+
+    This is the EMISSION half of the guard (`contracts.coerce_domain_hint`). The carried
+    half - the same team name arriving from the contact's stored memory, which is what
+    turn fca4aa5e-806b-4403-aa2e-fc2d0961fb2d actually failed on - is graded by
+    `test_engine.TestCarriedDomainHintGuard` and end to end by
+    `test_s6c_engine_paths.TestF3DomainHintNeverLeavesTheEnumEndToEnd`."""
+
+    def test_a_team_name_outside_the_enum_becomes_null(self) -> None:
+        assert _domain_hint_out("purchasing") is None
+
+    def test_a_declared_domain_is_unchanged(self) -> None:
+        assert _domain_hint_out("incoming") == "incoming"
+
+    def test_the_literal_string_null_is_still_coerced(self) -> None:
+        assert _domain_hint_out("null") is None
+
+    def test_every_domain_hints_member_is_a_substring_the_prompt_declares(self) -> None:
+        """Guards the enum itself, not just the coercion: a member this constant lists but
+        the prompt never mentions would silently zero every turn that names it."""
+        from app.services.chatbot.contracts import DOMAIN_HINTS
+        from app.services.chatbot_parser_prompt import SEMANTIC_PARSER_PROMPT
+
+        missing = [d for d in DOMAIN_HINTS if d not in SEMANTIC_PARSER_PROMPT]
+        assert not missing, f"DOMAIN_HINTS members not declared in the prompt: {missing}"

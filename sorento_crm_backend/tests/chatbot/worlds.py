@@ -559,6 +559,40 @@ def body_difference(
             for key in set(parse_output) | set(captured_parse_output)
             if parse_output.get(key) != captured_parse_output.get(key)
         )
+        # AC-821 / review of #713 blocker B2, NAMED rather than absorbed by the generic
+        # arm below, whose "a capture older than that body" reason would be a lie here.
+        # ONE world reaches this: `sub-output-live/out-15023025`, whose live parser emitted
+        # `suggested_team: "purchasing_product"` - a team that is not one of the eight the
+        # router can act on - and whose live spine persisted it verbatim. That is the
+        # defect B2 fixes (the next turn assigns whatever is in `variables.routing`), so
+        # the port deliberately narrows it back to the routing chain's own answer and this
+        # world can no longer be graded against the capture.
+        #
+        # Deliberately unable to excuse anything else: `routing` must be the ONLY key that
+        # moved, and the CAPTURE's own team must be the non-catalogue one. A capture whose
+        # team is a real member, or one that also differs elsewhere, still falls through.
+        from app.services.chatbot.contracts import SUGGESTED_TEAMS
+
+        captured_team = (
+            (captured_parse_output.get("routing") or {}).get("suggested_team")
+            if isinstance(captured_parse_output.get("routing"), dict)
+            else None
+        )
+        if differing == ["routing"] and isinstance(captured_team, str) and (
+            captured_team.strip().lower() not in SUGGESTED_TEAMS
+        ):
+            return (
+                f"the capture's own `routing.suggested_team` is {captured_team!r}, which is "
+                "not one of the eight teams in `contracts.SUGGESTED_TEAMS`. AC-821 / review "
+                "of #713 B2: a team word the router cannot act on must never reach the "
+                "persisted routing, because the NEXT turn assigns whatever is there "
+                "(measured: 'escalate to marketing' then 'I need a human' called "
+                "next_assignee with team_code 'marketing' and commented 'Team: marketing'). "
+                "The port narrows it back to the routing chain's own answer, so this "
+                "capture records the defect and cannot be graded. Pinned by "
+                "tests/chatbot/test_pass4_item1b_marketing_ambiguous_clarify.py::"
+                "TestANonCatalogueTeamWordIsNeverPersistedOrAssigned"
+            )
         return (
             "the parser post-processor disagrees with the body that produced this capture "
             f"on {', '.join(differing)}. S1 was re-ported onto the LIVE `output_exchange` "

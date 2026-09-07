@@ -12,8 +12,10 @@ const Toaster = ({ ...props }: ToasterProps) => {
   return (
     <Sonner
       theme={theme as ToasterProps['theme']}
-      // Every toast is dismissible: a long error that auto-dismisses on a timer
-      // is unreadable, and one that does not is stuck over the page.
+      // Every toast auto-dismisses (2026-09-07: sticky error toasts read as
+      // stuck, especially one re-fired by a failing background refetch) and
+      // every toast is dismissible early via the close button.
+      duration={5000}
       closeButton
       className="group toaster [&_[data-type=success]>[data-icon]]:text-success [&_[data-type=success]_[data-title]]:text-success [&_[data-type=info]_[data-title]]:text-info [&_[data-type=error]>[data-icon]]:text-destructive [&_[data-type=error]_[data-title]]:text-destructive"
       toastOptions={{

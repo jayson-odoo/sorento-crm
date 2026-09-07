@@ -7,6 +7,15 @@ before the PR is opened, and once against PRODUCTION after the deploy; the outpu
 the PR (or the deploy note). A case that fails is a finding to fix or to explain - never one to
 soften.
 
+**Run it after EVERY deploy, not only a chatbot PR's own (LESSONS-LEARNT.md #103).** The
+chatbot's entity resolver is SHARED with every other admin-data reference table (`AttachmentType`,
+`Customer`, `Product`, ...), so a migration that seeds or edits a row in one of those tables can
+change chatbot resolution even when its own PR has no chatbot file in the diff - #707's
+`485_shipment_line_photo_type.py` (an unrelated SCM feature) deployed alongside #713 and broke
+"photo" resolution three minutes after the deploy, and `git diff` on #713's own files showed
+nothing wrong, because nothing in #713 was. A deploy that touches ANY reference table the
+resolver searches is chatbot-relevant.
+
 ```bash
 cd sorento_crm_backend
 venv/bin/python scripts/chatbot_console_check.py \
@@ -45,3 +54,29 @@ Two limits worth knowing before reading a red line as a defect:
 - **Access is decided before routing.** A turn whose agent the contact has no grant for (or whose
   `access_agents` row does not exist at all) comes back `access_denied` whatever the lane does.
   That is a data prerequisite, and the check naming it is the check working.
+- **`tests/chatbot/test_replay.py` SKIPS the whole corpus in silence** when it cannot
+  resolve the sibling n8n checkout (`tests/chatbot/_corpus.py`). The run says `passed` with
+  a skip count nobody reads, so a kill test aimed at a replay fixture proves nothing on its
+  own - a reviewer who reverts a hunk and sees green may only be seeing an absent corpus.
+
+  **Confirm the root was resolved rather than assuming, and do NOT reach for
+  `CHATBOT_FIXTURES_DIR` first.** Auto-discovery walks up to the sibling checkout and
+  prefers the CAPTURES worktree over the main one, which is what you want: the capture runs
+  land in `captures-rs1a-parser` and only reach the main checkout when that lane merges, so
+  pointing the variable at `<n8n checkout>/n8n-workflows-init/tests/fixtures` DOWNGRADES the
+  corpus and reddens `test_s6c_answer_lane.py::test_full_corpus_has_at_least_one_capture[miss-suggest-result]`.
+  An explicit `CHATBOT_FIXTURES_DIR` beats both, so a wrong one is worse than none.
+
+  ```bash
+  # what the loader actually found, and how much of it there is
+  venv/bin/python -c "from tests.chatbot import _corpus; print(_corpus.corpus_root())"
+  venv/bin/pytest tests/chatbot/test_replay.py --collect-only -q   # 1871 in this lane
+
+  # then the kill test itself - a SKIP here means the corpus is missing, not that the
+  # fixture agrees
+  venv/bin/pytest "tests/chatbot/test_replay.py::test_full_corpus_replay[output_exchange/sub-semantic-parser/parser-15157067]" -q
+  ```
+
+  If you do set the variable, point it at the CAPTURES worktree
+  (`sorento_crm_n8n/.claude/worktrees/captures-rs1a-parser/n8n-workflows-init/tests/fixtures`),
+  which is what auto-discovery would have chosen.

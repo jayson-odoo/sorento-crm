@@ -135,6 +135,20 @@ def _build_json_schema() -> dict[str, Any]:
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
+                    # `string_or_null`, NOT an enum of `SUGGESTED_TEAMS`, and from
+                    # 7 Sep 2026 that is a CONTRACT rather than the general permissiveness
+                    # the docstring above describes (owner rules R-a / R-c, console pass
+                    # 4). The prompt asks for an enum member when the customer's team word
+                    # maps to exactly one, and for the customer's OWN word, verbatim and
+                    # lowercased, when it maps to several ("marketing" - three teams) or to
+                    # none ("sales"). `null` therefore means one thing only: the customer
+                    # named no team.
+                    #
+                    # That is what lets `lanes/escalation._person_routing` tell "escalate
+                    # to marketing" (ask which of the three) from "I want to talk to a
+                    # human" (assign the default) without reading either message, which
+                    # D11 forbids. Tightening this to an enum would delete the
+                    # discriminator and take the H64 defect back.
                     "suggested_team": string_or_null,
                     "suggested_agent": string_or_null,
                 },

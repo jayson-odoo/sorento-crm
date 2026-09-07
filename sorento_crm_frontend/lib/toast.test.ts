@@ -32,10 +32,10 @@ describe('lib/toast (M6-04)', () => {
     expect(sonnerToast.success).toHaveBeenCalledWith('Saved', { duration: 4000 });
   });
 
-  it('toast.error defaults to Infinity with a close button', () => {
+  it('toast.error defaults to a 5000ms duration with a close button', () => {
     toast.error('Failed');
     expect(sonnerToast.error).toHaveBeenCalledWith('Failed', {
-      duration: Infinity,
+      duration: 5000,
       closeButton: true,
     });
   });

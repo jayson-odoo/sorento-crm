@@ -405,6 +405,7 @@ _SUMMARY_FIELDS = (
     ("customer", "Customer"),
     ("product_code", "Product Code"),
     ("order_count", "DOs"),
+    ("order_date", "DO Date"),
     ("delivered_quantity", "Delivered Qty"),
     ("pending_quantity", "Pending Qty"),
     ("delivered_between", "Delivered"),
@@ -444,8 +445,8 @@ def _sl_date(v: Any) -> Optional[str]:
     return out
 
 
-def _sl_between(row: dict) -> Optional[str]:
-    a, b = _sl_date(row.get("delivered_from")), _sl_date(row.get("delivered_to"))
+def _sl_between(from_val: Any, to_val: Any) -> Optional[str]:
+    a, b = _sl_date(from_val), _sl_date(to_val)
     if a and b:
         return a if a == b else f"{a} – {b}"
     return a or b
@@ -461,9 +462,10 @@ def _summary_item(customer: Optional[str], row: dict) -> Optional[dict]:
         "customer": customer,
         "product_code": code,
         "order_count": _sl_num(row.get("order_count")),
+        "order_date": _sl_between(row.get("order_date_from"), row.get("order_date_to")),
         "delivered_quantity": _sl_num(row.get("delivered_quantity")),
         "pending_quantity": _sl_num(row.get("pending_quantity")),
-        "delivered_between": _sl_between(row),
+        "delivered_between": _sl_between(row.get("delivered_from"), row.get("delivered_to")),
     }
     fields = [
         {"key": k, "label": lbl, "value": values[k]}
@@ -587,7 +589,6 @@ def _incoming_list(rows: list[dict], b: _Builder) -> None:
                         "Product Name",
                         _distinct_name(l.get("product_code"), l.get("product_name")),
                     ),
-                    ("shipment_number", "Shipment", s.get("shipment_number")),
                     ("shipping_container_number", "Container", s.get("shipping_container_number")),
                     *((key, label, s.get(key)) for key, label in _CLEARANCE_PAIRS),
                     (

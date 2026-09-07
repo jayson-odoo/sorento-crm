@@ -490,11 +490,36 @@ def test_render_never_gates_the_answer_itself():
     fields = {f["label"]: f["value"] for f in out["items"][0]["fields"]}
     assert fields["Product Code"] == "SRTWB7109"
     assert fields["Product Name"] == "Basin Mixer"
-    assert fields["Shipment"] == "SHP-1"
+    assert "Shipment" not in fields
     assert fields["Container"] == "SEGU4008631"
     assert fields["Incoming Quantity"] == 12
     assert "BRW" in str(fields["Warehouse Allocations"])
     assert out["has_result"] is True
+
+
+def test_incoming_list_render_has_no_shipment_number():
+    """The auto-generated packing-list number means nothing to a customer - the
+    render must not carry a field for it, though the raw payload key stays."""
+    out = env("crm_incoming_stock_list", {"data": [_incoming_row()]})
+
+    for item in out["items"]:
+        keys = {f["key"] for f in item["fields"]}
+        labels = {f["label"] for f in item["fields"]}
+        assert "shipment_number" not in keys
+        assert "Shipment" not in labels
+
+
+def test_incoming_list_raw_payload_still_carries_shipment_number():
+    """AC3.2: `view=render` is opt-in (module docstring) - a caller who does not ask
+    for it gets the tool's raw data shape unchanged, `shipment_number` included. The
+    render dropping the field (above) must not come from the presenter popping it
+    off the row on the way through; it must stay a read via `.get()`."""
+    from sorento_crm_mcp.presenters import _Builder, _incoming_list
+
+    row = _incoming_row()
+    _incoming_list([row], _Builder())
+
+    assert row["shipment_number"] == "SHP-1"
 
 
 def test_render_carries_the_denial_reason_through():
@@ -1093,19 +1118,36 @@ def _fields(item):
 
 
 def test_qs_m1_single_customer_single_product_is_one_item_in_the_item_shape():
-    items = summary_items(_SUM_M1)
+    g = {**_G_ECO, "order_date_from": "2026-03-01", "order_date_to": "2026-07-20"}
+    s = {**_SUM_M1, "groups": [g]}
+    items = summary_items(s)
     assert len(items) == 1
     assert items[0]["title"] == "ECO WORLD SDN BHD · SRTWC8605"
     assert _fields(items[0]) == [
         ("customer", "Customer", "ECO WORLD SDN BHD"),
         ("product_code", "Product Code", "SRTWC8605"),
         ("order_count", "DOs", 5),
+        ("order_date", "DO Date", "01/03/2026 \u2013 20/07/2026"),
         ("delivered_quantity", "Delivered Qty", 48),
         ("pending_quantity", "Pending Qty", 17),
         ("delivered_between", "Delivered", "02/03/2026 – 15/07/2026"),
     ]
     # every field carries a key - consumers match on it, never on the label
     assert all(set(f) == {"key", "label", "value"} for f in items[0]["fields"])
+
+
+def test_qs_m10_order_date_absent_when_backend_sent_none():
+    """The recorded qs6 envelopes were captured before this field existed - no
+    order_date_from/to on their groups[], so no `order_date` field renders."""
+    items = summary_items(_SUM_M1)  # _G_ECO carries no order_date_from/to
+    assert "order_date" not in dict((k, v) for k, _, v in _fields(items[0]))
+
+
+def test_qs_m11_order_date_single_day_renders_one_date():
+    g = {**_G_ECO, "order_date_from": "2026-05-04", "order_date_to": "2026-05-04"}
+    s = {**_SUM_M1, "groups": [g]}
+    items = summary_items(s)
+    assert dict((k, v) for k, _, v in _fields(items[0]))["order_date"] == "04/05/2026"
 
 
 def test_qs_m2_multi_customer_gets_a_leading_total_then_one_item_per_customer():

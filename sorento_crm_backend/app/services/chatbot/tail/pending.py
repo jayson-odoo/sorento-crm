@@ -19,10 +19,13 @@ Two replacements, and they are deliberately different in kind:
 `member_offer` joins it at S3 because the offer-hold lane RE-PERSISTS an open roster and
 the marker is what says the offer is still open after S8 deletes the regex - the roster
 itself is carried by `selection_context` + `last_result_set`, but neither of those says
-"an escalation is still on the table". The remaining three (`team_clarify`,
-`company_clarify`, `tier_ask`) have a structured reader already and no text read to
-replace, so writing them would be machinery for a hypothetical; S5 writes them when its
-escalation lane needs them.
+"an escalation is still on the table". `team_clarify` joins them on
+7 Sep 2026 (AC-822), which is S5's lane needing it exactly as this paragraph anticipated:
+owner rule R-a narrows the ask to the teams the customer's own word named, so
+`selection_context` alone no longer says WHICH teams were offered, and the answer to the
+ask has nothing to resolve against without the list. The remaining two (`company_clarify`,
+`tier_ask`) still have a structured reader already and no text read to replace, so writing
+them would be machinery for a hypothetical.
 """
 from __future__ import annotations
 
@@ -59,6 +62,7 @@ def derive(
     gate: Any = None,
     selection_context: Any = None,
     member_offer_ttl: int | None = None,
+    team_clarify_options: Any = None,
 ) -> dict[str, Any] | None:
     """`variables.pending`, or None when nothing is pending.
 
@@ -66,6 +70,23 @@ def derive(
     dym-offer lifecycle learned the hard way: a branch that relies on "the key just is not
     there" survives one refactor and then silently keeps a stale offer alive.
     """
+    if selection_context == "team_clarify":
+        # THE THIRD KIND (AC-822, owner rule R-b). The module docstring above says the
+        # clarify kinds have a structured reader already and no text read to replace, so
+        # writing them would be machinery for a hypothetical - and that held right up to
+        # the turn that made it false. The ask offers a NARROWED set of teams now (R-a:
+        # "marketing" offers three, not eight), and `selection_context` alone cannot say
+        # WHICH three, so a tap on a quick reply had nothing to resolve against.
+        #
+        # MORE SPECIFIC than the offer kinds and it outranks them for the same reason
+        # `member_offer` outranks `escalation_offer`: the next turn has to resolve an
+        # answer against this list, and "an offer is open" does not say which list.
+        return {
+            "kind": "team_clarify",
+            "team": escalation_team(qf, gate),
+            "domain": jsc.get(qf, "domain_hint"),
+            "options": list(jsc.array(team_clarify_options)),
+        }
     if selection_context == "member_offer":
         # A numbered roster is on the customer's screen. MORE SPECIFIC than
         # `escalation_offer` and it outranks it: the next turn has to resolve a number
