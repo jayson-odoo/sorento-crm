@@ -739,6 +739,19 @@ def _answers(**kw: Any) -> dict[str, Any]:
     return {"resolved": False, "picks": [], "yes_no": None, "free_text": None, **kw}
 
 
+# "and the price?" - a REUSE continuation, which is what the two TTL worlds need and what
+# a casual turn is not. The executor carries the previous entity set forward on one of
+# these, so the scope stays alive by the legacy path right up to the turn the slot dies,
+# and the world grades what actually reaches the lane.
+_CONTINUATION: dict[str, Any] = {
+    "message_type": "business_query",
+    "domain_hint": None,
+    "intent_hint": None,
+    "entities": [],
+    "entity_op": "reuse",
+}
+
+
 OWNER_WORLDS: tuple[OwnerWorld, ...] = (
     OwnerWorld(
         world_id="owner-pick-then-next-pick",
@@ -978,14 +991,74 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
         ),
     ),
     OwnerWorld(
-        world_id="owner-product-decays-after-its-ttl",
-        acs=("AC-940", "AC-941"),
+        world_id="owner-product-decays-under-continuation-turns",
+        acs=("AC-940",),
         why=(
-            "A product asked at turn 1, with no product named since. At turn 3 (age 2, "
-            "TTL 3) it still carries; at turn 5 (age 4) it is GONE, with a `decay` trace "
-            "line naming the slot and its age in turns. This is the one property no "
-            "captured world can show, because nothing aged before slice B1."
+            "A product asked at turn 1 and never named again, with the turns in between "
+            "being REUSE continuations of the same question rather than small talk - so "
+            "the executor carries the entity forward on every one of them and the scope "
+            "looks alive right up to the moment it is not. At N+2 the answer still has "
+            "the product; at N+4 it has nothing and the reply has to ask which product. "
+            "That last assertion is on the ENTITY LIST, because a TTL that only clears a "
+            "focus slot changes no byte a customer reads."
         ),
+        turns=(
+            OwnerTurn(
+                message="SRTWC8517 stock?",
+                emission={
+                    "message_type": "business_query",
+                    "domain_hint": "inventory",
+                    "intent_hint": "check_stock",
+                    "entities": [_product("SRTWC8517")],
+                },
+                expect={"focus_products": ["SRTWC8517"], "qf_entity_codes": ["SRTWC8517"]},
+            ),
+            OwnerTurn(
+                message="and the price?",
+                emission=_CONTINUATION,
+                expect={"focus_products": ["SRTWC8517"], "qf_entity_codes": ["SRTWC8517"]},
+            ),
+            OwnerTurn(
+                message="and the dimensions?",
+                # Age 2 at this turn: inside the TTL, so the question is still answerable
+                # and the product is still in scope.
+                emission=_CONTINUATION,
+                expect={
+                    "focus_products": ["SRTWC8517"],
+                    "qf_entity_codes": ["SRTWC8517"],
+                    "decayed": (),
+                },
+            ),
+            OwnerTurn(
+                message="and the weight?",
+                emission=_CONTINUATION,
+                expect={"focus_products": ["SRTWC8517"], "qf_entity_codes": ["SRTWC8517"]},
+            ),
+            OwnerTurn(
+                message="and the colour?",
+                # Age 4: past the TTL. The slot is dropped at intake AND the carried
+                # entity goes with it, so the turn reaches the lanes with nothing to
+                # answer about and the reply asks which product.
+                emission=_CONTINUATION,
+                expect={
+                    "focus_products": None,
+                    "qf_entity_codes": [],
+                    "decayed": ("products",),
+                },
+            ),
+        ),
+    ),
+    OwnerWorld(
+        world_id="owner-anaphora-past-the-ttl-asks-which-product",
+        acs=("AC-941",),
+        why=(
+            "The same shape, answered with 'that one' instead of a bare continuation. "
+            "Inside the TTL the reference resolves to the alive product; past it there is "
+            "nothing to resolve against, the turn is marked unresolved and the bot has to "
+            "ask. The `decay` trace line names the slot and its age in turns, which is "
+            "AC-941's own evidence."
+        ),
+        emits_v3=True,
         turns=(
             OwnerTurn(
                 message="SRTWC8517 stock?",
@@ -998,43 +1071,34 @@ OWNER_WORLDS: tuple[OwnerWorld, ...] = (
                 expect={"focus_products": ["SRTWC8517"]},
             ),
             OwnerTurn(
-                message="ok thanks",
-                emission={"message_type": "casual", "domain_hint": None, "entities": []},
+                message="and the price?",
+                emission=_CONTINUATION,
                 expect={"focus_products": ["SRTWC8517"]},
             ),
             OwnerTurn(
-                message="and the price?",
-                emission={
-                    "message_type": "business_query",
-                    "domain_hint": None,
-                    "intent_hint": None,
-                    "entities": [],
-                    "entity_op": "reuse",
+                message="what about that one",
+                emission={**_CONTINUATION, "anaphora": True},
+                expect={
+                    "focus_products": ["SRTWC8517"],
+                    "qf_entity_codes": ["SRTWC8517"],
+                    "qf": {"anaphora_resolved": True},
                 },
-                # Age 2 at this turn: inside the TTL, so the scope is still there and the
-                # question is answerable.
-                expect={"focus_products": ["SRTWC8517"], "decayed": ()},
             ),
             OwnerTurn(
-                message="ok",
-                emission={"message_type": "casual", "domain_hint": None, "entities": []},
-                expect={},
+                message="and the weight?",
+                emission=_CONTINUATION,
+                expect={"focus_products": ["SRTWC8517"]},
             ),
             OwnerTurn(
-                message="and the price?",
-                emission={
-                    "message_type": "business_query",
-                    "domain_hint": None,
-                    "intent_hint": None,
-                    "entities": [],
-                    "entity_op": "reuse",
+                message="how much is that one",
+                emission={**_CONTINUATION, "anaphora": True},
+                expect={
+                    "focus_products": None,
+                    "qf_entity_codes": [],
+                    "qf": {"anaphora_unresolved": True},
+                    "decayed": ("products",),
+                    "decay_reason_contains": "not restated for 4 turns",
                 },
-                # Age 4 at this turn: past the TTL, so the slot is dropped at intake and
-                # the turn reaches the lanes with no product to answer about.
-                # `domain` ages out with it: the two turns between were casual, so
-                # neither restated one, and a slot nobody restates is a slot the customer
-                # has moved on from whichever axis it is.
-                expect={"focus_products": None, "decayed": ("domain", "products")},
             ),
         ),
     ),

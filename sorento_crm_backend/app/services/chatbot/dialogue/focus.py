@@ -33,11 +33,13 @@ refactor this size.
 
 **Where `focus` comes from on a session that has none.** Every live contact's stored
 session, and every capture in the corpus, was written before this existed. `from_session`
-therefore PROJECTS a focus out of the legacy keys (`entities`, `domain_hint`,
-`date_filter_*`, `requested_attributes`, `access_levels`, `query_brands`) when
-`variables.focus` is absent, dated to the previous turn so every slot is alive. A
-conversation in flight at deploy time behaves exactly as it did, and starts ageing
-properly from its next turn.
+therefore PROJECTS a focus out of the legacy keys - but ONLY on the one turn where the
+`focus` key is entirely ABSENT, and dated to the turn that first saw it. Once the key
+exists the projection never runs again, and `{}` counts as existing: `decay` writes the key
+explicitly, so an empty focus means "everything aged out", and a projection that fell
+through on one would rebuild the slot out of the legacy `entities` the tail is still
+writing and put the TTL permanently out of reach. Measured on the first cut of this module:
+the slot came back alive on the very turn it died.
 
 **The order is the plan's**, and it is not arbitrary:
 
@@ -174,19 +176,26 @@ def from_session(variables: Any, *, turn_no: int) -> dict[str, Any]:
     is not a migration, it is an outage the tests would have caught and the customers would
     have paid for.
 
-    Projected slots are dated to `turn_no - 1`: they were set by the previous turn as far
-    as anybody can tell, so they are alive under any TTL of 1 or more and they age
-    correctly from here. `source` is `reuse`, because that is what they are.
+    THE KEY'S PRESENCE IS THE WHOLE TEST, and `{}` is present. `decay` writes it
+    explicitly, so an empty focus means "every slot aged out" - and rebuilding one from the
+    legacy `entities` the tail is still writing would resurrect the slot on the turn it
+    died and put the TTL permanently out of reach. Only an ABSENT key means "this session
+    predates the slot", and that is the one case the legacy keys answer.
+
+    Projected slots are dated to `turn_no`, the turn they were first SEEN. Nobody can know
+    when they were really set, so they get one full TTL from first sight and age normally
+    after it. Dating them earlier would be a guess; re-dating them every turn is the defect
+    above. `source` is `reuse`, because that is what they are.
     """
     stored = variables if isinstance(variables, dict) else {}
-    existing = stored.get("focus")
-    if isinstance(existing, dict) and any(
-        isinstance(existing.get(name), dict) for name in FOCUS_SLOTS
-    ):
+    if "focus" in stored:
+        existing = stored.get("focus")
+        if not isinstance(existing, dict):
+            return {}
         return {k: v for k, v in existing.items() if k in FOCUS_SLOTS and isinstance(v, dict)}
 
     projected: dict[str, Any] = {}
-    at = max(0, int(turn_no) - 1)
+    at = max(0, int(turn_no))
 
     def put(name: str, value: Any) -> None:
         if value is None or value == [] or value == {} or value == "":
@@ -432,6 +441,69 @@ def reuse_alive(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
             o["access_levels"] = list(alive)
             o["_tier_carried"] = True
             _touch(focus, "tier", turn, out, rule="reuse_alive")
+
+    _drop_dead_carried_entities(focus, turn, out)
+
+
+def _drop_dead_carried_entities(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:
+    """A DEAD slot does not reuse, and that has to reach the ENTITY LIST or it means nothing.
+
+    This is what makes decay observable. The entity executor's `reuse` arm carries the
+    previous turn's entities forward off `previous_conversation_state.entities`, which the
+    tail keeps writing whatever the focus says - so a products slot that aged out at intake
+    was still in scope at the lane, the reply still answered about it, and the TTL was a
+    number in the trace with no effect on a single customer-visible byte. AC-940 asks for
+    the reply to ASK which product; this is the line that makes it.
+
+    Only CARRIED entities, and only where the slot is gone. An entity this message named is
+    the turn's own scope; a slot that is alive is a slot the customer is still on. And the
+    axes with no slot of their own (an order number, a category, a flyer) are left alone
+    rather than swept up, because nothing here knows when they went stale.
+
+    Inert on the whole captured corpus by construction: those sessions carry no `focus`
+    key, so `from_session` projects one FROM these very entities and every slot is alive.
+    """
+    entities = jsc.array(turn.o.get("entities"))
+    if not entities:
+        return
+    kept: list[Any] = []
+    dropped_by_slot: dict[str, list[Any]] = {}
+    for entity in entities:
+        name = _slot_of(entity)
+        if (
+            name is None
+            or jsc.get(entity, "current_message") is True
+            or value_of(focus, name) not in (None, [], {})
+        ):
+            kept.append(entity)
+            continue
+        dropped_by_slot.setdefault(name, []).append(entity)
+    if not dropped_by_slot:
+        return
+    turn.o["entities"] = kept
+    turn.o["entities_dropped_on_decay"] = [
+        f"{jsc.get(e, 'hint')}:{jsc.get(e, 'raw')}"
+        for group in dropped_by_slot.values()
+        for e in group
+    ]
+    for name, group in dropped_by_slot.items():
+        out.entries.append(
+            {
+                "slot": name,
+                "before": [jsc.get(e, "canonical_code") or jsc.get(e, "raw") for e in group],
+                "after": None,
+                "rule": "reuse_alive",
+                "source": "reuse",
+            }
+        )
+
+
+def _slot_of(entity: Any) -> str | None:
+    """Which focus slot owns this entity's axis, or None for an axis with no slot."""
+    hint = jsc.lower_or_empty(jsc.get(entity, "hint"))
+    if hint == "product":
+        return "products"
+    return _SLOT_BY_HINT.get(hint)
 
 
 def domain_from_switch_word(focus: dict[str, Any], turn: Turn, out: Outputs) -> None:

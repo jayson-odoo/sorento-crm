@@ -590,7 +590,7 @@ class TestApplyRunsThemInThePlansOrder:
 class TestFromSessionProjectsALegacySession:
     """Every live contact's session and every capture was written before `focus` existed."""
 
-    def test_the_legacy_keys_become_slots_dated_to_the_previous_turn(self) -> None:
+    def test_the_legacy_keys_become_slots_dated_to_the_turn_that_first_saw_them(self) -> None:
         projected = fr.from_session(
             {
                 "entities": [_entity("SRTWC8517"), _entity("ABC", "customer")],
@@ -612,8 +612,33 @@ class TestFromSessionProjectsALegacySession:
             "tier",
             "brands",
         }
-        assert all(s["set_at_turn"] == 4 for s in projected.values())
+        assert all(s["set_at_turn"] == 5 for s in projected.values()), (
+            "dated to the turn that first SAW them: nobody can know when they were really "
+            "set, so they get one full TTL from first sight"
+        )
         assert all(s["source"] == "reuse" for s in projected.values())
+
+    def test_an_EMPTY_focus_is_never_re_projected(self) -> None:
+        """The defect this closes: `decay` writes `{}` when every slot ages out, and a
+        projection that fell through on it rebuilt the slot from the legacy `entities` the
+        tail is still writing - so the slot came back alive on the very turn it died and
+        the TTL could never be reached."""
+        assert (
+            fr.from_session(
+                {"focus": {}, "entities": [_entity("SRTWC8517")], "domain_hint": "inventory"},
+                turn_no=9,
+            )
+            == {}
+        )
+
+    def test_a_focus_that_lost_ONE_slot_keeps_the_rest_and_projects_nothing(self) -> None:
+        stored = {"domain": _slot("inventory", turn=8)}
+
+        projected = fr.from_session(
+            {"focus": stored, "entities": [_entity("SRTWC8517")]}, turn_no=9
+        )
+
+        assert set(projected) == {"domain"}, "the dead products slot is NOT rebuilt"
 
     def test_a_stored_focus_wins_over_the_projection(self) -> None:
         stored = {"products": _slot([_entity("SRTKS6091")], turn=9)}
@@ -626,6 +651,86 @@ class TestFromSessionProjectsALegacySession:
     def test_an_empty_session_projects_nothing(self) -> None:
         assert fr.from_session({}, turn_no=1) == {}
         assert fr.from_session(None, turn_no=1) == {}
+
+
+class TestADeadSlotStopsTheEntityCarry:
+    """AC-940's teeth: decay has to reach the ENTITY LIST or it changes nothing a customer
+    can see. The executor's `reuse` arm carries the previous entities forward off the
+    legacy session key, which the tail keeps writing whatever the focus says."""
+
+    def test_a_carried_product_goes_when_its_slot_has_aged_out(self) -> None:
+        out = fr.Outputs(focus={})
+        o = {
+            "entity_op_applied": "reuse",
+            "entities": [_entity("SRTWC8517", current_message=False)],
+        }
+
+        fr.reuse_alive({}, _turn(o), out)
+
+        assert o["entities"] == []
+        assert o["entities_dropped_on_decay"] == ["product:SRTWC8517"]
+
+    def test_the_drop_is_traced_against_the_slot_that_died(self) -> None:
+        out = fr.Outputs(focus={})
+        o = {
+            "entity_op_applied": "reuse",
+            "entities": [_entity("SRTWC8517", current_message=False)],
+        }
+
+        fr.reuse_alive({}, _turn(o), out)
+
+        entry = next(e for e in out.entries if e["slot"] == "products")
+        assert entry["rule"] == "reuse_alive"
+        assert entry["before"] == ["SRTWC8517"]
+        assert entry["after"] is None
+
+    def test_an_alive_slot_keeps_its_carried_entity(self) -> None:
+        focus = {"products": _slot([_entity("SRTWC8517")])}
+        out = fr.Outputs(focus=focus)
+        o = {
+            "entity_op_applied": "reuse",
+            "entities": [_entity("SRTWC8517", current_message=False)],
+        }
+
+        fr.reuse_alive(focus, _turn(o), out)
+
+        assert [e["raw"] for e in o["entities"]] == ["SRTWC8517"]
+
+    def test_an_entity_this_message_named_is_never_dropped(self) -> None:
+        out = fr.Outputs(focus={})
+        o = {"entity_op_applied": "replace_combine", "entities": [_entity("SRTWC8517")]}
+
+        fr.reuse_alive({}, _turn(o), out)
+
+        assert [e["raw"] for e in o["entities"]] == ["SRTWC8517"]
+
+    def test_only_the_dead_axis_is_swept(self) -> None:
+        focus = {"customer": _slot(_entity("ABC", "customer"))}
+        out = fr.Outputs(focus=focus)
+        o = {
+            "entity_op_applied": "reuse",
+            "entities": [
+                _entity("SRTWC8517", current_message=False),
+                _entity("ABC", "customer", current_message=False),
+            ],
+        }
+
+        fr.reuse_alive(focus, _turn(o), out)
+
+        assert [e["raw"] for e in o["entities"]] == ["ABC"]
+
+    def test_an_axis_with_no_slot_of_its_own_is_left_alone(self) -> None:
+        """An order number, a category, a flyer: nothing here knows when they go stale, so
+        sweeping them up would be a guess dressed as a rule."""
+        out = fr.Outputs(focus={})
+        o = {
+            "entity_op_applied": "reuse",
+            "entities": [_entity("M2609-0086", "customer_order", current_message=False)],
+        }
+
+        fr.reuse_alive({}, _turn(o), out)
+
+        assert [e["raw"] for e in o["entities"]] == ["M2609-0086"]
 
 
 class TestAReuseNeverRefreshesTheClock:

@@ -501,6 +501,19 @@ def _assert_owner_expectations(
     if "decayed" in expect:
         decayed = tuple(r["slot"] for r in trace if r.get("kind") == "decay")
         assert decayed == expect["decayed"], f"{where}: what decayed at intake"
+    if "decay_reason_contains" in expect:
+        reasons = " | ".join(
+            str(r.get("reason") or "") for r in trace if r.get("kind") == "decay"
+        )
+        assert expect["decay_reason_contains"] in reasons, (
+            f"{where}: the decay line has to SAY why, in turns"
+        )
+    if "qf_entity_codes" in expect:
+        # THE assertion that makes a TTL mean something. A slot cleared in the focus
+        # object and an entity still in `qf.entities` is a customer being answered about a
+        # product they stopped talking about four turns ago.
+        codes = _codes(qf.get("entities")) or []
+        assert codes == expect["qf_entity_codes"], f"{where}: the scope that reached the lane"
     for key, value in (expect.get("qf") or {}).items():
         assert qf.get(key) == value, f"{where}: qf.{key}"
 
