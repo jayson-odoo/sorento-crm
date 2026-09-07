@@ -47,15 +47,10 @@ import {
   Eye,
   Save,
   RefreshCw,
-  X,
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
-import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { cn } from '@/lib/utils';
 import type {
   ImpositionConfig,
@@ -79,7 +74,6 @@ import {
   pinnedFromDoc,
   resizeAllTags,
   resizeTag,
-  resolveTagSize,
   starterTemplateFor,
   tagForLine,
   tagSizeBounds,
@@ -87,11 +81,11 @@ import {
   tagsFromDoc,
   type ArrangeItem,
   type PinnedPlacement,
-  type TagSizePreset,
 } from '@/lib/dealer-kit/request-tags';
 import { formatTagPrice } from '@/lib/dealer-kit/price-badge';
 import { TagCanvasEditor } from '@/app/(protected)/dealer-kit/tag-templates/components/TagCanvasEditor';
 import { useKitLibrary } from '@/app/(protected)/dealer-kit/tag-templates/components/useTagBindings';
+import { TagSizeControl } from '@/app/(protected)/dealer-kit/components/TagSizeControl';
 import { useAutosave } from '@/hooks/useAutosave';
 import { ArrangeSheetView } from './ArrangeSheetView';
 import { TemplatePickDialog } from './TemplatePickDialog';
@@ -106,11 +100,11 @@ import {
 import { listPublishedTemplates } from '../../../../services/tagTemplateService';
 import { FocusShell, FocusToggle } from '../../../../components/FocusMode';
 import { AutosaveIndicator } from '../../../../components/AutosaveIndicator';
-import { SaveAsSizeDialog } from './SaveAsSizeDialog';
 import {
   useDeleteTagSizePreset,
   useTagSizesQuery,
 } from '../../../../tag-sizes/hooks/useTagSizes';
+import { SaveAsSizeDialog } from './SaveAsSizeDialog';
 
 let idSeq = 0;
 function newTagId(): string {
@@ -412,9 +406,13 @@ export function RequestTagDesigner({
     return row ? { kind: 'line', line: row } : null;
   }, [selectedLineId, resolved]);
 
-  // -- Tag size control (D24, S9) ---------------------------------------------
+  // -- Tag size control (D24, S9; lifted to a shared component, S1) -----------
 
   const sizePresets = useMemo(() => tagSizePresets(templates), [templates]);
+  const savedSizesQuery = useTagSizesQuery();
+  const deleteSavedSize = useDeleteTagSizePreset();
+  const [saveSizeOpen, setSaveSizeOpen] = useState(false);
+  const tagSizeBoundsForRequest = useMemo(() => tagSizeBounds(imposition), [imposition]);
 
   const handleResizeTag = useCallback(
     (width_mm: number, height_mm: number) => {
@@ -828,13 +826,37 @@ export function RequestTagDesigner({
         canApplyToAll={Boolean(selectedTag) && request.lines.length > 1}
         onApplyToAll={handleApplyDesignToAll}
       />
-      <TagSizeControl
-        tag={selectedTag}
-        presets={sizePresets}
-        imposition={imposition}
-        onResize={handleResizeTag}
-        onResizeAll={handleResizeAllTags}
-      />
+      {selectedTag ? (
+        <TagSizeControl
+          width_mm={selectedTag.width_mm}
+          height_mm={selectedTag.height_mm}
+          presets={sizePresets}
+          savedSizes={savedSizesQuery.data}
+          bounds={tagSizeBoundsForRequest}
+          onResize={handleResizeTag}
+          onResizeAll={handleResizeAllTags}
+          onDeleteSavedSize={(id, name) => deleteSavedSize.run({ id, subject: name })}
+          deletingSavedSizeId={deleteSavedSize.isPending ? deleteSavedSize.targetId : null}
+          onSaveAsSize={() => setSaveSizeOpen(true)}
+        />
+      ) : (
+        <div className="shrink-0 border-b border-r p-3">
+          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Tag Size
+          </span>
+          <p className="mt-1 text-2xs text-muted-foreground">
+            Select a line to set its tag size.
+          </p>
+        </div>
+      )}
+      {selectedTag && (
+        <SaveAsSizeDialog
+          open={saveSizeOpen}
+          onOpenChange={setSaveSizeOpen}
+          width_mm={selectedTag.width_mm}
+          height_mm={selectedTag.height_mm}
+        />
+      )}
     </>
   );
 
@@ -1189,245 +1211,3 @@ function LinesRail({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Tag size control (D24, S9): W x H mm for the SELECTED line's tag
-// ---------------------------------------------------------------------------
-
-/** Key one preset is looked up under. */
-function sizeKey(width_mm: number, height_mm: number): string {
-  return `${width_mm}x${height_mm}`;
-}
-
-/**
- * Never a real option in the SELECT - a size nobody picked from the list has
- * nothing to select TO (S9 review nit). `value` is set to this whenever the
- * tag's current size matches no preset, so the trigger falls through to
- * `placeholder="Custom"` the same way every other unselected SearchableSelect
- * shows its placeholder: muted, and un-clickable in the list.
- */
-const CUSTOM_SIZE_VALUE = '__custom__';
-
-function TagSizeControl({
-  tag,
-  presets,
-  imposition,
-  onResize,
-  onResizeAll,
-}: {
-  tag: PlacedTag | null;
-  presets: TagSizePreset[];
-  imposition: ImpositionConfig;
-  onResize: (width_mm: number, height_mm: number) => void;
-  onResizeAll: (width_mm: number, height_mm: number) => void;
-}) {
-  // Held as TEXT and committed on blur/Enter, not on every keystroke (S9
-  // review B1): the control used to call `onResize` per keystroke, which
-  // changed `tags` -> changed a doc key the canvas was mounted on -> remounted
-  // the whole editor (this control's own DOM included) after the first
-  // digit, so "95" typed as fast as anyone can type landed as "9". `null`
-  // means "nothing typed right now" - the field shows the tag's live value,
-  // which is what lets a preset pick or an Apply-to-all elsewhere update the
-  // boxes without an effect fighting whatever is mid-typed in them.
-  const [wDraft, setWDraft] = useState<string | null>(null);
-  const [hDraft, setHDraft] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  // Saved sizes (S4, D2): a second group in the dropdown, deletable - unlike
-  // the "Template sizes" group above, which is derived from published
-  // templates and stays read-only here.
-  const savedSizesQuery = useTagSizesQuery();
-  const savedSizes = savedSizesQuery.data ?? [];
-  const deleteSavedSize = useDeleteTagSizePreset();
-  const [saveSizeOpen, setSaveSizeOpen] = useState(false);
-
-  if (!tag) {
-    return (
-      <div className="shrink-0 border-b border-r p-3">
-        <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-          Tag Size
-        </span>
-        <p className="mt-1 text-2xs text-muted-foreground">
-          Select a line to set its tag size.
-        </p>
-      </div>
-    );
-  }
-
-  const bounds = tagSizeBounds(imposition);
-
-  const commit = (axis: 'w' | 'h') => {
-    const draft = axis === 'w' ? wDraft : hDraft;
-    const setDraft = axis === 'w' ? setWDraft : setHDraft;
-    if (draft === null) return;
-    const n = parseFloat(draft);
-    if (Number.isNaN(n)) {
-      setDraft(null);
-      setError(null);
-      return;
-    }
-    const candidateW = axis === 'w' ? n : tag.width_mm;
-    const candidateH = axis === 'h' ? n : tag.height_mm;
-    const result = resolveTagSize(candidateW, candidateH, bounds);
-    if (!result.ok) {
-      // Keep the typed value on screen next to the reason - reverting it
-      // silently would read as the edit never happened (S9 review S3).
-      setError(result.reason);
-      return;
-    }
-    setError(null);
-    onResize(result.width_mm, result.height_mm);
-    setDraft(null);
-  };
-
-  const onEnter = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') e.currentTarget.blur();
-  };
-
-  // Every size choice, template-derived AND saved, keyed the same way
-  // (D2/AC-S4-4): "Template sizes" first (not deletable here), then "Saved
-  // sizes" (each with an `x`). `savedByKey` is what lets `renderOption` find
-  // the RECORD behind a saved row - the option itself only carries the size.
-  const savedByKey = new Map(
-    savedSizes.map((s) => [sizeKey(s.width_mm, s.height_mm), s] as const),
-  );
-  const options: SearchableSelectOption[] = [
-    ...presets.map((p) => ({
-      value: sizeKey(p.width_mm, p.height_mm),
-      label: p.label,
-      group: 'Template sizes',
-    })),
-    ...savedSizes.map((s) => ({
-      value: sizeKey(s.width_mm, s.height_mm),
-      label: `${s.name} (${s.width_mm} x ${s.height_mm} mm)`,
-      group: 'Saved sizes',
-    })),
-  ];
-  const allSizes = [...presets, ...savedSizes];
-  const matchingPreset = allSizes.find(
-    (p) => p.width_mm === tag.width_mm && p.height_mm === tag.height_mm,
-  );
-
-  const applySize = (width_mm: number, height_mm: number) => {
-    const result = resolveTagSize(width_mm, height_mm, bounds);
-    if (!result.ok) {
-      setError(result.reason);
-      return;
-    }
-    setError(null);
-    onResize(result.width_mm, result.height_mm);
-  };
-
-  return (
-    <div className="flex shrink-0 flex-col gap-2 border-b border-r p-3">
-      <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-        Tag Size
-      </span>
-      <SearchableSelect
-        value={matchingPreset ? sizeKey(matchingPreset.width_mm, matchingPreset.height_mm) : CUSTOM_SIZE_VALUE}
-        onChange={(value) => {
-          const found = allSizes.find((p) => sizeKey(p.width_mm, p.height_mm) === value);
-          if (!found) return;
-          applySize(found.width_mm, found.height_mm);
-        }}
-        options={options}
-        placeholder="Custom"
-        renderOption={(opt) => {
-          const saved = savedByKey.get(opt.value);
-          return (
-            <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
-              <span className="truncate break-words">{opt.label}</span>
-              {saved &&
-                (() => {
-                  // Matches the listing rows' own `rowPending` dim (N4) - this
-                  // dropdown has no DataGrid row to dim, so the `x` itself
-                  // carries the same signal while ITS OWN delete counts down.
-                  const pending =
-                    deleteSavedSize.isPending && deleteSavedSize.targetId === saved.id;
-                  return (
-                    <button
-                      type="button"
-                      aria-label={`Delete saved size ${saved.name}`}
-                      disabled={pending}
-                      className={cn(
-                        'shrink-0 rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-destructive',
-                        pending && 'pointer-events-none opacity-50',
-                      )}
-                      onPointerDown={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                      }}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        deleteSavedSize.run({ id: saved.id, subject: saved.name });
-                      }}
-                    >
-                      <X className="size-3.5" />
-                    </button>
-                  );
-                })()}
-            </div>
-          );
-        }}
-      />
-      <div className="grid grid-cols-2 gap-2">
-        <div className="flex flex-col gap-1">
-          <Label className="text-xs text-muted-foreground">W (mm)</Label>
-          <Input
-            type="number"
-            className="h-7 px-2 text-xs"
-            aria-label="Tag width (mm)"
-            value={wDraft ?? tag.width_mm}
-            step={0.5}
-            onChange={(e) => setWDraft(e.target.value)}
-            onBlur={() => commit('w')}
-            onKeyDown={onEnter}
-          />
-        </div>
-        <div className="flex flex-col gap-1">
-          <Label className="text-xs text-muted-foreground">H (mm)</Label>
-          <Input
-            type="number"
-            className="h-7 px-2 text-xs"
-            aria-label="Tag height (mm)"
-            value={hDraft ?? tag.height_mm}
-            step={0.5}
-            onChange={(e) => setHDraft(e.target.value)}
-            onBlur={() => commit('h')}
-            onKeyDown={onEnter}
-          />
-        </div>
-      </div>
-      {error && <p className="text-2xs text-destructive">{error}</p>}
-      <div className="flex gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="h-7 flex-1 text-xs"
-          onClick={() => onResizeAll(tag.width_mm, tag.height_mm)}
-        >
-          Apply to all lines
-        </Button>
-        {!matchingPreset && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-7 flex-1 text-xs"
-            onClick={() => setSaveSizeOpen(true)}
-          >
-            Save as size
-          </Button>
-        )}
-      </div>
-
-      <SaveAsSizeDialog
-        open={saveSizeOpen}
-        onOpenChange={setSaveSizeOpen}
-        width_mm={tag.width_mm}
-        height_mm={tag.height_mm}
-      />
-    </div>
-  );
-}

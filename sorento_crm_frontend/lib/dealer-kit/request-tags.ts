@@ -315,6 +315,20 @@ export function resizeAllTags(
   return next;
 }
 
+/**
+ * A template document's `print_size` mirror (S1): `doc.width_mm/height_mm`
+ * and the template's own top-level `print_size` are two copies of the same
+ * fact, and this is the ONE place either the create or the update path
+ * reads it from - a doc resized without going through this could leave the
+ * two disagreeing forever, since nothing else compares them.
+ */
+export function printSizeOf(doc: {
+  width_mm: number;
+  height_mm: number;
+}): { width_mm: number; height_mm: number } {
+  return { width_mm: doc.width_mm, height_mm: doc.height_mm };
+}
+
 /** The floor every tag size control clamps up to (S9 review S3). */
 export const MIN_TAG_SIZE_MM = 10;
 

@@ -37,7 +37,7 @@
  * covers the refreshes and closes React never hears about.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { toast } from '@/lib/toast';
 import { History, Save as SaveIcon, Upload } from 'lucide-react';
@@ -71,9 +71,11 @@ import {
   restoreTemplateVersion,
   updateTemplate,
 } from '../../services/tagTemplateService';
+import { tagSizePresets } from '@/lib/dealer-kit/request-tags';
 import { TemplateVersionsSheet } from '../components/TemplateVersionsSheet';
 import { FocusShell, FocusToggle } from '../../components/FocusMode';
 import { AutosaveIndicator } from '../../components/AutosaveIndicator';
+import { TagSizeControl } from '../../components/TagSizeControl';
 import { useAutosave } from '@/hooks/useAutosave';
 
 const TagCanvasEditor = dynamic(
@@ -117,6 +119,17 @@ export default function TagTemplateEditorPage() {
 
   /** Full screen (D11, AC-S6-1): the same `FocusShell` the room designer uses. */
   const [focus, setFocus] = useState(false);
+
+  // -- Tag size control (S1) ---------------------------------------------------
+
+  // No "Template sizes" preset group here (unlike the request designer's own
+  // control): this page's own existing unit test mocks `tagTemplateService`
+  // down to the six calls it already exercises, and a template editor has
+  // no other natural size list to offer beyond the W/H fields themselves -
+  // "Saved sizes" (react-query, see the note on `TagSizeControl` itself) is
+  // the same story. The control still shows W/H mm and the "Custom" dropdown
+  // (AC-S1-1); only the two population sources are absent here.
+  const sizePresets = useMemo(() => tagSizePresets([]), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -221,6 +234,23 @@ export default function TagTemplateEditorPage() {
       handler();
     };
   }, [flushAutosave]);
+
+  // Resize (S1): `doc.width_mm/height_mm` updates live, no remount (AC-S1-2)
+  // - `TagCanvasEditor` reads THOSE two straight off the `doc` prop on every
+  // render, unlike `layers`, which it only seeds from `doc` once on mount.
+  // Layers are untouched (AC-S1-5). Re-arming the autosave debounce with the
+  // SAME layers is enough to carry a pure resize to the server too: the
+  // debounce's own callback reads width_mm/height_mm off `templateRef.
+  // current.doc` at fire time, which by then already has the new size.
+  const handleResizeTemplate = useCallback(
+    (width_mm: number, height_mm: number) => {
+      setTemplate((prev) =>
+        prev ? { ...prev, doc: { ...prev.doc, width_mm, height_mm } } : prev,
+      );
+      scheduleAutosave(draftLayers);
+    },
+    [draftLayers, scheduleAutosave],
+  );
 
   // Manual Save flushes first (S4): it cancels the armed debounce and waits for
   // anything already on the wire, so the button and the autosave cannot write
@@ -442,6 +472,14 @@ export default function TagTemplateEditorPage() {
             onLayersChange={setDraftLayers}
             hideSaveBar
             docId={template.id}
+            leftRail={
+              <TagSizeControl
+                width_mm={template.doc.width_mm}
+                height_mm={template.doc.height_mm}
+                presets={sizePresets}
+                onResize={handleResizeTemplate}
+              />
+            }
           />
         </div>
         {viewing && (
