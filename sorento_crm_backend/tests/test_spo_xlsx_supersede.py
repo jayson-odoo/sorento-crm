@@ -3085,3 +3085,105 @@ class TestAcX41ARetiredByAbsenceMemberTakesNoShare:
         )
         assert by_id[str(live_line.id)]["line_status"] == "closed", by_id
         assert by_id[str(live_line.id)]["receipt_status"] == "fully_received", by_id
+
+
+# ============================================================================ #
+# AC-X42 (D28c, security round 4)
+# ============================================================================ #
+class TestAcX42ARetiredMembersOwnGrnIsNotRedistributed:
+    def test_a_retired_lines_own_picking_line_stays_on_it_never_redistributed_to_a_sibling(
+        self, env
+    ):
+        """AC-X42. A retired member's own GRN is not redistributed. L1
+        (Seq 1, allocated 29, retired by absence: closed, `receipt_status
+        pending`, received 10, stated 10) HOLDS one approved picking line
+        of 10; L2 (Seq 2, allocated 18, open, 0) has no picking line at
+        all. After `sync_grn_received_to_spo(<L1's header>)` and after
+        `sync_received_for_spo_number(N)`: L1 still reads 10 closed
+        pending, L2 still reads 0 open. The live lines share only the
+        picking total drawn against LIVE members; a receipt a retired
+        line reports is never counted twice.
+
+        RED today: `_sync_group_received`'s `kept_total` sums `computed`
+        over every NON-RELEASED member regardless of live status - L1's
+        own 10 (proven by its own picking line) is folded into the pool
+        redistributed across `live_targets`, which here is L2 alone. L2
+        therefore receives L1's already-accounted-for 10 as if it were
+        its own share, reading `quantity_received == 10` instead of 0.
+        """
+        from app.services.procurement_service import PickingHeaderService
+
+        number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        wh_code = _warehouse_code(env, env.warehouse_ref)
+        doc_ref = f"{MARKER}:ACDOC:{uuid.uuid4().hex[:8]}"
+
+        retired = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=1, product_id=product_id, location_code=wh_code,
+            allocated_quantity=29, quantity_received=10, line_status="closed",
+            receipt_status="pending", source_system="autocount",
+            source_ref=f"{MARKER}:AC1:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+            stated_received=10,
+        )
+        live_line = SPOAllocation(
+            id=str(uuid.uuid4()), company_id=env.company_a, spo_number=number,
+            spo_line_number=2, product_id=product_id, location_code=wh_code,
+            allocated_quantity=18, quantity_received=0, line_status="open",
+            receipt_status="pending", source_system="autocount",
+            source_ref=f"{MARKER}:AC2:{uuid.uuid4().hex[:8]}", source_doc_ref=doc_ref,
+            stated_received=0,
+        )
+        env.db.add_all([retired, live_line])
+        env.db.flush()
+
+        header = PickingHeader(
+            id=str(uuid.uuid4()), company_id=env.company_a,
+            picking_number=unique_code(MARKER), picking_type="goods_received",
+            picking_status="approved", spo_number=number,
+        )
+        env.db.add(header)
+        env.db.flush()
+        env.db.add(
+            PickingLine(
+                id=str(uuid.uuid4()), company_id=env.company_a,
+                picking_header_id=header.id, spo_allocation_id=retired.id,
+                product_id=product_id, quantity_expected=10, quantity_picked=10,
+            )
+        )
+        env.db.flush()
+        env.db.commit()
+
+        def _rows():
+            env.db.expire_all()
+            rows = env.db.execute(
+                text(
+                    "SELECT id, quantity_received, line_status, receipt_status "
+                    "FROM spo_allocations WHERE id IN (:a, :b)"
+                ),
+                {"a": str(retired.id), "b": str(live_line.id)},
+            ).mappings().all()
+            return {str(r["id"]): r for r in rows}
+
+        PickingHeaderService(env.db).sync_grn_received_to_spo(header.id)
+
+        by_id = _rows()
+        assert by_id[str(retired.id)]["quantity_received"] == 10, by_id
+        assert by_id[str(retired.id)]["line_status"] == "closed", by_id
+        assert by_id[str(retired.id)]["receipt_status"] == "pending", by_id
+        assert by_id[str(live_line.id)]["quantity_received"] == 0, (
+            "a retired member's own proven receipt must never be "
+            f"redistributed to a live sibling - got {by_id}"
+        )
+        assert by_id[str(live_line.id)]["line_status"] == "open", by_id
+        assert by_id[str(live_line.id)]["receipt_status"] == "pending", by_id
+
+        PickingHeaderService(env.db).sync_received_for_spo_number(number)
+
+        by_id2 = _rows()
+        assert by_id2[str(retired.id)]["quantity_received"] == 10, by_id2
+        assert by_id2[str(retired.id)]["line_status"] == "closed", by_id2
+        assert by_id2[str(retired.id)]["receipt_status"] == "pending", by_id2
+        assert by_id2[str(live_line.id)]["quantity_received"] == 0, by_id2
+        assert by_id2[str(live_line.id)]["line_status"] == "open", by_id2
+        assert by_id2[str(live_line.id)]["receipt_status"] == "pending", by_id2
