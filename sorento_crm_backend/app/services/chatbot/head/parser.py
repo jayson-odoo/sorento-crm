@@ -71,10 +71,14 @@ class ParserConfig:
 
 
 def _build_json_schema() -> dict[str, Any]:
-    """The strict 26-key `ParseOutput` schema the provider is held to (AC-105).
+    """The strict `ParseOutput` schema the provider is held to (AC-105).
 
-    26 top-level keys, and `routing` carries exactly two members. That is what the LIVE
-    parser emits: every one of the 488 captured raw emissions has this shape.
+    26 top-level keys until 7 Sep 2026 and 29 since (growth r1 slice B2 adds
+    `answers_open_question`, `anaphora` and `topic_reset`); `routing` carries exactly two
+    members. The first 26 are what the LIVE parser emits: every one of the 488 captured
+    raw emissions has that shape, and the three new ones are absent from every capture,
+    which is why `output_exchange` exempts them from its own required-key check rather
+    than this schema relaxing.
 
     Built from the prompt's own OUTPUT block. `additionalProperties: false` is what makes
     "exactly these keys, no others" a provider guarantee instead of an instruction, and
@@ -131,6 +135,33 @@ def _build_json_schema() -> dict[str, Any]:
             "is_active": {"type": ["boolean", "string", "null"]},
             "order_status": string_or_null,
             "correction": {"type": ["boolean", "null"]},
+            # -- growth r1 slice B2: the three keys prompt v3 adds ---------------- #
+            # Declared on the WIRE for every version, because a strict `json_schema` has
+            # to list every property it allows and OpenAI's strict mode requires every
+            # property to be required. A v1 or v2 emission therefore carries them too,
+            # guessed - which is safe, because every reader acts only on `focus` and
+            # `open_question` and both are empty until the slice B3/B4 writers fill them.
+            #
+            # `post_process` treats all three as ABSENT-TOLERANT
+            # (`output_exchange._EXEMPT_FROM_REQUIRED`), which is what keeps the 1,875
+            # captured emissions replayable: none of them has these keys and none of them
+            # ever will.
+            "answers_open_question": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "resolved": {"type": ["boolean", "null"]},
+                    # 1-based POSITIONS against the frozen `open_question.options` rows,
+                    # never uuids: the model is shown labels only, so a position is the
+                    # only handle it can hold and the engine resolves it.
+                    "picks": {"type": "array", "items": {"type": "number"}},
+                    "yes_no": {"type": ["string", "null"]},
+                    "free_text": {"type": ["string", "null"]},
+                },
+                "required": ["resolved", "picks", "yes_no", "free_text"],
+            },
+            "anaphora": {"type": ["boolean", "null"]},
+            "topic_reset": {"type": ["boolean", "null"]},
             "routing": {
                 "type": "object",
                 "additionalProperties": False,
@@ -194,6 +225,9 @@ def _build_json_schema() -> dict[str, Any]:
             "is_active",
             "order_status",
             "correction",
+            "answers_open_question",
+            "anaphora",
+            "topic_reset",
             "routing",
             "escalation",
         ],

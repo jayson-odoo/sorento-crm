@@ -68,11 +68,25 @@ def test_the_date_expression_became_the_registry_variable() -> None:
 
 
 def test_the_output_block_declares_exactly_the_schema_keys() -> None:
-    """The prompt and `parser.PARSE_OUTPUT_JSON_SCHEMA` must agree on the wire shape."""
+    """The prompt and `parser.PARSE_OUTPUT_JSON_SCHEMA` must agree on the wire shape.
+
+    Minus the three keys prompt v3 introduced (growth r1 slice B2). The schema is ONE
+    wire shape shared by every published version, so it is a superset of what the LIVE
+    v1 body asks for and equal to what the newest one asks for - the equality half is
+    `test_parser.py::TestStrictSchema::test_it_declares_the_keys_the_NEWEST_prompt_declares`.
+    Naming the three here rather than loosening the assertion is what keeps this guard:
+    a FOURTH key appearing in the schema and not in this constant still fails.
+    """
+    from app.services.chatbot.head.output_exchange import V3_EMISSION_KEYS
     from app.services.chatbot.head.parser import DECLARED_KEYS
 
-    missing = sorted(k for k in DECLARED_KEYS if f'"{k}"' not in SEMANTIC_PARSER_PROMPT)
+    expected = DECLARED_KEYS - set(V3_EMISSION_KEYS)
+    missing = sorted(k for k in expected if f'"{k}"' not in SEMANTIC_PARSER_PROMPT)
     assert not missing, f"prompt does not declare: {', '.join(missing)}"
+    for key in V3_EMISSION_KEYS:
+        assert f'"{key}"' not in SEMANTIC_PARSER_PROMPT, (
+            f"{key} belongs to prompt v3; the live v1 body must not mention it"
+        )
 
 
 def _live_file() -> Path | None:

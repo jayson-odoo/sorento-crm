@@ -817,7 +817,64 @@ def output_exchange(json_item: dict, parent_input: dict) -> dict:
 #
 # Imported rather than restated: one list of required keys, in the file that declares the
 # schema the provider is held to.
-_EXEMPT_FROM_REQUIRED = frozenset({"broaden_axis"})
+#
+# The three growth-r1 keys are exempt for a DIFFERENT reason from `broaden_axis`, and the
+# difference is worth stating. `broaden_axis` is a key the live model sometimes omits. The
+# other three are keys NO capture has and no capture ever will: they arrived with prompt
+# v3 on 7 Sep 2026, the corpus is 1,875 emissions made before that, and the replay feeds
+# `_parser_raw` straight into this function. Requiring them here would fail every one of
+# those replays at the first line, which is precisely the regression the corpus exists to
+# catch. `_v3_defaults` below fills them instead, so every reader downstream sees the same
+# three keys whichever prompt version produced the emission.
+V3_EMISSION_KEYS = ("answers_open_question", "anaphora", "topic_reset")
+_EXEMPT_FROM_REQUIRED = frozenset({"broaden_axis"}) | frozenset(V3_EMISSION_KEYS)
+
+# What a pre-v3 emission means, said explicitly rather than left as an absent key. "No
+# question was answered, nothing was referred back to, and the topic did not reset" is the
+# correct reading of a v1/v2 turn, and it is also the SAFE one: all three rules that read
+# these keys then do nothing at all.
+NO_OPEN_QUESTION_ANSWER: dict[str, Any] = {
+    "resolved": False,
+    "picks": [],
+    "yes_no": None,
+    "free_text": None,
+}
+
+
+def v3_signals(o: Any) -> dict[str, Any]:
+    """The three prompt-v3 keys, defaulted when the emission does not carry them.
+
+    THE DEFAULTING HAPPENS HERE AND NOT ON `o`, and the difference is the corpus. Writing
+    the defaults into the emission would add three keys to `output_exchange`'s own output
+    on every one of the 1,875 captured replays and to `parse.output` on every world, so
+    every capture would diverge and every world would skip as "the parser post-processor
+    disagrees with the body that produced this capture" - which is the gate, not a
+    formality. An accessor gives every reader the same three values with no capture moving
+    a byte, and a v3 emission passes through it unchanged.
+
+    Values are NORMALISED, not merely fetched: `resolved` and the two flags are real
+    booleans, `picks` is a list of positive 1-based integers, `yes_no` is `"yes"`, `"no"`
+    or None. A model's `"true"`, `-1` or `"Yes please"` is operator-facing nonsense that
+    must not reach a handler.
+    """
+    answer = jsc.get(o, "answers_open_question")
+    answer = answer if isinstance(answer, dict) else {}
+    yes_no = jsc.nullish_str(answer.get("yes_no")).strip().lower()
+    picks = [
+        int(p)
+        for p in (jsc.js_number(x) for x in jsc.array(answer.get("picks")))
+        if jsc.is_integer(p) and p >= 1
+    ]
+    return {
+        "answers_open_question": {
+            "resolved": answer.get("resolved") is True,
+            "picks": picks,
+            "yes_no": yes_no if yes_no in ("yes", "no") else None,
+            "free_text": answer.get("free_text") if isinstance(answer.get("free_text"), str) else None,
+        },
+        "anaphora": jsc.get(o, "anaphora") is True,
+        "topic_reset": jsc.get(o, "topic_reset") is True,
+    }
 _EMISSION_ARRAY_KEYS = ("entities", "access_levels", "requested_attributes", "reference_positions")
 _EMISSION_OBJECT_KEYS = ("routing", "escalation")
 
