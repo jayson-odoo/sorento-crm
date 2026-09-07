@@ -278,26 +278,26 @@ export function InspectorPanel({
                 label="X (mm)"
                 value={Math.round(layer.x_mm * 100) / 100}
                 onChange={(v) => update({ x_mm: v })}
-                step={0.5}
+                step={0.25}
               />
               <NumberInput
                 label="Y (mm)"
                 value={Math.round(layer.y_mm * 100) / 100}
                 onChange={(v) => update({ y_mm: v })}
-                step={0.5}
+                step={0.25}
               />
               <NumberInput
                 label="W (mm)"
                 value={Math.round(layer.width_mm * 100) / 100}
                 onChange={(v) => update({ width_mm: v })}
-                step={0.5}
+                step={0.25}
                 min={1}
               />
               <NumberInput
                 label="H (mm)"
                 value={Math.round(layer.height_mm * 100) / 100}
                 onChange={(v) => update({ height_mm: v })}
-                step={0.5}
+                step={0.25}
                 min={1}
               />
               <NumberInput

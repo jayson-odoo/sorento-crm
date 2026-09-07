@@ -161,7 +161,7 @@ export function CanvasToolbar({
         label="Select"
         onClick={() => onToolChange('select')}
         active={tool === 'select'}
-        shortcut="V"
+        shortcut="V • Arrow 0.25mm, Shift 1mm, Alt 0.1mm"
       />
       <ToolbarButton
         icon={Hand}

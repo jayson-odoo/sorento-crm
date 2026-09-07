@@ -271,6 +271,8 @@ const ZOOM_BUTTON_FACTOR = 1.25;
 const MARQUEE_SLOP_PX = 3;
 /** How far a duplicate or a paste lands from its original, in mm. */
 const CLONE_OFFSET_MM = 5;
+/** Arrow-key nudge distances in mm: plain, Shift, Alt/Option. */
+const NUDGE_MM = { base: 0.25, shift: 1, alt: 0.1 };
 
 /**
  * Polygon corner-editing handles, in SCREEN pixels (S4).
@@ -2501,8 +2503,8 @@ export function TagCanvasEditor({
         handlePaste();
       }
 
-      // Nudge with arrow keys (1mm, or 0.1mm with shift).
-      const nudge = e.shiftKey ? 0.1 : 1;
+      // Nudge with arrow keys (0.25mm, 1mm with shift, 0.1mm with alt/option).
+      const nudge = e.shiftKey ? NUDGE_MM.shift : e.altKey ? NUDGE_MM.alt : NUDGE_MM.base;
       if (e.key === 'ArrowLeft' && selectedIds.size > 0) {
         e.preventDefault();
         nudgeSelection(-nudge, 0);
