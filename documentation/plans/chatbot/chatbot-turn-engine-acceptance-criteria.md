@@ -1781,29 +1781,54 @@ contact inside the synchronous request. Different contacts run in parallel.
   (H77)
 - AC-827 `[BE][T]` **`product_attachment` attachment-type resolution is domain-scoped, so a
   migration-seeded internal document type never collides with a customer-facing one.**
-  Owner console pass 5, item 1 (7 Sep 2026, prod regression against #713). "send me the
-  photo of SRTWC8517-SH-UF" (turns a5317cf4 / b4369aba) stopped resolving deterministically
-  the moment migration `485_shipment_line_photo_type.py` seeded "Shipment Line Photo" -
-  it shares the substring "photo" with the pre-existing "Product Photos" row, and
-  `gate.py`'s own non-product ambiguity handler had no per-type narrowing, so the customer
-  got a silent wrong pick or a did-you-mean for a document type they never asked about,
-  never the file that DOES exist.
+  Owner console pass 5, item 1 (7 Sep 2026, prod regression against #713; corrected on
+  review round 1, blockers B1/B2/Q1). "send me the photo of SRTWC8517-SH-UF" (turns
+  a5317cf4 / b4369aba) stopped resolving deterministically the moment migration
+  `485_shipment_line_photo_type.py` seeded "Shipment Line Photo" - it shares the substring
+  "photo" with the pre-existing "Product Photos" row, and `gate.py`'s own non-product
+  ambiguity handler had no per-type narrowing, so the customer got a silent wrong pick or
+  a did-you-mean for a document type they never asked about, never the file that DOES
+  exist.
 
   **Given** a `product_attachment` domain query whose attachment-type token Tier 2
   substring-matches more than one `attachment_types` row, **when** only one of those rows
-  is ever used on a PRODUCT-entity attachment (measured against the `attachments` table
-  itself, not a hardcoded denylist), **then** only that row is a candidate - Tier 1 exact
-  stays untouched, so a customer who types the internal type's own exact code still
-  resolves it, and the domain scoping applies only when `domain_hint == "product_attachment"`,
-  leaving every other caller of the shared resolver unaffected.
+  is a type at least one PRODUCT actually carries a file of (via `product_attachments`,
+  the real linkage - measured against the `attachments` table directly, not a hardcoded
+  denylist), **then** only that row is a candidate - Tier 1 exact stays untouched, so a
+  customer who types the internal type's own exact code still resolves it, and the domain
+  scoping applies only when `domain_hint == "product_attachment"`, leaving every other
+  caller of the shared resolver unaffected.
+
+  **Correction, review round 1.** The first cut filtered `attachments.entity_type ==
+  'product'`, which is EMPTY in production (a product's file links via
+  `product_attachments.product_id -> attachment_id`; `attachments.entity_type` is NULL on
+  every one of them) - the fix's own frozenset was empty and "photo" stayed exactly as
+  ambiguous as before, a passing test suite that changed nothing live. Corrected to join
+  through `product_attachments`; the real candidate set in production is FOUR types
+  (Product Photos / Technical Specifications / Certification / Promotion), stated here
+  rather than claimed away - "spec" or "cert" can still plausibly substring-match two of
+  the four, and `gate.py`'s silent `non_products[0]` pick is UNCHANGED for that residual
+  case. This item narrows the pool measurably (two colliding types down to the real four,
+  the migration's own collision resolved); it does not make every possible word
+  deterministic, and a numbered pick for the non-product ambiguity branch (mirroring the
+  product branch's own `specific_options`) is the fix for the residual case, not built
+  here - not exercised by any committed red, and shared machinery across every
+  non-product entity type (certificates, transporters, ...), a materially wider,
+  unmeasured blast radius than this item's own scope.
+
+  Also corrected: `send_attachments` was mis-diagnosed as needing a new "zero-tool fetch"
+  (issue #727, opened then CLOSED as invalid). The test harness's `tool_search` stub
+  returned `[]`, which makes `run_fetch` return `not_found` before `mcp_call` is ever
+  reached - `product_attachment` DOES have a fetch path
+  (`crm_master_product_attachments_list`); both tests now cross the real seam (`tool_search`
+  faked to a deterministic pick, `mcp_call` the PRODUCTION binding with only
+  `MCPRuntimeClient.call_tool` monkeypatched to the STRING shape it actually returns - the
+  same recipe `test_s6a_gate_dry_run_and_seams.py::
+  TestOwnerRulingATheCustomerPickerReachesTheProductionProbeSeam` already uses) and pass
+  for real, no `xfail`.
 
   Kill test: seed "Shipment Line Photo" without the domain scoping and the ambiguity comes
-  back. Two committed reds stay `xfail(strict=True)` rather than fixed here (tracked as
-  issue #727): `product_attachment` has no deterministic fetch path that skips the MCP
-  tool-search-then-call pipeline, and building one duplicates or reroutes the access-level
-  / company-scope logic `/api/v1/master-data/product-attachments` already carries - a
-  materially larger, security-relevant change outside this item's own scope. Evidence:
-  `tests/chatbot/test_pass5_item1_photo_attachment_alias.py`. (H79)
+  back. Evidence: `tests/chatbot/test_pass5_item1_photo_attachment_alias.py`. (H78)
 - AC-828 `[BE][T]` **A "last month" that set a concrete date this turn is not wiped by its
   own `broaden_axis`.** Owner console pass 5, item B1 (7 Sep 2026). Turns e4381b0d /
   98526b81 under an open `member_offer`: the parser's SAME output sets
@@ -1815,28 +1840,48 @@ contact inside the synchronous request. Different contacts run in parallel.
   **Given** a `reuse` turn whose `broaden_axis` is `"date"` AND whose own parser output
   already carries a concrete `date_filter_start` / `date_filter_end`, **then** the wipe does
   not fire and the turn's own date survives post-process, unchanged from what the parser
-  said. Pre-existing (not part of #713's diff, confirmed by line range). Evidence:
+  said. Pre-existing (not part of #713's diff, confirmed by line range). Not
+  fixture-visible: no captured `output_exchange` fixture in the whole corpus carries
+  `broaden_axis: "date"` at all. Evidence:
   `tests/chatbot/test_pass5_item2_member_offer_business_query_filter_route.py::TestB1LastMonthUnderMemberOfferKeepsTheParsersOwnDateFilter`.
-  (H80)
-- AC-829 `[BE][T]` **A bare product code under an open member offer narrows the product
-  half of the carried pair.** Owner console pass 5, item B2 (7 Sep 2026, D11 inventory row
-  R-b). Turn 6ea9fd1a: "rpacc" after a working "last month" (hanlim/srtwc286) is never
+  (H79)
+- AC-829 `[BE][T]` **A bare reply under an open member offer, that the parser extracted
+  nothing from, narrows the carried pair by asking the RESOLVER.** Owner console pass 5,
+  item B2 (7 Sep 2026, D11 inventory row R-b; corrected on review round 1, blockers
+  B3/B4). Turn 6ea9fd1a: "rpacc" after a working "last month" (hanlim/srtwc286) is never
   extracted as an entity by the parser at all, so the reply kept naming the OLD product
-  ("Product: srtwc286") - a genuine gap, not a wrong branch: nothing read a bare reply
-  against `prev_state.routing_companies[].codes`, where product variant codes like
-  "SRTWC286-SH-RPACC" live.
+  ("Product: srtwc286") - a genuine gap, not a wrong branch.
 
-  **Given** an open `member_offer` whose `routing_companies[].codes` carry a product
-  variant code, and a bare one-word reply, **when** that word EQUALS one segment of a code
-  whose FIRST segment equals the carried product entity's own token, **then** the product
-  entity is replaced (the customer half and the date window survive unchanged) and the turn
-  is answered, not reprompted. D11-compliant by construction: equality against segments of a
-  string this codebase itself persisted, never a substring or regex scan of the customer's
-  message - the same class of tap `_team_clarify_pick` is inventoried under. A second-order
-  fix travels with it: the narrowed entity's `current_message: True` left `message_type` at
-  `"casual"`, which routed the rest of the turn as an unanswered CS-member-offer instead of
-  the answer it had just become; `message_type` now promotes to `"business_query"` the same
-  way the pre-existing "bare entity under an open member roster" block (AC-816 rule 3)
-  already does. Evidence:
+  **Correction, review round 1.** The first cut read the bare reply against
+  `prev_state.routing_companies[].codes` for a matching CODE SEGMENT and invented a shape
+  ("SRTWC286-SH-RPACC") no capture's `routing_companies` carries to make its own test
+  pass - measured against the REAL vendored 6ea9fd1a capture, zero codes in it contain
+  "rpacc". Production's real shape: TWO products are coded literally `RPACC`
+  (cross-company duplicates, same shape `srtwc286` itself is), which only the RESOLVER
+  can tell apart from junk text.
+
+  **Given** an open `member_offer`, a turn that named NO entity of its own (parser
+  `entities: []`), and a bare reply of four words or fewer, **when** the whole message,
+  sent to the resolver as one token (`allowed_entity_types: ["product","customer"]`,
+  OR-mode, `fallback_to_all_types: true` - the resolver decides, never a pattern match
+  here), resolves to a single entity_type / canonical_code (same-code cross-company
+  duplicates collapse to one answer, `gate.py`'s own rule for a normal token), **then**
+  the matching half of the carried pair is REPLACED (`canonical_code` set to the resolved
+  code, never left null - the MAIN resolve call that follows exact-matches it rather than
+  re-searching the bare word freely across the catalogue and silently widening scope) and
+  the turn is answered, not reprompted; **when** it resolves to nothing or something
+  genuinely ambiguous, **then** nothing changes and the existing pipeline answers
+  not-found off the UNCHANGED carried pair - never `offer_hold` (B3's precondition, no
+  date and no entity at all, is a different, narrower shape and stays a green regression
+  guard). **When the bare token resolves to a CUSTOMER instead of a product**, the SAME
+  rule replaces the customer half of the pair instead - the mechanism is symmetric across
+  both halves of what a member offer's carried pair can be, not product-only.
+
+  A second-order fix travels with it: the narrowed entity's `current_message: True` left
+  `message_type` at `"casual"`, which routed the rest of the turn as an unanswered
+  CS-member-offer instead of the answer it had just become; `message_type` now promotes
+  to `"business_query"` the same way the pre-existing "bare entity under an open member
+  roster" block (AC-816 rule 3) already does. Not fixture-visible: no `sub-resolve-and-gate`
+  capture has the precondition shape. Evidence:
   `tests/chatbot/test_pass5_item2_member_offer_business_query_filter_route.py::TestB2ABareProductCodeUnderTheOfferNarrowsTheProduct`.
-  (H81)
+  (H80)
