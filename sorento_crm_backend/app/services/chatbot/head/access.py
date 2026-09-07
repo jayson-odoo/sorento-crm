@@ -21,6 +21,35 @@ from app.services.mcp_access_service import evaluate_agent
 logger = logging.getLogger(__name__)
 
 
+def _granted_field_reveal_keys(db: Session, *, contact_id: str, space_id: str | None) -> list[str]:
+    """This contact's granted field-reveal keys (chatbot growth r1, Slice C).
+
+    A SEPARATE resolution from `evaluate_agent`'s (which does not return the
+    internal `respond_contacts.id` a field-reveal grant is keyed on) rather than
+    a change to it - `evaluate_agent` is the access-agent decision n8n's
+    `/external/access-agent/check` also calls, and this stays untouched (Slice C
+    decision). Fails closed to `[]`: an unresolvable contact reveals nothing, the
+    same posture `field_access.py::resolve_contact_id` takes.
+    """
+    try:
+        from app.models.access import RespondContact
+        from app.models.respond_workspace import RespondWorkspace
+        from app.services.contact_field_reveal_service import granted_keys
+
+        query = db.query(RespondContact.id).filter(RespondContact.respond_io_id == contact_id)
+        if space_id:
+            query = query.join(
+                RespondWorkspace, RespondWorkspace.id == RespondContact.workspace_id
+            ).filter(RespondWorkspace.space_id == str(space_id))
+        rows = query.limit(2).all()
+        if len(rows) != 1:
+            return []
+        return granted_keys(db, rows[0][0])
+    except Exception:  # noqa: BLE001 - a lookup failure must fail closed, not fail the turn
+        logger.warning("chatbot: field-reveal lookup failed for %s", contact_id, exc_info=True)
+        return []
+
+
 def check_access(
     db: Session,
     *,
@@ -30,9 +59,10 @@ def check_access(
 ) -> dict[str, Any]:
     """`ctx.access`: `{allowed, decision, agent_name, attributes, all_attributes_allowed}`.
 
-    `attributes` / `all_attributes_allowed` are the per-field answers the endpoint only
-    computes when a caller asks for them. The spine never does, so both stay null and the
-    shape still matches what `check-access` returns today.
+    `attributes` is this contact's granted field-reveal keys (`[]` when none) and
+    `all_attributes_allowed` is always `False`: nothing here is an "everything"
+    grant, only named keys. `output_structurer` (Slice A/C) drops any field whose
+    `restricted` key is absent from this list.
 
     An unknown agent fails CLOSED (`deny_unknown_agent`) - `deriveRouting`'s `ideate` case
     is the single source of truth for that agent name, and the denial message is rendered
@@ -48,8 +78,8 @@ def check_access(
         "allowed": decision.allowed,
         "decision": decision.decision,
         "agent_name": decision.agent_name,
-        "attributes": None,
-        "all_attributes_allowed": None,
+        "attributes": _granted_field_reveal_keys(db, contact_id=contact_id, space_id=space_id),
+        "all_attributes_allowed": False,
     }
 
 

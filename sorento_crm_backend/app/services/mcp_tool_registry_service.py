@@ -31,6 +31,15 @@ class SyncReport:
     deactivated: int
 
 
+def _restricted_fields(spec) -> list[dict[str, str]]:
+    """`ToolSpec.restricted_fields` (key, label) pairs, as the JSONB the table
+    stores. `getattr` default so a `_FakeSpec` fixture with no such attribute -
+    every tool that ships with nothing restricted - syncs to `[]`, not a crash.
+    """
+    pairs = getattr(spec, "restricted_fields", None) or ()
+    return [{"key": key, "label": label} for key, label in pairs]
+
+
 def _load_specs() -> Iterable:
     """Return every `ToolSpec` from the code catalog (base + per-module overlay).
 
@@ -65,6 +74,7 @@ def sync_catalog(db: Session) -> SyncReport:
                     http_method=spec.method,
                     is_active=True,
                     last_seen_at=sync_started_at,
+                    restricted_fields=_restricted_fields(spec),
                 )
             )
             added += 1
@@ -77,6 +87,7 @@ def sync_catalog(db: Session) -> SyncReport:
         existing.http_method = spec.method
         existing.is_active = True
         existing.last_seen_at = sync_started_at
+        existing.restricted_fields = _restricted_fields(spec)
         updated += 1
 
     db.flush()

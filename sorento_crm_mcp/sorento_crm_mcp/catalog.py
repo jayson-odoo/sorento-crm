@@ -43,6 +43,13 @@ class ToolSpec:
     domain: str = ""  # Logical domain ("products", "orders", "procurement", ...).
     related_tools: tuple[str, ...] = ()  # Cross-references (surviving tools only).
     escalation_team: str = ""  # "sales" | "support" | "warehouse" | "procurement" | "".
+    # Field-reveal keys this tool's presenter marks `restricted=<key>` in
+    # `field_vocabulary`, one (key, label) pair per gated field - e.g.
+    # `(("inventory.sellable", "Sellable stock"),)`. Static, not read off a live
+    # response: `mcp_tool_registry_service.sync_catalog` copies this straight into
+    # `mcp_tools.restricted_fields` without ever calling the tool. Empty for a tool
+    # with nothing restricted (the common case).
+    restricted_fields: tuple[tuple[str, str], ...] = ()
 
 
 # Paths match [sorento_crm_backend/app/api/v1/__init__.py](sorento_crm_backend/app/api/v1/__init__.py) prefixes.

@@ -1,0 +1,148 @@
+"""`GET /system/chatbot/field-reveal-keys` and `GET|PUT
+.../contacts/{id}/field-reveals` (chatbot growth r1, Slice C1, AC-963, AC-964).
+"""
+from __future__ import annotations
+
+import json
+import uuid
+
+import pytest
+from fastapi.testclient import TestClient
+
+import app.main  # noqa: F401  isort:skip - registers every model before any query
+from app.main import app
+from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
+from app.models.access import McpTool
+from app.services.user_service import UserPermissionService
+
+from tests.chatbot.test_turns_admin_api import db  # noqa: F401 - reuses the blank-schema fixture
+
+BASE = "/api/v1/system/chatbot"
+CONTACT_VIEW = "user_management.contacts.view"
+CONTACT_EDIT = "user_management.contacts.edit"
+
+_GRANTS: set[str] = set()
+_ACTOR: dict = {"id": None, "name": "ZZT Field Reveal Tester"}
+
+
+@pytest.fixture(autouse=True)
+def _permissions(monkeypatch):
+    _GRANTS.clear()
+    _GRANTS.add(CONTACT_VIEW)
+    _GRANTS.add(CONTACT_EDIT)
+    monkeypatch.setattr(
+        UserPermissionService,
+        "check_user_has_permission",
+        lambda self, uid, slug: slug in _GRANTS,
+    )
+    monkeypatch.setattr(UserPermissionService, "get_user_role_slugs", lambda self, uid: set())
+    yield
+    _GRANTS.clear()
+
+
+@pytest.fixture()
+def client(db):  # noqa: F811 - fixture shadow is the point
+    def _override_db():
+        try:
+            yield db
+        finally:
+            pass
+
+    app.dependency_overrides[get_db] = _override_db
+    app.dependency_overrides[get_current_user] = lambda: dict(_ACTOR)
+    app.dependency_overrides[get_current_user_or_api_key] = lambda: dict(_ACTOR)
+    _ACTOR["id"] = str(uuid.uuid4())
+    try:
+        yield TestClient(app, raise_server_exceptions=False)
+    finally:
+        app.dependency_overrides.clear()
+
+
+def _contact(db) -> str:
+    from sqlalchemy import text
+
+    db.execute(
+        text(
+            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars) "
+            "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb))"
+        ),
+        {"cid": f"ZZT-{uuid.uuid4().hex[:8]}", "phone": f"+6000{uuid.uuid4().hex[:7]}", "sv": json.dumps({})},
+    )
+    db.commit()
+    return db.execute(text("SELECT id FROM respond_contacts ORDER BY created_at DESC LIMIT 1")).scalar()
+
+
+def _seed_restricted_tool(db) -> None:
+    from datetime import datetime
+
+    db.add(
+        McpTool(
+            id=str(uuid.uuid4()),
+            tool_name=f"ZZT-tool-{uuid.uuid4().hex[:6]}",
+            http_path="/x",
+            http_method="GET",
+            is_active=True,
+            last_seen_at=datetime.utcnow(),
+            restricted_fields=[
+                {"key": "inventory.sellable", "label": "Sellable stock"},
+                {"key": "purchase_orders.supplier", "label": "PO supplier"},
+            ],
+        )
+    )
+    db.commit()
+
+
+class TestFieldRevealKeys:
+    def test_lists_keys_with_labels(self, client, db):
+        _seed_restricted_tool(db)
+        resp = client.get(f"{BASE}/field-reveal-keys")
+        assert resp.status_code == 200, resp.text
+        keys = {item["key"]: item["label"] for item in resp.json()["items"]}
+        assert keys["inventory.sellable"] == "Sellable stock"
+        assert keys["purchase_orders.supplier"] == "PO supplier"
+
+    def test_requires_permission(self, client, db):
+        _GRANTS.discard(CONTACT_VIEW)
+        resp = client.get(f"{BASE}/field-reveal-keys")
+        assert resp.status_code == 403
+
+
+class TestContactFieldReveals:
+    def test_get_defaults_to_empty(self, client, db):
+        contact_id = _contact(db)
+        resp = client.get(f"{BASE}/contacts/{contact_id}/field-reveals")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["granted"] == []
+
+    def test_put_replaces_and_get_reflects_it(self, client, db):
+        contact_id = _contact(db)
+        _seed_restricted_tool(db)
+
+        put_resp = client.put(
+            f"{BASE}/contacts/{contact_id}/field-reveals",
+            json={"granted": ["inventory.sellable"]},
+        )
+        assert put_resp.status_code == 200, put_resp.text
+        assert put_resp.json()["granted"] == ["inventory.sellable"]
+
+        get_resp = client.get(f"{BASE}/contacts/{contact_id}/field-reveals")
+        assert get_resp.json()["granted"] == ["inventory.sellable"]
+
+        # Full replace: the previous key drops off, the new one lands.
+        put_resp2 = client.put(
+            f"{BASE}/contacts/{contact_id}/field-reveals",
+            json={"granted": ["purchase_orders.supplier"]},
+        )
+        assert put_resp2.json()["granted"] == ["purchase_orders.supplier"]
+
+    def test_unknown_contact_is_404(self, client, db):
+        resp = client.get(f"{BASE}/contacts/ZZT-no-such-contact/field-reveals")
+        assert resp.status_code == 404
+
+    def test_put_requires_edit_permission(self, client, db):
+        contact_id = _contact(db)
+        _GRANTS.discard(CONTACT_EDIT)
+        resp = client.put(
+            f"{BASE}/contacts/{contact_id}/field-reveals", json={"granted": []}
+        )
+        assert resp.status_code == 403
