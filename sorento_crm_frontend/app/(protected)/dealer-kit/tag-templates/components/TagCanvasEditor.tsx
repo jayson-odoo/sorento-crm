@@ -1424,6 +1424,20 @@ export function TagCanvasEditor({
    */
   const editingPoints = Boolean(cornerHandleLayer && cornerHandleLayer.id === editingPointsId);
 
+  /**
+   * Clears the raw id once it stops pointing at the eligible layer (B2):
+   * `editingPoints` above already derives false the instant that happens, so
+   * the handles disappear correctly - but the id itself stayed put, so
+   * re-selecting the SAME polygon (click empty, then click it again) matched
+   * again and landed straight back in edit-points mode instead of showing
+   * the Transformer's own anchors like any other first click does.
+   */
+  useEffect(() => {
+    if (editingPointsId && cornerHandleLayer?.id !== editingPointsId) {
+      setEditingPointsId(null);
+    }
+  }, [cornerHandleLayer, editingPointsId]);
+
   /** Where every handle sits, in the layer's own pixel space. Edit-points
    * mode only (S5) - select mode shows the Transformer's own anchors instead. */
   const polygonHandles = useMemo(() => {

@@ -658,6 +658,35 @@ describe('leaving edit-points mode (S5, AC-S5-3)', () => {
 
     expect(queryHandle(container, 'polygon-vertex-0')).toBeNull();
   });
+
+  it('re-selecting the SAME polygon with a single click after straying elsewhere shows Transformer anchors, not vertex handles (B2)', () => {
+    // The review's exact repro is click-empty-canvas then re-click the same
+    // polygon; the Stage stand-in's `getPointerPosition` always returns
+    // null, so a literal mousedown/mouseup click-empty sequence cannot run
+    // through it here. Selecting sh2 (a rect, ineligible for corner
+    // handles) exercises the identical underlying condition: cornerHandleLayer
+    // stops matching the stale editingPointsId - a plain single click back
+    // onto sh1 must not land back in edit-points mode just because that
+    // stale id was never cleared (B2).
+    const { container } = render(
+      <TagCanvasEditor
+        doc={docWith(
+          shapeLayer('sh1', 'polygon'),
+          shapeLayer('sh2', 'rect', {}, { x_mm: 45 }),
+        )}
+        onChange={vi.fn()}
+      />,
+    );
+
+    enterEditPoints('sh1');
+    expect(handle(container, 'polygon-vertex-0')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('layer-sh2'));
+    selectShape('sh1');
+
+    expect(queryHandle(container, 'polygon-vertex-0')).toBeNull();
+    expect(lastAnchors()).toEqual(FULL_ANCHORS);
+  });
 });
 
 // ---------------------------------------------------------------------------
