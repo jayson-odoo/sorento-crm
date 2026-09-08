@@ -52,3 +52,21 @@ receipt. So "closed, never received" is not evidence of retirement.
   `total_received`. It takes no share of its group's receipt and is never reopened. A retired line
   whose stated receipt is 29 and whose goods-received note is then deleted still reads 29 (the D28c
   floor, AC-X40 unchanged).
+
+## Round 3 (reviewer, 2026-09-08)
+
+- **AC-H11 [BE][T]** (ghost document) A document whose every line is hidden does not appear in
+  `list_documents` under any state, and `get_document` still answers 404 for it. Today the group
+  forms with the aggregates gated but not the membership, so it lists as a 0-line row that errors
+  when opened. Reachable without the backfill: a push naming zero lines retires every row.
+
+- **AC-H12 [BE][T]** (header agrees with the page) `list_documents`' Balance, status, worst overdue
+  and earliest ETA count only visible lines, the same set `get_document` returns. Seed a document
+  with one open visible line and one hidden line that is `open` with zero receipt (the shape that
+  breaks the "retired implies closed" convention) and assert the list header's Balance equals the
+  detail's. The supplier rollup counts the same visible set on both sides, so the majority supplier
+  name cannot differ between the list and the page it opens.
+
+- **AC-H13 [BE][T]** (packing list) The per-product related-SPO strip on the packing-list detail
+  (`app/api/v1/procurement/packing_lists.py`) hides retired allocations and excludes their allocated
+  quantity, the same rule as every other listing.
