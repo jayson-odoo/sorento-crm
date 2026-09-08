@@ -636,8 +636,11 @@ DIVERGENCES: list[Divergence] = [
     # AC-1 (chatbot-warehouse-entity-and-last-in, 8 Sep 2026): `ALLOWED` gained
     # "warehouse" on `inventory` and a whole `spo_allocation` row, so the gate's DEBUG
     # ECHO of the matrix lists one more type than every capture taken before the change.
-    # `gate_debug.allowed_lookup` is that echo and nothing else - it is `ALLOWED[domain]`
-    # copied onto the output for a reader, never an input to any decision.
+    # `gate_debug.allowed_lookup` is `ALLOWED[domain]` copied onto the output. No capture
+    # in the corpus feeds it into a decision; the one reader that derives anything from it
+    # (`answer.py`'s needs-scope message, which turns the allowed types into the "give me a
+    # product code or warehouse" option list) is graded separately, by
+    # tests/chatbot/test_warehouse_entity.py::TestZeroEntitySpoAllocationAsksInsteadOfFanningOut.
     #
     # FIELD-SCOPED to that one key, deliberately: `gate_passed`, `gate_reason`,
     # `compatible_entities`, `require_specific` and every other byte are still graded, and

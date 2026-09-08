@@ -46,15 +46,24 @@ async def get_spo_last_receipt(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    """The last `top_n` SPO lines PER PRODUCT, newest first, GR ignored entirely. With NO
+    """The last `top_n` SPO lines PER PRODUCT, newest first by the SPO's own date. With NO
     `product_ids` (an unscoped ask), `top_n` is instead a plain cap over ALL products - the
     same ordering, newest first, any product - never one row per product across the whole
     table.
 
-    Date fallback order: `spo_allocations.expected_date` (the line's promised delivery),
-    else `.issue_date`, else `.created_at` - each row labels which column it used
-    (`date_label`: "Expected" / "Issued" / "Recorded"), so the presenter never claims a
-    date it did not actually read. `warehouse_ids` narrows before the pick.
+    GR never decides WHICH line answers (no `receipt_status` filter, no inbound-shipment
+    arrival column), but it IS reported on the line that did.
+
+    Each row: `spo_number`, `product_id`, `product_code`, `product_name`, `spo_quantity`
+    (ordered), `gr_quantity` (received; None when nothing has been), `spo_date`,
+    `spo_date_source`, `gr_date` (None when no approved GRN line), `warehouse`.
+
+    `spo_date` fallback order: `spo_allocations.expected_date` (the line's promised
+    delivery), else `.issue_date`, else `.created_at` - `spo_date_source` says which one
+    answered ("expected" / "issued" / "recorded"), so the presenter never labels a
+    bookkeeping timestamp as a promised delivery. `gr_date` is
+    `picking_headers.picking_date` reached through `picking_lines.spo_allocation_id`, for
+    `picking_status = 'approved'` only. `warehouse_ids` narrows before the pick.
     """
     try:
         rows = last_receipt_rows(

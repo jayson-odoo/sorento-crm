@@ -18,11 +18,11 @@ the dates named.
   2026-08-30, `receipt_status` pending, not received), C (no `expected_date`, no
   `issue_date`, `created_at` 2026-08-21, fully_received, with an inbound shipment arrival
   2026-08-26). `last_receipt_rows(product_ids=[P])` returns B first with
-  `date = 2026-08-30`, `date_label = "Expected"`; with `top_n = 3` the order is B, C
-  (`date = 2026-08-21`, `date_label = "Recorded"`), A. The shipment arrival is never used
-  as the key.
+  `spo_date = 2026-08-30`, `spo_date_source = "expected"`; with `top_n = 3` the order is
+  B, C (`spo_date = 2026-08-21`, `spo_date_source = "recorded"`), A. The shipment arrival
+  is never used as the key.
 - AC-5 Issue-date fallback. A line with `expected_date` NULL and `issue_date` set uses
-  `issue_date` with `date_label = "Issued"`.
+  `issue_date` with `spo_date_source = "issued"`.
 - AC-6 One row per product. Products P1 and P2 each with two lines; `product_ids=[P1, P2]`,
   `top_n = 1` returns exactly two rows, one per product, each product's newest line, grouped
   by `product_code` order. `top_n = 2` returns four rows, two per product, newest first
@@ -33,10 +33,29 @@ the dates named.
 - AC-7 Warehouse filter. Lines of P in `BRW` and `BRW-IB`; `warehouse_ids=[BRW-IB]` returns
   only the BRW-IB line even when the BRW line is newer.
 - AC-8 Route. `GET /api/v1/procurement/spo-allocations/last-receipt?product_ids=..&warehouse_ids=..&top_n=..`
-  returns the same rows through the API, `data[0].date_label` present, `empty` false.
-- AC-9 Presenter (MCP). `_spo_last_receipt` renders the intro "Here is the last SPO line
-  per product." and a "Quantity" field from `quantity`; a row with `quantity_received`
-  also shows "Quantity Received". `date_label` is still the date field's label.
+  returns the same rows through the API, `data[0].spo_date_source` present, `empty` false.
+- AC-9 Presenter (MCP), field order. Owner ruling 8 Sep 2026 against the rendered answer.
+  `_spo_last_receipt` keeps the intro "Here is the last SPO line per product." and renders
+  EXACTLY these fields, in this order: `SPO Number`, `Product Code`, `SPO Quantity`,
+  `GR Quantity`, `SPO Date`, `GR Date`, `Warehouse`. Asserted as an exact list, because
+  the order is the ruling. Both GR fields are "if any" and disappear independently: a row
+  with `gr_quantity = None` and `gr_date = None` renders the five others in the same
+  order. A row whose `spo_date_source` is `"recorded"` labels that field
+  `SPO Date (recorded)` instead of `SPO Date`, so a bookkeeping timestamp is never read as
+  a promised delivery.
+- AC-9b GR date. `gr_date` is `picking_headers.picking_date` reached through
+  `picking_lines.spo_allocation_id`, with `picking_status = 'approved'` and
+  `max(picking_date)` per allocation (measured on the 0907 copy: 987 of 987 approved
+  headers carry a `picking_date`; 2,043 allocations have approved GRN lines and none has
+  more than one approved header). An allocation with an approved GRN header answers with
+  that date; the same allocation under a DRAFT header answers `gr_date = None`; a line
+  with `quantity_received > 0` and no GRN row at all (the ESB-stated path, 74,300 rows on
+  the 0907 copy) answers with `gr_quantity` set and `gr_date = None`. Both the per-product
+  and the unscoped branch carry it, and one grouped join serves every row - never a
+  per-row lookup.
+- AC-9c GR quantity is absence, not zero. `spo_allocations.quantity_received` defaults to
+  0 and is never null, so `gr_quantity` is `None` when nothing has been received and the
+  presenter shows no `GR Quantity` field at all.
 - AC-10 Browser (tester, agent-browser via sidebar, stack :3080/:8080 over
   `sorento_ai_automation_0907`). Chatbot Console, contact Jayson:
   - "last in for SRT62-GM to brw" answers one row for SRT62-GM whose warehouse is `BRW`

@@ -19,7 +19,7 @@ from app.main import app  # noqa: E402
 
 from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
 from app.models.base import set_company_scope
-from app.models.procurement import InboundShipment, SPOAllocation
+from app.models.procurement import InboundShipment, PickingHeader, PickingLine, SPOAllocation
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.company_scope_resolver import apply_company_scope
 from app.services.spo_last_receipt_service import last_receipt_rows
@@ -87,6 +87,34 @@ def _allocation(
     return row
 
 
+def _approved_grn(db, *, allocation, product_id, picking_date, status="approved"):
+    """One GRN header + one line pointing at `allocation`. `picking_headers.picking_date`
+    is the tool's GR Date; only an `approved` header counts."""
+    header = PickingHeader(
+        id=str(uuid.uuid4()),
+        picking_number=unique_code("GRN")[:50],
+        picking_type="goods_receive",
+        picking_date=picking_date,
+        picking_status=status,
+        company_id=DEFAULT_COMPANY_ID,
+    )
+    db.add(header)
+    db.flush()
+    db.add(
+        PickingLine(
+            id=str(uuid.uuid4()),
+            picking_header_id=header.id,
+            spo_allocation_id=allocation.id,
+            product_id=product_id,
+            quantity_expected=1,
+            quantity_picked=1,
+            company_id=DEFAULT_COMPANY_ID,
+        )
+    )
+    db.flush()
+    return header
+
+
 # --------------------------------------------------------------------- service
 
 
@@ -113,15 +141,15 @@ def test_last_spo_line_gr_ignored_entirely(db):
     rows = last_receipt_rows(db, product_ids=[prod.id])
     assert len(rows) == 1
     assert rows[0]["spo_number"] == "B"
-    assert rows[0]["date"] == "2026-08-30"
-    assert rows[0]["date_label"] == "Expected"
+    assert rows[0]["spo_date"] == "2026-08-30"
+    assert rows[0]["spo_date_source"] == "expected"
 
     rows3 = last_receipt_rows(db, product_ids=[prod.id], top_n=3)
     assert [r["spo_number"] for r in rows3] == ["B", "C", "A"]
-    assert rows3[1]["date"] == "2026-08-21"
-    assert rows3[1]["date_label"] == "Recorded"
+    assert rows3[1]["spo_date"] == "2026-08-21"
+    assert rows3[1]["spo_date_source"] == "recorded"
     # The shipment's warehouse_arrival_date (2026-08-26) never appears anywhere.
-    assert all(r["date"] != "2026-08-26" for r in rows3)
+    assert all(r["spo_date"] != "2026-08-26" for r in rows3)
 
 
 def test_issue_date_fallback_when_expected_date_is_null(db):
@@ -131,8 +159,8 @@ def test_issue_date_fallback_when_expected_date_is_null(db):
     db.commit()
 
     rows = last_receipt_rows(db, product_ids=[prod.id])
-    assert rows[0]["date"] == "2026-07-01"
-    assert rows[0]["date_label"] == "Issued"
+    assert rows[0]["spo_date"] == "2026-07-01"
+    assert rows[0]["spo_date_source"] == "issued"
 
 
 def test_created_at_fallback_when_neither_date_is_set(db):
@@ -142,8 +170,8 @@ def test_created_at_fallback_when_neither_date_is_set(db):
     db.refresh(alloc)
 
     rows = last_receipt_rows(db, product_ids=[prod.id])
-    assert rows[0]["date_label"] == "Recorded"
-    assert rows[0]["date"] == alloc.created_at.date().isoformat()
+    assert rows[0]["spo_date_source"] == "recorded"
+    assert rows[0]["spo_date"] == alloc.created_at.date().isoformat()
 
 
 def test_one_row_per_product_grouped_by_product_code(db):
@@ -207,14 +235,89 @@ def test_warehouse_filter_before_per_product_pick(db):
     assert rows[0]["warehouse"] == "BRW-IB"
 
 
-def test_quantity_is_the_ordered_quantity_not_received(db):
+def test_spo_quantity_is_the_ordered_quantity_and_gr_quantity_the_received_one(db):
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
     _allocation(db, product_id=prod.id, quantity=25, qty_received=10, status="pending")
     db.commit()
 
     rows = last_receipt_rows(db, product_ids=[prod.id])
-    assert rows[0]["quantity"] == 25
-    assert rows[0]["quantity_received"] == 10
+    assert rows[0]["spo_quantity"] == 25
+    assert rows[0]["gr_quantity"] == 10
+
+
+def test_gr_quantity_is_none_when_nothing_has_been_received(db):
+    """`spo_allocations.quantity_received` defaults to 0 and is never null, and the zero
+    rows are exactly the OPEN lines this tool exists to surface - so zero reaches the
+    caller as absence, not as a figure to print beside the ordered quantity."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    _allocation(db, product_id=prod.id, quantity=25, qty_received=0)
+    db.commit()
+
+    rows = last_receipt_rows(db, product_ids=[prod.id])
+    assert rows[0]["spo_quantity"] == 25
+    assert rows[0]["gr_quantity"] is None
+    assert rows[0]["gr_date"] is None
+
+
+def test_gr_date_comes_from_the_approved_picking_header(db):
+    """AC-9b. `picking_lines.spo_allocation_id` -> `picking_headers` with
+    `picking_status = 'approved'`, `picking_date`. Measured on the 0907 copy: 987 of 987
+    approved headers carry a `picking_date`, 2,043 allocations have approved GRN lines
+    and NONE has more than one approved header, so `max(picking_date)` per allocation is
+    the whole rule."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    alloc = _allocation(
+        db, product_id=prod.id, expected_date=date(2026, 6, 10), quantity=25, qty_received=25,
+    )
+    _approved_grn(db, allocation=alloc, product_id=prod.id, picking_date=date(2026, 6, 18))
+    db.commit()
+
+    rows = last_receipt_rows(db, product_ids=[prod.id])
+    assert rows[0]["spo_date"] == "2026-06-10"
+    assert rows[0]["gr_quantity"] == 25
+    assert rows[0]["gr_date"] == "2026-06-18"
+
+
+def test_a_draft_picking_header_is_not_a_gr_date(db):
+    """Only an APPROVED header counts - a draft GRN has not received anything yet."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    alloc = _allocation(db, product_id=prod.id, quantity=25, qty_received=25)
+    _approved_grn(
+        db, allocation=alloc, product_id=prod.id, picking_date=date(2026, 6, 18), status="draft",
+    )
+    db.commit()
+
+    rows = last_receipt_rows(db, product_ids=[prod.id])
+    assert rows[0]["gr_quantity"] == 25
+    assert rows[0]["gr_date"] is None
+
+
+def test_a_line_received_without_a_grn_shows_a_gr_quantity_and_no_gr_date(db):
+    """The ESB-stated path: 74,300 allocations on the 0907 copy carry
+    `quantity_received > 0` with no approved GRN row at all. Intended - the owner's rule
+    is "GR date if any"."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    _allocation(db, product_id=prod.id, quantity=25, qty_received=25, status="fully_received")
+    db.commit()
+
+    rows = last_receipt_rows(db, product_ids=[prod.id])
+    assert rows[0]["gr_quantity"] == 25
+    assert rows[0]["gr_date"] is None
+
+
+def test_the_unscoped_branch_carries_the_gr_date_too(db):
+    """The two branches must answer the same shape - the unscoped one is a different
+    query, not a different contract."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    alloc = _allocation(
+        db, product_id=prod.id, expected_date=date(2026, 6, 10), quantity=25, qty_received=25,
+    )
+    _approved_grn(db, allocation=alloc, product_id=prod.id, picking_date=date(2026, 6, 18))
+    db.commit()
+
+    rows = last_receipt_rows(db, top_n=5)
+    assert rows[0]["gr_date"] == "2026-06-18"
+    assert rows[0]["gr_quantity"] == 25
 
 
 # AC-911's DEFAULT_UNSUPPORTED_DOMAINS assertion lives in
@@ -257,7 +360,7 @@ def test_route_last_receipt_default_top_n_one(client, db):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert len(body["data"]) == 1
-    assert body["data"][0]["quantity"] == 15
+    assert body["data"][0]["spo_quantity"] == 15
     assert body["empty"] is False
 
 
@@ -276,7 +379,7 @@ def test_route_last_receipt_with_warehouse_filter_and_top_n(client, db):
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert len(body["data"]) == 3
-    assert body["data"][0]["date_label"] is not None
+    assert body["data"][0]["spo_date_source"] is not None
     assert body["empty"] is False
 
 

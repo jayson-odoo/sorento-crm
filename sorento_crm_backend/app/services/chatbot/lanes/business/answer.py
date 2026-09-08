@@ -2102,6 +2102,11 @@ def _human_list(values: list) -> str:
         return "a valid value"
     if len(kept) == 1:
         return jsc.js_string(kept[0])
+    if len(kept) == 2:
+        # "A or B", never "A, or B". A two-item list has no series to separate, so the
+        # comma is a tell that a three-item helper wrote the sentence (review S5,
+        # 8 Sep 2026: "Give me a product code, or warehouse, and I can look it up").
+        return f"{jsc.js_string(kept[0])} or {jsc.js_string(kept[1])}"
     head = ", ".join(jsc.js_string(v) for v in kept[:-1])
     return f"{head}, or {jsc.js_string(kept[-1])}"
 

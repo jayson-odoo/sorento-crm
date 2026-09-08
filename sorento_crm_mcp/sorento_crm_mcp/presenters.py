@@ -459,38 +459,43 @@ def _purchase_orders_placed(rows: list[dict], b: _Builder) -> None:
 
 
 def _spo_last_receipt(rows: list[dict], b: _Builder) -> None:
-    """Reworded 8 Sep 2026 (chatbot-warehouse-entity-and-last-in, AC-9): the tool now
-    answers the last SPO LINE per product, not a receipt - `quantity` (the ordered
-    quantity) is the primary figure, and `quantity_received` is a second field shown only
-    when something really has been received.
+    """Owner ruling 8 Sep 2026, against the rendered answer (chatbot-warehouse-entity-and-
+    last-in, AC-9 / AC-9b). A row reads, in this order:
 
-    `> 0`, not "is not None" (review S3, 8 Sep 2026): `spo_allocations.quantity_received`
-    defaults to 0 and is never null, and 917 lines carry exactly 0 - the OPEN lines this
-    rework exists to surface. Showing "Quantity Received: 0" on every one of them is noise
-    beside "Quantity", so the zero is dropped and a partial or full receipt still says so.
+        SPO Number, Product Code, SPO Quantity, GR Quantity (if any), SPO Date,
+        GR Date (if any), Warehouse
 
-    `date_label` still names WHICH column answered - never claim "Expected" when the row
-    fell back to `issue_date` or `created_at`."""
+    SPO Number stays first because it is the identity line - the same string the item
+    title carries. The ORDER is the ruling, so it is asserted as an exact list in
+    `tests/test_presenters.py`, not as a membership test.
+
+    Both GR fields are "if any", and they are absent independently:
+
+    * `gr_quantity` is None when nothing has been received. The backend already applies
+      that rule (`spo_allocations.quantity_received` defaults to 0 and is never null, and
+      the zero rows are the OPEN lines this tool exists to surface), so a zero never
+      arrives here as a number.
+    * `gr_date` is None when no APPROVED GRN header points at the line. 74,300 allocations
+      on the 0907 copy carry a received quantity with no GRN row at all (the ESB-stated
+      path), so a GR quantity with no GR date is ordinary, not a defect.
+
+    `SPO Date` is labelled `SPO Date (recorded)` when the backend fell back to
+    `created_at` (`spo_date_source == "recorded"`, ~3% of lines): a bookkeeping timestamp
+    must not be read as a promised delivery date. `b.item` drops any pair whose value is
+    None, which is what makes the two "if any" fields disappear rather than render empty.
+    """
     for r in rows:
-        date_label = r.get("date_label") or "Date"
-        received = r.get("quantity_received")
-        try:
-            has_receipt = received is not None and float(received) > 0
-        except (TypeError, ValueError):
-            has_receipt = _filled(received)
+        source = str(r.get("spo_date_source") or "").strip().lower()
+        spo_date_label = "SPO Date (recorded)" if source == "recorded" else "SPO Date"
         b.item(
             r.get("spo_number"),
             [
-                ("company_name", "Company", r.get("company_name")),
                 ("spo_number", "SPO Number", r.get("spo_number")),
                 ("product_code", "Product Code", r.get("product_code")),
-                ("quantity", "Quantity", _qty(r.get("quantity"))),
-                (
-                    "quantity_received",
-                    "Quantity Received",
-                    _qty(received) if has_receipt else None,
-                ),
-                ("date", str(date_label), r.get("date")),
+                ("spo_quantity", "SPO Quantity", _qty(r.get("spo_quantity"))),
+                ("gr_quantity", "GR Quantity", _qty(r.get("gr_quantity"))),
+                ("spo_date", spo_date_label, r.get("spo_date")),
+                ("gr_date", "GR Date", r.get("gr_date")),
                 ("warehouse", "Warehouse", r.get("warehouse")),
             ],
         )

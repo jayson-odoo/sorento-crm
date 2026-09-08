@@ -61,10 +61,10 @@ UAC: `chatbot-warehouse-entity-and-last-in-acceptance-criteria.md`.
 
 4. `last_receipt_rows` (and the `/last-receipt` route + MCP tool description) change
    meaning to "the last SPO line per product":
-   - No `receipt_status` filter. GR is ignored entirely.
-   - Ordering key per line: `expected_date`, falling back to `issue_date`, then
-     `created_at::date` for the 3% with neither. `date_label` names which:
-     "Expected" / "Issued" / "Recorded". The shipment arrival columns are no longer read
+   - No `receipt_status` filter. GR never decides WHICH line answers.
+   - Ordering key per line (`spo_date`): `expected_date`, falling back to `issue_date`,
+     then `created_at::date` for the 3% with neither. `spo_date_source` names which:
+     "expected" / "issued" / "recorded". The shipment arrival columns are no longer read
      here (they belong to the incoming domain).
    - ONE row per product **when `product_ids` is given**: for each named product, the top
      `top_n` lines by that key, newest first. `top_n` therefore means "lines per product",
@@ -78,15 +78,44 @@ UAC: `chatbot-warehouse-entity-and-last-in-acceptance-criteria.md`.
    - Ties on the same date: `created_at DESC` stays as the deterministic tiebreak, stated
      in the docstring as a tiebreak and nothing more.
 5. Presenter `_spo_last_receipt` and its intro line ("Here is the last receipt I found.")
-   are reworded for the new meaning: intro "Here is the last SPO line per product." and the
-   quantity field reads the ordered quantity (`quantity` on the allocation, not
-   `quantity_received`); keep `quantity_received` as a second field only when it is
-   **above zero** so a received line still says so. Above zero, not non-null (review
-   round, 8 Sep 2026): the column defaults to 0 and is never null, and the 917 zero rows
-   are exactly the open lines this rework exists to surface, so a non-null test would
-   print "Quantity Received: 0" on every one of them. The catalogue `ToolSpec` description for the
-   tool says the same. `restricted_fields`, `related_tools`, `domain` on the spec are
-   unchanged.
+   are reworded for the new meaning: intro "Here is the last SPO line per product."
+
+### The rendered row (owner ruling, 8 Sep 2026, against the screenshot)
+
+GR never decides which line answers, but it IS reported on the line that did - so the
+row reads, in this order and no other:
+
+    SPO Number, Product Code, SPO Quantity, GR Quantity (if any), SPO Date,
+    GR Date (if any), Warehouse
+
+- SPO Number stays first: it is the identity line, the same string the item title carries.
+  The owner's list starts after it.
+- `spo_quantity` = `allocated_quantity`. `gr_quantity` = `quantity_received`, **None when
+  zero**: the column defaults to 0 and is never null, and the zero rows are exactly the
+  open lines this rework exists to surface, so a non-null test would print
+  "GR Quantity: 0" on every one of them.
+- `SPO Date` is labelled `SPO Date (recorded)` when `spo_date_source` is `"recorded"`, so
+  the 3% that fell back to `created_at` stay honest.
+- `gr_date` is `picking_headers.picking_date` reached through
+  `picking_lines.spo_allocation_id`, `picking_status = 'approved'` only. Measured on the
+  0907 copy: 987 of 987 approved headers carry a `picking_date`; 2,043 allocations have
+  approved GRN lines and NONE has more than one approved header, so `max(picking_date)`
+  per allocation is the whole rule - taken as ONE grouped join, never a per-row lookup,
+  and company-scoped by hand on both picking tables for the same `.subquery()` reason as
+  the allocation predicate. 74,300 allocations carry `quantity_received > 0` with no
+  approved GRN row (the ESB-stated path): they show a GR quantity and no GR date, which
+  is what "if any" means.
+- Service keys renamed to match: `spo_quantity`, `gr_quantity`, `spo_date`,
+  `spo_date_source`, `gr_date`. `quantity`, `quantity_received`, `date` and `date_label`
+  are gone. Grepped before renaming: no chatbot renderer reads this tool's row keys -
+  `fetch.IDENTITY_KEYS` projection is gated on `result_type == "incoming_stock"` (or a
+  `field_vocabulary`, which only the incoming envelope carries) and this tool's
+  `result_type` is `spo_last_receipt`. The `Company` line was dropped from the presenter
+  with them: the service has never emitted `company_name`, so it has never rendered.
+- The catalogue `ToolSpec` description, the `/last-receipt` route docstring and
+  `mcp_tool_capability_service`'s intent line all name the six fields in this order and
+  the GR Date source. `restricted_fields`, `related_tools`, `domain` on the spec are
+  unchanged.
 
 ### Resolver: the warehouse AND probe is all or nothing
 

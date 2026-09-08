@@ -112,6 +112,9 @@ class TestZeroEntitySpoAllocationAsksInsteadOfFanningOut:
         # all (`fetch.DATE_PARAMS`), so offering a date range asks for a filter nothing
         # downstream could apply.
         assert "date range" not in message, message
+        # Two options are "A or B", never "A, or B" - an Oxford comma on a two-item list
+        # is the tell that a list helper was written for three (review S5, 8 Sep 2026).
+        assert "a product code or warehouse" in message, message
 
 
 class TestTransformerEmitsWarehouseIds:
