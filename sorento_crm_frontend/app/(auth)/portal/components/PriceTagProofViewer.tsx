@@ -13,6 +13,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Skeleton } from '@/components/ui/skeleton';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -76,6 +77,10 @@ export default function PriceTagProofViewer({
   }, [containerWidth, pageWidthMm]);
 
   const scale = zoom === 'fit' ? fitScale : zoom;
+  // Before the ResizeObserver's first callback, containerWidth is still 0
+  // and fitScale falls back to 1 (real size) - a visible flash of an
+  // oversized sheet for one frame. Wait for a real measurement instead.
+  const isMeasuringFit = zoom === 'fit' && containerWidth === 0;
 
   // Build a single-sheet doc for the active sheet.
   const activeSheetDoc = useMemo(() => {
@@ -171,13 +176,17 @@ export default function PriceTagProofViewer({
           ref={containerRef}
           className="overflow-auto bg-muted/30 rounded-lg p-4 max-h-[70vh]"
         >
-          {activeSheetDoc && (
-            <TagSheetRenderer
-              doc={activeSheetDoc}
-              resolvedData={resolvedData}
-              preview
-              previewScale={scale}
-            />
+          {isMeasuringFit ? (
+            <Skeleton className="h-64 w-full" />
+          ) : (
+            activeSheetDoc && (
+              <TagSheetRenderer
+                doc={activeSheetDoc}
+                resolvedData={resolvedData}
+                preview
+                previewScale={scale}
+              />
+            )
           )}
         </div>
       </CardContent>
