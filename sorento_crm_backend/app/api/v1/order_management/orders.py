@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
-from app.services.order_service import OrderService
+from app.services.order_service import OrderService, stamp_so_outstanding_rows
 from app.services.uuid_list_param import parse_uuid_list
 from app.config import settings as app_settings
 
@@ -578,6 +578,17 @@ async def get_orders(
                     so_outstanding_summary(
                         db, customer_ids=_resolved_customer_ids, product_ids=_resolved_product_ids
                     )
+                )
+                # D8 (owner console pass, 8 Sep 2026): the per-row SO block the by-product
+                # route stamps reaches THIS route's products[] / groups[] too - the same
+                # five figures, the same three-state rule, the same scope. The top-level
+                # leg above stays for callers that read it; the presenter no longer
+                # renders a three-line block off it.
+                stamp_so_outstanding_rows(
+                    db,
+                    body["summary"],
+                    customer_ids=_resolved_customer_ids,
+                    product_ids=_resolved_product_ids,
                 )
             return JSONResponse(content=body)
         return result

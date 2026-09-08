@@ -317,7 +317,10 @@ def test_orders_groups_absent_when_backend_did_not_group():
     assert "groups" not in out
 
 
-def test_pipeline_summary_prepended_for_single_product_ask():
+def test_no_three_line_block_is_prepended_off_a_top_level_so_outstanding_qty():
+    """D8 (owner, 8 Sep 2026): the old "SO Outstanding / DO open / Delivered" block is gone;
+    the per-row SO block is the only SO rendering, and the `so_outstanding` bucket's own
+    summary (no products) renders nothing either."""
     out = env("crm_order_management_orders_list", {
         "data": [{"order_number": "A1", "debtor_name": "ABC",
                    "lines": [{"quantity": 3, "product": {"product_code": "SRTWC8517"}}]}],
@@ -326,46 +329,20 @@ def test_pipeline_summary_prepended_for_single_product_ask():
             "customers": ["ABC"], "customer_count": 1,
             "so_outstanding_qty": 7, "so_outstanding_count": 1,
             "products": [{"product_code": "SRTWC8517", "order_count": 5, "customer_count": 1,
-                          "delivered_quantity": 12, "pending_quantity": 3,
-                          "delivered_from": "2026-06-01", "delivered_to": "2026-06-10"}],
+                          "delivered_quantity": 12, "pending_quantity": 3, "so_count": 1,
+                          "so_ordered_qty": 9, "so_transferred_qty": 2, "so_outstanding_qty": 7}],
         },
     })
-    items = out["summary_items"]
-    labels = [f["fields"][0]["label"] for f in items[:3]]
-    assert labels[0] == "SO Outstanding"
-    assert items[0]["fields"][0]["value"] == 7
-    assert labels[1] == "DO open (not yet delivered)"
-    assert items[1]["fields"][0]["value"] == 3
-    assert "Delivered" in labels[2]
-    assert items[2]["fields"][0]["value"] == 12
-
-
-def test_pipeline_summary_absent_when_no_so_outstanding_key():
-    """AC-905b: 'list DO for <customer>' (no quantity ask) never carries the
-    so_outstanding leg, so the plain per-customer/product summary is unaffected."""
-    out = env("crm_order_management_orders_list", {
-        "data": [{"order_number": "A1", "debtor_name": "ABC",
-                   "lines": [{"quantity": 3, "product": {"product_code": "SRTWC8517"}}]}],
-        "summary": {
-            "row_count": 5, "order_count": 5, "delivered_count": 4, "pending_count": 1,
-            "customers": ["ABC"], "customer_count": 1,
-            "products": [{"product_code": "SRTWC8517", "order_count": 5, "customer_count": 1,
-                          "delivered_quantity": 12, "pending_quantity": 3}],
-        },
-    })
-    labels = [f["fields"][0]["label"] for f in out["summary_items"]]
-    assert "SO Outstanding" not in labels
-
-
-def test_pipeline_summary_absent_on_so_outstanding_bucket_own_summary():
-    """The `so_outstanding` bucket's OWN include_summary=true carries no DO
-    data at all - must not synthesize a fake '0 DO open' line."""
-    out = env("crm_order_management_orders_list", {
+    labels = [f["label"] for item in out["summary_items"] for f in item["fields"]]
+    assert "DO open (not yet delivered)" not in labels
+    assert labels.count("SO Outstanding") == 1  # the row's own field, once
+    assert "SO" in labels and "Ordered" in labels
+    bucket = env("crm_order_management_orders_list", {
         "order_status": "so_outstanding",
         "data": [{"so_number": "SO-1", "product_code": "SRTWC8517", "outstanding_qty": 7}],
         "summary": {"scope": "filter", "row_count": 1, "so_outstanding_qty": 7, "so_outstanding_count": 1},
     })
-    assert "summary_items" not in out
+    assert "summary_items" not in bucket
 
 
 def test_products_specs_render_as_keyed_fields_ranked_by_backend_order():

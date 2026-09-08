@@ -133,6 +133,25 @@ cases:
   # beside the lane's explicit tokens (with "image" and "photo" alike); they now fold into
   # the unresolved token, and the parser's attachment_type canonical_code is the taxonomy
   # value ("image" -> photo). One group, the single-miss wording, code quick replies.
+  # D7 (owner ruling on the restored-DB pass): the ladder is stock -> incoming -> PO from
+  # either side. "hav incoming?" after a zero-stock ask used to stop at "No incoming and no
+  # stock for X." because the 489 ladder had no PO rung on `incoming`; migration 491 adds
+  # it. Same PO placed key gate, one offer.
+  - name: D7 - an incoming ask on a zero-stock code climbs to the PO rung
+    cold: true
+    turns:
+      - text: "check stock CB2904"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["CB2904", "but PO is placed"]
+          no_uuid: true
+      - text: "hav incoming?"
+        expect:
+          branch_kind: business_query
+          reply_contains: ["No incoming and no stock for CB2904, but PO is placed:"]
+          reply_not_contains: ["No incoming and no stock for CB2904."]
+          no_uuid: true
+
   - name: D6 - a code miss with an attachment word is one did-you-mean group  # NEW VOCABULARY
     text: "Ibwc7605 image"
     cold: true
@@ -202,7 +221,9 @@ cases:
     cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["SO Outstanding", "DO open (not yet delivered)", "Delivered"]
+      # D8: the three-line block is gone; the rows carry the SO block then the DO block
+      reply_contains: ["SO:", "Ordered:", "SO Outstanding", "Delivered"]
+      reply_not_contains: ["DO open (not yet delivered)"]
       no_uuid: true
 
   # Owner turn 98912914 (8 Sep): the same question with a customer whose name resolves to
@@ -219,6 +240,18 @@ cases:
   #     GROUP BY 1,2;
   #   -> HENG SENG HARDWARE SDN BHD [A/C III] x SRTWC286-SH / -SH-150 / -SH-200 (6 / 2 / 4 DOs);
   #      no open SO line for the pair today, so the field reads 0 - the LABEL is what is graded.
+  # D8 (owner screenshot, orders LIST tool, all customers x SRTWT8201): the rows carried the
+  # DO block only and the struck three-line block sat on top. The list route now stamps the
+  # SO block per row like the by-product route, and the block is gone from the render.
+  - name: D8 - all customers of a code on the orders list carry the SO block per row  # NEW VOCABULARY
+    text: "how many did all customers take of SRTWT8201"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["*SO:*", "*Ordered:*", "SRTWT8201"]
+      reply_not_contains: ["DO open (not yet delivered)"]
+      no_uuid: true
+
   - name: A3 how many did the customer take - by-product tool carries the SO line per row  # NEW VOCABULARY
     text: "how many did heng seng hardware take of srtwc286"
     cold: true

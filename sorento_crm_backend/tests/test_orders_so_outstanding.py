@@ -347,3 +347,37 @@ def test_route_so_outstanding_cap_lifts_for_a_date_scoped_read(client, db, monke
     )
     assert resp.status_code == 200, resp.text
     assert len(resp.json()["data"]) == 25
+
+
+def test_d8_the_list_route_stamps_the_so_block_on_its_rows(client, db):
+    """D8 (owner console pass, 8 Sep 2026): the orders LIST route carried the SO figures at
+    the top level only, so its per-row summary showed the DO block alone while the
+    by-product route showed both. Now the total row and each customer row carry the five
+    SO figures under include_pipeline."""
+    from datetime import date as _d
+
+    cust = customer(db, company_id=DEFAULT_COMPANY_ID, name="ABC")
+    other = customer(db, company_id=DEFAULT_COMPANY_ID, name="XYZ")
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID)
+    for c in (cust, other):
+        o = order(db, company_id=DEFAULT_COMPANY_ID, customer_id=c.id)
+        o.debtor_name = c.customer_name
+        order_line(db, company_id=DEFAULT_COMPANY_ID, order_id=o.id, product_id=prod.id, warehouse_id=wh.id)
+    so = _so_line(db, customer_id=cust.id, product_id=prod.id, ordered=9, delivered=2)  # +7
+    so.order_date = _d(2026, 5, 1)
+    db.commit()
+
+    resp = client.get(BASE, params={"product_ids": prod.id, "include_summary": "true", "include_pipeline": "true"})
+    assert resp.status_code == 200, resp.text
+    summary = resp.json()["summary"]
+    total = summary["products"][0]
+    assert (total["so_count"], total["so_ordered_qty"], total["so_transferred_qty"], total["so_outstanding_qty"]) == (1, 9, 2, 7)
+    assert total["so_date_from"] == "2026-05-01"
+    by_cust = {g["customer"]: g for g in summary["groups"]}
+    assert (by_cust["ABC"]["so_count"], by_cust["ABC"]["so_outstanding_qty"]) == (1, 7)
+    assert (by_cust["XYZ"]["so_count"], by_cust["XYZ"]["so_outstanding_qty"]) == (0, 0)  # known, nothing: zeros
+    assert summary["so_outstanding_qty"] == 7  # the top-level leg stays for its readers
+
+    plain = client.get(BASE, params={"product_ids": prod.id, "include_summary": "true"}).json()["summary"]
+    assert not any(k.startswith("so_") for row in plain["products"] + plain["groups"] for k in row)

@@ -647,50 +647,9 @@ def summary_items(summary: Any) -> list[dict]:
     return items
 
 
-def _pipeline_summary_items(summary: Any) -> list[dict]:
-    """AC-905b: the three-line pipeline (SO outstanding / DO open / delivered),
-    prepended ahead of `summary_items()`'s per-customer/product breakdown.
-
-    Gated on `so_outstanding_qty` being PRESENT in the raw summary - the plain
-    DO-summary shape (`stamp_order_summary`) never sets it; the orders route
-    adds it only when the caller asked (`include_summary=true`), so an old
-    caller's envelope is unaffected (the key is simply absent).
-
-    "DO open" / "Delivered" read a QUANTITY when the filter narrowed to exactly
-    one product (`summary.products` has one entry - the literal AC-905b case,
-    "how many did X take of Y"); otherwise they read the DO COUNT, because the
-    top-level summary carries no cross-product quantity total (nothing sums
-    across products - "Amendment 4"). Flagged in the PLAN as the owner's
-    review-page assumption, not a confirmed final shape.
-    """
-    # Both legs required: the `so_outstanding` BUCKET's own summary carries
-    # `so_outstanding_qty` too (its one number) but never `pending_count` - it
-    # has no DO data to report, so this must not synthesize a fake "0 DO open".
-    if not isinstance(summary, dict) or "so_outstanding_qty" not in summary or "pending_count" not in summary:
-        return []
-    so_qty = _sl_num(summary.get("so_outstanding_qty")) or 0
-    products = summary.get("products") if isinstance(summary.get("products"), list) else []
-    single = products[0] if len(products) == 1 else None
-    if single is not None:
-        do_open = _sl_num(single.get("pending_quantity")) or 0
-        delivered = _sl_num(single.get("delivered_quantity")) or 0
-        window = _sl_between(single.get("delivered_from"), single.get("delivered_to"))
-    else:
-        do_open = _sl_num(summary.get("pending_count")) or 0
-        delivered = _sl_num(summary.get("delivered_count")) or 0
-        window = _sl_between(summary.get("delivered_from"), summary.get("delivered_to"))
-    delivered_label = f"Delivered ({window})" if window else "Delivered"
-    return [
-        {"title": None, "fields": [
-            {"key": "so_outstanding", "label": "SO Outstanding", "value": so_qty},
-        ]},
-        {"title": None, "fields": [
-            {"key": "do_open", "label": "DO open (not yet delivered)", "value": do_open},
-        ]},
-        {"title": None, "fields": [
-            {"key": "delivered", "label": delivered_label, "value": delivered},
-        ]},
-    ]
+# D8 (owner console pass, 8 Sep 2026): the three-line "SO Outstanding / DO open / Delivered"
+# block that used to be prepended off the top-level `so_outstanding_qty` is gone - the
+# per-row SO block (`_SUMMARY_FIELDS`) is the only SO rendering, on both order tools.
 
 
 def summary_intro(summary: Any, n_items: int) -> Optional[str]:
@@ -1544,7 +1503,7 @@ def present_response(tool_name: str, raw: str) -> str:
     # must cost the summary, never the envelope the rows already rendered into.
     if has_result and b.items and isinstance(data.get("summary"), dict):
         try:
-            _sitems = _pipeline_summary_items(data["summary"]) + summary_items(data["summary"])
+            _sitems = summary_items(data["summary"])
             _sintro = summary_intro(data["summary"], len(b.items))
         except Exception as _exc:  # pragma: no cover - by contract
             logger.warning("summary_items skipped: %s", _exc)
