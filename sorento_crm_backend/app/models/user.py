@@ -561,12 +561,14 @@ class SystemSetting(Base):
     # domain. `answer.py::run_crossdomain`'s hard inventory<->incoming pair became the
     # first rung of this; `purchase_order` is the second rung on `inventory` (Foundre's
     # rule: "no stock, no incoming, but a PO is placed"). A tenant with
-    # `{"inventory": ["incoming"]}` never probes PO at all.
+    # `{"inventory": ["incoming"]}` never probes PO at all. D7 (owner ruling, 8 Sep 2026,
+    # migration 491): the ladder is stock -> incoming -> PO whichever domain the customer
+    # entered from, so `incoming` climbs to `purchase_order` too.
     chatbot_crossdomain_ladder = Column(
         JSONB,
         nullable=False,
-        server_default='{"inventory": ["incoming", "purchase_order"], "incoming": ["inventory"]}',
-        default=lambda: {"inventory": ["incoming", "purchase_order"], "incoming": ["inventory"]},
+        server_default='{"inventory": ["incoming", "purchase_order"], "incoming": ["inventory", "purchase_order"]}',
+        default=lambda: {"inventory": ["incoming", "purchase_order"], "incoming": ["inventory", "purchase_order"]},
     )
     # Which lanes the CRM is allowed to FINISH, by `branch_kind`, one at a time.
     #

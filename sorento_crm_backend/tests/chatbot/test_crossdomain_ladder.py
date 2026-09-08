@@ -90,12 +90,15 @@ def _run(
     code: str = "SRTWC8517",
     uuid: str = "prod-uuid-1",
     granted: list[str] | None = GRANTED,
+    parser: dict | None = None,
 ) -> tuple[dict, list[tuple[str, dict]]]:
     calls: list[tuple[str, dict]] = []
 
     def mcp_probe(name: str, args: dict) -> dict:
         calls.append((name, args))
-        if name == _INCOMING_TOOL:
+        if name in (_INCOMING_TOOL, _STOCK_TOOL):
+            # the first probe: the OTHER domain's tool (incoming from a stock ask, stock
+            # from an incoming ask) - `incoming_response` is its answer either way
             return incoming_response
         if name == _PO_TOOL:
             return po_response if po_response is not None else {"answers": [], "has_result": False}
@@ -104,7 +107,7 @@ def _run(
     services = AnswerServices(mcp_probe=mcp_probe, family_fetch=lambda q: {"data": []})
     result = run_crossdomain(
         _validator_result(),
-        parser=_PARSER,
+        parser=parser or _PARSER,
         resolved=_resolved_for(code, uuid),
         session_block={"session_vars": {"variables": {}}},
         entities_names=None,
@@ -142,6 +145,11 @@ def _composed_text(result: dict, *, answered: bool = True, miss_offer: bool = Fa
 
 _LADDER_WITH_PO = {"inventory": ["incoming", "purchase_order"], "incoming": ["inventory"]}
 _LADDER_NO_PO = {"inventory": ["incoming"], "incoming": ["inventory"]}
+# D7 (migration 491): the shipped ladder climbs to PO from either side.
+_LADDER_491 = {"inventory": ["incoming", "purchase_order"], "incoming": ["inventory", "purchase_order"]}
+_STOCK_TOOL = "crm_inventory_stock_balance_list"
+_INCOMING_PARSER = {**_PARSER, "intent_hint": "check_incoming", "domain_hint": "incoming",
+                    "user_goal": "check incoming for SRTWC8517"}
 
 
 class TestAC920IncomingHasRowsUnchanged:
@@ -483,3 +491,72 @@ class TestD2OneHeadingPerDocument:
             "7 pcs expected 2026-10-05"
         )
         assert block.count("202607-S0054") == 1
+
+
+class TestD7AnIncomingAskClimbsToThePORung:
+    """D7 (owner ruling, 8 Sep 2026): stock -> incoming -> PO whichever domain the customer
+    entered from. "hav incoming?" for a zero-stock code with an open PO line used to end
+    at "No incoming and no stock for X." because the 489 ladder had no second rung on
+    `incoming`; migration 491 adds it."""
+
+    def test_from_incoming_the_po_rung_runs_and_the_wording_follows_the_climb(self) -> None:
+        result, calls = _run(
+            ladder=_LADDER_491,
+            incoming_response={"answers": [], "has_result": False},
+            po_response={"answers": [_po_row(42, "2026-07-13", po_number="202607-S0054", po_date="2026-07-17")], "has_result": True},
+            parser=_INCOMING_PARSER,
+        )
+        assert [name for name, _ in calls] == [_STOCK_TOOL, _PO_TOOL]
+        block = result["render"]["_xdBlock"]["block"]
+        assert block.startswith("No incoming and no stock for SRTWC8517, but PO is placed:\nPO 202607-S0054 dated 2026-07-17:\n42 pcs expected 2026-07-13")
+        assert result["render"]["_xdBlock"]["team"] == "purchasing"
+        assert _composed_text(result).count("Would you like me to escalate") == 1
+
+    def test_from_incoming_the_three_way_miss_reads_in_the_same_order(self) -> None:
+        result, calls = _run(
+            ladder=_LADDER_491,
+            incoming_response={"answers": [], "has_result": False},
+            po_response={"answers": [], "has_result": False},
+            parser=_INCOMING_PARSER,
+        )
+        assert [name for name, _ in calls] == [_STOCK_TOOL, _PO_TOOL]
+        assert "No incoming, no stock and nothing on order for SRTWC8517." in result["render"]["_xdBlock"]["block"]
+
+    def test_from_incoming_the_spo_header_variant_holds(self) -> None:
+        result, _ = _run(
+            ladder=_LADDER_491,
+            incoming_response={"answers": [], "has_result": False},
+            po_response={"answers": [_po_row(7, "2026-10-05", po_number="SPO-9", po_date="2026-08-20", kind="SPO")], "has_result": True},
+            parser=_INCOMING_PARSER,
+        )
+        assert "No incoming and no stock for SRTWC8517, but stock is on order from the supplier:" in result["render"]["_xdBlock"]["block"]
+
+    def test_from_incoming_without_the_grant_no_probe_and_the_ladder_off_note(self) -> None:
+        result, calls = _run(
+            ladder=_LADDER_491,
+            incoming_response={"answers": [], "has_result": False},
+            po_response={"answers": [_po_row(42, "2026-07-13")], "has_result": True},
+            parser=_INCOMING_PARSER,
+            granted=[],
+        )
+        assert [name for name, _ in calls] == [_STOCK_TOOL]
+        assert "No incoming and no stock for SRTWC8517." in result["render"]["_xdBlock"]["block"]
+        assert "PO" not in result["render"]["_xdBlock"]["block"]
+
+    def test_the_489_ladder_still_stops_at_stock_from_incoming(self) -> None:
+        """A tenant that kept the 489 shape (custom or not yet migrated) is unchanged."""
+        result, calls = _run(
+            ladder=_LADDER_WITH_PO,
+            incoming_response={"answers": [], "has_result": False},
+            po_response={"answers": [_po_row(42, "2026-07-13")], "has_result": True},
+            parser=_INCOMING_PARSER,
+        )
+        assert [name for name, _ in calls] == [_STOCK_TOOL]
+
+    def test_from_inventory_the_wording_is_unchanged(self) -> None:
+        result, _ = _run(
+            ladder=_LADDER_491,
+            incoming_response={"answers": [], "has_result": False},
+            po_response={"answers": [], "has_result": False},
+        )
+        assert "No stock, no incoming and nothing on order for SRTWC8517." in result["render"]["_xdBlock"]["block"]

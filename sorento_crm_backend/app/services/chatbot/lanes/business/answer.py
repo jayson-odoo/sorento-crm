@@ -934,6 +934,14 @@ _CROSSDOMAIN_RUNG_TEAM: dict[str, str] = {"purchase_order": "purchasing"}
 #: The field-reveal key a contact must hold for the rung to run at all (8 Sep 2026). A rung
 #: with no row here is ungated.
 _CROSSDOMAIN_RUNG_GRANT: dict[str, str] = {"purchase_order": "purchase_orders.placed"}
+#: The shipped ladder (migration 491, D7): stock -> incoming -> PO from either side. The
+#: DATABASE row is where the default lives; `engine._crossdomain_ladder` hands this out
+#: only for a settings row that carries no usable ladder (a `create_all` schema), never
+#: for a direct `run_crossdomain` call with none (H52 keeps that the pre-A7 single pair).
+DEFAULT_CROSSDOMAIN_LADDER: dict[str, list[str]] = {
+    "inventory": ["incoming", "purchase_order"],
+    "incoming": ["inventory", "purchase_order"],
+}
 
 
 def _next_crossdomain_rung(origin_domain: Any, *, ladder: dict[str, list[str]] | None) -> str | None:
@@ -1145,12 +1153,16 @@ def _apply_crossdomain_rung(
     lines_by_code = _crossdomain_rung_rows(
         probe_result if isinstance(probe_result, dict) else {}, missing=missing
     )
+    # D7: the wording follows the customer's own climb - from an incoming ask the first
+    # absence is "incoming", then "stock"; from a stock ask the reverse.
+    origin_incoming = xd.get("origin_domain") == "incoming"
+    first_word, second_word = ("incoming", "stock") if origin_incoming else ("stock", "incoming")
     if not lines_by_code:
         # The rung answered NOTHING either - AC-922's wording, one step further than the
         # existing "no X and no Y".
         # Item 5: "nothing on order" - PO lines and unshipped SPO allocations alike.
         still_nothing_note = (
-            f"No stock, no incoming and nothing on order for {', '.join(nothing_codes)}."
+            f"No {first_word}, no {second_word} and nothing on order for {', '.join(nothing_codes)}."
         )
         # No offer sentence: `crossdomain_compose` writes it once from `block["team"]`
         # (set to the rung's team below) - see the first probe's `nothing_note`.
@@ -1163,16 +1175,17 @@ def _apply_crossdomain_rung(
         po_lines = _crossdomain_rung_text(found_rows)
         # The header names what the rows ARE: "PO is placed" (D2: no article, the owner's
         # wording) when any row is a PO line, "stock is on order from the supplier" when
-        # every row is an unshipped SPO allocation (item 5).
+        # every row is an unshipped SPO allocation (item 5). D7: the absence pair reads in
+        # the order the customer climbed - "No incoming and no stock" from an incoming ask.
         header = (
             "but stock is on order from the supplier"
             if found_rows and all(r.get("kind") == "spo" for r in found_rows)
             else "but PO is placed"
         )
-        parts.append(f"No stock and no incoming for {', '.join(found)}, {header}:\n{po_lines}")
+        parts.append(f"No {first_word} and no {second_word} for {', '.join(found)}, {header}:\n{po_lines}")
         if still_nothing:
             parts.append(
-                f"No stock, no incoming and nothing on order for {', '.join(still_nothing)}."
+                f"No {first_word}, no {second_word} and nothing on order for {', '.join(still_nothing)}."
             )
         new_note = "\n\n".join(parts)
 

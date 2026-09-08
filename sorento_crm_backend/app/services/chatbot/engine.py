@@ -2644,7 +2644,13 @@ def _crossdomain_ladder(row: Any) -> dict[str, list[str]] | None:
     """
     configured = getattr(row, "chatbot_crossdomain_ladder", None) if row else None
     if not isinstance(configured, dict):
-        return None
+        if row is None:
+            return None
+        # D7: a settings row with no usable ladder (a schema built from the models, never
+        # migrated) gets the shipped default; no row at all stays None (H52).
+        from app.services.chatbot.lanes.business.answer import DEFAULT_CROSSDOMAIN_LADDER
+
+        return {k: list(v) for k, v in DEFAULT_CROSSDOMAIN_LADDER.items()}
     return {
         str(k): [str(v) for v in vs]
         for k, vs in configured.items()

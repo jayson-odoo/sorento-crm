@@ -54,6 +54,12 @@ EMPTY_STOCK = {
     "has_result": False,
 }
 NO_ROWS = {"answers": [], "has_result": False}
+EMPTY_INCOMING = {
+    "result_type": "incoming",
+    "intro": "No matching results found.",
+    "items": [],
+    "has_result": False,
+}
 PO_ROWS = {
     "answers": [
         {
@@ -101,8 +107,10 @@ def _bundle(code: str = CODE) -> ResolveGateServices:
     )
 
 
-def _run_stock_turn(session_factory, monkeypatch, *, po_response, code: str = CODE):
-    """A real stock turn for a product with NO stock, with the PO probe stubbed."""
+def _run_stock_turn(session_factory, monkeypatch, *, po_response, code: str = CODE, origin: str = "inventory"):
+    """A real stock turn for a product with NO stock, with the PO probe stubbed. D7:
+    `origin="incoming"` drives the same code from an incoming ask (the fetch answers with
+    the empty incoming envelope; the stock probe finds nothing; the PO probe answers)."""
     from app.models.user import SystemSetting
     from app.services.chatbot import engine as engine_mod
 
@@ -114,10 +122,11 @@ def _run_stock_turn(session_factory, monkeypatch, *, po_response, code: str = CO
     # configured" while the shipped default was right there.
     for row in db.query(SystemSetting).all():
         row.chatbot_completed_lanes = ["business_query"]
-        # The 489 default, explicitly: the rung under test is what every tenant ships with.
+        # The 491 default, explicitly: the rung under test is what every tenant ships with
+        # (D7: PO from either side).
         row.chatbot_crossdomain_ladder = {
             "inventory": ["incoming", "purchase_order"],
-            "incoming": ["inventory"],
+            "incoming": ["inventory", "purchase_order"],
         }
     db.commit()
 
@@ -152,9 +161,9 @@ def _run_stock_turn(session_factory, monkeypatch, *, po_response, code: str = CO
         lambda db: FetchServices(
             embed=lambda query: [0.0, 0.0, 0.0],
             tool_search=lambda embedding, *, query, domain: [
-                {"name": "crm_inventory_stock_balance_list", "similarity": 0.9}
+                {"name": "crm_incoming_stock_list" if origin == "incoming" else "crm_inventory_stock_balance_list", "similarity": 0.9}
             ],
-            mcp_call=lambda name, args: json.dumps(EMPTY_STOCK),
+            mcp_call=lambda name, args: json.dumps(EMPTY_INCOMING if origin == "incoming" else EMPTY_STOCK),
         ),
     )
     monkeypatch.setattr(
@@ -432,3 +441,29 @@ class TestOwner8SepTheRungIsPerContactAndOffersOnce:
         assert "PO" not in said.replace("No stock and no incoming", "")
         text = (result.reply or {}).get("text") or ""
         assert text.count("Would you like me to escalate") == 1, text
+
+
+class TestD7AnIncomingAskReachesThePORung:
+    """D7 (owner ruling, 8 Sep 2026): "hav incoming?" on a zero-stock code with an open PO
+    line climbs stock -> PO like a stock ask does, and the wording follows the climb."""
+
+    def test_an_incoming_ask_on_a_zero_stock_code_gets_the_po_lines(
+        self, session_factory, seeded, stub_parser, stub_access, system_settings_row, monkeypatch
+    ) -> None:
+        stub_parser(
+            _parser_output(
+                intent_hint="check_incoming",
+                domain_hint="incoming",
+                entities=[{"raw": CODE, "hint": "product", "current_message": True}],
+            )
+        )
+        stub_access(attributes=["purchase_orders.placed"])
+        result, said, probes = _run_stock_turn(session_factory, monkeypatch, po_response=PO_ROWS, origin="incoming")
+        assert result.status == "done", result.error
+        # the incoming lane's own picker probe may sit beside them; the climb is what matters
+        assert probes.index("crm_inventory_stock_balance_list") < probes.index(PO_TOOL)
+        assert f"No incoming and no stock for {CODE}, but PO is placed:" in said, said
+        assert "1000 pcs expected 2026-06-01" in said
+        assert "GUANGDONG" not in said
+        text = (result.reply or {}).get("text") or ""
+        assert text.count("Would you like me to escalate") == 1
