@@ -114,6 +114,14 @@ All line refs are `origin/main` at 970166643.
   approved | ready` (404 otherwise, no doc leak while designing). FE replaces the mock
   with `TagSheetRenderer` over that doc. Zoom levels `[0.25, 0.5, 0.75, 1, 1.5, 2]` plus
   "Fit" (width of the container); default Fit; pinch/ctrl-wheel not in scope.
+- D13 SLA config admin offers Price Tag Request. Prod has NO `form_sla_configs` row for
+  `price_tag_request` (owner, 8 Sep) and the admin dialog
+  `sla-management/form-sla-config/components/FormSLAConfigDialog.tsx:121-126` lists only
+  stock_inquiry, purchase_request, sponsorship_form, complaint, so the row cannot be
+  created from the UI. Add `price_tag_request` to that list, to `FormSLASourceType`
+  (`_shared/formSLAService.ts:48`), the label map(s) and the list filter. No backend
+  change: `FORM_SLA_TYPES` already carries it. After deploy the owner creates the config
+  (start event `submit`, marketing agent) and D8 starts placing requests.
 - D12 Auto-export on approve: `transition_status` to `approved` calls
   `request_tag_sheet_export(db, request_id, sheet_ids=None, user_id=...)` after commit of
   the status. Portal "Download PDF" enables when the export completes (worker). While
@@ -130,8 +138,9 @@ All line refs are `origin/main` at 970166643.
 | S4 | Portal design preview real doc + zoom (D11) | FE mock -> BE | `portal_price_tag.py` (new route), `portal-client.ts`, `PriceTagRequestForm.tsx`, `PriceTagProofViewer.tsx` |
 | S5 | Auto-export on approve (D12) | BE + FE copy | `price_tag_request_service.py`, `tag_sheet_export_service.py`, gear item copy |
 | S6 | AI extract sales order lines (D7) | BE registry + FE | `form_schema_registry.py`, `PriceTagRequestForm.tsx`, `AIExtractDialog.tsx` kind map |
+| S7 | Price Tag Request selectable in Form SLA config admin (D13) | FE | `FormSLAConfigDialog.tsx`, `formSLAService.ts`, `FormSLAConfigList.tsx` |
 
-Phase 1 (FE against mocks, no tests): S1, S2 FE, S4 FE, S6 FE.
+Phase 1 (FE against mocks, no tests): S1, S2 FE, S4 FE, S6 FE, S7.
 Phase 2 (BE test-first, then vitest for FE): S2 BE, S3, S4 BE, S5, S6 registry; vitest for
 form (price mode gating, remarks, no alt/acc columns), proof viewer zoom, status labels.
 Phase 3: `/code-review`, browser evidence to `seed-assets/verification/r7-*.png`.

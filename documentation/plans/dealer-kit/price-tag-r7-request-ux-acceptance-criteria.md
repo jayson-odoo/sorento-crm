@@ -94,6 +94,14 @@ Each AC is verified in a real browser (agent-browser, dev server :3081) unless m
   `_form_has_line_items("price_tag_request")` is True.
 - AC-S6-5 `vitest`: apply handler maps extracted rows to form lines; unmatched skipped.
 
+## S7 Form SLA config admin
+
+- AC-S7-1 SLA Management > Form SLA Config > Add: the form type dropdown offers "Price Tag
+  Request"; saving a config with start event `submit` succeeds and it lists with that label.
+- AC-S7-2 The list's form-type filter includes Price Tag Request.
+- AC-S7-3 Browser: with that config on the lane DB (one-member marketing team), a portal
+  submit lands as Designing assigned to that member (AC-S3-4 end to end).
+
 ## Regression
 
 - AC-R-1 Existing pytest for price tag transitions, set guard, debtor scoping still green.
