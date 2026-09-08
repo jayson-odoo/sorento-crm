@@ -106,9 +106,13 @@ class PriceTagRequestUpdate(BaseModel):
     promotion_id: Optional[str] = None
     needed_by_date: Optional[date] = None
     notes: Optional[str] = None
-    # None means "leave it as it is" - the header PUT is a partial edit and
-    # every other field here follows the same convention.
-    price_mode: Optional[Literal["list", "selling"]] = None
+    # NOT Optional: the column is NOT NULL, and `price_mode: null` used to
+    # reach `setattr(req, "price_mode", None)` in the route (`exclude_unset`
+    # only drops an OMITTED field, not one explicitly sent as null) and 500
+    # on the flush. Omitted still means "leave it as it is" - `exclude_unset`
+    # handles that regardless of what the default is; an explicit null is
+    # now a 422, same as any other unknown price_mode value.
+    price_mode: Literal["list", "selling"] = "list"
     lines: Optional[list[PriceTagRequestLineCreate]] = None
 
 

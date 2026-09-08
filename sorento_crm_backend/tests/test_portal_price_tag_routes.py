@@ -455,6 +455,21 @@ class TestPriceModeAndRemarks:
 
         assert res.status_code == 422, res.text
 
+    def test_update_rejects_an_explicit_null_price_mode_with_422(self, client):
+        """M1: an explicit `null` used to reach `setattr(req, "price_mode",
+        None)` - `exclude_unset` only drops an OMITTED field, not one sent
+        as null - and 500 on the flush against the NOT NULL column."""
+        c, db, _ = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE,
+            json={"lines": [{"line_type": "product", "product_id": product_id}]},
+        ).json()
+
+        res = c.put(f"{_BASE}/{created['id']}", json={"price_mode": None})
+
+        assert res.status_code == 422, res.text
+
     def test_line_create_accepts_remarks_and_the_response_carries_it(self, client):
         c, db, _ = client
         product_id = _seed_product(db)
