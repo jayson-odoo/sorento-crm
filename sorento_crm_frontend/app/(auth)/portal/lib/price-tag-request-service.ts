@@ -33,10 +33,17 @@ export interface PriceTagRequestLine {
   quantity: number;
   alternatives: { product_id: string; name: string; code: string }[];
   included_accessories: string | null;
+  /** Free-text note on the line (D6). Set on the line, not the header, so
+   *  each product can carry its own instruction. */
+  remarks: string | null;
   sort_order: number;
   /** Derived class on the product - used for the set guard. */
   product_class?: string | null;
 }
+
+/** Header-level price mode (D5): replaces the per-line "Promo price" switch.
+ *  `selling` requires a promotion - the server rejects it without one. */
+export type PriceMode = 'list' | 'selling';
 
 export interface PriceTagRequestSummary {
   id: string;
@@ -49,6 +56,8 @@ export interface PriceTagRequestSummary {
   /** Null on a draft, for the same reason as `debtor_name`. */
   needed_by_date: string | null;
   notes: string | null;
+  /** Defaults to 'list' server-side; absent on a request created before r7. */
+  price_mode?: PriceMode;
   status: string;
   line_count: number;
   created_at: string;
@@ -332,6 +341,7 @@ export interface CreatePriceTagRequestInput {
   promotion_id: string | null;
   needed_by_date: string | null;
   notes: string | null;
+  price_mode: PriceMode;
   lines: Omit<PriceTagRequestLine, 'id' | 'name' | 'code' | 'sort_order'>[];
 }
 

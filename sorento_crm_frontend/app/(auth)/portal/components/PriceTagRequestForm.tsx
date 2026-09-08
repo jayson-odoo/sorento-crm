@@ -38,6 +38,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import {
   SearchableSelect,
@@ -53,6 +54,7 @@ import type {
   PriceTagRequestLine,
   DebtorOption,
   PromotionOption,
+  PriceMode,
 } from '../lib/price-tag-request-service';
 import {
   lookupDebtors,
@@ -75,6 +77,7 @@ import { toPreviewItem, portalFetchBytes } from '../lib/portal-preview';
 import { uploadAttachment, type PortalAttachment } from '../lib/portal-client';
 import type { ResolvedLineData } from '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer';
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
+import { cn } from '@/lib/utils';
 
 // ---------------------------------------------------------------------------
 // Draft line (client-side, before persisting)
@@ -91,6 +94,8 @@ interface DraftLine {
   quantity: number;
   alternatives: { product_id: string; name: string; code: string }[];
   included_accessories: string;
+  /** Free-text note on the line (D6). */
+  remarks: string;
   guard_error: string | null;
 }
 
@@ -111,6 +116,7 @@ function emptyDraftLine(): DraftLine {
     quantity: 1,
     alternatives: [],
     included_accessories: '',
+    remarks: '',
     guard_error: null,
   };
 }
@@ -136,6 +142,7 @@ function lineToDraft(line: PriceTagRequestLine): DraftLine {
     quantity: line.quantity,
     alternatives: line.alternatives,
     included_accessories: line.included_accessories ?? '',
+    remarks: line.remarks ?? '',
     guard_error: null,
   };
 }
@@ -227,6 +234,10 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   // ---- Form state ----
   const [debtorCode, setDebtorCode] = useState('');
   const [promotionId, setPromotionId] = useState<string>('');
+  // Header price mode (D5): replaces the per-line "Promo price" switch.
+  // Selling requires a promotion, so clearing the promotion while Selling is
+  // chosen flips the control back to List price.
+  const [priceMode, setPriceMode] = useState<PriceMode>('list');
   const [neededByDate, setNeededByDate] = useState('');
   const [notes, setNotes] = useState('');
   const [lines, setLines] = useState<DraftLine[]>([]);
@@ -302,6 +313,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         setRequest(data);
         setDebtorCode(data.debtor_code ?? '');
         setPromotionId(data.promotion_id ?? '');
+        setPriceMode(data.price_mode ?? 'list');
         // Both are nullable on a draft (D48a): an empty input, not a crash.
         setNeededByDate(data.needed_by_date ?? '');
         setNotes(data.notes ?? '');
@@ -441,6 +453,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       quantity: l.quantity,
       alternatives: l.alternatives,
       included_accessories: l.included_accessories || null,
+      remarks: l.remarks || null,
       product_class: null,
     }));
 
@@ -507,6 +520,13 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     });
   }, [debtorCode, neededByDate, lines.length]);
 
+  // Selling price only means something with a promotion behind it (D5):
+  // clearing the promotion while Selling is chosen flips the control back to
+  // List rather than leaving it pointed at a price that no longer resolves.
+  useEffect(() => {
+    if (!promotionId && priceMode === 'selling') setPriceMode('list');
+  }, [promotionId, priceMode]);
+
   // ---- PO attachments: buffer pre-draft, flush once the draft exists ----
   //
   // The legacy SubmissionForm pattern (D2): a file dropped before Save Draft or
@@ -552,6 +572,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         promotion_id: promotionId || null,
         needed_by_date: neededByDate || null,
         notes: notes || null,
+        price_mode: priceMode,
         lines: payloadLines(),
       };
       // An open draft is UPDATED, not created again: saving twice used to leave
@@ -575,7 +596,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSaving(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveId, debtorCode, debtors, promotionId, neededByDate, notes, lines, flushPendingFiles, router, slug]);
+  }, [effectiveId, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug]);
 
   // ---- Delete draft ----
   const handleDeleteDraft = useCallback(async () => {
@@ -621,6 +642,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         promotion_id: promotionId || null,
         needed_by_date: neededByDate,
         notes: notes || null,
+        price_mode: priceMode,
         lines: payloadLines(),
       };
       // Same reasoning as Save Draft: a retry after a create succeeded but the
@@ -654,7 +676,7 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       setSubmitting(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collectProblems, applyFieldErrors, effectiveId, debtorCode, debtors, promotionId, neededByDate, notes, lines, flushPendingFiles, router, slug]);
+  }, [collectProblems, applyFieldErrors, effectiveId, debtorCode, debtors, promotionId, priceMode, neededByDate, notes, lines, flushPendingFiles, router, slug]);
 
   // ---- Approve proof ----
   const handleApprove = useCallback(async () => {
@@ -794,6 +816,16 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           </p>
         </div>
 
+        {/* Price mode (D5) */}
+        <div className="space-y-1.5">
+          <Label>Price</Label>
+          <p className="text-sm font-medium py-2">
+            {(request.price_mode ?? 'list') === 'selling'
+              ? 'Selling price'
+              : 'List price'}
+          </p>
+        </div>
+
         {/* Need by date */}
         <div className="space-y-1.5">
           <Label>Need by</Label>
@@ -826,14 +858,15 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               </p>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[420px] table-fixed text-sm">
+                <table className="w-full min-w-[520px] table-fixed text-sm">
                   <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
                     <tr>
                       <th className="w-10 px-2 py-2 text-left">#</th>
-                      <th className="w-[70%] px-2 py-2 text-left">Item</th>
-                      <th className="w-[20%] px-2 py-2 text-left">
+                      <th className="w-[45%] px-2 py-2 text-left">Item</th>
+                      <th className="w-[15%] px-2 py-2 text-left">
                         Qty (tags)
                       </th>
+                      <th className="w-[40%] px-2 py-2 text-left">Remarks</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -858,6 +891,12 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                           </div>
                         </td>
                         <td className="px-2 py-2">{line.quantity}</td>
+                        <td
+                          className="px-2 py-2 text-muted-foreground truncate"
+                          title={line.remarks ?? undefined}
+                        >
+                          {line.remarks || '-'}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -1048,6 +1087,53 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         />
       </div>
 
+      {/* Price mode (D5): List price by default, Selling price only once a
+          promotion is picked - it has nothing to sell against otherwise. */}
+      <div className="space-y-1.5">
+        <Label>Price</Label>
+        <div className="inline-flex items-center rounded-md border p-0.5">
+          <button
+            type="button"
+            className={cn(
+              'rounded px-3 py-1.5 text-sm transition-colors',
+              priceMode === 'list'
+                ? 'bg-primary text-primary-foreground'
+                : 'text-muted-foreground hover:bg-muted',
+            )}
+            onClick={() => setPriceMode('list')}
+          >
+            List price
+          </button>
+          {promotionId ? (
+            <button
+              type="button"
+              className={cn(
+                'rounded px-3 py-1.5 text-sm transition-colors',
+                priceMode === 'selling'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'text-muted-foreground hover:bg-muted',
+              )}
+              onClick={() => setPriceMode('selling')}
+            >
+              Selling price
+            </button>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  disabled
+                  className="cursor-not-allowed rounded px-3 py-1.5 text-sm text-muted-foreground opacity-50"
+                >
+                  Selling price
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>Select a promotion first</TooltipContent>
+            </Tooltip>
+          )}
+        </div>
+      </div>
+
       {/* Need by date */}
       <div
         className="space-y-1.5"
@@ -1096,13 +1182,14 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
                   Fixed columns let the picker's trigger truncate instead, and
                   the min-width keeps every cell usable while the wrapper
                   scrolls on a phone, which is the Purchase Request pattern. */}
-              <table className="w-full min-w-[420px] table-fixed text-sm">
+              <table className="w-full min-w-[560px] table-fixed text-sm">
                 <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
                   <tr>
                     <th className="w-7 px-2 py-2 text-left">#</th>
-                    <th className="w-[55%] px-2 py-2 text-left">Item</th>
-                    <th className="w-[20%] px-2 py-2 text-left">Qty (tags)</th>
-                    <th className="w-[25%] px-2 py-2"></th>
+                    <th className="w-[35%] px-2 py-2 text-left">Item</th>
+                    <th className="w-[12%] px-2 py-2 text-left">Qty (tags)</th>
+                    <th className="w-[33%] px-2 py-2 text-left">Remarks</th>
+                    <th className="w-[20%] px-2 py-2"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1301,6 +1388,14 @@ function LineRow({
           />
         </td>
         <td className="px-2 py-2">
+          <Input
+            value={line.remarks}
+            onChange={(e) => onUpdate(line.key, { remarks: e.target.value })}
+            placeholder="Note for this line..."
+            aria-label={`Remarks for line ${index + 1}`}
+          />
+        </td>
+        <td className="px-2 py-2">
           <div className="flex items-center justify-end gap-0.5">
             <Button
               variant="ghost"
@@ -1340,7 +1435,7 @@ function LineRow({
       </tr>
       {line.guard_error && (
         <tr>
-          <td colSpan={4} className="px-2 pb-2">
+          <td colSpan={5} className="px-2 pb-2">
             <p className="text-xs text-destructive bg-destructive/10 rounded px-2 py-1.5">
               {line.guard_error}
             </p>

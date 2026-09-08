@@ -25,6 +25,9 @@ export interface PriceTagRequestLine {
   quantity: number;
   alternatives: { product_id: string; name: string; code: string }[];
   included_accessories: string | null;
+  /** Free-text note on the line (D6). Optional: absent on a request created
+   *  before r7. */
+  remarks?: string | null;
   sort_order: number;
   marketing_price_override: number | null;
   marketing_override_reason: string | null;
@@ -33,6 +36,9 @@ export interface PriceTagRequestLine {
   /** Resolved selling price. */
   sell_price: number | null;
 }
+
+/** Header-level price mode (D5): replaces the per-line "Promo price" switch. */
+export type PriceMode = 'list' | 'selling';
 
 /**
  * The shape `entity_attachment_service.list_attachments_for_entity` answers
@@ -66,6 +72,8 @@ export interface PriceTagRequestSummary {
   promotion_name: string | null;
   needed_by_date: string | null;
   notes: string | null;
+  /** Defaults to 'list' server-side; absent on a request created before r7. */
+  price_mode?: PriceMode;
   status: string;
   line_count: number;
   created_at: string;

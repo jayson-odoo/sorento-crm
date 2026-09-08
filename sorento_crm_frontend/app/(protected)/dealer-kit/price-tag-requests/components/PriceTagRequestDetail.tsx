@@ -437,6 +437,14 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                   <span className="text-muted-foreground block">Promotion</span>
                   <p className="font-medium">{request.promotion_name ?? '-'}</p>
                 </div>
+                <div>
+                  <span className="text-muted-foreground block">Price</span>
+                  <p className="font-medium">
+                    {(request.price_mode ?? 'list') === 'selling'
+                      ? 'Selling price'
+                      : 'List price'}
+                  </p>
+                </div>
               </div>
               <div className="mt-4">
                 <span className="text-sm text-muted-foreground block">Notes</span>
@@ -481,6 +489,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                         <th className="py-2 pr-3 font-medium text-right">
                           Sell Price
                         </th>
+                        <th className="py-2 pr-3 font-medium">Remarks</th>
                         <th className="py-2 pr-3 font-medium">Tag</th>
                         {canDesign && (
                           <th className="py-2 font-medium text-right">Actions</th>
@@ -528,6 +537,12 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                   {line.marketing_price_override.toFixed(2)}
                                 </span>
                               )}
+                            </td>
+                            <td
+                              className="py-2 pr-3 text-muted-foreground text-xs truncate max-w-[160px]"
+                              title={line.remarks ?? undefined}
+                            >
+                              {line.remarks || '-'}
                             </td>
                             <td className="py-2 pr-3">
                               {designed ? (

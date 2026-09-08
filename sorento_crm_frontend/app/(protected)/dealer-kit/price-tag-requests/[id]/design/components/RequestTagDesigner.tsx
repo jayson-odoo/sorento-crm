@@ -1343,6 +1343,14 @@ function LinesRail({
                               ? ` / LP ${formatTagPrice(row.list_price)}`
                               : ''}
                         </p>
+                        {line.remarks && (
+                          <p
+                            className="mt-0.5 truncate text-2xs text-muted-foreground"
+                            title={line.remarks}
+                          >
+                            {line.remarks}
+                          </p>
+                        )}
                       </>
                     )}
                   </button>
