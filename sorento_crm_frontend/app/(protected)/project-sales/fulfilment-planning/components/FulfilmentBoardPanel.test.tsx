@@ -228,6 +228,24 @@ function withContribution(
   };
 }
 
+/**
+ * Marks every contribution SAVED (an approved draft), the 8 Sep 2026 baseline (reverses R11)
+ * for fixtures that used to rely on silence being agreement: Confirm posts only a line the
+ * planner saved, so a test whose real point is something else (window vs selection, per-order
+ * grouping, a server refusal) gives its lines a saved draft here rather than leaving them
+ * untouched and hoping Confirm still counts them.
+ */
+function allSaved(board: PlanningBoard): PlanningBoard {
+  return withContribution(board, () => true, (entry) => ({
+    ...entry,
+    draft: {
+      decision: { verdict: 'approved' as const },
+      saved_by: 'Test Planner',
+      saved_at: '2026-09-08T00:00:00Z',
+    },
+  }));
+}
+
 function renderPanel(
   soNumbers = ['SO403340', 'SO398322'],
   onBack: () => void = vi.fn(),
@@ -707,12 +725,13 @@ describe('FulfilmentBoardPanel: the confirm counter is selection-scoped, not win
     const lines = fortyLines();
     getPlanningBoard.mockImplementation(
       (_orders: unknown, granularity: BoardGranularity) =>
-        Promise.resolve(boardOf(lines, {}, granularity)),
+        Promise.resolve(allSaved(boardOf(lines, {}, granularity))),
     );
 
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
-    // R11: every plannable line is a suggestion nobody has rejected, so all forty count.
+    // Every one of the forty lines is SAVED (8 Sep 2026 ruling, reverses R11), so all forty
+    // count regardless of the window.
     expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
       '40 to confirm · 0 rejected',
     );
@@ -747,7 +766,7 @@ describe('FulfilmentBoardPanel: the confirm counter is selection-scoped, not win
     const lines = fortyLines();
     getPlanningBoard.mockImplementation(
       (_orders: unknown, granularity: BoardGranularity) =>
-        Promise.resolve(boardOf(lines, {}, granularity)),
+        Promise.resolve(allSaved(boardOf(lines, {}, granularity))),
     );
 
     renderPanel(['SO403340']);
@@ -788,7 +807,7 @@ describe('FulfilmentBoardPanel: the confirm counter is selection-scoped, not win
     const lines = fortyLines();
     getPlanningBoard.mockImplementation(
       (_orders: unknown, granularity: BoardGranularity) =>
-        Promise.resolve(boardOf(lines, {}, granularity)),
+        Promise.resolve(allSaved(boardOf(lines, {}, granularity))),
     );
 
     renderPanel(['SO403340']);
@@ -842,7 +861,7 @@ describe('FulfilmentBoardPanel: the confirm counter is selection-scoped, not win
  */
 describe('FulfilmentBoardPanel: a background refetch dims the board, never blanks it (D16)', () => {
   it('keeps the matrix mounted and dims it while Confirm’s own refetch is in flight', async () => {
-    getPlanningBoard.mockResolvedValueOnce(boardOf([demand()]));
+    getPlanningBoard.mockResolvedValueOnce(allSaved(boardOf([demand()])));
     confirmMany.mockResolvedValue({
       results: [
         {
@@ -882,7 +901,7 @@ describe('FulfilmentBoardPanel: a background refetch dims the board, never blank
     expect(screen.getByTestId('fulfilment-board-matrix')).toBeInTheDocument();
     expect(screen.queryByText(/Nothing is outstanding/)).not.toBeInTheDocument();
 
-    resolveRefetch(boardOf([demand()]));
+    resolveRefetch(allSaved(boardOf([demand()])));
 
     await waitFor(() =>
       expect(screen.getByTestId('board-content')).toHaveClass('opacity-100'),
@@ -930,8 +949,9 @@ describe('FulfilmentBoardPanel: a stale saved line is named as "changed" (C4)', 
   it('names the changed count in the Confirm dialog, and re-save as what clears it', async () => {
     // A SECOND, plannable line beside the stale one: a board where the stale line is the
     // ONLY line has nothing left to confirm, and Confirm disables itself before the dialog
-    // ever opens - this board keeps Confirm pressable so the sentence can be read.
-    const mixed = withContribution(
+    // ever opens - this board keeps Confirm pressable so the sentence can be read. It must
+    // itself be SAVED (8 Sep 2026 ruling, reverses R11), or it too contributes nothing.
+    let mixed = withContribution(
       boardOf([demand(), demand({ sales_order_id: 'so-b', so_number: 'SO398322', line_no: 1, item_code: 'WESERP20B' })]),
       (entry) => entry.item_code === 'WESERP10B',
       (entry) => ({
@@ -941,6 +961,18 @@ describe('FulfilmentBoardPanel: a stale saved line is named as "changed" (C4)', 
           saved_by: 'Test Planner',
           saved_at: '2026-09-03T00:00:00Z',
           stale: true,
+        },
+      }),
+    );
+    mixed = withContribution(
+      mixed,
+      (entry) => entry.item_code === 'WESERP20B',
+      (entry) => ({
+        ...entry,
+        draft: {
+          decision: { verdict: 'approved' },
+          saved_by: 'Test Planner',
+          saved_at: '2026-09-08T00:00:00Z',
         },
       }),
     );
@@ -1321,16 +1353,20 @@ describe('FulfilmentBoardPanel: states', () => {
  * cost the planner the work they did, and it must say which lines were refused and why.
  */
 /**
- * ONE CONFIRM (R11, UAC D1/D2/D4/D6). The board no longer builds its body from ticked rows;
- * `confirmLinesFor` posts every plannable, non-rejected line as its own suggestion once the
- * planner presses the single header button, and every order writes in ONE `confirmMany` call.
+ * ONE CONFIRM (UAC D1/D2/D4/D6). The board no longer builds its body from ticked rows;
+ * `confirmLinesFor` posts every plannable, SAVED, non-rejected line as its own suggestion once
+ * the planner presses the single header button, and every order writes in ONE `confirmMany`
+ * call. Since the 8 Sep 2026 ruling (reverses R11) a line must be SAVED to post, so this
+ * describe block's fixture saves both lines of its order.
  */
 describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
   function twoLineOrder() {
-    return boardOf([
-      demand({ line_no: 1, item_code: 'WESERP10B' }),
-      demand({ line_no: 2, item_code: 'TPE-9204' }),
-    ]);
+    return allSaved(
+      boardOf([
+        demand({ line_no: 1, item_code: 'WESERP10B' }),
+        demand({ line_no: 2, item_code: 'TPE-9204' }),
+      ]),
+    );
   }
 
   async function openConfirmDialog() {
@@ -1469,8 +1505,9 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
   /**
    * Adoption mirrored the order's open lines when it ran, so a later upload can add a core line
    * with no mirror. The order is still confirmable; that line is not, and it is NAMED rather
-   * than silently dropped. R11: no manual Approve is needed for either line to be posted or
-   * for the unpostable one to be caught - untouched is a suggestion, same as approved.
+   * than silently dropped. Both lines here are SAVED (8 Sep 2026 ruling, reverses R11: an
+   * uncovered line has to be saved before Confirm counts it at all), so the unpostable one is
+   * a TOUCHED (named) line, never the "N untouched" count.
    */
   it('names a plannable line that has no mirror, and leaves it out of the Confirm count', async () => {
     const board = twoLineOrder();
@@ -1488,12 +1525,9 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
 
-    // UNTOUCHED, so it is COUNTED rather than named (R11): silence is agreement, so the
-    // population that can be left out is every plannable line, and a notice naming hundreds
-    // of them one by one is a wall nobody reads.
     expect(
       await screen.findByText(
-        '1 untouched line is not on the planning record yet; open it to decide.',
+        'TPE-9204 line 2 is not on the planning record yet, so this confirmation leaves it out. Re-sync the sales order to add it.',
       ),
     ).toBeInTheDocument();
     // `plannedLineCount` still counts it here: it cannot tell "adopted, but this one line's
@@ -1515,7 +1549,7 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
    * and the button said "Confirm 7 lines" beside eight verdicts, with nothing saying which one
    * was missing or why. Both are named now, and the count agrees.
    */
-  it('names a plannable line whose Reserve the board cannot address, and leaves it out', async () => {
+  it('names a SAVED line whose Reserve the board cannot address, and leaves it out', async () => {
     const board = twoLineOrder();
     getPlanningBoard.mockResolvedValue(
       withContribution(
@@ -1542,7 +1576,7 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
 
     expect(
       await screen.findByText(
-        '1 untouched line reserves at a warehouse the board cannot address; open it to decide.',
+        'TPE-9204 line 2 reserves at a warehouse the board cannot address, so this confirmation leaves it out. Amend it to place the Reserve.',
       ),
     ).toBeInTheDocument();
     expect(screen.getByTestId('board-confirm')).toHaveTextContent(
@@ -1550,7 +1584,7 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
     );
   });
 
-  it('names an approved-as-is Buy of a discontinued product that carries no reason, and leaves it out', async () => {
+  it('names a SAVED, approved-as-is Buy of a discontinued product that carries no reason, and leaves it out', async () => {
     const board = twoLineOrder();
     getPlanningBoard.mockResolvedValue(
       withContribution(
@@ -1577,7 +1611,7 @@ describe('FulfilmentBoardPanel: Confirm actually confirms', () => {
 
     expect(
       await screen.findByText(
-        '1 untouched line buys a discontinued product with no reason given; open it to decide.',
+        'TPE-9204 line 2 buys a discontinued product with no reason given, so this confirmation leaves it out. Amend it to give one.',
       ),
     ).toBeInTheDocument();
     expect(screen.getByTestId('board-confirm')).toHaveTextContent(
@@ -1608,24 +1642,28 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
       demand({ line_no: 1, item_code: 'WESERP10B' }),
       demand({ line_no: 2, item_code: 'TPE-9204' }),
     ]);
-    return withContribution(
-      {
-        ...board,
-        orders: board.orders.map((order) => ({
-          ...order,
-          project_sales_order_id: null,
-        })),
-      },
-      () => true,
-      (entry) => ({ ...entry, project_line_id: null }),
+    return allSaved(
+      withContribution(
+        {
+          ...board,
+          orders: board.orders.map((order) => ({
+            ...order,
+            project_sales_order_id: null,
+          })),
+        },
+        () => true,
+        (entry) => ({ ...entry, project_line_id: null }),
+      ),
     );
   }
 
   function adopted() {
-    return boardOf([
-      demand({ line_no: 1, item_code: 'WESERP10B' }),
-      demand({ line_no: 2, item_code: 'TPE-9204' }),
-    ]);
+    return allSaved(
+      boardOf([
+        demand({ line_no: 1, item_code: 'WESERP10B' }),
+        demand({ line_no: 2, item_code: 'TPE-9204' }),
+      ]),
+    );
   }
 
   async function openConfirmDialog() {
@@ -1639,7 +1677,8 @@ describe('FulfilmentBoardPanel: Confirm adopts first when it has to', () => {
     renderPanel(['SO403340']);
     await screen.findByTestId('fulfilment-board-matrix');
 
-    // R11: both plannable lines post as their own suggestion, no manual Approve needed.
+    // Both lines are SAVED (8 Sep 2026 ruling, reverses R11), so both plannable lines post
+    // as their own suggestion.
     expect(screen.getByTestId('board-confirm')).toHaveTextContent(
       'Confirm (2)',
     );
@@ -2172,15 +2211,16 @@ describe('FulfilmentBoardPanel: pivoting the rows', () => {
   });
 
   it('keeps a decision made under one axis visible under another', async () => {
-    getPlanningBoard.mockResolvedValue(twoOrders());
+    // The other two lines are SAVED (8 Sep 2026 ruling, reverses R11), or Confirm would read
+    // 0 before this test ever gets to reject the third.
+    getPlanningBoard.mockResolvedValue(allSaved(twoOrders()));
 
     renderPanel(['SO000001', 'SO000002']);
     await screen.findByTestId('fulfilment-board-matrix');
 
     // Decide a line while the rows are products. BBB is owed by one order only, so the cell
-    // holds exactly the line this test is deciding. Rejected, not approved: under R11 an
-    // approval leaves the board-wide counter unchanged (silence already agreed with it), so
-    // only a rejection gives this test a number that actually moves.
+    // holds exactly the line this test is deciding. Rejecting it is what moves the counter;
+    // the other two lines already count because they are saved.
     fireEvent.click(
       await screen.findByRole('button', {
         name: /BBB, 20 across 1 sales order/,
@@ -2306,28 +2346,32 @@ describe('FulfilmentBoardPanel: pivoting the rows', () => {
  * `confirmMany` call grouped per order - never one call per order from the panel.
  */
 /**
- * NO APPROVE ALL, NO CONFIRM ALL APPROVED (R11, UAC D1). Silence on a plannable line already
- * agrees with the suggestion, so there is nothing left for a bulk "approve everything" to do,
- * and the header carries one Confirm rather than a second all-approved button beside it. What
- * survives from the old flow - one `confirmMany` call grouped per order, a per-order result,
- * and a selection- not window-scoped population - is exercised through the single Confirm (N).
+ * NO APPROVE ALL, NO CONFIRM ALL APPROVED (UAC D1). There is one header Confirm rather than a
+ * bulk all-approved button beside it - "Save all suggested" is the bulk way to agree with the
+ * engine, and Confirm then posts only what was saved (8 Sep 2026 ruling, reverses R11: silence
+ * on a plannable line no longer agrees with it). What survives from the old flow - one
+ * `confirmMany` call grouped per order, a per-order result, and a selection- not window-scoped
+ * population - is exercised through the single Confirm (N).
  */
 describe('FulfilmentBoardPanel: one Confirm, not Approve all (D1, D4)', () => {
+  /** Both lines SAVED (8 Sep 2026 ruling, reverses R11), or Confirm reads 0 from the start. */
   function twoUndecidedOrders() {
-    return boardOf([
-      demand({
-        sales_order_id: 'so-a',
-        so_number: 'SO403340',
-        line_no: 1,
-        item_code: 'WESERP10B',
-      }),
-      demand({
-        sales_order_id: 'so-b',
-        so_number: 'SO398322',
-        line_no: 1,
-        item_code: 'WESERP20B',
-      }),
-    ]);
+    return allSaved(
+      boardOf([
+        demand({
+          sales_order_id: 'so-a',
+          so_number: 'SO403340',
+          line_no: 1,
+          item_code: 'WESERP10B',
+        }),
+        demand({
+          sales_order_id: 'so-b',
+          so_number: 'SO398322',
+          line_no: 1,
+          item_code: 'WESERP20B',
+        }),
+      ]),
+    );
   }
 
   it('carries no Approve all and no Confirm all approved button anywhere', async () => {
@@ -2349,7 +2393,7 @@ describe('FulfilmentBoardPanel: one Confirm, not Approve all (D1, D4)', () => {
 
     renderPanel();
     await screen.findByTestId('fulfilment-board-matrix');
-    // Both lines are already suggestions nobody has touched (R11): Confirm (2) from the start.
+    // Both lines are SAVED: Confirm (2) from the start.
     expect(screen.getByTestId('board-confirm')).toHaveTextContent(
       'Confirm (2)',
     );
@@ -2414,8 +2458,10 @@ describe('FulfilmentBoardPanel: one Confirm, not Approve all (D1, D4)', () => {
     ).toBeInTheDocument();
   });
 
-  it('leaves Confirm disabled at Confirm (0) once the one plannable line is rejected', async () => {
-    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+  it('leaves Confirm disabled at Confirm (0) once the one SAVED, plannable line is rejected', async () => {
+    // SAVED (8 Sep 2026 ruling, reverses R11), so Confirm starts enabled at (1) and this test
+    // can show that a REJECT is what drops it back to (0), not that it was never counted.
+    getPlanningBoard.mockResolvedValue(allSaved(boardOf([demand()])));
 
     renderPanel();
     await screen.findByTestId('fulfilment-board-matrix');
@@ -2473,7 +2519,8 @@ describe('FulfilmentBoardPanel: one Confirm, not Approve all (D1, D4)', () => {
     // The window really did leave one line off screen, so the assertions below mean something.
     expect(board.cells).toHaveLength(1);
     expect(board.contributions).toHaveLength(2);
-    getPlanningBoard.mockResolvedValue(board);
+    // Both SAVED (8 Sep 2026 ruling, reverses R11), or the counter reads 0 regardless of window.
+    getPlanningBoard.mockResolvedValue(allSaved(board));
     currentSearchParams = new URLSearchParams('granularity=day');
     confirmMany.mockResolvedValue({
       results: [
@@ -2504,6 +2551,57 @@ describe('FulfilmentBoardPanel: one Confirm, not Approve all (D1, D4)', () => {
       'pso-so-a',
       'pso-so-b',
     ]);
+  });
+});
+
+/**
+ * CONFIRM POSTS SAVED LINES ONLY (8 Sep 2026 captain's ruling, reverses R11): the exact case
+ * from the captain's screenshot - a board of eighteen lines on one order, seventeen SAVED and
+ * one left alone, must read "17 to confirm" and post exactly those seventeen, the untouched
+ * eighteenth staying on the board undecided.
+ */
+describe('FulfilmentBoardPanel: Confirm counts only saved lines (8 Sep 2026 ruling)', () => {
+  it('reads "17 to confirm · 0 rejected", shows "Confirm (17)", and posts 17 ids, the untouched line’s id absent', async () => {
+    const lines = Array.from({ length: 18 }, (_unused, index) =>
+      demand({ line_no: index + 1, item_code: `LINE-${index + 1}` }),
+    );
+    const board = withContribution(
+      boardOf(lines),
+      (entry) => entry.line_no !== 18,
+      (entry) => ({
+        ...entry,
+        draft: {
+          decision: { verdict: 'approved' as const },
+          saved_by: 'Test Planner',
+          saved_at: '2026-09-08T00:00:00Z',
+        },
+      }),
+    );
+    getPlanningBoard.mockResolvedValue(board);
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-a', ok: true, decision_revision: 1 }],
+    });
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
+      '17 to confirm · 0 rejected',
+    );
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent(
+      'Confirm (17)',
+    );
+
+    fireEvent.click(screen.getByTestId('board-confirm'));
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
+
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const body = confirmMany.mock.calls[0][0] as {
+      orders: { pso_id: string; lines: { project_line_id: string }[] }[];
+    };
+    const ids = body.orders[0].lines.map((line) => line.project_line_id);
+    expect(ids).toHaveLength(17);
+    expect(ids).not.toContain('pl-so-a-18');
   });
 });
 
@@ -2772,7 +2870,8 @@ describe('FulfilmentBoardPanel: a line mid-Undo is not re-seeded by a sibling sa
  */
 describe('FulfilmentBoardPanel: an order whose change is already applied is not sent again', () => {
   it('leaves it out of the post and says so in the results', async () => {
-    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+    // SAVED (8 Sep 2026 ruling, reverses R11), or Confirm is disabled before the press.
+    getPlanningBoard.mockResolvedValue(allSaved(boardOf([demand()])));
     getPlanningChangeBatch.mockResolvedValue({
       id: 'pcb-1',
       applied_at: null,

@@ -1006,13 +1006,13 @@ describe('confirmLinesFor', () => {
     contributions.find((entry) => entry.so_number === soNumber && entry.line_no === lineNo)!.key;
 
   /**
-   * D4/R11: silence means the suggestion. Only the OTHER order's line is left out - never a
-   * line of this order the planner has simply not touched yet.
+   * D4: only the OTHER order's line is left out - never a line of THIS order, saved or not.
    */
   it('names only the lines of the order being confirmed, not the other order on the draft', () => {
     const lines = confirmLinesFor(contributions, 'so-a', {
       [keyOf('SO000001', 1)]: { verdict: 'approved' },
       [keyOf('SO000002', 3)]: { verdict: 'approved' },
+      [keyOf('SO000001', 2)]: { verdict: 'approved' },
     });
     expect(lines.map((entry) => entry.project_line_id).sort()).toEqual([
       'pl-so-a-1',
@@ -1020,13 +1020,21 @@ describe('confirmLinesFor', () => {
     ]);
   });
 
-  it('posts an untouched plannable line as the engine’s own suggestion (R11)', () => {
-    // Line 2 carries no verdict at all: silence agrees with the proposal.
+  it('leaves an untouched, uncovered line out (8 Sep 2026 ruling, reverses R11)', () => {
+    // Line 2 carries no verdict at all: it is undecided, not agreed, so it stays off the body.
     const lines = confirmLinesFor(contributions, 'so-a', {
       [keyOf('SO000001', 1)]: { verdict: 'approved' },
     });
-    const untouched = lines.find((entry) => entry.project_line_id === 'pl-so-a-2')!;
-    expect(untouched).toEqual({
+    expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-1']);
+  });
+
+  it('posts a SAVED approval on an uncovered line as the engine’s own suggestion', () => {
+    const lines = confirmLinesFor(contributions, 'so-a', {
+      [keyOf('SO000001', 1)]: { verdict: 'approved' },
+      [keyOf('SO000001', 2)]: { verdict: 'approved' },
+    });
+    const saved = lines.find((entry) => entry.project_line_id === 'pl-so-a-2')!;
+    expect(saved).toEqual({
       project_line_id: 'pl-so-a-2',
       timely_spo_qty: '0',
       suspected_system_issue: false,
@@ -1087,19 +1095,21 @@ describe('confirmLinesFor', () => {
     expect(lines[0].buy_qty).toBe('45');
   });
 
-  it('leaves a REJECTED line out entirely, so it stays undecided (the other line of the order still posts)', () => {
+  it('leaves a REJECTED line out entirely, so it stays undecided (the other, SAVED line still posts)', () => {
     const lines = confirmLinesFor(contributions, 'so-a', {
       [keyOf('SO000001', 1)]: { verdict: 'rejected', reason: 'No.' },
+      [keyOf('SO000001', 2)]: { verdict: 'approved' },
     });
     expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-2']);
   });
 
-  it('leaves out a line the server gave no mirror id for, rather than posting a null (the other line still posts)', () => {
+  it('leaves out a line the server gave no mirror id for, rather than posting a null (the other, SAVED line still posts)', () => {
     const orphan = contributions.map((entry) =>
       entry.line_no === 1 ? { ...entry, project_line_id: null } : entry,
     );
     const lines = confirmLinesFor(orphan, 'so-a', {
       [keyOf('SO000001', 1)]: { verdict: 'approved' },
+      [keyOf('SO000001', 2)]: { verdict: 'approved' },
     });
     expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-2']);
   });
@@ -1473,15 +1483,14 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
     expect(lines[0].buy_qty).toBe('16');
   });
 
-  it('posts the untouched, uncovered line by its own suggestion; the covered one stays carried (R11)', () => {
-    // Nothing to re-post for line 1: the server carries the untouched covered line verbatim.
-    // Line 2 is untouched too, but it is NOT covered, so silence agrees with its suggestion.
+  it('posts nothing for an untouched order: the covered line stays carried, the uncovered line stays undecided (8 Sep 2026 ruling, reverses R11)', () => {
+    // Line 1 is covered and untouched: the server carries it. Line 2 is uncovered and
+    // untouched: nobody has saved a decision for it, so it stays on the board too.
     const lines = confirmLinesFor(contributions, 'so-a', {});
-    expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-2']);
-    expect(lines[0].buy_qty).toBe('16');
+    expect(lines).toEqual([]);
   });
 
-  it('sends the amendment when the planner amended the covered line, alongside the other line’s own suggestion', () => {
+  it('sends the amendment when the planner amended the covered line, alongside the other line’s own SAVED suggestion', () => {
     const lines = confirmLinesFor(contributions, 'so-a', {
       [keyOf(1)]: {
         verdict: 'amended',
@@ -1492,6 +1501,7 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
         buy_qty: '38',
         reason: 'The stock arrived at my own warehouse.',
       },
+      [keyOf(2)]: { verdict: 'approved' },
     });
 
     expect(lines.map((entry) => entry.project_line_id).sort()).toEqual([
@@ -1558,10 +1568,11 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
         buy_qty: '38',
         reason: 'The stock arrived at my own warehouse.',
       },
+      [keyOf(2)]: { verdict: 'approved' as const },
     };
     const standing = standingsFor(board.orders, owners, draft, new Set([keyOf(1)]))[0];
     expect(standing.carried_count).toBe(0);
-    // The body now carries TWO lines: the amendment, and line 2's own suggestion (R11) - so
+    // The body now carries TWO lines: the amendment, and line 2's own SAVED suggestion - so
     // nothing of this two-line order is left undecided by the press.
     expect(commitPreviewFor(standing, confirmLinesFor(contributions, 'so-a', draft).length)).toEqual({
       committing: 2,
@@ -1591,6 +1602,7 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
   it('posts the suggestion for a covered line the planner APPROVED (C11)', () => {
     const lines = confirmLinesFor(contributions, 'so-a', {
       [keyOf(1)]: { verdict: 'approved' },
+      [keyOf(2)]: { verdict: 'approved' },
     });
 
     expect(lines.map((entry) => entry.project_line_id).sort()).toEqual([
@@ -1609,29 +1621,43 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
   });
 
   it('still posts nothing for a covered line nobody touched', () => {
-    expect(confirmLinesFor(contributions, 'so-a', {}).map((entry) => entry.project_line_id))
-      .toEqual(['pl-so-a-2']);
+    // Line 2 is saved so the assertion isolates the covered line's own untouched rule.
+    expect(
+      confirmLinesFor(contributions, 'so-a', { [keyOf(2)]: { verdict: 'approved' } }).map(
+        (entry) => entry.project_line_id,
+      ),
+    ).toEqual(['pl-so-a-2']);
   });
 
   it('still posts nothing for a covered line the planner REJECTED', () => {
     const lines = confirmLinesFor(contributions, 'so-a', {
       [keyOf(1)]: { verdict: 'rejected', reason: 'The site cancelled it.' },
+      [keyOf(2)]: { verdict: 'approved' },
     });
     expect(lines.map((entry) => entry.project_line_id)).toEqual(['pl-so-a-2']);
   });
 
   it('counts the approved covered line on the Confirm button, and the untouched one not', () => {
     // The counter reads the same rule the body does, so "Confirm (N)" and what the press
-    // posts cannot disagree - the defect was visible as a button stuck at 0.
-    expect(plannedLineCount(contributions, 'so-a', {})).toBe(1);
+    // posts cannot disagree - the defect was visible as a button stuck at 0. Line 2 is saved
+    // in both cases so the comparison isolates what approving the COVERED line 1 adds.
     expect(
-      plannedLineCount(contributions, 'so-a', { [keyOf(1)]: { verdict: 'approved' } }),
+      plannedLineCount(contributions, 'so-a', { [keyOf(2)]: { verdict: 'approved' } }),
+    ).toBe(1);
+    expect(
+      plannedLineCount(contributions, 'so-a', {
+        [keyOf(1)]: { verdict: 'approved' },
+        [keyOf(2)]: { verdict: 'approved' },
+      }),
     ).toBe(2);
   });
 
   it('counts an approved covered line as committing, not as carried', () => {
     const owners = new Map(contributions.map((entry) => [entry.key, entry.sales_order_id]));
-    const draft = { [keyOf(1)]: { verdict: 'approved' as const } };
+    const draft = {
+      [keyOf(1)]: { verdict: 'approved' as const },
+      [keyOf(2)]: { verdict: 'approved' as const },
+    };
     const standing = standingsFor(board.orders, owners, draft, new Set([keyOf(1)]))[0];
     expect(standing.carried_count).toBe(0);
     expect(
@@ -1651,8 +1677,9 @@ describe('confirmLinesFor and a line an active decision already covers', () => {
       [keyOf(1)]: { verdict: 'rejected', reason: 'Changed my mind.' },
     });
     expect(summary.rejected).toBe(0);
-    // Line 2 (untouched, uncovered) still counts by R11's silence-is-agreement.
-    expect(summary.toConfirm).toBe(1);
+    // Line 2 is uncovered and untouched, so it stays undecided (8 Sep 2026 ruling, reverses
+    // R11) - nothing is committable here.
+    expect(summary.toConfirm).toBe(0);
   });
 });
 
@@ -1692,6 +1719,40 @@ describe('confirmSummaryFor: changed (C4)', () => {
     );
     const summary = confirmSummaryFor(board.cells.flatMap((cell) => cell.contributions), {});
     expect(summary.changed).toBe(0);
+  });
+});
+
+/**
+ * CONFIRM POSTS SAVED LINES ONLY (8 Sep 2026 ruling, reverses R11): a board of five lines
+ * where only three were saved reads "3 to confirm", not five - the untouched line stays off
+ * the count exactly as it stays off the body.
+ */
+describe('confirmSummaryFor: saved lines only (8 Sep 2026 ruling, reverses R11)', () => {
+  it('reads toConfirm 3, rejected 1 over 3 saved, 1 untouched and 1 rejected line', () => {
+    const board = buildBoard(
+      [
+        line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, qty: '10' }),
+        line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 2, qty: '10', item_code: 'TPE-9204' }),
+        line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 3, qty: '10', item_code: 'TPE-9205' }),
+        line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 4, qty: '10', item_code: 'TPE-9206' }),
+        line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 5, qty: '10', item_code: 'TPE-9207' }),
+      ],
+      { today: TODAY },
+    );
+    const contributions = board.cells.flatMap((cell) => cell.contributions);
+    const keyOf = (lineNo: number) =>
+      contributions.find((entry) => entry.line_no === lineNo)!.key;
+
+    const summary = confirmSummaryFor(contributions, {
+      [keyOf(1)]: { verdict: 'approved' },
+      [keyOf(2)]: { verdict: 'approved' },
+      [keyOf(3)]: { verdict: 'approved' },
+      [keyOf(5)]: { verdict: 'rejected', reason: 'No.' },
+      // Line 4 is left out of the draft entirely: untouched, uncovered, undecided.
+    });
+
+    expect(summary.toConfirm).toBe(3);
+    expect(summary.rejected).toBe(1);
   });
 });
 
@@ -1937,8 +1998,9 @@ describe('confirmLinesFor and a discontinued product', () => {
     expect(unpostableDecidedFor(contributions, 'so-a', draft)).toEqual([]);
   });
 
-  it('still names it on an amendment that buys it without a reason (line 1 still posts by its own suggestion, R11)', () => {
+  it('still names it on an amendment that buys it without a reason (the other, SAVED line still posts)', () => {
     const draft = {
+      [contributions.find((entry) => entry.line_no === 1)!.key]: { verdict: 'approved' as const },
       [old.key]: {
         verdict: 'amended' as const,
         reserve: [],

@@ -40,8 +40,8 @@ Plan: `PLAN-scm-planning-inline-decisions.md`. Walk on `/scm/sales-orders` and `
 
 - D1 The header bar shows "N to confirm · M rejected" on the left and, on the right, a gear followed by **Confirm (N)** as the last element. No Approve all, no Confirm all approved.
 - D2 The gear lists Undo all and Back to sales orders; Undo all is disabled when nothing has been edited and clears every draft decision when pressed.
-- D3 With nothing touched on a 3-line board, Confirm reads Confirm (3). Rejecting one line makes it Confirm (2) and the counter "2 to confirm · 1 rejected".
-- D4 Pressing Confirm opens "Confirm N lines across M orders?"; confirming sends every non-rejected line: amended lines as amended, untouched lines as suggested. Rejected lines are not sent.
+- D3 REVERSED (captain's ruling, 8 Sep 2026): with nothing touched on a 3-line board, Confirm reads Confirm (0) - silence is undecided, not agreement. Saving all three (or rejecting one and saving the other two) is what moves the counter; "Save all suggested" is the bulk way to agree with the engine before Confirm.
+- D4 REVERSED (captain's ruling, 8 Sep 2026): pressing Confirm opens "Confirm N lines across M orders?"; confirming sends every SAVED, non-rejected line: amended lines as amended, saved-but-untouched lines as suggested. Rejected lines are not sent, and neither is an untouched line nobody has saved - it stays on the board undecided.
 - D5 The Commit section (per-order cards, "Confirm this order", the Order Inquiries / stock transfer copy) no longer exists.
 - D6 After the SO404352 confirm the toast reads "37 lines confirmed · 1 transfer proposed · 0 inquiry rows" (numbers per the fixture) and a **Stock transfers** panel appears **above the product matrix**, listing the 15 × SRTWB7518 BRW → BRW-AM transfer as Proposed, for SO404352 · line 22.
 - D7 Approve on that row moves it to Approved and the row stays listed; Approve all proposed approves every proposed row in the panel; each action toasts and refreshes without a page reload.
@@ -79,7 +79,7 @@ Plan: `PLAN-scm-planning-inline-decisions.md`. Walk on `/scm/sales-orders` and `
 - G8 Switching Buy on and back off restores the Reserve quantities, the borrow rows and their reasons.
 - G9 Unticking "This might be a system problem" on a confirmed line clears the warning on the pill and posts `false`.
 - G10 An unplannable line's expanded panel states why it cannot be decided and offers no verb.
-- G11 The unpostable notice names touched lines (at most five, then "and N more") and counts untouched ones per reason.
+- G11 The unpostable notice names touched lines (at most five, then "and N more") and counts untouched ones per reason. UPDATED (captain's ruling, 8 Sep 2026): an untouched, uncovered line no longer reaches this population at all - Confirm never attempts it, so it is neither named nor counted here; it simply stays undecided on the board. The "untouched" count now only ever applies to the rarer covered-and-decided case.
 - G12 Undo all asks "Discard N draft decisions?" before it clears the draft.
 - G13 A sales order whose planning-change rows all read applied is not posted again by the board's Confirm, and the results say so.
 - G14 `line_ids=not-an-id` on `stock-detail` is refused by name rather than reaching the query (pytest).

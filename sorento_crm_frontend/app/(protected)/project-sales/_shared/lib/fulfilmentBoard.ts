@@ -232,16 +232,18 @@ export function commitPreviewFor(
  * the board commits through the same per-order confirmation the sheet does rather than growing
  * a second write path (13.4: the board is a LENS).
  *
- * ONE CONFIRM, AND SILENCE MEANS THE SUGGESTION (R11, the captain 27 Aug). A planner who has
- * read the board and changed nothing has agreed with it; making them press Approve on every
- * untouched line first was a second gesture that said exactly what the first one already
- * said, and Approve all existed only to undo the cost of it. So an untouched, plannable line
- * is confirmed as the engine proposed it, and the only way to keep a line out is to REJECT
- * it, which is a decision with a reason attached.
+ * CONFIRM POSTS SAVED LINES ONLY (8 Sep 2026 captain's ruling, reverses R11). R11 read an
+ * untouched, uncovered line as agreement and posted the engine's own suggestion for it; the
+ * board-wide Confirm now leaves that line alone - not posted, not counted - because nobody
+ * decided it. Only a SAVED decision moves an uncovered line into the body: an amendment
+ * composed in the editor, or an approval saved via the row or "Save all suggested". A COVERED
+ * line keeps its pre-existing rule: untouched, it is carried by the server; an explicit verdict
+ * (amend or approve) is posted.
  *
  * What is NOT named is the point. A line the body omits is left UNDECIDED and keeps flowing to
  * reorder planning. So:
  *
+ * - an UNCOVERED line with no saved decision is omitted: nobody has agreed with the engine yet;
  * - a REJECTED line is omitted. The planner refused the proposal; committing it anyway would
  *     be the opposite of what they said, and there is no "commit nothing for this line" verb;
  * - a line with no `project_line_id` is omitted rather than posted with a null, because the
@@ -292,9 +294,11 @@ export interface UnpostableLine {
   /**
    * Whether the planner decided this line themselves, or left it alone.
    *
-   * Under R11 silence is agreement, so the population this walks is EVERY plannable line, not
-   * only the ticked ones - and a notice naming three hundred untouched lines one by one is a
-   * wall nobody reads. A touched line is named; the rest are counted.
+   * Since the 8 Sep 2026 ruling (reverses R11) an untouched, uncovered line is never posted at
+   * all, so it never reaches this population - only a SAVED decision or a covered-and-decided
+   * line can be unpostable. `touched` is effectively always true here now; the field stays
+   * (an unpostable covered line could in principle be untouched) rather than being refactored
+   * away for one caller.
    */
   touched: boolean;
 }
@@ -306,8 +310,12 @@ export interface UnpostableLine {
  * The single place the rule lives, so the body, the notice that names what the body left out
  * and the count on the button cannot disagree about which lines those are.
  *
- * `decision` UNDEFINED means the planner left the line alone, which under R11 is agreement:
- * the engine's own composition is posted for it, exactly as an explicit Approve would.
+ * `decision` UNDEFINED on an UNCOVERED line means the planner left it alone: the 8 Sep 2026
+ * ruling (reverses R11) reads that as UNDECIDED, not agreement, so nothing is posted for it -
+ * it stays on the board. Only a SAVED decision (an approved draft included) moves an uncovered
+ * line into the confirmation; "Save all suggested" is the bulk way to agree with the engine
+ * before pressing Confirm. A COVERED line keeps its own rule below: untouched is carried by
+ * the server, and an explicit verdict is still posted.
  */
 function lineFor(
   contribution: BoardContribution,
@@ -321,6 +329,13 @@ function lineFor(
   // "Suggestion changed" - excluded here rather than posted on the strength of a comparison
   // that is no longer true, until the planner opens the row and saves it again.
   if (contribution.draft?.stale) return null;
+  // UNCOVERED AND UNTOUCHED (8 Sep 2026 ruling, reverses R11): the planner has not saved a
+  // decision for this line, so it is left UNDECIDED - not posted, not counted as rejected. A
+  // SAVED decision may arrive either as this call's own `decision` argument or, when the
+  // caller has not yet merged the board's shared draft into it, as `contribution.draft` -
+  // both mean somebody saved it. A covered line's untouched case is handled separately below
+  // (it is carried by the server).
+  if (!contribution.covered && decision === undefined && !contribution.draft) return null;
   // ALREADY CONFIRMED, AND NOT TOUCHED SINCE: the server carries it. Nothing to post, and
   // nothing to derive - the board proposes nothing for a covered line, and inventing one
   // would overwrite a person's composition with the engine's opinion of it.
@@ -521,10 +536,10 @@ function reserveWarehouses(
  * The lines this confirmation cannot carry, and why, so the screen can say so and the count on
  * the button agrees with the notice beside it.
  *
- * EVERY PLANNABLE LINE, not only the decided ones (R11): an untouched line is confirmed as the
- * engine proposed it, so it can be left out for exactly the same three reasons, and while this
- * only walked the draft those went out in silence. The caller says which is which - a line the
- * planner composed is named, and the untouched ones are counted per reason.
+ * Since the 8 Sep 2026 ruling (reverses R11) an untouched, uncovered line is never posted, so it
+ * cannot be unpostable either - it is simply left on the board, undecided. What this walks now
+ * is a SAVED decision (amend or approve) or a covered-and-decided line, left out for one of the
+ * three reasons below. The caller says which is which - a line the planner composed is named.
  *
  * Adoption mirrored the order's open lines at the time it ran, so a later upload can add a core
  * line with no mirror: its order stays confirmable and that one contribution has no
@@ -593,12 +608,13 @@ export function plannedLineCount(
  * JUST wrote, before React has re-rendered with it - can be read the same way the header
  * counter is, off a plain `draft` object rather than off component state.
  *
- * NO APPROVE ALL (R11): silence on a plannable line is agreement, so there is nothing left
- * for it to fill in, and the counter has no "undecided" to report. A REJECTED line is a
- * decision that commits nothing, counted apart rather than simply subtracted in silence. A
- * line an active decision already COVERS and nobody has amended is not counted: the server
- * carries it into the next revision itself. A SAVED-BUT-STALE line (S4, AC-4.4) is not
- * counted either, the same reason `lineFor` will not post it.
+ * CONFIRM POSTS SAVED LINES ONLY (8 Sep 2026 ruling, reverses R11): an uncovered line nobody
+ * has saved a decision for is undecided, not agreed, so the counter reports nothing for it -
+ * "Save all suggested" is the bulk way to agree with the engine before Confirm. A REJECTED
+ * line is a decision that commits nothing, counted apart rather than simply excluded. A line
+ * an active decision already COVERS and nobody has amended is not counted: the server carries
+ * it into the next revision itself. A SAVED-BUT-STALE line (S4, AC-4.4) is not counted either,
+ * the same reason `lineFor` will not post it.
  */
 export function confirmSummaryFor(
   contributions: BoardContribution[],
@@ -618,6 +634,11 @@ export function confirmSummaryFor(
   for (const contribution of contributions) {
     if (contribution.unplannable) continue;
     const decision = draft[contribution.key];
+    // 8 Sep 2026 ruling (reverses R11): an untouched, uncovered line is undecided, not
+    // agreed - it must not pull its order into the confirmable set on its own. A SAVED
+    // decision counts whether it arrived as this call's `draft` argument or, when the caller
+    // has not yet merged the board's shared draft into it, as `contribution.draft`.
+    if (!contribution.covered && !decision && !contribution.draft) continue;
     if (contribution.covered && decision?.verdict !== 'amended') continue;
     if (decision?.verdict === 'rejected') {
       rejected += 1;

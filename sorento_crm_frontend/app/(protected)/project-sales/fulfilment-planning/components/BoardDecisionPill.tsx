@@ -36,8 +36,9 @@ import type {
  * opposite of what happened to it.
  */
 const VERDICT_PILL: Record<string, string> = {
-  // Nobody has said anything about this line yet, and under R11 that is agreement: silence
-  // confirms the suggestion. Grey because it is the state a board opens in, not an outcome.
+  // Nobody has said anything about this line yet. Since the 8 Sep 2026 ruling (reverses
+  // R11) that is undecided, not agreement: Confirm leaves it alone until it is saved. Grey
+  // because it is the state a board opens in, not an outcome.
   suggested: 'bg-muted text-muted-foreground',
   saved: 'bg-emerald-100 text-emerald-800',
   rejected: 'bg-red-100 text-red-800',

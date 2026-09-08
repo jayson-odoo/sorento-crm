@@ -682,14 +682,16 @@ export function FulfilmentBoardPanel({
   const [batchResults, setBatchResults] = React.useState<ConfirmManyOrderResult[] | null>(null);
 
   /**
-   * CONFIRM (R11): one call, grouped per order, each order writing in its OWN transaction
+   * CONFIRM (one call, grouped per order, each order writing in its OWN transaction
    * server-side (`confirm_many`) - so one order's refusal never takes the others down. Any
    * order that has not been adopted yet is adopted first; the board is re-read once
    * afterwards so the fresh mirror lines can be named in the payload (adoption fills
    * `project_line_id`, which is null until then).
    *
-   * The population is `confirmLinesFor`'s own, which is the point of the ruling: a plannable
-   * line nobody rejected is confirmed as suggested, whether or not the planner touched it.
+   * The population is `confirmLinesFor`'s own: CONFIRM POSTS SAVED LINES ONLY (8 Sep 2026
+   * ruling, reverses R11). An uncovered line nobody saved a decision for is left undecided,
+   * not confirmed as the engine's suggestion; "Save all suggested" is the bulk way to agree
+   * with it before this press.
    */
   const runConfirmAll = React.useCallback(async () => {
     if (!board.data) return;
@@ -706,6 +708,9 @@ export function FulfilmentBoardPanel({
             if (contribution.unplannable) return false;
             const decision = draft[contribution.key];
             if (decision?.verdict === 'rejected') return false;
+            // 8 Sep 2026 ruling (reverses R11): an untouched, uncovered line is undecided,
+            // not agreed - it does not put its order in the batch on its account alone.
+            if (!contribution.covered && !decision) return false;
             // Covered and untouched: the server carries it, so this press has nothing to
             // post for it and its order is not put in the batch on its account alone.
             if (contribution.covered && decision?.verdict !== 'amended') return false;
@@ -1590,11 +1595,12 @@ const UNPOSTABLE_SHORT: Record<UnpostableReason, [string, string]> = {
 /**
  * The sentences naming what this confirmation leaves out for one reason, and the fix.
  *
- * TWO POPULATIONS, because they need different words (R11). A line the planner composed is
+ * TWO POPULATIONS in shape, because they need different words. A line the planner composed is
  * NAMED - they are looking for the one they just worked on - capped at five names, since a
- * list longer than that is scrolled past rather than read. Lines nobody touched are confirmed
- * as suggested and can be left out for the same reasons, and there can be hundreds of them, so
- * they are COUNTED and the reader is told where to go and decide them.
+ * list longer than that is scrolled past rather than read. Since the 8 Sep 2026 ruling
+ * (reverses R11) an untouched, uncovered line is never posted at all, so it cannot land here
+ * unpostable either; the `untouched` count stays as a fallback for the rare covered-and-decided
+ * case rather than being removed for one caller.
  */
 export function unpostableNotices(
   reason: UnpostableReason,
