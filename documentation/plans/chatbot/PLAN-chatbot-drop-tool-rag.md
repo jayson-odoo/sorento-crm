@@ -1,7 +1,6 @@
 # PLAN: drop the tool RAG from the chatbot business lane
 
-Status: IMPLEMENTED, AC-8 browser check pending (8 Sep 2026, branch
-`feat/chatbot-drop-tool-rag`). Owner ruling the same day: "actually i just need 1 for each ... we can drop
+Status: IMPLEMENTED, AC-8 verified in the browser 8 Sep 2026 (branch feat/chatbot-drop-tool-rag).
 the rag from chatbot lane".
 UAC: `chatbot-drop-tool-rag-acceptance-criteria.md`.
 
