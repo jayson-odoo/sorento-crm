@@ -296,6 +296,19 @@ def portal_submit_price_tag_request(
             exc_info=True,
         )
 
+    # D8: auto-assign to whatever tracker the emit above just opened. Its own
+    # try/except - a bug here must not turn a successful submit into a
+    # failed one; the request simply stays `new` and unclaimed, same as if
+    # no active config existed at all (AC-S3-3).
+    try:
+        PriceTagRequestService.auto_assign_from_tracker(db, req)
+    except Exception:
+        logger.warning(
+            "Auto-assign from tracker failed for price_tag_request %s",
+            req.id,
+            exc_info=True,
+        )
+
     db.commit()
     return PriceTagRequestResponse.model_validate(req)
 

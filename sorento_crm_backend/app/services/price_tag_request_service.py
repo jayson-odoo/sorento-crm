@@ -264,6 +264,42 @@ class PriceTagRequestService:
         return request
 
     @staticmethod
+    def auto_assign_from_tracker(db: Session, request: PriceTagRequest) -> str | None:
+        """D8: copy the form SLA tracker's resolved assignee onto the request.
+
+        Reads the newest OPEN ``price_tag_request`` tracker for this request -
+        the one ``emit_form_event`` just opened, if an active config placed it
+        (``_start_for_config`` commits as part of opening it, so this read
+        always sees it: no explicit flush needed). No tracker, or a tracker
+        with no assignee, leaves the request ``new`` and unclaimed - the Claim
+        path is unchanged (AC-S3-2). Returns the assignee id, or ``None``.
+
+        Called from ``portal_submit_price_tag_request`` in its OWN try/except:
+        a failure here must not fail the submit (AC-S3-3).
+        """
+        from app.models.sla import ConversationSLATracking
+        from app.services.sla_scope import open_tracker_scope
+
+        tracker = (
+            db.query(ConversationSLATracking)
+            .filter(
+                ConversationSLATracking.source_entity_type == "price_tag_request",
+                ConversationSLATracking.source_entity_id == str(request.id),
+                *open_tracker_scope(),
+            )
+            .order_by(ConversationSLATracking.initiated_at.desc())
+            .first()
+        )
+        if not tracker or not tracker.assigned_to_id:
+            return None
+
+        request.assigned_to_id = tracker.assigned_to_id
+        PriceTagRequestService.transition_status(
+            db, str(request.id), STATUS_DESIGNING, user_id=tracker.assigned_to_id,
+        )
+        return tracker.assigned_to_id
+
+    @staticmethod
     def transition_status(
         db: Session,
         request_id: str,
