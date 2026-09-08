@@ -3663,10 +3663,24 @@ def _and_probe_transporter(db: Session, tokens: list[str]) -> list[ResolvedEntit
 
 def _and_probe_warehouse(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
     """Same ban as `_prefix_probe_warehouse`: no AND-mode fan-out for warehouse, exact
-    normalized code per token only, deduped across tokens."""
+    normalized code per token only, deduped across tokens.
+
+    ALL OR NOTHING across the tokens, like every other AND probe: this probe answers only
+    when EVERY token is itself a warehouse code. Exact-code-per-token alone broke the AND
+    contract ("rows matching EVERY token") in the one way that matters to the chatbot -
+    "SRT62-GM to brw" answered with BRW, which does not match "SRT62-GM", and that
+    non-empty intersection suppressed `_resolve_input`'s own "AND-mode produced zero
+    intersection; switched to OR-mode under the whitelist" degrade. That degrade is what
+    resolves a product and a warehouse SEPARATELY, so the product was lost and the
+    chatbot's fetch args carried `warehouse_ids` with no `product_ids` (measured, browser
+    AC-10, 8 Sep 2026; 161 of the 166 multi-hint AND turns in the corpus already ride the
+    degrade and were never affected).
+    """
     seen: set[str] = set()
     out: list[ResolvedEntity] = []
     hits = _probe_warehouse(db, tokens)
+    if any(not hits.get(tok) for tok in tokens):
+        return []
     for tok in tokens:
         for m in hits.get(tok, []):
             if m.uuid:
