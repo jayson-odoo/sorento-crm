@@ -165,3 +165,23 @@ naive `DateTime(timezone=False)` column and `retired_at` is `DateTime(timezone=T
   abandoned. A retired `autocount` row is now written from its OWN approved picking lines with the
   D28c floor, `max(stated_received, own approved total)`, and `may_reopen=False`. It still takes no
   share of its group, and AC-X40 still holds because the floor covers a later deletion.
+
+## 9. Round 3 rulings (reviewer, 2026-09-08)
+
+The reviewer measured the old predicate against the lane copy of production: it matched exactly two
+rows, both lines of SPO-2023/09-0046, a cancelled document with a single DocKey and no sibling. Its
+only effect would have been to make one whole document disappear. Round 2's narrowing stands.
+
+- **B2, the ghost row.** Fixed at the listing end: `list_documents` gates document MEMBERSHIP, not
+  only its aggregates, so a document with no visible line does not list. `get_document` keeps its
+  404, which is then consistent rather than contradictory: the document has no visible lines, and
+  neither surface offers it.
+- **S1.** `is_outstanding` in `list_documents` is built from `visible_line_clauses()` as well, so
+  Balance, status, worst overdue and earliest ETA cannot count a row the detail page does not
+  return. This closes the last structural gap rather than relying on "retired implies closed",
+  which no constraint enforces.
+- **S2.** `_document_supplier_rollup` counts visible lines only, matching `get_document`.
+- **N1 accepted, not deferred.** The packing-list detail's related-SPO strip is a listing and the
+  user's decision was every listing, so it takes the clause too.
+- **N2.** The backfill keeps `print` for its per-document report: it is an operator-facing report
+  like the dedupe script's, not application logging.
