@@ -1727,13 +1727,15 @@ class SPOAllocationService:
         """List SPO allocations. quantity_received is computed on load from approved GRN lines."""
         from sqlalchemy.orm import joinedload
         from app.schemas.procurement import SPOAllocationResponse
+        from app.services.scm import spo_supply
         q = self.db.query(SPOAllocation).options(
             joinedload(SPOAllocation.product),
             joinedload(SPOAllocation.warehouse),
             joinedload(SPOAllocation.inbound_shipment),
         )
-        
-        filters = []
+
+        # R1/R6: a retired line AutoCount stopped naming is hidden from the grid.
+        filters = [*spo_supply.visible_line_clauses()]
 
         shipment_ids = resolve_identifier(
             self.db,
@@ -1843,6 +1845,7 @@ class SPOAllocationService:
             InboundShipmentSimple,
             ShipmentAllocationSummaryGroup,
         )
+        from app.services.scm import spo_supply
 
         # Subquery / join: shipments that have at least one allocation matching filters
         q_shipments = (
@@ -1864,7 +1867,9 @@ class SPOAllocationService:
                 "empty": True,
             }
 
-        shipment_filters = []
+        # R1/R6: a retired line AutoCount stopped naming is hidden from the grid, and a
+        # shipment whose only allocations are hidden must not appear as a group of its own.
+        shipment_filters = [*spo_supply.visible_line_clauses()]
         if resolved_warehouse_ids:
             shipment_filters.append(SPOAllocation.warehouse_id.in_(resolved_warehouse_ids))
         if receipt_status and receipt_status != "all":
@@ -1889,7 +1894,7 @@ class SPOAllocationService:
         if shipment_filters:
             q_shipments = q_shipments.filter(and_(*shipment_filters))
 
-        allocation_filters = []
+        allocation_filters = [*spo_supply.visible_line_clauses()]
         if resolved_warehouse_ids:
             allocation_filters.append(SPOAllocation.warehouse_id.in_(resolved_warehouse_ids))
         if receipt_status and receipt_status != "all":
@@ -1986,10 +1991,13 @@ class SPOAllocationService:
             SPOAllocationWithShippedResponse,
             SPOWithAllocationsGroup,
         )
+        from app.services.scm import spo_supply
 
         # Base filter query (no eager load) - reuse for count and for page of spo_numbers
         q_base = self.db.query(SPOAllocation).filter(SPOAllocation.spo_number.isnot(None))
-        filters = []
+        # R1/R6: a retired line AutoCount stopped naming is hidden from the grid, both from
+        # the count/page-of-numbers query and from the allocations loaded per number below.
+        filters = [*spo_supply.visible_line_clauses()]
         resolved_warehouse_ids = resolve_identifier(
             self.db,
             warehouse_id,
@@ -2181,6 +2189,10 @@ class SPOAllocationService:
             *spo_supply.open_incoming_clauses(),
             SPOAllocation.allocated_quantity > func.coalesce(SPOAllocation.quantity_received, 0),
         )
+        # R1/R4/R6: a retired line AutoCount stopped naming is hidden from the header
+        # rollups (`total_allocated`, `total_received`, `line_count`) the same as it is
+        # from every other grid - one clause, imported from `spo_supply`.
+        is_visible = and_(*spo_supply.visible_line_clauses())
         arrival_expr = func.coalesce(
             InboundShipment.eta_delay_date,
             InboundShipment.estimated_arrival_date,
@@ -2261,9 +2273,19 @@ class SPOAllocationService:
             self.db.query(
                 SPOAllocation.spo_number.label("spo_number"),
                 doc_date_expr.label("doc_date"),
-                func.sum(SPOAllocation.allocated_quantity).label("total_allocated"),
-                func.sum(func.coalesce(SPOAllocation.quantity_received, 0)).label("total_received"),
-                func.count(SPOAllocation.id).label("line_count"),
+                func.coalesce(
+                    func.sum(case((is_visible, SPOAllocation.allocated_quantity), else_=0)), 0
+                ).label("total_allocated"),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (is_visible, func.coalesce(SPOAllocation.quantity_received, 0)),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("total_received"),
+                func.count(case((is_visible, SPOAllocation.id), else_=None)).label("line_count"),
                 has_outstanding_expr.label("has_outstanding"),
                 balance_sum_expr.label("balance"),
                 worst_overdue_expr.label("worst_overdue_days"),
@@ -2296,8 +2318,8 @@ class SPOAllocationService:
             "spo_number": SPOAllocation.spo_number,
             "doc_date": doc_date_expr,
             "created_at": doc_date_expr,
-            "total_allocated": func.sum(SPOAllocation.allocated_quantity),
-            "line_count": func.count(SPOAllocation.id),
+            "total_allocated": func.sum(case((is_visible, SPOAllocation.allocated_quantity), else_=0)),
+            "line_count": func.count(case((is_visible, SPOAllocation.id), else_=None)),
             "balance": balance_sum_expr,
             "worst_overdue_days": worst_overdue_expr,
             "earliest_eta": earliest_eta_expr,
@@ -2451,7 +2473,12 @@ class SPOAllocationService:
                 joinedload(SPOAllocation.product),
                 joinedload(SPOAllocation.warehouse),
             )
-            .filter(SPOAllocation.spo_number == spo_number)
+            .filter(
+                SPOAllocation.spo_number == spo_number,
+                # R1/R6: a retired line AutoCount stopped naming is hidden from the
+                # document's own lines list and its rollups below.
+                *spo_supply.visible_line_clauses(),
+            )
             .order_by(SPOAllocation.spo_line_number.asc().nullslast(), SPOAllocation.id)
             .all()
         )
@@ -2623,12 +2650,16 @@ class SPOAllocationService:
         for allocation, shipment, supplier_name, is_open in rows:
             allocated = allocation.allocated_quantity or 0
             received = allocation.quantity_received or 0
-            balance = max(allocated - received, 0)
             arrival = None
             if shipment is not None:
                 arrival = shipment.eta_delay_date or shipment.estimated_arrival_date
             arrival = arrival or allocation.expected_date
             outstanding = bool(is_open) and allocated > received
+            # R5: a line that is not outstanding reads balance 0, so the grid can never
+            # again disagree with its own header - `total_allocated`/`balance` above
+            # already sum outstanding-only, this was the one reader still computing a
+            # closed line's balance as if it were still owed.
+            balance = max(allocated - received, 0) if outstanding else 0
             overdue_days = spo_supply.overdue_days(arrival, today) if outstanding else 0
             supplier_counts[supplier_name] = supplier_counts.get(supplier_name, 0) + 1
 

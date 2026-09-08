@@ -36,7 +36,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, func, or_
 
 from app.models.procurement import InboundShipment, SPOAllocation, Supplier
 
@@ -66,6 +66,38 @@ def open_incoming_clauses() -> tuple:
         # Landed is not incoming. Only a shipment can say a row has landed; an SPO with no
         # container booked has nothing that could have arrived.
         or_(InboundShipment.id.is_(None), InboundShipment.actual_arrival_date.is_(None)),
+    )
+
+
+def visible_line_clauses() -> tuple:
+    """The one test a row must pass to be SHOWN in a listing (PLAN-hide-retired-spo-lines,
+    R1/R2): NOT (retired AND never received) - `retired_at IS NOT NULL AND
+    coalesce(quantity_received, 0) = 0` is the hidden set, everything else is visible.
+
+    This is a different question from `open_incoming_clauses()` above. That one asks
+    "is this line still supply a planner may count on" - closed, fully received or
+    landed lines all answer no, and stay entirely correct rows that simply are not
+    incoming anything more. This one asks "did AutoCount ever have this line, as far
+    as the document is concerned" - R1: a retired line is one AutoCount stopped
+    naming (the leftover sweep, or a DocKey change under the same `spo_number`), so it
+    is hidden from the document rather than merely marked closed. R2: a retired line
+    that carries a receipt (`quantity_received > 0`) stays visible regardless - stock
+    physically arrived against it, and D28c freezes that receipt on retirement, so
+    hiding the row would hide real goods that already landed.
+
+    A row that is merely `closed` (fully received, or closed for any reason with no
+    `retired_at`) is UNAFFECTED - it has no `retired_at`, so it is visible either way.
+
+    Readers: `procurement_service.SPOAllocationService.list_allocations`,
+    `list_allocations_grouped_by_shipment`, `list_allocations_grouped_by_spo_number`,
+    `list_documents` (and its `total_allocated` / `total_received` rollups) and
+    `get_document` (its lines list and the same two rollups).
+    """
+    return (
+        or_(
+            SPOAllocation.retired_at.is_(None),
+            func.coalesce(SPOAllocation.quantity_received, 0) > 0,
+        ),
     )
 
 
