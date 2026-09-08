@@ -1,7 +1,8 @@
 # PLAN: drop the tool RAG from the chatbot business lane
 
-Status: PLANNED (8 Sep 2026). Owner ruling the same day: "actually i just need 1 for
-each ... we can drop the rag from chatbot lane".
+Status: IMPLEMENTED (8 Sep 2026, branch `feat/chatbot-drop-tool-rag`), AC-8 (browser)
+outstanding. Owner ruling the same day: "actually i just need 1 for each ... we can drop
+the rag from chatbot lane".
 UAC: `chatbot-drop-tool-rag-acceptance-criteria.md`.
 
 ## Why (measured, not argued)
@@ -93,3 +94,34 @@ tuple (`goods_receive`, `ideate`) reaches `tool_filter` with `[]` and ends
 
 Out of scope: the AI assistant's RAG, the seeder script, the sync at startup, the MCP
 catalogue's presence in the backend image (separate lane), the parser prompt.
+
+## What landed, and where the code differed from the plan
+
+Five corrections, made while implementing and recorded here because the plan is the
+contract:
+
+1. **Step 3 names the wrong builder.** `production_services` builds `ResolveGateServices`;
+   the `FetchServices` builder is `fetch_services(db)`, and that is the one now returning
+   `FetchServices(mcp_call=_mcp_call(db))`. It still takes its session, unused, so the
+   engine's call site reads like every other lane's.
+2. **`rag_query_params` stays.** Step 1 names `collapse_tool_rows` only, and the other
+   `sub-get-rag` node body is left alone deliberately: it is REPLAY-only (it never ran in
+   process) and 38 captures grade it. It is now the last `sub-get-rag` body in the module
+   and its docstring says so.
+3. **`collapse_tool_rows`' 38 captures are no longer graded.** Deleting the port means
+   `test_replay.RUNNERS` loses its `Code_in_JavaScript1` entry, so that node drops out of
+   `PORTED_NODES` and its fixtures (1 vendored, 38 in the corpus) stop being replayed. The
+   captures stay on disk and `_corpus.NODE_SLUGS` keeps the slug, both with a comment
+   saying why. Nothing else about the replay changes: the vendored gate is green.
+4. **A zero-tool turn is no longer reachable end to end**, which is the point of the
+   change but does move two engine-level tests. Every domain that can pass the gate has a
+   tool, so `tests/chatbot/test_s6c_engine_paths.py::TestH11ZeroToolsIsAnOutcomeEndToEnd`
+   and `test_s6_s7_integration.py`'s matrix now drive the same customer-facing `not_found`
+   through a tool that answers EMPTY. H11's actual zero-tool arm is graded directly on
+   `run_fetch` (UAC AC-4). One assertion moved with it: the shadow cell's stage is `routed`
+   rather than `looked_up`, because `looked_up` is what the engine records when the shadow
+   lane ERRORED and the zero-tool pick was that error.
+5. **`mcp_tools.chatbot_domain` keeps the column and loses its prose.** Step 5 leaves the
+   column, the stamping and `mcp_tool_domains.py` in place; their comments all described
+   `search_tool_chunks` as the reader, so each now says the column is written and unread,
+   and names the same trigger for the drop.
