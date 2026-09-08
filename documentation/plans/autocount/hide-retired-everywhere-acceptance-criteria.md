@@ -36,3 +36,19 @@ that must stay visible (R2).
   line; it picks a visible sibling or refuses.
 - **AC-E14 [BE]** `get_received_quantities_by_product` is deliberately unchanged, with a comment
   saying why: a receipt found through a retired line is still a receipt.
+
+## Round 2 (security review, 2026-09-08)
+
+- **AC-E15 [BE][T]** (deactivation is reversible) A line retired and then named again by a later push
+  has an ACTIVE embedding document afterwards and is retrievable again. The worker's hash-skip
+  branch re-activates a document it finds inactive before returning `skipped`. Note for whoever
+  implements it: adding `retired_at` to the canonical body does NOT solve this. A hidden row never
+  reaches body building at all, and an un-retired row's body is identical to its original, so the
+  hash is unchanged either way. The skip branch is the only place that can repair it.
+
+- **AC-E16 [BE][T]** (a writer's view of state is never filtered) `spo_conversion_service._own_state`
+  is read by the SPO edit SAVE as well as by the planner display. It stays UNFILTERED, so a save
+  sees every allocation it must update or delete and cannot insert a duplicate for a
+  (shipment line, warehouse) whose row is merely hidden. The filtering moves to the display
+  consumer. Assert both halves: the planner display omits a retired line, and the save's held state
+  still contains it. AC-E10's `_own_state` half is revised accordingly.

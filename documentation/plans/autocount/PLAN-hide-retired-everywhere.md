@@ -70,3 +70,19 @@ transitively. The exposed readers are exactly those with no open-status test.
 - S2 the chatbot surfaces (2, 4, 11).
 - S3 the embedding trio (3), including deactivation on retirement.
 - S4 the purchasing arithmetic (7), with the direction of the change stated in the PR.
+
+## 6. Round 2 rulings (security review, 2026-09-08)
+
+- **The deactivation was one-way.** Retiring a line deactivates its document, but the un-retire is a
+  restatement of identical values, so the worker's `source_hash` is unchanged and it returns
+  `skipped` before ever reaching `is_active = True`. The line stays out of retrieval permanently,
+  with no repair path, since a backfill enqueue hits the same skip. Fix: the skip branch re-activates
+  an inactive document before returning. The reviewer's alternative, adding `retired_at` to the
+  canonical body, does not work in either direction and is recorded in AC-E15 so nobody tries it.
+- **`_own_state` is a writer's view, so it is not filtered.** It feeds the SPO edit save as well as
+  the planner display. A save that cannot see a hidden allocation would neither update nor delete it
+  and would insert a second row for the same (shipment line, warehouse). Unreachable on today's data
+  (no allocation carries a `po_line_id`), which is exactly the reasoning that produced the defect
+  this lane exists to fix, so it is corrected rather than named as a residual. The filter moves to
+  the display consumer. R7 is amended: a user-facing READ takes the clause; a read that a WRITE
+  depends on never does.
