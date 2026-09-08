@@ -259,14 +259,23 @@ async def get_packing_list(
     try:
         service = InboundShipmentService(db)
         shipment = service.get_shipment(shipment_id)
+        from app.services.scm import spo_supply
+
         # Refresh and persist line_status so n8n/API always have current value in DB
         service.refresh_shipment_line_statuses(shipment_id)
         # Reload shipment so line_status is in memory (refresh committed)
         shipment = service.get_shipment(shipment_id)
-        # SPO allocated total per product on this shipment
+        # SPO allocated total per product on this shipment. Round 3 N1 (reviewer): this
+        # and the related-SPO strip below are a listing, same as every grid
+        # PLAN-hide-retired-spo-lines already hides a retired line from - a retired
+        # line AutoCount stopped naming must not inflate this total or appear in the
+        # strip either.
         totals = (
             db.query(SPOAllocation.product_id, func.sum(SPOAllocation.allocated_quantity).label("total"))
-            .filter(SPOAllocation.inbound_shipment_id == shipment_id)
+            .filter(
+                SPOAllocation.inbound_shipment_id == shipment_id,
+                *spo_supply.visible_line_clauses(),
+            )
             .group_by(SPOAllocation.product_id)
             .all()
         )
@@ -274,7 +283,10 @@ async def get_packing_list(
         received_by_product = service.get_received_quantities_by_product(shipment_id)
         allocations = (
             db.query(SPOAllocation)
-            .filter(SPOAllocation.inbound_shipment_id == shipment_id)
+            .filter(
+                SPOAllocation.inbound_shipment_id == shipment_id,
+                *spo_supply.visible_line_clauses(),
+            )
             .order_by(SPOAllocation.created_at.asc())
             .all()
         )
