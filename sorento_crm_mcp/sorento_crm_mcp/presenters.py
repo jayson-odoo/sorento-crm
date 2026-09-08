@@ -51,6 +51,8 @@ PRESENTER_TOOLS: frozenset[str] = frozenset(
         "crm_inventory_stock_balance_list",
         "crm_forms_management_forms_list",
         "crm_portal_link_get",
+        "crm_procurement_po_placed_list",
+        "crm_procurement_spo_allocations_last_receipt_list",
     }
 )
 
@@ -71,6 +73,8 @@ _DEFAULT_INTRO = {
     "crm_inventory_stock_balance_list": "Stock details found for the requested products.",
     "crm_forms_management_forms_list": "Here are the forms I found.",
     "crm_portal_link_get": "Here is the link you requested.",
+    "crm_procurement_po_placed_list": "Here is the PO placed I found.",
+    "crm_procurement_spo_allocations_last_receipt_list": "Here is the last receipt I found.",
 }
 
 _RESULT_TYPE = {
@@ -88,6 +92,8 @@ _RESULT_TYPE = {
     "crm_inventory_stock_balance_list": "stock",
     "crm_forms_management_forms_list": "forms",
     "crm_portal_link_get": "portal_link",
+    "crm_procurement_po_placed_list": "purchase_orders_placed",
+    "crm_procurement_spo_allocations_last_receipt_list": "spo_last_receipt",
 }
 
 _STOCK_TOOL = "crm_inventory_stock_balance_list"
@@ -210,6 +216,42 @@ class _Builder:
         self.items: list[dict[str, Any]] = []
         self.attachments: list[dict[str, Any]] = []
         self.action_links: list[dict[str, Any]] = []
+        # field key -> permission key (A2/A5/A6, e.g. "inventory.sellable",
+        # "purchase_orders.supplier"). The MCP itself stays unfiltered (in-app
+        # assistant + n8n operators are internal); `output_structurer` is the
+        # only consumer that reads this and drops a field/summary item whose
+        # key is here unless the contact's access grants the permission key.
+        self.restricted_fields: dict[str, str] = {}
+        # spec_key -> registry label (A1). A SEPARATE top-level envelope key from
+        # `field_vocabulary` on purpose: that one already drives the incoming
+        # clearance/timeline projection in `output_structurer` (gated on its mere
+        # truthiness), so folding spec labels into it would misfire that whole
+        # machinery on every product spec answer, including a no-attribute ask
+        # that must show the compact "Specs:" line rather than have every keyed
+        # field stripped down to none.
+        self.spec_vocabulary: dict[str, str] = {}
+        # A2 (amended 8 Sep 2026): a presenter-computed summary block, rendered after
+        # the rows and before any trailing miss note - the SAME shape `present_response`
+        # already merges in for a tool whose BACKEND sends a `summary` dict (orders), but
+        # populated here for a tool (stock) whose aggregate is computed FROM THE ROWS the
+        # presenter already has, with no backend change needed.
+        self.summary_items: list[dict[str, Any]] = []
+
+    def restrict(self, key: str, permission: str) -> None:
+        self.restricted_fields[key] = permission
+
+    def note_spec(self, key: str, label: str) -> None:
+        self.spec_vocabulary[key] = label
+
+    def add_summary_item(self, label: Any, value: Any, *, key: str | None = None) -> None:
+        """One `*label:* value` line in the summary block. `key` is what a restricted
+        field is dropped by (see `restrict`); omitted, the line is never gated."""
+        if not _filled(value):
+            return
+        field: dict[str, Any] = {"label": label, "value": value}
+        if key is not None:
+            field["key"] = key
+        self.summary_items.append({"title": None, "fields": [field]})
 
     def item(
         self,
@@ -369,6 +411,71 @@ def _orders_list(rows: list[dict], b: _Builder) -> None:
         )
 
 
+def _orders_so_outstanding(rows: list[dict], b: _Builder) -> None:
+    """A3 (AC-905): `order_status=so_outstanding` - open SO lines, a DIFFERENT
+    row shape from `_orders_list` (SO number, not order number; no lines[])."""
+    for r in rows:
+        b.item(
+            r.get("so_number"),
+            [
+                ("company_name", "Company", r.get("company_name")),
+                ("so_number", "SO Number", r.get("so_number")),
+                ("product_code", "Product Code", r.get("product_code")),
+                ("outstanding_qty", "Outstanding Qty", _qty(r.get("outstanding_qty"))),
+                ("order_date", "Order Date", r.get("order_date")),
+                ("customer", "Customer", r.get("customer")),
+                (
+                    "requested_delivery_date",
+                    "Requested Delivery Date",
+                    r.get("requested_delivery_date"),
+                ),
+            ],
+        )
+
+
+def _purchase_orders_placed(rows: list[dict], b: _Builder) -> None:
+    """A5 (AC-907): PO placed, never netted against incoming. `supplier` is
+    RESTRICTED - a dealer never sees it, only a contact holding
+    `purchase_orders.supplier` (the actual gate is `output_structurer`, not
+    here - the MCP stays unfiltered)."""
+    for r in rows:
+        b.item(
+            r.get("po_number"),
+            [
+                ("company_name", "Company", r.get("company_name")),
+                ("po_number", "PO Number", r.get("po_number")),
+                # item 5 (8 Sep 2026): "po" = a PO line, "spo" = an unshipped SPO
+                # allocation; absent on an older row -> no field
+                ("kind", "Source", {"po": "PO", "spo": "SPO"}.get(r.get("kind"))),
+                ("product_code", "Product Code", r.get("product_code")),
+                ("outstanding_qty", "Outstanding Qty", _qty(r.get("outstanding_qty"))),
+                # the PO document date (8 Sep 2026); absent on an older row -> no field
+                ("po_date", "PO Date", r.get("po_date")),
+                ("expected_date", "Expected Date", r.get("expected_date")),
+                ("supplier", "Supplier", r.get("supplier")),
+            ],
+        )
+    b.restrict("supplier", "purchase_orders.supplier")
+
+
+def _spo_last_receipt(rows: list[dict], b: _Builder) -> None:
+    """A6 (AC-908): `date_label` names WHICH column answered - never claim
+    "Arrived" when the row is really a bare receipt-recorded timestamp."""
+    for r in rows:
+        date_label = r.get("date_label") or "Date"
+        b.item(
+            r.get("spo_number"),
+            [
+                ("company_name", "Company", r.get("company_name")),
+                ("spo_number", "SPO Number", r.get("spo_number")),
+                ("product_code", "Product Code", r.get("product_code")),
+                ("quantity_received", "Quantity Received", _qty(r.get("quantity_received"))),
+                ("date", str(date_label), r.get("date")),
+                ("warehouse", "Warehouse", r.get("warehouse")),
+            ],
+        )
+
+
 def _orders_by_product(rows: list[dict], b: _Builder) -> None:
     for o in rows:
         prods = ", ".join(
@@ -401,14 +508,25 @@ def _orders_by_product(rows: list[dict], b: _Builder) -> None:
 # the parser; an unnameable entry is dropped, not coerced.
 # NEVER RAISES on its own account - and the render path wraps it anyway.
 
+# D3 (owner console pass, 8 Sep 2026): the owner's order and labels - the SO block, then
+# the DO block. The SO figures ride on a row only under `include_pipeline`
+# (`stamp_so_outstanding_rows`); absent -> nothing, as every field here. The DO relabels
+# (DOs -> DO, Delivered Qty -> Delivered, Pending Qty -> DO Outstanding, Delivered span ->
+# Delivery Date) reach every include_summary caller, n8n included - owner ruling 8 Sep.
 _SUMMARY_FIELDS = (
     ("customer", "Customer"),
+    ("customers", "Customers"),
     ("product_code", "Product Code"),
-    ("order_count", "DOs"),
+    ("so_count", "SO"),
+    ("so_date", "SO Date"),
+    ("so_ordered_qty", "Ordered"),
+    ("so_transferred_qty", "Transferred to DO"),
+    ("so_outstanding_qty", "SO Outstanding"),
+    ("order_count", "DO"),
     ("order_date", "DO Date"),
-    ("delivered_quantity", "Delivered Qty"),
-    ("pending_quantity", "Pending Qty"),
-    ("delivered_between", "Delivered"),
+    ("delivered_quantity", "Delivered"),
+    ("delivered_between", "Delivery Date"),
+    ("pending_quantity", "DO Outstanding"),
 )
 
 
@@ -452,20 +570,29 @@ def _sl_between(from_val: Any, to_val: Any) -> Optional[str]:
     return a or b
 
 
-def _summary_item(customer: Optional[str], row: dict) -> Optional[dict]:
-    """One render item from a groups[]/products[] row; None when nothing can be named."""
+def _summary_item(customer: Optional[str], row: dict, *, customers: Optional[int] = None) -> Optional[dict]:
+    """One render item from a groups[]/products[] row; None when nothing can be named.
+    `customers` is the product TOTAL row's exact customer count (D3: it renders as a
+    `Customers` field where a customer row has `Customer`, replacing the old
+    "All customers (N)" title)."""
     code = row.get("product_code")
     if not isinstance(code, str) or not code.strip():
         return None
     code = code.strip()
     values = {
         "customer": customer,
+        "customers": customers,
         "product_code": code,
+        "so_count": _sl_num(row.get("so_count")),
+        "so_date": _sl_between(row.get("so_date_from"), row.get("so_date_to")),
+        "so_ordered_qty": _sl_num(row.get("so_ordered_qty")),
+        "so_transferred_qty": _sl_num(row.get("so_transferred_qty")),
+        "so_outstanding_qty": _sl_num(row.get("so_outstanding_qty")),
         "order_count": _sl_num(row.get("order_count")),
         "order_date": _sl_between(row.get("order_date_from"), row.get("order_date_to")),
         "delivered_quantity": _sl_num(row.get("delivered_quantity")),
-        "pending_quantity": _sl_num(row.get("pending_quantity")),
         "delivered_between": _sl_between(row.get("delivered_from"), row.get("delivered_to")),
+        "pending_quantity": _sl_num(row.get("pending_quantity")),
     }
     fields = [
         {"key": k, "label": lbl, "value": values[k]}
@@ -505,7 +632,7 @@ def summary_items(summary: Any) -> list[dict]:
         n_cust = _sl_num(p.get("customer_count"))
         n_cust = int(n_cust) if (n_cust is not None and n_cust >= 0) else len(rows)
         if n_cust > 1 or (summary.get("groups_truncated") is True and rows):
-            total = _summary_item(f"All customers ({max(n_cust, len(rows))})", p)
+            total = _summary_item(None, p, customers=max(n_cust, len(rows)))
             if total:
                 items.append(total)
         for g in rows:
@@ -520,6 +647,11 @@ def summary_items(summary: Any) -> list[dict]:
     return items
 
 
+# D8 (owner console pass, 8 Sep 2026): the three-line "SO Outstanding / DO open / Delivered"
+# block that used to be prepended off the top-level `so_outstanding_qty` is gone - the
+# per-row SO block (`_SUMMARY_FIELDS`) is the only SO rendering, on both order tools.
+
+
 def summary_intro(summary: Any, n_items: int) -> Optional[str]:
     """The summary intro (count over the whole filter; truncation notice). `n_items` is
     kept in the signature for callers; the page geometry is no longer stated."""
@@ -528,14 +660,12 @@ def summary_intro(summary: Any, n_items: int) -> Optional[str]:
     rc = _sl_num(summary.get("row_count"))
     if rc is None:
         return None
-    n = int(rc)
-    text = f"Summary over {n} DO{'' if n == 1 else 's'}."
-    # No page geometry: on a quantity ask the consumer prints the summary ONLY
-    # (order-quantity-summary amendment 5) - the DO page is not shown, so
-    # "showing N of them below" would describe something the reader cannot see.
+    # D3 (owner console pass, 8 Sep 2026): the "Summary over N DOs." sentence is struck -
+    # the items say everything; only the truncation notice survives, as its own line.
+    # `rc` is still required: a summary with no renderable row_count is not a summary.
     if summary.get("groups_truncated") is True or summary.get("products_truncated") is True:
-        text += " Not every breakdown is shown — add a customer, a product or a date range."
-    return text
+        return "Not every breakdown is shown — add a customer, a product or a date range."
+    return None
 
 
 #: Clearance fields, in the order a person narrates a container's journey, paired
@@ -720,25 +850,46 @@ def _promotion_products(rows: list[dict], b: _Builder) -> None:
             b.attach(a.get("attachment") or a)
 
 
+def _spec_field_value(spec: dict) -> Any:
+    """The VALUE half of "label: value unit" (the field's own label is the
+    registry label) - `_qty` compacts a numeric value the same way every other
+    quantity field does ("1.2000" -> "1.2")."""
+    value = spec.get("value")
+    val_text = _qty(value) if isinstance(value, (int, float)) else value
+    unit = spec.get("unit")
+    return f"{val_text} {unit}".strip() if _filled(unit) else val_text
+
+
 def _products(rows: list[dict], b: _Builder) -> None:
     for p in rows:
         desc = p.get("description")
-        b.item(
-            p.get("product_code"),
-            [
-                ("company_name", "Company", p.get("company_name")),
-                ("Product Code", p.get("product_code")),
-                ("Product Name", _distinct_name(p.get("product_code"), p.get("product_name"))),
-                ("Description", desc if _filled(desc) and desc != p.get("product_name") else None),
-                # Always surface price + dimensions for the products list; when the
-                # row has no value, render "Not defined" instead of dropping the line.
-                ("List Price", _money(p.get("list_price")) or "Not defined"),
-                ("Dimensions", _dims(p) or "Not defined"),
-            ],
-            discontinued=p.get("is_discontinued") is True,
-        )
+        pairs: list[tuple[Any, ...]] = [
+            ("company_name", "Company", p.get("company_name")),
+            ("Product Code", p.get("product_code")),
+            ("Product Name", _distinct_name(p.get("product_code"), p.get("product_name"))),
+            ("Description", desc if _filled(desc) and desc != p.get("product_name") else None),
+            # Always surface price + dimensions for the products list; when the
+            # row has no value, render "Not defined" instead of dropping the line.
+            ("List Price", _money(p.get("list_price")) or "Not defined"),
+            ("Dimensions", _dims(p) or "Not defined"),
+        ]
+        # A1 (AC-901/AC-902): every POPULATED spec key as its own keyed field,
+        # already ranked by the backend (rank_weight desc, then label) - this
+        # presenter does not re-sort. `output_structurer` is what decides whether
+        # to show all of them, one asked key, or the compact "Specs:" line.
+        for spec in p.get("specs") or []:
+            key = spec.get("key")
+            label = spec.get("label")
+            if not _filled(key) or not _filled(label):
+                continue
+            pairs.append((f"spec:{key}", label, _spec_field_value(spec)))
+            b.note_spec(str(key), str(label))
+        b.item(p.get("product_code"), pairs, discontinued=p.get("is_discontinued") is True)
         for a in p.get("attachments") or []:
             b.attach(a)
+
+
+FILE_LINK_UNAVAILABLE = "(file link unavailable right now)"
 
 
 def _product_attachments(rows: list[dict], b: _Builder) -> None:
@@ -768,6 +919,14 @@ def _product_attachments(rows: list[dict], b: _Builder) -> None:
                 # Says which of the three states this file is in, so the consumer
                 # never has to compare Valid Until against today itself.
                 ("Validity", _validity_label(state)),
+                # D9 (8 Sep 2026): a file whose link could not be signed is still LISTED -
+                # the reader learns what exists - and the missing link is said, not hidden.
+                # `attach` skips it, so no send action is ever built for it.
+                (
+                    "file_link",
+                    "File Link",
+                    FILE_LINK_UNAVAILABLE if not _filled(att.get("file_path") or att.get("url")) else None,
+                ),
             ],
             discontinued=prod.get("is_discontinued") is True,
             # Reuses the envelope's EXISTING flags.expired (same mechanism as
@@ -1000,21 +1159,39 @@ def _stock(rows: list[dict], b: _Builder) -> None:
         )
         is_discontinued = (prod.get("is_discontinued") is True) or (s.get("is_discontinued") is True)
         qoh = s.get("quantity_on_hand") if s.get("quantity_on_hand") is not None else s.get("quantity")
+        pairs: list[tuple[Any, ...]] = [
+            ("company_name", "Company", s.get("company_name")),
+            ("product_code", "Product Code", product_code),
+            ("product_name", "Product Name", _distinct_name(product_code, product_name)),
+            ("warehouse", "Warehouse", wh_name if _filled(wh_name) else "-"),
+            ("system_location", "System Location", sysloc if _filled(sysloc) else "-"),
+            ("quantity_on_hand", "Quantity On Hand", qoh if qoh is not None else "-"),
+        ]
+        # D1 (owner console pass, 8 Sep 2026): `*Outstanding:* N` right after the quantity,
+        # N = this (product, warehouse) row's own open SO (`open_so_qty`, attached by the
+        # backend under `include_sellable` only - absent otherwise, so the row is byte-
+        # identical). RESTRICTED behind `inventory.sellable`: the CRM's per-field drop
+        # removes it for a contact without the grant. A field, not a summary line - the
+        # summary slot is the quantity-summary mode and hides the location rows.
+        if s.get("sellable") is not None:
+            pairs.append(("open_so_qty", "Outstanding", _stock_int(s.get("open_so_qty"))))
+            b.restrict("open_so_qty", "inventory.sellable")
         # Warehouse / System Location always render (even when absent) so every
         # stock row has the same shape - a row with no warehouse joined must not
         # silently drop the fields. "-" placeholder keeps the field present.
-        b.item(
-            product_code,
-            [
-                ("company_name", "Company", s.get("company_name")),
-                ("product_code", "Product Code", product_code),
-                ("product_name", "Product Name", _distinct_name(product_code, product_name)),
-                ("warehouse", "Warehouse", wh_name if _filled(wh_name) else "-"),
-                ("system_location", "System Location", sysloc if _filled(sysloc) else "-"),
-                ("quantity_on_hand", "Quantity On Hand", qoh if qoh is not None else "-"),
-            ],
-            discontinued=is_discontinued,
-        )
+        b.item(product_code, pairs, discontinued=is_discontinued)
+
+
+def _as_int(v: Any) -> int:
+    """A quantity as a plain int for ARITHMETIC (product-level summing), 0 for
+    anything unreadable - never `None`, so `+=` never raises. Distinct from
+    `_stock_int` (display formatting, which passes `None` through unchanged)."""
+    if v is None:
+        return 0
+    try:
+        return int(Decimal(str(v)))
+    except (InvalidOperation, TypeError, ValueError):
+        return 0
 
 
 def _stock_int(v: Any) -> Any:
@@ -1045,7 +1222,23 @@ def _stock_compact(payload: dict, b: _Builder) -> None:
         fields: list[dict[str, Any]] = []
         if _filled(code_field):
             fields.append({"key": "product_code", "label": "Product Code", "value": code_field})
-        fields.append({"label": "Total", "value": _stock_int(entry.get("total_on_hand"))})
+        total = _stock_int(entry.get("total_on_hand"))
+        # D1 (owner console pass, 8 Sep 2026): with `include_sellable` the Total and every
+        # warehouse line carry an "(O/S: n)" suffix - the product's open SO on the Total
+        # (the unlocated remainder lives there only), the warehouse's own on its line. The
+        # suffix is a `granted_value` on a keyed, RESTRICTED field: the CRM's field drop
+        # swaps it in under `inventory.sellable` and strips it otherwise, so the plain
+        # number is what an ungranted contact reads and nothing is dropped. Without
+        # `sellable` on the entry (no include_sellable) the pair is the old unkeyed one.
+        with_os = entry.get("sellable") is not None
+        if with_os:
+            fields.append({
+                "key": "total_on_hand", "label": "Total", "value": total,
+                "granted_value": f"{total} (O/S: {_stock_int(entry.get('open_so_qty'))})",
+            })
+            b.restrict("total_on_hand", "inventory.sellable")
+        else:
+            fields.append({"label": "Total", "value": total})
         for loc in entry.get("locations") or []:
             if not isinstance(loc, dict):
                 continue
@@ -1055,13 +1248,18 @@ def _stock_compact(payload: dict, b: _Builder) -> None:
             code = loc.get("warehouse_code") or loc.get("system_location")
             if not _filled(code):
                 continue
-            fields.append(
-                {"label": str(code), "value": _stock_int(loc.get("quantity_on_hand"))}
-            )
-        # No `key` on these pairs: the label IS data (the location the contact is
-        # allowed to see), not a CRM field name a consumer could match on.
+            qty = _stock_int(loc.get("quantity_on_hand"))
+            if with_os and loc.get("open_so_qty") is not None:
+                fields.append({
+                    "key": "location_on_hand", "label": str(code), "value": qty,
+                    "granted_value": f"{qty} (O/S: {_stock_int(loc.get('open_so_qty'))})",
+                })
+                b.restrict("location_on_hand", "inventory.sellable")
+            else:
+                # No `key` on the plain pair: the label IS data (the location the contact
+                # is allowed to see), not a CRM field name a consumer could match on.
+                fields.append({"label": str(code), "value": qty})
         b.raw_item(entry.get("product_code"), fields, dict(entry.get("flags") or {}))
-
 
 def _stock_availability(payload: dict, b: _Builder) -> None:
     """`availability`: yes / no / ask, and nothing else.
@@ -1146,6 +1344,8 @@ _BUILDERS = {
     "crm_resource_attachments_list": _resource_attachments,
     "crm_inventory_stock_balance_list": _stock,
     "crm_forms_management_forms_list": _forms,
+    "crm_procurement_po_placed_list": _purchase_orders_placed,
+    "crm_procurement_spo_allocations_last_receipt_list": _spo_last_receipt,
 }
 
 
@@ -1233,15 +1433,27 @@ def present_response(tool_name: str, raw: str) -> str:
 
     b = _Builder()
     stock_mode = _stock_mode(tool_name, data)
+    # A3 (AC-905): a bucket swap on the SAME tool, not a second tool - the
+    # backend echoes `order_status` back on the payload (rows carry no other
+    # marker a presenter that never sees the query params could key on).
+    so_outstanding = (
+        tool_name == "crm_order_management_orders_list"
+        and data.get("order_status") == "so_outstanding"
+    )
+    # The row->item builder for THIS tool/bucket, reused below for `groups[]`
+    # (A3, AC-905/AC-906) so a grouped section renders identically to the flat
+    # list - one mapping, never a second one that could drift from it.
+    row_builder = _orders_so_outstanding if so_outstanding else _BUILDERS.get(tool_name, _generic)
     if tool_name == "crm_portal_link_get":
         _portal_link(data, b)
     elif stock_mode == "compact":
         _stock_compact(data, b)
     elif stock_mode == "availability":
         _stock_availability(data, b)
+    elif so_outstanding:
+        _orders_so_outstanding(rows, b)
     else:
-        builder = _BUILDERS.get(tool_name, _generic)
-        builder(rows, b)
+        row_builder(rows, b)
 
     # de-dupe attachments by (url, filename). The `url` is the DB `file_path` and is
     # the ONLY resolvable object key - return it verbatim. Do NOT rewrite its last
@@ -1275,12 +1487,17 @@ def present_response(tool_name: str, raw: str) -> str:
         intro = _STOCK_COMPACT_INTRO
     elif stock_mode == "availability":
         intro = _availability_intro(data)
+    elif so_outstanding:
+        intro = "Here is the outstanding SO I found."
     else:
         intro = _DEFAULT_INTRO.get(tool_name, "Here are the results I found.")
 
     envelope: dict[str, Any] = {
-        "result_type": _STOCK_MODE_RESULT_TYPE.get(stock_mode)
-        or _RESULT_TYPE.get(tool_name, "result"),
+        "result_type": (
+            "so_outstanding"
+            if so_outstanding
+            else _STOCK_MODE_RESULT_TYPE.get(stock_mode) or _RESULT_TYPE.get(tool_name, "result")
+        ),
         "intro": intro,
         "items": b.items,
         "attachments": attachments,
@@ -1306,5 +1523,36 @@ def present_response(tool_name: str, raw: str) -> str:
             envelope["summary_items"] = _sitems
             if _sintro:
                 envelope["intro"] = _sintro
+    # A2 (amended 8 Sep 2026): the presenter-computed block (stock's Open SO / Available
+    # lines) - independent of the `data.get("summary")` gate above, because this tool's
+    # backend sends no `summary` dict at all; everything it needs is already in `rows`.
+    if b.summary_items:
+        envelope["summary_items"] = b.summary_items + envelope.get("summary_items", [])
+    if b.restricted_fields:
+        envelope["restricted_fields"] = dict(b.restricted_fields)
+    if b.spec_vocabulary:
+        envelope["spec_vocabulary"] = dict(b.spec_vocabulary)
+    # Uniform group_by (A3, AC-905/AC-906): the backend already bucketed the
+    # rows into `groups: [{key, label, rows}]`; render each bucket's `rows`
+    # through the SAME row->item mapping the flat list used, so a grouped
+    # section is never a different shape from the ungrouped answer.
+    raw_groups = data.get("groups")
+    if isinstance(raw_groups, list) and raw_groups:
+        rendered_groups: list[dict[str, Any]] = []
+        for grp in raw_groups:
+            if not isinstance(grp, dict):
+                continue
+            grp_rows = grp.get("rows") if isinstance(grp.get("rows"), list) else []
+            gb = _Builder()
+            try:
+                row_builder(grp_rows, gb)
+            except Exception as _exc:  # pragma: no cover - one bad group must not cost the rest
+                logger.warning("group render skipped: %s", _exc)
+                continue
+            rendered_groups.append(
+                {"key": grp.get("key"), "label": grp.get("label"), "items": gb.items}
+            )
+        if rendered_groups:
+            envelope["groups"] = rendered_groups
     _annotate_field_access(envelope, tool_name)
     return json.dumps(envelope)

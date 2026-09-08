@@ -32,8 +32,21 @@ from tests.chatbot.test_engine import (  # noqa: F401 - re-exported fixtures use
 
 
 def _assert_trace_is_legible(trace: list[dict[str, Any]]) -> None:
-    assert trace, "no trace records were written at all"
-    for record in trace:
+    """Every STAGE RECORD in the persisted array is a sentence.
+
+    `chatbot.turns.trace` carries two kinds of entry since growth r1 A9. A stage record
+    (`TurnTrace.record`) has a `stage` and no `kind`, and is what this AC is about: an
+    operator reads it. An EVENT (`TurnTrace.add` - a tool call, a cross-domain probe, the
+    field reveals) has a flat `kind` and is deliberately technical detail: raw args and a
+    raw MCP envelope, which `trace_detail.py` renders in its own sections and which no
+    honest `summary` could be written for. Demanding prose of one would only ever produce
+    a fake sentence, so the filter is the `kind` key itself.
+
+    The stage list is still asserted non-empty, so "skip everything" is not a way to pass.
+    """
+    records = [entry for entry in trace if entry.get("kind") is None]
+    assert records, "no trace records were written at all"
+    for record in records:
         assert "raw" in record, record
         summary, why = record["summary"], record["why"]
         assert summary and why, record
@@ -92,7 +105,15 @@ class TestTraceLegibilityAcrossBranchKinds:
         _assert_trace_is_legible(trace)
 
     def test_out_of_scope(self, session_factory, seeded, stub_parser, stub_access):
-        stub_parser(_parser_output(message_type="request_for_help", domain_hint="order"))
+        # A pure help request: no entity named this turn. Since 8 Sep 2026 a
+        # `request_for_help` that names an entity beside a decisive intent or a switch
+        # word is retyped `business_query` (owner turn 2d903c96, "delivery to hanlim"),
+        # and the default fixture carries exactly that shape.
+        stub_parser(
+            _parser_output(
+                message_type="request_for_help", domain_hint="order", intent_hint=None, entities=[]
+            )
+        )
         stub_access()
         result, trace = _run(session_factory, _envelope())
         assert result.branch_kind == "out_of_scope"

@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from sqlalchemy.orm import Session
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel, Field
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission
@@ -153,6 +153,9 @@ class SystemSettingUpdate(BaseModel):
     # bare string that would then be iterated one CHARACTER at a time by the route's
     # membership test.
     chatbot_unsupported_domains: Optional[List[str]] = None
+    # A7 (chatbot-growth-r1): the cross-domain probe ladder, per origin domain -
+    # {"inventory": ["incoming", "purchase_order"], "incoming": ["inventory"]} by default.
+    chatbot_crossdomain_ladder: Optional[Dict[str, List[str]]] = None
     # Which chatbot lanes the CRM may FINISH, by `branch_kind`. `[]` (the default) means
     # none, and every turn delegates to n8n exactly as today. Validated as a list of
     # strings only: an unknown branch kind is the ENGINE's problem to ignore-and-warn, not
@@ -375,6 +378,7 @@ async def get_settings(
                 "media_max_entities": getattr(settings, "media_max_entities", 10) if settings else None,
                 "chatbot_stock_denial_enabled": getattr(settings, "chatbot_stock_denial_enabled", False) if settings else None,
                 "chatbot_unsupported_domains": getattr(settings, "chatbot_unsupported_domains", None) if settings else None,
+                "chatbot_crossdomain_ladder": getattr(settings, "chatbot_crossdomain_ladder", None) if settings else None,
                 "chatbot_completed_lanes": getattr(settings, "chatbot_completed_lanes", None) or [] if settings else None,
                 "chatbot_business_lane_enabled": getattr(settings, "chatbot_business_lane_enabled", False) if settings else None,
                 "chatbot_ordering_enabled": getattr(settings, "chatbot_ordering_enabled", False) if settings else None,
@@ -631,16 +635,34 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
     # NULL into a NOT NULL column and the PUT 500s at commit, which reads to the caller as
     # an outage rather than as the clear it asked for. The defaults repeat
     # `SystemSetting`'s own (`app/models/user.py`), which is the source of truth.
+    from app.modules.chatbot.lane_vocabulary import default_unsupported_domains
+
     _CHATBOT_COLUMN_DEFAULTS: dict[str, object] = {
-        "chatbot_unsupported_domains": ["goods_receive", "spo_allocation"],
+        # NOT a literal (AC-931): read from the chatbot module's own doorway, which
+        # projects it off `contracts.DOMAIN_SPEC`. This copy is why the doorway exists -
+        # A6 unblocked `spo_allocation` in route.py and in the migration and this third
+        # copy kept refusing it, which no test would have caught. Core may not import
+        # `app/services/chatbot/` (AC-002), so the doorway is the seam.
+        "chatbot_unsupported_domains": default_unsupported_domains(),
         "chatbot_completed_lanes": [],
         "chatbot_stock_denial_enabled": False,
         "chatbot_business_lane_enabled": False,
         "chatbot_ordering_enabled": False,
+        # A7 (chatbot-growth-r1): repeats SystemSetting.chatbot_crossdomain_ladder's own
+        # default (app/models/user.py).
+        "chatbot_crossdomain_ladder": {
+            "inventory": ["incoming", "purchase_order"],
+            "incoming": ["inventory"],
+        },
     }
     for column, default in _CHATBOT_COLUMN_DEFAULTS.items():
         if column in update_data and update_data[column] is None:
-            update_data[column] = list(default) if isinstance(default, list) else default
+            if isinstance(default, list):
+                update_data[column] = list(default)
+            elif isinstance(default, dict):
+                update_data[column] = dict(default)
+            else:
+                update_data[column] = default
 
     for key, value in update_data.items():
         setattr(settings, key, value)

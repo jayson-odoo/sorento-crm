@@ -154,13 +154,13 @@ _WORD_RE = re.compile(r"[a-z0-9]+")
 def _incoming_named_in_message(message: Any) -> bool:
     """Did the customer's OWN words say incoming this turn?
 
-    `output_exchange.DOMAIN_SWITCH_WORDS` is the table, imported rather than copied: it is
+    `contracts.DOMAIN_SWITCH_WORDS` is the table, imported rather than copied: it is
     already the inventoried vocabulary that decides a this-turn domain switch, and a second
-    list of the same words is how two readers of one question start disagreeing. Local
-    import for the same reason every other seam in this package uses one - the head module
-    is heavy and is not needed to answer a turn that never reaches this arm.
+    list of the same words is how two readers of one question start disagreeing. Since D9
+    it is inverted out of `DOMAIN_SPEC[domain].switch_words` rather than hand-maintained,
+    so this reader is now two hops from the one declaration instead of one hop from a copy.
     """
-    from app.services.chatbot.head.output_exchange import DOMAIN_SWITCH_WORDS
+    from app.services.chatbot.contracts import DOMAIN_SWITCH_WORDS
 
     # ANY token, where `output_exchange`'s switch reader (its ~line 1125) demands EVERY
     # remaining content token name the same domain. Different questions: the switch asks
@@ -198,7 +198,7 @@ def retype_shipment_miss(
       the owner's bare "srtwc287" are IDENTICAL in structured state and differ only in that
       one of them says ETA. A product legitimately HAS incoming stock - the incoming picker
       lists product codes - so the entity retype is right in both and only the domain needs
-      the customer's own word. The vocabulary is `output_exchange.DOMAIN_SWITCH_WORDS`,
+      the customer's own word. The vocabulary is `contracts.DOMAIN_SWITCH_WORDS`,
       imported, not copied.
     * With the domain dropped, the CARRIED business domain applies - which is what rule 4
       would have done had the invented domain not bypassed it. With nothing carried the

@@ -21,6 +21,8 @@ class _FakeSpec:
     restricted_fields: tuple = ()
 
 
+
+
 @pytest.fixture
 def db() -> Session:
     s = SessionLocal()
@@ -240,3 +242,46 @@ def test_sync_catalog_preserves_agent_id(db: Session, monkeypatch, cleanup_tool_
     # Cleanup the agent (cleanup_tool_names handles the McpTool row).
     db.query(AccessAgent).filter(AccessAgent.id == agent.id).delete()
     db.commit()
+
+
+def test_sync_catalog_stamps_chatbot_domain_from_the_tool_domain_map(
+    db: Session, monkeypatch, cleanup_tool_names
+):
+    """D17 (8 Sep 2026): `chatbot_domain` comes from
+    `app.services.mcp_tool_domains.CHATBOT_TOOL_DOMAINS`, NOT from
+    `app.services.chatbot.contracts.DOMAIN_SPEC` - `sync_catalog` is core and must
+    never import the chatbot package (AC-002). A tool in the map gets its domain, a
+    tool absent from it gets NULL (never enters a chatbot pool)."""
+    from app.services import mcp_tool_domains, mcp_tool_registry_service as svc
+
+    suffix = uuid.uuid4().hex[:8]
+    tool_a = f"phase1_test_a_{suffix}"
+    tool_b = f"phase1_test_b_{suffix}"
+    tool_c = f"phase1_test_c_{suffix}"  # absent from the map
+    cleanup_tool_names.extend([tool_a, tool_b, tool_c])
+
+    monkeypatch.setattr(
+        mcp_tool_domains,
+        "CHATBOT_TOOL_DOMAINS",
+        {tool_a: "zzt_domain_one", tool_b: "zzt_domain_two"},
+    )
+    monkeypatch.setattr(
+        svc,
+        "_load_specs",
+        lambda: (
+            _FakeSpec(name=tool_a, description="a", path="/a"),
+            _FakeSpec(name=tool_b, description="b", path="/b"),
+            _FakeSpec(name=tool_c, description="c", path="/c"),
+        ),
+    )
+
+    svc.sync_catalog(db)
+    db.commit()
+
+    rows = {
+        row.tool_name: row.chatbot_domain
+        for row in db.query(McpTool).filter(McpTool.tool_name.in_([tool_a, tool_b, tool_c]))
+    }
+    assert rows[tool_a] == "zzt_domain_one"
+    assert rows[tool_b] == "zzt_domain_two"
+    assert rows[tool_c] is None

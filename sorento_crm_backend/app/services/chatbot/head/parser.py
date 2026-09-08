@@ -71,10 +71,13 @@ class ParserConfig:
 
 
 def _build_json_schema() -> dict[str, Any]:
-    """The strict 26-key `ParseOutput` schema the provider is held to (AC-105).
+    """The strict 28-key `ParseOutput` schema the provider is held to (AC-105).
 
-    26 top-level keys, and `routing` carries exactly two members. That is what the LIVE
-    parser emits: every one of the 488 captured raw emissions has this shape.
+    26 top-level keys, and `routing` carries exactly two members, is what the LIVE
+    parser emits: every one of the 488 captured raw emissions has that shape. Growth r1
+    (AC-909 / AC-910) adds `group_by` and `top_n`, which no captured emission carries -
+    see their own comment below, and `output_exchange._EXEMPT_FROM_REQUIRED` for how a
+    pre-growth-r1 emission still post-processes.
 
     Built from the prompt's own OUTPUT block. `additionalProperties: false` is what makes
     "exactly these keys, no others" a provider guarantee instead of an instruction, and
@@ -130,6 +133,29 @@ def _build_json_schema() -> dict[str, Any]:
             "person_mention": string_or_null,
             "is_active": {"type": ["boolean", "string", "null"]},
             "order_status": string_or_null,
+            # Growth r1 (AC-909 / AC-910). The two keys every list tool this plan touches
+            # takes uniformly: which axis to break the answer down by, and how many rows
+            # were asked for. ENUM rather than the permissive `string_or_null` the older
+            # keys use, and that is safe HERE for the reason the docstring gives for the
+            # others being permissive: those keys have live emissions the enum would have
+            # to cover, and these two have none - no prompt version before
+            # `490_chatbot_parser_growth_r1` asks for them, so the enum cannot reject a
+            # value a working turn already produces. `output_exchange` exempts both from
+            # its required-key check, so a captured emission that predates them still
+            # post-processes with each reading as null.
+            "group_by": {
+                "type": ["string", "null"],
+                "enum": [
+                    "customer",
+                    "transporter",
+                    "date",
+                    "product",
+                    "warehouse",
+                    "supplier",
+                    None,
+                ],
+            },
+            "top_n": {"type": ["integer", "null"]},
             "correction": {"type": ["boolean", "null"]},
             "routing": {
                 "type": "object",
@@ -193,6 +219,8 @@ def _build_json_schema() -> dict[str, Any]:
             "person_mention",
             "is_active",
             "order_status",
+            "group_by",
+            "top_n",
             "correction",
             "routing",
             "escalation",

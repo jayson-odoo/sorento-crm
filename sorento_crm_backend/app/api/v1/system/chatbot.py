@@ -1,4 +1,5 @@
-"""System API: the turn trace behind System > Chat History (S2b, AC-255/AC-257).
+"""System API: the turn trace behind System > Chat History (S2b, AC-255/AC-257), plus the
+in-app chatbot console (Slice D final, chatbot growth r1).
 
 Three read-or-act routes over `chatbot.turns`, for the operator journey "a customer says
 the bot answered wrongly, what did it actually do?":
@@ -17,8 +18,15 @@ Two slugs, deliberately. `system.chat_history.view` reads the trace - the same g
 already reads the transcript it hangs under. `system.chat_history.manage` re-injects a
 WhatsApp turn at a real customer, which is a different thing to hand out.
 
+Two more routes are the console, `system-management/chatbot-console`'s own backend
+(`system.chat_history.view`, the same grant): `POST /console/turn` runs one DRY-RUN turn
+in process (`app.services.chatbot.console_service.run_console_turn`) and `GET
+/console/prompt-versions` lists the parser's versions so the console can pin one. Every
+console turn is `is_test=True` (D14): nothing it does reaches a real customer.
+
 This module is an authorised importer of `app.services.chatbot` (AC-002): the retry seam
-lives in the module package, and the trace screen is the module's own read surface.
+lives in the module package, the trace screen is the module's own read surface, and the
+console is the module's own dry-run entry point.
 """
 from __future__ import annotations
 
@@ -35,15 +43,21 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.dependencies import require_permission
+from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 from app.models.chatbot_turn import ChatbotTurn
 from app.schemas.integration import IntegrationLogCreate
 from app.schemas.chatbot_turn import (
     ChatbotTurnDetailResponse,
     ChatbotTurnListResponse,
     ChatbotTurnResponse,
+    ConsoleMediaStatusResponse,
+    ConsolePromptVersion,
+    ConsoleTurnRequest,
+    ConsoleTurnResponse,
     FailedContactListResponse,
     RetryTurnResponse,
 )
+from app.services.chatbot import console_service
 from app.services.chatbot.contracts import TURN_STAGES
 from app.services.chatbot.trace_detail import compose_trace_detail
 from app.services.integration_service import IntegrationLogService
@@ -487,3 +501,98 @@ def _log_retry(
         )
     except Exception as exc:  # noqa: BLE001 - the log must never fail the retry
         logger.warning("chatbot retry: integration log failed: %s", exc, exc_info=True)
+
+
+# --------------------------------------------------------------------------- #
+# In-app console (Slice D final, chatbot growth r1)
+# --------------------------------------------------------------------------- #
+
+
+@router.post("/console/turn", response_model=ConsoleTurnResponse)
+def console_turn(
+    payload: ConsoleTurnRequest,
+    _user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Run one dry-run chatbot turn for the console page, in process (D14: is_test=True,
+    ingress='console', zero writes outside `chatbot.turns`). See
+    `app.services.chatbot.console_service.run_console_turn` for what it does with
+    `session_vars` (membership, not truthiness) and `prompt_version_id` (a harness
+    override, dry-run only by construction).
+    """
+    result = console_service.run_console_turn(
+        db,
+        contact_respond_id=payload.contact_respond_id,
+        text=payload.text,
+        session_vars=payload.session_vars,
+        prompt_version_id=payload.prompt_version_id,
+        run_id=payload.run_id,
+        media=payload.media.model_dump() if payload.media is not None else None,
+    )
+    return ConsoleTurnResponse(
+        turn_id=result.turn_id,
+        branch_kind=result.branch_kind,
+        reply_text=result.reply_text,
+        quick_replies=result.quick_replies,
+        send_messages=result.send_messages,
+        session_vars=result.session_vars,
+        trace_summary=result.trace_summary,
+        media_status=result.media_status,
+        media_id=result.media_id,
+        media_text=result.media_text,
+        media_error=result.media_error,
+        prompt_version=result.prompt_version,
+    )
+
+
+@router.get("/console/media/{media_id}", response_model=ConsoleMediaStatusResponse)
+def console_media_status(
+    media_id: str,
+    _user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Poll fallback for a media turn whose synchronous wait timed out (commit 2). The FE
+    calls this every 2s until `status != "pending"`, then sends the extracted `text` as a
+    plain console turn. See `console_service.get_console_media_status`.
+    """
+    status_body = console_service.get_console_media_status(db, media_id)
+    return ConsoleMediaStatusResponse(**status_body)
+
+
+@router.get("/console/prompt-versions", response_model=list[ConsolePromptVersion])
+def console_prompt_versions(
+    _user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """Every version of the chatbot's semantic parser prompt, newest first, so the console
+    can pin one for the run (the same `prompt_overrides` harness key the Prompts screen's
+    "Run a turn" test uses). `label` is whichever `ai_prompt_labels` row (production,
+    staging, ...) currently points at that version, or null for one nothing points at.
+    """
+    rows = (
+        db.query(AIPromptVersion)
+        .filter(AIPromptVersion.name == console_service.PARSER_PROMPT_KEY)
+        .order_by(AIPromptVersion.version.desc())
+        .all()
+    )
+    labels = (
+        db.query(AIPromptLabel.version_id, AIPromptLabel.label)
+        .filter(AIPromptLabel.name == console_service.PARSER_PROMPT_KEY)
+        .all()
+    )
+    label_by_version_id: dict[str, str] = {}
+    for version_id, label in labels:
+        # A version can carry more than one label (production AND staging pointing at the
+        # same row); joined rather than picking one arbitrarily, so the console shows both.
+        existing = label_by_version_id.get(str(version_id))
+        label_by_version_id[str(version_id)] = f"{existing}, {label}" if existing else label
+    return [
+        ConsolePromptVersion(
+            id=str(row.id),
+            version=int(row.version),
+            label=label_by_version_id.get(str(row.id)),
+            chars=len(row.template or ""),
+            base=console_service.prompt_base(row.template),
+        )
+        for row in rows
+    ]

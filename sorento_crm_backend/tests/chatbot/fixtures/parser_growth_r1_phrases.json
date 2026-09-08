@@ -1,0 +1,200 @@
+{
+  "note": "Corpus samples for PLAN-chatbot-growth-r1.md Slice A (AC-905, AC-907, AC-908, AC-910). Each row is a customer phrasing the parser must be able to reach a growth-r1 answer from, the cue the prompt teaches it by, and the parse keys that phrasing has to produce. Graded by sorento_crm_backend/tests/chatbot/test_parser_growth_r1_reachability.py, which asserts (a) every cue is present verbatim in chatbot_parser_prompt.GROWTH_R1_ADDENDUM (so both the FULL and the SLIM published bodies carry it), and (b) every expected value is inside the declared vocabulary the code is written against (contracts.DOMAIN_HINTS / INTENT_HINTS, the parser schema's group_by enum, the orders route's order_status bucket). Nothing here calls an LLM: this file grades the CONTRACT between the prompt, the schema and the code, which is what a parser change can silently break. Whether the model actually obeys is the shadow window's job (AC-952).",
+  "phrases": [
+    {
+      "phrase": "outstanding SO for Hing Seng",
+      "language": "en",
+      "cue": "outstanding SO",
+      "expect": {
+        "domain_hint": "order",
+        "intent_hint": "check_order",
+        "order_status": "so_outstanding"
+      }
+    },
+    {
+      "phrase": "SO outstanding for SRTWC8517",
+      "language": "en",
+      "cue": "SO outstanding",
+      "expect": {
+        "domain_hint": "order",
+        "intent_hint": "check_order",
+        "order_status": "so_outstanding"
+      }
+    },
+    {
+      "phrase": "which ones are ordered but no DO yet",
+      "language": "en",
+      "cue": "ordered but no DO",
+      "expect": {
+        "domain_hint": "order",
+        "intent_hint": "check_order",
+        "order_status": "so_outstanding"
+      }
+    },
+    {
+      "phrase": "belum DO lagi yang mana",
+      "language": "ms",
+      "cue": "belum DO",
+      "expect": {
+        "domain_hint": "order",
+        "intent_hint": "check_order",
+        "order_status": "so_outstanding"
+      }
+    },
+    {
+      "phrase": "还没出DO的有哪些",
+      "language": "zh",
+      "cue": "还没出DO",
+      "expect": {
+        "domain_hint": "order",
+        "intent_hint": "check_order",
+        "order_status": "so_outstanding"
+      }
+    },
+    {
+      "phrase": "any PO for SRTWC8517",
+      "language": "en",
+      "cue": "PO",
+      "expect": {
+        "domain_hint": "purchase_order",
+        "intent_hint": "check_po"
+      }
+    },
+    {
+      "phrase": "is the purchase order placed already",
+      "language": "en",
+      "cue": "purchase order",
+      "expect": {
+        "domain_hint": "purchase_order",
+        "intent_hint": "check_po"
+      }
+    },
+    {
+      "phrase": "PO placed but not shipped yet?",
+      "language": "en",
+      "cue": "PO placed",
+      "expect": {
+        "domain_hint": "purchase_order",
+        "intent_hint": "check_po"
+      }
+    },
+    {
+      "phrase": "did we order it from supplier",
+      "language": "en",
+      "cue": "ordered from supplier",
+      "expect": {
+        "domain_hint": "purchase_order",
+        "intent_hint": "check_po"
+      }
+    },
+    {
+      "phrase": "采购单下了吗",
+      "language": "zh",
+      "cue": "采购单",
+      "expect": {
+        "domain_hint": "purchase_order",
+        "intent_hint": "check_po"
+      }
+    },
+    {
+      "phrase": "last in for SRTWC8517",
+      "language": "en",
+      "cue": "last in",
+      "expect": {
+        "domain_hint": "spo_allocation",
+        "intent_hint": "check_spo"
+      }
+    },
+    {
+      "phrase": "what was the last incoming qty",
+      "language": "en",
+      "cue": "last incoming qty",
+      "expect": {
+        "domain_hint": "spo_allocation",
+        "intent_hint": "check_spo"
+      }
+    },
+    {
+      "phrase": "when was it last received",
+      "language": "en",
+      "cue": "last received",
+      "expect": {
+        "domain_hint": "spo_allocation",
+        "intent_hint": "check_spo"
+      }
+    },
+    {
+      "phrase": "上次进货几时",
+      "language": "zh",
+      "cue": "上次进货",
+      "expect": {
+        "domain_hint": "spo_allocation",
+        "intent_hint": "check_spo"
+      }
+    },
+    {
+      "phrase": "outstanding DO by customer",
+      "language": "en",
+      "cue": "by customer",
+      "expect": {
+        "domain_hint": "order",
+        "intent_hint": "check_order",
+        "order_status": "outstanding",
+        "group_by": "customer"
+      }
+    },
+    {
+      "phrase": "open DO by transporter this week",
+      "language": "en",
+      "cue": "by transporter",
+      "expect": {
+        "domain_hint": "order",
+        "intent_hint": "check_order",
+        "order_status": "outstanding",
+        "group_by": "transporter"
+      }
+    },
+    {
+      "phrase": "stock per warehouse for SRTWC8517",
+      "language": "en",
+      "cue": "per warehouse",
+      "expect": {
+        "domain_hint": "inventory",
+        "intent_hint": "check_stock",
+        "group_by": "warehouse"
+      },
+      "note": "The PARSER emits group_by='warehouse' here; no inventory tool takes a group_by parameter yet, so fetch.entity_ids_transformer drops it (GROUP_BY_TOOLS is the orders and PO tools only). The cue is taught now because the axis vocabulary is one list, not one per tool; the stock tool picking it up is a later slice."
+    },
+    {
+      "phrase": "PO for SRTWC8517 by supplier",
+      "language": "en",
+      "cue": "by supplier",
+      "expect": {
+        "domain_hint": "purchase_order",
+        "intent_hint": "check_po",
+        "group_by": "supplier"
+      }
+    },
+    {
+      "phrase": "last 3 in for SRTWC8517",
+      "language": "en",
+      "cue": "last 3",
+      "expect": {
+        "domain_hint": "spo_allocation",
+        "intent_hint": "check_spo",
+        "top_n": 3
+      }
+    },
+    {
+      "phrase": "top 5 outstanding DO",
+      "language": "en",
+      "cue": "top 5",
+      "expect": {
+        "domain_hint": "order",
+        "intent_hint": "check_order",
+        "order_status": "outstanding",
+        "top_n": 5
+      }
+    }
+  ]
+}

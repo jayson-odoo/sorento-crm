@@ -251,6 +251,12 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     gate_reason = "ok"
     gate_clarification = ""
     compatible_entities: list[dict[str, Any]] = entities
+    # D10 (owner console pass, 8 Sep 2026, turn 69d9900e "srtwc8610-sh hav incoming?"):
+    # per token, the incompatible types it ONLY matched - never populated for a token that
+    # also carries an allowed-type match. `token -> [types]`, so `miss_resolutions`
+    # (`miss_suggest.py`) can force such a token past its own "already resolved" guard
+    # WITHOUT this file knowing anything about the did-you-mean machinery it feeds.
+    incompatible_only: dict[str, list[str]] = {}
 
     if allowed is None:
         # `${domain}` in a JS template literal, where `domain` is `parser.domain_hint ??
@@ -260,6 +266,22 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
         gate_reason = f"domain '{jsc.js_string(domain)}' not in matrix; passing through unscoped"
     else:
         compatible_entities = [e for e in entities if e["entity_type"] in allowed]
+        # Computed UNCONDITIONALLY (not only on the all-incompatible branch below): B1
+        # (turn 72146a1e "srtwc8610-sh certificate") needs it on a turn that otherwise
+        # PASSES - an attachment_type token resolved fine, so `compatible_entities` is
+        # non-empty and this domain's blanket "types [...] incompatible" branch never
+        # fires, yet the PRODUCT token's only match is still a product_set. Per-token
+        # (OR-mode `resolutions`) only; an AND-mode intersection has no single token to
+        # blame a miss on.
+        for resolution in jsc.array(resolver.get("resolutions")):
+            matches = jsc.array(jsc.get(resolution, "matches"))
+            if not matches:
+                continue
+            types = [jsc.get(m, "entity_type") for m in matches if jsc.truthy(m)]
+            if types and not any(t in allowed for t in types):
+                token = jsc.get(resolution, "token")
+                if jsc.truthy(token):
+                    incompatible_only[jsc.js_string(token)] = list(dict.fromkeys(types))
         if len(entities) == 0:
             gate_passed = ALLOWS_EMPTY.get(domain) is True
             gate_reason = (
@@ -302,8 +324,17 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     # be allowed to scope the lookup on its own: certificate_ids alone satisfies the
     # tool's narrowing tuple (OR semantics) and returns every product carrying it.
     # Resolver-derived on purpose - NOT `current_message`, a known-corrupted signal.
+    #
+    # D10c (turn 72146a1e "srtwc8610-sh certificate"): a genuinely-unresolved token is one
+    # shape of "missed"; a token whose only match is `incompatible_only` (a flyer/set code
+    # hitting `product_set`) is the SAME shape from the customer's chair - AND-mode's OWN
+    # gate never trips on it (the attachment_type token resolved fine, so `compatible_
+    # entities` is non-empty and the blanket incompatible-types branch above never runs),
+    # so this is the one place that catches it before the fetch scopes on the certificate
+    # alone and answers about products that were never the one asked about.
     if gate_passed and domain == "product_attachment":
         unresolved = [_lower_trim_nullish(t) for t in jsc.array(resolver.get("unresolved_tokens"))]
+        unresolved += [_lower_trim_nullish(t) for t in incompatible_only]
         product_raws = {
             _lower_trim_nullish(jsc.get(e, "raw"))
             for e in jsc.array(parser.get("entities"))
@@ -1426,5 +1457,7 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     if domain in ALLOWED:
         gate_debug["allowed_lookup"] = ALLOWED[domain]
     gate_debug["entities_count"] = len(entities)
+    if incompatible_only:
+        gate_debug["incompatible_only"] = incompatible_only
     out["gate_debug"] = gate_debug
     return out

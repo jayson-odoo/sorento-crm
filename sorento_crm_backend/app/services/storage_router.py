@@ -14,6 +14,8 @@ import os
 import threading
 import time
 from typing import Optional, Protocol
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeout
 from urllib.parse import unquote, urlparse
 
 logger = logging.getLogger(__name__)
@@ -272,6 +274,24 @@ def clear_signed_url_cache() -> None:
         _signed_cache.clear()
 
 
+#: D9 (owner console pass, 8 Sep 2026): signing is BEST EFFORT. One attempt, this many
+#: seconds per file, no retry - a signer that hangs (turn 8f4356a3 waited out the lane's
+#: whole 10 s tool budget) costs one link, never the answer.
+SIGN_TIMEOUT_SECONDS = 2.0
+_SIGNER = ThreadPoolExecutor(max_workers=4, thread_name_prefix="sign-url")
+
+
+def _sign_bounded(provider: str, key: str, expires_in: int) -> Optional[str]:
+    """`get_backend(provider).get_signed_url(...)` under `SIGN_TIMEOUT_SECONDS`. Raises
+    `TimeoutError` when the signer does not answer in time (the caller treats it like any
+    other signing failure: warns, caches the miss, hands back None or the raw path)."""
+    future = _SIGNER.submit(lambda: get_backend(provider).get_signed_url(key, expires_in=expires_in))
+    try:
+        return future.result(timeout=SIGN_TIMEOUT_SECONDS)
+    except FuturesTimeout as exc:
+        raise TimeoutError(f"signing took longer than {SIGN_TIMEOUT_SECONDS:g}s") from exc
+
+
 def resolve_signed_url(
     file_path: Optional[str],
     *,
@@ -331,7 +351,7 @@ def resolve_signed_url(
         return cached if cached is not None else (None if strict else raw)
 
     try:
-        signed = get_backend(chosen).get_signed_url(key, expires_in=expires_in)
+        signed = _sign_bounded(chosen, key, expires_in)
     except Exception as e:  # noqa: BLE001
         logger.warning(
             "Signed URL generation failed for provider=%s key=%s: %s",

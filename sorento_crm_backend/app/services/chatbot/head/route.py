@@ -35,7 +35,10 @@ import re
 from typing import Any
 
 from app.services.chatbot import jsc
-from app.services.chatbot.contracts import TAG_ONLY_BRANCH_KINDS
+from app.services.chatbot.contracts import (
+    DEFAULT_UNSUPPORTED_DOMAINS,
+    TAG_ONLY_BRANCH_KINDS,
+)
 
 _BARE_DIGITS = re.compile(r"^[0-9]+$")
 
@@ -52,10 +55,14 @@ def _prev_variables(ctx: dict) -> dict:
     return {}
 
 
-# AC-304: what `is_unsupported_domain` tests when no configured list is supplied. The two
-# literals the JS carries, in one place, so the column's default and the code's fallback
-# cannot drift into two different answers.
-DEFAULT_UNSUPPORTED_DOMAINS: tuple[str, ...] = ("goods_receive", "spo_allocation")
+# AC-304 / AC-931: what `is_unsupported_domain` tests when no configured list is supplied.
+# No longer a literal here - it is `contracts.DEFAULT_UNSUPPORTED_DOMAINS`, projected off
+# the rows of `DOMAIN_SPEC` whose `default_supported` is False (D9). Re-exported under the
+# same name because this is where every reader and every test has always looked for it.
+#
+# `goods_receive` is the only member today, and the table says why in one place rather than
+# two: it is the only domain with an empty `tools` tuple that is not answered by a lane of
+# its own. A6 (chatbot-growth-r1, AC-911) took `spo_allocation` out by giving it a tool.
 
 
 def decide(

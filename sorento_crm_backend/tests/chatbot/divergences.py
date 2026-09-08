@@ -192,6 +192,11 @@ DIVERGENCES: list[Divergence] = [
         strip_paths=(
             ("_xdBlock", "block"),
             ("_xdBlock", "any"),
+            # A7 (chatbot-growth-r1): new diagnostic keys, see the blanket entry at the
+            # bottom of this file for the full reason.
+            ("_xdBlock", "nothing_codes"),
+            ("_xdBlock", "nothing_note"),
+            ("_xdBlock", "nothing_missing"),
         ),
     ),
     # OWNER CONSOLE PASS 4, item G (6 Sep 2026): a requested code the PRIMARY domain
@@ -219,7 +224,14 @@ DIVERGENCES: list[Divergence] = [
                 "('No stock for <code>.'), where n8n said nothing at all. Field-scoped to "
                 "`_xdBlock.block`; every other key of the render is still compared."
             ),
-            strip_paths=(("_xdBlock", "block"),),
+            strip_paths=(
+                ("_xdBlock", "block"),
+                # A7 (chatbot-growth-r1): new diagnostic keys, see the blanket entry at
+                # the bottom of this file for the full reason.
+                ("_xdBlock", "nothing_codes"),
+                ("_xdBlock", "nothing_note"),
+                ("_xdBlock", "nothing_missing"),
+            ),
         )
         for name in (
             "exec-13484326",
@@ -512,6 +524,30 @@ DIVERGENCES: list[Divergence] = [
         ),
         strip_paths=(("output", "escalation"),),
     ),
+    # D10 (owner console pass, 8 Sep 2026, turn 69d9900e "srtwc8610-sh hav incoming?"):
+    # an `incoming`-domain entity hinted `inbound_shipment` or `order` whose raw is
+    # product-code-shaped (and not a real ISO 6346 container number) is retyped to
+    # `product` before the resolver has to referee the parser's own guess - n8n's live
+    # body has no such arm, so it left the model's `inbound_shipment` hint standing. This
+    # capture ("MWC7625-SH") is the one graded corpus member the retype actually fires
+    # on. Field-scoped to the entity list and the retype's own diagnostic; the domain,
+    # the intent and everything else on the capture still grades byte for byte. Pinned by
+    # `tests/chatbot/test_growth_r1_review_fixes.py::TestD10AnIncomingAskTypesTheCodeAsAProduct`.
+    Divergence(
+        node="output_exchange",
+        fixture="exec-13488887",
+        hazard="owner ruling D10 (8 Sep 2026, AC-816-adjacent)",
+        reason=(
+            "the capture records the model's own `inbound_shipment` hint for a "
+            "product-shaped code under `incoming`; the port retypes it to `product` "
+            "before resolution. Field-scoped to the entity list and "
+            "`incoming_hint_retyped_to_product`."
+        ),
+        strip_paths=(
+            ("output", "entities"),
+            ("output", "incoming_hint_retyped_to_product"),
+        ),
+    ),
     # The three keys rules 2, 3 and 4 ADD to `output_exchange`'s emission. No
     # capture can contain a key the node did not emit when it was taken, so this
     # is the same class as the `pending` marker above and is handled the same
@@ -552,6 +588,49 @@ DIVERGENCES: list[Divergence] = [
             # the carried pair. Same class as the five above - a key no capture can
             # contain, because `sub-resolve-and-gate` has no equivalent arm at all.
             ("output", "bare_member_offer_entity_resolved"),
+        ),
+    ),
+    # A7 (chatbot-growth-r1, AC-921/AC-922): `crossdomain_render`'s `_xdBlock` gained three
+    # diagnostic keys - `nothing_codes`, `nothing_note`, `nothing_missing` - so
+    # `run_crossdomain`'s NEW ladder rung (the purchase_order probe after the existing
+    # inventory<->incoming one) can act on exactly the codes the first probe found nothing
+    # for, without re-deriving them. n8n has no ladder and no equivalent keys; every
+    # existing capture predates A7, so no capture can carry them. Same class as the
+    # owner-ruling-K diagnostics above (a key no capture can contain), field-scoped so the
+    # rest of `_xdBlock` (`block`, `any`, `team`, `origin`, ...) still grades byte-exact.
+    # Behaviour pinned by test_crossdomain_ladder.py, not by these fixtures.
+    Divergence(
+        node="crossdomain-render",
+        fixture=None,
+        hazard="A7 (AC-921/AC-922) - added diagnostics",
+        reason=(
+            "`nothing_codes` / `nothing_note` / `nothing_missing` are new keys the port "
+            "adds to `_xdBlock` for the cross-domain ladder's next rung to read; n8n's "
+            "node has no ladder and no equivalent, so no capture can carry them."
+        ),
+        strip_paths=(
+            ("_xdBlock", "nothing_codes"),
+            ("_xdBlock", "nothing_note"),
+            ("_xdBlock", "nothing_missing"),
+        ),
+    ),
+    # A6 (chatbot-growth-r1, AC-911): `spo_allocation` is no longer in
+    # `DEFAULT_UNSUPPORTED_DOMAINS` - `crm_procurement_spo_allocations_last_receipt_list` answers
+    # "last in" now, so a turn asking about it routes to `business_query` instead of
+    # `not_supported`. This capture is exactly that case (test_run_id
+    # "rs1b4-01-notsupported"), so the whole item diverges (branch_kind and the
+    # access-check fields it carries) - blanket, because the hazard changes what this
+    # turn IS, not one field of it. Owner-approved 7 Sep 2026 (this plan). Behaviour
+    # pinned by test_crossdomain_ladder.py::TestAC911SPOAllocationDomainNoLongerUnsupported
+    # and route.py's own DEFAULT_UNSUPPORTED_DOMAINS.
+    Divergence(
+        node="route-turn",
+        fixture="rs1b4-01-notsupported",
+        hazard="A6 (AC-911)",
+        reason=(
+            "spo_allocation was unblocked from DEFAULT_UNSUPPORTED_DOMAINS, so this "
+            "capture's domain now routes to business_query instead of the captured "
+            "not_supported - the deliberate point of A6."
         ),
     ),
 ]

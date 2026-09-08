@@ -1012,6 +1012,109 @@ class StockService:
                 payload["relaxed_axis"] = "entity"
         return payload
 
+    def warehouse_ids_by_code(self, codes: list[str]) -> dict[str, str]:
+        """`{warehouse_code: id}` for the codes given (D1): the compact stock block names
+        locations by code, and the per-warehouse open SO is keyed by id."""
+        codes = [str(c) for c in codes if c]
+        if not codes:
+            return {}
+        rows = self.db.query(Warehouse.warehouse_code, Warehouse.id).filter(Warehouse.warehouse_code.in_(codes)).all()
+        return {str(code): str(wid) for code, wid in rows}
+
+    def on_hand_total_by_product(self, product_ids: list[str]) -> dict[str, int]:
+        """`quantity_on_hand` summed over EVERY warehouse row of each product (review round
+        2, S2): the per-product "Available" line must never be a sum over the returned
+        PAGE, which is short of the truth for a product held in more warehouses than the
+        page limit. Company scope ANDed in by hand - a column-only aggregate is where the
+        session listener's scope is lost (`order_service.stamp_order_summary`)."""
+        from app.services.company_scope import build_company_predicate, get_company_scope
+
+        ids = [str(pid) for pid in product_ids if pid]
+        if not ids:
+            return {}
+        q = self.db.query(Stock.product_id, func.sum(Stock.quantity_on_hand)).filter(
+            Stock.product_id.in_(ids)
+        )
+        pred = build_company_predicate(Stock, get_company_scope(self.db))
+        if pred is not None:
+            q = q.filter(pred)
+        return {str(pid): int(qty or 0) for pid, qty in q.group_by(Stock.product_id).all()}
+
+    def open_so_qty_by_product(self, product_ids: list[str]) -> dict[str, int]:
+        """Open (not-yet-DO'd) SO quantity per PRODUCT, across every warehouse (A2).
+
+        The product TOTAL. `open_so_qty_by_product_warehouse` is the per-warehouse
+        split; both exist because a per-warehouse row and the product summary row
+        are two different questions and the review found the first cut answering
+        the second one everywhere (should-fix 5).
+
+        An open DO (created, not yet delivered) is NOT subtracted here - AutoCount
+        deducts stock at DO creation, so it is already out of `on_hand` (AC-904b).
+        """
+        from app.models.order import SalesOrderLine
+
+        ids = [str(pid) for pid in product_ids if pid]
+        if not ids:
+            return {}
+        delta = SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered
+        rows = (
+            self.db.query(SalesOrderLine.product_id, func.sum(delta).label("open_qty"))
+            .filter(
+                SalesOrderLine.product_id.in_(ids),
+                SalesOrderLine.line_status == "open",
+                delta > 0,
+            )
+            .group_by(SalesOrderLine.product_id)
+            .all()
+        )
+        return {str(pid): int(qty or 0) for pid, qty in rows}
+
+    def open_so_qty_by_product_warehouse(
+        self, product_ids: list[str]
+    ) -> tuple[dict[tuple[str, str], int], dict[str, int]]:
+        """The same open SO quantity, split the way the plan says to spend it (A2).
+
+        Returns `({(product_id, warehouse_id): qty}, {product_id: unlocated_qty})`.
+
+        The first cut subtracted the PRODUCT-WIDE open SO from EVERY per-warehouse row,
+        so a product with 100 open SO across two warehouses read as 100 unsellable in
+        each - "Sellable 0 (oversold by 80)" against a warehouse holding 20, which is
+        arithmetic the customer can see is wrong. The plan is explicit: per warehouse
+        where the SO line has one, and the remainder (lines with no `warehouse_id`) on
+        the PRODUCT TOTAL row only, never spread across the warehouse rows. A0 measured
+        that remainder at 0.8% of open lines, which is why it is a small correction and
+        not a redesign - but a small correction applied to every row is still wrong on
+        every row.
+        """
+        from app.models.order import SalesOrderLine
+
+        ids = [str(pid) for pid in product_ids if pid]
+        if not ids:
+            return {}, {}
+        delta = SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered
+        rows = (
+            self.db.query(
+                SalesOrderLine.product_id,
+                SalesOrderLine.warehouse_id,
+                func.sum(delta).label("open_qty"),
+            )
+            .filter(
+                SalesOrderLine.product_id.in_(ids),
+                SalesOrderLine.line_status == "open",
+                delta > 0,
+            )
+            .group_by(SalesOrderLine.product_id, SalesOrderLine.warehouse_id)
+            .all()
+        )
+        by_pair: dict[tuple[str, str], int] = {}
+        unlocated: dict[str, int] = {}
+        for pid, wid, qty in rows:
+            if wid:
+                by_pair[(str(pid), str(wid))] = int(qty or 0)
+            else:
+                unlocated[str(pid)] = unlocated.get(str(pid), 0) + int(qty or 0)
+        return by_pair, unlocated
+
     # ------------------------------------------------------ stock visibility
 
     def _apply_stock_visibility(

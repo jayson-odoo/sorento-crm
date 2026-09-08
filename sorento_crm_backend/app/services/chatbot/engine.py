@@ -21,6 +21,7 @@ state; the tail (S2) is what fills it.
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 from contextlib import contextmanager
@@ -936,7 +937,7 @@ def run_turn(
                     stage=stage[0],
                     branch_kind=None,
                     error=message,
-                    records=turn_trace.records,
+                    records=turn_trace.persisted(),
                 )
             return _failed_result(turn_id, stage[0], message, actions, dry_run)
     finally:
@@ -1086,7 +1087,7 @@ def _worker_failed(
                         stage="queued",
                         branch_kind=None,
                         error=message,
-                        records=trace_mod.TurnTrace.resume(row.trace).records,
+                        records=trace_mod.TurnTrace.resume(row.trace).persisted(),
                         response=row.response if isinstance(row.response, dict) else None,
                     )
     except Exception:  # noqa: BLE001 - the reply matters more than the id
@@ -1149,7 +1150,7 @@ def _run_stages(  # noqa: PLR0915
                 stage="intake",
                 branch_kind=None,
                 error=AUDIO_NOT_PATCHED_ERROR,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
             )
             return _failed_result(turn_id, "intake", AUDIO_NOT_PATCHED_ERROR, actions, dry_run)
 
@@ -1254,7 +1255,7 @@ def _run_stages(  # noqa: PLR0915
                 stage="understood",
                 branch_kind=None,
                 error=message,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
             )
         return _failed_result(turn_id, "understood", message, actions, dry_run)
 
@@ -1527,6 +1528,7 @@ def _run_stages(  # noqa: PLR0915
                             services=business_services.fetch_services(db),
                             dry_run=dry_run,
                             space_id=business_services.fetch_space_id(db),
+                            trace=turn_trace,
                         )
                     except Exception as fetch_error:  # noqa: BLE001 - shadow, like above
                         logger.exception("chatbot turn %s: fetch step failed", turn_id)
@@ -1656,7 +1658,7 @@ def _run_stages(  # noqa: PLR0915
                 stage="sent",
                 branch_kind=branch_kind,
                 error=None,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
                 response={"ctx": ctx, "item": item, "actions": actions, "reply": reply},
             )
             return TurnResult(
@@ -1719,7 +1721,7 @@ def _run_stages(  # noqa: PLR0915
                 stage="looked_up",
                 branch_kind=branch_kind,
                 error=fetch_failed_hard,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
                 response={
                     "ctx": ctx,
                     "item": item,
@@ -1822,7 +1824,7 @@ def _run_stages(  # noqa: PLR0915
                 stage=stage[0],
                 branch_kind=branch_kind,
                 error=orphan_error,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
                 response={
                     "ctx": ctx,
                     "item": item,
@@ -1862,7 +1864,7 @@ def _run_stages(  # noqa: PLR0915
                 stage="looked_up" if lane_error_text else "routed",
                 branch_kind=branch_kind,
                 error=None,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
                 # S2 / D15: a duplicate delivery replays THIS, so n8n's re-emitters never
                 # see a null `ctx` or `item`. `actions` rides along because the caller must
                 # not execute them twice either - it gets the original list and its own
@@ -1892,6 +1894,7 @@ def _run_stages(  # noqa: PLR0915
             turn_trace=turn_trace,
             stage=stage,
             space_id=space_id_for_turn,
+            crossdomain_ladder=_crossdomain_ladder(settings_row),
         )
 
     if branch_kind == "out_of_scope" and completes_here:
@@ -1952,6 +1955,7 @@ def _run_business_answer(
     turn_trace: Any,
     stage: list[str],
     space_id: str | None,
+    crossdomain_ladder: dict[str, list[str]] | None = None,
 ) -> TurnResult:
     """S6c's handover: the answer half plus the tail, with NO database session open.
 
@@ -1974,7 +1978,7 @@ def _run_business_answer(
         ctx=ctx,
         item=item,
         actions=actions,
-        records=turn_trace.records,
+        records=turn_trace.persisted(),
     )
     try:
         completed = business.complete_answer(
@@ -1987,6 +1991,8 @@ def _run_business_answer(
             session_factory=session_factory,
             space_id=space_id,
             dry_run=dry_run,
+            crossdomain_ladder=crossdomain_ladder,
+            trace=turn_trace,
         )
     except Exception as exc:  # noqa: BLE001 - the lane's failure, with the lane's reply
         logger.exception("chatbot turn %s: business answer failed", turn_id)
@@ -2014,7 +2020,7 @@ def _run_business_answer(
                 stage="replied",
                 branch_kind=branch_kind,
                 error=failed,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
                 response={"ctx": ctx, "item": item, "actions": answer_actions, "reply": reply},
             )
         return TurnResult(
@@ -2154,7 +2160,7 @@ def _run_casual_lane(
                 stage="casual_llm",
                 branch_kind="low_signal",
                 error=failed,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
                 response={"ctx": ctx, "item": item, "actions": actions, "reply": reply},
             )
         return TurnResult(
@@ -2207,7 +2213,7 @@ def _run_casual_lane(
             stage="routed",
             branch_kind="low_signal",
             error=None,
-            records=turn_trace.records,
+            records=turn_trace.persisted(),
             response={"ctx": ctx, "item": item, "actions": actions},
         )
 
@@ -2285,7 +2291,7 @@ def _run_escalation_arm(
                 stage="looked_up",
                 branch_kind="out_of_scope",
                 error=message,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
                 response={"ctx": ctx, "item": item, "actions": actions},
             )
         return _failed_result(turn_id, "looked_up", message, actions, dry_run)
@@ -2343,7 +2349,7 @@ def _run_escalation_arm(
             stage="routed",
             branch_kind="out_of_scope",
             error=None,
-            records=turn_trace.records,
+            records=turn_trace.persisted(),
             response={"ctx": ctx, "item": item, "actions": all_actions, "pending": pending},
         )
 
@@ -2575,6 +2581,13 @@ class _TurnSwitches:
     chatbot_completed_lanes: Any = None
     chatbot_business_lane_enabled: bool = False
     chatbot_ordering_enabled: bool = False
+    # A7 (chatbot-growth-r1). MISSING until 8 Sep 2026, and that single omission is why
+    # Foundre's rule never fired for a customer: `_crossdomain_ladder` reads this snapshot,
+    # `getattr` found no attribute, returned None, and `_next_crossdomain_rung` reads None
+    # as "no ladder configured = the pre-A7 single probe". Every unit test passed the
+    # ladder in by hand, so nothing saw it. This is the "a new DB column must reach every
+    # manual builder" lesson one builder further along than the two it usually names.
+    chatbot_crossdomain_ladder: Any = None
 
 
 def _read_switches(db: Session) -> _TurnSwitches:
@@ -2592,6 +2605,7 @@ def _read_switches(db: Session) -> _TurnSwitches:
             getattr(row, "chatbot_business_lane_enabled", False)
         ),
         chatbot_ordering_enabled=bool(getattr(row, "chatbot_ordering_enabled", False)),
+        chatbot_crossdomain_ladder=getattr(row, "chatbot_crossdomain_ladder", None),
     )
 
 
@@ -2620,6 +2634,28 @@ def _unsupported_domains(row: Any) -> tuple[str, ...] | None:
     """
     configured = getattr(row, "chatbot_unsupported_domains", None) if row else None
     return tuple(str(x) for x in configured) if isinstance(configured, list) else None
+
+
+def _crossdomain_ladder(row: Any) -> dict[str, list[str]] | None:
+    """`system_settings.chatbot_crossdomain_ladder` (A7), or None for the default.
+
+    Same shape as `_unsupported_domains`: takes the row the turn has already read,
+    returns None when unset so `run_crossdomain` owns the fallback in one place.
+    """
+    configured = getattr(row, "chatbot_crossdomain_ladder", None) if row else None
+    if not isinstance(configured, dict):
+        if row is None:
+            return None
+        # D7: a settings row with no usable ladder (a schema built from the models, never
+        # migrated) gets the shipped default; no row at all stays None (H52).
+        from app.services.chatbot.lanes.business.answer import DEFAULT_CROSSDOMAIN_LADDER
+
+        return {k: list(v) for k, v in DEFAULT_CROSSDOMAIN_LADDER.items()}
+    return {
+        str(k): [str(v) for v in vs]
+        for k, vs in configured.items()
+        if isinstance(vs, list)
+    }
 
 
 def _enabled_lanes(db: Session, row: Any = _UNSET) -> frozenset[str]:
@@ -2856,10 +2892,14 @@ def _label_attachments(files: list, rows: list[tuple[Any, list[str]]]) -> list:
             kept.append(entry)
             continue
         url = entry.get("url")
-        if jsc.truthy(url):
-            if url in seen_urls:
-                continue
-            seen_urls.add(url)
+        if not jsc.truthy(url):
+            # D9 (8 Sep 2026): a file with no link is listed in the answer (the presenter
+            # says "(file link unavailable right now)") but never sent - a send with no
+            # url is a dead action, not a delivery.
+            continue
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
         kept.append(entry)
 
     groups: dict[str, list[int]] = {}
@@ -3214,6 +3254,7 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
     *,
     session_factory: SessionFactory,
     compose_send_action: bool = False,
+    lane_trace: Any = None,
 ) -> CompleteResult:
     """Run the tail of one turn: outcome -> member offer -> state -> compose -> persist.
 
@@ -3301,6 +3342,20 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
         branch_kind = row.branch_kind
         prior_actions = list(stored_response.get("actions") or [])
         turn_trace = trace_mod.TurnTrace.resume(row.trace)
+        # The events the LANE recorded after the head closed the row (A9): `run_fetch`
+        # runs in the head and its `tool` event is already on `row.trace`, but
+        # `run_crossdomain` runs inside `complete_answer` - AFTER the head wrote the row -
+        # so resuming from the row alone dropped every `crossdomain` and `reveals` event
+        # on the floor. The turn-detail screen then showed an empty cross-domain section
+        # for every business turn, and the console check could not tell a rung that never
+        # ran from one whose evidence was discarded. Carried explicitly rather than by
+        # sharing the object, because `resume` deliberately rebuilds from the persisted
+        # array and that is what makes the head/tail split one timeline.
+        if lane_trace is not None:
+            seen = {json.dumps(e, sort_keys=True, default=str) for e in turn_trace.events}
+            for event in getattr(lane_trace, "events", []) or []:
+                if json.dumps(event, sort_keys=True, default=str) not in seen:
+                    turn_trace.events.append(event)
         canned = copy_mod.resolve(db)
 
         # EVERY failure in the tail closes the turn, the way R4 promises for every
@@ -3349,7 +3404,7 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
                 stage="remembered",
                 branch_kind=branch_kind,
                 error=None,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
                 response={
                     **stored_response,
                     "reply": reply,
@@ -3389,7 +3444,7 @@ def complete_turn(  # noqa: PLR0915 - one linear pipeline, and the order IS the 
                 stage="remembered",
                 branch_kind=branch_kind,
                 error=message,
-                records=turn_trace.records,
+                records=turn_trace.persisted(),
             )
             raise
 

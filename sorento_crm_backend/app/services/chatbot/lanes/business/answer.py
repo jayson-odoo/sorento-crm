@@ -498,7 +498,24 @@ def crossdomain_zeroset(
             elif len(prods) == 1 and jsc.truthy(jsc.get(prods[0], "canonical_code")):
                 add(jsc.get(prods[0], "canonical_code"), jsc.get(prods[0], "uuid"), False)
     else:
-        tokens = {_norm_code(t) for t in jsc.array(rz.get("tokens"))}
+        # SEPARATOR-INSENSITIVE, and that is the whole of issue #736. The RESOLVER strips
+        # dashes and spaces off a product token before it resolves it, so a customer's
+        # "SRTWT7445-LV-NEW" arrives here as the token `SRTWT7445LVNEW` while the match it
+        # resolved to carries `canonical_code: "SRTWT7445-LV-NEW"`. `_norm_code` only
+        # strips and upper-cases, so the membership test below could never be true for a
+        # code with a separator in it: `requested` stayed empty, `missing` with it,
+        # `active` came out False, and `run_crossdomain` returned before probing anything.
+        # Foundre's rule was therefore OFF for every hyphenated code - most of the
+        # catalogue - while it worked for `CB2904`, whose token and canonical code are the
+        # same string. Measured on two live turns whose traces are otherwise identical
+        # field for field (console-check-1788789839).
+        #
+        # `_type_norm` is the key the rest of this file already compares these two sides
+        # through, and its own docstring names this exact mismatch; this call site was
+        # simply the one that did not use it. Applied to BOTH sides of the test only - the
+        # `_n` key that reaches persisted state and the `by_code` lookup against the tool's
+        # own output still use `_norm_code`, so no emitted value changes shape.
+        tokens = {_type_norm(t) for t in jsc.array(rz.get("tokens"))}
         if isinstance(rz.get("intersection"), list):
             intersection: list[Any] = rz["intersection"]
         elif jsc.truthy(rz.get("by_entity_type")):
@@ -508,7 +525,7 @@ def crossdomain_zeroset(
         else:
             intersection = []
         for m in intersection:
-            if is_prod(m) and jsc.truthy(jsc.get(m, "canonical_code")) and _norm_code(
+            if is_prod(m) and jsc.truthy(jsc.get(m, "canonical_code")) and _type_norm(
                 jsc.get(m, "canonical_code")
             ) in tokens:
                 add(jsc.get(m, "canonical_code"), jsc.get(m, "uuid"), False)
@@ -719,6 +736,10 @@ def crossdomain_render(
     # ASKED about - one with no uuid was never probed, so "no incoming" would be an absence
     # nothing established - so only a PROBED code earns the negative line.
     nothing: list[str] = []
+    # A7: the FULL `missing` entries behind `nothing` (code, uuid, uuids) - kept alongside
+    # the label list so `run_crossdomain` can build the next ladder rung's probe entities
+    # without re-deriving which codes qualify.
+    nothing_missing: list[dict[str, Any]] = []
     # Owner console pass 4, item G (6 Sep 2026): codes the OTHER domain answered, which the
     # primary one did not. Turn 858c9c54 named MSK11A-QT only inside "But there is INCOMING
     # stock (ETA) ...", so a stock question came back as two codes' stock and then an
@@ -735,6 +756,7 @@ def crossdomain_render(
                 label = jsc.js_string(code)
                 if label not in nothing:
                     nothing.append(label)
+                    nothing_missing.append(m)
             continue
         code = jsc.get(m, "code") or jsc.get(m, "_n")
         if jsc.truthy(code) and not _ms_is_uuid(code):
@@ -847,17 +869,15 @@ def crossdomain_render(
     if only_other and can_state_absence:
         only_other_note = f"No {primary_word} for {', '.join(only_other)}."
 
+    # NO OFFER SENTENCE HERE (8 Sep 2026, turns 0184d84d / 5f73ddb0 / 90a1637a): the block
+    # used to end "...Would you like me to escalate to X team?" and `tail/compose.
+    # crossdomain_compose` appended the LOCKED phrase again from `block["team"]`, so the
+    # customer read the question twice. Compose is the one writer of the offer, on the
+    # partial-answer branch from `team` below and on the total-miss branch from the miss
+    # sentence it slots this block above; this render only states what is absent.
     nothing_note = ""
     if nothing and can_state_absence:
-        team = zs.get("team")
-        offer = (
-            f" Would you like me to escalate to {jsc.js_string(team)} team?"
-            if jsc.truthy(team)
-            else " Would you like me to escalate this?"
-        )
-        nothing_note = (
-            f"No {primary_word} and no {other_word} for {', '.join(nothing)}.{offer}"
-        )
+        nothing_note = f"No {primary_word} and no {other_word} for {', '.join(nothing)}."
 
     body = (lead + "\n\n" + "\n\n".join(blocks) + silent_note + mention) if blocks else ""
     if body and only_other_note:
@@ -873,8 +893,330 @@ def crossdomain_render(
         "origin": zs.get("origin_domain") or None,
         "probed_rows": len(items),
         "rendered_rows": len(blocks),
+        # A7: the codes with NOTHING on either side, and the sentence built for them - so
+        # `run_crossdomain` can try a NEXT ladder rung (e.g. purchase_order) for exactly
+        # these codes and, if that rung answers, swap this sentence for its own without
+        # re-deriving which codes it is even about. Additive - nothing here reads them yet
+        # when the ladder has no further rung, so this render's own wording is unchanged.
+        #
+        # GATED ON `can_state_absence`, exactly as `nothing_note` and `only_other_note`
+        # are, and the first cut of A7 was not (review, blocker 2). "Missing" means the
+        # PRIMARY render did not ECHO the code, which is only the same statement as "this
+        # code has nothing" when the render is product-keyed or empty. A warehouse
+        # breakdown answers about the code without ever printing it, so an ungated list
+        # let the ladder append "No stock and no incoming for X, but a PO is placed"
+        # underneath the stock it had just shown - the exact defect `can_state_absence`
+        # exists to prevent, reintroduced one rung further along. Empty here means the
+        # rung never runs, which is the right answer: there is nothing we can honestly
+        # say is absent.
+        "nothing_codes": list(nothing) if can_state_absence else [],
+        "nothing_note": nothing_note,
+        # Same gate, same reason: the rung reads this to build its probe entities, so
+        # leaving it populated while `nothing_codes` is empty would only invite the
+        # next reader to make the mistake again.
+        "nothing_missing": list(nothing_missing) if can_state_absence else [],
     }
     return out
+
+
+#: A7: rungs beyond the hard-coded inventory<->incoming pair. Keyed by the rung NAME as it
+#: appears in `system_settings.chatbot_crossdomain_ladder` (a JSON list of strings, admin
+#: editable) - "incoming" is not here because that rung is the EXISTING hard probe above,
+#: never a second lookup. Only "purchase_order" exists today; a ladder entry naming
+#: anything else is simply never reached (no tool to call), which is the same "widen only
+#: with an entry" shape `_CHATBOT_COLUMN_DEFAULTS` uses elsewhere.
+_CROSSDOMAIN_RUNG_TOOL: dict[str, str] = {"purchase_order": "crm_procurement_po_placed_list"}
+_CROSSDOMAIN_RUNG_TEAM: dict[str, str] = {"purchase_order": "purchasing"}
+#: Item 5 (8 Sep 2026): the rung's tool returns PO lines AND unshipped SPO allocations
+#: (`kind` "po" / "spo", presented as Source "PO" / "SPO"), so its sentences speak of
+#: what is ON ORDER rather than of a document type - `_CROSSDOMAIN_RUNG_WORD` ("no PO
+#: for X") went with that.
+#: The field-reveal key a contact must hold for the rung to run at all (8 Sep 2026). A rung
+#: with no row here is ungated.
+_CROSSDOMAIN_RUNG_GRANT: dict[str, str] = {"purchase_order": "purchase_orders.placed"}
+#: The shipped ladder (migration 491, D7): stock -> incoming -> PO from either side. The
+#: DATABASE row is where the default lives; `engine._crossdomain_ladder` hands this out
+#: only for a settings row that carries no usable ladder (a `create_all` schema), never
+#: for a direct `run_crossdomain` call with none (H52 keeps that the pre-A7 single pair).
+DEFAULT_CROSSDOMAIN_LADDER: dict[str, list[str]] = {
+    "inventory": ["incoming", "purchase_order"],
+    "incoming": ["inventory", "purchase_order"],
+}
+
+
+def _next_crossdomain_rung(origin_domain: Any, *, ladder: dict[str, list[str]] | None) -> str | None:
+    """The rung AFTER the hard-coded inventory<->incoming probe, or None.
+
+    `ladder` is `None` when the caller passed none (H52: no ladder configured = the
+    pre-A7 single hard pair, unchanged - `TestCrossdomainProbe::
+    test_zeroset_active_triggers_exactly_one_probe...` pins this for a direct
+    `run_crossdomain` call with no `crossdomain_ladder` argument). In production
+    `engine._crossdomain_ladder` reads the REAL row, which carries the shipped default
+    (migration 489) the moment a settings row exists - so this function owns no default
+    of its own; the DATABASE row is the one place the default lives.
+
+    `ladder[origin][0]` is always the domain the hard probe above already asked (AC-923: a
+    tenant configuring `{"inventory": ["incoming"]}` has no second entry, so this returns
+    None and the PO rung never runs). Only the first name after it is tried - one further
+    rung per turn, same as the existing probe.
+    """
+    if not isinstance(ladder, dict):
+        return None
+    rungs = ladder.get(jsc.js_string(origin_domain))
+    if not isinstance(rungs, list) or len(rungs) < 2:
+        return None
+    for name in rungs[1:]:
+        if name in _CROSSDOMAIN_RUNG_TOOL:
+            return name
+    return None
+
+
+def _crossdomain_rung_probe_args(
+    missing: list[dict[str, Any]],
+    *,
+    rung: str,
+    parser: dict[str, Any] | None,
+    contact_id: Any,
+    space_id: Any,
+) -> dict[str, Any]:
+    """Same shape as `crossdomain_probe_args`, over the codes still `nothing` after the
+    first rung - never the full `missing` set, so a code the incoming probe already
+    answered is not re-asked about."""
+    qf = parser if isinstance(parser, dict) else {}
+    entities: list[dict[str, Any]] = []
+    for m in missing:
+        us = m["uuids"] if isinstance(m.get("uuids"), list) and m["uuids"] else (
+            [m["uuid"]] if jsc.truthy(m.get("uuid")) else []
+        )
+        entities.extend({"uuid": u, "entity_type": "product", "code": m.get("code")} for u in us)
+    codes = ", ".join(jsc.js_string(m.get("code")) for m in missing)
+    tool = _CROSSDOMAIN_RUNG_TOOL[rung]
+    return {
+        "tool": tool,
+        "contact_id": contact_id,
+        "entities": entities,
+        "semantic_input": {
+            "message_type": qf.get("message_type") if qf.get("message_type") is not None else None,
+            "intent_hint": qf.get("intent_hint") if qf.get("intent_hint") is not None else None,
+            "domain_hint": qf.get("domain_hint") if qf.get("domain_hint") is not None else None,
+            "user_goal": qf.get("user_goal") if qf.get("user_goal") is not None else None,
+            "contact_id": jsc.js_string(contact_id) if contact_id is not None else None,
+            "space_id": space_id_or_default(space_id),
+        },
+        "user_prompt": f"cross-domain probe (crossdomain -> {rung}) for: {codes}",
+    }
+
+
+def _crossdomain_rung_rows(
+    probe_result: Any, *, missing: list[dict[str, Any]]
+) -> dict[str, list[tuple[str, str]]]:
+    """Which of `missing`'s codes the rung answered, and the rendered line per row.
+
+    Returns `{CODE: [(line, kind), ...]}` - only codes the rung actually found rows for,
+    `kind` "po" or "spo" (item 5; a row with no Source field is a PO row, today's shape).
+    Never renders `supplier`: the field template simply does not name it, which is what
+    keeps a dealer from ever seeing it here without threading the field-reveal grant into
+    this probe.
+    """
+    env: Any = probe_result if jsc.truthy(probe_result) else {}
+    if jsc.truthy(env) and isinstance(jsc.get(env, "output"), dict):
+        env = env["output"]
+    items = _envelope_items(env)
+    by_code: dict[str, list[Any]] = {}
+    for it in items:
+        c = jsc.nullish_str(_field_val(it, "product code")).strip()
+        if not c or c == _EMPTY_VALUE:
+            continue
+        by_code.setdefault(c.upper(), []).append(it)
+
+    def field_by_key(it: Any, k: str) -> Any:
+        f = jsc.find(jsc.get(it, "fields") or [], lambda x: jsc.has(x, "key") and x["key"] == k)
+        return jsc.get(f, "value") if jsc.truthy(f) else None
+
+    out: dict[str, list[str]] = {}
+    for m in missing:
+        code = jsc.js_string(m.get("code") or m.get("_n"))
+        rows = by_code.get(code.upper(), [])
+        if not rows:
+            continue
+        out[code] = [_crossdomain_rung_row(it, field_by_key) for it in rows]
+    return out
+
+
+def _crossdomain_rung_row(it: Any, field_by_key: Any) -> dict[str, Any]:
+    """One rung row as `{kind, number, po_date, expected, qty}` - `kind` "po" or "spo"
+    (a row with no Source field is a PO row, today's shape). Rendering is
+    `_crossdomain_rung_text`, which groups the rows by document."""
+    kind = "spo" if jsc.js_string(field_by_key(it, "kind") or "").strip().upper() == "SPO" else "po"
+    return {
+        "kind": kind,
+        "number": field_by_key(it, "po_number"),
+        "po_date": field_by_key(it, "po_date"),
+        "expected": field_by_key(it, "expected_date"),
+        "qty": field_by_key(it, "outstanding_qty"),
+    }
+
+
+def _crossdomain_rung_text(rows: list[dict[str, Any]]) -> str:
+    """D11/D14 (owner ruling, 8 Sep 2026): one line per PO/SPO LINE, `Qty {outstanding_qty}
+    placed on {document_date}` - `po_date` is `purchase_orders.issue_date` (the SPO's issue
+    date on an SPO row), never the expected/ETA date (owner: it is not accurate). No
+    per-document heading naming the PO/SPO number - D2's heading-per-document shape is
+    retired - and no "pcs". Lines from several documents just follow one another in the
+    rows' own order:
+
+        Qty 10 placed on 2026-07-29
+        Qty 20 placed on 2026-07-29
+
+    "placed on {date}" is omitted, along with the date, when the date is null - same as
+    before.
+    """
+    out: list[str] = []
+    for row in rows:
+        qty = _fmt_xd_value(row.get("qty"))
+        po_date = row.get("po_date")
+        line = f"Qty {qty}" if po_date in (None, "") else f"Qty {qty} placed on {_fmt_xd_value(po_date)}"
+        out.append(line)
+    return "\n".join(out)
+
+
+def _apply_crossdomain_rung(
+    render: dict[str, Any],
+    *,
+    xd: dict[str, Any],
+    parser: dict[str, Any] | None,
+    services: Any,
+    contact_id: Any,
+    space_id: Any,
+    ladder: dict[str, list[str]] | None,
+    trace: Any = None,
+    granted: Any = None,
+) -> None:
+    """Mutates `render["_xdBlock"]` in place: tries the ladder's next rung for the codes
+    the first probe found NOTHING for, and swaps the "no X and no Y" sentence for the
+    rung's own wording when it answers (AC-921/AC-922).
+
+    A no-op (H62/AC-924 kept byte-identical) when: the origin has no further rung
+    (AC-923), or the first probe found something for every requested code
+    (`nothing_codes` empty), or the rung probe itself fails - the SAME degrade-not-crash
+    contract the first probe already has.
+    """
+    block = render.get("_xdBlock") if isinstance(render, dict) else None
+    if not isinstance(block, dict):
+        return
+    nothing_codes = block.get("nothing_codes") or []
+    if not nothing_codes:
+        return
+    rung = _next_crossdomain_rung(xd.get("origin_domain"), ladder=ladder)
+    if rung is None:
+        return
+    # PER-CONTACT GATE (8 Sep 2026): on-order information is a field reveal, key
+    # `purchase_orders.placed`, granted on Contacts > Access. `granted` is the contact's
+    # granted key list (`ctx["access"]["attributes"]`, the same set `fetch.py`'s field drop
+    # reads; None is the empty set, as there). Without the grant the rung does not run
+    # at all - no probe, no PO lines - and the block stays the ladder-off shape. The
+    # DIRECT PO ask is not gated by this key; it keeps its supplier-only gating.
+    need = _CROSSDOMAIN_RUNG_GRANT.get(rung)
+    granted_set = set(granted) if isinstance(granted, (list, tuple, set, frozenset)) else set()
+    if need and need not in granted_set:
+        if trace is not None:
+            trace.add("crossdomain", {"rung": rung, "skipped": "not_granted", "needs": need})
+        return
+    missing = block.get("nothing_missing") or []
+    args = _crossdomain_rung_probe_args(
+        missing, rung=rung, parser=parser, contact_id=contact_id, space_id=space_id
+    )
+    try:
+        probe_result = services.mcp_probe(args["tool"], args)
+    except Exception:  # noqa: BLE001 - degrades to the existing nothing_note, never a dead turn
+        logger.warning("chatbot: cross-domain %s rung probe did not run", rung, exc_info=True)
+        return
+    lines_by_code = _crossdomain_rung_rows(
+        probe_result if isinstance(probe_result, dict) else {}, missing=missing
+    )
+    # D7: the wording follows the customer's own climb - from an incoming ask the first
+    # absence is "incoming", then "stock"; from a stock ask the reverse.
+    origin_incoming = xd.get("origin_domain") == "incoming"
+    first_word, second_word = ("incoming", "stock") if origin_incoming else ("stock", "incoming")
+    if not lines_by_code:
+        # The rung answered NOTHING either - AC-922's wording, one step further than the
+        # existing "no X and no Y".
+        # Item 5: "nothing on order" - PO lines and unshipped SPO allocations alike.
+        still_nothing_note = (
+            f"No {first_word}, no {second_word} and nothing on order for {', '.join(nothing_codes)}."
+        )
+        # No offer sentence: `crossdomain_compose` writes it once from `block["team"]`
+        # (set to the rung's team below) - see the first probe's `nothing_note`.
+        new_note = still_nothing_note
+    else:
+        found = [c for c in nothing_codes if c in lines_by_code]
+        still_nothing = [c for c in nothing_codes if c not in lines_by_code]
+        parts: list[str] = []
+        found_rows = [row for c in found for row in lines_by_code[c]]
+        po_lines = _crossdomain_rung_text(found_rows)
+        # The header names what the rows ARE: "PO is placed" (D2: no article, the owner's
+        # wording) when any row is a PO line, "stock is on order from the supplier" when
+        # every row is an unshipped SPO allocation (item 5). D7: the absence pair reads in
+        # the order the customer climbed - "No incoming and no stock" from an incoming ask.
+        header = (
+            "but stock is on order from the supplier"
+            if found_rows and all(r.get("kind") == "spo" for r in found_rows)
+            else "but PO is placed"
+        )
+        parts.append(f"No {first_word} and no {second_word} for {', '.join(found)}, {header}:\n{po_lines}")
+        if still_nothing:
+            parts.append(
+                f"No {first_word}, no {second_word} and nothing on order for {', '.join(still_nothing)}."
+            )
+        new_note = "\n\n".join(parts)
+
+    old_note = block.get("nothing_note") or ""
+    old_block_text = block.get("block") or ""
+    if old_note and old_block_text.endswith(old_note):
+        new_block_text = old_block_text[: -len(old_note)] + new_note
+    elif old_block_text:
+        new_block_text = f"{old_block_text}\n\n{new_note}"
+    else:
+        new_block_text = new_note
+    block["block"] = new_block_text
+    block["any"] = True
+    block["nothing_note"] = new_note
+    block["rung"] = rung
+    # THE OFFER AND THE ROUTING HAVE TO NAME THE SAME TEAM (review, should-fix 8). The
+    # sentence just written says "escalate to purchasing team" because a PO is what
+    # answered, while `tail/pending.escalation_team` reads the TURN's routing - which for
+    # a stock question is `warehouse`. The customer would have been told one team and
+    # handed to another, which is the H64 shape: a discriminator produced in one place and
+    # ignored in the other. The rung is what answered, so the rung's team is the turn's
+    # team from here on; stamped on the parser's own routing, which is the one field
+    # `escalation_team` and `escalate_catalog` both read.
+    rung_team = _CROSSDOMAIN_RUNG_TEAM.get(rung)
+    if rung_team:
+        block["team"] = rung_team
+        if isinstance(parser, dict):
+            routing = parser.get("routing")
+            if not isinstance(routing, dict):
+                routing = {}
+                parser["routing"] = routing
+            routing["suggested_team"] = rung_team
+            # Said out loud on the trace: a turn whose team changed mid-lane with no
+            # record of why is the kind of thing an operator cannot reconstruct.
+            parser["crossdomain_rung_team"] = rung_team
+    if trace is not None:
+        # A9: the ladder's OWN probe, over exactly the codes the first probe found
+        # nothing for - `run_crossdomain` records the first (hard-coded) probe
+        # itself, so this is the second `crossdomain` event when it fires.
+        row_count = sum(len(v) for v in lines_by_code.values())
+        trace.add(
+            "crossdomain",
+            {
+                "rung": rung,
+                "tool": args.get("tool"),
+                "args": args,
+                "rows": row_count,
+                "rendered": new_note,
+            },
+        )
 
 
 def run_crossdomain(
@@ -888,12 +1230,20 @@ def run_crossdomain(
     contact_id: Any,
     space_id: Any = None,
     dry_run: bool = False,
+    crossdomain_ladder: dict[str, list[str]] | None = None,
+    trace: Any = None,
+    granted: Any = None,
 ) -> dict[str, Any]:
-    """`crossdomain-zeroset -> crossdomain-gate -> crossdomain-probe -> crossdomain-render`.
+    """`crossdomain-zeroset -> crossdomain-gate -> crossdomain-probe -> crossdomain-render`,
+    then A7's further ladder rung (`_apply_crossdomain_rung`) when the first probe still
+    left codes with nothing on either side.
 
-    D14: a dry run makes the SAME probe. The read is what a test turn has to reproduce, or
-    console and clone testing prove nothing about production; the writes are what D14
+    D14: a dry run makes the SAME probe(s). The read is what a test turn has to reproduce,
+    or console and clone testing prove nothing about production; the writes are what D14
     suppresses, and this lane has none.
+
+    `trace` (A9, chatbot-growth-r1): the turn's live `TurnTrace`, optional - `None` is a
+    no-op, same contract as `run_fetch`'s own `trace` parameter.
     """
     zeroset = crossdomain_zeroset(
         validator_result, parser=parser, resolved=resolved, session_block=session_block
@@ -917,6 +1267,30 @@ def run_crossdomain(
         probe_result if isinstance(probe_result, dict) else {},
         zeroset=xd,
         validator=validator_result,
+    )
+    if trace is not None:
+        block = render.get("_xdBlock") if isinstance(render, dict) else {}
+        block = block if isinstance(block, dict) else {}
+        trace.add(
+            "crossdomain",
+            {
+                "rung": xd.get("other_tool"),  # the hard-coded first probe names its rung by tool
+                "tool": args.get("tool"),
+                "args": args,
+                "rows": block.get("probed_rows"),
+                "rendered": block.get("block"),
+            },
+        )
+    _apply_crossdomain_rung(
+        render,
+        xd=xd,
+        parser=parser,
+        services=services,
+        contact_id=contact_id,
+        space_id=space_id,
+        ladder=crossdomain_ladder,
+        trace=trace,
+        granted=granted,
     )
     return {"zeroset": zeroset, "render": render}
 

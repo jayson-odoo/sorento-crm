@@ -277,3 +277,55 @@ def test_fallback_excludes_raw_attachment_unless_whitelisted(db):
         if m["entity_type"] == "attachment"
     ]
     assert leaked == [], f"raw attachment leaked into fallback: {leaked}"
+
+
+# --------------------------------------------------------------------------- #
+# D10b (owner console pass, 8 Sep 2026, turn 69d9900e "srtwc8610-sh hav incoming?"). A
+# token whose only match is a type the caller did not whitelist (SRTWC8610-SH is a
+# `product_sets.set_code`, reachable only via the internal "product" -> "product_set"
+# expansion `_expand_entity_types` always applies) now ALSO gets trigram alternatives,
+# exactly as a genuine miss would - the caller asked for "product", and a product_set
+# match is as useless to it as no match at all.
+# --------------------------------------------------------------------------- #
+def _require_product_set(db, set_code: str):
+    exists = db.execute(
+        text("SELECT 1 FROM product_sets WHERE set_code = :c LIMIT 1"),
+        {"c": set_code},
+    ).first()
+    if not exists:
+        pytest.skip(f"product set {set_code!r} not present in DB")
+
+
+def test_incompatible_only_token_gets_alternatives_over_the_caller_types(db):
+    _require_product_set(db, "SRTWC8610-SH")
+    _require_codes(db, "SRTWC8611", "SRTWC8613", "SRTWC8614")
+    r = _resolution(db, "srtwc8610-sh")
+    # matches keeps the incompatible row - byte identity for a caller reading it.
+    assert [m.entity_type for m in r.matches] == ["product_set"]
+    codes = [a.canonical_code for a in r.alternatives]
+    assert codes[:3] == ["SRTWC8611", "SRTWC8613", "SRTWC8614"], codes
+    assert all(a.entity_type == "product" for a in r.alternatives)
+    # The set's own two member products are not offered as "did you mean" to a
+    # customer who just named the set they belong to.
+    assert "SRTWCX8610-SH" not in codes
+    assert "SRTWCY8610-SH" not in codes
+
+
+def test_a_compatible_match_still_gets_no_alternatives(db):
+    """Unchanged: a token whose match IS one of the caller's own types (not merely
+    reachable through the internal product_set expansion) stays exactly as before."""
+    _require_codes(db, "SRTKT71SS")
+    r = _resolution(db, "SRTKT71SS")
+    assert r.matches and r.matches[0].entity_type == "product"
+    assert r.alternatives == []
+
+
+def test_no_allowed_entity_types_is_unchanged(db):
+    """`caller_types` is None (no whitelist passed) -> the incompatible-only branch
+    never engages, so a token that matched something still gets NO alternatives -
+    byte-identical to before D10b for every caller that passes no whitelist at all."""
+    _require_product_set(db, "SRTWC8610-SH")
+    res = er.resolve_references(db, ["srtwc8610-sh"])
+    r = res.resolutions[0]
+    assert r.matches and r.matches[0].entity_type == "product_set"
+    assert r.alternatives == []

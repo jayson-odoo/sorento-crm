@@ -22,8 +22,55 @@ from app.schemas.procurement import (
 )
 from app.schemas.common import ListResponse
 from app.services.error_handler import handle_internal_error
+from app.services.spo_last_receipt_service import last_receipt_rows
+from app.services.uuid_list_param import parse_uuid_list
 
 router = APIRouter()
+
+
+#: A6 (chatbot-growth-r1, AC-908): registered BEFORE `/{allocation_id}` below for the
+#: same reason `/documents` is - Starlette matches routes in registration order and
+#: `/{allocation_id}` accepts any single path segment, "last-receipt" included.
+@router.get("/last-receipt")
+async def get_spo_last_receipt(
+    product_ids: Optional[list[str]] = Query(
+        None, description="Filter by canonical product UUIDs (csv / JSON / repeated)."
+    ),
+    warehouse_ids: Optional[list[str]] = Query(
+        None, description="Filter by canonical warehouse UUIDs (csv / JSON / repeated)."
+    ),
+    top_n: int = Query(1, ge=1, le=50, description="How many most-recent receipts to return."),
+    current_user: dict = Depends(get_current_user_or_api_key),
+    db: Session = Depends(get_db),
+):
+    """Most recently received SPO allocations, newest first.
+
+    Date fallback order: `inbound_shipments.warehouse_arrival_date`, else
+    `.actual_arrival_date`, else `spo_allocations.created_at` - each row labels
+    which column it used (`date_label`), so the presenter never claims a date
+    it did not actually read.
+    """
+    try:
+        rows = last_receipt_rows(
+            db,
+            product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
+            warehouse_ids=parse_uuid_list(warehouse_ids, param_name="warehouse_ids"),
+            top_n=top_n,
+        )
+        from fastapi.encoders import jsonable_encoder
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(
+            content=jsonable_encoder(
+                {
+                    "data": rows,
+                    "pagination": {"total": len(rows), "page": 1, "limit": len(rows)},
+                    "empty": not rows,
+                }
+            )
+        )
+    except Exception as e:  # noqa: BLE001
+        raise handle_internal_error(str(e))
 
 
 @router.get("/grouped-by-shipment", response_model=ListResponse[ShipmentAllocationSummaryGroup])

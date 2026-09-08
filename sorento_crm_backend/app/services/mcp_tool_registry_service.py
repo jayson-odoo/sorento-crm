@@ -55,6 +55,12 @@ def _load_specs() -> Iterable:
 def sync_catalog(db: Session) -> SyncReport:
     sync_started_at = datetime.utcnow()
     specs = list(_load_specs())
+    # `CHATBOT_TOOL_DOMAINS` is what `search_tool_chunks` filters a chatbot pool on
+    # instead of the tool NAME - see `mcp_tools.chatbot_domain`'s own docstring for the
+    # leak that forced it. It lives in `app/services/`, not `app/services/chatbot/`:
+    # this is core, and core must never import the chatbot package (AC-002,
+    # `tests/chatbot/test_import_boundary.py`) - D17, after D15 got that backwards.
+    from app.services.mcp_tool_domains import CHATBOT_TOOL_DOMAINS
 
     added = 0
     updated = 0
@@ -63,6 +69,7 @@ def sync_catalog(db: Session) -> SyncReport:
         existing = (
             db.query(McpTool).filter(McpTool.tool_name == spec.name).one_or_none()
         )
+        chatbot_domain = CHATBOT_TOOL_DOMAINS.get(spec.name)
         if existing is None:
             db.add(
                 McpTool(
@@ -75,6 +82,7 @@ def sync_catalog(db: Session) -> SyncReport:
                     is_active=True,
                     last_seen_at=sync_started_at,
                     restricted_fields=_restricted_fields(spec),
+                    chatbot_domain=chatbot_domain,
                 )
             )
             added += 1
@@ -88,6 +96,7 @@ def sync_catalog(db: Session) -> SyncReport:
         existing.is_active = True
         existing.last_seen_at = sync_started_at
         existing.restricted_fields = _restricted_fields(spec)
+        existing.chatbot_domain = chatbot_domain
         updated += 1
 
     db.flush()

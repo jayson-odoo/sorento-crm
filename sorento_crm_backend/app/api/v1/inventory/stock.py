@@ -71,6 +71,107 @@ class BulkDeleteStockRequest(BaseModel):
     ids: list[str]
 
 
+def _with_sellable(service: StockService, result: dict) -> JSONResponse:
+    """Attach `open_so_qty` + `sellable` per row/entry (A2, AC-903/AC-904).
+
+    Bypasses `response_model` on purpose, same reason as products'
+    `_with_specifications`: `StockBalanceListResponse` does not declare these
+    fields, so returning `result` straight through response_model would drop
+    them silently rather than serialize them. `sellable` is `on_hand - open_qty`,
+    left NEGATIVE here - the chatbot presenter is what renders "0 (oversold by
+    N)"; a raw/staff caller reading a negative number can already do that math.
+
+    `stock_availability` rows are skipped entirely: that mode's whole point is
+    never disclosing a quantity, and open_so_qty/sellable are quantities.
+    """
+    body = StockBalanceListResponse.model_validate(result).model_dump(mode="json")
+    rows = result.get("data") or []
+    product_ids: set[str] = {
+        str(getattr(r, "product_id", None)) for r in rows if getattr(r, "product_id", None)
+    }
+    for entry in result.get("stock_summary") or []:
+        pid = entry.get("product_id") if isinstance(entry, dict) else None
+        if pid:
+            product_ids.add(str(pid))
+    # TWO aggregations, and the split is the point (review, should-fix 5). A per-warehouse
+    # ROW gets that warehouse's own open SO; the product SUMMARY row gets the product
+    # total, which is the per-warehouse quantities plus the lines that carry no
+    # `warehouse_id`. Subtracting the product total on every warehouse row - the first cut
+    # - reported the same demand two, three, four times over and printed "oversold" against
+    # a warehouse that was not.
+    open_so_total = service.open_so_qty_by_product(list(product_ids))
+    open_so_by_warehouse, _unlocated = service.open_so_qty_by_product_warehouse(
+        list(product_ids)
+    )
+
+    def _attach(target: dict, open_qty: int, on_hand) -> None:
+        try:
+            oh = int(on_hand) if on_hand is not None else 0
+        except (TypeError, ValueError):
+            oh = 0
+        target["open_so_qty"] = open_qty
+        target["sellable"] = oh - open_qty
+
+    for serialized, row in zip(body.get("data") or [], rows):
+        pid = str(getattr(row, "product_id", "") or "")
+        if not pid:
+            continue
+        wid = str(getattr(row, "warehouse_id", "") or "")
+        # A detailed row IS a (product, warehouse) pair. With no warehouse on the row at
+        # all there is nothing to narrow by, so it takes the product total - the same
+        # answer it had before, for the one row shape that has no better one.
+        open_qty = open_so_by_warehouse.get((pid, wid), 0) if wid else open_so_total.get(pid, 0)
+        _attach(serialized, open_qty, getattr(row, "quantity_on_hand", None))
+    # COMPACT entries: the product total on the entry (the unlocated remainder lives
+    # here only), and each warehouse line's own open SO on the location (D1, owner
+    # console pass 8 Sep: "*BRW:* 0 (O/S: 12)"). Locations carry a code, not an id, so the
+    # codes are resolved once through the service.
+    summary_entries = [e for e in (body.get("stock_summary") or []) if isinstance(e, dict)]
+    loc_codes = {
+        str(loc.get("warehouse_code"))
+        for e in summary_entries
+        for loc in (e.get("locations") or [])
+        if isinstance(loc, dict) and loc.get("warehouse_code")
+    }
+    wh_id_by_code = service.warehouse_ids_by_code(list(loc_codes)) if loc_codes else {}
+    for entry in summary_entries:
+        pid = str(entry.get("product_id") or "")
+        if not pid:
+            continue
+        _attach(entry, open_so_total.get(pid, 0), entry.get("total_on_hand"))
+        for loc in entry.get("locations") or []:
+            if not isinstance(loc, dict):
+                continue
+            wid = wh_id_by_code.get(str(loc.get("warehouse_code") or ""))
+            loc["open_so_qty"] = open_so_by_warehouse.get((pid, wid), 0) if wid else 0
+    # DETAILED mode carries a per-product summary too (review round 2, S2): the chatbot's
+    # "Open SO n, Available n" line reads the product TOTAL from here, never a sum over
+    # the page of rows, which is short of the truth for a product held in more warehouses
+    # than the page limit. `total_on_hand` is summed over every warehouse row of the
+    # product (`on_hand_total_by_product`), not over `data`. Only under `include_sellable`
+    # (this function), so a caller that never asked is byte-identical.
+    if not body.get("stock_summary") and rows:
+        on_hand_total = service.on_hand_total_by_product(list(product_ids))
+        summary: list[dict] = []
+        seen: set[str] = set()
+        for serialized, row in zip(body.get("data") or [], rows):
+            pid = str(getattr(row, "product_id", "") or "")
+            if not pid or pid in seen:
+                continue
+            seen.add(pid)
+            product = serialized.get("product") if isinstance(serialized.get("product"), dict) else {}
+            entry = {
+                "product_id": pid,
+                "product_code": product.get("product_code") or serialized.get("product_code"),
+                "product_name": product.get("product_name") or serialized.get("product_name"),
+                "total_on_hand": on_hand_total.get(pid, 0),
+            }
+            _attach(entry, open_so_total.get(pid, 0), entry["total_on_hand"])
+            summary.append(entry)
+        body["stock_summary"] = summary
+    return JSONResponse(content=body)
+
+
 @router.get("/balance", response_model=StockBalanceListResponse)
 def get_stock_balance(
     page: int = Query(1, ge=1),
@@ -139,6 +240,15 @@ def get_stock_balance(
             "the quantity again."
         ),
     ),
+    include_sellable: bool = Query(
+        False,
+        description=(
+            "Attach `open_so_qty` (open sales-order quantity not yet DO'd) and "
+            "`sellable` (on_hand minus open_so_qty) to each detailed row / compact "
+            "summary entry. Off by default - the response is unchanged for every "
+            "caller that does not ask. Never attached in `availability` mode."
+        ),
+    ),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -190,6 +300,8 @@ def get_stock_balance(
         if isinstance(result, dict) and result.get("alternatives"):
             from fastapi.encoders import jsonable_encoder
             return JSONResponse(content=jsonable_encoder(result))
+        if include_sellable and isinstance(result, dict):
+            return _with_sellable(service, result)
         return result
     except Exception as e:
         raise handle_internal_error(str(e))

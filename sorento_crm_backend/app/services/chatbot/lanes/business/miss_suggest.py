@@ -127,6 +127,18 @@ def gate_resolved_tokens(gate: Any) -> set[str]:
     return out
 
 
+def gate_incompatible_only_tokens(gate: Any) -> set[str]:
+    """D10 (owner console pass, 8 Sep 2026, turn 69d9900e): tokens `gate.py` marked as
+    matching NOTHING this domain serves - a flyer/set code hitting `product_set` under
+    `incoming`. To this domain the token is exactly as absent as one that matched nothing at
+    all, so `miss_resolutions` forces it past the `resolved` / exact-match guards below.
+    """
+    incompatible = jsc.get(jsc.get(gate, "gate_debug"), "incompatible_only")
+    if not isinstance(incompatible, dict):
+        return set()
+    return {jsc.nullish_str(t).strip().lower() for t in incompatible if jsc.truthy(t)}
+
+
 def miss_resolutions(resolved: Any, *, gate: Any) -> list:
     """`missResolutions`: a token the resolver did not resolve AND that had no exact match.
 
@@ -134,19 +146,23 @@ def miss_resolutions(resolved: Any, *, gate: Any) -> list:
     three bodies carry the same comment demanding they stay identical.
     """
     resolved_tokens = gate_resolved_tokens(gate)
+    incompatible_only = gate_incompatible_only_tokens(gate)
     resolutions = jsc.get(resolved, "resolutions")
     if isinstance(resolutions, list):
         out = []
         for res in resolutions:
             if not jsc.truthy(res):
                 continue
-            if jsc.get(res, "resolved") is True:
-                continue
-            matches = jsc.get(res, "matches")
-            if isinstance(matches, list) and any(_is_exact(m) for m in matches):
-                continue
-            if jsc.nullish_str(jsc.get(res, "token")).strip().lower() in resolved_tokens:
-                continue
+            token_key = jsc.nullish_str(jsc.get(res, "token")).strip().lower()
+            forced_miss = token_key in incompatible_only
+            if not forced_miss:
+                if jsc.get(res, "resolved") is True:
+                    continue
+                matches = jsc.get(res, "matches")
+                if isinstance(matches, list) and any(_is_exact(m) for m in matches):
+                    continue
+                if token_key in resolved_tokens:
+                    continue
             out.append(res)
         return out
     if jsc.array(jsc.get(resolved, "unresolved_tokens")):

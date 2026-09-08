@@ -33,6 +33,8 @@ from typing import Any, Iterable, Optional, Sequence
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+import logging
+
 from app.models.marketing import PromotionProduct
 from app.models.product import Product, ProductAttachment
 from app.models.resources import Attachment
@@ -42,6 +44,9 @@ from app.services.error_handler import AppException
 #: candidates is a wall of thumbnails - so a big page is a long scroll.
 DEFAULT_LIMIT = 25
 MAX_LIMIT = 100
+
+
+logger = logging.getLogger(__name__)
 
 
 def set_brochure_image(
@@ -410,6 +415,7 @@ def signed_urls(
         attachment.id: attachment
         for attachment in db.query(Attachment).filter(Attachment.id.in_(ids)).all()
     }
+    unsigned: list[str] = []
     for row in rows:
         for candidate in row["candidates"]:
             attachment = attachments.get(candidate["attachmentId"])
@@ -421,9 +427,19 @@ def signed_urls(
             # strict: a candidate that cannot be signed shows as having no
             # preview rather than as a broken thumbnail, so a human is not
             # invited to choose a photo the catalogue could never render.
+            # D9: each signing is bounded (`storage_router.SIGN_TIMEOUT_SECONDS`, one
+            # attempt) and a failure leaves THIS candidate's url None and moves on - the
+            # rows are returned either way.
             candidate["url"] = resolve_signed_url(
                 source,
                 provider=attachment.storage_provider,
                 expires_in=expires_in,
                 strict=True,
             )
+            if candidate["url"] is None:
+                unsigned.append(str(attachment.id))
+    if unsigned:
+        logger.warning(
+            "brochure images: %d of %d attachment(s) could not be signed in time, link left empty: %s",
+            len(unsigned), len(ids), ", ".join(unsigned[:20]),
+        )

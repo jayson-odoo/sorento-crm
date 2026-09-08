@@ -22,11 +22,16 @@ from __future__ import annotations
 from typing import Any
 
 import logging
+import time
 
 from app.services.chatbot import jsc
 from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import resolve_gate
-from app.services.chatbot.lanes.business.services import FetchServices, ResolveGateServices
+from app.services.chatbot.lanes.business.services import (
+    FetchServices,
+    ResolveGateServices,
+    drop_by_product_without_product,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +116,7 @@ def _fetch_semantic_input(
     contact_id: Any,
     space_id: str | None,
 ) -> dict[str, Any]:
-    """`Call 'sub-get-results'`'s `semantic_input`, all thirteen fields.
+    """`Call 'sub-get-results'`'s `semantic_input`, all thirteen fields plus growth r1's two.
 
     It was `{}`, and that was not a small omission: `access_levels`, `is_active`,
     `date_mode`, `order_status`, `requested_attributes` and both date filters all reach the
@@ -149,6 +154,15 @@ def _fetch_semantic_input(
             if parse_output.get("requested_attributes") is not None
             else []
         ),
+        # Growth r1 (AC-909 / AC-910). Fifteen fields now, and these two are the reason the
+        # docstring above says an empty object is not a small omission: `entity_ids_
+        # transformer` reads `group_by` and `top_n` off THIS object, so without them the
+        # transformer's grouping and top-n arms were unreachable from a live turn no matter
+        # what the parser emitted. `.get` reads a pre-growth-r1 emission (which carries
+        # neither key, see `output_exchange._EXEMPT_FROM_REQUIRED`) as null, and the
+        # transformer omits a null rather than sending one.
+        "group_by": parse_output.get("group_by"),
+        "top_n": parse_output.get("top_n"),
     }
 
 
@@ -177,12 +191,41 @@ def _error_fragment(reason: str, *, outcome: str | None = None) -> dict[str, Any
     return fragment
 
 
+#: D9 (owner console pass, 8 Sep 2026, turn 8f4356a3): a document tool that does not answer
+#: within the lane's tool budget is an ABSENCE the customer can act on (the miss lane, with
+#: its escalate offer), never the generic error reply. Only these tools, and only on a
+#: timeout: a stock or order read that fails stays an infrastructure failure, because
+#: telling a customer "no stock" off a dead read would assert an absence nobody measured.
+ATTACHMENT_TOOLS: frozenset[str] = frozenset(
+    {
+        "crm_master_product_attachments_list",
+        "crm_certificates_list",
+        "crm_marketing_promotion_attachments_list",
+        "crm_resource_attachments_list",
+        "crm_resource_attachments_catalogue",
+        "crm_resource_attachments_current_stock_list",
+    }
+)
+
+
+def _fetch_failure_outcome(tool_name: Any, exc: BaseException) -> str | None:
+    """`"not_found"` for a document tool that timed out (the miss lane answers it, with the
+    escalate offer); None for every other failure - today's hard failure, unchanged."""
+    if jsc.js_string(tool_name) not in ATTACHMENT_TOOLS:
+        return None
+    text = str(exc).lower()
+    if isinstance(exc, TimeoutError) or "timed out" in text or "timeout" in text:
+        return "not_found"
+    return None
+
+
 def run_fetch(
     payload: dict[str, Any],
     *,
     services: FetchServices,
     dry_run: bool = False,
     space_id: str | None = None,
+    trace: Any = None,
 ) -> dict[str, Any]:
     """S6b: the fetch step, the next call site after `run_until_exit`'s `continue` exit.
 
@@ -207,6 +250,11 @@ def run_fetch(
     nothing about production, and this lane writes nothing either way - the only write on
     the whole turn is `chatbot.turns`, which the engine owns. The parameter is taken (and
     unused) so the engine's call site reads the same as every other lane's.
+
+    `trace` (A9, chatbot-growth-r1): the turn's live `TurnTrace`, optional - when given,
+    "the read" below records one `tool` event (`name`, `args`, the envelope, `ms`) via
+    `trace.add`. `None` is a no-op, so every existing caller (and every world/replay test)
+    is unaffected by omitting it.
     """
     _ = dry_run
     raw_gate = payload.get("gate")
@@ -278,14 +326,20 @@ def run_fetch(
         logger.warning("chatbot: tool search did not run", exc_info=True)
         return _error_fragment(f"tool search failed: {exc}")
 
-    pick = fetch_mod.tool_filter(
-        candidates,
-        has_product=(
-            any(isinstance(e, dict) and e.get("entity_type") == "product" for e in entities)
-            if isinstance(entities, list)
-            else None
-        ),
+    has_product = (
+        any(isinstance(e, dict) and e.get("entity_type") == "product" for e in entities)
+        if isinstance(entities, list)
+        else None
     )
+    # Item 7 (8 Sep 2026): a customer-only order ask never reaches the by-product tool -
+    # `services.drop_by_product_without_product` (the F4 policy seam; a no-op on every
+    # other pool). Recorded on `_tool_pick` so the trace says what the pool lost and why.
+    candidates, dropped_no_product = drop_by_product_without_product(
+        candidates, domain=domain, has_product=has_product
+    )
+    pick = fetch_mod.tool_filter(candidates, has_product=has_product)
+    if dropped_no_product and pick.items:
+        pick.items[0]["json"].setdefault("_tool_pick", {})["dropped_no_product"] = dropped_no_product
     if pick.outcome == "not_found":
         # H11: zero tools is an OUTCOME, not an empty turn. The engine gets something to
         # say rather than a fragment that looks like a lane which never ran.
@@ -299,6 +353,11 @@ def run_fetch(
         "entities": entities,
         "semantic_input": semantic_input,
         "contact_id": contact_id,
+        # A2 (chatbot-growth-r1): read by `output_structurer`'s restricted-field
+        # drop, which is the ONLY consumer of `access.attributes`. Slice C wires
+        # `check_access` to fill it from `contact_field_reveals`; until then it is
+        # always None, so every restricted field stays hidden by construction.
+        "access": ctx.get("access"),
     }
     args = fetch_mod.entity_ids_transformer(trigger, space_id=space_id)
     if tool_name in fetch_mod.ENTITY_FILTER_REQUIRED_TOOLS and not fetch_mod.has_narrowing_filter(
@@ -312,6 +371,7 @@ def run_fetch(
             f"{tool_name} needs a document or entity filter and none could be built",
             outcome="not_found",
         )
+    _tool_started = time.perf_counter()
     try:
         raw = fetch_mod.call_tool(tool_name, args, mcp=_McpSeam(services.mcp_call))
     except fetch_mod.ToolNotAllowed as refused:
@@ -324,15 +384,56 @@ def run_fetch(
         return _error_fragment(str(refused), outcome="tool_not_allowed")
     except Exception as exc:  # noqa: BLE001 - `onError: continueErrorOutput`, verbatim
         logger.warning("chatbot: MCP tool %s failed", tool_name, exc_info=True)
-        return _error_fragment(f"MCP tool {tool_name} failed: {exc}")
+        return _error_fragment(
+            f"MCP tool {tool_name} failed: {exc}", outcome=_fetch_failure_outcome(tool_name, exc)
+        )
 
     envelope = fetch_mod.parse_mcp_content(raw)
+    if trace is not None:
+        # A9: ONE call, ONE tool, ONE envelope this turn - the same "the read" this
+        # whole function is named for. `envelope` rides through `trace.add`'s own
+        # 32 KB cap, so a large result set never grows the trace unbounded.
+        trace.add(
+            "tool",
+            {
+                "name": tool_name,
+                "args": args,
+                "envelope": envelope,
+                "ms": int((time.perf_counter() - _tool_started) * 1000),
+            },
+        )
     # The ERROR check comes BEFORE the render: an error envelope has no rows, and rendering
     # it first would build a "No matching results found." message for a turn that failed.
     if isinstance(envelope, dict) and isinstance(envelope.get("error"), str):
         return _error_fragment(envelope["error"])
 
     structured = fetch_mod.output_structurer(envelope, trigger)
+    if trace is not None:
+        restricted = envelope.get("restricted_fields") if isinstance(envelope, dict) else None
+        if isinstance(restricted, dict) and restricted:
+            access = trigger.get("access") if isinstance(trigger.get("access"), dict) else {}
+            granted_raw = access.get("attributes")
+            granted = list(granted_raw) if isinstance(granted_raw, list) else []
+            # A9: which restricted keys this turn's envelope carried, which the
+            # contact's access actually granted, and which were therefore dropped -
+            # the same "attributes is a list, today always None" contract A2 reads.
+            dropped = [k for k in restricted if restricted[k] not in granted]
+            # The GROUP AXIS, when `output_structurer` refused it (blocker 1, AC-907):
+            # a restricted value used as a section heading is a leak no field filter can
+            # reach, so the axis is dropped and the answer rendered flat - and the trace
+            # has to say which axis went, or the operator reads an ungrouped answer to a
+            # grouped question with no reason anywhere.
+            axis_dropped = envelope.get("group_by_dropped") if isinstance(envelope, dict) else None
+            if axis_dropped:
+                dropped.append(f"group_by:{axis_dropped}")
+            trace.add(
+                "reveals",
+                {
+                    "restricted_fields_seen": sorted(restricted.keys()),
+                    "granted": sorted(granted),
+                    "dropped": sorted(dropped),
+                },
+            )
     item = fetch_mod.fetch_result(structured, tool=tool_item, tier_probe=None)
     return {
         "kind": "result",
@@ -381,6 +482,8 @@ def complete_answer(
     session_factory: Any,
     space_id: str | None = None,
     dry_run: bool = False,
+    crossdomain_ladder: dict[str, list[str]] | None = None,
+    trace: Any = None,
 ) -> dict[str, Any]:
     """S6c: finish the business turn in process, and return `{reply, actions, ...}`.
 
@@ -531,6 +634,15 @@ def complete_answer(
             contact_id=contact_id,
             space_id=space_id,
             dry_run=dry_run,
+            crossdomain_ladder=crossdomain_ladder,
+            trace=trace,
+            # the contact's granted field-reveal keys - the PO rung needs
+            # `purchase_orders.placed` (8 Sep 2026); same set the field drop reads
+            granted=(
+                (ctx.get("access") or {}).get("attributes")
+                if isinstance(ctx.get("access"), dict)
+                else None
+            ),
         )
         result_item = answer_mod.build_result(
             promo,
@@ -599,6 +711,10 @@ def complete_answer(
         # It cannot be built before the tail the way S4's clarifier builds its own: the
         # words do not exist until the tail has composed them.
         compose_send_action=True,
+        # A9: the events THIS lane recorded (the cross-domain probes, the field reveals)
+        # were added after the head closed the row, so `complete_turn`'s resume-from-row
+        # cannot see them. Handed over explicitly, or they never reach the column.
+        lane_trace=trace,
     )
     return {
         "reply": completed.reply,

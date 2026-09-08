@@ -473,6 +473,213 @@ class TestBareEntityInheritanceIsBlockedAtResolveTime:
 
 
 # --------------------------------------------------------------------------- #
+# D10 (owner console pass, 8 Sep 2026, turn 69d9900e "srtwc8610-sh hav incoming?"). The
+# resolver's own answer for that token was a `product_set` (SRTWC8610-SH exists as a set
+# code, not a product code) and the gate refused it flat: "types [product_set]
+# incompatible with 'incoming'" - a genuine incompatibility, but one the customer cannot
+# tell apart from a code that matched nothing, and live n8n answers the latter with a
+# did-you-mean over the domain's own allowed types.
+# --------------------------------------------------------------------------- #
+
+
+class TestIncompatibleOnlyTokenIsStampedForTheMissLane:
+    INCOMING_PARSER = {
+        "domain_hint": "incoming",
+        "entities": [{"hint": "product", "raw": "srtwc8610-sh", "current_message": True}],
+    }
+
+    def _resolver(self, *, matches: list, alternatives: list | None = None) -> dict[str, Any]:
+        return {
+            "tokens": ["srtwc8610-sh"],
+            "resolutions": [
+                {
+                    "token": "srtwc8610-sh",
+                    "resolved": True,
+                    "matches": matches,
+                    "alternatives": alternatives or [],
+                }
+            ],
+            "unresolved_tokens": [],
+        }
+
+    def test_a_token_matching_only_an_incompatible_type_is_stamped(self) -> None:
+        resolver = self._resolver(
+            matches=[
+                {
+                    "uuid": "u-set",
+                    "entity_type": "product_set",
+                    "canonical_code": "SRTWC8610-SH",
+                    "match_tier": "exact",
+                    "company_name": "Sorento",
+                }
+            ]
+        )
+        out = run_gate(dict(resolver), parser=self.INCOMING_PARSER, resolver=resolver)
+        assert out["gate_passed"] is False
+        assert out["gate_reason"] == "types [product_set] incompatible with 'incoming'"
+        assert out["gate_debug"]["incompatible_only"] == {"srtwc8610-sh": ["product_set"]}
+
+    def test_a_token_with_an_allowed_type_match_too_is_not_stamped(self) -> None:
+        """The compat refusal stays a plain pass when SOME match is allowed - only a
+        token whose EVERY match is incompatible gets the miss-lane treatment."""
+        resolver = self._resolver(
+            matches=[
+                {
+                    "uuid": "u-prod",
+                    "entity_type": "product",
+                    "canonical_code": "SRTWC8610",
+                    "match_tier": "exact",
+                    "company_name": "Sorento",
+                },
+                {
+                    "uuid": "u-set",
+                    "entity_type": "product_set",
+                    "canonical_code": "SRTWC8610-SH",
+                    "match_tier": "exact",
+                    "company_name": "Sorento",
+                },
+            ]
+        )
+        out = run_gate(dict(resolver), parser=self.INCOMING_PARSER, resolver=resolver)
+        assert out["gate_passed"] is True
+        assert "incompatible_only" not in out["gate_debug"]
+
+    def test_the_miss_lane_offers_the_incompatible_only_token_over_the_allowed_types(
+        self,
+    ) -> None:
+        """`miss_resolutions` forces the stamped token past its own `resolved` guard, and
+        `_token_candidates`' existing type filter is what keeps the offer to `product`."""
+        from app.services.chatbot.lanes.business.miss_suggest import (
+            _token_candidates,
+            miss_resolutions,
+        )
+
+        resolver = self._resolver(
+            matches=[
+                {
+                    "uuid": "u-set",
+                    "entity_type": "product_set",
+                    "canonical_code": "SRTWC8610-SH",
+                    "match_tier": "exact",
+                    "company_name": "Sorento",
+                }
+            ],
+            alternatives=[
+                {
+                    "uuid": "u-8611",
+                    "entity_type": "product",
+                    "canonical_code": "SRTWC8611",
+                    "match_tier": "trgm",
+                    "company_name": "Sorento",
+                },
+                {
+                    "uuid": "u-8613",
+                    "entity_type": "product",
+                    "canonical_code": "SRTWC8613",
+                    "match_tier": "trgm",
+                    "company_name": "Sorento",
+                },
+            ],
+        )
+        gate = run_gate(dict(resolver), parser=self.INCOMING_PARSER, resolver=resolver)
+        assert gate["gate_passed"] is False
+
+        misses = miss_resolutions(resolver, gate=gate)
+        assert [m["token"] for m in misses] == ["srtwc8610-sh"]
+
+        cands = _token_candidates(misses[0], allowed_types=["product", "inbound_shipment"], uuid_keyed=False)
+        assert [c["canonical_code"] for c in cands] == ["SRTWC8611", "SRTWC8613"]
+
+
+# --------------------------------------------------------------------------- #
+# D10c (owner console pass, 8 Sep 2026, turn 72146a1e "srtwc8610-sh certificate"). AND
+# mode with two tokens: the product token resolves ONLY to `product_set`, the
+# attachment_type token resolves fine (Certification) - so the blanket "types [...]
+# incompatible" branch never fires (`compatible_entities` is non-empty, it just lacks
+# `product`) and the turn used to fetch certificates scoped to NOTHING about the product,
+# answering "no certificate matched these" for a subject that was silently dropped.
+# --------------------------------------------------------------------------- #
+class TestB1CatchesAnIncompatibleOnlyProductBesideAResolvedAttachmentType:
+    PA_PARSER = {
+        "domain_hint": "product_attachment",
+        "entities": [
+            {"hint": "product", "raw": "srtwc8610-sh", "current_message": True},
+            {"hint": "attachment_type", "raw": "certificate", "current_message": True},
+        ],
+    }
+
+    def _resolver(self) -> dict[str, Any]:
+        return {
+            "tokens": ["srtwc8610-sh", "certificate"],
+            "resolutions": [
+                {
+                    "token": "srtwc8610-sh",
+                    "resolved": True,
+                    "matches": [
+                        {
+                            "uuid": "u-set",
+                            "entity_type": "product_set",
+                            "canonical_code": "SRTWC8610-SH",
+                            "match_tier": "exact",
+                            "company_name": "Sorento",
+                        }
+                    ],
+                    "alternatives": [
+                        {
+                            "uuid": "u-8611",
+                            "entity_type": "product",
+                            "canonical_code": "SRTWC8611",
+                            "match_tier": "trgm",
+                            "company_name": "Sorento",
+                        }
+                    ],
+                },
+                {
+                    "token": "certificate",
+                    "resolved": True,
+                    "matches": [
+                        {
+                            "uuid": "u-cert-type",
+                            "entity_type": "attachment_type",
+                            "canonical_code": "Certification",
+                            "match_tier": "substring",
+                            "company_name": None,
+                        }
+                    ],
+                    "alternatives": [],
+                },
+            ],
+            "unresolved_tokens": [],
+        }
+
+    def test_the_gate_refuses_rather_than_scoping_on_the_certificate_alone(self) -> None:
+        resolver = self._resolver()
+        out = run_gate(dict(resolver), parser=self.PA_PARSER, resolver=resolver)
+        assert out["gate_passed"] is False
+        assert out["gate_reason"] == (
+            "'product_attachment' subject product did not resolve; refusing to scope "
+            "on carried entities"
+        )
+        assert out["gate_debug"]["incompatible_only"] == {"srtwc8610-sh": ["product_set"]}
+
+    def test_a_real_product_beside_the_attachment_type_still_passes(self) -> None:
+        """The other half: an actual `product` match means B1 has nothing to catch."""
+        resolver = self._resolver()
+        resolver["resolutions"][0]["matches"] = [
+            {
+                "uuid": "u-prod",
+                "entity_type": "product",
+                "canonical_code": "SRTWC8610",
+                "match_tier": "exact",
+                "company_name": "Sorento",
+            }
+        ]
+        out = run_gate(dict(resolver), parser=self.PA_PARSER, resolver=resolver)
+        assert out["gate_passed"] is True
+        assert "incompatible_only" not in out["gate_debug"]
+
+
+# --------------------------------------------------------------------------- #
 # Owner console pass 4, item F (live turn ace4cec6). The customer typed "srtwc287" with a
 # stock question already in play (previous domain `inventory`, a warehouse escalation
 # offer pending) and the reply led with "No incoming stock (ETA) found for SRTWC287" -
