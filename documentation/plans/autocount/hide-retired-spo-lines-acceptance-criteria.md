@@ -95,7 +95,19 @@ afterwards.
   fully received line is NOT stamped. Marking it would gain nothing, because a received line stays
   visible under R2 either way, and would wrongly take it out of its group's receipt sharing.
 
-- **AC-H17 [BE][T]** (one payload, one rule) The packing-list detail's `spo_allocated_quantity` and
+- **AC-H17 (revised, round 5) [BE][T]** (one payload, one rule, display only) The packing-list
+  detail's `spo_allocated_quantity` AND the `line_status` it reports are both derived from the
+  visible set, recomputed for the response. `refresh_shipment_line_statuses`' PERSISTED column and
+  status are NOT changed: they feed the reorder engine, not the screen. So one payload carries one
+  population, and no stored value moves.
+
+- **AC-H19 [BE][T]** (the signal n8n actually reads) `incoming_stock_service._warehouse_allocations_for`
+  counts retired allocations today, with no line-status or retirement test, so the incoming badge
+  and its `unallocated_quantity` gap both credit supply that AutoCount deleted. It takes
+  `visible_line_clauses()`. A retired allocation on a container stops counting as allocated, which
+  widens the gap to what is genuinely uncovered.
+
+- **AC-H17 (superseded) [BE][T]** (one payload, one rule) The packing-list detail's `spo_allocated_quantity` and
   the `line_status` derived from it count the same visible set. Today the endpoint overwrites the
   quantity with a filtered total while the status still derives from the unfiltered one, so one
   response can show allocated 3912 against a status computed from 8324.

@@ -282,3 +282,25 @@ ships with evidence, not on argument:
 If the measured change is large or a consumer needs the unfiltered figure, AC-H17 splits out of this
 lane and the packing list keeps one population on both halves by reverting the response-side filter
 instead.
+
+## 12. Round 5 rulings: AC-H17 splits, the badge joins (reviewer's consumer check, 2026-09-08)
+
+The measurement cannot be taken locally. The production copy carries no retired row and no packing
+list content at all, so its zeros are by construction on two independent grounds, not by safety. The
+reviewer's read-only differential query goes to the user as a production ask instead.
+
+The consumer check settled it without the number:
+
+- **`container_request_service.PL_UNALLOCATED_SQL` subtracts `spo_allocated_quantity` from the
+  reorder ask.** Filtering the persisted column raises the unallocated figure, so the engine nets
+  more and asks a supplier for less. That is a purchasing decision changing as a side effect of a
+  display lane, and `allocation_suggestion_service` moves with it. Out of scope: **AC-H17 is
+  narrowed to the response only.** The packing list recomputes both the quantity and the status it
+  REPORTS from the visible set, so one payload carries one population, and the stored column keeps
+  feeding the engine untouched until a lane with SCM eyes decides it deliberately. The reviewer's
+  query is attached to that future lane, not to this one.
+- **The badge does not read that column at all.** `incoming_stock_service._warehouse_allocations_for`
+  queries `spo_allocations` directly with no line-status or retirement test, so citing the n8n badge
+  as a reason for AC-H17 was simply wrong. The badge has its own hole, and it is the same defect as
+  the incident: supply AutoCount deleted still counted. **AC-H19 fixes it here**, because it is a
+  read with no persisted column and no purchasing arithmetic behind it.
