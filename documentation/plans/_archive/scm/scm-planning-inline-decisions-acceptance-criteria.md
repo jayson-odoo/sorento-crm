@@ -79,7 +79,7 @@ Plan: `PLAN-scm-planning-inline-decisions.md`. Walk on `/scm/sales-orders` and `
 - G8 Switching Buy on and back off restores the Reserve quantities, the borrow rows and their reasons.
 - G9 Unticking "This might be a system problem" on a confirmed line clears the warning on the pill and posts `false`.
 - G10 An unplannable line's expanded panel states why it cannot be decided and offers no verb.
-- G11 The unpostable notice names touched lines (at most five, then "and N more") and counts untouched ones per reason. UPDATED (captain's ruling, 8 Sep 2026): an untouched, uncovered line no longer reaches this population at all - Confirm never attempts it, so it is neither named nor counted here; it simply stays undecided on the board. The "untouched" count now only ever applies to the rarer covered-and-decided case.
+- G11 The unpostable notice names lines (at most five, then "and N more") per reason. UPDATED (captain's ruling, 8 Sep 2026): an untouched, uncovered line no longer reaches this population at all - Confirm never attempts it, so it is neither named nor counted here; it simply stays undecided on the board. Every line that does reach here carries a SAVED decision, so the "untouched" count is gone - nothing can reach it.
 - G12 Undo all asks "Discard N draft decisions?" before it clears the draft.
 - G13 A sales order whose planning-change rows all read applied is not posted again by the board's Confirm, and the results say so.
 - G14 `line_ids=not-an-id` on `stock-detail` is refused by name rather than reaching the query (pytest).

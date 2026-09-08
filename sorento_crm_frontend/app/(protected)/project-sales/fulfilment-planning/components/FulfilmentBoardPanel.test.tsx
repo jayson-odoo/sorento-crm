@@ -2603,6 +2603,19 @@ describe('FulfilmentBoardPanel: Confirm counts only saved lines (8 Sep 2026 ruli
     expect(ids).toHaveLength(17);
     expect(ids).not.toContain('pl-so-a-18');
   });
+
+  it('reads "0 to confirm · 0 rejected" and disables Confirm (0) when nothing is saved (UAC D3 reversed)', async () => {
+    getPlanningBoard.mockResolvedValue(boardOf([demand()]));
+
+    renderPanel(['SO403340']);
+    await screen.findByTestId('fulfilment-board-matrix');
+
+    expect(screen.getByTestId('board-confirm-summary')).toHaveTextContent(
+      '0 to confirm · 0 rejected',
+    );
+    expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (0)');
+    expect(screen.getByTestId('board-confirm')).toBeDisabled();
+  });
 });
 
 /**
@@ -3022,24 +3035,22 @@ describe('FulfilmentBoardPanel: a cell’s own Undo saves and toasts once (D15)'
 });
 
 /**
- * The notice beside the button (R11): a line the planner composed is NAMED, capped at five,
- * and the lines nobody touched are counted - there can be hundreds of those, and a wall of
- * names is read by nobody.
+ * The notice beside the button: since the 8 Sep 2026 ruling (reverses R11) every line reaching
+ * here carries a SAVED decision, so every one of them is NAMED, capped at five.
  */
 describe('unpostableNotices', () => {
-  function line(lineNo: number, touched: boolean) {
+  function line(lineNo: number) {
     return {
       contribution: {
         item_code: 'TPE-9204',
         line_no: lineNo,
       } as unknown as BoardContribution,
       reason: 'buy_reason_missing' as const,
-      touched,
     };
   }
 
-  it('names a touched line and states the fix', () => {
-    expect(unpostableNotices('buy_reason_missing', [line(2, true)])).toEqual([
+  it('names a line and states the fix', () => {
+    expect(unpostableNotices('buy_reason_missing', [line(2)])).toEqual([
       'TPE-9204 line 2 buys a discontinued product with no reason given, so this confirmation leaves it out. Amend it to give one.',
     ]);
   });
@@ -3047,27 +3058,10 @@ describe('unpostableNotices', () => {
   it('caps the names at five and counts the rest', () => {
     const [sentence] = unpostableNotices(
       'buy_reason_missing',
-      [1, 2, 3, 4, 5, 6, 7].map((no) => line(no, true)),
+      [1, 2, 3, 4, 5, 6, 7].map((no) => line(no)),
     );
     expect(sentence).toContain('line 5 and 2 more');
     expect(sentence).not.toContain('line 6');
-  });
-
-  it('counts untouched lines instead of naming them, in one sentence', () => {
-    expect(
-      unpostableNotices(
-        'buy_reason_missing',
-        [1, 2, 3].map((no) => line(no, false)),
-      ),
-    ).toEqual([
-      '3 untouched lines buy a discontinued product with no reason given; open them to decide.',
-    ]);
-  });
-
-  it('says both when the reason catches touched and untouched lines together', () => {
-    expect(
-      unpostableNotices('no_mirror', [line(2, true), line(3, false)]).length,
-    ).toBe(2);
   });
 });
 

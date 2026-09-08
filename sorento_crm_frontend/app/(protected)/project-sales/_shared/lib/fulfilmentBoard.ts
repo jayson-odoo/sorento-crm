@@ -291,16 +291,6 @@ export type UnpostableReason = 'no_mirror' | 'no_reserve_warehouse' | 'buy_reaso
 export interface UnpostableLine {
   contribution: BoardContribution;
   reason: UnpostableReason;
-  /**
-   * Whether the planner decided this line themselves, or left it alone.
-   *
-   * Since the 8 Sep 2026 ruling (reverses R11) an untouched, uncovered line is never posted at
-   * all, so it never reaches this population - only a SAVED decision or a covered-and-decided
-   * line can be unpostable. `touched` is effectively always true here now; the field stays
-   * (an unpostable covered line could in principle be untouched) rather than being refactored
-   * away for one caller.
-   */
-  touched: boolean;
 }
 
 /**
@@ -330,12 +320,12 @@ function lineFor(
   // that is no longer true, until the planner opens the row and saves it again.
   if (contribution.draft?.stale) return null;
   // UNCOVERED AND UNTOUCHED (8 Sep 2026 ruling, reverses R11): the planner has not saved a
-  // decision for this line, so it is left UNDECIDED - not posted, not counted as rejected. A
-  // SAVED decision may arrive either as this call's own `decision` argument or, when the
-  // caller has not yet merged the board's shared draft into it, as `contribution.draft` -
-  // both mean somebody saved it. A covered line's untouched case is handled separately below
-  // (it is carried by the server).
-  if (!contribution.covered && decision === undefined && !contribution.draft) return null;
+  // decision for this line, so it is left UNDECIDED - not posted, not counted as rejected.
+  // `decision` is the caller's own draft, already merged with whatever the server sent as
+  // `contribution.draft` (the Panel's seeding effect does this on every board read), so its
+  // being undefined here is the whole signal that nobody saved anything. A covered line's
+  // untouched case is handled separately below (it is carried by the server).
+  if (!contribution.covered && decision === undefined) return null;
   // ALREADY CONFIRMED, AND NOT TOUCHED SINCE: the server carries it. Nothing to post, and
   // nothing to derive - the board proposes nothing for a covered line, and inventing one
   // would overwrite a person's composition with the engine's opinion of it.
@@ -569,11 +559,7 @@ export function unpostableDecidedFor(
     const built = lineFor(contribution, draft[contribution.key]);
     if (typeof built !== 'string') continue;
     if (built === 'no_mirror' && !isAdopted) continue;
-    unpostable.push({
-      contribution,
-      reason: built,
-      touched: Boolean(draft[contribution.key]),
-    });
+    unpostable.push({ contribution, reason: built });
   }
   return unpostable;
 }
@@ -635,10 +621,10 @@ export function confirmSummaryFor(
     if (contribution.unplannable) continue;
     const decision = draft[contribution.key];
     // 8 Sep 2026 ruling (reverses R11): an untouched, uncovered line is undecided, not
-    // agreed - it must not pull its order into the confirmable set on its own. A SAVED
-    // decision counts whether it arrived as this call's `draft` argument or, when the caller
-    // has not yet merged the board's shared draft into it, as `contribution.draft`.
-    if (!contribution.covered && !decision && !contribution.draft) continue;
+    // agreed - it must not pull its order into the confirmable set on its own. `decision`
+    // is the caller's own draft, already merged with whatever the server sent as
+    // `contribution.draft`, so its being falsy here is the whole signal that nobody saved it.
+    if (!contribution.covered && !decision) continue;
     if (contribution.covered && decision?.verdict !== 'amended') continue;
     if (decision?.verdict === 'rejected') {
       rejected += 1;

@@ -1696,29 +1696,42 @@ describe('confirmSummaryFor: changed (C4)', () => {
       { today: TODAY },
     );
     const base = board.cells[0].contributions[0];
+    const decision = { verdict: 'amended' as const };
     const stale = {
       ...base,
       draft: {
-        decision: { verdict: 'amended' as const },
+        decision,
         saved_by: 'Eling',
         saved_at: '2026-09-03T01:00:00',
         stale: true,
       },
     };
 
-    const summary = confirmSummaryFor([stale], {});
+    // The Panel's own draft map mirrors every server draft into it before any press (the
+    // seeding effect), so a real caller's `draft[key]` is never undefined here - it is seeded
+    // the same way in this test.
+    const summary = confirmSummaryFor([stale], { [stale.key]: decision });
 
     expect(summary.changed).toBe(1);
     expect(summary.toConfirm).toBe(0);
   });
 
-  it('reads 0 when nothing saved is stale', () => {
+  it('reads `changed` 0 and `toConfirm` 1 when the one saved line is not stale', () => {
     const board = buildBoard(
       [line({ sales_order_id: 'so-a', so_number: 'SO000001', line_no: 1, qty: '100' })],
       { today: TODAY },
     );
-    const summary = confirmSummaryFor(board.cells.flatMap((cell) => cell.contributions), {});
+    const base = board.cells[0].contributions[0];
+    const decision = { verdict: 'approved' as const };
+    const saved = {
+      ...base,
+      draft: { decision, saved_by: 'Eling', saved_at: '2026-09-03T01:00:00' },
+    };
+
+    const summary = confirmSummaryFor([saved], { [saved.key]: decision });
+
     expect(summary.changed).toBe(0);
+    expect(summary.toConfirm).toBe(1);
   });
 });
 
