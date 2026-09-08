@@ -334,6 +334,30 @@ class PriceTagRequestService:
 
         request.status = new_status
         db.flush()
+
+        # D12: an approve auto-queues one tag-sheet export, so the salesperson
+        # never has to ask marketing to run it separately. Function-local
+        # module import (not a from-import) - tag_sheet_export_service
+        # imports STATUS_APPROVED/STATUS_READY from THIS module at ITS own
+        # top level, so a top-level import here would be circular, and tests
+        # monkeypatch this module's `request_tag_sheet_export` attribute,
+        # which only a call through the module (not a bound name) picks up.
+        # Own try/except: a failure here must never turn a successful
+        # approve into a failed one (AC-S5-2) - logged, nothing raised.
+        if new_status == STATUS_APPROVED:
+            try:
+                from app.services.dealer_kit import tag_sheet_export_service
+
+                tag_sheet_export_service.request_tag_sheet_export(
+                    db, request_id=request_id, user_id=user_id, sheet_ids=None,
+                )
+            except Exception:
+                logger.warning(
+                    "Auto-export failed for price_tag_request %s",
+                    request_id,
+                    exc_info=True,
+                )
+
         return request
 
     @staticmethod

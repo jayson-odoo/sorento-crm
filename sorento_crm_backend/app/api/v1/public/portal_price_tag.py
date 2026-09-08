@@ -410,8 +410,12 @@ def portal_approve_price_tag_request(
             code="NOT_FOUND",
         )
 
+    # D12's auto-export needs a requesting user; the portal has no CRM user
+    # of its own, so this passes the request's own assignee - the marketing
+    # person who designed it, and the natural "who asked for this PDF" answer
+    # for an export the SALESPERSON'S approve click triggered.
     result = PriceTagRequestService.transition_status(
-        db, request_id, STATUS_APPROVED,
+        db, request_id, STATUS_APPROVED, user_id=req.assigned_to_id,
     )
     db.commit()
     return PriceTagRequestResponse.model_validate(result)
