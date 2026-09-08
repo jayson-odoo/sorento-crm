@@ -4708,13 +4708,16 @@ class ProjectSupplyService:
         if (
             from_stock > _ZERO
             and buy > _ZERO
-            and not self._is_pool_share_split(fact, entry, from_stock)
             and not (getattr(entry, "amend_reason", None) or "").strip()
+            and not self._is_pool_share_split(fact, entry, from_stock)
         ):
             refuse(
                 invalid,
-                "Mixing stock with a Buy is a manual decision the engine never proposes. "
-                "Say why this differs from the proposal, then it can be saved.",
+                "A line is either met wholly from stock or wholly bought unless a reason "
+                f"is given. This one mixes {qty_text(from_stock)} from stock with a Buy of "
+                f"{qty_text(buy)}: take the whole {qty_text(fact.open_qty)} from stock, buy "
+                f"the whole {qty_text(fact.open_qty)}, or say why this differs from the "
+                "proposal.",
             )
 
     def _is_pool_share_split(

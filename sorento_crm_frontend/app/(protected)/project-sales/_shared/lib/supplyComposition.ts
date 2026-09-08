@@ -303,10 +303,12 @@ function poolShareSplit(
  *
  * `options.mixAllowed` (the captain, 8 Sep 2026): the whole-line rule (AC-L5) stays for the
  * ENGINE's proposals and for the per-order SHEET, where a mix is never a deliberate manual
- * decision. The fulfilment-planning BOARD passes `mixAllowed: true`, because a board
- * amendment always carries `amend_reason` when it differs from the proposal
- * (`amendNeedsReason`) - the reason is the thing that tells purchasing the split was
- * intended, and the server's own gate reads that same field, not a client-only flag.
+ * decision. The fulfilment-planning BOARD passes `mixAllowed: true` on the strength of its
+ * own `reason` field, not of this function: the panel seeds `reason` from the frozen
+ * decision's own `amend_reason` at mount (`BoardLineDecisionPanel`), and `amendNeedsReason`
+ * only asks whether the draft has moved SINCE THEN, so an unchanged frozen mix re-saves on
+ * the reason it already carried, not a freshly typed one. The server's own gate reads that
+ * same field off the confirm line, not a client-only flag.
  */
 export function lineBlockers(
   draft: DraftLine,

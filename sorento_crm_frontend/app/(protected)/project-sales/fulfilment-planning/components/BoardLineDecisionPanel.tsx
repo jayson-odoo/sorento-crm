@@ -98,6 +98,9 @@ export function BoardLineDecisionPanel({
   const [draft, setDraft] = React.useState<DraftLine>(() =>
     draftFor(contribution, decision),
   );
+  // Seeded from the frozen decision's own `amend_reason`, not blank - the server's whole-line
+  // mix rule (`mixAllowed` below) now depends on this reaching Save even when nothing about
+  // the draft has changed since.
   const [reason, setReason] = React.useState(
     () => decision?.reason ?? contribution.decision?.amend_reason ?? '',
   );
@@ -195,10 +198,11 @@ export function BoardLineDecisionPanel({
    */
   const poolLimits = React.useMemo(() => poolShareLimitsOf(locations), [locations]);
   // `mixAllowed`: the 8 Sep 2026 ruling. AC-L5's whole-line rule is lifted on this panel
-  // because a board amendment that mixes stock and Buy carries `amend_reason` before Save
-  // will accept it (`needsReason` below, off `amendNeedsReason`) - the reason is the manual
-  // signal, not a flag this panel invents. The per-order sheet does not pass this and still
-  // refuses the mix (`SupplyLineCard`).
+  // because `reason` (seeded from the frozen decision's own `amend_reason` above, or typed
+  // fresh) is what Save sends as `amend_reason` on the confirm line - `needsReason` below
+  // only forces a NEW one when the draft has moved since that baseline (`amendNeedsReason`),
+  // so an unchanged frozen mix re-saves on the reason it already carried. The per-order sheet
+  // does not pass this and still refuses the mix (`SupplyLineCard`).
   const blockers = lineBlockers(draft, poolLimits, { mixAllowed: true });
   const needsReason = amendNeedsReason(contribution, draft);
   // Which verdict Save takes, and therefore what it may be pressed for: approving the engine's

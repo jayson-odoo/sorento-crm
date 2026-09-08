@@ -668,12 +668,20 @@ The order-inquiry side (purchasing's board, place-on-PO UX) is the next planning
   manual-adjustment signal (schema comment: "Absent when they took the proposal as it stood"),
   not a separate board-only flag - the engine never proposes a mix, so any mix reaching confirm
   is a person's own composition, and the reason is what tells purchasing the split is
-  deliberate. Without a reason the mix is still refused (422), now: "Mixing stock with a Buy is
-  a manual decision the engine never proposes. Say why this differs from the proposal, then it
-  can be saved." Implemented in `project_supply_service.py::_check_line` (backend) and
-  `supplyComposition.ts::lineBlockers`'s `mixAllowed` option, passed only by
+  deliberate. Without a reason the mix is still refused (422), now: "A line is either met
+  wholly from stock or wholly bought unless a reason is given. This one mixes {qty} from stock
+  with a Buy of {qty}: take the whole {qty} from stock, buy the whole {qty}, or say why this
+  differs from the proposal." Implemented in `project_supply_service.py::_check_line` (backend)
+  and `supplyComposition.ts::lineBlockers`'s `mixAllowed` option, passed only by
   `BoardLineDecisionPanel` (the sheet's `SupplyLineCard` still refuses the mix outright, no
-  option passed).
+  option passed). `planning_change_service` carries a frozen line's own `amend_reason` forward
+  into an auto-replanned line - it only ever REDUCES quantities on a revision, never creates a
+  mix - so the gate's meaning rests on that carry staying honest; a replan that ever composed a
+  new mix without also carrying the reason would defeat it silently. The project allowance
+  `_is_pool_share_split` checks is a PROPOSAL-time bound on what the engine offers, not a
+  confirm-time cap: at confirm the pool leg is bounded only by free stock, the five-pool net,
+  and R14, so a hand-typed share above the allowance still confirms once a reason is given (see
+  `test_the_confirm_admits_a_hand_typed_share_above_the_allowance_with_a_reason`).
 
 - **TEMPORARY: an own-group bin's capacity is not capped by the group net when a reason is
   given (captain, 8 Sep 2026, lift TEMPORARY).** Measured on the lane DB: SO419417 line 9,

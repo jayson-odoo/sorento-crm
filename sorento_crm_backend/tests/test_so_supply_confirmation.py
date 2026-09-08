@@ -2237,8 +2237,9 @@ def test_a_line_mixing_stock_with_a_buy_without_a_reason_is_refused(api):
     failing = response.json()["failing_lines"]
     assert failing[0]["line_no"] == 10
     assert failing[0]["reason"] == (
-        "Mixing stock with a Buy is a manual decision the engine never proposes. Say why "
-        "this differs from the proposal, then it can be saved."
+        "A line is either met wholly from stock or wholly bought unless a reason is given. "
+        "This one mixes 5 from stock with a Buy of 15: take the whole 20 from stock, buy "
+        "the whole 20, or say why this differs from the proposal."
     )
 
 
