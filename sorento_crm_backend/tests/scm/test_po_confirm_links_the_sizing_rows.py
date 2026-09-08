@@ -384,20 +384,32 @@ def test_a_purchase_order_naming_two_runs_falls_back_to_the_latest_completed(scm
 
 def _group_warehouse(db, code: str) -> str:
     """A warehouse whose code carries an ownership-group suffix, so ladder v4's group rule
-    is in play (`group_of_warehouse_code` reads the suffix after the first hyphen)."""
-    return _mk_warehouse(db, code)
+    is in play (`group_of_warehouse_code` reads the suffix after the first hyphen).
+
+    `segment='project'` (B1, review of PR - the reviewer's own measurement against the
+    7 Sep prod copy: 55 project-segment warehouses, 5 dealer-segment ones - the pools
+    themselves - and zero null-segment. A bare group location is exactly a project bin on
+    the real book, never an unclassified one, and leaving `segment` NULL here made
+    `is_site_pool(None)` read True (`COALESCE(segment, 'dealer')`) - wrongly cascadable on
+    its own account, a fixture artefact production has never had.
+    """
+    return _mk_warehouse(db, code, segment="project")
 
 
-def test_a_group_bought_to_exactly_the_plan_figure_is_never_auto_taken(scm_app):
-    """The boundary used to be the ordinary case: a purchase order raised off the plan buys
-    exactly what the plan said was short, landing the group on `group_net + remaining == 0`
-    - offered, never refused, so the rows that sized it were never stranded.
+def test_a_group_bought_to_exactly_the_plan_figure_is_still_offered(scm_app):
+    """The boundary, and it is the ordinary case rather than an edge one (captain, 27 Aug):
+    a purchase order raised off the plan buys exactly what the plan said was short,
+    landing the group on `group_net + remaining == 0` - offered, never refused, so the
+    row that sized it is never stranded.
 
-    SLICE H, 8 Sep 2026: the deficit boundary still decides what `_groups_in_deficit`
-    OFFERS (a group location's candidate still appears in `_candidates_for_row`, greyed or
-    not), but a group location is never a POOL, so it is never `cascadable` any more and
-    the confirm's own cascade takes nothing from it (AC-H1, AC-H3). The row stays raised
-    and the buy has to be linked by hand.
+    B1 (review of PR, coordinator's own measurement against the 7 Sep prod copy): this IS
+    AC-H11's scenario, not AC-H1's. `bulk_confirm` on a `draft_recommendation` PO calls
+    `supply_claim.claim_purchase_order_for_sizing_rows`, which claims every PROJECT-BIN
+    line of the confirmed order for the rows that sized its plan cell - the same
+    `own_so_claim` `_candidate` now reads. A group location IS a project bin on the real
+    book (`segment='project'`, measured; see `_group_warehouse`), so this row's own claim
+    is written in the SAME transaction the confirm runs in, and the row links in full -
+    exactly as it did before slice H, through the exception the owner explicitly kept.
     """
     _, db, _, _ = scm_app
     actor = seed_user(db, None)
@@ -420,8 +432,10 @@ def test_a_group_bought_to_exactly_the_plan_figure_is_never_auto_taken(scm_app):
 
     PurchaseOrderService(db).bulk_confirm([poid], actor=actor)
 
-    assert _linked_qty(db, row["inquiry_row"].id) == 0.0, (
-        "AC-H1: a group location is never cascadable, however the deficit boundary reads"
+    assert _linked_qty(db, row["inquiry_row"].id) == 8.0, (
+        "AC-H11: a group bought to exactly the plan figure was refused its own purchase "
+        "order - the write-time claim is the owner's own-SO exception, not gated on the "
+        "deficit boundary at all"
     )
 
 
@@ -429,21 +443,30 @@ def test_a_group_short_of_its_backlog_is_still_never_auto_taken(scm_app):
     """The second half of the old ruling used to say the group's own acknowledged, unlinked
     row still reached its own purchase order however short the group's backlog was.
 
-    SLICE H, 8 Sep 2026: that exemption still governs what `_candidates_for_row` OFFERS
-    (asserted directly against the candidate walk in `test_order_inquiry_links.py` and
-    `test_order_inquiry_dedication.py`), but a group location is never cascadable, so the
-    automatic pass no longer places it (AC-H1) - the buy has to be linked by hand, which is
-    exactly the override the Link dialog keeps open (AC-H7).
+    B1 (review of PR): this PO is `autocount`-sourced and `active`, not a
+    `draft_recommendation` this codebase confirmed, so `supply_claim.
+    claim_purchase_order_for_sizing_rows` never runs and `own_so_claim` stays False - a
+    genuinely different scenario from the sibling test above (which IS a plan confirm and
+    DOES write the claim). The row stays raised because it is a `segment='project'` line
+    nobody's SO claims (G12, AC-H1), not because the deficit boundary refuses it - the
+    deficit boundary in fact LIFTS the refusal for this row (`_exempt_groups_for_row`),
+    which is what the direct candidate-walk assertions below prove: without that lift
+    (and without `_groups_in_deficit` excluding a STRANGER'S row from the same line), this
+    test would pass for the wrong reason.
     """
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
     _, db, _, _ = scm_app
     actor = seed_user(db, None)
     here = _group_warehouse(db, f"{MARKER}SHORT-BB")
+    elsewhere = _group_warehouse(db, f"{MARKER}SHORT-CC")
     pid = _mk_product(db, f"{MARKER}-SHORTSKU")
     # 13 owed at the group against 8 on order: net + remaining is -5, a real deficit.
     row = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=8)
     _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=5)
+    # A DIFFERENT group's own acknowledged, unlinked row of the same product - its own
+    # exemption is for ITS group ("CC"), never for "BB"'s.
+    stranger = _confirmed_leg(db, product_id=pid, warehouse_id=elsewhere, buy_qty=3)
 
     poid = _u()
     db.execute(text(
@@ -457,11 +480,30 @@ def test_a_group_short_of_its_backlog_is_still_never_auto_taken(scm_app):
         {"i": _u(), "po": poid, "p": pid, "w": here})
     db.flush()
 
+    service = ProjectOrderInquiryService(db)
+    # AC-H10: `_groups_in_deficit` excludes group "BB"'s own line from a STRANGER row at
+    # group "CC" entirely - nothing offered at all - while `_exempt_groups_for_row` lifts
+    # that same exclusion for the row whose own acknowledged instruction the buy was
+    # sized for. Deleting either function would make one of these two disagree with the
+    # other: without `_groups_in_deficit`, the stranger would wrongly see the line too;
+    # without `_exempt_groups_for_row`, the row that earned it would see nothing either.
+    assert service._candidates_for_row(stranger["inquiry_row"]) == [], (
+        "a stranger's row at a DIFFERENT group must not reach a line group BB's own "
+        "backlog already owes"
+    )
+    offered = service._candidates_for_row(row["inquiry_row"])
+    assert [c["location"] for c in offered] == [f"{MARKER}SHORT-BB"], (
+        "the row that earned the exemption must still be OFFERED the line"
+    )
+    assert offered[0]["cascadable"] is False, (
+        "AC-H1: offered is not cascadable - nobody's SO claims this project-bin line"
+    )
+
     ProjectOrderInquiryService(db).auto_place_for_products(
         [pid], actor_user_id=actor, trigger="worklist",
     )
 
     assert _linked_qty(db, row["inquiry_row"].id) == 0.0, (
-        "AC-H1: a group location is never cascadable, even for the row that earned the "
-        "deficit exemption"
+        "AC-H1: a project-bin line nobody's SO claims is never auto-taken, even for the "
+        "row that earned the deficit exemption"
     )

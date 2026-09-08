@@ -266,20 +266,22 @@ def test_a_shipping_order_line_outside_the_pool_is_never_drafted(api):
 
 
 def test_two_rows_are_never_drafted_onto_the_same_units(api):
-    """SLICE D, 8 Sep 2026: the first row's draft still takes the line's whole balance -
-    12 covers its 10 in full - but the second row now finds only 2 left, short of its own
-    10, so the all-or-nothing rule (AC-D1) drafts it NOTHING rather than the 2 it used to
-    get. The two rows still never draft onto the same units; there is just no partial
-    draft left to prove it with, so the assertion is that the second stays undrafted.
+    """SLICE D, 8 Sep 2026 (S5, review of PR): the first row's draft takes the line's
+    whole balance up to its own need - 12 covers its 10 in full, leaving exactly 2 - and
+    the SECOND row needs exactly that 2, so the all-or-nothing rule (AC-D2, covered in
+    full) drafts it the remainder and no more. Sized this way rather than at 10 so the
+    test keeps a POSITIVE assertion: the second row takes exactly what is left, proving
+    the two never draft onto the same units, rather than a vacuous "gets nothing" that a
+    row needing more than the whole line would read the same either way.
     """
     _client, world = api
     _open_po_line(world, qty=12)
 
     first = _raise_one_row(api, qty="10")["row"]
-    second = _raise_one_row(api, qty="10")["row"]
+    second = _raise_one_row(api, qty="2")["row"]
 
     assert sum(Decimal(str(l.qty)) for l in _links_of(world, first)) == Decimal("10")
-    assert sum(Decimal(str(l.qty)) for l in _links_of(world, second)) == Decimal("0")
+    assert sum(Decimal(str(l.qty)) for l in _links_of(world, second)) == Decimal("2")
 
 
 # ---------------------------------------------------------------------------

@@ -115,13 +115,17 @@ class _World:
             {"i": pool, "c": self.company_id},
         )
         self.warehouses["BRW"] = pool
+        # `segment = 'project'` on both (S1, captain's ruling): `cascadable` reads
+        # `is_site_pool(segment)` now, never `pool_warehouse_id` membership alone, and on
+        # the real book every non-pool warehouse is `segment = 'project'` - see
+        # `test_order_inquiry_links.py`'s own copy of this note for the measurement.
         for code in ("BRW-IB", "BRW-BB"):
             wid = _uid()
             db.execute(
                 text(
                     "INSERT INTO warehouses (id, company_id, warehouse_code, "
-                    "warehouse_name, is_active, pool_warehouse_id) "
-                    "VALUES (:i, :c, :code, :code, true, :p)"
+                    "warehouse_name, is_active, pool_warehouse_id, segment) "
+                    "VALUES (:i, :c, :code, :code, true, :p, 'project')"
                 ),
                 {"i": wid, "c": self.company_id, "code": code, "p": pool},
             )

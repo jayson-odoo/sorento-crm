@@ -139,13 +139,21 @@ class _World:
             {"i": pool, "c": self.company_id},
         )
         self.warehouses["BRW"] = pool
+        # `segment = 'project'` on every one of these (S1, captain's ruling on the review
+        # round): `is_site_pool(segment)` is what `cascadable` reads now, never
+        # `pool_warehouse_id` membership alone, and on the real book EVERY non-pool
+        # warehouse is `segment = 'project'` - measured against the 7 Sep prod copy, 55
+        # project-segment against 5 dealer-segment (the pools themselves) and zero null.
+        # A fixture warehouse left at NULL segment reads as a dealer location too
+        # (`COALESCE(segment, 'dealer')`) and would be wrongly cascadable on its own
+        # account, which is not the shape production has ever had.
         for code in ("BRW-IB", "DC1-IB", "BRW-BB"):
             wid = _uid()
             db.execute(
                 text(
                     "INSERT INTO warehouses (id, company_id, warehouse_code, "
-                    "warehouse_name, is_active, pool_warehouse_id) "
-                    "VALUES (:i, :c, :code, :code, true, :p)"
+                    "warehouse_name, is_active, pool_warehouse_id, segment) "
+                    "VALUES (:i, :c, :code, :code, true, :p, 'project')"
                 ),
                 {"i": wid, "c": self.company_id, "code": code, "p": pool},
             )
@@ -478,6 +486,24 @@ def test_a_candidate_states_both_dates_and_its_line_label(world):
         c for c in world.svc.po_candidates_for_row(row.id) if c["tier"] == TIER_POOL
     )
     assert pool_candidate["default_take"] == "8", "the pool line covers it instead"
+
+
+def test_default_take_reads_zero_for_every_candidate_the_cascade_will_not_deal(world):
+    """AC-D5. A row needing more than every cascadable candidate combined - the pool
+    line's own 165 is short of the 200 needed here - is the all-or-nothing case, and
+    EVERY candidate's `default_take` has to read zero, not just the ones the walk would
+    otherwise have skipped: the dialog's own preview must never promise a take the pass
+    itself will not make, or the two read as two different opinions."""
+    _two_purchase_orders(world)
+    row = world.row("ORDER", 200)
+
+    candidates = world.svc.po_candidates_for_row(row.id)
+
+    assert len(candidates) == 5, "every location tier is still LISTED, never filtered out"
+    assert {c["default_take"] for c in candidates} == {"0"}, (
+        "the cascadable total (165, the pool line) is short of the 200 needed, so the "
+        "cascade takes nothing - and the preview has to agree candidate by candidate"
+    )
 
 
 def test_an_order_row_is_offered_the_shipping_order_before_any_purchase_order(world):

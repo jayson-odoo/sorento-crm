@@ -3714,22 +3714,28 @@ class ProjectOrderInquiryService:
             "location": location,
             "tier": tier,
             # What the automatic pass may take (the owner, 8 Sep 2026 - slice H, correcting
-            # the reading of the 27 August ruling): a line claimed by THIS row's own sales
-            # order, OR one that sits at the SITE POOL. Nothing else - not the row's own
-            # project location (tier 1), not its ownership group at another site (tier 2),
-            # not a sibling location at the site (tier 4). The 27 August wording ("the site
-            # pool and better") read as a ceiling that also admitted tiers 1 and 2, and on
-            # real data that let the automatic pass take BRW-IB's own open line for SO391853
-            # out from under it - stock standing at a project location is already spoken for
-            # by that project UNLESS this row's own SO is the one holding it.
+            # the reading of the 27 August ruling, and the captain's own S1 ruling on the
+            # review round that followed): a line claimed by THIS row's own sales order, OR
+            # one that sits at the SITE POOL. Nothing else - not the row's own project
+            # location (tier 1), not its ownership group at another site (tier 2), not a
+            # sibling location at the site (tier 4). The 27 August wording ("the site pool
+            # and better") read as a ceiling that also admitted tiers 1 and 2, and on real
+            # data that let the automatic pass take BRW-IB's own open line for SO391853 out
+            # from under it - stock standing at a project location is already spoken for by
+            # that project UNLESS this row's own SO is the one holding it.
             #
-            # `own_so_claim` is that exception, and it is G12's own `own_claim` - the same
-            # evidence `project_locked` already reads (`project_locked = project_bin and
-            # not own_claim`), not a new mechanism. It was already cascadable before this
-            # ruling through that route; this rule only ADDS the pool-membership test
-            # alongside it, never removes the claim-based one. Pool membership is decided
-            # by `_pool_codes()` - the candidate's own location is one of the codes it
-            # names - never by the tier number and never by the shape of the code.
+            # `own_so_claim` is that exception, and it is G12's own `own_claim` - not a new
+            # mechanism. `is_site_pool(segment)` is the SAME predicate `project_locked`
+            # already reads it through (`project_locked = project_bin and not own_claim`,
+            # `project_bin = not is_site_pool(...)`), never `_pool_codes()`'s FK graph:
+            # S1, the captain's own ruling, corrects the first cut of this line, which
+            # tested FK pool membership - a SECOND, different definition of "pool" living
+            # beside `project_locked`'s. `pool_predicate.is_site_pool` is written to be the
+            # one spelling of a site pool, `segment`-based; `_pool_codes()` stays, but only
+            # for `link_location_tier`'s ORDERING below, a different question entirely. The
+            # algebra: with `own_claim` true, `project_locked` is always false regardless of
+            # `project_bin`, so `own_so_claim or not project_locked` already reduces to
+            # `own_so_claim or is_site_pool(segment)` - no second field to thread in.
             #
             # The tier and its sub-rank are UNCHANGED and still decide the ORDER a pool is
             # tried in (the row's own site pool before the others). The Link dialog is
@@ -3748,10 +3754,7 @@ class ProjectOrderInquiryService:
             # SUPPLY WRITER that created the line wrote (`app/services/scm/supply_claim.py`),
             # the book's own FromSODocList column, or a person in the Link dialog - never by
             # the pass that wants to consume it; this rule only READS that value.
-            "cascadable": own_so_claim
-            or (
-                (str(location or "").strip().upper() in pools) and not project_locked
-            ),
+            "cascadable": own_so_claim or not project_locked,
             "issue_date": issue_date,
             "expected_date": expected_date,
             "remaining": remaining,
