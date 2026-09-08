@@ -333,6 +333,9 @@ def coerce_domain_hint(value: Any) -> Any:
     is a TEAM name (`SUGGESTED_TEAMS`), not a domain - and `select_tool`'s
     `source_id LIKE '%purchasing%'` filter matched nothing (every incoming tool's
     `source_id` is `implemented::crm_incoming_stock_*`), so the turn ended `not_found`.
+    That filter is GONE since 8 Sep 2026 (the lane picks `DOMAIN_SPEC[domain].tools[0]`,
+    and a team name is not a key), so the same turn ends the same way for a plainer
+    reason. The guard stays: a domain outside the enum must not reach any reader.
 
     A domain reaches a turn from exactly TWO places, and both call this:
 

@@ -403,23 +403,6 @@ def _run_output_structurer(fixture: _corpus.Fixture) -> list:
     ]
 
 
-def _run_rag_query_params(fixture: _corpus.Fixture) -> list:
-    from app.services.chatbot.lanes.business.fetch import rag_query_params
-
-    embedding = ((fixture.input[0] or {}).get("json") or {}).get("data") or []
-    trigger = fixture.first("When Executed by Another Workflow")
-    return [
-        {
-            "json": rag_query_params(
-                (embedding[0] or {}).get("embedding") if embedding else [],
-                source_type=trigger.get("source_type"),
-                limit=trigger.get("limit"),
-                domain=trigger.get("domain"),
-            )
-        }
-    ]
-
-
 # --------------------------------------------------------------------------- #
 # S2, the tail. Two shapes of capture, and the difference is a BODY difference,
 # not a divergence: the live spine's `compile-current-state` predates RS-3 half
@@ -595,12 +578,12 @@ RUNNERS = {
     "fetch-result": _run_fetch_result,
     "entity-ids-transformer": _run_entity_ids_transformer,
     "output-structurer": _run_output_structurer,
-    # `sub-get-rag`'s first Code node. Its SECOND (`Code_in_JavaScript1`, the
-    # `source_id` -> name collapse) has no runner because it has no port: the tool RAG
-    # was dropped on 8 Sep 2026 and `fetch.collapse_tool_rows` went with it, so its 38
-    # captures are ungraded rather than graded against nothing. They stay on disk until
+    # `sub-get-rag`'s two Code nodes (`Code_in_JavaScript`, the embedding to SQL
+    # parameters; `Code_in_JavaScript1`, the `source_id` to name collapse) have no
+    # runners because they have no ports: the tool RAG was dropped on 8 Sep 2026 and
+    # `fetch.rag_query_params` / `fetch.collapse_tool_rows` went with it. Their 76
+    # captures are ungraded rather than graded against nothing, and stay on disk until
     # n8n's own copy of that sub is retired.
-    "Code_in_JavaScript": _run_rag_query_params,
     "build-outcome": _run_build_outcome,
     "escalate-catalog": _run_escalate_catalog,
     "cs-roster-plan": _run_cs_roster_plan,

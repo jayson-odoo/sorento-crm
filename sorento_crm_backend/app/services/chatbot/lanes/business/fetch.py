@@ -149,27 +149,6 @@ def tool_filter(candidates: Any, *, has_product: bool | None) -> ToolPick:
     )
 
 
-def rag_query_params(
-    embedding: list[float], *, source_type: Any, limit: Any, domain: Any
-) -> dict[str, Any]:
-    """`sub-get-rag`'s first Code node: the embedding becomes the SQL's bound parameters.
-
-    Ported for REPLAY rather than for use, and that was already true before the tool RAG
-    was dropped: in process there was never a `$1..$4` to bind, so the only consumer is
-    `test_replay.py`. It is here because the node has 38 real captures and grading it is
-    what proves the port reads the embedding response the same way n8n does -
-    `$json.data[0].embedding`, and the pgvector literal is `[a,b,c]` with no spaces. It is
-    the last `sub-get-rag` body left; nothing on the turn path calls it (`select_tool` reads
-    `DOMAIN_SPEC`), and it goes the day n8n's own copy of that sub is retired.
-    """
-    return {
-        "vector_text": "[" + ",".join(jsc.js_string(v) for v in jsc.array(embedding)) + "]",
-        "source_type": source_type,
-        "limit": limit,
-        "domain": domain,
-    }
-
-
 def select_tool(domain: str | None) -> list[dict[str, Any]]:
     """The domain's tool, read off `DOMAIN_SPEC`. No embedding, no database, no network.
 
@@ -178,6 +157,13 @@ def select_tool(domain: str | None) -> list[dict[str, Any]]:
     table, and the two domains that answer from nothing (`goods_receive`, `ideate`). The
     empty list reaches `tool_filter` and ends the turn `not_found`, exactly as a zero-row
     search did (H11).
+
+    NULL DOMAIN IS A NARROWING, and a deliberate one: the search ran UNFILTERED when
+    `domain` was null, so such a turn could still come back with a tool, and this returns
+    nothing. Measured on `sorento_ai_automation_0907`: of 994 `business_query` turns, 0
+    reached the fetch step with a null or missing `domain_hint`, so the narrowing has no
+    measured effect. A tool picked by cosine distance alone, with no domain to answer
+    from, was never a defensible answer anyway.
 
     **Why the vector search went (owner ruling, 8 Sep 2026: "we can drop the rag from
     chatbot lane").** The candidate set was already this literal, and it is small: 4 tools

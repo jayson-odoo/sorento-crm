@@ -163,14 +163,11 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
     "fetch-result": ("sub-fetch-results-rs", "sub-fetch-results-live"),
     "entity-ids-transformer": ("sub-get-results",),
     "output-structurer": ("sub-get-results",),
-    # `sub-get-rag`'s two Code nodes, under the names n8n gave them. The FIRST is ported
-    # for REPLAY only: in process there is no SQL to bind parameters for. The second has
-    # no port left at all - the tool RAG was dropped on 8 Sep 2026, taking
-    # `fetch.collapse_tool_rows` with it - so `test_replay.RUNNERS` has no entry for it
-    # and its captures are not graded. The slug stays so the pair is still discoverable
-    # from one place if n8n's own copy of the sub is ever re-read.
-    "Code_in_JavaScript": ("sub-get-rag-live",),
-    "Code_in_JavaScript1": ("sub-get-rag-live",),
+    # `sub-get-rag`'s two Code nodes (`Code_in_JavaScript` / `Code_in_JavaScript1`, under
+    # the names n8n gave them) are DELIBERATELY absent. The tool RAG was dropped on 8 Sep
+    # 2026 and both bodies went with it, so neither has a port to grade and
+    # `test_replay.RUNNERS` has no entry for either. Their 76 captures stay on disk, and
+    # they come back here the day something ports them again.
     # S2, the tail. `clone-sub-output` is the RS-9 split-out sub; the two spine slugs
     # captured the same node names before and after the split, which is why the loader
     # unions them and prefixes each id with its slug.

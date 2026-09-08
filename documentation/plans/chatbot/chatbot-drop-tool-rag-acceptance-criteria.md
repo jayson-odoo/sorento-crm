@@ -20,9 +20,13 @@ Plan: `PLAN-chatbot-drop-tool-rag.md`. Every criterion is a pytest unless marked
 - AC-3 Trace. `_tool_pick` on the picked item carries `chosen = tools[0]`,
   `rejected = []`, `count = 1`, `source = "domain_spec"`. The trace step the drawer
   reads is otherwise unchanged in shape.
-- AC-4 Outcome parity. `domain = None`, a domain outside `DOMAIN_SPEC`, and a domain
-  with an empty `tools` tuple (`goods_receive`, `ideate`) all end `outcome = "not_found"`
-  with the existing "no MCP tool matched this question" fragment.
+- AC-4 Outcomes. `domain = None`, a domain outside `DOMAIN_SPEC`, and a domain with an
+  empty `tools` tuple (`goods_receive`, `ideate`) all end `outcome = "not_found"` with the
+  existing "no MCP tool matched this question" fragment. Parity for the last two, and a
+  deliberate NARROWING for the first: `search_tool_chunks` searched the whole pool
+  UNFILTERED when `domain` was null, so such a turn could still be handed a tool. Measured
+  on `sorento_ai_automation_0907`, 0 of 994 `business_query` turns reached the fetch step
+  with a null or missing `domain_hint`, so the narrowing has no measured effect.
 - AC-5 Egress guard intact. `tests/chatbot/test_tool_pool_is_read_only.py` and the
   `ensure_read_only` tests pass unchanged.
 - AC-6 Seams gone. `FetchServices` has no `embed` or `tool_search` field;
@@ -31,8 +35,18 @@ Plan: `PLAN-chatbot-drop-tool-rag.md`. Every criterion is a pytest unless marked
   grep for each name across `sorento_crm_backend/app` returns nothing.
 - AC-7 Suite. `pytest tests/chatbot -q` green on a Postgres DB migrated to head (this
   lane uses `sorento_ai_automation_0907`), including `test_replay.py`.
-- AC-8 Browser (tester, agent-browser, via sidebar). Chatbot Console, contact Jayson,
-  message "last in for SRT62-gm" on the local stack over `sorento_ai_automation_0907`:
-  the reply lists the most recent fully-received allocation for SRT62-GM (10 rows exist,
-  all `fully_received`), and the turn's trace shows `source: domain_spec`. If the local
-  parser has no LLM key the tester reports that as the blocker rather than skipping AC-8.
+- AC-8 Browser (tester, agent-browser, via sidebar) plus one SQL read. Chatbot Console,
+  contact Jayson, message "last in for SRT62-gm" on the local stack over
+  `sorento_ai_automation_0907`: the reply lists the most recent fully-received allocation
+  for SRT62-GM (10 rows exist, all `fully_received`).
+
+  The `source: domain_spec` half is checked in SQL, not in the drawer, and that is not a
+  shortcut: no screen renders it. `api/v1/system/trace_detail.py` returns only
+  `name` / `args` / `envelope` / `ms` for the tool step, and the console renders no trace
+  at all, so `_tool_pick` reaches no UI. Read it off the row instead - the `_tool_pick`
+  object under the fetch step of `chatbot.turns.trace` for that turn - and assert
+  `chosen = crm_procurement_spo_allocations_last_receipt_list`, `rejected = []`,
+  `count = 1`, `source = domain_spec`.
+
+  If the local parser has no LLM key the tester reports that as the blocker rather than
+  skipping AC-8.

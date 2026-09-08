@@ -155,8 +155,9 @@ def _error_fragment(reason: str, *, outcome: str | None = None) -> dict[str, Any
     load-bearing: `not_found` is a GENUINE ABSENCE (H11's zero-tool case - the question
     was understood and nothing matches it), while an absent `outcome` is an
     INFRASTRUCTURE failure (the MCP call raised, or the tool returned an error envelope).
-    Only the first may be told to the customer as "I could not find anything". It rides on the ITEM as well as the fragment because `complete_answer`
-    receives the item, not the fragment.
+    Only the first may be told to the customer as "I could not find anything". It rides
+    on the ITEM as well as the fragment because `complete_answer` receives the item, not
+    the fragment.
     """
     item = fetch_mod.fetch_result(
         {"error": reason, **({"outcome": outcome} if outcome is not None else {})}

@@ -1,7 +1,7 @@
 # PLAN: drop the tool RAG from the chatbot business lane
 
-Status: IMPLEMENTED (8 Sep 2026, branch `feat/chatbot-drop-tool-rag`), AC-8 (browser)
-outstanding. Owner ruling the same day: "actually i just need 1 for each ... we can drop
+Status: IMPLEMENTED, AC-8 browser check pending (8 Sep 2026, branch
+`feat/chatbot-drop-tool-rag`). Owner ruling the same day: "actually i just need 1 for each ... we can drop
 the rag from chatbot lane".
 UAC: `chatbot-drop-tool-rag-acceptance-criteria.md`.
 
@@ -52,9 +52,18 @@ one candidate and emits `_tool_pick = {chosen, rejected: [], count: 1, has_produ
 a new `source: "domain_spec"` set by the caller, so the trace still says how the tool was
 chosen.
 
-Outcomes are unchanged: no domain, an unknown domain, or a domain with an empty `tools`
-tuple (`goods_receive`, `ideate`) reaches `tool_filter` with `[]` and ends
-`not_found` with the same "no MCP tool matched this question" fragment (H11).
+Outcomes: an unknown domain, or a domain with an empty `tools` tuple (`goods_receive`,
+`ideate`), reaches `tool_filter` with `[]` and ends `not_found` with the same "no MCP tool
+matched this question" fragment (H11), exactly as a zero-row search did.
+
+**A NULL domain is a narrowing, not parity, and it is deliberate.** `search_tool_chunks`
+ran an UNFILTERED search when `domain` was null (its `else: rows = _run([])` branch), so
+such a turn used to come back with whatever tool was nearest in the whole pool;
+`select_tool(None)` returns `[]` and the turn ends `not_found`. Measured on
+`sorento_ai_automation_0907`: of 994 `business_query` turns, 0 reached the fetch step with
+a null or missing `domain_hint`, so the change has no measured effect. It is also the
+right direction: a tool chosen by cosine distance with no domain to answer from was never
+a defensible answer.
 
 ## Work
 
@@ -104,15 +113,16 @@ contract:
    the `FetchServices` builder is `fetch_services(db)`, and that is the one now returning
    `FetchServices(mcp_call=_mcp_call(db))`. It still takes its session, unused, so the
    engine's call site reads like every other lane's.
-2. **`rag_query_params` stays.** Step 1 names `collapse_tool_rows` only, and the other
-   `sub-get-rag` node body is left alone deliberately: it is REPLAY-only (it never ran in
-   process) and 38 captures grade it. It is now the last `sub-get-rag` body in the module
-   and its docstring says so.
-3. **`collapse_tool_rows`' 38 captures are no longer graded.** Deleting the port means
-   `test_replay.RUNNERS` loses its `Code_in_JavaScript1` entry, so that node drops out of
-   `PORTED_NODES` and its fixtures (1 vendored, 38 in the corpus) stop being replayed. The
-   captures stay on disk and `_corpus.NODE_SLUGS` keeps the slug, both with a comment
-   saying why. Nothing else about the replay changes: the vendored gate is green.
+2. **`rag_query_params` goes too** (review, 8 Sep 2026). Step 1 names
+   `collapse_tool_rows` only, and the first cut kept the other `sub-get-rag` body on the
+   grounds that 38 captures grade it. That is an unjustified asymmetry: both are
+   REPLAY-only bodies of a sub nothing calls now, so both are deleted.
+3. **`sub-get-rag`'s 76 captures are no longer graded.** With neither port left,
+   `test_replay.RUNNERS` loses both entries, `_corpus.NODE_SLUGS` loses both slugs, and
+   the two nodes drop out of `PORTED_NODES` and out of `COVERAGE.md` (regenerated;
+   `sub-get-rag-live` now renders as `(none ported)`, with its scan still on record). The
+   fixture files stay on disk, with a comment at each site saying why. Nothing else about
+   the replay changes: the vendored gate is green.
 4. **A zero-tool turn is no longer reachable end to end**, which is the point of the
    change but does move two engine-level tests. Every domain that can pass the gate has a
    tool, so `tests/chatbot/test_s6c_engine_paths.py::TestH11ZeroToolsIsAnOutcomeEndToEnd`
