@@ -935,7 +935,43 @@ def _annotate(
     if full:
         out["dym_ambiguous_codes"] = dym_ambiguous_codes  # [] on every non-uuid-keyed turn
         out["dym_ambiguous_uuids"] = dym_ambiguous_uuids  # F8's uuid companion, likewise
+    # #750, decision 1: on the uuid-keyed lane `probed` / `dym_available_codes` are UUIDs and
+    # every render keys by the CODE it printed, so the composer needs the planner's own
+    # (uuid, code, company) map to translate. Carried HERE rather than re-derived there: this
+    # node already holds it, and a second derivation would be a second thing to keep in step
+    # with `_dym_plan`. Emitted only when the lane IS uuid-keyed, so a code-keyed turn (and
+    # every capture of one) is byte-identical. `build_suggest_offer` strips it again with the
+    # rest of `_DYM_CTRL_KEYS`.
+    if uuid_keyed:
+        out["dym_probe_row_keys"] = jsc.array(jsc.get(xf, "dym_probe_row_keys"))
+    # #750, decision 3: the noun the customer reads is the RESOLVED attachment type
+    # ("Product Photos"), not their own word for it ("photo", "gambar"). The scoping entity is
+    # what the probe was actually filtered on, so it is the only honest name for what was
+    # looked for. `DOMAIN_PROBE["product_attachment"].noun` is None precisely because the type
+    # is not known until the turn resolves one; the domains that DO carry a literal noun
+    # (`inventory`, `promotion`) declare no `requires` and so never reach this.
+    type_name = _scoping_type_name(xf)
+    if type_name:
+        out["dym_probe_type_name"] = type_name
     return out
+
+
+_TYPE_SCOPES: frozenset[str] = frozenset({"attachment_type", "certificate"})
+
+
+def _scoping_type_name(transform: Any) -> str:
+    """The attachment type the probe was scoped to, off the plan's own `dym_probe_entities`.
+
+    `_dym_plan` appends the scoping entities AFTER the candidates (`[*cands, *scoping]`) and
+    only ever from `cfg["requires"]`, so the first type-shaped entity here is the one
+    `_scoping_from` chose, code and all.
+    """
+    for entity in jsc.array(jsc.get(transform, "dym_probe_entities")):
+        if _norm(jsc.get(entity, "entity_type")) in _TYPE_SCOPES:
+            code = jsc.nullish_str(jsc.get(entity, "code")).strip()
+            if code:
+                return code
+    return ""
 
 
 def dym_annotate(
