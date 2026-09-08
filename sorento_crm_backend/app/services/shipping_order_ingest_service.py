@@ -545,32 +545,63 @@ class ShippingOrderIngestService(MasterRefResolver):
         The claim-writing loop itself is `order_link_service
         .write_claims_for_lines` (S7 dedup), shared with
         `DocumentIngestService`'s own line claims.
+
+        V5 (AutoCount linkage widen): a line naming the EXACT sales-order
+        line it was raised for, via `from_so_line_ref`, resolves through
+        `order_link_service.write_line_ref_claims` - see
+        `DocumentIngestService._write_order_link_claims` for the shared
+        docstring, and `order_link_service.write_line_ref_claims`'s own for
+        the resolution rule.
+
+        CALL ORDER (B1 review fix): `write_line_ref_claims` runs FIRST, same
+        rule and same reason as `DocumentIngestService`'s own call site - see
+        its docstring.
         """
-        wanted = [
+        number_wanted = [
             (line.source_ref, [n for n in (line.from_so_numbers or []) if n])
             for line in payload.lines
             if getattr(line, "from_so_numbers", None)
         ]
-        if not wanted:
+        ref_wanted = [
+            (line.source_ref, line.from_so_line_ref)
+            for line in payload.lines
+            if getattr(line, "from_so_line_ref", None)
+        ]
+        if not number_wanted and not ref_wanted:
             return
 
-        refs = [source_ref for source_ref, _ in wanted]
+        refs = {source_ref for source_ref, _ in number_wanted} | {
+            source_ref for source_ref, _ in ref_wanted
+        }
         rows = (
             self.db.query(SPOAllocation)
             .filter(
                 SPOAllocation.company_id == self.company_id,
                 SPOAllocation.source_doc_ref == payload.source_ref,
-                SPOAllocation.source_ref.in_(refs),
+                SPOAllocation.source_ref.in_(list(refs)),
             )
             .all()
+        )
+        # N1 review fix: one row/product-code index, shared by both calls
+        # below instead of each running its own identical `Product` query.
+        index = order_link_service.index_claim_rows(self.db, rows)
+        order_link_service.write_line_ref_claims(
+            self.db,
+            company_id=self.company_id,
+            document_number=payload.spo_number,
+            rows=rows,
+            wanted=ref_wanted,
+            id_attr="spo_allocation_id",
+            index=index,
         )
         order_link_service.write_claims_for_lines(
             self.db,
             company_id=self.company_id,
             document_number=payload.spo_number,
             rows=rows,
-            wanted=wanted,
+            wanted=number_wanted,
             id_attr="spo_allocation_id",
+            index=index,
         )
 
     def _guard_spo_number_conflict(self, payload: CanonicalShippingOrder) -> None:
@@ -812,7 +843,7 @@ class ShippingOrderIngestService(MasterRefResolver):
         received = _round_qty(line.qty_received)
         outstanding = ordered - received
 
-        return {
+        values = {
             "product_id": product_id,
             "warehouse_id": warehouse_id,
             "location_code": location_code,
@@ -835,6 +866,31 @@ class ShippingOrderIngestService(MasterRefResolver):
             # by `_write_row`. No column exists for it on this table either.
             "line_number": getattr(line, "line_number", None),
         }
+        # V5 (AutoCount linkage widen, ingest-contract-2-2-so-links): raw
+        # pass-through onto `spo_allocations`, never resolved into an id
+        # (see the column comments in `app/models/procurement.py`). Left OUT
+        # of `values` entirely when the payload does not mention the field -
+        # `model_fields_set`, not truthiness - so an omitted field on a
+        # re-push never clears what an earlier push recorded (absent_vs_null,
+        # the same rule this whole surface follows for every other field).
+        if "from_so_line_ref" in line.model_fields_set:
+            values["from_so_line_ref"] = line.from_so_line_ref
+        if "from_po_line_ref" in line.model_fields_set:
+            values["from_po_line_ref"] = line.from_po_line_ref
+        if "from_po_number" in line.model_fields_set:
+            values["from_po_number"] = line.from_po_number
+        # V5: the cross-book case - raw pass-through, same rule as the
+        # fields above. See `PurchaseOrderLine.from_so_external`'s column
+        # comment for why this is not a claim row.
+        if "from_so_external" in line.model_fields_set:
+            external = line.from_so_external
+            # S4 review fix: `exclude_unset=True` so a partial object is
+            # stored exactly as sent - see the identical comment in
+            # `DocumentIngestService._line_values`.
+            values["from_so_external"] = (
+                external.model_dump(exclude_unset=True) if external is not None else None
+            )
+        return values
 
     def _location_code(
         self, warehouse_id: Optional[str], sent_code: Optional[str]

@@ -538,6 +538,25 @@ class SPOAllocation(Base, CompanyScopedMixin):
     #: was deleted, showing 58 open units on a 29-unit order. The group
     #: recompute skips a retired row entirely.
     retired_at = Column(DateTime(timezone=True), nullable=True)
+    # --- AutoCount linkage widen (V5, ingest-contract-2-2-so-links) ------------------
+    #: The SOURCE purchase-order line this shipping-order line was raised from,
+    #: same `"{database}:{DocKey}:{DtlKey}"` format as `source_ref` above. Raw
+    #: pass-through, never resolved into an id: `po_line_id` above already means
+    #: something narrower (a Sorento-raised SPO's own supply chain), and this is
+    #: what lets an order-inquiry row that reserved against this SPO print the
+    #: purchase order the buyer actually reads. NULL when the ESB has not stated
+    #: one; an omitted field on a re-push never clears a value already stored
+    #: (absent_vs_null, `shipping_order_ingest_service._line_values`).
+    from_po_line_ref = Column(String(255), nullable=True)
+    #: The source purchase order's own document number, alongside the ref above.
+    from_po_number = Column(String(100), nullable=True)
+    #: The exact sales-order line this shipping-order line was raised for,
+    #: same format and same B2 uniform-persistence rule as
+    #: `PurchaseOrderLine.from_so_line_ref` below - see its comment.
+    from_so_line_ref = Column(String(255), nullable=True)
+    #: The cross-book case of a sales-order line reference - see the
+    #: identical comment on `PurchaseOrderLine.from_so_external` below.
+    from_so_external = Column(JSONB, nullable=True)
 
     inbound_shipment = relationship("InboundShipment", back_populates="spo_allocations")
     supplier = relationship("Supplier", foreign_keys=[supplier_id])
@@ -797,6 +816,32 @@ class PurchaseOrderLine(Base, CompanyScopedMixin):
     line_status = Column(String(50), default="open", nullable=False)
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
+    # --- AutoCount linkage widen (V5, ingest-contract-2-2-so-links) ------------------
+    # B2 (review ruling): every field the wire sends is persisted uniformly on
+    # BOTH `purchase_order_lines` and `spo_allocations`, not on `spo_allocations`
+    # alone - `from_so_line_ref` in particular is the whole point of this
+    # slice, and a purchase order pushed before its sales order must not lose
+    # the exact ref forever. Same format as `source_ref` above
+    # (`"{database}:{DocKey}:{DtlKey}"`), joinable to `sales_order_lines
+    # .source_ref`. `order_link_service.write_line_ref_claims` resolves it
+    # at write time when possible; `_exact_so_line_for` re-reads it straight
+    # off this column on a later `resolve()` sweep when it was not - which is
+    # the reason it is stored here at all, not merely consumed and discarded.
+    from_so_line_ref = Column(String(255), nullable=True)
+    #: The SOURCE purchase-order line this one was raised from (an
+    #: inter-company book transfer chain), same format as the ref above -
+    #: raw pass-through, never resolved into an id.
+    from_po_line_ref = Column(String(255), nullable=True)
+    #: The source purchase order's own document number, alongside the ref.
+    from_po_number = Column(String(100), nullable=True)
+    # The cross-book case of a sales-order line reference - the sales order
+    # lives in ANOTHER AutoCount database, so its key cannot resolve here.
+    # Recorded raw, verbatim from the payload's `from_so_external` object -
+    # the smallest honest place for a fact that never becomes a Sorento id
+    # (see `order_link_service.write_line_ref_claims`'s docstring for why
+    # this is not a `scm.order_link_claim` row: that table's identity
+    # requires a real `so_number`, which a cross-book key does not carry).
+    from_so_external = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 

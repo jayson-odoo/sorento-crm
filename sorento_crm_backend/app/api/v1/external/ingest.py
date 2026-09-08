@@ -188,7 +188,12 @@ SUPPORTED_ENTITIES = set(ENTITY_SPECS) | set(DOCUMENT_ENTITIES) | set(SHIPPING_O
 # router. A STRING (S4, ingest-parity-standardisation D-final): "2.1" is a
 # point release of the same major contract, and a bare int can never express
 # that - the ESB's own gate compares it as an opaque value, never arithmetic.
-CONTRACT_VERSION = "2.1"
+# "2.2" (V5, ingest-contract-2-2-so-links): from_so_line_ref/from_so_external/
+# from_po_line_ref/from_po_number added to purchase_orders and
+# shipping_orders lines, and from_so_numbers is now listed under
+# `fields_added` too (a v2-era field the ESB only now depends on reading
+# back). All additive and optional, same as every point release before it.
+CONTRACT_VERSION = "2.2"
 
 
 def _principal_may_delete(db: Session, current_user: dict, entity: str) -> bool:
