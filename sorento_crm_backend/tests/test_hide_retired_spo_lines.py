@@ -1,4 +1,4 @@
-"""RED tests for hiding retired SPO allocation lines (AC-H1..AC-H6, AC-H8).
+"""RED tests for hiding retired SPO allocation lines (AC-H1..AC-H6, AC-H8, AC-H10).
 
 UAC: documentation/plans/autocount/hide-retired-spo-lines-acceptance-criteria.md
 PLAN: documentation/plans/autocount/PLAN-hide-retired-spo-lines.md
@@ -73,13 +73,14 @@ def _alloc(
     line_status: str = "open",
     retired_at: datetime | None = None,
     source_system: str | None = "autocount",
+    stated_received: int | None = None,
 ) -> SPOAllocation:
-    """One `spo_allocations` row, extended with `retired_at`/`source_system` -
-    the two columns `test_spo_allocation_documents._line` does not carry.
-    `source_system="autocount"` by default so `list_allocations`' GRN-computed-
-    receipt recompute (`_receipt_is_computed`, triggered for `source_system in
-    {None, 'scm_spo_history'}`) never overwrites the seeded `quantity_received`
-    out from under an assertion here.
+    """One `spo_allocations` row, extended with `retired_at`/`source_system`/
+    `stated_received` - columns `test_spo_allocation_documents._line` does not
+    carry. `source_system="autocount"` by default so `list_allocations`'
+    GRN-computed-receipt recompute (`_receipt_is_computed`, triggered for
+    `source_system in {None, 'scm_spo_history'}`) never overwrites the seeded
+    `quantity_received` out from under an assertion here.
     """
     allocation = SPOAllocation(
         id=_u(),
@@ -92,6 +93,7 @@ def _alloc(
         line_status=line_status,
         retired_at=retired_at,
         source_system=source_system,
+        stated_received=stated_received,
     )
     db.add(allocation)
     db.flush()
@@ -437,3 +439,139 @@ class TestAcH8DocumentTotalExcludesTheRetiredLine:
         assert retired_line.id not in line_ids
         assert body["total_allocated"] == 600, body["total_allocated"]
         assert body["line_count"] == 3, body["line_count"]
+
+
+# =================================================================================== #
+# AC-H10 (B2, round 2): a receipt approved AFTER retirement still reaches the row
+# =================================================================================== #
+
+
+class TestAcH10ReceiptAfterRetirement:
+    def test_a_grn_approved_after_retirement_still_writes_the_allocation_s_receipt(
+        self, scm_app
+    ):
+        """AC-H10, first half. A retired allocation (received 0) plus an
+        approved goods-received note whose picking line draws 5 against it:
+        after `sync_grn_received_to_spo`, the allocation reads
+        `quantity_received 5`, is still returned by the document detail (R2:
+        `retired_at` set AND `quantity_received > 0` stays visible), and
+        counts in `total_received`.
+
+        RED today: `_sync_received_for_allocations` still `continue`s on a
+        retired autocount row without writing anything, so
+        `quantity_received` stays 0 - and at 0 the row is also hidden
+        (R2 requires `> 0`), so both the DB-level and the document-detail
+        assertions fail.
+        """
+        from app.services.procurement_service import PickingHeaderService
+
+        client, db = _client(scm_app)
+        chain = _chain(db)
+        product = _product(db, chain)
+        doc = unique_code("SPO-H10A")
+
+        retired = _alloc(
+            db, spo_number=doc, line_no=1, product=product, allocated=47, received=0,
+            line_status="closed", retired_at=_now(),
+        )
+
+        header = PickingHeader(
+            id=_u(),
+            picking_number=unique_code("GRN-H10A"),
+            picking_type="goods_received",
+            picking_status="approved",
+            spo_number=doc,
+        )
+        db.add(header)
+        db.flush()
+        db.add(
+            PickingLine(
+                id=_u(),
+                picking_header_id=header.id,
+                spo_allocation_id=retired.id,
+                product_id=product.id,
+                quantity_expected=5,
+                quantity_picked=5,
+            )
+        )
+        db.flush()
+        db.commit()
+
+        PickingHeaderService(db).sync_grn_received_to_spo(header.id)
+
+        db.expire_all()
+        stored = db.query(SPOAllocation).filter(SPOAllocation.id == retired.id).one()
+        assert stored.quantity_received == 5, stored.quantity_received
+
+        r = client.get(f"{DOCUMENTS_URL}/{doc}")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        line_ids = {line["id"] for line in body["lines"]}
+        assert retired.id in line_ids, line_ids
+        assert body["total_received"] == 5, body["total_received"]
+
+    def test_a_retired_line_s_stated_receipt_survives_the_grn_that_proved_it_being_deleted(
+        self, scm_app
+    ):
+        """AC-H10, second half - the AC-X40 shape
+        (`tests/test_spo_xlsx_supersede.py::TestAcX40...`), but seeded with
+        `retired_at` set directly rather than reached through the ingest's
+        own leftover sweep: a retired allocation with `stated_received 29`
+        and `quantity_received 29` (closed BY the GRN that proved it) whose
+        GRN is then deleted still reads 29 and stays closed - the D28c
+        floor (`max(stated_received, its own approved picking total)`)
+        covers the deletion, so a retired line is never demand again just
+        because the receipt that closed it went away.
+
+        This is a guard, not a reproduction of a live bug: on the
+        PRE-B2 tree the assertions below already pass BY INERTIA (a retired
+        row is never touched by `_sync_received_for_allocations` at all, in
+        either direction, so `quantity_received` simply never moves off 29).
+        `test_a_grn_approved_after_retirement...` above is what actually
+        pins the new write path being red today; this one exists so that
+        once that write path lands, nobody drops the `max(stated_received,
+        ...)` floor and silently zeroes a retired line's receipt the moment
+        its GRN is deleted (AC-X40's own regression, one row over).
+        """
+        from app.services.procurement_service import PickingHeaderService
+
+        client, db = _client(scm_app)
+        chain = _chain(db)
+        product = _product(db, chain)
+        doc = unique_code("SPO-H10B")
+
+        retired = _alloc(
+            db, spo_number=doc, line_no=1, product=product, allocated=29, received=29,
+            receipt_status="fully_received", line_status="closed", retired_at=_now(),
+            stated_received=29,
+        )
+
+        header = PickingHeader(
+            id=_u(),
+            picking_number=unique_code("GRN-H10B"),
+            picking_type="goods_received",
+            picking_status="approved",
+            spo_number=doc,
+        )
+        db.add(header)
+        db.flush()
+        db.add(
+            PickingLine(
+                id=_u(),
+                picking_header_id=header.id,
+                spo_allocation_id=retired.id,
+                product_id=product.id,
+                quantity_expected=29,
+                quantity_picked=29,
+            )
+        )
+        db.flush()
+        db.commit()
+
+        PickingHeaderService(db).delete_grn(header.id)
+
+        db.expire_all()
+        stored = db.query(SPOAllocation).filter(SPOAllocation.id == retired.id).one()
+        assert stored.quantity_received == 29, stored.quantity_received
+        assert stored.line_status == "closed", stored.line_status
+        assert stored.receipt_status == "fully_received", stored.receipt_status
