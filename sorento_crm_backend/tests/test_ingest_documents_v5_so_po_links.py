@@ -38,6 +38,7 @@ from sqlalchemy import text
 
 from app.api.v1.external.contract import FIELDS_ADDED
 from app.models.order import SalesOrder, SalesOrderLine
+from app.models.product import Product
 from app.services.scm import order_link_service
 
 from tests.test_ingest_documents import (
@@ -116,6 +117,31 @@ def _spo_rows(env, spo_number: str):
         )
         .mappings()
         .all()
+    )
+
+
+def _assert_ambiguous_match_picks_the_decoy(env, *, so_number: str, product_id: str, decoy_line):
+    """The premise `TestRefTakesPrecedenceOverAmbiguousNumberMatch` and
+    `TestExactRefRecoveryOnLaterSweep` both rest on (reviewer follow-up):
+    `_sales_side`'s `by_key` dict comprehension, over an ORDER-BY-less
+    SELECT, keeps the DECOY for the shared `(so_number, item_code)` key -
+    verified empirically in this environment, never guaranteed by Postgres.
+
+    Asserted HERE, before the behaviour under test runs, so a broken
+    premise fails LOUDLY, naming itself, instead of the surrounding test
+    quietly going on passing with the exact-ref logic it exists to guard
+    doing nothing at all - the ordering assumption can only fail OPEN
+    otherwise (a flipped order makes the ambiguous match agree with the
+    exact-ref result by coincidence, and the real assertion below cannot
+    tell the two apart).
+    """
+    item_code = env.db.query(Product.product_code).filter(Product.id == product_id).scalar()
+    by_key, _by_number = order_link_service._sales_side(env.db, {so_number})
+    ambiguous = by_key[(so_number, item_code)]
+    assert str(ambiguous.id) == str(decoy_line.id), (
+        "premise broken: _sales_side's ambiguous (so_number, item_code) match no "
+        "longer picks the decoy line - this test can no longer prove the exact-ref "
+        "precedence it exists to guard"
     )
 
 
@@ -415,6 +441,15 @@ class TestRefTakesPrecedenceOverAmbiguousNumberMatch:
         env.db.flush()
         env.db.commit()
 
+        # Premise, asserted before exercising the behaviour under test
+        # (reviewer follow-up): if `_sales_side`'s insertion-order
+        # assumption ever stops holding, this fails HERE, loudly, instead
+        # of the assertion below quietly continuing to pass with the fix
+        # doing nothing.
+        _assert_ambiguous_match_picks_the_decoy(
+            env, so_number=so_number, product_id=product_id, decoy_line=decoy_line,
+        )
+
         line = _po_line(env, from_so_numbers=[so_number], from_so_line_ref=wanted_ref)
         record = _po_record(env, lines=[line])
 
@@ -446,6 +481,10 @@ class TestRefTakesPrecedenceOverAmbiguousNumberMatch:
         env.db.add(decoy_line)
         env.db.flush()
         env.db.commit()
+
+        _assert_ambiguous_match_picks_the_decoy(
+            env, so_number=so_number, product_id=product_id, decoy_line=decoy_line,
+        )
 
         line = _spo_line(env, from_so_numbers=[so_number], from_so_line_ref=wanted_ref)
         record = _spo_record(env, lines=[line], supplier_ref=env.supplier_ref)
@@ -758,6 +797,14 @@ class TestExactRefRecoveryOnLaterSweep:
         env.db.add(decoy_line)
         env.db.flush()
         env.db.commit()
+
+        # Premise, asserted before calling resolve() (reviewer follow-up):
+        # if the ambiguous match ever stopped picking the decoy, the
+        # assertion below would go on passing with the exact-ref recovery
+        # dead - it can only fail OPEN otherwise.
+        _assert_ambiguous_match_picks_the_decoy(
+            env, so_number=so_number, product_id=product_id, decoy_line=decoy_line,
+        )
 
         result = order_link_service.resolve(env.db)
 
