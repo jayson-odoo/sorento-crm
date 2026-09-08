@@ -2950,6 +2950,8 @@ def revise(
     `qty_ordered` over the header's lines on read - so "the header total" recomputes itself
     the moment the lines above do.
     """
+    from app.services.scm import spo_supply
+
     shipment, po, links = _spo_scope(db, shipment_id, purchase_order_id, for_update=True)
     own = _own_state(db, po, links)
 
@@ -3146,6 +3148,11 @@ def revise(
 
     for sid in dropped:
         held = own[sid]
+        # NOT the AC-E18 guard (round 4 addendum) - deliberately unfiltered. This
+        # is the whole SPO LINE going, not one split within a kept line: every
+        # allocation under it, hidden ones included, is going with it, the same
+        # way `held["po_line"]` and `links[sid]` two lines down are. There is no
+        # "operator only meant the visible half" reading of dropping a line.
         for allocation in held["allocations"]:
             db.delete(allocation)
             removed_allocations += 1
@@ -3174,6 +3181,37 @@ def revise(
 
         wanted = {s["warehouse_id"]: s["qty"] for s in entry["splits"]}
         for allocation in held["allocations"]:
+            # AC-E18 (round 4 + addendum, R7's third clause): a HIDDEN allocation
+            # takes NO PART in this reconciliation at all - skipped before it can
+            # even be MATCHED against `wanted`, not only before it could be
+            # deleted. Checked per ROW, on the allocation itself, never on
+            # whether its warehouse is absent from `wanted`, because two
+            # different shapes both put a hidden row where a warehouse-presence
+            # check would miss it: (a) its warehouse is absent from the
+            # submitted splits entirely, since `planner_state` never showed it
+            # to the browser; (b) a VISIBLE and a HIDDEN allocation share the
+            # SAME warehouse on one line - `wanted` is keyed by warehouse id and
+            # its entry is consumed by whichever row this loop reaches FIRST
+            # (`wanted.pop`), so gating only the delete branch would still let a
+            # hidden row reached first silently STEAL the operator's split
+            # (mutating a row that must stay untouched) and push its VISIBLE
+            # sibling into the delete branch instead. Skipping the hidden row
+            # entirely - never matched, never updated, never deleted - is the
+            # only guard that survives both shapes: its own warehouse slot in
+            # `wanted` stays unconsumed for whichever VISIBLE allocation (or new
+            # insert) actually owns it. Neither shape is a decision the operator
+            # made about this row - it is our own filtering coming back at us.
+            # Deleting it would also destroy its frozen `stated_received`
+            # (D28c) and the `source_doc_ref` identity the ingest needs to
+            # un-retire it on the next push - not merely a row disappearing from
+            # this screen, but the ingest's own memory of it. Unreachable on
+            # today's data - no allocation carries a `po_line_id`, so
+            # `held["allocations"]` is always empty here - and fixed anyway:
+            # "unreachable today" is the exact reasoning already rejected for
+            # `_own_state` in round 2, and it is the reasoning that produced the
+            # defect this whole lane exists to fix.
+            if not spo_supply.is_visible_allocation(allocation):
+                continue
             warehouse_id = str(allocation.warehouse_id) if allocation.warehouse_id else ""
             if warehouse_id in wanted:
                 allocation.allocated_quantity = int(round(wanted.pop(warehouse_id)))
