@@ -104,3 +104,26 @@ def test_inactive_warehouse_still_resolves(db):
     with company_scope(db, frozenset({SORENTO})):
         hits = er._probe_warehouse(db, ["brw old"])["brw old"]
     assert _ids(hits) == {wid}
+
+
+# AC-11 (chatbot-warehouse-entity-and-last-in): the AND probe still means AND.
+#
+# Exact-code-per-token made this probe answer "brw" with BRW even when the sibling token
+# was a product code, so the intersection came back non-empty with the warehouse ALONE and
+# `_resolve_input`'s "AND-mode produced zero intersection; switched to OR-mode under the
+# whitelist" degrade - the pass that resolves a product and a warehouse separately - never
+# ran. Measured on the local prod copy, 8 Sep 2026: "SRT62-GM to brw" resolved BRW and
+# dropped SRT62-GM entirely.
+
+
+def test_and_probe_contributes_nothing_when_a_token_is_not_a_warehouse(db):
+    _seed_warehouses(db)
+    with company_scope(db, frozenset({SORENTO})):
+        assert er._and_probe_warehouse(db, ["SRT62GM", "brw"]) == []
+
+
+def test_and_probe_keeps_every_token_when_all_of_them_are_warehouse_codes(db):
+    ids = _seed_warehouses(db)
+    with company_scope(db, frozenset({SORENTO})):
+        hits = er._and_probe_warehouse(db, ["brw", "brw ib"])
+    assert _ids(hits) == {ids["BRW"], ids["BRW-IB"]}
