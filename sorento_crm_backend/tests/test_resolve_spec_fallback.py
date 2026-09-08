@@ -543,3 +543,54 @@ def test_the_answer_is_company_scoped(db, client, water_closet_catalogue):
     offered = [c["product_id"] for c in body["spec_candidates"]]
     assert water_closet_catalogue["wanted"] in offered
     assert mocha.id not in offered
+
+
+# D6 (owner console pass, 8 Sep 2026, turn 333c37cf "Ibwc7605 image")
+
+@pytest.mark.parametrize("word", ["image", "photo"])
+def test_with_explicit_tokens_the_spec_matches_attach_to_the_unresolved_token(client, word):
+    """The lane sends the parser's tokens. The spec matches used to arrive as a THIRD
+    resolution keyed on the whole query ("Ibwc7605 image"), which the lane's
+    did-you-mean rendered as a second miss group beside "Ibwc7605". Measured with both
+    "image" and "photo" against the lane's exact body: the attachment word is not the
+    trigger, `spec_fallback` + `_emit_spec_matches` keyed on `payload.query` is (the
+    `_synthesize_alpha_tokens` path never runs when `tokens` are supplied). Now they
+    fold into the unresolved product token's own resolution: exactly the caller's tokens
+    come back."""
+    body = client.post(
+        ENDPOINT,
+        json={
+            "query": f"ZZTKS9099 {word}",
+            "tokens": ["zztks9099", word],
+            "match_mode": "and",
+            "allowed_entity_types": ["product", "attachment_type"],
+            "access_levels": [],
+            "domain": "product_attachment",
+            "fallback_to_all_types": True,
+            "limit": 15,
+            "spec_fallback": True,
+            "extracted_specs": [{"key": "class", "value": "Kitchen Sink"}],
+            "free_terms": ["stainless steel kitchen sink"],
+            "dry_run": True,
+        },
+    ).json()
+    tokens = [r["token"] for r in body["resolutions"]]
+    assert tokens == ["zztks9099", word], tokens
+    product_res = body["resolutions"][0]
+    assert [m["match_tier"] for m in product_res["matches"]] == ["spec_search"]
+    assert product_res["matches"][0]["canonical_code"] == "ZZTKS9001"
+    assert product_res["resolved"] is True and product_res["ambiguous"] is False
+
+
+def test_without_tokens_the_whole_query_resolution_is_unchanged(client):
+    body = client.post(
+        ENDPOINT,
+        json={
+            "query": "stainless steel kitchen sink",
+            "spec_fallback": True,
+            "extracted_specs": [{"key": "class", "value": "Kitchen Sink"}],
+        },
+    ).json()
+    spec_res = [r for r in body["resolutions"] if any(m["match_tier"] == "spec_search" for m in r["matches"])]
+    assert len(spec_res) == 1
+    assert spec_res[0]["token"] == "stainless steel kitchen sink"

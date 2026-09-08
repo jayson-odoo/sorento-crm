@@ -2096,11 +2096,28 @@ def _is_code_shaped(token: str) -> bool:
     return bool(_CODE_RE.fullmatch(word))
 
 
+def _spec_attach_token(result: dict[str, Any], tokens: list[str] | None) -> str | None:
+    """The explicit token the spec matches belong to: the FIRST caller-supplied token whose
+    resolution came back with no matches. None when the caller sent no tokens, or every
+    token matched something - the whole-query resolution then stays as it was."""
+    if not tokens:
+        return None
+    sent = {str(t or "").strip().lower() for t in tokens if str(t or "").strip()}
+    for res in result.get("resolutions") or []:
+        if not isinstance(res, dict):
+            continue
+        token = str(res.get("token") or "").strip()
+        if token.lower() in sent and not res.get("matches"):
+            return token
+    return None
+
+
 def _emit_spec_matches(
     result: dict[str, Any],
     candidates: list[dict],
     token: str,
     bound_words: set[str] | None = None,
+    attach_to: str | None = None,
 ) -> None:
     """Emit ranker candidates as ordinary product matches.
 
@@ -2181,7 +2198,26 @@ def _emit_spec_matches(
         # describes rows that no longer exist. Spec rows carry no scored text,
         # so this honestly yields no claims.
         _attach_and_coverage(result)
-    result.setdefault("resolutions", []).append(spec_resolution)
+    # `attach_to` (D6): fold the matches into that explicit token's own resolution,
+    # keeping its token, instead of appending a whole-query one.
+    target = None
+    if attach_to:
+        target = next(
+            (
+                r
+                for r in (result.get("resolutions") or [])
+                if isinstance(r, dict)
+                and str(r.get("token") or "").strip().lower() == attach_to.strip().lower()
+            ),
+            None,
+        )
+    if target is not None:
+        target["matches"] = spec_matches
+        target["resolved"] = spec_resolution["resolved"]
+        target["ambiguous"] = spec_resolution["ambiguous"]
+        target.setdefault("alternatives", [])
+    else:
+        result.setdefault("resolutions", []).append(spec_resolution)
     # Something was found, so the words it answered are no longer unresolved.
     #
     # "Answered" means the CANDIDATES answered it, word by word. Membership of
@@ -2385,8 +2421,19 @@ def resolve_reference_post(
                 if word:
                     bound_words.add(word)
         # AND emit them as ordinary product matches (see _emit_spec_matches).
+        # D6 (owner console pass, 8 Sep 2026, turn 333c37cf "Ibwc7605 image"): with EXPLICIT
+        # `tokens`, the spec matches attach to the unresolved product token's own
+        # resolution rather than to a third, whole-query token - the lane's did-you-mean
+        # rendered that phrase token as a SECOND miss group ("Ibwc7605 image" beside
+        # "Ibwc7605"). Measured with both "image" and "photo": the attachment word is not
+        # the trigger, `spec_fallback` is. A caller that sends no `tokens` keeps today's
+        # whole-query resolution, byte for byte.
         _emit_spec_matches(
-            result, found["candidates"], payload.query or "", bound_words=bound_words
+            result,
+            found["candidates"],
+            payload.query or "",
+            bound_words=bound_words,
+            attach_to=_spec_attach_token(result, payload.tokens),
         )
         # What the customer asked for that nothing offered can satisfy. The caller says
         # "no Cabana one, here are Sorento" rather than silently substituting.
