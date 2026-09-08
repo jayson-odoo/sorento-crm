@@ -420,10 +420,6 @@ def _run_rag_query_params(fixture: _corpus.Fixture) -> list:
     ]
 
 
-def _run_collapse_tool_rows(fixture: _corpus.Fixture) -> list:
-    from app.services.chatbot.lanes.business.fetch import collapse_tool_rows
-
-    return [{"json": {"tools": collapse_tool_rows([i.get("json") for i in fixture.input])}}]
 # --------------------------------------------------------------------------- #
 # S2, the tail. Two shapes of capture, and the difference is a BODY difference,
 # not a divergence: the live spine's `compile-current-state` predates RS-3 half
@@ -599,8 +595,12 @@ RUNNERS = {
     "fetch-result": _run_fetch_result,
     "entity-ids-transformer": _run_entity_ids_transformer,
     "output-structurer": _run_output_structurer,
+    # `sub-get-rag`'s first Code node. Its SECOND (`Code_in_JavaScript1`, the
+    # `source_id` -> name collapse) has no runner because it has no port: the tool RAG
+    # was dropped on 8 Sep 2026 and `fetch.collapse_tool_rows` went with it, so its 38
+    # captures are ungraded rather than graded against nothing. They stay on disk until
+    # n8n's own copy of that sub is retired.
     "Code_in_JavaScript": _run_rag_query_params,
-    "Code_in_JavaScript1": _run_collapse_tool_rows,
     "build-outcome": _run_build_outcome,
     "escalate-catalog": _run_escalate_catalog,
     "cs-roster-plan": _run_cs_roster_plan,

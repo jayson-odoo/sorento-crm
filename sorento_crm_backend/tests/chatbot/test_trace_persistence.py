@@ -146,13 +146,10 @@ def _resolved_bundle() -> ResolveGateServices:
 
 
 def _fetch_services(envelope: dict[str, Any]) -> FetchServices:
-    return FetchServices(
-        embed=lambda query: [0.0, 0.0, 0.0],
-        tool_search=lambda embedding, *, query, domain: [
-            {"name": "crm_inventory_stock_balance_list", "similarity": 0.9}
-        ],
-        mcp_call=lambda name, args: json.dumps(envelope),
-    )
+    """The MCP seam only. The tool itself comes from the parser's `domain_hint`:
+    every turn below parses as `inventory`, whose `DOMAIN_SPEC` tool is
+    `crm_inventory_stock_balance_list` - what this bundle used to stub as a search hit."""
+    return FetchServices(mcp_call=lambda name, args: json.dumps(envelope))
 
 
 def _answer_services() -> AnswerServices:

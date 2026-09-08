@@ -348,14 +348,14 @@ DOMAIN_TOOLS: dict[str, tuple[str, ...]] = {
 def test_every_domain_tool_is_in_the_read_only_pool(
     domain: str, tools: tuple[str, ...]
 ) -> None:
-    """A domain's tools must be candidates the chatbot may actually call. Unchanged by the
-    8 Sep 2026 retrieval fix below - `CHATBOT_READ_ONLY_TOOLS` gates a tool AFTER it is
-    retrieved, not before, so this is still a real way for a domain to end up unable to
-    answer.
+    """A domain's tools must be tools the chatbot may actually call. `select_tool` reads
+    `tools[0]` and `ensure_read_only` gates the name at the egress, so a domain whose tool
+    is off the allow-list answers nothing at all - this is still a real way for a domain to
+    end up unable to answer.
 
     `goods_receive` and `ideate` are absent from `DOMAIN_TOOLS` on purpose: neither has a
     read-only tool at all, which is exactly why one is unsupported and the other is
-    answered by its own lane rather than by a tool search.
+    answered by its own lane rather than by a tool call.
     """
     for tool in tools:
         assert tool in CHATBOT_READ_ONLY_TOOLS, f"{tool!r} ({domain!r}) is not read-only"
@@ -367,11 +367,14 @@ def test_after_sync_every_domain_spec_tool_has_its_domain_stamped() -> None:
     placed tool's OLD name contained "order" and leaked into every `order` pool under
     the old `source_id LIKE '%<domain_hint>%'` filter; it is also why that tool is now
     named `crm_procurement_po_placed_list`).
-    `EmbeddingReadService.search_tool_chunks` narrows a known domain's pool on
-    `mcp_tools.chatbot_domain` instead, and that column is stamped by
-    `mcp_tool_registry_service.sync_catalog` straight off `DOMAIN_SPEC[domain].tools` - so
-    the property worth pinning is that a real sync lands the right value, not that a name
-    happens to contain a substring.
+    The tool search narrowed a known domain's pool on `mcp_tools.chatbot_domain` instead,
+    and that column is stamped by `mcp_tool_registry_service.sync_catalog` straight off
+    `DOMAIN_SPEC[domain].tools` - so the property worth pinning is that a real sync lands
+    the right value, not that a name happens to contain a substring. The search itself was
+    dropped hours later (the lane reads `DOMAIN_SPEC[domain].tools[0]` outright), which
+    makes reachability a table lookup rather than a query; the stamp stays, unread, until
+    the next migration that touches `mcp_tools` carries its drop, and so does this
+    assertion, which is what keeps the two data copies from drifting while it does.
 
     Runs a real sync against the shared database and rolls it back; skipped when
     `mcp_tools` is empty (CI's database has no seed data - LESSONS-LEARNT).

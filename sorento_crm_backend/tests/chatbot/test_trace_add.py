@@ -27,13 +27,13 @@ from app.services.chatbot.lanes.business.services import AnswerServices, FetchSe
 
 
 def _fetch_services(mcp_result: str) -> FetchServices:
-    return FetchServices(
-        embed=lambda query: [0.1],
-        tool_search=lambda embedding, *, query, domain: [
-            {"name": "crm_master_products_list", "similarity": 0.9}
-        ],
-        mcp_call=lambda name, args: mcp_result,
-    )
+    return FetchServices(mcp_call=lambda name, args: mcp_result)
+
+
+#: The parse output whose `domain_hint` names `crm_master_products_list` - the tool every
+#: payload below expects. `select_tool` reads the domain off `DOMAIN_SPEC` since the tool
+#: RAG was dropped, so the hint is what puts a tool on the turn.
+_MASTER_PRODUCTS_CTX = {"parse": {"output": {"domain_hint": "master_products"}}}
 
 
 def test_turn_trace_add_appends_to_events_not_records():
@@ -54,6 +54,7 @@ def test_run_fetch_records_a_tool_event():
                 {"uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310", "entity_type": "product", "code": "SRTWB7096"}
             ]
         },
+        "ctx": _MASTER_PRODUCTS_CTX,
     }
     services = _fetch_services('{"answers": [], "has_result": false}')
 
@@ -76,6 +77,7 @@ def test_run_fetch_records_a_reveals_event_when_restricted_fields_present():
                 {"uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310", "entity_type": "product", "code": "SRTWB7096"}
             ]
         },
+        "ctx": _MASTER_PRODUCTS_CTX,
     }
     envelope = {
         "result_type": "stock",
@@ -109,6 +111,7 @@ def test_run_fetch_records_no_reveals_event_when_no_restricted_fields():
                 {"uuid": "6136ea6b-1699-46ec-8e8e-f60c8bb64310", "entity_type": "product", "code": "SRTWB7096"}
             ]
         },
+        "ctx": _MASTER_PRODUCTS_CTX,
     }
     services = _fetch_services('{"answers": [], "has_result": false}')
 

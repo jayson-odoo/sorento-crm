@@ -53,19 +53,20 @@ class DomainSpec:
       `DOMAIN_SWITCH_WORDS` (word -> domain). The inversion is what makes "one word, one
       domain" a property the guardrail test can check rather than an accident of hand
       editing.
-    * `tools` - the MCP tools a turn in this domain answers from. Two readers: the
-      chatbot's allow-list (`lanes/business/fetch.CHATBOT_READ_ONLY_TOOLS`), and
-      `mcp_tool_registry_service.sync_catalog`, which inverts this into
-      `mcp_tools.chatbot_domain` (one domain per tool - a tool listed here twice raises
-      at sync time). `EmbeddingReadService.search_tool_chunks` narrows a domain's pool
-      on THAT column, not on the tool NAME (owner ruling, 8 Sep 2026: a name-`LIKE`
-      filter let the PO placed tool's OLD name - it contained the word "order" -
-      leak into every `order` pool; it is also why that tool is now named
-      `crm_procurement_po_placed_list`, a name no domain's substring can match, so
-      n8n's own untouched `LIKE` query never picks it either). A tool still needs
-      the switch-word / intent path to actually be a candidate; historical turns
-      b5b19cec and A6's own tool before its rename are why every tool here is
-      reachable at all, not why the filter still reads the name.
+    * `tools` - the MCP tools a turn in this domain answers from, FIRST ONE FIRST.
+      `lanes/business/fetch.select_tool` calls `tools[0]` and nothing else, so the head
+      of each tuple is a contract, not an ordering: reorder it and a different tool
+      answers the customer. It is the tool production already chose - measured over the
+      740 business turns in the 7 Sep 2026 prod copy, the embedding pick this replaced
+      was the first-listed tool on every one of them, and
+      `tests/chatbot/test_tool_pick_from_domain_spec.py` pins the eleven names.
+      The REST of each tuple is an allow-list, not a candidate list: the union feeds
+      `fetch.CHATBOT_READ_ONLY_TOOLS`, which is what the probes and the cross-domain
+      rung are checked against when they name a tool directly.
+      `mcp_tool_registry_service.sync_catalog` also stamps this mapping (via
+      `mcp_tool_domains.CHATBOT_TOOL_DOMAINS`) onto `mcp_tools.chatbot_domain` - one
+      domain per tool, a tool listed twice raises at sync time - and nothing reads that
+      column since the tool search went (see its own docstring).
     * `escalation_team` - the `SUGGESTED_TEAMS` member a turn in this domain escalates to.
       Mirrors `output_exchange.derive_routing`'s ladder, which is a REPLAY-GRADED ported
       node and therefore stays the executable copy; the guardrail test asserts the two
@@ -236,10 +237,10 @@ DOMAIN_SPEC: dict[str, DomainSpec] = {
         # "last in" phrasing is the prompt's to teach, not this table's.
         switch_words=("spo",),
         # `..._spo_allocations_...` and not `..._spo_...`: the name predates the 8 Sep
-        # 2026 fix (`search_tool_chunks` filtered `source_id LIKE '%spo_allocation%'`,
-        # so the shorter name was unretrievable from this domain - growth r1 A6). The
-        # filter now reads `mcp_tools.chatbot_domain`, so the name no longer matters
-        # for retrievability, but the owner ruled against renaming a shipped tool.
+        # 2026 fix (the retired tool search filtered `source_id LIKE '%spo_allocation%'`,
+        # so the shorter name was unretrievable from this domain - growth r1 A6). No
+        # search and no name decides retrievability now, this row does, but the owner
+        # ruled against renaming a shipped tool.
         tools=("crm_procurement_spo_allocations_last_receipt_list",),
         escalation_team=None,
     ),

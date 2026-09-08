@@ -163,9 +163,12 @@ NODE_SLUGS: dict[str, tuple[str, ...]] = {
     "fetch-result": ("sub-fetch-results-rs", "sub-fetch-results-live"),
     "entity-ids-transformer": ("sub-get-results",),
     "output-structurer": ("sub-get-results",),
-    # `sub-get-rag`'s two Code nodes, under the names n8n gave them. Ported for REPLAY: in
-    # process there is no SQL to bind parameters for, and the collapse is what makes
-    # `tool-filter`'s max-similarity pick meaningful.
+    # `sub-get-rag`'s two Code nodes, under the names n8n gave them. The FIRST is ported
+    # for REPLAY only: in process there is no SQL to bind parameters for. The second has
+    # no port left at all - the tool RAG was dropped on 8 Sep 2026, taking
+    # `fetch.collapse_tool_rows` with it - so `test_replay.RUNNERS` has no entry for it
+    # and its captures are not graded. The slug stays so the pair is still discoverable
+    # from one place if n8n's own copy of the sub is ever re-read.
     "Code_in_JavaScript": ("sub-get-rag-live",),
     "Code_in_JavaScript1": ("sub-get-rag-live",),
     # S2, the tail. `clone-sub-output` is the RS-9 split-out sub; the two spine slugs

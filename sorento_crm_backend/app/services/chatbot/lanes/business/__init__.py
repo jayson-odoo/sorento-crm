@@ -30,7 +30,6 @@ from app.services.chatbot.lanes.business import resolve_gate
 from app.services.chatbot.lanes.business.services import (
     FetchServices,
     ResolveGateServices,
-    drop_by_product_without_product,
 )
 
 logger = logging.getLogger(__name__)
@@ -90,23 +89,6 @@ def run_until_exit(
     if branch_kind == "stock_denied":
         payload["not_allowed_check_stock"] = True
     return {"delegate": DELEGATE, "payload": payload}
-
-
-def _rag_message(parse_output: dict[str, Any]) -> str:
-    """The three-line prompt `Execute 'sub-get-rag'` sends, then the newline strip.
-
-    `sub-get-rag`'s own first step is `$json.message.replace(/\r?\n/g, ' ')` before the
-    text is embedded, so the vector is built from a SINGLE line. Embedding the newlines
-    instead changes the vector on every turn - 38 of 38 captures carry the stripped form -
-    and therefore changes which tool is picked. The strip belongs here, at the seam that
-    builds the text, not inside the embedding provider.
-    """
-    message = (
-        f"intent_hint: {jsc.js_string(parse_output.get('intent_hint'))}\n"
-        f"domain_hint: {jsc.js_string(parse_output.get('domain_hint'))}\n"
-        f"user_goal: {jsc.js_string(parse_output.get('user_goal'))}"
-    )
-    return message.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
 
 
 def _fetch_semantic_input(
@@ -172,9 +154,8 @@ def _error_fragment(reason: str, *, outcome: str | None = None) -> dict[str, Any
     `outcome` separates the two things this arm carries, and the separation is
     load-bearing: `not_found` is a GENUINE ABSENCE (H11's zero-tool case - the question
     was understood and nothing matches it), while an absent `outcome` is an
-    INFRASTRUCTURE failure (the MCP call raised, the tool returned an error envelope, the
-    tool search failed). Only the first may be told to the customer as "I could not find
-    anything". It rides on the ITEM as well as the fragment because `complete_answer`
+    INFRASTRUCTURE failure (the MCP call raised, or the tool returned an error envelope).
+    Only the first may be told to the customer as "I could not find anything". It rides on the ITEM as well as the fragment because `complete_answer`
     receives the item, not the fragment.
     """
     item = fetch_mod.fetch_result(
@@ -317,29 +298,23 @@ def run_fetch(
         }
 
     # ── tool selection ───────────────────────────────────────────────────────
+    # ONE candidate, read off `DOMAIN_SPEC` - no embedding call, no database read, so
+    # nothing here can fail and there is nothing to catch. Measured over the 740 business
+    # turns in the 7 Sep 2026 prod copy, the vector search this replaced chose the domain's
+    # first-listed tool on every one of them.
     domain = parse_output.get("domain_hint") or (tier_gate or {}).get("tier_pick_domain")
-    try:
-        candidates = fetch_mod.select_tool(
-            None, query=_rag_message(parse_output), domain=domain, services=services
-        )
-    except Exception as exc:  # noqa: BLE001 - no vector, no tool: an answerable outcome
-        logger.warning("chatbot: tool search did not run", exc_info=True)
-        return _error_fragment(f"tool search failed: {exc}")
+    candidates = fetch_mod.select_tool(domain)
 
     has_product = (
         any(isinstance(e, dict) and e.get("entity_type") == "product" for e in entities)
         if isinstance(entities, list)
         else None
     )
-    # Item 7 (8 Sep 2026): a customer-only order ask never reaches the by-product tool -
-    # `services.drop_by_product_without_product` (the F4 policy seam; a no-op on every
-    # other pool). Recorded on `_tool_pick` so the trace says what the pool lost and why.
-    candidates, dropped_no_product = drop_by_product_without_product(
-        candidates, domain=domain, has_product=has_product
-    )
     pick = fetch_mod.tool_filter(candidates, has_product=has_product)
-    if dropped_no_product and pick.items:
-        pick.items[0]["json"].setdefault("_tool_pick", {})["dropped_no_product"] = dropped_no_product
+    if pick.items:
+        # HOW the tool was chosen, on the trace an operator reads. Stamped here rather than
+        # inside `tool_filter`, which is a ported node graded against 38 captures.
+        pick.items[0]["json"].setdefault("_tool_pick", {})["source"] = "domain_spec"
     if pick.outcome == "not_found":
         # H11: zero tools is an OUTCOME, not an empty turn. The engine gets something to
         # say rather than a fragment that looks like a lane which never ran.
@@ -565,8 +540,8 @@ def complete_answer(
         fragments["incoming_picker"] = lane_item
 
     elif fetch_arm == "error" and fetch.get("outcome") != "not_found":
-        # An INFRASTRUCTURE failure, not an absence: the MCP call raised, the tool returned
-        # an error envelope, or the tool search failed. Rendering the miss lane here would
+        # An INFRASTRUCTURE failure, not an absence: the MCP call raised or the tool
+        # returned an error envelope. Rendering the miss lane here would
         # tell the customer "I could not find anything" about a read that never ran - the
         # same assertion `crossdomain-render`'s "positive facts only" rule refuses to make.
         # Live agrees: `Call 'sub-get-results'` carries `onError: continueErrorOutput` and
