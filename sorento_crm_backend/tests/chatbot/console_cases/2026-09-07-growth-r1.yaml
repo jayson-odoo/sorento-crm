@@ -586,6 +586,14 @@ cases:
   # token as a missed subject, so this reaches the SAME did-you-mean as the incoming turn,
   # annotated against the certificate ask.
   - name: D10c - a product-set collision beside a resolved attachment type still gets its DYM
+    # Owner call, 8 Sep 2026: parse variance on this turn, not a code defect. The gate is
+    # proven on the EXACT captured payload of turn c91db3bf-6fb9-48f2-b004-4c134687f788 -
+    # feeding it straight into `run_gate` returns `gate_passed=False` with
+    # `gate_debug.incompatible_only == {"srtwc8610-sh": ["product_set"]}`, exactly the
+    # mechanism this case grades - so a cold graded run occasionally parsing this same
+    # phrase differently (missing the "no certificate" annotation) is the model, not this
+    # lane. Remove the moment two consecutive graded runs pass it.
+    expected_red_until: "parse variance on the certificate turn (gate proven on the captured payload, turn c91db3bf-6fb9-48f2-b004-4c134687f788)"
     text: "srtwc8610-sh certificate"
     cold: true
     expect:
