@@ -64,7 +64,11 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # 4-letter + 7-digit token (a real container number) is a container. Intentional content.
 # +99 chars (D12, 8 Sep 2026, turn 8f4a8526): one sentence in REQUESTED ATTRIBUTES, both
 # bodies - "details" / "product details" / "info" / "tell me about X" name no property.
-CONSTANT_CHARS = 48792
+# +204 chars (E2, 8 Sep 2026, turn b377b18e "Catalog Sorento"): one sentence in the
+# resource_attachment domain description, both bodies - a document-class word plus a
+# brand or company name is get_resource_attachment with the attachment entity, never
+# promotion.
+CONSTANT_CHARS = 48996
 
 
 def _without_growth_r1_addendum(text: str) -> str:

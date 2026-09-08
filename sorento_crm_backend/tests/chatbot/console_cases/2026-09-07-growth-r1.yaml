@@ -142,6 +142,25 @@ cases:
       reply_not_contains: ["no material recorded"]
       no_uuid: true
 
+  # E2 (owner turn b377b18e, 8 Sep 2026): "Catalog Sorento" - a document-class word
+  # ("catalog") plus a brand/company name ("Sorento") - is a resource_attachment ask, not
+  # a promotion one. The lane already resolved and sent both catalogue attachments; the
+  # prompt gains one sentence in the resource_attachment domain description (both bodies)
+  # saying so directly, so the parser stops needing the lucky read.
+  #   SELECT id, original_filename FROM attachments WHERE id IN
+  #     ('9a379ec6-a1fe-483f-9bd8-dc2c6e10f459', '102d1278-7c18-461c-8400-43415946e882');
+  #   -> "SORENTO CATALOGUE 2024 (SEARCHABLE)_compressed.pdf", "Mocha Catalogue FA 300924.pdf"
+  - name: E2 - Catalog Sorento is a resource attachment ask, not promotion  # NEW VOCABULARY
+    text: "Catalog Sorento"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains:
+        - "I have attached"
+        - "SORENTO CATALOGUE 2024"
+        - "Mocha Catalogue FA 300924"
+      no_uuid: true
+
   # D6 (owner pass on the restored DB, turn 333c37cf): "Ibwc7605 image" rendered TWO
   # did-you-mean groups ("Ibwc7605" and a whole-phrase "Ibwc7605 image") with the
   # multi-miss wording. The resolver's spec_fallback keyed its matches on the whole query
