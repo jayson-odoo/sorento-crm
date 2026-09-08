@@ -6,7 +6,7 @@
  * Wired to real portal API via `price-tag-request-service.ts`.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ArrowLeft,
@@ -18,6 +18,7 @@ import {
   Loader2,
   MessageSquare,
   Plus,
+  Sparkles,
   Trash2,
 } from 'lucide-react';
 import { toast } from '@/lib/toast';
@@ -55,6 +56,7 @@ import type {
   DebtorOption,
   PromotionOption,
   PriceMode,
+  TagItemOption,
 } from '../lib/price-tag-request-service';
 import {
   lookupDebtors,
@@ -72,6 +74,11 @@ import {
 import PriceTagProofViewer from './PriceTagProofViewer';
 import POCrossCheckViewer from './POCrossCheckViewer';
 import { AttachmentDropzone } from './AttachmentDropzone';
+import {
+  AIExtractDialog,
+  type AIExtractApplyPayload,
+} from './AIExtractDialog';
+import type { AIExtractedProductLine } from '../lib/portal-client';
 import AttachmentPreviewModal from '@/components/common/AttachmentPreviewModal';
 import { toPreviewItem, portalFetchBytes } from '../lib/portal-preview';
 import {
@@ -82,6 +89,10 @@ import {
 import type { ResolvedLineData } from '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer';
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 import { cn } from '@/lib/utils';
+
+/** Where an AI-extracted product line stands against the catalogue lookup
+ *  (D7/AC-S6-2), shown in the extract dialog's own result table. */
+type AIMatchStatus = 'loading' | 'matched_product' | 'matched_set' | 'not_found';
 
 // ---------------------------------------------------------------------------
 // Draft line (client-side, before persisting)
@@ -172,6 +183,15 @@ const DESIGN_PREVIEW_STATUSES = new Set([
   'ready',
 ]);
 
+/** What the AI extract dialog's field mirror shows (D7) - matches the two
+ *  header fields registered server-side for `price_tag_request` (Phase 2).
+ *  Display only: neither field writes back into this form, since Customer
+ *  is a select (not free text) and there is no sales order number field. */
+const AI_EXTRACT_FIELD_DEFS = [
+  { name: 'customer_name', label: 'Customer' },
+  { name: 'so_number', label: 'Sales Order No.' },
+];
+
 /**
  * The field keys a refusal named, if it named any.
  *
@@ -255,6 +275,16 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [attachments, setAttachments] = useState<PortalAttachment[]>([]);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+
+  // ---- AI extract sales order lines (D7) ----
+  const [aiExtractOpen, setAiExtractOpen] = useState(false);
+  // Per-row match state for the CURRENT extraction, indexed the same as the
+  // dialog's own `result.products` - populated as each code resolves so the
+  // dialog can show "Not found" before Apply is even clicked (AC-S6-2), and
+  // read again by the apply handler so it never re-looks-up what this
+  // already knows.
+  const [aiMatchStatuses, setAiMatchStatuses] = useState<AIMatchStatus[]>([]);
+  const aiMatchesRef = useRef<(TagItemOption | null)[]>([]);
 
   // ---- Proof review state ----
   const [changesNote, setChangesNote] = useState('');
@@ -383,6 +413,91 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     },
     [],
   );
+
+  // ---- AI extract sales order lines (D7) ----
+  //
+  // Fires when the dialog moves to Review, so a row can already read "Not
+  // found" before Apply is clicked (AC-S6-2). Matches by exact code, trimmed
+  // and case-insensitive, against the SAME lookup the Item picker above
+  // uses - one call per code, which is fine for a sales order's page count.
+  const handleAIExtracted = useCallback(
+    (products: AIExtractedProductLine[]) => {
+      setAiMatchStatuses(products.map(() => 'loading'));
+      aiMatchesRef.current = products.map(() => null);
+      products.forEach((p, index) => {
+        const code = (p.product_code ?? '').trim();
+        const lookup = code ? lookupTagItems(code) : Promise.resolve([]);
+        lookup
+          .then((items) => {
+            const match =
+              items.find(
+                (i) => i.code.trim().toLowerCase() === code.toLowerCase(),
+              ) ?? null;
+            aiMatchesRef.current[index] = match;
+            setAiMatchStatuses((prev) => {
+              const next = [...prev];
+              next[index] = match
+                ? match.kind === 'product_set'
+                  ? 'matched_set'
+                  : 'matched_product'
+                : 'not_found';
+              return next;
+            });
+          })
+          .catch(() => {
+            aiMatchesRef.current[index] = null;
+            setAiMatchStatuses((prev) => {
+              const next = [...prev];
+              next[index] = 'not_found';
+              return next;
+            });
+          });
+      });
+    },
+    [],
+  );
+
+  /** Apply = append one line per matched row (D7). unit_price is shown in the
+   *  dialog only and is never stored (ADR 0008) - no field in `DraftLine`
+   *  reads it. Reads the SAME matches `handleAIExtracted` already resolved,
+   *  rather than looking every code up a second time. */
+  const handleAIExtractApply = useCallback((payload: AIExtractApplyPayload) => {
+    const matches = aiMatchesRef.current;
+    const newLines: DraftLine[] = [];
+    const notFoundCodes: string[] = [];
+    payload.productLines.forEach((p, index) => {
+      const match = matches[index];
+      const code = (p.product_code ?? '').trim();
+      if (!match) {
+        if (code) notFoundCodes.push(code);
+        return;
+      }
+      const qty = p.quantity != null ? Math.max(1, Math.round(p.quantity)) : 1;
+      newLines.push({
+        key: `draft-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 8)}`,
+        line_type: match.kind,
+        product_id: match.kind === 'product' ? match.id : null,
+        product_set_id: match.kind === 'product_set' ? match.id : null,
+        name: match.name || match.code,
+        code: match.code,
+        show_promo_price: true,
+        quantity: qty,
+        alternatives: [],
+        included_accessories: '',
+        remarks: p.notes ?? '',
+        guard_error: null,
+      });
+    });
+    if (newLines.length > 0) {
+      setLines((prev) => [...prev, ...newLines]);
+      toast.success(
+        `Added ${newLines.length} line${newLines.length === 1 ? '' : 's'} from the sales order.`,
+      );
+    }
+    if (notFoundCodes.length > 0) {
+      toast.error(`Not found: ${notFoundCodes.join(', ')}`);
+    }
+  }, []);
 
   // ---- Line management ----
   const addLine = useCallback(() => {
@@ -1244,8 +1359,20 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
 
       {/* Sales Order upload */}
       <Card>
-        <CardHeader className="py-3 px-4">
+        <CardHeader className="py-3 px-4 flex-row flex-wrap items-center justify-between gap-2 space-y-0">
           <CardTitle className="text-base">Sales Order</CardTitle>
+          {/* Once there is a file to read - attached or still pending the
+              draft - AI extract has something to look at (AC-S6-1). */}
+          {(attachments.length > 0 || pendingFiles.length > 0) && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setAiExtractOpen(true)}
+            >
+              <Sparkles className="size-3.5 mr-1" />
+              Extract lines with AI
+            </Button>
+          )}
         </CardHeader>
         <CardContent className="px-4 pb-4">
           {/* The shared portal dropzone (D2/D3): a file dropped before the draft
@@ -1262,6 +1389,18 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           />
         </CardContent>
       </Card>
+
+      <AIExtractDialog
+        open={aiExtractOpen}
+        onOpenChange={setAiExtractOpen}
+        kind="price_tag_request"
+        fieldDefs={AI_EXTRACT_FIELD_DEFS}
+        onApply={handleAIExtractApply}
+        onExtracted={handleAIExtracted}
+        renderRowStatus={(_p, index) => (
+          <AIMatchStatusLabel status={aiMatchStatuses[index]} />
+        )}
+      />
 
       {/* One line saying how much is outstanding, above the button that found it */}
       {(problemCount > 0 || serverMessage) && (
@@ -1462,6 +1601,24 @@ function LineRow({
       )}
     </>
   );
+}
+
+// ---------------------------------------------------------------------------
+// AI extract match state (D7)
+// ---------------------------------------------------------------------------
+
+/** The "Match" cell the AI extract dialog shows per row (AC-S6-2). */
+function AIMatchStatusLabel({ status }: { status: AIMatchStatus | undefined }) {
+  switch (status) {
+    case 'matched_product':
+      return <span className="text-emerald-700">Matched product</span>;
+    case 'matched_set':
+      return <span className="text-emerald-700">Matched set</span>;
+    case 'not_found':
+      return <span className="text-destructive">Not found</span>;
+    default:
+      return <span className="text-muted-foreground">Checking...</span>;
+  }
 }
 
 // ---------------------------------------------------------------------------

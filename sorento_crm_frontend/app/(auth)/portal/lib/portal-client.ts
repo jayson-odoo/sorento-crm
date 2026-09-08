@@ -1044,11 +1044,15 @@ export interface AIExtractResult {
   provider?: string | null;
 }
 
-export const AI_EXTRACT_FORM_KEYS: Record<PortalSubmissionKind, string> = {
+export const AI_EXTRACT_FORM_KEYS: Record<PortalLandingKind, string> = {
   complaint: 'portal.complaint',
   stock_inquiry: 'portal.stock_inquiry',
   purchase_request: 'portal.purchase_request',
   sponsorship_form: 'portal.sponsorship_form',
+  // D7: registered in the backend's FORM_SCHEMAS as its own top-level key
+  // (not `portal.`-prefixed like the four above) since it is a gated form
+  // with its own dedicated page, not a `SubmissionForm` kind.
+  price_tag_request: 'price_tag_request',
 };
 
 export async function aiExtractFromFiles(
