@@ -67,13 +67,23 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
   ),
 }));
 
+let capturedPendingFiles: File[] = [];
 vi.mock('./AttachmentDropzone', () => ({
-  AttachmentDropzone: () => null,
+  AttachmentDropzone: (props: { pendingFiles?: File[] }) => {
+    capturedPendingFiles = props.pendingFiles ?? [];
+    return null;
+  },
 }));
 
 type CapturedProps = {
+  fieldDefs?: unknown[];
   onExtracted?: (products: unknown[]) => void;
-  onApply?: (payload: { productLines: unknown[] }) => void;
+  onApply?: (payload: {
+    productLines: unknown[];
+    files?: File[];
+    alsoAttach?: boolean;
+    values?: Record<string, unknown>;
+  }) => void;
 };
 let captured: CapturedProps = {};
 vi.mock('./AIExtractDialog', () => ({
@@ -104,6 +114,7 @@ const MATCHED_SET = {
 beforeEach(() => {
   vi.clearAllMocks();
   captured = {};
+  capturedPendingFiles = [];
   asMock(lookupDebtors).mockResolvedValue([]);
   asMock(lookupTagItems).mockImplementation(async (query?: string) => {
     const q = (query ?? '').trim().toLowerCase();
@@ -229,5 +240,42 @@ describe('PriceTagRequestForm - AI extract apply mapping (AC-S6-3, AC-S6-5)', ()
     await waitFor(() =>
       expect(toasts.error).toHaveBeenCalledWith(expect.stringContaining('GHOST-CODE')),
     );
+  });
+
+  it('honours alsoAttach: the extracted files join the Sales Order pending files (review fix)', async () => {
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Customer');
+
+    const products = [{ product_code: MATCHED_PRODUCT.code, quantity: 1, notes: null }];
+    await extractAndSettle(products);
+    const file = new File(['zzt'], 'ZZT-so.pdf', { type: 'application/pdf' });
+
+    await act(async () => {
+      captured.onApply?.({ productLines: products, files: [file], alsoAttach: true });
+    });
+
+    await waitFor(() => expect(capturedPendingFiles).toContain(file));
+  });
+
+  it('does not buffer the file when alsoAttach is false', async () => {
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Customer');
+
+    const products = [{ product_code: MATCHED_PRODUCT.code, quantity: 1, notes: null }];
+    await extractAndSettle(products);
+    const file = new File(['zzt'], 'ZZT-so.pdf', { type: 'application/pdf' });
+
+    await act(async () => {
+      captured.onApply?.({ productLines: products, files: [file], alsoAttach: false });
+    });
+
+    expect(capturedPendingFiles).not.toContain(file);
+  });
+
+  it('passes no field defs to mirror (D7 review push-back: no header fields on this form)', async () => {
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Customer');
+
+    expect(captured.fieldDefs).toEqual([]);
   });
 });

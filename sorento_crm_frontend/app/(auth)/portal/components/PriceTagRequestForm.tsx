@@ -183,15 +183,6 @@ const DESIGN_PREVIEW_STATUSES = new Set([
   'ready',
 ]);
 
-/** What the AI extract dialog's field mirror shows (D7) - matches the two
- *  header fields registered server-side for `price_tag_request` (Phase 2).
- *  Display only: neither field writes back into this form, since Customer
- *  is a select (not free text) and there is no sales order number field. */
-const AI_EXTRACT_FIELD_DEFS = [
-  { name: 'customer_name', label: 'Customer' },
-  { name: 'so_number', label: 'Sales Order No.' },
-];
-
 /**
  * The field keys a refusal named, if it named any.
  *
@@ -495,6 +486,13 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
     }
     if (notFoundCodes.length > 0) {
       toast.error(`Not found: ${notFoundCodes.join(', ')}`);
+    }
+    // The dialog's own alsoAttach checkbox (checked by default): the file(s)
+    // read for extraction join the SAME pending/flush path a Sales Order
+    // drop uses, so Save Draft/Submit upload them once - not here, and not
+    // twice.
+    if (payload.alsoAttach && payload.files.length > 0) {
+      setPendingFiles((prev) => [...prev, ...payload.files]);
     }
   }, []);
 
@@ -1378,18 +1376,18 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       <Card>
         <CardHeader className="py-3 px-4 flex-row flex-wrap items-center justify-between gap-2 space-y-0">
           <CardTitle className="text-base">Sales Order</CardTitle>
-          {/* Once there is a file to read - attached or still pending the
-              draft - AI extract has something to look at (AC-S6-1). */}
-          {(attachments.length > 0 || pendingFiles.length > 0) && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setAiExtractOpen(true)}
-            >
-              <Sparkles className="size-3.5 mr-1" />
-              Extract lines with AI
-            </Button>
-          )}
+          {/* Always shown, not gated on an attachment already existing here
+             (review fix): the dialog takes the file itself and, with
+             alsoAttach checked, stores it into this same section - gating
+             on an attachment first meant dropping the file in TWICE. */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setAiExtractOpen(true)}
+          >
+            <Sparkles className="size-3.5 mr-1" />
+            Extract lines with AI
+          </Button>
         </CardHeader>
         <CardContent className="px-4 pb-4">
           {/* The shared portal dropzone (D2/D3): a file dropped before the draft
@@ -1411,7 +1409,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         open={aiExtractOpen}
         onOpenChange={setAiExtractOpen}
         kind="price_tag_request"
-        fieldDefs={AI_EXTRACT_FIELD_DEFS}
+        // No header fields to mirror (D7 review push-back): Customer is a
+        // select, not free text, and there is no sales order number field -
+        // an empty list here is also what keeps the dialog from claiming
+        // "Applied N fields" for fields nothing on this form reads.
+        fieldDefs={[]}
         onApply={handleAIExtractApply}
         onExtracted={handleAIExtracted}
         renderRowStatus={(_p, index) => (

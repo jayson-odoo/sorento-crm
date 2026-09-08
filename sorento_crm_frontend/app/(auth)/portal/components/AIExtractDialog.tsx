@@ -298,6 +298,15 @@ export function AIExtractDialog({
     [filledFieldEntries, discarded],
   );
 
+  // A form with NO header fields (price_tag_request: fieldDefs=[]) still has
+  // something to apply when there are line items - the "nothing extractable"
+  // state and the Confirm button's disabled state both have to look past
+  // fieldDefs alone or a fields-less form could never confirm anything.
+  const hasApplicableProductLines =
+    KINDS_WITH_LINE_ITEMS.includes(kind) &&
+    !!result?.products &&
+    result.products.length > 0;
+
   const handleConfirm = () => {
     if (!result) return;
     const out: Record<string, string | string[]> = {};
@@ -308,13 +317,19 @@ export function AIExtractDialog({
       values: out,
       files,
       alsoAttach,
-      productLines: KINDS_WITH_LINE_ITEMS.includes(kind)
-        ? (result.products ?? [])
-        : [],
+      productLines: hasApplicableProductLines ? (result.products ?? []) : [],
     });
-    toast.success(
-      `Applied ${remainingFieldEntries.length} field${remainingFieldEntries.length === 1 ? '' : 's'}.`,
-    );
+    const parts: string[] = [];
+    if (remainingFieldEntries.length > 0) {
+      parts.push(
+        `${remainingFieldEntries.length} field${remainingFieldEntries.length === 1 ? '' : 's'}`,
+      );
+    }
+    if (hasApplicableProductLines) {
+      const n = result.products?.length ?? 0;
+      parts.push(`${n} line${n === 1 ? '' : 's'}`);
+    }
+    toast.success(parts.length > 0 ? `Applied ${parts.join(' and ')}.` : 'Applied.');
     onOpenChange(false);
   };
 
@@ -446,12 +461,12 @@ export function AIExtractDialog({
               className="space-y-3 flex-1 min-h-0 overflow-y-auto -mx-1 px-1"
               data-testid="ai-extract-review"
             >
-              {remainingFieldEntries.length === 0 ? (
+              {remainingFieldEntries.length === 0 && !hasApplicableProductLines ? (
                 <p className="text-sm text-muted-foreground">
                   Nothing extractable was found. Go back and try with clearer
                   pages, or close to fill the form manually.
                 </p>
-              ) : (
+              ) : remainingFieldEntries.length > 0 ? (
                 <div className="rounded-md border border-border">
                   <ScrollArea>
                     <table className="w-auto min-w-full text-sm">
@@ -495,9 +510,9 @@ export function AIExtractDialog({
                     <ScrollBar orientation="horizontal" />
                   </ScrollArea>
                 </div>
-              )}
+              ) : null}
 
-              {KINDS_WITH_LINE_ITEMS.includes(kind) && result.products && result.products.length > 0 && (
+              {hasApplicableProductLines && (
                 <div className="rounded-md border border-border">
                   <div className="px-3 py-2 text-xs uppercase tracking-wide text-muted-foreground border-b border-border">
                     Line items ({result.products.length}) - will be applied to the items list
@@ -581,7 +596,7 @@ export function AIExtractDialog({
               </Button>
               <Button
                 onClick={handleConfirm}
-                disabled={remainingFieldEntries.length === 0}
+                disabled={remainingFieldEntries.length === 0 && !hasApplicableProductLines}
                 data-testid="ai-extract-confirm"
               >
                 Confirm and prefill
