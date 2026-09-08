@@ -67,12 +67,18 @@ def location_stock_for_product(db: Session, product_id: str) -> dict[str, Any]:
     code_by_id = {str(w.id): w.warehouse_code for w in warehouses}
     # `segment` is the test, through the one module that spells it (`pool_predicate`) - it
     # was written out by hand here, which is how this panel could come to disagree with the
-    # cell that opens it. This is the same rule the reorder engine reads, so this panel's
+    # cell that opens it. This is the same rule the REORDER engine reads, so this panel's
     # `on_hand` and the engine's counted `on_hand` for the SAME location can never
     # disagree about which side of the dealer/project line it sits on (captain, 20 Aug:
     # pool-only counted supply). NOT `pool_warehouse_id`: that FK also drives the
     # unrelated fulfilment-pool netting opt-in, whose members are not necessarily
     # project-segment locations.
+    #
+    # `is_pool` is a LABEL only - this endpoint has never filtered on it, so the caveat below
+    # is about who READS the label, not about anything this function does differently. The
+    # container-request grid and the SPO planner (R7, captain 8 Sep 2026) both now count a
+    # `is_pool: false` row's `on_hand` in their own totals too - only the REORDER engine still
+    # reads `is_pool` as pool-only counted supply.
     is_pool_by_id = {str(w.id): is_site_pool(w.segment) for w in warehouses}
 
     # What is already ORDERED into each location, on the same predicate `scm.po_ordered_v`
@@ -139,9 +145,11 @@ def location_stock_for_product(db: Session, product_id: str) -> dict[str, Any]:
         locations.append({
             "warehouse_id": wid,
             "warehouse_code": code_by_id.get(wid),
-            # Whether THIS location's own stock is counted by the reorder engine's
-            # `on_hand` (pool-only, captain 20 Aug) or is project-held supply that is
-            # visible here but not counted there.
+            # Whether THIS location's own stock is counted by the REORDER engine's `on_hand`
+            # (pool-only, captain 20 Aug - unwidened) or is project-held supply that is
+            # visible here but not counted there. The container-request grid and the SPO
+            # planner (R7, captain 8 Sep 2026) count a `false` row too, in their own `on_hand`
+            # - this flag still only answers the reorder engine's question.
             "is_pool": is_pool,
             "on_hand": float(on_hand),
             "reserved": float(reserved),

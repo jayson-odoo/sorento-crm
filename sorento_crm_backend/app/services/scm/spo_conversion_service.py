@@ -245,7 +245,6 @@ from app.services.numbering_defaults import (
 from app.services.numbering_service import NumberingService
 from app.services.rules import shipping_order_rules
 from app.services.scm.demand_class import PROJECT as _DEMAND_CLASS_PROJECT
-from app.services.scm.pool_predicate import ACTIVE_SITE_POOL_SQL
 from app.services.scm.supplier_scope import is_uuid as _is_uuid
 
 logger = logging.getLogger(__name__)
@@ -920,17 +919,8 @@ def coverage_for_so_lines(db: Session, so_line_ids: Sequence[str]) -> dict[str, 
     return out
 
 
-#: The site-pool test, from the one module that spells it (`pool_predicate`). It was copied
-#: here, and into two other files, on the reasoning `_stock_context` below gives for copying
-#: its whole query - but this one line is not that: both cells this module prints open a
-#: dialog counting ACTIVE POOL rows only (`location_stock_service.location_stock_for_product`
-#: for On hand, `container_request_drill` for Incoming SPO), so the cells count the same
-#: locations or they cannot foot, and a rule that must be identical is one rule.
-_ACTIVE_POOL = ACTIVE_SITE_POOL_SQL
-
-
 def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
-    """On hand + incoming SPO, per product, at ACTIVE SITE POOLS - COPIED from
+    """On hand + incoming SPO, per product, at EVERY ACTIVE LOCATION - COPIED from
     `container_request_service._stock_context` rather than imported (same reasoning that
     module gives for copying `loading_plan_service._catalogue_cbm`: two lanes touching the
     same file is a worse cost than a few duplicated lines). Same figures, same views, so this
@@ -940,17 +930,18 @@ def _stock_context(db: Session, product_ids: list[str]) -> dict[str, dict]:
     figure feeds `suggested_qty` any more. Kept because it is cheap (one query, already paid
     for by every earlier version of this module) and still useful to see beside the ask.
 
-    Context still has to foot to the dialog it opens (AC-G3: "sum = cell"). Both figures used
-    to sum every warehouse the net-position view names, while the On hand lightbox lists
-    active pool locations only and the Incoming SPO dialog filters `w.is_active AND _POOL` -
-    so the planner printed one number and the reader who clicked it landed on another. Closed
-    locations and project bins leave the cells here for the same reason they left the
-    container request's (`_ACTIVE_POOL` above)."""
+    Widened from ACTIVE SITE POOLS ONLY to every active location (R7, captain 8 Sep 2026),
+    the same change `container_request_service._stock_context` and `container_request_drill.
+    _spo_rows` made: this screen is opened FROM the container request grid, whose own On hand /
+    Incoming SPO now count project bins too, so a narrower figure here would contradict the
+    grid it was opened from. DISPLAY consistency only - `suggested_qty` on this screen does not
+    net either figure (see above), so widening it changes no converted quantity. Closed
+    locations are still excluded, `w.is_active` alone now does that job."""
     if not product_ids:
         return {}
     prod_scope, prod_params = company_sql_predicate(db, "p.company_id", param_prefix="scp")
     wh_scope, wh_params = company_sql_predicate(db, "w.company_id", param_prefix="scw")
-    where = ["np.product_id::text = ANY(:pids)", _ACTIVE_POOL]
+    where = ["np.product_id::text = ANY(:pids)", "w.is_active"]
     if prod_scope:
         where.append(prod_scope)
     if wh_scope:

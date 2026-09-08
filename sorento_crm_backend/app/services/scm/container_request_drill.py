@@ -61,7 +61,6 @@ from app.services.scm.container_request_service import (
     PL_NOT_ARRIVED_SQL,
     PL_REMAINING_SQL,
 )
-from app.services.scm.pool_predicate import SITE_POOL_SQL
 from app.services.scm.supplier_scope import is_uuid, supplier_row
 
 #: What a caller may ask for. `on_hand` is NOT here - it is served by
@@ -72,10 +71,6 @@ KINDS = ("spo", "incoming_pl", "po")
 #: read on this screen uses (`container_request_service.history`), so the two agree about
 #: what "recently" means.
 _HISTORY_MONTHS = 12
-
-#: The site-pool test, from the one module that spells it (`pool_predicate`). The SPO cell
-#: nets POOL supply only, so the dialog behind it counts pool rows only.
-_POOL = SITE_POOL_SQL
 
 #: Shipment states that mean the goods have landed - verbatim from migration 337, whose
 #: `scm.on_order_v` body the SPO reader below mirrors.
@@ -228,19 +223,21 @@ def _incoming_pl_rows(db: Session, product_id: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# SPO - `_stock_context.incoming_spo`, which is `scm.on_order_v` at site pools
+# SPO - `_stock_context.incoming_spo`, which is `scm.on_order_v` at every active location
 # ---------------------------------------------------------------------------
 
 
 def _spo_rows(db: Session, product_id: str, *, open_rows: bool) -> list[dict]:
-    """What is on the water for the site pools (Open), or what has landed (History).
+    """What is on the water at any active location (Open), or what has landed (History).
 
-    The Open predicate is `scm.on_order_v`'s own, clause for clause, narrowed to ACTIVE site
-    pools the way `_stock_context` narrows it: an allocation with no warehouse is incoming
-    supply NOWHERE (migration 420), an allocation on a landed shipment is already in On hand,
-    and a project bin's allocation is spoken for. Company scope is on the PRODUCT and the
-    WAREHOUSE - the two columns `_stock_context` scopes on - so the two reads cannot disagree
-    about which rows belong to this caller.
+    The Open predicate is `scm.on_order_v`'s own, clause for clause, narrowed to ACTIVE
+    locations the way `_stock_context` narrows it: an allocation with no warehouse is incoming
+    supply NOWHERE (migration 420), an allocation on a landed shipment is already in On hand.
+    Site pool and project bin allocations are both counted (R7, captain 8 Sep 2026) - this used
+    to narrow to site pools only, matching the old netting rule; it now matches the widened one
+    so the dialog's total still foots the cell it opened from. Company scope is on the PRODUCT
+    and the WAREHOUSE - the two columns `_stock_context` scopes on - so the two reads cannot
+    disagree about which rows belong to this caller.
 
     The shipment join is a LEFT JOIN, and the view's `s.id IS NULL OR ...` rides with it: an
     SPO allocation that names a warehouse but no shipment yet is on order (the view counts it,
@@ -299,7 +296,6 @@ def _spo_rows(db: Session, product_id: str, *, open_rows: bool) -> list[dict]:
         JOIN warehouses w ON w.id = sa.warehouse_id
         WHERE sa.product_id = CAST(:pid AS uuid)
           AND w.is_active
-          AND {_POOL}
           AND {where}
           {("AND " + prod_scope) if prod_scope else ""}
           {("AND " + wh_scope) if wh_scope else ""}

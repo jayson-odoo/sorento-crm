@@ -216,9 +216,9 @@ def test_drill_incoming_pl_leaves_out_shipments_that_have_arrived(scm_app):
     assert r.json()["total"] == cell["incoming_pl"] == 0
 
 
-def test_drill_spo_total_is_the_spo_cell_and_counts_site_pools_only(scm_app):
-    # The cell nets SITE POOL supply only (`_stock_context`); a project bin's SPO is shown
-    # muted on the row and must not appear in the dialog that foots to the cell.
+def test_drill_spo_total_is_the_spo_cell_and_counts_every_active_location(scm_app):
+    # R7 (captain 8 Sep 2026): the cell nets supply at every active location, pool AND
+    # project bin, so the dialog behind it counts both too or the total would not foot.
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
@@ -235,13 +235,66 @@ def test_drill_spo_total_is_the_spo_cell_and_counts_site_pools_only(scm_app):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["kind"] == "spo"
-    assert body["total"] == cell["incoming_spo"] == 90
-    assert sum(row["qty"] for row in body["rows"]) == 90
-    assert {row["warehouse_code"] for row in body["rows"]} == {pool.warehouse_code}
+    assert body["total"] == cell["incoming_spo"] == 160
+    assert sum(row["qty"] for row in body["rows"]) == 160
+    assert {row["warehouse_code"] for row in body["rows"]} == {
+        pool.warehouse_code,
+        group.warehouse_code,
+    }
     row = body["rows"][0]
     assert row["spo_number"]
     assert row["shipment_number"]
     assert row["received"] == 0
+
+
+def test_build_and_drill_pin_the_r7_widen_to_every_active_location(scm_app):
+    """R7 (captain 8 Sep 2026, reversing F2/26 Aug): `open_so_need` already sums project
+    demand alongside retail/unclassified, so a supply side that counted site pools only was
+    overstating the ask by exactly the stock already promised to that project. Pins:
+
+    (a) `on_hand` / `incoming_spo` on the row equal pool + project-bin quantity.
+    (b) `suggested_qty` is netted by the project-bin quantity too.
+    (c) `on_hand_group` / `incoming_spo_group` / `group_locations` still report the
+        project half - a breakdown now, not an exclusion.
+    (d) an INACTIVE location is still excluded from every figure.
+    (e) the SPO drill's `total` still foots to the row's `incoming_spo` (AC-B4/B5).
+    """
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=10, cbm=0.5)
+    _so(db, w, "A", 500, demand_class="retail")
+    pool = _warehouse(db)
+    group = _warehouse(db, segment="project")
+    closed = _warehouse(db, is_active=False)
+    _on_hand(db, w, "A", pool, 100)
+    _on_hand(db, w, "A", group, 40)
+    _on_hand(db, w, "A", closed, 999)
+    _incoming_spo(db, w, "A", pool, 20)
+    _incoming_spo(db, w, "A", group, 30)
+    _incoming_spo(db, w, "A", closed, 999)
+
+    row = _cell(app, db, w, "A")
+
+    # (a)
+    assert row["on_hand"] == 140  # 100 pool + 40 project, the closed 999 excluded
+    assert row["incoming_spo"] == 50  # 20 pool + 30 project, the closed 999 excluded
+    # (b)
+    assert row["suggested_qty"] == 310  # 500 - 140 - 50
+    # (c)
+    assert row["on_hand_group"] == 40
+    assert row["incoming_spo_group"] == 30
+    assert row["group_locations"]["on_hand"] == 40
+    assert row["group_locations"]["incoming_spo"] == 30
+    assert group.warehouse_code in row["group_locations"]["warehouse_codes"]
+    # (d)
+    assert closed.warehouse_code not in {s["warehouse_code"] for s in row["sites"]}
+    assert closed.warehouse_code not in row["group_locations"]["warehouse_codes"]
+
+    # (e)
+    r = _drill(app, str(w.supplier.id), str(w.product("A").id), "spo")
+    assert r.status_code == 200, r.text
+    assert r.json()["total"] == row["incoming_spo"] == 50
 
 
 def test_drill_spo_open_row_carries_the_container_number(scm_app):

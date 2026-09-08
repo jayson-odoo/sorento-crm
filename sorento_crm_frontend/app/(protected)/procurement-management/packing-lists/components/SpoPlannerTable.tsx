@@ -845,7 +845,9 @@ export function SpoPlannerTable({
         );
       }
       case 'on_hand':
-        return <OnHandTable productId={ln.product_id} />;
+        // R7 (captain 8 Sep 2026): this planner's own On hand cell counts every active
+        // location, so the lightbox behind it must too, or the total stops footing.
+        return <OnHandTable productId={ln.product_id} scope="all" />;
       case 'spo':
         return <SpoTabs supplierId={ln.supplier_id ?? ''} productId={ln.product_id} />;
       default:
@@ -1114,7 +1116,7 @@ export function SpoPlannerTable({
           return (
             <PlanNumberButton
               value={fmtInt(ln.incoming_spo)}
-              label="What is already on the water for the site pools"
+              label="What is already on the water, every active location"
               onClick={() => setDialog({ kind: 'spo', line: ln })}
               // The drill reads by supplier AND product; without both there is nothing to
               // ask for, so the figure stays plain text rather than opening an empty table.

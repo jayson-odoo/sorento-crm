@@ -117,7 +117,7 @@ describe('ContainerRequestRowDialog', () => {
     const suggestion = screen.getByTestId('row-suggestion');
     expect(suggestion).toHaveTextContent('2,426');
     // The arithmetic, spelled out (AC-B5).
-    expect(suggestion).toHaveTextContent('need 3,999 - pool stock 1,573 - SPO 0 = 2,426');
+    expect(suggestion).toHaveTextContent('need 3,999 - on hand 1,573 - SPO 0 = 2,426');
     // Gone: "Incoming PL 600 and outstanding PO 297 are not deducted" was a sentence
     // teaching the reader the rule, which the UI does not do (PRINCIPLES design mandates).
     // The two figures keep their own section further down, labelled, not explained.
@@ -159,7 +159,7 @@ describe('ContainerRequestRowDialog', () => {
     expect(screen.getByTestId('row-suggestion')).toHaveTextContent('900');
   });
 
-  it('lists every site pool, zero rows included, and the group locations muted (AC-B1/B3)', () => {
+  it('lists every site pool, zero rows included, and the group locations counted too (R7)', () => {
     const table = renderDialog() && screen.getByTestId('row-locations');
     const rows = within(table).getAllByRole('row');
 
@@ -169,10 +169,15 @@ describe('ContainerRequestRowDialog', () => {
     expect(within(table).getByText('MWH')).toBeInTheDocument();
     expect(within(table).getByText('WH3')).toBeInTheDocument();
     // The group line names a couple of codes and how many there are, and its Counted cell is
-    // a dash: this stock is real and deliberately not part of the ask.
+    // a real figure now (R7, captain 8 Sep 2026): this stock nets into the ask same as a
+    // site pool's, so it reads as counted rather than as a dash.
     expect(within(table).getByText('BRW-BB, DC1-BB, ... (12)')).toBeInTheDocument();
     expect(within(table).getByText('Group locations')).toBeInTheDocument();
-    expect(within(table).getByText('640')).toBeInTheDocument();
+    const groupRow = within(table).getByText('Group locations').closest('tr');
+    expect(groupRow).not.toBeNull();
+    // group_locations.on_hand (640) + group_locations.incoming_spo (0) = 640, in both the
+    // On hand cell and the Counted cell.
+    expect(within(groupRow as HTMLElement).getAllByText('640')).toHaveLength(2);
   });
 
   it('names the packing lists and open POs behind the reference figures (AC-B4)', () => {
