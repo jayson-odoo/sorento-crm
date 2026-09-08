@@ -3750,15 +3750,32 @@ class ProjectOrderInquiryService:
     def _cascade_take(
         candidates: Sequence[Dict[str, Any]], need: Decimal
     ) -> List[Tuple[Dict[str, Any], Decimal]]:
-        """`min(what is left on this line, what is still needed)` off each candidate in the
-        order it was given, until the need is covered or the candidates run out.
+        """`min(what is left on this line, what is still needed)` off each CASCADABLE
+        candidate in the order it was given, until the need is covered - or NOTHING at all,
+        ruled by the owner 8 Sep 2026 (slice D): when the cascadable candidates cannot
+        cover `need` IN FULL, this returns an empty list rather than the partial cover it
+        used to.
 
-        Partial coverage is allowed and is not a failure: a `need` bigger than every
-        candidate's remaining balance combined simply returns less than `need`, and the row
-        is left PARTLY LINKED with the rest still counting as demand. Before the links
-        table there was nowhere to record that, so the row had to be split for the
-        arithmetic to work.
+        Half covering a 493-piece row and buying the other 378 strands whatever the half
+        DID cover - it cannot be re-offered to another row that needed exactly that much -
+        while leaving the row PARTLY LINKED with the balance still counting as demand. The
+        row's whole quantity going to Buy is the honest outcome when nothing on hand can
+        answer it in full; a row already `partly_linked` from before this ruling is left
+        exactly as it is (not retro-applied), and `partly_linked` stays reachable through a
+        re-deal, a book re-upload, or a manual partial taken by hand in the Link dialog -
+        none of which calls this method (`place_on_po_allocations` walks `by_target`
+        directly and is never routed through the cascade).
         """
+        cascadable_total = sum(
+            (
+                candidate["remaining"]
+                for candidate in candidates
+                if candidate.get("cascadable", True)
+            ),
+            _ZERO,
+        )
+        if cascadable_total < need:
+            return []
         still = need
         takes: List[Tuple[Dict[str, Any], Decimal]] = []
         for candidate in candidates:

@@ -282,19 +282,37 @@ def test_rejecting_a_fully_linked_row_takes_its_documents_back(api):
 
 def test_rejecting_a_partly_linked_row_takes_its_half_back_too(api):
     """The same rule from the other side, and the same reversal: a refusal leaves the row
-    holding nothing, whether it was covered wholly or in part."""
+    holding nothing, whether it was covered wholly or in part.
+
+    SLICE D, 8 Sep 2026: the AUTOMATIC pass no longer leaves a row PARTLY LINKED - 4 of 10
+    cascadable is short of the whole 10, so acknowledging links nothing and the row stays
+    `raised` (AC-D1). `partly_linked` is still a real, reachable state (AC-D4); it now
+    comes from a PERSON naming a partial by hand in the Link dialog, which is what this
+    test writes directly to keep testing what it always meant to - a refusal giving back
+    whatever a row was holding, however it got there.
+    """
     _client, world = api
-    _po, _po_line = _open_po_line(world, qty=4)
+    _po, po_line = _open_po_line(world, qty=4)
     fixture = _raise_one_row(api, qty="10")
     row = fixture["row"]
 
     with _as_purchasing(world) as buyer:
         assert buyer.post(ACK_URL, json={"row_ids": [str(row.id)]}).status_code == 200
         world.db.commit()
-        # 4 of the 10 covered, and the acknowledgement's own cascade is what covers them:
-        # one purchase-order line of 4 against a row of 10 leaves 6 still owed.
+        # AC-D1: 4 of the 10 needed is short of the whole row, so the automatic cascade
+        # links nothing and the row stays raised.
+        world.db.refresh(row)
+        assert row.state == INQUIRY_RAISED
+
+        # AC-D4: a buyer may still take a partial by hand.
+        ProjectOrderInquiryService(world.db).place_on_po_allocations(
+            str(row.id), [{"po_line_id": po_line.id, "qty": "4"}],
+            actor_user_id=world.buyer,
+        )
+        world.db.commit()
         world.db.refresh(row)
         assert row.state == INQUIRY_PARTLY_LINKED
+
         response = buyer.post(
             f"{LIST}/{row.id}/reject", json={"reason": "No supplier for the rest"}
         )
