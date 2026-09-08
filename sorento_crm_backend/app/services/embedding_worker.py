@@ -763,6 +763,31 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
         # If multiple distinct source_hash values are current (duplicate batches), re-embed so
         # mark_previous_non_current + insert can consolidate.
         if len(distinct_current) == 1 and source_hash in distinct_current:
+            # R9/AC-E15 (round 2 + round 3, security review): keyed on "the document
+            # is inactive and this row is not hidden" - never on anything specific to
+            # retirement - because TWO paths reach this branch with a document still
+            # `is_active = False`. (1) An un-retire restates IDENTICAL values, so
+            # `source_hash` is unchanged. (2) A retired row whose `quantity_received`
+            # goes 0 -> >0 (R2) is VISIBLE again by `visible_line_clauses()` the
+            # instant that happens - `_spo_allocation_hidden` above already returned
+            # False for it - but the canonical body carries no receipt figure, so the
+            # hash is unchanged too. Both land here because nothing else in the
+            # pipeline ever sets `is_active` back to True. A body-text change (adding
+            # `retired_at`) fixes neither: a HIDDEN row never reaches body building at
+            # all (the branch above returns first), and a now-visible row's body is
+            # byte-identical to its original, so the hash matches either way.
+            # Re-activating here, before the skip, is the only place that can repair
+            # it - for any source_type, not only `spo_allocation`.
+            doc = (
+                db.query(EmbeddingDocument)
+                .filter(
+                    EmbeddingDocument.source_type == queue_item.source_type,
+                    EmbeddingDocument.source_id == queue_item.source_id,
+                )
+                .first()
+            )
+            if doc is not None and not doc.is_active:
+                doc.is_active = True
             queue_item.status = "skipped"
             queue_item.processed_at = datetime.utcnow()
             db.commit()
