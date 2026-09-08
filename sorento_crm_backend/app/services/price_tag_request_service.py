@@ -274,8 +274,13 @@ class PriceTagRequestService:
         with no assignee, leaves the request ``new`` and unclaimed - the Claim
         path is unchanged (AC-S3-2). Returns the assignee id, or ``None``.
 
-        Called from ``portal_submit_price_tag_request`` in its OWN try/except:
-        a failure here must not fail the submit (AC-S3-3).
+        The write (status, assignee, the tag_sheet page) runs inside its own
+        SAVEPOINT: ``assigned_to_id`` is set only after ``transition_status``
+        has actually succeeded, and a failure anywhere in the block rolls the
+        savepoint back rather than leaving a half-write (assigned but still
+        ``new``, or vice versa) for the caller's own ``db.commit()`` to
+        persist. Called from ``portal_submit_price_tag_request`` in its OWN
+        try/except: a failure here must not fail the submit (AC-S3-3).
         """
         from app.models.sla import ConversationSLATracking
         from app.services.sla_scope import open_tracker_scope
@@ -293,11 +298,53 @@ class PriceTagRequestService:
         if not tracker or not tracker.assigned_to_id:
             return None
 
-        request.assigned_to_id = tracker.assigned_to_id
-        PriceTagRequestService.transition_status(
-            db, str(request.id), STATUS_DESIGNING, user_id=tracker.assigned_to_id,
-        )
+        savepoint = db.begin_nested()
+        try:
+            PriceTagRequestService.transition_status(
+                db, str(request.id), STATUS_DESIGNING, user_id=tracker.assigned_to_id,
+            )
+            request.assigned_to_id = tracker.assigned_to_id
+            # B1: a request auto-assigned straight into `designing` needs the
+            # same tag_sheet page Claim creates - without this GET
+            # .../design 404s NO_PAGE, and auto-assign has already claimed
+            # it, so there is no Claim button left to fix it from.
+            PriceTagRequestService.ensure_tag_sheet_page(
+                db, request, tracker.assigned_to_id,
+            )
+            db.flush()
+            savepoint.commit()
+        except Exception:
+            savepoint.rollback()
+            raise
         return tracker.assigned_to_id
+
+    @staticmethod
+    def ensure_tag_sheet_page(
+        db: Session, request: PriceTagRequest, user_id: str | None,
+    ) -> None:
+        """The tag_sheet ``Page`` a request needs before design can happen.
+
+        Idempotent: a no-op once ``request.page_id`` is set. Extracted from
+        the CRM claim route (``claim_price_tag_request``) so BOTH claim and
+        ``auto_assign_from_tracker`` (D8) create it the same way - a request
+        that lands in ``designing`` with no page 404s NO_PAGE on
+        ``GET .../design`` (B1).
+        """
+        if request.page_id:
+            return
+        from app.models.dealer_kit import Page
+
+        page = Page(
+            name=f"Tags - {request.doc_number}",
+            slug=f"tag-sheet-{request.doc_number.lower()}",
+            kind="tag_sheet",
+            request_id=request.id,
+            company_id=request.company_id,
+            created_by=user_id,
+        )
+        db.add(page)
+        db.flush()
+        request.page_id = page.id
 
     @staticmethod
     def transition_status(

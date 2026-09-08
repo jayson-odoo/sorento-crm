@@ -228,6 +228,33 @@ class TestAutoAssignWithAnActiveConfig:
         assert tracker is not None
         assert tracker.assigned_to_id == member_id
 
+    def test_auto_assign_creates_the_tag_sheet_page(self, client):
+        """B1: a request auto-assigned straight into `designing` needs the
+        same tag_sheet page Claim would have created, or GET .../design
+        404s NO_PAGE with no Claim button left to fix it from."""
+        c, db, _contact_id = client
+        from app.models.dealer_kit import Page
+        from app.models.price_tag import PriceTagRequest
+
+        product_id = _seed_product(db)
+        _seed_one_member_tier1_config(db)
+        created = c.post(_BASE, json=_submittable_payload(product_id)).json()
+
+        res = c.post(f"{_BASE}/{created['id']}/submit")
+        assert res.status_code == 200, res.text
+
+        db.expire_all()
+        row = (
+            db.query(PriceTagRequest)
+            .filter(PriceTagRequest.id == created["id"])
+            .first()
+        )
+        assert row.page_id is not None
+
+        page = db.query(Page).filter(Page.id == row.page_id).first()
+        assert page is not None
+        assert page.kind == "tag_sheet"
+
 
 class TestNoActiveConfig:
     def test_submit_leaves_the_request_new_and_unassigned(self, client):

@@ -168,18 +168,9 @@ def claim_price_tag_request(
     )
 
     # Auto-create a tag_sheet page for this request if one does not exist.
-    if not result.page_id:
-        page = Page(
-            name=f"Tags - {result.doc_number}",
-            slug=f"tag-sheet-{result.doc_number.lower()}",
-            kind="tag_sheet",
-            request_id=result.id,
-            company_id=result.company_id,
-            created_by=_user_id(user),
-        )
-        db.add(page)
-        db.flush()
-        result.page_id = page.id
+    # Shared with auto_assign_from_tracker (D8, B1) so a request claimed by
+    # either path ends up with the same page.
+    PriceTagRequestService.ensure_tag_sheet_page(db, result, _user_id(user))
 
     db.commit()
     # Answered through the same resolver as the detail route: the page renders
