@@ -415,8 +415,8 @@ class TestOwner8SepTheRungIsPerContactAndOffersOnce:
         )
         assert result.status == "done", result.error
         assert PO_TOOL in probes
-        # D11 (owner ruling, 8 Sep 2026): `{outstanding_qty} {document_date}`, no heading.
-        assert "but PO is placed:\n27 2026-06-30" in said, said
+        # D11/D14 (owner ruling, 8 Sep 2026): `Qty {outstanding_qty} placed on {document_date}`, no heading.
+        assert "but PO is placed:\nQty 27 placed on 2026-06-30" in said, said
         assert "pcs" not in said and "expected" not in said and "202607-S0031" not in said
         # `said` joins the reply with every send action's copy of it; the count is on the
         # reply text alone.
@@ -466,9 +466,9 @@ class TestD7AnIncomingAskReachesThePORung:
         # the incoming lane's own picker probe may sit beside them; the climb is what matters
         assert probes.index("crm_inventory_stock_balance_list") < probes.index(PO_TOOL)
         assert f"No incoming and no stock for {CODE}, but PO is placed:" in said, said
-        # D11: PO_ROWS carries no `po_date`, so the line is the quantity alone; the
+        # D11/D14: PO_ROWS carries no `po_date`, so the line is the quantity alone; the
         # (irrelevant) expected date never renders either way.
-        assert "but PO is placed:\n1000" in said
+        assert "but PO is placed:\nQty 1000" in said
         assert "expected" not in said and "2026-06-01" not in said
         assert "GUANGDONG" not in said
         text = (result.reply or {}).get("text") or ""

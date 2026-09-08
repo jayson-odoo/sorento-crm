@@ -1058,22 +1058,24 @@ def _crossdomain_rung_row(it: Any, field_by_key: Any) -> dict[str, Any]:
 
 
 def _crossdomain_rung_text(rows: list[dict[str, Any]]) -> str:
-    """D11 (owner ruling, 8 Sep 2026): one line per PO/SPO LINE, `{outstanding_qty}
-    {document_date}` - `po_date` is `purchase_orders.issue_date` (the SPO's issue date on
-    an SPO row), never the expected/ETA date (owner: it is not accurate). No per-document
-    heading naming the PO/SPO number - D2's heading-per-document shape is retired - and no
-    "pcs". Lines from several documents just follow one another in the rows' own order:
+    """D11/D14 (owner ruling, 8 Sep 2026): one line per PO/SPO LINE, `Qty {outstanding_qty}
+    placed on {document_date}` - `po_date` is `purchase_orders.issue_date` (the SPO's issue
+    date on an SPO row), never the expected/ETA date (owner: it is not accurate). No
+    per-document heading naming the PO/SPO number - D2's heading-per-document shape is
+    retired - and no "pcs". Lines from several documents just follow one another in the
+    rows' own order:
 
-        10 2026-07-29
-        20 2026-07-29
+        Qty 10 placed on 2026-07-29
+        Qty 20 placed on 2026-07-29
 
-    Every part is omitted when null, same as before.
+    "placed on {date}" is omitted, along with the date, when the date is null - same as
+    before.
     """
     out: list[str] = []
     for row in rows:
         qty = _fmt_xd_value(row.get("qty"))
         po_date = row.get("po_date")
-        line = qty if po_date in (None, "") else f"{qty} {_fmt_xd_value(po_date)}"
+        line = f"Qty {qty}" if po_date in (None, "") else f"Qty {qty} placed on {_fmt_xd_value(po_date)}"
         out.append(line)
     return "\n".join(out)
 
