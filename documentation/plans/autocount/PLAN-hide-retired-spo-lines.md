@@ -229,3 +229,17 @@ the `tests/scm/` group from section "verification commands" below both green bef
 four changes; `tests/test_migration_466_shipment_line_description.py`,
 `tests/test_shipment_lines_follow_header_company.py`, `tests/test_consolidated_packing_list.py`,
 `tests/test_packing_list_multi_supplier.py` (packing-list detail readers) unaffected.
+
+## 10. Round 4 rulings (security review of the delta, 2026-09-08)
+
+- **Both proposed fixes are taken.** The retired branch gets the same ownership gate its sibling
+  has, and the backfill freezes the receipt before stamping. Either alone closes the hole; together
+  they make the invariant structural rather than dependent on which writer retired the row.
+- **The backfill never stamps a `fully_received` row.** Dropping the receipt predicate let a live
+  line that AutoCount still names qualify, if a later open sibling happened to exist. A received
+  line is visible under R2 whether marked or not, so the marker buys nothing there and costs the
+  row its share of the group's receipt.
+- **The packing list is filtered on both halves** (`refresh_shipment_line_statuses`' persisted
+  `spo_allocated_quantity` as well as the response), reversing the section 6 note that left it
+  alone. The two halves disagreeing inside one payload is worse than either choice, and the user's
+  decision was every listing.

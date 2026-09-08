@@ -70,3 +70,32 @@ receipt. So "closed, never received" is not evidence of retirement.
 - **AC-H13 [BE][T]** (packing list) The per-product related-SPO strip on the packing-list detail
   (`app/api/v1/procurement/packing_lists.py`) hides retired allocations and excludes their allocated
   quantity, the same rule as every other listing.
+
+## Round 4 (security review of the delta, 2026-09-08)
+
+Round 2 dropped the receipt predicate and round 2 also added a write to retired rows. Each is right
+alone; together a backfill-stamped row carrying a receipt but no frozen floor can be zeroed by the
+next recompute and then hidden, which is the D28 defect class on the one row shape that is invisible
+afterwards.
+
+- **AC-H14 [BE][T]** (ownership gate) The retired branch of `_sync_received_for_allocations` skips a
+  row that is neither released nor picked against, exactly as the non-AutoCount branch does. Given a
+  retired allocation with `quantity_received 25`, `stated_received` NULL and no picking line
+  anywhere, running `sync_received_for_spo_number` for its document leaves it at 25 and visible. A
+  retired allocation that IS picked against still takes its own approved total (AC-H10 unchanged).
+
+- **AC-H15 [S][T]** (backfill freezes) The backfill sets `stated_received = max(stated, received)`
+  when that is positive, before stamping `retired_at`, the same order the ingest's leftover sweep and
+  the dedupe use. After `--apply` on a row carrying 25, a later `sync_received_for_spo_number` leaves
+  it at 25.
+
+- **AC-H16 [S][T]** (a live line is never stamped) The backfill never stamps a row whose
+  `receipt_status` is `fully_received`. Given push 1 writing a line closed at 100 of 100 that
+  AutoCount still names, and push 2 adding an open sibling for the same product and location, the
+  fully received line is NOT stamped. Marking it would gain nothing, because a received line stays
+  visible under R2 either way, and would wrongly take it out of its group's receipt sharing.
+
+- **AC-H17 [BE][T]** (one payload, one rule) The packing-list detail's `spo_allocated_quantity` and
+  the `line_status` derived from it count the same visible set. Today the endpoint overwrites the
+  quantity with a filtered total while the status still derives from the unfiltered one, so one
+  response can show allocated 3912 against a status computed from 8324.
