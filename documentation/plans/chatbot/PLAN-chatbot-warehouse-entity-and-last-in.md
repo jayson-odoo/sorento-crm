@@ -44,6 +44,9 @@ UAC: `chatbot-warehouse-entity-and-last-in-acceptance-criteria.md`.
 1. `gate.ALLOWED["inventory"]` gains `"warehouse"`. A new row
    `"spo_allocation": ["product", "warehouse", "category", "brand"]` replaces the
    unscoped pass-through (the owner accepted the gate matrix). `purchase_order` stays as is.
+   This row carries no `ALLOWS_EMPTY` entry, so a bare "last in" with no product now fails
+   the gate instead of passing through unscoped - with one-row-per-product semantics (item
+   4 below), a bare "last in" with no product asks for one instead of fanning out.
 2. `fetch.TYPE_TO_PARAM["warehouse"] = "warehouse_ids"`.
 3. Warehouse resolution is EXACT CODE after normalisation: casefold and strip every
    non-alphanumeric character on both sides, so "brw ib", "brwib", "BRW-IB" all resolve to

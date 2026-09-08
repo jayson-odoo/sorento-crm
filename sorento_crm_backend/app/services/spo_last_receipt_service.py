@@ -19,6 +19,13 @@ Ordering key per line: `expected_date` (the SPO line's promised delivery), falli
 which column answered: "Expected" / "Issued" / "Recorded". `created_at DESC` is a
 deterministic TIEBREAK only, for lines sharing the same date - it carries no business
 meaning of its own.
+
+Follow-up (8 Sep 2026): one row per product only applies when the caller actually NAMED
+products. `product_ids` empty is an unscoped ask - the tool is reachable directly by the
+AI assistant, not gated behind a resolved product - and one row per product across the
+whole table is thousands of rows. With no `product_ids`, `top_n` is instead a plain cap
+over the same ordering, across every product, so an unscoped call costs exactly `top_n`
+rows regardless of how many products exist.
 """
 from __future__ import annotations
 
@@ -51,12 +58,17 @@ def last_receipt_rows(
     warehouse_ids: Optional[list[str]] = None,
     top_n: int = 1,
 ) -> list[dict]:
-    """The last `top_n` SPO lines PER PRODUCT (default 1), GR ignored entirely.
+    """The last `top_n` SPO lines PER PRODUCT (default 1) when `product_ids` is given, GR
+    ignored entirely. With NO `product_ids`, `top_n` is instead a plain cap over ALL
+    products - the same ordering key, newest first, any product - so an unscoped call
+    (the AI assistant can reach this tool without a resolved product) costs exactly
+    `top_n` rows rather than one per product across the whole table.
 
-    `warehouse_ids` filters lines to those warehouses BEFORE the per-product pick, so a
-    line at an excluded warehouse never displaces one at an included warehouse. Rows are
-    grouped product by product, in `product_code` order; within a product, newest key
-    first, `created_at DESC` breaking a tie on the same date.
+    `warehouse_ids` filters lines to those warehouses BEFORE the pick, so a line at an
+    excluded warehouse never displaces one at an included warehouse. In the per-product
+    case, rows are grouped product by product, in `product_code` order; within a product
+    (or, unscoped, within the single overall list), newest key first, `created_at DESC`
+    breaking a tie on the same date.
     """
     top_n = max(int(top_n or 1), 1)
     key_expr = func.coalesce(
@@ -67,51 +79,74 @@ def last_receipt_rows(
         (SPOAllocation.issue_date.isnot(None), "Issued"),
         else_="Recorded",
     )
-    rn = (
-        func.row_number()
-        .over(
-            partition_by=SPOAllocation.product_id,
-            order_by=(key_expr.desc().nulls_last(), SPOAllocation.created_at.desc()),
-        )
-        .label("rn")
-    )
 
-    numbered = db.query(
-        SPOAllocation.id.label("allocation_id"),
-        SPOAllocation.spo_number,
-        SPOAllocation.product_id,
-        SPOAllocation.warehouse_id,
-        SPOAllocation.allocated_quantity,
-        SPOAllocation.quantity_received,
-        key_expr.label("date_key"),
-        label_expr.label("date_label"),
-        rn,
-    )
     if product_ids:
-        numbered = numbered.filter(SPOAllocation.product_id.in_(product_ids))
-    if warehouse_ids:
-        numbered = numbered.filter(SPOAllocation.warehouse_id.in_(warehouse_ids))
-    sub = numbered.subquery()
-
-    rows = (
-        db.query(
-            sub.c.spo_number,
-            sub.c.allocated_quantity,
-            sub.c.quantity_received,
-            sub.c.date_key,
-            sub.c.date_label,
-            sub.c.rn,
-            Product.id.label("product_id"),
-            Product.product_code,
-            Product.product_name,
-            Warehouse.warehouse_code,
+        rn = (
+            func.row_number()
+            .over(
+                partition_by=SPOAllocation.product_id,
+                order_by=(key_expr.desc().nulls_last(), SPOAllocation.created_at.desc()),
+            )
+            .label("rn")
         )
-        .join(Product, Product.id == sub.c.product_id)
-        .outerjoin(Warehouse, Warehouse.id == sub.c.warehouse_id)
-        .filter(sub.c.rn <= top_n)
-        .order_by(Product.product_code.asc(), sub.c.rn.asc())
-        .all()
-    )
+
+        numbered = db.query(
+            SPOAllocation.id.label("allocation_id"),
+            SPOAllocation.spo_number,
+            SPOAllocation.product_id,
+            SPOAllocation.warehouse_id,
+            SPOAllocation.allocated_quantity,
+            SPOAllocation.quantity_received,
+            key_expr.label("date_key"),
+            label_expr.label("date_label"),
+            rn,
+        ).filter(SPOAllocation.product_id.in_(product_ids))
+        if warehouse_ids:
+            numbered = numbered.filter(SPOAllocation.warehouse_id.in_(warehouse_ids))
+        sub = numbered.subquery()
+
+        rows = (
+            db.query(
+                sub.c.spo_number,
+                sub.c.allocated_quantity,
+                sub.c.quantity_received,
+                sub.c.date_key,
+                sub.c.date_label,
+                Product.id.label("product_id"),
+                Product.product_code,
+                Product.product_name,
+                Warehouse.warehouse_code,
+            )
+            .join(Product, Product.id == sub.c.product_id)
+            .outerjoin(Warehouse, Warehouse.id == sub.c.warehouse_id)
+            .filter(sub.c.rn <= top_n)
+            .order_by(Product.product_code.asc(), sub.c.rn.asc())
+            .all()
+        )
+    else:
+        # Unscoped: NOT windowed per product - a plain top_n over every line, newest first.
+        q = (
+            db.query(
+                SPOAllocation.spo_number,
+                SPOAllocation.allocated_quantity,
+                SPOAllocation.quantity_received,
+                key_expr.label("date_key"),
+                label_expr.label("date_label"),
+                Product.id.label("product_id"),
+                Product.product_code,
+                Product.product_name,
+                Warehouse.warehouse_code,
+            )
+            .join(Product, Product.id == SPOAllocation.product_id)
+            .outerjoin(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
+        )
+        if warehouse_ids:
+            q = q.filter(SPOAllocation.warehouse_id.in_(warehouse_ids))
+        rows = (
+            q.order_by(key_expr.desc().nulls_last(), SPOAllocation.created_at.desc())
+            .limit(top_n)
+            .all()
+        )
 
     out: list[dict] = []
     for row in rows:

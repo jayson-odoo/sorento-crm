@@ -27,6 +27,9 @@ the dates named.
   `top_n = 1` returns exactly two rows, one per product, each product's newest line, grouped
   by `product_code` order. `top_n = 2` returns four rows, two per product, newest first
   within each.
+- AC-6b Unscoped call is bounded. Three products, one line each, no `product_ids`,
+  `top_n = 2` returns exactly 2 rows, the two newest lines by the same key regardless of
+  which product they belong to - never one row per product across the whole table.
 - AC-7 Warehouse filter. Lines of P in `BRW` and `BRW-IB`; `warehouse_ids=[BRW-IB]` returns
   only the BRW-IB line even when the BRW line is newer.
 - AC-8 Route. `GET /api/v1/procurement/spo-allocations/last-receipt?product_ids=..&warehouse_ids=..&top_n=..`

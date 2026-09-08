@@ -168,6 +168,24 @@ def test_one_row_per_product_grouped_by_product_code(db):
     assert [r["spo_number"] for r in rows2] == ["P1-NEW", "P1-OLD", "P2-NEW", "P2-OLD"]
 
 
+def test_unscoped_call_is_a_plain_cap_not_one_row_per_product(db):
+    """AC-6b: with NO `product_ids`, one-row-per-product would fan out to a row for
+    every product in the table (thousands of rows; the AI assistant can call this tool
+    unscoped). `top_n` is instead a plain cap over every line, newest first, any
+    product."""
+    p1 = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    p2 = product(db, company_id=DEFAULT_COMPANY_ID, code="P2")
+    p3 = product(db, company_id=DEFAULT_COMPANY_ID, code="P3")
+    _allocation(db, product_id=p1.id, expected_date=date(2026, 6, 1), spo_number="P1-LINE")
+    _allocation(db, product_id=p2.id, expected_date=date(2026, 6, 20), spo_number="P2-NEWEST")
+    _allocation(db, product_id=p3.id, expected_date=date(2026, 6, 15), spo_number="P3-2ND-NEWEST")
+    db.commit()
+
+    rows = last_receipt_rows(db, top_n=2)
+    assert len(rows) == 2
+    assert [r["spo_number"] for r in rows] == ["P2-NEWEST", "P3-2ND-NEWEST"]
+
+
 def test_warehouse_filter_before_per_product_pick(db):
     """AC-7."""
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")

@@ -57,6 +57,53 @@ class TestGateKeepsWarehouse:
         assert "customer" not in types
 
 
+class TestZeroEntitySpoAllocationAsksInsteadOfFanningOut:
+    """Follow-up ruling (8 Sep 2026, chatbot-warehouse-entity-and-last-in): with
+    one-row-per-product semantics, an unscoped "last in" (no product, no warehouse - no
+    entity at all) would otherwise fan out to a row for every product in the table. The
+    gate must refuse it, and the miss lane must render a clarification instead of the
+    turn ever reaching fetch."""
+
+    def _empty_gate(self) -> dict[str, Any]:
+        resolver: dict[str, Any] = {"resolutions": []}
+        return run_gate(
+            dict(resolver),
+            parser={"domain_hint": "spo_allocation", "entities": []},
+            resolver=resolver,
+        )
+
+    def test_gate_fails_with_no_entities(self) -> None:
+        out = self._empty_gate()
+        assert out["gate_passed"] is False
+        assert "requires a scoping entity" in out["gate_reason"]
+
+    def test_the_miss_branch_fires_not_the_continue_branch(self) -> None:
+        """`if3_miss` is what `resolve_gate.run` checks BEFORE it would ever reach
+        fetch - True here means the turn takes the clarification exit, not the
+        continue-to-fetch one."""
+        from app.services.chatbot.lanes.business.resolve_gate import if3_miss
+
+        gate = self._empty_gate()
+        ctx_resolved_ctx = {"gate": gate}
+        assert if3_miss(ctx_resolved_ctx, parser={"domain_hint": "spo_allocation", "entities": []}) is True
+
+    def test_a_clarification_is_rendered(self) -> None:
+        from app.services.chatbot.lanes.business.answer import not_found_error_message
+
+        parser = {
+            "domain_hint": "spo_allocation",
+            "entities": [],
+            "routing": {"suggested_team": "procurement"},
+            "access_levels": [],
+        }
+        resolved: dict[str, Any] = {"by_entity_type": {}, "tokens": [], "unresolved_tokens": []}
+        gate = self._empty_gate()
+
+        out = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
+        assert out.get("is_clarification") is True
+        assert (out.get("escalate_message") or "").strip() != ""
+
+
 class TestTransformerEmitsWarehouseIds:
     def test_warehouse_entity_becomes_warehouse_ids(self) -> None:
         trigger = {
