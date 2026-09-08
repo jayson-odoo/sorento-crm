@@ -150,3 +150,18 @@ it - the UAC's own condition is written as `coalesce(...) <> ...` for exactly th
 naive `DateTime(timezone=False)` column and `retired_at` is `DateTime(timezone=True)`:
 `row.updated_at.replace(tzinfo=timezone.utc)` when set (matching the app's existing
 `datetime.utcnow()` writers of `updated_at`), else `datetime.now(timezone.utc)`.
+
+## 8. Round 2 rulings (security review, 2026-09-08)
+
+- **B1.** The backfill's evidence is not "closed and never received", which four writers produce.
+  It is "AutoCount replaced this line": a `source_ref` on the row, plus an OPEN sibling in its own
+  `(company, spo_number, product_id, upper(location_code))` group created strictly later. A
+  cancelled document has no open sibling anywhere, and an absence-closed line has no later sibling,
+  so both drop out. Anything that cannot be told apart is left alone: the ingest's own leftover
+  sweep stamps it on the next push. The docstring's "exactly two reasons" claim is deleted and the
+  four closers are named instead.
+- **B2.** A receipt approved after retirement never reached `quantity_received`, because the
+  recompute skips a retired row entirely, so R2's guard read a column the retirement path had
+  abandoned. A retired `autocount` row is now written from its OWN approved picking lines with the
+  D28c floor, `max(stated_received, own approved total)`, and `may_reopen=False`. It still takes no
+  share of its group, and AC-X40 still holds because the floor covers a later deletion.
