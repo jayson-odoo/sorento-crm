@@ -889,6 +889,9 @@ def _products(rows: list[dict], b: _Builder) -> None:
             b.attach(a)
 
 
+FILE_LINK_UNAVAILABLE = "(file link unavailable right now)"
+
+
 def _product_attachments(rows: list[dict], b: _Builder) -> None:
     for r in rows:
         prod = r.get("product") or {}
@@ -916,6 +919,14 @@ def _product_attachments(rows: list[dict], b: _Builder) -> None:
                 # Says which of the three states this file is in, so the consumer
                 # never has to compare Valid Until against today itself.
                 ("Validity", _validity_label(state)),
+                # D9 (8 Sep 2026): a file whose link could not be signed is still LISTED -
+                # the reader learns what exists - and the missing link is said, not hidden.
+                # `attach` skips it, so no send action is ever built for it.
+                (
+                    "file_link",
+                    "File Link",
+                    FILE_LINK_UNAVAILABLE if not _filled(att.get("file_path") or att.get("url")) else None,
+                ),
             ],
             discontinued=prod.get("is_discontinued") is True,
             # Reuses the envelope's EXISTING flags.expired (same mechanism as

@@ -2892,10 +2892,14 @@ def _label_attachments(files: list, rows: list[tuple[Any, list[str]]]) -> list:
             kept.append(entry)
             continue
         url = entry.get("url")
-        if jsc.truthy(url):
-            if url in seen_urls:
-                continue
-            seen_urls.add(url)
+        if not jsc.truthy(url):
+            # D9 (8 Sep 2026): a file with no link is listed in the answer (the presenter
+            # says "(file link unavailable right now)") but never sent - a send with no
+            # url is a dead action, not a delivery.
+            continue
+        if url in seen_urls:
+            continue
+        seen_urls.add(url)
         kept.append(entry)
 
     groups: dict[str, list[int]] = {}

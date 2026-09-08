@@ -191,6 +191,34 @@ def _error_fragment(reason: str, *, outcome: str | None = None) -> dict[str, Any
     return fragment
 
 
+#: D9 (owner console pass, 8 Sep 2026, turn 8f4356a3): a document tool that does not answer
+#: within the lane's tool budget is an ABSENCE the customer can act on (the miss lane, with
+#: its escalate offer), never the generic error reply. Only these tools, and only on a
+#: timeout: a stock or order read that fails stays an infrastructure failure, because
+#: telling a customer "no stock" off a dead read would assert an absence nobody measured.
+ATTACHMENT_TOOLS: frozenset[str] = frozenset(
+    {
+        "crm_master_product_attachments_list",
+        "crm_certificates_list",
+        "crm_marketing_promotion_attachments_list",
+        "crm_resource_attachments_list",
+        "crm_resource_attachments_catalogue",
+        "crm_resource_attachments_current_stock_list",
+    }
+)
+
+
+def _fetch_failure_outcome(tool_name: Any, exc: BaseException) -> str | None:
+    """`"not_found"` for a document tool that timed out (the miss lane answers it, with the
+    escalate offer); None for every other failure - today's hard failure, unchanged."""
+    if jsc.js_string(tool_name) not in ATTACHMENT_TOOLS:
+        return None
+    text = str(exc).lower()
+    if isinstance(exc, TimeoutError) or "timed out" in text or "timeout" in text:
+        return "not_found"
+    return None
+
+
 def run_fetch(
     payload: dict[str, Any],
     *,
@@ -356,7 +384,9 @@ def run_fetch(
         return _error_fragment(str(refused), outcome="tool_not_allowed")
     except Exception as exc:  # noqa: BLE001 - `onError: continueErrorOutput`, verbatim
         logger.warning("chatbot: MCP tool %s failed", tool_name, exc_info=True)
-        return _error_fragment(f"MCP tool {tool_name} failed: {exc}")
+        return _error_fragment(
+            f"MCP tool {tool_name} failed: {exc}", outcome=_fetch_failure_outcome(tool_name, exc)
+        )
 
     envelope = fetch_mod.parse_mcp_content(raw)
     if trace is not None:

@@ -834,3 +834,70 @@ class TestSwitchWordDomainOfThisMessage:
         from app.services.chatbot.head.output_exchange import _switch_word_domain
 
         assert _switch_word_domain(message) == domain
+
+
+class TestD9AFileLinkThatCannotBeSignedIsLeftOut:
+    """D9 (owner console pass, 8 Sep 2026, turn 8f4356a3 "cwsp124 technical drawing")."""
+
+    def test_a_document_tool_timeout_is_an_answerable_absence(self) -> None:
+        from app.services.chatbot.lanes.business import _fetch_failure_outcome
+
+        assert _fetch_failure_outcome("crm_master_product_attachments_list", TimeoutError("timed out")) == "not_found"
+        assert _fetch_failure_outcome("crm_resource_attachments_list", RuntimeError("MCP call timed out after 10s")) == "not_found"
+        # a broken read is still a hard failure, and a stock read never becomes an absence
+        assert _fetch_failure_outcome("crm_master_product_attachments_list", RuntimeError("500 from the CRM")) is None
+        assert _fetch_failure_outcome("crm_inventory_stock_balance_list", TimeoutError("timed out")) is None
+
+    def test_a_file_with_no_link_is_never_sent(self) -> None:
+        from app.services.chatbot.engine import _clean_attachments
+
+        source = {
+            "items": [],
+            "attachments": [
+                {"url": "https://cdn/a.pdf", "filename": "a.pdf", "mimeType": "application/pdf", "attachmentType": "Drawing"},
+                {"url": None, "filename": "b.pdf", "mimeType": "application/pdf", "attachmentType": "Drawing"},
+                {"filename": "c.pdf"},
+            ],
+        }
+        out = _clean_attachments(source)
+        assert [a["filename"] for a in out["attachments"]] == ["a.pdf"]
+
+    def test_the_reply_names_both_files_while_the_send_list_has_one(self) -> None:
+        """End to end through `output_structurer` (the reply text) and `_attachments_src`
+        (the send list): a product with two files, one unsignable, is answered whole and
+        sent partial."""
+        from app.services.chatbot.engine import _attachments_src
+
+        envelope = {
+            "result_type": "product_attachments",
+            "intro": "Here are the product files I found.",
+            "items": [
+                {
+                    "title": "CWSP124",
+                    "fields": [
+                        {"label": "Product Code", "value": "CWSP124"},
+                        {"label": "File Name", "value": "CWSP124-drawing.pdf"},
+                        {"key": "file_link", "label": "File Link", "value": "(file link unavailable right now)"},
+                    ],
+                },
+                {
+                    "title": "CWSP124",
+                    "fields": [
+                        {"label": "Product Code", "value": "CWSP124"},
+                        {"label": "File Name", "value": "CWSP124.jpg"},
+                    ],
+                },
+            ],
+            "attachments": [
+                {"url": None, "filename": "CWSP124-drawing.pdf", "mimeType": "application/pdf", "attachmentType": "Technical Drawing"},
+                {"url": "https://cdn.test.invalid/x/CWSP124.jpg", "filename": "CWSP124.jpg", "mimeType": "image/jpeg", "attachmentType": "Product Photos"},
+            ],
+            "has_result": True,
+        }
+        out = fetch.output_structurer(envelope, {})
+        assert "CWSP124-drawing.pdf" in out["response"]
+        assert "CWSP124.jpg" in out["response"]
+        assert "(file link unavailable right now)" in out["response"]
+
+        cleaned = _attachments_src({"outcome_fragment": {"central-exchange": out}})
+        assert [a["filename"] for a in cleaned["attachments"]] == ["CWSP124.jpg"]

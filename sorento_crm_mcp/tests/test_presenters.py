@@ -1600,3 +1600,22 @@ def test_purchase_orders_placed_source_names_the_kind_after_po_number():
         "data": [{"po_number": "PO-1001", "product_code": "SRTWC8517", "outstanding_qty": 50}],
     })
     assert "Source" not in [f["label"] for f in old["items"][0]["fields"]]
+
+
+def test_product_attachment_with_no_link_is_listed_with_the_unavailable_note_and_never_attached():
+    """D9 (8 Sep 2026): a file whose link could not be signed stays in the answer (name,
+    type) with "(file link unavailable right now)" and produces no attachment entry."""
+    out = env("crm_master_product_attachments_list", {
+        "data": [
+            {"product": {"product_code": "CWSP124"}, "attachment": {"original_filename": "CWSP124-drawing.pdf",
+             "attachment_type": {"type_name": "Technical Drawing"}, "file_path": None, "mime_type": "application/pdf"}},
+            {"product": {"product_code": "CWSP124"}, "attachment": {"original_filename": "CWSP124.jpg",
+             "attachment_type": {"type_name": "Product Photos"}, "file_path": "https://cdn-sorento.com/x/CWSP124.jpg", "mime_type": "image/jpeg"}},
+        ],
+    })
+    first = {f["label"]: f["value"] for f in out["items"][0]["fields"]}
+    assert first["File Name"] == "CWSP124-drawing.pdf"
+    assert first["File Link"] == "(file link unavailable right now)"
+    second = {f["label"]: f["value"] for f in out["items"][1]["fields"]}
+    assert "File Link" not in second
+    assert [a["filename"] for a in out["attachments"]] == ["CWSP124.jpg"]

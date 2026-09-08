@@ -587,3 +587,31 @@ def test_a_caller_without_the_permission_is_refused(api):
         == 403
     )
     assert client.delete(f"{_BASE}/{product.id}").status_code == 403
+
+
+def test_d9_a_signer_that_times_out_on_one_file_leaves_that_url_empty_and_returns_both(api, monkeypatch):
+    """D9 (owner console pass, 8 Sep 2026): signing is best effort - the file that could not
+    be signed in time comes back with `url: None`, the other with its link, and the endpoint
+    answers with both rows either way."""
+    from app.services import storage_router
+
+    db, _as = api
+    _as(_EDITOR_ID)
+    client = TestClient(app)
+    product = _product(db)
+    good = _attach(db, product, "front.jpg")
+    bad = _attach(db, product, "side.jpg")
+
+    class _OneFileTimesOut:
+        def get_signed_url(self, key: str, expires_in: int = 3600) -> str:
+            if "side.jpg" in key:
+                raise TimeoutError("signing took longer than 2s")
+            return f"https://cdn.test.invalid/{key}?Signature=stub"
+
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider: _OneFileTimesOut())
+    response = client.get(_BASE, params={"only_unset": "false", "query": product.product_code})
+    assert response.status_code == 200, response.text
+    row = _row(response.json(), product.id)
+    urls = {c["attachmentId"]: c["url"] for c in row["candidates"]}
+    assert urls[good.attachment_id] is not None
+    assert urls[bad.attachment_id] is None
