@@ -47,7 +47,7 @@ export default function PriceTagProofViewer({
     return (
       <Card>
         <CardHeader className="py-3 px-4">
-          <CardTitle className="text-base">Proof Preview</CardTitle>
+          <CardTitle className="text-base">Design Preview</CardTitle>
         </CardHeader>
         <CardContent className="px-4 pb-4">
           <p className="text-sm text-muted-foreground text-center py-6">
@@ -62,7 +62,7 @@ export default function PriceTagProofViewer({
     <Card>
       <CardHeader className="py-3 px-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <CardTitle className="text-base">Proof Preview</CardTitle>
+          <CardTitle className="text-base">Design Preview</CardTitle>
           <div className="flex items-center gap-2">
             {/* Zoom controls */}
             <Button

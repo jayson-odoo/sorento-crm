@@ -822,7 +822,7 @@ export const SUBMISSION_STATUS_LABELS: Record<string, string> = {
   updated: 'Updated',
   // Price tag request statuses
   designing: 'Designing',
-  proof_ready: 'Proof Ready',
+  proof_ready: 'Design Ready',
   changes_requested: 'Changes Requested',
   ready: 'Ready',
   void: 'Void',

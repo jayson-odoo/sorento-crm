@@ -86,7 +86,7 @@ export default function RequestTagDesignerShell({ requestId }: Props) {
 
   /**
    * Manual Save: the deliberate act, so it keeps its toast - and rethrows so a
-   * caller that saves as a PRECONDITION (Mark proof ready, Print sheet) can
+   * caller that saves as a PRECONDITION (Mark design ready, Print sheet) can
    * abort instead of transitioning a request whose design never landed.
    */
   const handleSave = useCallback(

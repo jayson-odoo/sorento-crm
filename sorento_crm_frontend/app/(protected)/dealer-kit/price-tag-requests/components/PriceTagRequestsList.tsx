@@ -46,7 +46,7 @@ const STATUS_OPTIONS = [
   { value: '__all__', label: 'All statuses' },
   { value: 'new', label: 'New' },
   { value: 'designing', label: 'Designing' },
-  { value: 'proof_ready', label: 'Proof Ready' },
+  { value: 'proof_ready', label: 'Design Ready' },
   { value: 'changes_requested', label: 'Changes Requested' },
   { value: 'approved', label: 'Approved' },
   { value: 'ready', label: 'Ready' },
@@ -161,7 +161,7 @@ export default function PriceTagRequestsList() {
       {
         accessorKey: 'debtor_name',
         header: ({ column }) => (
-          <DataGridColumnHeader title="Debtor" column={column} />
+          <DataGridColumnHeader title="Customer" column={column} />
         ),
         size: 200,
         cell: ({ row }) => (
@@ -171,7 +171,7 @@ export default function PriceTagRequestsList() {
           </span>
         ),
         meta: {
-          headerTitle: 'Debtor',
+          headerTitle: 'Customer',
           skeleton: <Skeleton className="h-4 w-32" />,
         },
       },

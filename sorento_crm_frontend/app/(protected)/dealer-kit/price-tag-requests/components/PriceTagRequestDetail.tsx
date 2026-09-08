@@ -8,8 +8,8 @@
  * (trail derived from the sidebar, title + ONE Back on the toolbar row), then a
  * record card carrying the document number, its status pill and the read-only
  * metadata, with `DetailActions` (page-scoped pager, gear, one primary CTA) on
- * its right. Everything else - the request, its lines, its PO attachments and
- * its proof - lives in tabs (D25), the same shape `StockTransferDetail` and
+ * its right. Everything else - the request, its lines and its sales order
+ * attachments - lives in tabs (D25), the same shape `StockTransferDetail` and
  * `SPODocumentDetail` use: `Tabs`/`TabsList variant="line"` under the record
  * card, one `Card` per tab.
  *
@@ -22,7 +22,8 @@
  * designer" button living in a standalone Proof card; `priceTagActions`
  * already puts `design`/`view design` first whenever it is legal, so that
  * button was a duplicate of the header's own primary CTA and is gone with the
- * card (D25).
+ * card (D25). The Proof tab itself is gone too (D10): the design lives in the
+ * designer, one click away through the same primary CTA.
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -83,7 +84,7 @@ import {
   type PriceTagActionSpec,
 } from './priceTagRequestActions';
 
-type DetailTab = 'request' | 'lines' | 'attachments' | 'proof';
+type DetailTab = 'request' | 'lines' | 'attachments';
 
 const STATUS_PILL_BASE =
   'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold';
@@ -95,30 +96,6 @@ const ACTION_ICON: Record<PriceTagAction, typeof UserPlus> = {
   export: Download,
   void: XCircle,
 };
-
-/** What the proof section says at each status. */
-function proofSummary(status: string): string {
-  switch (status) {
-    case 'new':
-      return 'Nothing has been designed yet. Claim the request and design its tags.';
-    case 'designing':
-      return 'The tags are being designed. Mark the proof ready to send it to the salesperson.';
-    case 'proof_ready':
-      return 'The proof is with the salesperson, waiting to be approved.';
-    case 'changes_requested':
-      return 'The salesperson asked for changes. Design the tags again and mark a new proof ready.';
-    case 'approved':
-      return 'The proof was approved. Export the PDF to print it.';
-    case 'ready':
-      return 'The PDF has been exported. Look for it in My Downloads.';
-    case 'rejected':
-      return 'The request was rejected, so there is no proof to show.';
-    case 'void':
-      return 'The request was voided, so there is no proof to show.';
-    default:
-      return 'No proof has been produced for this request.';
-  }
-}
 
 interface Props {
   requestId: string;
@@ -192,11 +169,11 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
       // 'mark_proof_ready' since this page was written, which is not a status,
       // so every click came back 409 INVALID_TRANSITION. Measured on the lane.
       await transitionPriceTagRequest(requestId, 'proof_ready');
-      toast.success('Proof marked as ready');
+      toast.success('Design marked as ready');
       const data = await getPriceTagRequest(requestId);
       setRequest(data);
     } catch {
-      toast.error('Failed to mark the proof ready');
+      toast.error('Failed to mark the design ready');
     } finally {
       setActionLoading(false);
     }
@@ -272,9 +249,9 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
   // request still let a row jump into the designer).
   const canDesign = actions.some((spec) => spec.action === 'design');
 
-  // PO Attachments: standard preview/download, read-only - upload stays
-  // portal-only (D4). Backed by the generic attachment download route, same as
-  // every other CRM attachment list.
+  // Sales Order attachments: standard preview/download, read-only - upload
+  // stays portal-only (D4). Backed by the generic attachment download route,
+  // same as every other CRM attachment list.
   const attachments = request?.attachments ?? [];
   const attachmentPreviewItems: AttachmentPreviewItem[] = useMemo(
     () =>
@@ -353,7 +330,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
               <p className="text-sm text-muted-foreground">
                 Created: {formatDateTimeInMalaysia(request.created_at)}
                 {' · '}
-                Needed by:{' '}
+                Need by:{' '}
                 {request.needed_by_date
                   ? formatDate(new Date(request.needed_by_date))
                   : '-'}
@@ -418,10 +395,10 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
         </CardHeader>
       </Card>
 
-      {/* Request / Lines / PO Attachments / Proof (D25): the same record, four
-          tabs instead of four stacked cards - view and edit are the same
-          layout, and there is no edit here beyond what the header's own
-          actions already do. */}
+      {/* Request / Lines / Sales Order (D25): the same record, three tabs
+          instead of stacked cards - view and edit are the same layout, and
+          there is no edit here beyond what the header's own actions already
+          do. */}
       <Tabs value={tab} onValueChange={(v) => setTab(v as DetailTab)} className="w-full">
         <TabsList variant="line" className="mb-4 w-full justify-start">
           <TabsTrigger value="request">
@@ -434,11 +411,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
           </TabsTrigger>
           <TabsTrigger value="attachments">
             <Paperclip />
-            <span>PO Attachments</span>
-          </TabsTrigger>
-          <TabsTrigger value="proof">
-            <Eye />
-            <span>Proof</span>
+            <span>Sales Order</span>
           </TabsTrigger>
         </TabsList>
 
@@ -447,7 +420,7 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
             <CardContent className="px-4 py-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
                 <div>
-                  <span className="text-muted-foreground block">Debtor</span>
+                  <span className="text-muted-foreground block">Customer</span>
                   {/* A portal draft may carry neither (D48a). */}
                   <p className="font-medium">{request.debtor_name ?? '-'}</p>
                   {request.debtor_code && (
@@ -508,7 +481,6 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                         <th className="py-2 pr-3 font-medium text-right">
                           Sell Price
                         </th>
-                        <th className="py-2 pr-3 font-medium">Accessories</th>
                         <th className="py-2 pr-3 font-medium">Tag</th>
                         {canDesign && (
                           <th className="py-2 font-medium text-right">Actions</th>
@@ -535,11 +507,6 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                               >
                                 {line.name}
                               </span>
-                              {line.alternatives.length > 0 && (
-                                <span className="text-xs text-muted-foreground">
-                                  +{line.alternatives.length} alt
-                                </span>
-                              )}
                             </td>
                             <td className="py-2 pr-3 text-right">{line.quantity}</td>
                             <td className="py-2 pr-3 text-right">
@@ -561,9 +528,6 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                                   {line.marketing_price_override.toFixed(2)}
                                 </span>
                               )}
-                            </td>
-                            <td className="py-2 pr-3 text-muted-foreground text-xs">
-                              {line.included_accessories ?? '-'}
                             </td>
                             <td className="py-2 pr-3">
                               {designed ? (
@@ -602,16 +566,16 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
         </TabsContent>
 
         <TabsContent value="attachments" className="mt-0 space-y-4 focus-visible:outline-none">
-          {/* PO attachments - read-only: marketing views/downloads what the
-              salesperson attached, upload stays portal-only (D4). */}
+          {/* Sales order attachments - read-only: marketing views/downloads
+              what the salesperson attached, upload stays portal-only (D4). */}
           <Card>
             <CardHeader className="py-3 px-4">
-              <CardTitle className="text-base">PO Attachments</CardTitle>
+              <CardTitle className="text-base">Sales Order</CardTitle>
             </CardHeader>
             <CardContent className="px-4 pb-4">
               {attachments.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-4">
-                  No PO attachments uploaded.
+                  No sales order files attached.
                 </p>
               ) : (
                 <div className="space-y-1">
@@ -637,29 +601,6 @@ export default function PriceTagRequestDetail({ requestId }: Props) {
                     </button>
                   ))}
                 </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="proof" className="mt-0 space-y-4 focus-visible:outline-none">
-          <Card>
-            <CardHeader className="py-3 px-4">
-              <CardTitle className="text-base">Proof</CardTitle>
-            </CardHeader>
-            <CardContent className="px-4 pb-4">
-              <p className="text-sm text-muted-foreground">
-                {proofSummary(request.status)}
-              </p>
-              {/* "ready" already says this (proofSummary above); this line is
-                  for the rarer case - an earlier export exists but the status
-                  has since moved on (e.g. back to "approved" after a reprint
-                  request) and the record of it would otherwise be lost. */}
-              {request.has_completed_export && request.status !== 'ready' && (
-                <p className="mt-2 text-sm text-muted-foreground">
-                  A completed PDF export exists for this request - check My
-                  Downloads.
-                </p>
               )}
             </CardContent>
           </Card>

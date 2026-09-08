@@ -48,7 +48,7 @@ export function priceTagActions(
   }
 
   if (current === 'designing' || current === 'changes_requested') {
-    actions.push({ action: 'mark_proof_ready', label: 'Mark proof ready' });
+    actions.push({ action: 'mark_proof_ready', label: 'Mark design ready' });
   }
 
   if (current === 'approved' || current === 'ready') {
