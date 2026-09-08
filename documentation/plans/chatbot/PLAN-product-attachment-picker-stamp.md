@@ -1,6 +1,7 @@
 # PLAN: product_attachment picker stamps "has / no <type>" per line (repair)
 
-Status: IMPLEMENTED (8 Sep 2026), AC-1 to AC-7 green, AC-8 (browser) outstanding.
+Status: IMPLEMENTED, AC-8 verified in the browser 8 Sep 2026 (branch
+fix/product-attachment-picker-stamp).
 Issue #750 (owner-observed on prod, relayed from sorento-crm-n8n#97). Owner's words: "my problem is why it doesn't have has / no product
 photo stamping".
 UAC: `product-attachment-picker-stamp-acceptance-criteria.md`.

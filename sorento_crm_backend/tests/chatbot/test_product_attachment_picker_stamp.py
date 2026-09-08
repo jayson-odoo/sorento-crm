@@ -217,17 +217,23 @@ def _probe_services(
                 Company.name,
                 AttachmentType.type_name,
                 Attachment.original_filename,
+                Attachment.attachment_type_id,
             )
             .join(ProductAttachment, ProductAttachment.product_id == Product.id)
             .join(Attachment, Attachment.id == ProductAttachment.attachment_id)
             .join(AttachmentType, AttachmentType.id == Attachment.attachment_type_id)
             .join(Company, Company.id == Product.company_id)
             .filter(Product.id.in_(list(args.get("product_ids") or [])))
-            .filter(Attachment.attachment_type_id.in_(list(args.get("attachment_type_ids") or [])))
             .all()
         )
+        # The tool narrows by whatever the transformer sent. A certificate-scoped turn sends
+        # `certificate_ids` and NO `attachment_type_ids`, so an unconditional type filter
+        # would answer an empty page for a question the real tool answers.
+        type_ids = list(args.get("attachment_type_ids") or [])
+        if type_ids:
+            rows = [row for row in rows if str(row[4]) in {str(t) for t in type_ids}]
         items = []
-        for code, company_name, type_name, filename in rows:
+        for code, company_name, type_name, filename, _type_id in rows:
             fields = [{"label": "Product Code", "value": code}]
             if with_company:
                 fields.insert(0, {"label": "Company", "value": company_name})
@@ -353,6 +359,11 @@ class TestPickerStamp:
             f"{NO_PHOTO_CODE} has no {PHOTO_TYPE_NAME} attachment, so its line must say so "
             f"rather than dead-ending the customer on a pick: {lines[NO_PHOTO_CODE]!r}"
         )
+        # The two keys `dym-annotate` carries for this render are CONTROL keys: they are
+        # stripped again by `_DYM_CTRL_KEYS`, so the object this node emits is unchanged and
+        # `build-suggest-offer`'s own captures stay byte-equal.
+        assert "dym_probe_row_keys" not in offer, sorted(offer)
+        assert "dym_probe_type_name" not in offer, sorted(offer)
 
     def test_ac1_numbering_and_order_are_the_gates_own(
         self, session_factory, monkeypatch
@@ -410,6 +421,107 @@ class TestPickerStamp:
         lines = _picker_lines(offer.get("escalate_message"))
         assert lines[HAS_PHOTO_CODE].endswith("- has certificate"), lines[HAS_PHOTO_CODE]
         assert lines[NO_PHOTO_CODE].endswith("- no certificate"), lines[NO_PHOTO_CODE]
+
+
+class TestCertificateScopedTurn:
+    """A turn scoped by a resolved CERTIFICATE, not by an attachment type.
+
+    `DOMAIN_PROBE["product_attachment"].requires` is `["attachment_type", "certificate"]`, and
+    a `certificate` entity's `canonical_code` is the certificate NUMBER
+    (`entity_resolver.py` ~1701, `canonical_code=row.certificate_number`), so naming the
+    scoping entity's code verbatim would stamp "- has MS1234-5" at the customer. The family
+    word is what the line must say.
+
+    The resolver payload is a literal for the same reason AC-3's is (see the module
+    docstring): the certificates chain is not what this test is about, and the entity shape is
+    `_probe_certificate`'s own. Everything downstream of it - gate, transform, probe seam,
+    annotator, composer - is real.
+    """
+
+    CERT_NUMBER = "MS1234-5"
+    # A syntactically real uuid so `_scoping_from`'s `_is_uuid` accepts it and the transformer
+    # sends `certificate_ids`; nothing dereferences it, since the probe seam is the stub.
+    CERT_UUID = "3f2b1c66-9c1a-4a3e-8f21-0a5f6b7c8d90"
+
+    def _resolver_payload(self, products: list[tuple[str, str]]) -> dict[str, Any]:
+        return {
+            "tokens": [TOKEN, self.CERT_NUMBER],
+            "resolutions": [
+                {
+                    "token": TOKEN,
+                    "resolved": False,
+                    "ambiguous": True,
+                    "matches": [
+                        {
+                            "entity_type": "product",
+                            "canonical_code": code,
+                            "uuid": uuid,
+                            "match_field": "product_code",
+                            "match_tier": "prefix",
+                            "company_name": "ZZT Cert Co",
+                            "display": {"product_code": code},
+                        }
+                        for code, uuid in products
+                    ],
+                    "alternatives": [],
+                },
+                {
+                    "token": self.CERT_NUMBER,
+                    "resolved": True,
+                    "ambiguous": False,
+                    "matches": [
+                        {
+                            "entity_type": "certificate",
+                            "canonical_code": self.CERT_NUMBER,
+                            "uuid": self.CERT_UUID,
+                            "match_field": "certificate_number",
+                            "match_tier": "exact",
+                            "display": {"certificate_number": self.CERT_NUMBER},
+                        }
+                    ],
+                    "alternatives": [],
+                },
+            ],
+            "unresolved_tokens": [],
+        }
+
+    def test_ac2_a_certificate_scoped_turn_stamps_the_family_word_not_the_number(
+        self, session_factory, monkeypatch
+    ) -> None:
+        company_id = _seed_company(session_factory, name="ZZT Cert Co")
+        _seed_contact_in(session_factory, [company_id])
+        has_id = _seed_product(session_factory, company_id=company_id, code=HAS_PHOTO_CODE)
+        no_id = _seed_product(session_factory, company_id=company_id, code=NO_PHOTO_CODE)
+        type_id = _seed_attachment_type(session_factory, CERT_TYPE_NAME)
+        _seed_file_for(
+            session_factory,
+            product_id=has_id,
+            attachment_type_id=type_id,
+            company_id=company_id,
+            filename=f"{HAS_PHOTO_CODE}-cert.pdf",
+        )
+
+        db = session_factory()
+        set_company_scope(db, frozenset({company_id}))
+        calls: list[tuple[str, dict]] = []
+        services = _probe_services(db, monkeypatch, calls=calls)
+
+        parser = _parser(type_raw=self.CERT_NUMBER, type_code=None)
+        _resolved, gate, offer = _run_lane(
+            db,
+            services,
+            parser=parser,
+            text=f"{self.CERT_NUMBER} for srtwc286",
+            resolved=self._resolver_payload([(HAS_PHOTO_CODE, has_id), (NO_PHOTO_CODE, no_id)]),
+        )
+
+        assert gate.get("require_specific") is True, gate.get("gate_reason")
+        assert calls and self.CERT_UUID in (calls[0][1].get("certificate_ids") or []), calls
+        message = offer.get("escalate_message") or ""
+        lines = _picker_lines(message)
+        assert lines[HAS_PHOTO_CODE].endswith("- has certificate"), lines[HAS_PHOTO_CODE]
+        assert lines[NO_PHOTO_CODE].endswith("- no certificate"), lines[NO_PHOTO_CODE]
+        assert self.CERT_NUMBER not in message, message
 
 
 # --------------------------------------------------------------------------- #

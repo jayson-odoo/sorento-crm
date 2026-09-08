@@ -939,9 +939,7 @@ def _annotate(
     # every render keys by the CODE it printed, so the composer needs the planner's own
     # (uuid, code, company) map to translate. Carried HERE rather than re-derived there: this
     # node already holds it, and a second derivation would be a second thing to keep in step
-    # with `_dym_plan`. Emitted only when the lane IS uuid-keyed, so a code-keyed turn (and
-    # every capture of one) is byte-identical. `build_suggest_offer` strips it again with the
-    # rest of `_DYM_CTRL_KEYS`.
+    # with `_dym_plan`.
     if uuid_keyed:
         out["dym_probe_row_keys"] = jsc.array(jsc.get(xf, "dym_probe_row_keys"))
     # #750, decision 3: the noun the customer reads is the RESOLVED attachment type
@@ -950,9 +948,19 @@ def _annotate(
     # looked for. `DOMAIN_PROBE["product_attachment"].noun` is None precisely because the type
     # is not known until the turn resolves one; the domains that DO carry a literal noun
     # (`inventory`, `promotion`) declare no `requires` and so never reach this.
-    type_name = _scoping_type_name(xf)
-    if type_name:
-        out["dym_probe_type_name"] = type_name
+    #
+    # BOTH keys are `full`-only. The partial lane's annotator is a separate deployed copy
+    # whose reader (`tail/compile_state.py::_partial_dym_block`) keys by code and takes its
+    # noun from the parser, so a key it never reads would move that node's contract for
+    # nothing. On the FULL lane the type name IS emitted for a code-keyed turn too (it says
+    # what the probe was scoped to, which has nothing to do with the key mode), and that is
+    # why five `dym-annotate` captures are registered in `tests/chatbot/divergences.py`.
+    # `build_suggest_offer` strips both again with the rest of `_DYM_CTRL_KEYS`, so its own
+    # emitted object is unchanged either way.
+    if full:
+        type_name = _scoping_type_name(xf)
+        if type_name:
+            out["dym_probe_type_name"] = type_name
     return out
 
 
@@ -960,17 +968,30 @@ _TYPE_SCOPES: frozenset[str] = frozenset({"attachment_type", "certificate"})
 
 
 def _scoping_type_name(transform: Any) -> str:
-    """The attachment type the probe was scoped to, off the plan's own `dym_probe_entities`.
+    """The document type the probe was scoped to, off the plan's own `dym_probe_entities`.
 
-    `_dym_plan` appends the scoping entities AFTER the candidates (`[*cands, *scoping]`) and
-    only ever from `cfg["requires"]`, so the first type-shaped entity here is the one
-    `_scoping_from` chose, code and all.
+    REVERSE order, and that is load-bearing: `_dym_plan` builds the list as
+    `[*cands, *scoping]`, and a CANDIDATE can itself be type-shaped (`attachment_type` and
+    `certificate` are both in `MAPPABLE` and in the domain's `ALLOWED` set, so a misspelt
+    document token can arrive as a did-you-mean candidate). Scanning forwards would name that
+    candidate; scanning backwards reads the scoping entities, which are appended last and are
+    the only entities the probe was actually filtered on. The list is empty whenever scoping
+    is empty (`_dym_plan` fails closed on `no_scoping_entity` before it is built), so the
+    reverse scan cannot fall through to a candidate on a turn that HAS scoping.
+
+    A `certificate` entity's `canonical_code` is a certificate NUMBER
+    (`entity_resolver.py` ~1701), never a type name, so it names its family instead of
+    stamping "- has MS1234-5" at the customer.
     """
-    for entity in jsc.array(jsc.get(transform, "dym_probe_entities")):
-        if _norm(jsc.get(entity, "entity_type")) in _TYPE_SCOPES:
-            code = jsc.nullish_str(jsc.get(entity, "code")).strip()
-            if code:
-                return code
+    for entity in reversed(jsc.array(jsc.get(transform, "dym_probe_entities"))):
+        entity_type = _norm(jsc.get(entity, "entity_type"))
+        if entity_type not in _TYPE_SCOPES:
+            continue
+        if entity_type == "certificate":
+            return "certificate"
+        code = jsc.nullish_str(jsc.get(entity, "code")).strip()
+        if code:
+            return code
     return ""
 
 
