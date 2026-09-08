@@ -516,30 +516,38 @@ cases:
           no_uuid: true
 
   # D10 (owner console pass, 8 Sep 2026, turn 69d9900e). `SRTWC8610-SH` is a product SET
-  # code (`product_sets.set_code`); no product of that code exists. The gate now marks a
-  # token whose only match is an incompatible type (D10 item 1, `gate_debug.
-  # incompatible_only`) so the miss lane treats it as unresolved rather than as a flat
-  # refusal, and `output_exchange` retypes a shipment/order-hinted product-shaped code to
-  # `product` under `incoming` (item 2) so the parser's own mistake does not compound it.
-  #
-  # KNOWN GAP, measured 8 Sep 2026 against this database: the resolver's own trigram
-  # "did-you-mean" search (`entity_resolver.py`, the `for tr in resolutions: if tr.matches:
-  # continue` skip) never runs for THIS token, because it already has a match - the
-  # incompatible `product_set` hit - and the skip does not know that hit is the wrong type
-  # for this domain. Measured directly against `POST /system/references/resolve` with the
-  # exact body `resolve_entity_body` builds for this turn: `alternatives: []`. The live
-  # n8n reply names SRTWC8611 / SRTWC8613 / SRTWC8614 by searching the BARE code
-  # `srtwc8610` (no `-SH`), which is not a call this lane makes. Reproducing that reply
-  # needs a change to `entity_resolver.py`'s alternatives gate, outside gate.py /
-  # output_exchange.py / the prompt - registered here rather than asserted silently.
-  # This case therefore grades what D10 actually changed today: the reply still ends in
-  # the escalate offer, by design (the miss-lane mechanism ran, found no candidates in
-  # this database, and fell back to it) - not the four-way disagreement the incompatible
-  # gate reason used to produce with no explanation at all.
-  - name: D10 - a product-set-only code on an incoming ask still gets an answerable miss
+  # code (`product_sets.set_code`); no product of that code exists. The gate marks a token
+  # whose only match is an incompatible type (`gate_debug.incompatible_only`) so the miss
+  # lane treats it as unresolved rather than as a flat refusal (item 1); `output_exchange`
+  # retypes a shipment/order-hinted product-shaped code to `product` under `incoming` so
+  # the parser's own mistake does not compound it (item 2); and (D10b)
+  # `entity_resolver.py`'s trigram "did-you-mean" search now runs for a token whose only
+  # match is a type the caller did not ask for (the `caller_types` check beside the
+  # existing `if tr.matches: continue`), which is what actually surfaces SRTWC8611 /
+  # SRTWC8613 / SRTWC8614 - the set's own two member products (SRTWCX8610-SH,
+  # SRTWCY8610-SH) are excluded from that list, they are part of what the customer
+  # already named, not an alternative to it.
+  - name: D10 - a product-set-only code on an incoming ask offers its real siblings
     text: "srtwc8610-sh hav incoming?"
     cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["srtwc8610-sh", "escalate"]
+      reply_contains: ["srtwc8610-sh", "Did you mean", "SRTWC8611", "SRTWC8613", "SRTWC8614"]
+      no_uuid: true
+
+  # D10c (owner console pass, 8 Sep 2026, turn 72146a1e). AND mode, two tokens: the
+  # product token resolves ONLY to `product_set` and the attachment_type token resolves
+  # fine ("certificate" -> Certification) - so the blanket incompatible-types branch never
+  # fires (`compatible_entities` is non-empty, it just lacks a `product`) and the turn
+  # used to fetch certificates scoped to nothing about the product, answering "no
+  # certificate matched these" for a subject silently dropped from the reply. B1 (the
+  # attachment-subject-gate in gate.py) now also treats an `incompatible_only` product
+  # token as a missed subject, so this reaches the SAME did-you-mean as the incoming turn,
+  # annotated against the certificate ask.
+  - name: D10c - a product-set collision beside a resolved attachment type still gets its DYM
+    text: "srtwc8610-sh certificate"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["srtwc8610-sh", "Did you mean", "SRTWC8611", "SRTWC8613", "SRTWC8614", "no certificate"]
       no_uuid: true

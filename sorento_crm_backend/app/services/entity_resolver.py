@@ -535,8 +535,13 @@ class TokenResolution:
     # Fuzzy trigram "did you mean" neighbours for a token that produced NO exact/
     # prefix/embedding match. Purely entity-level (NOT domain-data-gated - that is
     # the list tools' job): "SRTKT71SX unknown → did you mean SRTKT71SS?". Emitted
-    # so callers get a suggestion inline without a second neighbour lookup. Never
-    # populated when `matches` is non-empty; does not affect `resolved`.
+    # so callers get a suggestion inline without a second neighbour lookup. Usually
+    # empty when `matches` is non-empty; the one exception (D10b) is a token whose
+    # every match is a type outside the caller's OWN `allowed_entity_types` (a flyer/set
+    # code hitting `product_set` when the caller asked for `product`) - there `matches`
+    # keeps that row (byte identity for callers reading it) and `alternatives` ALSO gets
+    # populated, because to the caller that match is as useless as no match at all. Does
+    # not affect `resolved`, which still reads `matches` alone.
     alternatives: list[ResolvedEntity] = field(default_factory=list)
 
     @property
@@ -4693,6 +4698,19 @@ def resolve_references(
             return frozenset({paired}) if paired else frozenset()
         return allowed
 
+    # D10b (owner console pass, 8 Sep 2026, turn 69d9900e): the caller's OWN requested
+    # types, canonicalized but NOT expanded. `allowed` above already widens "product" to
+    # also reach `product_set` (a flyer/set code is a legitimate product-domain hit in
+    # general, and n8n relies on that), which is exactly why a token that matched ONLY
+    # `product_set` still counts as `resolved` and never reached the alternatives search
+    # below - the caller asked for "product", not "product or product_set", and has no way
+    # to tell a set code from an absence. Compared against this NARROWER set, not `allowed`.
+    caller_types: Optional[frozenset[str]] = (
+        frozenset(_canonical_entity_type(t) for t in allowed_entity_types if t)
+        if allowed_entity_types is not None
+        else None
+    )
+
     # `product_attachment` is the ONE domain this filters: a customer asking for a
     # document ABOUT a product must never land on an internal SCM document type
     # (Shipment Line Photo, Proforma Invoice, ...) that happens to share a substring
@@ -4967,12 +4985,17 @@ def resolve_references(
     ]
     resolutions.extend(freeword_resolutions)
 
-    # Fuzzy "did you mean" alternatives for tokens that matched NOTHING. Trigram
-    # neighbours only (entity-level, no domain-data gate); best-effort so a missing
+    # Fuzzy "did you mean" alternatives for tokens that matched NOTHING - PLUS (D10b) a
+    # token whose every match is a type the caller never asked for (`caller_types`, not
+    # the internally-widened `allowed`). The latter is the SAME shape as matching nothing:
+    # the caller has no use for the row it got and no way to tell that from a genuine miss.
+    # Trigram neighbours only (entity-level, no domain-data gate); best-effort so a missing
     # pg_trgm (e.g. sqlite tests) or a probe error never fails resolution. Capped
     # and floored to keep the surface tight and relevant.
     for tr in resolutions:
-        if tr.matches:
+        if tr.matches and (
+            caller_types is None or any(m.entity_type in caller_types for m in tr.matches)
+        ):
             continue
         tok_types = _types_for(tr.token)
         if tok_types is not None and not tok_types:
@@ -4982,6 +5005,21 @@ def resolve_references(
         except Exception:
             logger.exception("resolve alternatives trgm lookup failed for token=%s", tr.token)
             hits = []
+        if tr.matches:
+            # D10b: a product_set's own MEMBER products are not an alternative to the set
+            # code that already matched - they are PART of what the customer already
+            # named, not a different thing to try instead. Measured: without this, "did
+            # you mean" for SRTWC8610-SH led with its own two members (SRTWCX8610-SH,
+            # SRTWCY8610-SH, similarity 0.667) ahead of the sibling codes a customer could
+            # actually use (SRTWC8611/8613/8614, similarity 0.571).
+            member_uuids = {
+                str(member.get("uuid"))
+                for m in tr.matches
+                for member in (m.display.get("members") or [])
+                if isinstance(member, dict) and member.get("uuid")
+            }
+            if member_uuids:
+                hits = [h for h in hits if str(h.uuid) not in member_uuids]
         tr.alternatives = [h for h in hits if (h.similarity or 0.0) >= SUGGEST_FLOOR][:_ALTERNATIVES_CAP]
 
     _apply_company_scope(db, resolutions)

@@ -592,6 +592,94 @@ class TestIncompatibleOnlyTokenIsStampedForTheMissLane:
 
 
 # --------------------------------------------------------------------------- #
+# D10c (owner console pass, 8 Sep 2026, turn 72146a1e "srtwc8610-sh certificate"). AND
+# mode with two tokens: the product token resolves ONLY to `product_set`, the
+# attachment_type token resolves fine (Certification) - so the blanket "types [...]
+# incompatible" branch never fires (`compatible_entities` is non-empty, it just lacks
+# `product`) and the turn used to fetch certificates scoped to NOTHING about the product,
+# answering "no certificate matched these" for a subject that was silently dropped.
+# --------------------------------------------------------------------------- #
+class TestB1CatchesAnIncompatibleOnlyProductBesideAResolvedAttachmentType:
+    PA_PARSER = {
+        "domain_hint": "product_attachment",
+        "entities": [
+            {"hint": "product", "raw": "srtwc8610-sh", "current_message": True},
+            {"hint": "attachment_type", "raw": "certificate", "current_message": True},
+        ],
+    }
+
+    def _resolver(self) -> dict[str, Any]:
+        return {
+            "tokens": ["srtwc8610-sh", "certificate"],
+            "resolutions": [
+                {
+                    "token": "srtwc8610-sh",
+                    "resolved": True,
+                    "matches": [
+                        {
+                            "uuid": "u-set",
+                            "entity_type": "product_set",
+                            "canonical_code": "SRTWC8610-SH",
+                            "match_tier": "exact",
+                            "company_name": "Sorento",
+                        }
+                    ],
+                    "alternatives": [
+                        {
+                            "uuid": "u-8611",
+                            "entity_type": "product",
+                            "canonical_code": "SRTWC8611",
+                            "match_tier": "trgm",
+                            "company_name": "Sorento",
+                        }
+                    ],
+                },
+                {
+                    "token": "certificate",
+                    "resolved": True,
+                    "matches": [
+                        {
+                            "uuid": "u-cert-type",
+                            "entity_type": "attachment_type",
+                            "canonical_code": "Certification",
+                            "match_tier": "substring",
+                            "company_name": None,
+                        }
+                    ],
+                    "alternatives": [],
+                },
+            ],
+            "unresolved_tokens": [],
+        }
+
+    def test_the_gate_refuses_rather_than_scoping_on_the_certificate_alone(self) -> None:
+        resolver = self._resolver()
+        out = run_gate(dict(resolver), parser=self.PA_PARSER, resolver=resolver)
+        assert out["gate_passed"] is False
+        assert out["gate_reason"] == (
+            "'product_attachment' subject product did not resolve; refusing to scope "
+            "on carried entities"
+        )
+        assert out["gate_debug"]["incompatible_only"] == {"srtwc8610-sh": ["product_set"]}
+
+    def test_a_real_product_beside_the_attachment_type_still_passes(self) -> None:
+        """The other half: an actual `product` match means B1 has nothing to catch."""
+        resolver = self._resolver()
+        resolver["resolutions"][0]["matches"] = [
+            {
+                "uuid": "u-prod",
+                "entity_type": "product",
+                "canonical_code": "SRTWC8610",
+                "match_tier": "exact",
+                "company_name": "Sorento",
+            }
+        ]
+        out = run_gate(dict(resolver), parser=self.PA_PARSER, resolver=resolver)
+        assert out["gate_passed"] is True
+        assert "incompatible_only" not in out["gate_debug"]
+
+
+# --------------------------------------------------------------------------- #
 # Owner console pass 4, item F (live turn ace4cec6). The customer typed "srtwc287" with a
 # stock question already in play (previous domain `inventory`, a warehouse escalation
 # offer pending) and the reply led with "No incoming stock (ETA) found for SRTWC287" -
