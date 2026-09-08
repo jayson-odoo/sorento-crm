@@ -41,6 +41,7 @@ from app.models.base import set_company_scope
 from app.models.procurement import SPOAllocation
 from app.models.product import Product, ProductCategory, UnitOfMeasure
 from app.services.company_scope import DEFAULT_COMPANY_ID
+from app.services.procurement_service import PickingHeaderService
 
 from tests._pg_fixture import blank_session, unique_code
 
@@ -84,12 +85,16 @@ def _row(
     source_ref: str | None,
     allocated: int = 10,
     updated_at: datetime | None = None,
+    quantity_received: int = 0,
+    receipt_status: str = "pending",
+    stated_received: int | None = None,
 ) -> SPOAllocation:
-    """One `autocount` row, closed-with-no-receipt or open, at a given
-    `created_at` - the two things the group-membership evidence (B1) turns
-    on. Every row is `quantity_received 0` / not fully received: this suite
-    is entirely about the SIBLING-EVIDENCE gate, not the receipt gate round 1
-    already covers.
+    """One `autocount` row, closed-with-no-receipt (round 2/3's own shape,
+    the defaults) or open, at a given `created_at` - the two things the
+    group-membership evidence (B1) turns on. `quantity_received`/
+    `receipt_status`/`stated_received` default to the round 1/2 "never
+    received" shape but round 4's AC-H15/AC-H16 override them to prove the
+    freeze and the fully-received exclusion.
     """
     return SPOAllocation(
         id=str(uuid.uuid4()),
@@ -99,14 +104,15 @@ def _row(
         product_id=product_id,
         location_code=location_code,
         allocated_quantity=allocated,
-        quantity_received=0,
-        receipt_status="pending",
+        quantity_received=quantity_received,
+        receipt_status=receipt_status,
         line_status=line_status,
         source_system="autocount",
         source_ref=source_ref,
         created_at=created_at,
         retired_at=None,
         updated_at=updated_at,
+        stated_received=stated_received,
     )
 
 
@@ -345,3 +351,163 @@ class TestAcH9BackfillEvidenceIsAReplacementSibling:
         by_id = _retired_at_by_id(db, [closed_diff_product.id, closed_diff_location.id])
         assert by_id[closed_diff_product.id] is None, by_id
         assert by_id[closed_diff_location.id] is None, by_id
+
+
+# =================================================================================== #
+# AC-H15 (round 4): the backfill freezes stated_received before stamping retired_at
+# =================================================================================== #
+
+
+class TestAcH15BackfillFreezesStatedReceivedBeforeStamping:
+    def test_apply_freezes_stated_received_to_the_quantity_received_floor(self, db):
+        """AC-H15. A candidate row (closed, `source_ref`, later OPEN
+        sibling) carrying `quantity_received 25` and `stated_received` NULL:
+        after `--apply` it reads `stated_received 25` (not NULL) AND
+        `retired_at` set - the freeze happens BEFORE the stamp, the same
+        order the ingest's leftover sweep and the dedupe use. A following
+        `sync_received_for_spo_number` (no picking line anywhere, nothing
+        released - AC-H14's own ownership gate skips it either way) leaves
+        `quantity_received` at 25.
+
+        RED today at the `stated_received` assertion: the backfill stamps
+        `retired_at` and touches nothing else, so `stated_received` stays
+        NULL - a later recompute that DOES reach this row (picked against or
+        released) would then float on `compute_received_for_allocation`
+        alone with no floor under it, exactly the D28 defect class round 4
+        exists to close.
+        """
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        product = _seed_product(db)
+        spo_number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        location = f"{MARKER}-LOC"
+
+        closed_row = _row(
+            spo_number=spo_number, line_no=1, product_id=product.id, location_code=location,
+            line_status="closed", created_at=T0, source_ref=f"{MARKER}:REF1:{uuid.uuid4().hex[:8]}",
+            allocated=30, quantity_received=25, receipt_status="pending",
+        )
+        later_open_sibling = _row(
+            spo_number=spo_number, line_no=2, product_id=product.id, location_code=location,
+            line_status="open", created_at=T1, source_ref=f"{MARKER}:REF2:{uuid.uuid4().hex[:8]}",
+        )
+        db.add_all([closed_row, later_open_sibling])
+        db.flush()
+        db.commit()
+
+        from scripts.backfill_retired_spo_lines import run  # noqa: PLC0415 - round 4 not landed
+
+        run(db, DEFAULT_COMPANY_ID, dry_run=False)
+
+        db.expire_all()
+        stored = db.execute(
+            text(
+                "SELECT retired_at, stated_received, quantity_received "
+                "FROM spo_allocations WHERE id = :id"
+            ),
+            {"id": closed_row.id},
+        ).mappings().first()
+        assert stored["retired_at"] is not None, stored
+        assert stored["stated_received"] == 25, stored
+
+        PickingHeaderService(db).sync_received_for_spo_number(spo_number)
+        db.expire_all()
+        after = db.execute(
+            text("SELECT quantity_received FROM spo_allocations WHERE id = :id"),
+            {"id": closed_row.id},
+        ).mappings().first()
+        assert after["quantity_received"] == 25, after
+
+
+# =================================================================================== #
+# AC-H16 (round 4): a fully-received row is NEVER stamped, sibling or not
+# =================================================================================== #
+
+
+class TestAcH16FullyReceivedRowNeverStamped:
+    def test_a_fully_received_row_with_a_later_open_sibling_is_not_stamped(self, db):
+        """AC-H16. A line closed at 100 of 100
+        (`receipt_status='fully_received'`) that AutoCount still names, with
+        a later-created OPEN sibling for the same product and location
+        (round 2's own sibling evidence, fully satisfied): still NOT
+        stamped. A received line is visible under R2 whether marked or not,
+        so retiring it buys nothing and would wrongly drop it out of its
+        group's receipt sharing.
+
+        RED today: `_candidate_rows` (round 2/3) tests only
+        `line_status == 'closed'` + `source_ref IS NOT NULL` + the sibling -
+        no `receipt_status` guard at all - so this fully-received row is
+        wrongly stamped.
+        """
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        product = _seed_product(db)
+        spo_number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        location = f"{MARKER}-LOC"
+
+        fully_received_row = _row(
+            spo_number=spo_number, line_no=1, product_id=product.id, location_code=location,
+            line_status="closed", created_at=T0, source_ref=f"{MARKER}:REF1:{uuid.uuid4().hex[:8]}",
+            allocated=100, quantity_received=100, receipt_status="fully_received",
+        )
+        later_open_sibling = _row(
+            spo_number=spo_number, line_no=2, product_id=product.id, location_code=location,
+            line_status="open", created_at=T1, source_ref=f"{MARKER}:REF2:{uuid.uuid4().hex[:8]}",
+        )
+        db.add_all([fully_received_row, later_open_sibling])
+        db.flush()
+        db.commit()
+
+        from scripts.backfill_retired_spo_lines import run  # noqa: PLC0415 - round 4 not landed
+
+        run(db, DEFAULT_COMPANY_ID, dry_run=False)
+        by_id = _retired_at_by_id(db, [fully_received_row.id])
+        assert by_id[fully_received_row.id] is None, by_id
+
+
+# =================================================================================== #
+# AC-H18 (round 4 addition): the dry-run report is per-ROW evidence, not a bare count
+# =================================================================================== #
+
+
+class TestAcH18DryRunReportsPerRowEvidence:
+    def test_dry_run_prints_the_row_id_and_the_justifying_sibling_s_source_ref(
+        self, db, capsys
+    ):
+        """AC-H18. The dry-run report names, per candidate ROW: the
+        allocation id, `source_ref`, `source_doc_ref`, `created_at`,
+        `quantity_received` and `receipt_status`, plus the `created_at` and
+        `source_ref` of the OPEN sibling that justified the stamp - not a
+        bare per-document count, so the evidence for WHY a specific row was
+        chosen is auditable before anyone runs `--apply`.
+
+        RED today: the report prints one line per DOCUMENT
+        (`f"  {spo_number}: {len(doc_rows)} row(s) to retire"`), naming
+        neither the row's own id nor the sibling that justified it - this
+        test's two `assert ... in output` calls are checking for text the
+        current report never prints.
+        """
+        set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+        product = _seed_product(db)
+        spo_number = f"{MARKER}-SPO-{uuid.uuid4().hex[:8]}"
+        location = f"{MARKER}-LOC"
+        sibling_ref = f"{MARKER}:SIBREF:{uuid.uuid4().hex[:8]}"
+
+        closed_row = _row(
+            spo_number=spo_number, line_no=1, product_id=product.id, location_code=location,
+            line_status="closed", created_at=T0, source_ref=f"{MARKER}:REF1:{uuid.uuid4().hex[:8]}",
+        )
+        later_open_sibling = _row(
+            spo_number=spo_number, line_no=2, product_id=product.id, location_code=location,
+            line_status="open", created_at=T1, source_ref=sibling_ref,
+        )
+        db.add_all([closed_row, later_open_sibling])
+        db.flush()
+        db.commit()
+
+        from scripts.backfill_retired_spo_lines import run  # noqa: PLC0415 - round 4 not landed
+
+        capsys.readouterr()  # discard anything already buffered
+        run(db, DEFAULT_COMPANY_ID, dry_run=True)
+        output = capsys.readouterr().out
+
+        assert closed_row.id in output, output
+        assert sibling_ref in output, output

@@ -1,4 +1,4 @@
-"""RED tests for hiding retired SPO allocation lines (AC-H1..AC-H6, AC-H8, AC-H10..AC-H13).
+"""RED tests for hiding retired SPO allocation lines (AC-H1..AC-H6, AC-H8, AC-H10..AC-H14, AC-H17).
 
 UAC: documentation/plans/autocount/hide-retired-spo-lines-acceptance-criteria.md
 PLAN: documentation/plans/autocount/PLAN-hide-retired-spo-lines.md
@@ -588,6 +588,60 @@ class TestAcH10ReceiptAfterRetirement:
 
 
 # =================================================================================== #
+# AC-H14 (round 4): the retired branch skips a row nobody released or picked
+# =================================================================================== #
+
+
+class TestAcH14OwnershipGateOnTheRetiredBranch:
+    def test_an_untouched_retired_row_is_left_exactly_as_stored(self, scm_app):
+        """AC-H14. A retired allocation with `quantity_received 25`,
+        `stated_received` NULL, and NO picking line anywhere: running
+        `sync_received_for_spo_number` for its document (nothing released,
+        nothing picked) leaves it at 25 and still visible. Pairs with
+        `TestAcH10ReceiptAfterRetirement`'s first test - together the two
+        pin both directions of the retired branch's gate: picked against ->
+        recompute writes (AC-H10); neither released nor picked -> skip,
+        exactly as the non-AutoCount branch's own
+        `if alloc_id not in released and not
+        self._allocation_has_picking_line(alloc_id): continue` already
+        does.
+
+        RED today: round 2's B2 write
+        (`self._write_received(alloc, max(stated_received, computed),
+        may_reopen=False)`) runs UNCONDITIONALLY for every retired autocount
+        row, with no ownership gate at all - `compute_received_for_allocation`
+        finds no approved picking line and returns 0, `stated_received` is
+        NULL (reads as 0), so `max(0, 0) = 0` OVERWRITES the stored 25 with
+        0 - which then also HIDES the row under R2 (`retired_at` set AND
+        `quantity_received 0`), so both assertions below fail.
+        """
+        from app.services.procurement_service import PickingHeaderService
+
+        client, db = _client(scm_app)
+        chain = _chain(db)
+        product = _product(db, chain)
+        doc = unique_code("SPO-H14")
+
+        retired = _alloc(
+            db, spo_number=doc, line_no=1, product=product, allocated=30, received=25,
+            line_status="closed", retired_at=_now(), stated_received=None,
+        )
+        db.commit()
+
+        PickingHeaderService(db).sync_received_for_spo_number(doc)
+
+        db.expire_all()
+        stored = db.query(SPOAllocation).filter(SPOAllocation.id == retired.id).one()
+        assert stored.quantity_received == 25, stored.quantity_received
+
+        r = client.get(f"{DOCUMENTS_URL}/{doc}")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        line_ids = {line["id"] for line in body["lines"]}
+        assert retired.id in line_ids, line_ids
+
+
+# =================================================================================== #
 # AC-H11 (round 3, B2 "ghost document"): no visible line -> no listing, no page
 # =================================================================================== #
 
@@ -642,25 +696,17 @@ class TestAcH11GhostDocumentNeverLists:
 
 
 class TestAcH12ListHeaderAgreesWithDetail:
-    def test_balance_status_and_supplier_agree_when_a_hidden_line_is_open_not_closed(
-        self, scm_app
-    ):
-        """AC-H12. A visible open line plus a HIDDEN line that is
-        `line_status='open'` (not closed - nothing enforces "retired
-        implies closed") with zero receipt and `retired_at` set: the list
-        row's Balance equals the detail's `balance`, `status` is not driven
-        by the hidden line, and the majority supplier name (a different
-        supplier on the hidden line) matches between list and detail.
+    """AC-H12, split into two tests (reviewer kill-test round) so a regression in
+    EITHER ruling names itself instead of both failing under one test name: S1
+    (`is_outstanding` visibility-gated) and S2 (`_document_supplier_rollup`
+    visibility-gated) are independent code paths, and the original single test
+    could not tell a reader which one broke. Same seed both times: a visible open
+    line plus a HIDDEN line that is `line_status='open'` (not closed - nothing
+    enforces "retired implies closed") with zero receipt and `retired_at` set, on
+    a different supplier so the majority-vote half has something to get wrong.
+    """
 
-        RED today: `is_outstanding` in `list_documents` only reads
-        `open_incoming_clauses()` (line-status-gated, not visibility-gated),
-        so this open-but-retired line still counts as outstanding there even
-        though `get_document`'s own `rows` query has already filtered it out
-        entirely - the list's Balance/status disagree with the page it
-        opens. `_document_supplier_rollup` is unfiltered too, so the hidden
-        line's own supplier can win (or split) the majority vote the detail
-        page never counts at all.
-        """
+    def _seed(self, scm_app):
         client, db = _client(scm_app)
         chain = _chain(db)
         product = _product(db, chain)
@@ -677,6 +723,19 @@ class TestAcH12ListHeaderAgreesWithDetail:
             db, spo_number=doc, line_no=2, product=product, allocated=999, received=0,
             line_status="open", retired_at=_now(), supplier_id=supplier_hidden.id,
         )
+        return client, doc
+
+    def test_balance_status_worst_overdue_and_earliest_eta_agree_with_detail(self, scm_app):
+        """S1. The list row's Balance, status, worst overdue and earliest ETA
+        equal the detail's, none of them driven by the hidden line.
+
+        RED today: `is_outstanding` in `list_documents` only reads
+        `open_incoming_clauses()` (line-status-gated, not visibility-gated), so
+        this open-but-retired line still counts as outstanding there even
+        though `get_document`'s own `rows` query has already filtered it out
+        entirely - the list's Balance/status disagree with the page it opens.
+        """
+        client, doc = self._seed(scm_app)
 
         detail = client.get(f"{DOCUMENTS_URL}/{doc}")
         assert detail.status_code == 200, detail.text
@@ -688,8 +747,44 @@ class TestAcH12ListHeaderAgreesWithDetail:
 
         assert row["balance"] == detail_body["balance"], (row, detail_body)
         assert row["status"] == detail_body["status"], (row, detail_body)
+        assert row["worst_overdue_days"] == max(
+            (line["overdue_days"] for line in detail_body["lines"] if line["outstanding"]),
+            default=0,
+        ), (row, detail_body)
+        detail_earliest = min(
+            (
+                line["arrival_date"] for line in detail_body["lines"]
+                if line["outstanding"] and line["arrival_date"] is not None
+            ),
+            default=None,
+        )
+        assert row["earliest_eta"] == detail_earliest, (row, detail_body)
+
+    def test_majority_supplier_name_and_extra_count_agree_with_detail(self, scm_app):
+        """S2. The majority supplier name (and its "+N others" extra count)
+        agree between the list and the detail page it opens.
+
+        RED today: `_document_supplier_rollup` is unfiltered, so the hidden
+        line's own supplier can win (or split) the majority vote the detail
+        page's own `supplier_counts` never counts at all - the list can show a
+        different supplier name (or a nonzero `supplier_extra_count`) than the
+        page it opens.
+        """
+        client, doc = self._seed(scm_app)
+
+        detail = client.get(f"{DOCUMENTS_URL}/{doc}")
+        assert detail.status_code == 200, detail.text
+        detail_body = detail.json()
+
+        list_r = client.get(DOCUMENTS_URL, params={"state": "all", "query": doc, "limit": 100})
+        assert list_r.status_code == 200, list_r.text
+        row = next(r for r in list_r.json()["data"] if r["spo_number"] == doc)
+
         assert row["supplier_name"] == "Visible Supplier Co", row
         assert row["supplier_name"] == detail_body["supplier_name"], (row, detail_body)
+        assert row["supplier_extra_count"] == detail_body["supplier_extra_count"], (
+            row, detail_body,
+        )
 
 
 # =================================================================================== #
@@ -817,3 +912,76 @@ class TestAcH13PackingListRelatedSpoStripHidesRetired:
         assert line_body["spo_allocated_quantity"] == 10, line_body
         related_ids = {a["id"] for a in (line_body.get("related_spo_allocations") or [])}
         assert related_ids == {visible.id}, related_ids
+
+
+# =================================================================================== #
+# AC-H17 (round 4): the packing list's quantity and its derived status agree
+# =================================================================================== #
+
+
+class TestAcH17PackingListQuantityAndStatusAgree:
+    def test_line_status_is_derived_from_the_same_visible_total_as_spo_allocated_quantity(
+        self, scm_app
+    ):
+        """AC-H17. A shipment line whose product has one visible allocation
+        (10) and one retired, zero-receipt allocation (999) with an
+        `inbound_shipment_id` on the SAME shipment: `spo_allocated_quantity`
+        and the `line_status` derived from it must count the same visible
+        set. `quantity_shipped` is chosen (50) so the filtered total (10)
+        and the unfiltered total (1009) fall in DIFFERENT status branches of
+        `compute_inbound_shipment_line_status` - filtered:
+        `quantity_shipped(50) > allocated(10)` -> `partially_allocated`;
+        unfiltered: `quantity_shipped(50) <= allocated(1009)` and
+        `received(0) == 0` -> `allocated` - so an ungated status cannot pass
+        by coincidence.
+
+        RED today: `get_packing_list` persists `line_status` via
+        `refresh_shipment_line_statuses`, whose own `totals_alloc` query
+        carries no visibility filter at all (round 3 only filtered the
+        ROUTE's own `totals`/`allocations` re-queries, overwriting
+        `spo_allocated_quantity` in memory afterwards but never touching the
+        already-persisted `line_status`) - so the response shows
+        `spo_allocated_quantity 10` against a `line_status` computed from
+        1009, exactly the "3912 against a status computed from 8324"
+        disagreement the AC names.
+        """
+        client, db = _client(scm_app)
+        chain = _chain(db)
+        product = _product(db, chain)
+        doc = unique_code("SPO-H17")
+
+        shipment = InboundShipment(
+            id=_u(),
+            shipment_number=unique_code("SHIP-H17"),
+            shipment_date=date(2026, 7, 1),
+            shipment_status="in_transit",
+        )
+        db.add(shipment)
+        db.flush()
+        db.add(
+            InboundShipmentLine(
+                id=_u(), shipment_id=shipment.id, product_id=product.id, quantity_shipped=50,
+            )
+        )
+        db.flush()
+
+        visible = _alloc(db, spo_number=doc, line_no=1, product=product, allocated=10, received=0)
+        visible.inbound_shipment_id = shipment.id
+        retired = _alloc(
+            db, spo_number=doc, line_no=2, product=product, allocated=999, received=0,
+            line_status="closed", retired_at=_now(),
+        )
+        retired.inbound_shipment_id = shipment.id
+        db.flush()
+
+        r = client.get(f"{PACKING_LISTS_URL}/{shipment.id}")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        product_lines = [
+            line for line in body["shipment_lines"] if line["product_id"] == product.id
+        ]
+        assert len(product_lines) == 1, product_lines
+        line_body = product_lines[0]
+
+        assert line_body["spo_allocated_quantity"] == 10, line_body
+        assert line_body["line_status"] == "partially_allocated", line_body
