@@ -89,7 +89,8 @@ All line refs are `origin/main` at 970166643.
   column, designer LinesRail second row (muted, truncated, title attr). Migration
   `ptag_0005_price_mode_remarks` adds both D5 and D6 columns.
 - D7 AI extract of sales order lines: register `price_tag_request` in `FORM_SCHEMAS`
-  (fields: `customer_name` text, `so_number` text) and `FORMS_WITH_LINE_ITEMS`. Portal
+  (review push-back accepted: empty field list - the form has no header fields to
+  mirror, only a line items section) and `FORMS_WITH_LINE_ITEMS`. Portal
   form Sales Order section gains "Extract lines with AI" (reuses `AIExtractDialog`, kind
   `price_tag_request`). Apply = append one line per extracted product whose
   `product_code` resolves to a product or set by exact code (case-insensitive, trimmed;
