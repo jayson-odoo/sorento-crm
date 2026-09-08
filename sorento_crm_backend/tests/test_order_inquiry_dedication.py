@@ -730,3 +730,139 @@ def test_ac_6_10_a_pool_destination_lines_candidacy_is_unchanged_by_g12(world):
     assert candidates[0]["unattributed"] is False
     assert candidates[0]["dedicated_to"] is None
     assert candidates[0]["remaining"] == Decimal("40")
+
+
+# ------------------------------------------------------------------- AC-H11
+#
+# The owner's ruling, 8 Sep 2026, correcting an over-read of slice H
+# (`PLAN-scm-oi-reserving-feedback-8sep.md`): the automatic pass takes from the site pool
+# alone UNLESS the line is directly claimed by the row's OWN sales order. That exception
+# is not new and it is not gated on slice F - it is G12's own `own_claim`, already read
+# by `_candidate` as `own_so_claim`. `cascadable` in words: `own_so_claim OR (pool AND
+# NOT project_locked)`. The four rows below are that truth table, plus the ordering a
+# buyer actually reads when both are on offer.
+
+
+def test_ac_h11_row1_a_project_bin_line_claimed_by_this_rows_own_so_is_cascadable(world):
+    """Row 1: project bin, THIS row's own SO claims it -> cascadable. The exception the
+    owner preserved."""
+    world.project_bin_warehouse("PRJ-BIN")
+    lines = world.purchase_order(
+        "ZZT-PO-H11-1", date(2026, 8, 1), [("PRJ-BIN", 40, SOON, "1")]
+    )
+    line_id = lines[0]
+    world.set_own_so_number("ZZT-SO-H11-1")
+    _, core_line_id = world.claiming_so("ZZT-SO-H11-1", date(2026, 7, 1), qty=10)
+    own_line = world.own_so_line(core_line_id)
+    row = world.row("ORDER", 10, location="PRJ-BIN", so_line=own_line)
+    world.claim(
+        so_number="ZZT-SO-H11-1", po_number="ZZT-PO-H11-1", so_line_id=core_line_id,
+        po_line_id=line_id,
+    )
+
+    candidates = world.svc._candidates_for_row(row)
+    assert candidates[0]["target_id"] == line_id
+    assert candidates[0]["cascadable"] is True
+    assert candidates[0]["unattributed"] is False
+
+
+def test_ac_h11_row2_a_project_bin_line_claimed_by_another_so_stays_refused(world):
+    """Row 2, first half: project bin, claimed by SOMEBODY ELSE's SO -> refused. G12's
+    lock stands exactly as before - the exception is this row's OWN claim, never any
+    claim."""
+    world.project_bin_warehouse("PRJ-BIN")
+    lines = world.purchase_order(
+        "ZZT-PO-H11-2", date(2026, 8, 1), [("PRJ-BIN", 40, SOON, "1")]
+    )
+    line_id = lines[0]
+    world.set_own_so_number("ZZT-SO-H11-OWN")
+    _, other_core_line_id = world.claiming_so(
+        "ZZT-SO-H11-OTHER", date(2026, 7, 1), qty=40
+    )
+    world.claim(
+        so_number="ZZT-SO-H11-OTHER", po_number="ZZT-PO-H11-2",
+        so_line_id=other_core_line_id, po_line_id=line_id,
+    )
+    row = world.row("ORDER", 10, location="PRJ-BIN")
+
+    candidates = world.svc._candidates_for_row(row)
+    assert candidates[0]["target_id"] == line_id
+    assert candidates[0]["cascadable"] is False
+    assert candidates[0]["dedicated_to"] == "ZZT-SO-H11-OTHER"
+
+
+def test_ac_h11_row2_a_project_bin_line_claimed_by_nobody_stays_refused(world):
+    """Row 2, second half: project bin, claimed by NOBODY -> refused (AC-6.8's own
+    scenario, restated here so all four rows of the table sit together)."""
+    world.project_bin_warehouse("PRJ-BIN")
+    lines = world.purchase_order(
+        "ZZT-PO-H11-3", date(2026, 8, 1), [("PRJ-BIN", 40, SOON, "1")]
+    )
+    line_id = lines[0]
+    world.set_own_so_number("ZZT-SO-H11-OWN")
+    row = world.row("ORDER", 10, location="PRJ-BIN")
+
+    candidates = world.svc._candidates_for_row(row)
+    assert candidates[0]["target_id"] == line_id
+    assert candidates[0]["cascadable"] is False
+    assert candidates[0]["unattributed"] is True
+
+
+def test_ac_h11_row3_a_pool_line_stays_cascadable(world):
+    """Row 3: a POOL location is cascadable on its own account, own claim or not - the
+    ordinary rule (AC-6.10's own scenario, restated here)."""
+    lines = world.purchase_order(
+        "ZZT-PO-H11-4", date(2026, 8, 1), [("BRW", 40, SOON, "1")]
+    )
+    line_id = lines[0]
+    world.set_own_so_number("ZZT-SO-H11-OWN")
+    row = world.row("ORDER", 10, location="BRW-IB")
+
+    candidates = world.svc._candidates_for_row(row)
+    assert candidates[0]["target_id"] == line_id
+    assert candidates[0]["cascadable"] is True
+
+
+def test_ac_h11_row4_a_sibling_location_with_no_claim_stays_refused(world):
+    """Row 4: neither a pool nor this row's own claim - a sibling location at the same
+    site is refused to the automatic pass, slice H's real and only narrowing. The Link
+    dialog still lists it for a buyer to take by hand."""
+    lines = world.purchase_order(
+        "ZZT-PO-H11-5", date(2026, 8, 1), [("BRW-BB", 40, SOON, "1")]
+    )
+    line_id = lines[0]
+    world.set_own_so_number("ZZT-SO-H11-OWN")
+    row = world.row("ORDER", 10, location="BRW-IB")
+
+    candidates = world.svc._candidates_for_row(row)
+    assert candidates[0]["target_id"] == line_id
+    assert candidates[0]["tier"] == TIER_SIBLING
+    assert candidates[0]["cascadable"] is False
+
+
+def test_ac_h11_an_own_claimed_project_bin_line_outranks_a_pool_line(world):
+    """The ordering half: with BOTH a project-bin line THIS row's own SO claims and an
+    ordinary pool line on offer, the claimed line wins on the sort key (G7 is
+    outermost, ranked ahead of the location tier) - and it is the line the cascade
+    actually takes from, not merely the one first in the list."""
+    world.project_bin_warehouse("PRJ-BIN")
+    claimed_lines = world.purchase_order(
+        "ZZT-PO-H11-6", date(2026, 8, 1), [("PRJ-BIN", 10, SOON, "1")]
+    )
+    claimed_line_id = claimed_lines[0]
+    world.purchase_order("ZZT-PO-H11-7", date(2026, 7, 1), [("BRW", 10, SOON, "1")])
+    world.set_own_so_number("ZZT-SO-H11-6")
+    _, core_line_id = world.claiming_so("ZZT-SO-H11-6", date(2026, 7, 1), qty=10)
+    own_line = world.own_so_line(core_line_id)
+    row = world.row("ORDER", 10, location="PRJ-BIN", so_line=own_line)
+    world.claim(
+        so_number="ZZT-SO-H11-6", po_number="ZZT-PO-H11-6", so_line_id=core_line_id,
+        po_line_id=claimed_line_id,
+    )
+
+    candidates = world.svc._candidates_for_row(row)
+    assert candidates[0]["target_id"] == claimed_line_id
+    assert candidates[0]["cascadable"] is True
+
+    takes = ProjectOrderInquiryService._cascade_take(candidates, Decimal("10"))
+    assert [c["target_id"] for c, _qty in takes] == [claimed_line_id]

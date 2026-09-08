@@ -68,8 +68,9 @@ verified in a real browser (agent-browser, via the sidebar) as well as by test.
 
 ## Slice H, the pass takes from the pool and nowhere else
 
-* AC-H1 A row at BRW-IB, and a PO line at BRW-IB with enough remaining, get NO
-  automatic link. The row stays raised and its quantity goes to Buy.
+* AC-H1 A row at BRW-IB, and a PO line at BRW-IB with enough remaining that NO
+  claim of this row's own sales order names, get no automatic link. The row
+  stays raised and its quantity goes to Buy.
 * AC-H2 The same row WITH a BRW pool line covering it in full is linked to the
   pool line.
 * AC-H3 A row at BRW-IB and a line at DC1-IB (same ownership group, another
@@ -87,6 +88,19 @@ verified in a real browser (agent-browser, via the sidebar) as well as by test.
   this change. No migration, no script.
 * AC-H10 `_groups_in_deficit` and `_exempt_groups_for_row` still run for the
   Link dialog and manual placement, and their tests still pass.
+* AC-H11 The owner's exception: a project-bin line that THIS row's own sales
+  order claims IS taken automatically, wherever it stands. A purchase order
+  this codebase raised off the plan claims the rows that sized it
+  (`scm/supply_claim.py`), and those rows link on the next pass exactly as they
+  did before slice H.
+* AC-H12 A project-bin line claimed by ANOTHER sales order, or claimed by
+  nobody, is still refused (G12 unchanged), and is still listed in the Link
+  dialog for a manual take.
+* AC-H13 The cascade never writes or infers a claim for itself. A project-bin
+  line is attributed by the supply writer, by the book's `FromSODocList`, or by
+  a person - never by the pass that wants to consume it.
+* AC-H14 Ranking: with an own-claimed project-bin line and a pool line both
+  available and both able to cover, the claimed line wins on the sort key.
 
 ## Slice E, SO-tied line wins (gated)
 

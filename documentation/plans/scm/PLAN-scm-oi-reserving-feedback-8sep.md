@@ -229,6 +229,66 @@ pools (`BRW`, `DC1`, `MWH`, `RSW`, `WH3`) are all present today, so there is no
 live exposure. If the location diff ever arrives, check it for pool codes and
 nothing else.
 
+## Slice H. The automatic pass takes from the pool, or from a line this row's
+own sales order claims
+
+Ruled by the owner, 8 Sep, correcting the reading of the 27 August ruling: the
+automatic pass may take from the SITE POOL and nowhere else, "unless the line
+is directly linked to the SO of the order inquiry". Stock standing at a project
+location is already spoken for by that project.
+
+`_candidate` set `cascadable = own_location is None or tier <= TIER_POOL`, so
+the pass helped itself to a line at the row's own project location (tier 1) and
+at the same ownership group on another site (tier 2). On real data that let it
+take BRW-IB's own open line for SO391853 out from under it.
+
+THE EXCEPTION ALREADY EXISTS. It is G12's own-claim rule, and `_candidate`
+already receives it as `own_so_claim`: a line at a `segment = 'project'`
+warehouse is cascadable when THIS row's own sales order claims it, and
+`project_locked = project_bin and not own_claim` is how that is expressed
+today. The claim comes from the book's own `FromSODocList`, from the supply
+writer that created the line (`app/services/scm/supply_claim.py` - a purchase
+order this codebase raised off the plan claims the order-inquiry rows that
+sized it, in the same transaction), or from a person naming the line in the
+Link dialog. It never comes from the pass that wants to consume it.
+
+So the rule is:
+
+| line | this row's own SO claims it | cascadable |
+| --- | --- | --- |
+| project bin | yes | YES, the owner's exception |
+| project bin | no, or claimed by another SO | no (G12, unchanged) |
+| pool code | either | YES (unchanged) |
+| anything else | either | no (this slice's only narrowing) |
+
+* Decided by POOL MEMBERSHIP read off `_pool_codes()`, never by the tier
+  number and never by the shape of the code.
+* The tier and its sub-rank are unchanged and still decide the ORDER pools are
+  tried in. This narrows WHICH lines are ever taken, not how they rank.
+* A row that names NO location is dealt on the same rule. Today it is
+  cascadable against everything, which would let the least-specified row take
+  what the best-specified row may not.
+* The Link dialog is untouched. It lists every tier, and a buyer may take a
+  project-location line by hand. That override path is `manual`.
+* `_groups_in_deficit` and `_exempt_groups_for_row` now bear mostly on the
+  Link dialog and manual placement. Keep both, say so in a comment.
+* Not retro-applied. Links already standing survive.
+
+WHAT SLICE F ADDS is a THIRD and more precise source for the same claim -
+`FromSODtlKey` resolving to the exact sales-order line rather than a document
+number plus an item code. It is not the exception; the exception ships here.
+Slice E shrinks to that precision work.
+
+CONSEQUENCE FOR THE PR. Reservations standing on an UNCLAIMED project-location
+line stop being dealt, and with slice D's all-or-nothing rule on top that
+quantity moves to Buy. A claimed one is unaffected, which is a far smaller
+swing than the first estimate.
+
+FIRST PASS GOT THIS WRONG. The implementation demanded pool membership ON TOP
+OF the G12 gate, which killed the exception. The tell was a CRM-raised
+reorder-plan purchase order no longer auto-linking to the rows it was bought
+for. Corrected in a fifth commit.
+
 ## Order of work
 
 A and B are independent of everything and ship first. D and H ship with them,
