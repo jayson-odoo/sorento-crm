@@ -779,6 +779,32 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         meta: { headerTitle: 'Location' },
       },
       {
+        id: 'so_links',
+        // The AutoCount book's own linkage, not the allocations panel below (that answers
+        // who RESERVED the line through our own order-inquiry flow; this answers what the
+        // book records the line as raised FOR). NOT a link: sales orders live on two
+        // different screens - project or adopted book - and picking the wrong one is worse
+        // than plain text.
+        accessorFn: (line) => line.so_links?.[0]?.so_number ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="S/O" column={column} />,
+        cell: ({ row }) => {
+          const links = row.original.so_links ?? [];
+          if (links.length === 0) return <span className="text-muted-foreground">-</span>;
+          const label =
+            links.length === 1
+              ? links[0].so_number
+              : `${links[0].so_number} +${links.length - 1} more`;
+          const title = links.map((l) => l.so_number).join(', ');
+          return (
+            <span className="block truncate" title={title}>
+              {label}
+            </span>
+          );
+        },
+        size: 150,
+        meta: { headerTitle: 'S/O' },
+      },
+      {
         id: 'expected_date',
         // The ISO date, not the printed "04 Jul 2026": the display form sorts by
         // day-of-month and would put September before July. A line with no date sorts last

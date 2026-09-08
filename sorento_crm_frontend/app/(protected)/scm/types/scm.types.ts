@@ -593,6 +593,22 @@ export interface PurchaseOrderLine {
   line_total?: string | null;
   /** The currency the figures above are IN. Blank predates the book having more than one. */
   currency?: string | null;
+  /**
+   * The AutoCount book's own sales-order linkage for this LINE - distinct from
+   * `PurchaseOrderLineAllocation.dedicated_to` below, which is who RESERVED the line
+   * through our own order-inquiry flow. A line can carry one, the other, both or
+   * neither. Empty on most lines: the book only links what a buyer raised through
+   * Transfer from S/O (`PLAN-scm-book-linkage-on-document-lines.md`).
+   */
+  so_links?: PurchaseOrderLineSoLink[];
+}
+
+/** One sales order the book links a purchase-order LINE to. Never an id on screen - the
+ *  document number is what a person reads. */
+export interface PurchaseOrderLineSoLink {
+  so_number: string;
+  so_line_id: string | null;
+  source: string;
 }
 
 /**

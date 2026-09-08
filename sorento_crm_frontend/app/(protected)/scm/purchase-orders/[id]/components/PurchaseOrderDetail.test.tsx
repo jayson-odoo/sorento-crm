@@ -548,6 +548,95 @@ describe('PurchaseOrderDetail - the lines grid', () => {
   });
 });
 
+describe('PurchaseOrderDetail - the book\'s own S/O linkage (AC-A1/A2/A3/A8)', () => {
+  it('prints the sales order a line resolves to', () => {
+    usePurchaseOrder.mockReturnValue({
+      data: po({
+        lines: [
+          { ...po().lines[0], so_links: [{ so_number: 'SO391853', so_line_id: null, source: 'order_inquiry' }] },
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('CW-BASIN-450').closest('tr') as HTMLElement;
+    expect(within(row).getByText('SO391853')).toBeInTheDocument();
+  });
+
+  it('reads a muted dash when nothing is linked, never a guess', () => {
+    usePurchaseOrder.mockReturnValue({
+      data: po({ lines: [{ ...po().lines[0], so_links: [] }] }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('CW-BASIN-450').closest('tr') as HTMLElement;
+    expect(within(row).getByText('-')).toBeInTheDocument();
+  });
+
+  it('condenses several sales orders to the first plus a count, full list on the title', () => {
+    usePurchaseOrder.mockReturnValue({
+      data: po({
+        lines: [
+          {
+            ...po().lines[0],
+            so_links: [
+              { so_number: 'SO391853', so_line_id: 'sl-1', source: 'order_inquiry' },
+              { so_number: 'SO391900', so_line_id: null, source: 'po_history' },
+            ],
+          },
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('CW-BASIN-450').closest('tr') as HTMLElement;
+    const cell = within(row).getByText('SO391853 +1 more');
+    expect(cell).toBeInTheDocument();
+    expect(cell).toHaveAttribute('title', 'SO391853, SO391900');
+  });
+
+  it('never lets a claim on a DIFFERENT line reach this one (AC-A4, at the render boundary)', () => {
+    // A document-level claim carries no `po_line_id`, so the backend never puts it on any
+    // line's `so_links` in the first place - this pins that an absent/empty array reads as
+    // "nothing linked", never as an opportunity to guess from the document.
+    usePurchaseOrder.mockReturnValue({
+      data: po({ lines: [{ ...po().lines[0], so_links: undefined }] }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('CW-BASIN-450').closest('tr') as HTMLElement;
+    expect(within(row).getByText('-')).toBeInTheDocument();
+  });
+
+  it('does not turn the sales order into a link (a deliberate omission)', () => {
+    usePurchaseOrder.mockReturnValue({
+      data: po({
+        lines: [
+          { ...po().lines[0], so_links: [{ so_number: 'SO391853', so_line_id: null, source: 'order_inquiry' }] },
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    expect(screen.queryByRole('link', { name: /SO391853/ })).not.toBeInTheDocument();
+  });
+});
+
 describe('PurchaseOrderDetail - correcting the order in place', () => {
   beforeEach(() => {
     usePurchaseOrder.mockReturnValue({ data: po(), isLoading: false, isError: false });
