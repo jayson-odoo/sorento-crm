@@ -1,7 +1,7 @@
 # PLAN: product_attachment picker stamps "has / no <type>" per line (repair)
 
-Status: PLANNED (8 Sep 2026). Issue #750 (owner-observed on prod, relayed from
-sorento-crm-n8n#97). Owner's words: "my problem is why it doesn't have has / no product
+Status: IMPLEMENTED (8 Sep 2026), AC-1 to AC-7 green, AC-8 (browser) outstanding.
+Issue #750 (owner-observed on prod, relayed from sorento-crm-n8n#97). Owner's words: "my problem is why it doesn't have has / no product
 photo stamping".
 UAC: `product-attachment-picker-stamp-acceptance-criteria.md`.
 
@@ -73,3 +73,20 @@ monkeypatched to answer from seeded rows).
   sets + noun; verify 3413 and 3527-3541 need nothing).
 - Tests: the existing failing test goes green; add the D1 case, the company-suffix case,
   the twin-code case, and the noun/certificate case (see UAC). No FE change.
+
+## What it cost, on landing
+
+- `_annotate` carries two new keys (`dym_probe_row_keys`, `dym_probe_type_name`) and
+  `build_suggest_offer` strips them again with the rest of `_DYM_CTRL_KEYS`, so that node's
+  own captures stay byte-equal. The `dym-annotate` captures cannot: 5 of the 16 graded ones
+  now carry a key n8n's body does not emit, so they are registered field-scoped in
+  `tests/chatbot/divergences.py` (measured: those 5 are exactly the ones that differ, and
+  the addition is their only disagreement).
+- AC-3 is driven from a LITERAL resolver payload rather than a real resolve, because the D1
+  surface needs a token with no `matches` and trigram `alternatives`, and the blank test
+  schema's `search_path` excludes `public` where `pg_trgm` lives, so `similarity()` cannot
+  run there. The gate, transform, annotator and composer are all real on that test.
+- The D1 single-token surface sorts has-first when it annotates. That sort is the shipped
+  behaviour for every already-stamped domain and it runs before the roster and the pick
+  round trip are derived, so it is left alone; decision 4's no-reorder rule is about the
+  require-specific picker, whose numbering is the gate's.
