@@ -1,6 +1,8 @@
 # PLAN: order inquiry PO/SPO reserving, feedback batch 8 September 2026
 
-Status: DRAFT, slices E/F/G gated on the AutoCount shared service reply.
+Status: Slices A, B, D and H implemented (code + tests green; browser
+verification still to run). Slices C, E, F, G remain gated on the AutoCount
+shared service reply and are not started.
 
 Owner feedback batch of 8 Sep 2026 against the Order Inquiries worklist
 (`/project-sales/order-inquiries`) and its PO/SPO reservation. Eleven items,
@@ -76,8 +78,10 @@ documents is five lines tall, and purchasing scrolls a hundred of them.
 * The info icon opens a lightbox listing every document backing the row: kind,
   document number, location, quantity, expected date, and the standing (draft
   or confirmed). Document numbers there keep the existing lightbox trigger.
-* Where the row has exactly one document, print it inline after the headline
-  and still offer the icon.
+* The cell prints NO document number, not even for a row backing exactly one
+  document (AC-A6, the owner's cut of the mock, 8 Sep 2026 - reverses the
+  earlier "print it inline" draft of this line). Every document lives in the
+  lightbox only.
 
 Nothing is removed from the API. This is a rendering change.
 
@@ -252,22 +256,44 @@ order this codebase raised off the plan claims the order-inquiry rows that
 sized it, in the same transaction), or from a person naming the line in the
 Link dialog. It never comes from the pass that wants to consume it.
 
-So the rule is:
+S1 CORRECTION (review round, 8 Sep): the first cut of this slice tested POOL
+MEMBERSHIP off `_pool_codes()` - the `pool_warehouse_id` FK graph - which is
+the wrong authority and a second, competing definition of "pool" living beside
+`project_locked`'s own. `app/services/scm/pool_predicate.py` exists to be the
+ONE spelling of a site pool, and its own docstring says the test is `segment`,
+never `pool_warehouse_id`. `cascadable` reads `is_site_pool(segment)` instead -
+the SAME predicate `project_locked` already reads through
+(`project_locked = project_bin and not own_claim`,
+`project_bin = not is_site_pool(segment)`). Measured against the 7 Sep prod
+copy: 55 active warehouses are `segment = 'project'`, 5 are `dealer` (the pool
+codes themselves, every one of them also an FK pool target), zero are
+unclassified - so `is_site_pool(segment)` and FK pool membership agree on
+every real warehouse, and the segment-based reading closes a gap the FK one
+left open: a warehouse that is neither an FK-named pool nor project-segment
+used to be silently never cascadable and never born-claimed either.
+`_pool_codes()` is UNCHANGED and still used - only for `link_location_tier`'s
+ORDERING (which pool a candidate ranks under), a separate question.
+
+The final rule, in words: `cascadable = own_so_claim or is_site_pool(segment)`.
+As a table:
 
 | line | this row's own SO claims it | cascadable |
 | --- | --- | --- |
-| project bin | yes | YES, the owner's exception |
-| project bin | no, or claimed by another SO | no (G12, unchanged) |
-| pool code | either | YES (unchanged) |
-| anything else | either | no (this slice's only narrowing) |
+| project bin (`segment='project'`) | yes | YES, the owner's exception, wherever the line stands |
+| project bin (`segment='project'`) | no, or claimed by another SO | no (G12, unchanged) |
+| site pool (`segment != 'project'`) | either | YES (unchanged) |
 
-* Decided by POOL MEMBERSHIP read off `_pool_codes()`, never by the tier
-  number and never by the shape of the code.
+Three rows, not four: on the real book every warehouse is one of the first two
+columns' locations, so there is no fourth "anything else" case in production -
+the algebra covers one anyway (`own_so_claim` alone still wins regardless of
+`is_site_pool`, so a hypothetical warehouse in neither camp would still be
+cascadable if this row's own SO claims it, and refused otherwise).
+
 * The tier and its sub-rank are unchanged and still decide the ORDER pools are
-  tried in. This narrows WHICH lines are ever taken, not how they rank.
-* A row that names NO location is dealt on the same rule. Today it is
-  cascadable against everything, which would let the least-specified row take
-  what the best-specified row may not.
+  tried in (`_pool_codes()`, unchanged, ordering only). This narrows WHICH
+  lines are ever taken, not how they rank.
+* A row that names NO location is dealt on the same rule - `cascadable` never
+  reads the ROW's own location at all, only the CANDIDATE's.
 * The Link dialog is untouched. It lists every tier, and a buyer may take a
   project-location line by hand. That override path is `manual`.
 * `_groups_in_deficit` and `_exempt_groups_for_row` now bear mostly on the
