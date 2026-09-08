@@ -52,10 +52,10 @@ export function previewLinesFrom(
 /**
  * The five figures above the loading-plan grid (PLAN section 2b, AC-A2.1).
  *
- * They DECOMPOSE the need rather than restate the columns: need is covered first by what the
- * site pools already hold, then by what is on the water, and what is left is the ask. Summing
- * the columns instead would put 1.3 million units of BRW stock on a card next to a 61,802
- * need, which says nothing about this container.
+ * They DECOMPOSE the need rather than restate the columns: need is covered first by what is
+ * already on hand at every active location, then by what is on the water, and what is left is
+ * the ask. Summing the columns instead would put 1.3 million units of BRW stock on a card
+ * next to a 61,802 need, which says nothing about this container.
  *
  * `toAsk` follows the editable cell, not `suggested_qty`, because the card has to move when
  * she overrides a quantity - that is the whole reason it is above the grid.
@@ -63,9 +63,10 @@ export function previewLinesFrom(
 export interface ContainerRequestSummary {
   /** Gross open SO need over every row. */
   need: number;
-  /** Of that need, the part the site pools already hold. */
-  fromPool: number;
-  /** Of what the pools do not hold, the part already on the water as an SPO. */
+  /** Of that need, the part already on hand (R7, captain 8 Sep 2026: every active location,
+   *  not site pools only). */
+  fromOnHand: number;
+  /** Of what is not already on hand, the part already on the water as an SPO. */
   fromSpo: number;
   /** What is actually being asked for, her edits included. */
   toAsk: number;
@@ -83,7 +84,7 @@ export function summariseContainerRequest(
 ): ContainerRequestSummary {
   const summary: ContainerRequestSummary = {
     need: 0,
-    fromPool: 0,
+    fromOnHand: 0,
     fromSpo: 0,
     toAsk: 0,
     askCbm: 0,
@@ -93,12 +94,12 @@ export function summariseContainerRequest(
 
   for (const row of rows) {
     const need = row.open_so_need;
-    const pool = Math.min(row.on_hand, need);
+    const onHand = Math.min(row.on_hand, need);
     const spo = Math.min(Math.max(need - row.on_hand, 0), row.incoming_spo);
     const qty = qtyFor(row);
 
     summary.need += need;
-    summary.fromPool += pool;
+    summary.fromOnHand += onHand;
     summary.fromSpo += spo;
     summary.toAsk += qty;
     // Whatever their own latest statement says they have - the stock list's packed figure

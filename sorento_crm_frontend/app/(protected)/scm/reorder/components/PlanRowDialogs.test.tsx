@@ -290,7 +290,11 @@ describe('PlanRowDialog - On hand (F4)', () => {
     },
   ];
 
-  it('shows only the site-pool row(s), never a project bin, when a pool row exists', () => {
+  it('shows only the site-pool row(s), never a project bin, when a pool row exists (R7 regression pin: the reorder engine did NOT widen, unlike the shared lightbox\'s "all" scope)', () => {
+    // This is a PRIVATE `OnHandTable`, never `PlanRowDialog.tsx`'s exported one (which the
+    // container-request grid and the SPO planner render with `scope="all"`, R7, captain
+    // 8 Sep 2026) - the reorder screen keeps its own copy specifically so a future widening
+    // of the shared component can never flip this screen's netting along with it.
     useLocationStock.mockReturnValue({
       data: { product_id: 'p1', as_of: '2026-08-20T10:00:00', locations },
       isLoading: false,

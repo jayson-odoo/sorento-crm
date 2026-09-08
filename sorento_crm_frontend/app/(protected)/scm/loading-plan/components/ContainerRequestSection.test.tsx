@@ -486,7 +486,7 @@ describe('ContainerRequestSection - the grid', () => {
 
     const cards = screen.getByTestId('container-request-stat-cards');
     expect(within(cards).getByTestId('stat-need')).toHaveTextContent('100');
-    expect(within(cards).getByTestId('stat-pool')).toHaveTextContent('30');
+    expect(within(cards).getByTestId('stat-on-hand')).toHaveTextContent('30');
     expect(within(cards).getByTestId('stat-spo')).toHaveTextContent('20');
     expect(within(cards).getByTestId('stat-ask')).toHaveTextContent('50');
     expect(within(cards).queryByTestId('stat-packed')).not.toBeInTheDocument();
@@ -861,7 +861,13 @@ describe('ContainerRequestSection - the eight figures open the shared lightbox (
     expect(within(dialog).getByText('Total').closest('tr')).toHaveTextContent('10');
   });
 
-  it('the On hand figure opens the location table, pools only, footing to the cell (AC-B3)', () => {
+  it('the On hand figure opens the location table, every active location, footing to the widened cell (R7, regression pin for the B1 footing break)', () => {
+    // R7 widened this grid's own On hand cell to count a project bin's stock alongside a
+    // site pool's (`container_request_service._stock_context`). The lightbox behind the cell
+    // has to count the SAME rows or the total the reader clicked and the total she lands on
+    // disagree - which is exactly the bug this test caught: the lightbox still hard-filtered
+    // to `is_pool` rows after the cell widened, so BRW (40) footed here while the cell read
+    // 1039 (40 + 999).
     useLocationStock.mockReturnValue({
       data: {
         as_of: '2026-08-27T10:00:00',
@@ -898,11 +904,14 @@ describe('ContainerRequestSection - the eight figures open the shared lightbox (
 
     expect(dialog).toHaveTextContent('On hand · ITEM-1');
     expect(within(dialog).getByText('BRW')).toBeInTheDocument();
-    expect(within(dialog).queryByText('PROJ-BIN')).not.toBeInTheDocument();
-    expect(within(dialog).getByText('Site pools').closest('tr')).toHaveTextContent('40');
+    // The project bin IS listed now - it is no longer excluded from the total.
+    expect(within(dialog).getByText('PROJ-BIN')).toBeInTheDocument();
+    expect(within(dialog).getByText('Every active location').closest('tr')).toHaveTextContent(
+      '1,039', // 40 + 999, the widened cell's own total (fmtInt groups thousands)
+    );
   });
 
-  it('the SPO figure opens the shipping orders on their way to a pool (AC-B4)', () => {
+  it('the SPO figure opens the shipping orders on their way, any active location (AC-B4)', () => {
     useContainerRequestDrill.mockReturnValue({
       data: {
         rows: [
@@ -924,7 +933,7 @@ describe('ContainerRequestSection - the eight figures open the shared lightbox (
     });
     renderSection();
 
-    const dialog = openFigure('Shipping orders on their way to a site pool');
+    const dialog = openFigure('Shipping orders on their way, any active location');
 
     expect(dialog).toHaveTextContent('SPO · ITEM-1');
     expect(within(dialog).getByText('SPO-9')).toBeInTheDocument();

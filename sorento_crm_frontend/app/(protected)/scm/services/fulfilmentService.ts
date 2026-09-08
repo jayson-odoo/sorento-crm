@@ -671,13 +671,14 @@ export interface ContainerRequestRow {
   /** What the engine worked out before any typed quantity was applied. `Save (N)` counts the
    *  rows where the two differ, and the formula tooltip still explains this figure. */
   engine_qty: number;
-  /** SITE POOLS ONLY (`warehouses.segment <> 'project'`), the reorder engine's own predicate.
-   *  Stock sitting in a group location is real, but it is spoken for, so it can neither be
-   *  asked against nor netted off the ask; it travels beside this as `on_hand_group` and is
-   *  shown muted in the row popover. */
+  /** EVERY active location - site pool AND project bin (R7, captain 8 Sep 2026, reverses
+   *  F2/26 Aug): stock in a group location is real, and `open_so_need` above already counts
+   *  the project demand it covers, so leaving it out of the ask was double-counting in the
+   *  demand side's favour. `on_hand_group` is still the group-location HALF of this total,
+   *  named for the breakdown row (no longer muted - it is counted the same as any site now). */
   on_hand: number;
   on_hand_group: number;
-  /** Open SPO allocations landing at a site pool. Same split, same reason. */
+  /** Open SPO allocations, every active location. Same split, same reason. */
   incoming_spo: number;
   incoming_spo_group: number;
   /** Unreceived packing-list quantity on shipments that have not arrived, any destination.
@@ -750,7 +751,10 @@ export interface ContainerRequestSite {
   incoming_spo: number;
 }
 
-/** What the pool predicate left out, aggregated: the group locations feeding project orders. */
+/** The project-bin HALF of `on_hand` / `incoming_spo`, aggregated - a breakdown of what is
+ *  already counted in the total (R7, captain 8 Sep 2026), not a figure the pool predicate
+ *  excluded. The pool predicate still decides the SITE/GROUP split; it stopped deciding
+ *  what counts. */
 export interface ContainerRequestGroupLocations {
   count: number;
   on_hand: number;

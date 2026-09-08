@@ -467,46 +467,58 @@ describe('monthLabel', () => {
 // ---------------------------------------------------------------------------
 
 describe('OnHandTable', () => {
-  it('shows the site pools only, foots them, and dates the reading', () => {
+  const twoLocations = [
+    {
+      warehouse_id: 'w1',
+      warehouse_code: 'BRW',
+      on_hand: 201,
+      reserved: 0,
+      free: 201,
+      so_qty: 96,
+      spo_qty: 90,
+      available: 105,
+      is_pool: true,
+    },
+    {
+      warehouse_id: 'w2',
+      warehouse_code: 'BRW-BB',
+      on_hand: 500,
+      reserved: 0,
+      free: 500,
+      so_qty: 0,
+      spo_qty: 0,
+      available: 500,
+      is_pool: false,
+    },
+  ];
+
+  it('scope="all" (the two live callers) counts every active location, foots them, and dates the reading (R7)', () => {
     useLocationStock.mockReturnValue({
-      data: {
-        product_id: 'p1',
-        as_of: '2026-08-27T06:05:00',
-        locations: [
-          {
-            warehouse_id: 'w1',
-            warehouse_code: 'BRW',
-            on_hand: 201,
-            reserved: 0,
-            free: 201,
-            so_qty: 96,
-            spo_qty: 90,
-            available: 105,
-            is_pool: true,
-          },
-          {
-            warehouse_id: 'w2',
-            warehouse_code: 'BRW-BB',
-            on_hand: 500,
-            reserved: 0,
-            free: 500,
-            so_qty: 0,
-            spo_qty: 0,
-            available: 500,
-            is_pool: false,
-          },
-        ],
-      },
+      data: { product_id: 'p1', as_of: '2026-08-27T06:05:00', locations: twoLocations },
       isLoading: false,
     });
 
-    renderWithClient(<OnHandTable productId="p1" />);
+    renderWithClient(<OnHandTable productId="p1" scope="all" />);
+
+    expect(screen.getByText('BRW')).toBeTruthy();
+    expect(screen.getByText('BRW-BB')).toBeTruthy();
+    const footer = screen.getByText('Every active location').closest('tr') as HTMLElement;
+    expect(within(footer).getByText('701')).toBeTruthy(); // 201 + 500
+    expect(screen.getByText(/Stock as of/)).toBeTruthy();
+  });
+
+  it('scope="pools" (kept for a future caller, nothing here uses it today) still shows site pools only, footing them', () => {
+    useLocationStock.mockReturnValue({
+      data: { product_id: 'p1', as_of: '2026-08-27T06:05:00', locations: twoLocations },
+      isLoading: false,
+    });
+
+    renderWithClient(<OnHandTable productId="p1" scope="pools" />);
 
     expect(screen.getByText('BRW')).toBeTruthy();
     expect(screen.queryByText('BRW-BB')).toBeNull();
     const footer = screen.getByText('Site pools').closest('tr') as HTMLElement;
     expect(within(footer).getByText('201')).toBeTruthy();
-    expect(screen.getByText(/Stock as of/)).toBeTruthy();
   });
 
   it('expands a location to the documents behind it', () => {
@@ -531,7 +543,7 @@ describe('OnHandTable', () => {
       isLoading: false,
     });
 
-    renderWithClient(<OnHandTable productId="p1" />);
+    renderWithClient(<OnHandTable productId="p1" scope="all" />);
     expect(screen.queryByTestId('stock-documents')).toBeNull();
 
     fireEvent.click(screen.getByText('BRW'));
@@ -545,7 +557,7 @@ describe('OnHandTable', () => {
       isLoading: false,
     });
 
-    renderWithClient(<OnHandTable productId="p1" />);
+    renderWithClient(<OnHandTable productId="p1" scope="all" />);
 
     expect(screen.getByText('No stock rows for this product.')).toBeTruthy();
   });
@@ -595,7 +607,7 @@ describe('SpoTabs', () => {
 
     renderWithClient(<SpoTabs supplierId="sup1" productId="p1" />);
 
-    expect(screen.getByRole('tab', { name: 'Open to pools (117)' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Open (117)' })).toBeTruthy();
     expect(screen.getByText('CRM-SPO-e372b1e9')).toBeTruthy();
     // Container, not "Packing list" (S4, AC-D2).
     expect(screen.getByText('Container')).toBeTruthy();
@@ -608,7 +620,7 @@ describe('SpoTabs', () => {
     expect(screen.getByText('117')).toBeTruthy();
   });
 
-  it('says the SPO sentence when nothing is on its way to a pool', () => {
+  it('says the SPO sentence when nothing is on its way anywhere', () => {
     renderWithClient(<SpoTabs supplierId="sup1" productId="p1" />);
 
     expect(screen.getByText(NO_SPO_TO_POOL)).toBeTruthy();

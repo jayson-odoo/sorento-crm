@@ -59,7 +59,7 @@ function row(over: Partial<ContainerRequestRow> = {}): ContainerRequestRow {
 const asked = (r: ContainerRequestRow) => r.suggested_qty;
 
 describe('summariseContainerRequest', () => {
-  it('decomposes the need: pool stock first, then SPO, then the ask', () => {
+  it('decomposes the need: on hand first, then SPO, then the ask', () => {
     const rows = [
       row({ product_id: 'a', open_so_need: 100, on_hand: 30, incoming_spo: 20, suggested_qty: 50 }),
       row({ product_id: 'b', open_so_need: 40, on_hand: 0, incoming_spo: 0, suggested_qty: 40 }),
@@ -68,12 +68,12 @@ describe('summariseContainerRequest', () => {
     const s = summariseContainerRequest(rows, asked);
 
     expect(s.need).toBe(140);
-    expect(s.fromPool).toBe(30);
+    expect(s.fromOnHand).toBe(30);
     expect(s.fromSpo).toBe(20);
     expect(s.toAsk).toBe(90);
     // The three parts foot back to the need, which is the whole reason they are cards and
     // not column totals.
-    expect(s.fromPool + s.fromSpo + s.toAsk).toBe(s.need);
+    expect(s.fromOnHand + s.fromSpo + s.toAsk).toBe(s.need);
   });
 
   it('never counts more cover than there is need for it', () => {
@@ -82,7 +82,7 @@ describe('summariseContainerRequest', () => {
 
     const s = summariseContainerRequest(rows, asked);
 
-    expect(s.fromPool).toBe(40);
+    expect(s.fromOnHand).toBe(40);
     expect(s.fromSpo).toBe(0);
     expect(s.toAsk).toBe(0);
   });

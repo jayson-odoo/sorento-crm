@@ -34,6 +34,7 @@ from app.models.scm import PriorityPolicy
 from app.models.supplier_notice import SupplierNoticeLine
 from app.services.scm import supplier_notice_service
 from tests.scm.conftest import as_user, requires_pg, seed_user
+from tests.scm.test_container_request_universe import _place as place_on_po
 from tests.scm.test_container_request_universe import _project_need as project_need
 from tests.scm.test_loading_plan import World
 from tests.scm.test_outstanding_import_routes import as_company_user
@@ -135,7 +136,9 @@ def _row(rows: list[dict], key: str, w: World) -> dict:
 
 
 def _warehouse(db, *, segment: str | None = None, is_active: bool = True) -> Warehouse:
-    """A location. `segment='project'` makes it a GROUP location - stock there is spoken for.
+    """A location. `segment='project'` makes it a GROUP location - stock there is spoken for
+    by a project, but it is counted the same as a pool's in the R7 total (captain 8 Sep
+    2026); it only gets its own breakdown row, never an exclusion.
 
     The pool predicate is `COALESCE(segment, 'dealer') <> 'project'`, the reorder engine's own
     (`reorder_run_service`), so a warehouse with no segment stated is a site pool: a location
@@ -482,14 +485,16 @@ def test_build_suggested_qty_floors_at_zero_when_stock_and_incoming_cover_the_ne
 
 
 # --------------------------------------------------------------------------- #
-# F2 - the pool predicate, and the packing list as a reference
+# R7 (captain 8 Sep 2026, reversing F2) - every active location nets, group stock
+# breaks out beside the total rather than sitting outside it
 # --------------------------------------------------------------------------- #
 
 
-def test_build_on_hand_counts_site_pools_only_and_reports_group_stock_beside_it(scm_app):
-    # AC-B1. Stock in a group location is real and it is spoken for - a project bin holds it
-    # for an order that is already promised - so it can neither be asked against nor netted
-    # off the ask. Same predicate the reorder engine nets by.
+def test_build_on_hand_counts_every_active_location_and_still_reports_the_group_half(scm_app):
+    # R7: `open_so_need` already counts project demand, so the supply side has to count
+    # project-bin stock too or the ask is overstated by exactly the stock already promised
+    # to that project. `on_hand_group` still isolates the project-bin half for the dialog's
+    # "of which, in project bins" breakdown - it is now a label, not an exclusion.
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
@@ -504,9 +509,9 @@ def test_build_on_hand_counts_site_pools_only_and_reports_group_stock_beside_it(
 
     assert r.status_code == 200, r.text
     row = _row(r.json()["rows"], "A", w)
-    assert row["on_hand"] == 200
-    assert row["on_hand_group"] == 50
-    assert row["suggested_qty"] == 300  # 500 - 200, the group 50 is NOT netted
+    assert row["on_hand"] == 250  # 200 pool + 50 group, both count now
+    assert row["on_hand_group"] == 50  # still reported as the breakdown
+    assert row["suggested_qty"] == 250  # 500 - 250, the group 50 IS netted now
 
 
 def test_build_counts_active_locations_only(scm_app):
@@ -538,9 +543,10 @@ def test_build_counts_active_locations_only(scm_app):
     assert row["suggested_qty"] == 300  # 500 - 200, the closed 60 is NOT netted
 
 
-def test_build_spo_counts_site_pools_only(scm_app):
-    # AC-B2, review item 1: an allocation bound for a group location lands in a bin this
-    # container cannot draw on, so it is out of the cell and muted in the breakdown.
+def test_build_spo_counts_every_active_location_and_still_reports_the_group_half(scm_app):
+    # R7: an allocation bound for a group location is incoming supply for a project the
+    # demand side already counted, so it nets too; `incoming_spo_group` keeps naming the
+    # project-bin half for the breakdown.
     app, db, gcu, gcuk = scm_app
     as_company_user(app, db, gcu, gcuk)
     w = World(db)
@@ -555,9 +561,9 @@ def test_build_spo_counts_site_pools_only(scm_app):
 
     assert r.status_code == 200, r.text
     row = _row(r.json()["rows"], "A", w)
-    assert row["incoming_spo"] == 30
-    assert row["incoming_spo_group"] == 70
-    assert row["suggested_qty"] == 470  # 500 - 30
+    assert row["incoming_spo"] == 100  # 30 pool + 70 group, both count now
+    assert row["incoming_spo_group"] == 70  # still reported as the breakdown
+    assert row["suggested_qty"] == 400  # 500 - 100
 
 
 def test_build_lists_every_site_pool_including_the_empty_ones(scm_app):
@@ -582,11 +588,55 @@ def test_build_lists_every_site_pool_including_the_empty_ones(scm_app):
     assert sites[held.warehouse_code]["on_hand"] == 40
     assert empty.warehouse_code in sites
     assert sites[empty.warehouse_code]["on_hand"] == 0
-    # The group location is never a site row - it has its own muted line.
+    # The group location is never a site row - it has its own breakdown line, no longer
+    # muted (R7, captain 8 Sep 2026): its stock is counted in the total the same as a pool's.
     assert group.warehouse_code not in sites
     assert row["group_locations"]["on_hand"] == 15
     assert row["group_locations"]["count"] == 1
     assert group.warehouse_code in row["group_locations"]["warehouse_codes"]
+    # The split does not mean the exclusion: the group's 15 is IN the 55 total (R7).
+    assert row["on_hand"] == 55
+
+
+def test_build_on_hand_nets_a_placed_projects_bin_stock_against_retail_demand(scm_app):
+    """S5 (captain 8 Sep 2026): the R7 widening is not an exact wash between the demand and
+    supply sides - this pins the known, accepted residue rather than a bug this test is
+    blessing by accident (see `_stock_context`'s docstring for the record of it).
+
+    `_project_open_need` nets a project line's demand by what CS has already placed on a PO
+    (R15) - a fully placed line leaves NOTHING in `open_so_need` for it. The widened `on_hand`
+    does not ask what a bin's stock is FOR: once that placement lands as received stock in the
+    project's own bin, this screen counts it anyway. The stock is therefore counted with its
+    own matching demand already gone, and it nets instead against whatever OTHER (retail)
+    demand for the SAME product is still open.
+    """
+    app, db, gcu, gcuk = scm_app
+    as_company_user(app, db, gcu, gcuk)
+    w = World(db)
+    w.stock("A", packed=10, cbm=0.5)
+
+    # Retail demand, still fully open - the only thing this screen has left to ask for.
+    _so(db, w, "A", 100, demand_class="retail")
+
+    # A project line CS has already placed IN FULL - `_project_open_need` nets it to zero.
+    project_line = project_need(db, w, "A", 30)
+    place_on_po(db, w, project_line, 30)
+
+    # That placement has since landed: the stock sits in the project's own bin.
+    group = _warehouse(db, segment="project")
+    _on_hand(db, w, "A", group, 30)
+
+    r = TestClient(app).post(BUILD_URL, json={"plan_id": _plan(db, w)})
+
+    assert r.status_code == 200, r.text
+    row = _row(r.json()["rows"], "A", w)
+    assert row["project_qty"] == 0  # fully placed - nothing left to ask for
+    assert row["retail_qty"] == 100
+    assert row["open_so_need"] == 100
+    assert row["on_hand"] == 30  # the widened total still counts the project bin
+    assert row["on_hand_group"] == 30
+    # 100 - 30: the already-placed project's OWN stock nets a demand it was never for.
+    assert row["suggested_qty"] == 70
 
 
 def test_build_incoming_packing_list_is_shown_and_nets_its_unallocated_part(scm_app):
