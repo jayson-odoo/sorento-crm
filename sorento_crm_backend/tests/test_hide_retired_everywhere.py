@@ -15,11 +15,23 @@ seeded rows). AC-E14 is a comment-only decision with no test.
 Written test-first per the tester brief, from three inputs: the UAC, the PLAN's
 `spo_supply.visible_line_clauses()` contract, and the captain's own priority ordering
 (E1, E2, E4, E11, E3, then the rest). NOTE for whoever reads the run output: by the time
-this suite was written the coder had already landed and COMMITTED fixes for every AC here
-except AC-E7 (commits 6134bd1dc, c72faa922, c5307e7fa) - so most of these tests are
-expected to be GREEN on first run, pinning the contract rather than reproducing a live
-bug. AC-E7 (`coverage_service._supply_events_many`'s shipment leg) is still unfixed and is
-expected RED. See the tester's final report to the captain for the per-AC breakdown.
+this suite ran, the coder had already landed and COMMITTED fixes for every AC here
+(commits 6134bd1dc, c72faa922, c5307e7fa, ef53fd10b - the last, AC-E7's
+`coverage_service._supply_events_many` fix, landed WHILE this suite was being written) -
+so every test passed on first run, pinning the contract rather than reproducing a live
+bug. Each assertion was traced by hand against the actual diff hunk that introduced
+`spo_supply.visible_line_clauses()` (or the equivalent new logic) before or immediately
+after being written, and for AC-E1/AC-E7 additionally against the PRE-FIX version of the
+file (`git show <commit>^:path`, read-only) to confirm the old code would have produced
+the values these assertions now forbid. See the tester's final report to the captain for
+the per-AC breakdown.
+
+AC-E9 has two readers (module docstring's own reason the second is not a call into the
+first): `project_order_inquiry_service.links_for_rows` (`TestAcE9LinksForRowsHidesRetired`)
+and `spo_conversion_service._project_coverage`'s own `taken_by`
+(`TestAcE9ProjectCoverageHidesRetired`, built off the real `svc.create` + `World` fixture
+`tests.scm.test_spo_conversion` already uses for a project ORDER BACK row, per the
+captain's steer rather than a hand-built demand-row fixture).
 """
 from __future__ import annotations
 
@@ -502,6 +514,104 @@ class TestAcE9LinksForRowsHidesRetired:
             hidden_docs = {link["document"] for link in out.get(hidden_row.id, [])}
             assert visible.spo_number in visible_docs, visible_docs
             assert hidden.spo_number not in hidden_docs, hidden_docs
+
+
+class TestAcE9ProjectCoverageHidesRetired:
+    """AC-E9's other half: `spo_conversion_service._project_coverage`'s own `taken_by` -
+    the same "Linked to" fact, read locally by the SPO-create screen rather than through
+    `ProjectOrderInquiryService` (module docstring's own reason not to import it).
+
+    Built off `svc.create` + the `World` fixture from `tests.scm.test_spo_conversion`
+    (the same shape `test_unwind_deletes_the_order_inquiry_link_before_the_allocation_it_
+    points_at` there seeds for a project ORDER BACK row) rather than hand-built demand
+    rows: it is the cheapest path to a REAL `spo_allocations` row a project row's link
+    resolves through, and reuses the SPO number `_project_coverage` itself has to look up
+    in `taken_by` - a hand-built `source_ref`/link pair would only prove the query filters
+    correctly, not that a real "Create SPO" write still resolves the same way.
+    """
+
+    def test_taken_by_omits_a_retired_lines_number_once_the_spo_that_named_it_is_retired(self):
+        from decimal import Decimal
+
+        from app.models.project_so import (
+            INQUIRY_RAISED,
+            IV_ORDER_BACK,
+            OrderInquiry,
+            OrderInquiryRow,
+            ProjectSalesOrderLine,
+            SO_STATUS_DRAFT,
+        )
+        from app.models.projects import Project
+        from app.services.scm import spo_conversion_service as svc
+        from tests.scm.test_spo_conversion import World
+
+        with pg_session() as db:
+            w = World(db)
+            supplier = w.supplier()
+            wh = w.warehouse()
+            w.po("A", supplier, [("A", 100, 0)])
+            shipment, lines = w.shipment([("A", 40, supplier)])
+            product = w.product("A")
+
+            title = f"{MARKER} e9 project"
+            project = Project(
+                id=_u(), title=title, normalised_title=title.lower(),
+                project_code=f"{MARKER}-E9-{uuid.uuid4().hex[:8]}",
+            )
+            db.add(project)
+            db.flush()
+            pso = ProjectSalesOrder(
+                id=_u(), project_id=project.id, area_group="TOWER",
+                provisional_ref=f"{MARKER}-E9-PSO-{uuid.uuid4().hex[:6]}",
+                autocount_doc_no=f"{MARKER}-E9-SI-{uuid.uuid4().hex[:6]}",
+                status=SO_STATUS_DRAFT, grouping_origin="area",
+                published_at=datetime(2026, 1, 2, 9, 0),
+            )
+            db.add(pso)
+            db.flush()
+            pso_line = ProjectSalesOrderLine(
+                id=_u(), project_sales_order_id=pso.id, line_no=1,
+                product_id=product.id, description=f"{MARKER} e9 line",
+                qty=Decimal("40"), uom="UNIT", unit_price=Decimal("10.00"),
+                amount=Decimal("400"), delivery_date=date(2026, 9, 10),
+            )
+            db.add(pso_line)
+            db.flush()
+            inquiry = OrderInquiry(id=_u(), project_sales_order_id=pso.id, state=INQUIRY_RAISED)
+            db.add(inquiry)
+            db.flush()
+            row = OrderInquiryRow(
+                id=_u(), order_inquiry_id=inquiry.id, so_line_id=pso_line.id,
+                item_code=product.product_code, qty=Decimal("40"),
+                delivery_date=date(2026, 9, 10), verb=IV_ORDER_BACK, state=INQUIRY_RAISED,
+            )
+            db.add(row)
+            db.flush()
+
+            created = svc.create(
+                db, str(shipment.id),
+                [{
+                    "shipment_line_id": str(lines[0].id), "qty": 40, "include": True,
+                    "location_splits": [{"warehouse_id": str(wh.id), "qty": 40}],
+                    "so_takes": [{"key": f"project:{row.id}", "qty": 40}],
+                }],
+            )
+            spo_number = created["created_spos"][0]["po_number"]
+
+            key = f"project:{row.id}"
+            before = svc._project_coverage(db, str(product.id))
+            before_row = next(r for r in before if r["key"] == key)
+            assert spo_number in before_row["taken_by"], before_row
+
+            # Retire every allocation this SPO wrote - the leftover sweep's own shape.
+            db.query(SPOAllocation).filter(SPOAllocation.spo_number == spo_number).update(
+                {"retired_at": _now(), "line_status": "closed"}, synchronize_session=False
+            )
+            db.flush()
+
+            after = svc._project_coverage(db, str(product.id))
+            after_row = next(r for r in after if r["key"] == key)
+            assert spo_number not in after_row["taken_by"], after_row
 
 
 # =================================================================================== #
