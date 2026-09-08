@@ -103,6 +103,8 @@ cases:
   # projection kept identity fields + matched SPEC keys only, so the presenter's own
   # "List Price" line was dropped and the answer said "no price recorded". Base fields
   # now come first. SELECT list_price FROM products WHERE product_code='SRTWC286-SH' -> 1260.
+  # D12 superseded item 8's mechanism (base fields are now ALWAYS on the page, never
+  # selected by the ask), but this case's own expectation still holds exactly as written.
   - name: item 8 - list price of a product reaches the base List Price field  # NEW VOCABULARY
     text: "list price of SRTWC286-SH"
     cold: true
@@ -110,6 +112,19 @@ cases:
       branch_kind: business_query
       reply_contains: ["SRTWC286-SH", "List Price"]
       reply_not_contains: ["recorded for"]
+      no_uuid: true
+
+  # D12 (owner ruling, 8 Sep 2026, turn 8f4a8526): "product details" names NO property
+  # (prompt fix, both bodies) - `requested_attributes` reaches the projection empty,
+  # which is the no-attribute path and always carried every base field. Before this fix
+  # the parser emitted `["price"]` for "product details" and the projection (item 8's
+  # own mechanism) then dropped List Price and Dimensions from the reply.
+  - name: D12 - product details names no property, base fields still show  # NEW VOCABULARY
+    text: "SRTJC802A-1500 product details"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["SRTJC802A-1500", "*List Price:*", "*Dimensions:*"]
       no_uuid: true
 
   # Owner turn 0682154e: "seat cover material of srtwc286" -> ["material"]; the registry

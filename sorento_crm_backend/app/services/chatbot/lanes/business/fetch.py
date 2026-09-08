@@ -1067,10 +1067,16 @@ def _names_a_shipment(ctx: dict[str, Any]) -> bool:
     )
 
 
-#: Base (non-spec) fields kept on a product item even when `requested_attributes`
-#: narrows to one spec key - identity anchors, so "wattage of X" still says WHICH
-#: product the number belongs to.
-_PRODUCT_IDENTITY_LABELS: frozenset[str] = frozenset({"Product Code", "Company"})
+#: D12 (owner ruling, 8 Sep 2026, turn 8f4a8526 "SRTJC802A-1500 product details"): the
+#: BASE fields a product answer ALWAYS carries, whatever `requested_attributes` says -
+#: item 8's `_PRODUCT_IDENTITY_LABELS` (Product Code, Company only) meant an asked word
+#: that named no base field of its own (or a wrongly-emitted `["price"]` for a message
+#: that named no property at all) dropped List Price, Dimensions, Product Name and
+#: Description from the reply. Discontinued flag and attachments are not `fields` rows
+#: at all and were never affected by this.
+_PRODUCT_IDENTITY_LABELS: frozenset[str] = frozenset(
+    {"Product Code", "Product Name", "Description", "List Price", "Dimensions", "Company"}
+)
 
 _SPEC_KEY_PREFIX = "spec:"
 _SPEC_SUMMARY_CAP = 8
@@ -1083,34 +1089,30 @@ def _normalize_spec_word(v: Any) -> str:
     return re.sub(r"[_\-]+", " ", jsc.nullish_str(v).strip().lower()).strip()
 
 
-#: Item 8 (8 Sep 2026): an asked word that names one of the presenter's BASE fields.
-#: "list price of X" -> `["price"]` used to drop the presenter's own "List Price" line
-#: (the projection kept identity fields + matched SPEC keys only) and answer "no price
-#: recorded". Matched by whole word or containment on the normalised ask, in this order.
-#: Review round 2 (S5/S6): a single-token entry matches the whole ask EXACTLY; only a
-#: multi-token entry may be contained in a longer ask. The first cut also matched a token
-#: inside the ask, and on the live registry "brand name" reached Product Name (0 spec hits,
-#: no miss line, the brand never mentioned) and "seat size" reached Dimensions (the carton,
-#: not the seat). The Product Name row went with it: no measured turn asks for the name
-#: alone. "cost" -> List Price is right for a CUSTOMER (the list price is what it costs
-#: them); an internal cost price is not a customer-facing field.
-_BASE_FIELD_BY_ASK: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("List Price", ("price", "list price", "harga", "cost")),
-    ("Dimensions", ("dimension", "dimensions", "size", "measurement", "ukuran", "saiz")),
-    ("Description", ("description", "desc", "details")),
+#: D12: since a base field is now ALWAYS on the page (`_PRODUCT_IDENTITY_LABELS`), an
+#: asked word naming one is no longer a thing to PICK (item 8's `_BASE_FIELD_BY_ASK`
+#: is retired) - it only means "do not add a miss line for this word", because the
+#: field it names is already there. Single-token entry matches the whole ask EXACTLY;
+#: only the one multi-token entry ("list price") may be contained in a longer ask -
+#: same discipline as item 8's own matching, kept for the same reason ("seat size"
+#: must not read as a hit on "size").
+_BASE_PROPERTY_WORDS: frozenset[str] = frozenset(
+    {
+        "price", "list price", "harga", "cost",
+        "dimension", "dimensions", "size", "ukuran", "saiz",
+        "description", "name",
+    }
 )
+
+
+def _names_a_base_property(norm: str) -> bool:
+    for w in _BASE_PROPERTY_WORDS:
+        if norm == w or (" " in w and w in norm):
+            return True
+    return False
+
+
 _MISS_CODES_CAP = 5
-
-
-def _base_label_for(norm: str) -> str | None:
-    """The FIRST matching base label. A merged entry ("price and size") keeps only the
-    first; the prompt asks the model to emit one attribute per entry, and a split
-    emission renders both (pinned in the projection tests)."""
-    for label, words in _BASE_FIELD_BY_ASK:
-        for w in words:
-            if norm == w or (" " in w and w in norm):
-                return label
-    return None
 
 
 def _tokens(norm: str) -> set[str]:
@@ -1130,23 +1132,29 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
     "Specs:" field summarising up to `_SPEC_SUMMARY_CAP` populated keys ("and N
     more" beyond that). Byte-identical to before item 8.
 
-    With requested_attributes (item 8, 8 Sep 2026, turns 0682154e and "list price of
-    X"), per asked word, in this order:
-      1. BASE FIELDS FIRST - a word naming a presenter base field (`_BASE_FIELD_BY_ASK`:
-         price / dimensions / description; a single-token entry exactly, a multi-token
-         entry by containment) keeps that field on every item; a base hit is a hit.
-      2. SPEC KEYS BY TOKEN CONTAINMENT - exact match on the normalised key or label
+    With requested_attributes (item 8 / D12, 8 Sep 2026), every item ALWAYS keeps its
+    base fields (`_PRODUCT_IDENTITY_LABELS`: Product Code, Product Name, Description,
+    List Price, Dimensions, Company) - a base field is never dropped by an ask, and an
+    asked word is never "matched" to one; it is on the page regardless. Only the SPEC
+    keys are on demand, per asked word:
+      1. SPEC KEYS BY TOKEN CONTAINMENT - exact match on the normalised key or label
          first, else every key whose key OR label tokens contain every asked token
          ("material" reaches both `material` and `seat_material` via "Seat cover
          material"; "seat cover material" reaches `seat_material` only), rendered in
          registry order (the order the presenter emitted them).
-      3. ONE MISS LINE PER ASKED WORD, not per item: the codes with no hit for that word
-         go into ONE `spec_misses` entry, rendered once AFTER the items by
-         `output_structurer` - "*<label>:* not recorded for A, B, C (+N more)", label
-         from the registry when the word matches a known key/label, else the asked
-         word; codes capped at `_MISS_CODES_CAP`. (Not `summary_items`: that slot is the
-         quantity-summary mode and suppresses the item rows, fetch.py's items loop.)
-    An item with no hit for any asked word keeps its identity fields only.
+      2. ONE MISS LINE PER ASKED WORD, not per item, for a word that matched NO spec key
+         on that item - EXCEPT a word naming a base property (`_names_a_base_property`:
+         price / list price / harga / cost / dimension(s) / size / ukuran / saiz /
+         description / name), which produces no miss line at all: the field it names is
+         already on the page, so "not recorded" would contradict what the reply just
+         showed. A genuine spec miss goes into ONE `spec_misses` entry, rendered once
+         AFTER the items by `output_structurer` - "*<label>:* not recorded for A, B, C
+         (+N more)", label from the registry when the word matches a known key/label,
+         else the asked word; codes capped at `_MISS_CODES_CAP`. (Not `summary_items`:
+         that slot is the quantity-summary mode and suppresses the item rows, fetch.py's
+         items loop.)
+    An item with no spec hit for any asked word keeps its base fields only - byte
+    identity with the no-attribute path's own field set.
     """
     vocab_raw = e.get("spec_vocabulary")
     vocab: dict[str, str] = vocab_raw if isinstance(vocab_raw, dict) else {}
@@ -1218,10 +1226,10 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
             continue
 
         # An attribute was asked: identity fields + the base fields + the spec keys it names.
+        # D12: base fields are ALWAYS kept - no ask can drop or add one.
         kept_base = [
             f for f in base if isinstance(f, dict) and f.get("label") in _PRODUCT_IDENTITY_LABELS
         ]
-        base_by_label = {f.get("label"): f for f in base if isinstance(f, dict)}
         spec_norms: list[tuple[dict[str, Any], str, str]] = []  # (field, norm_key, norm_label)
         for f in spec_fields:
             raw_key = jsc.js_string(f.get("key") or "")[len(_SPEC_KEY_PREFIX):]
@@ -1230,16 +1238,7 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
         matched: list[dict[str, Any]] = []
         seen_field_ids: set[int] = {id(f) for f in kept_base}
         for norm, _asked_word in asked:
-            hit = False
-            # 1. base fields first
-            base_label = _base_label_for(norm)
-            base_field = base_by_label.get(base_label) if base_label else None
-            if base_field is not None:
-                hit = True
-                if id(base_field) not in seen_field_ids:
-                    kept_base.append(base_field)
-                    seen_field_ids.add(id(base_field))
-            # 2. spec keys: an exact key/label match AND every key whose key or label
+            # 1. spec keys: an exact key/label match AND every key whose key or label
             #    tokens contain every asked token - ALL of them, in registry order
             toks = _tokens(norm)
             contained = [
@@ -1247,12 +1246,14 @@ def _project_product_specs(e: dict[str, Any], req_attrs: list[Any]) -> None:
                 for f, nk, nl in spec_norms
                 if norm in (nk, nl) or (toks and (toks <= _tokens(nk) or toks <= _tokens(nl)))
             ]
+            hit = bool(contained)
             for f in contained:
-                hit = True
                 if id(f) not in seen_field_ids:
                     matched.append(f)
                     seen_field_ids.add(id(f))
-            if not hit:
+            # 2. a spec miss - UNLESS the word names a base property, which is already
+            #    on the page (kept_base, above) and needs no "not recorded" line.
+            if not hit and not _names_a_base_property(norm):
                 missed_codes[norm].append(jsc.js_string(code))
         it["fields"] = kept_base + matched
 

@@ -79,14 +79,16 @@ def test_no_spec_key_at_all_is_the_plain_four_field_answer():
     assert [f["label"] for f in fields] == ["Company", "Product Code", "Product Name", "List Price", "Dimensions"]
 
 
-def test_single_key_ask_returns_only_that_key_plus_identity():
+def test_single_key_ask_returns_base_fields_plus_that_key():
+    """D12 (8 Sep 2026): base fields (Product Name, List Price, Dimensions included)
+    are ALWAYS on the page - an ask narrows only which SPEC key joins them."""
     envelope = _product_envelope(specs=_FOUR_SPECS)
     ctx = {"semantic_input": {"requested_attributes": ["wattage"]}}
     out = fetch.output_structurer(envelope, ctx)
     fields = out["answers"][0]["fields"]
     labels = [f["label"] for f in fields]
-    assert labels == ["Company", "Product Code", "Wattage"]
-    assert fields[2]["value"] == "60 W"
+    assert labels == ["Company", "Product Code", "Product Name", "List Price", "Dimensions", "Wattage"]
+    assert fields[-1]["value"] == "60 W"
 
 
 def test_single_key_ask_matches_by_label_synonym_word():
@@ -99,12 +101,16 @@ def test_single_key_ask_matches_by_label_synonym_word():
     assert any(f["label"] == "Wattage" for f in fields)
 
 
+_BASE_LABELS = ["Company", "Product Code", "Product Name", "List Price", "Dimensions"]
+
+
 def test_asked_key_the_product_lacks_answers_no_label_recorded():
-    """Item 8 (8 Sep 2026): the miss is said ONCE, above the items, never per item."""
+    """Item 8 (8 Sep 2026): the miss is said ONCE, above the items, never per item. D12:
+    base fields stay on the page even though the asked key missed."""
     envelope = _product_envelope(specs=_FOUR_SPECS)
     ctx = {"semantic_input": {"requested_attributes": ["voltage"]}}
     out = fetch.output_structurer(envelope, ctx)
-    assert [f["label"] for f in out["answers"][0]["fields"]] == ["Company", "Product Code"]
+    assert [f["label"] for f in out["answers"][0]["fields"]] == _BASE_LABELS
     assert "*voltage:* not recorded for SRTWC8517" in out["response"]
     assert out["response"].count("recorded for") == 1
 
@@ -116,7 +122,7 @@ def test_asked_key_the_product_lacks_uses_registry_label_when_known():
     envelope["spec_vocabulary"] = {"wattage": "Wattage"}
     ctx = {"semantic_input": {"requested_attributes": ["wattage"]}}
     out = fetch.output_structurer(envelope, ctx)
-    assert [f["label"] for f in out["answers"][0]["fields"]] == ["Company", "Product Code"]
+    assert [f["label"] for f in out["answers"][0]["fields"]] == _BASE_LABELS
     assert "*Wattage:* not recorded for SRTWC8517" in out["response"]
 
 
@@ -160,49 +166,46 @@ def _labels(out: dict, index: int = 0) -> list[str]:
     return [f["label"] for f in out["answers"][index]["fields"]]
 
 
-class TestBaseFieldsFirst:
-    """Turn "list price of X" -> `["price"]` used to drop the presenter's own List Price
-    field and answer "no price recorded"."""
+_ITEM_BASE_LABELS = ["Company", "Product Code", "Product Name", "List Price", "Dimensions"]
+_ITEM_BASE_LABELS_WITH_DESC = ["Company", "Product Code", "Product Name", "Description", "List Price", "Dimensions"]
 
-    def test_price_reaches_the_list_price_field_with_no_miss(self):
-        out = fetch.output_structurer(_family_envelope([_item("SRTWC286-SH", specs=[_SEAT])], _MATERIAL_VOCAB),
-                                      {"semantic_input": {"requested_attributes": ["price"]}})
-        assert _labels(out) == ["Company", "Product Code", "List Price"]
-        assert "recorded for" not in out["response"]
 
-    def test_the_whole_phrase_and_the_other_languages_reach_the_same_field(self):
-        for word, label in (("list price", "List Price"), ("harga", "List Price"), ("cost", "List Price"),
-                            ("dimension", "Dimensions"), ("size", "Dimensions"), ("ukuran", "Dimensions"),
-                            ("description", "Description"), ("desc", "Description")):
+class TestD12BaseFieldsAlwaysRenderOnlySpecsAreOnDemand:
+    """D12 (owner ruling, 8 Sep 2026, turn 8f4a8526 "SRTJC802A-1500 product details").
+    Turn "list price of X" -> `["price"]` used to drop every OTHER base field (the
+    projection kept identity fields + the matched base field + spec hits only) and
+    answer with Product Code + Description alone. Base fields are now unconditional."""
+
+    def test_a_base_property_word_asked_produces_no_miss_and_base_fields_are_unaffected(self):
+        for word in ("price", "list price", "harga", "cost", "dimension", "size", "ukuran", "saiz"):
             out = fetch.output_structurer(
                 _family_envelope([_item("SRTWC286-SH", specs=[_SEAT], description="Wall hung closet")], _MATERIAL_VOCAB),
                 {"semantic_input": {"requested_attributes": [word]}},
             )
-            assert _labels(out) == ["Company", "Product Code", label], word
+            assert _labels(out) == _ITEM_BASE_LABELS_WITH_DESC, word
+            assert "recorded for" not in out["response"], word
 
     def test_a_single_token_entry_matches_the_whole_ask_only(self):
-        """Review round 2 (S5/S6): "brand name" must not reach Product Name and "seat size"
-        must not reach Dimensions - a token inside a longer ask is not the base field. The
-        ask falls through to the spec pass and gets its miss line on a miss."""
+        """Review round 2 (S5/S6), still true: "brand name" must not read as the base
+        word "name", nor "seat size" as "size" - a token inside a longer ask is not the
+        base property. The ask falls through to the spec pass and gets its miss line."""
         for word in ("brand name", "seat size", "selling price"):
             out = fetch.output_structurer(_family_envelope([_item("SRTWC286-SH", specs=[_SEAT])], _MATERIAL_VOCAB),
                                           {"semantic_input": {"requested_attributes": [word]}})
-            assert _labels(out) == ["Company", "Product Code"], word
+            assert _labels(out) == _ITEM_BASE_LABELS, word
             assert f"*{word}:* not recorded for SRTWC286-SH" in out["response"], word
             assert out["response"].count("recorded for") == 1
 
     def test_a_multi_token_entry_is_still_found_inside_a_longer_ask(self):
         out = fetch.output_structurer(_family_envelope([_item("SRTWC286-SH")], {}),
                                       {"semantic_input": {"requested_attributes": ["the list price please"]}})
-        assert _labels(out) == ["Company", "Product Code", "List Price"]
+        assert _labels(out) == _ITEM_BASE_LABELS
+        assert "recorded for" not in out["response"]
 
-    def test_a_split_emission_renders_both_base_fields(self):
-        """`_base_label_for` returns the first label only, so a merged entry "price and
-        size" would keep List Price and silence size; the prompt asks the model to split,
-        and a split emission renders both."""
+    def test_two_base_property_words_together_produce_no_miss_for_either(self):
         out = fetch.output_structurer(_family_envelope([_item("SRTWC286-SH")], {}),
                                       {"semantic_input": {"requested_attributes": ["price", "size"]}})
-        assert _labels(out) == ["Company", "Product Code", "List Price", "Dimensions"]
+        assert _labels(out) == _ITEM_BASE_LABELS
         assert "recorded for" not in out["response"]
 
 
@@ -214,18 +217,18 @@ class TestSpecKeysByTokenContainment:
     def test_material_reaches_every_key_whose_label_or_key_contains_it_in_registry_order(self):
         out = fetch.output_structurer(_family_envelope([_item("SRTWC286-SH", specs=[_SEAT, _MAT])], _MATERIAL_VOCAB),
                                       {"semantic_input": {"requested_attributes": ["material"]}})
-        assert _labels(out) == ["Company", "Product Code", "Seat cover material", "Material"]
+        assert _labels(out) == _ITEM_BASE_LABELS + ["Seat cover material", "Material"]
         assert "recorded for" not in out["response"]
 
     def test_the_whole_phrase_reaches_only_the_key_that_contains_every_token(self):
         out = fetch.output_structurer(_family_envelope([_item("SRTWC286-SH", specs=[_SEAT, _MAT])], _MATERIAL_VOCAB),
                                       {"semantic_input": {"requested_attributes": ["seat cover material"]}})
-        assert _labels(out) == ["Company", "Product Code", "Seat cover material"]
+        assert _labels(out) == _ITEM_BASE_LABELS + ["Seat cover material"]
 
     def test_exact_match_still_wins_and_nothing_else_is_dragged_in(self):
         out = fetch.output_structurer(_family_envelope([_item("SRTWC286-SH", specs=_FOUR_SPECS)], {s["key"]: s["label"] for s in _FOUR_SPECS}),
                                       {"semantic_input": {"requested_attributes": ["wattage"]}})
-        assert _labels(out) == ["Company", "Product Code", "Wattage"]
+        assert _labels(out) == _ITEM_BASE_LABELS + ["Wattage"]
 
 
 class TestOneMissLinePerAskedWord:
@@ -234,7 +237,7 @@ class TestOneMissLinePerAskedWord:
         out = fetch.output_structurer(_family_envelope(items, _MATERIAL_VOCAB),
                                       {"semantic_input": {"requested_attributes": ["material"]}})
         for i in range(7):
-            assert _labels(out, i) == ["Company", "Product Code"]
+            assert _labels(out, i) == _ITEM_BASE_LABELS
         response = out["response"]
         assert response.count("recorded for") == 1
         # the registry's EXACT match names the line ("material" -> "Material")
@@ -245,8 +248,8 @@ class TestOneMissLinePerAskedWord:
         items = [_item("SRTWC286-SH", specs=[_SEAT]), _item("SRTWC286-SH-NEW-P")]
         out = fetch.output_structurer(_family_envelope(items, _MATERIAL_VOCAB),
                                       {"semantic_input": {"requested_attributes": ["material"]}})
-        assert _labels(out, 0) == ["Company", "Product Code", "Seat cover material"]
-        assert _labels(out, 1) == ["Company", "Product Code"]
+        assert _labels(out, 0) == _ITEM_BASE_LABELS + ["Seat cover material"]
+        assert _labels(out, 1) == _ITEM_BASE_LABELS
         assert out["response"].count("recorded for") == 1
         assert "not recorded for SRTWC286-SH-NEW-P" in out["response"]
         assert "not recorded for SRTWC286-SH," not in out["response"]
@@ -276,3 +279,15 @@ def test_no_attribute_asked_is_byte_identical_to_the_compact_specs_path():
     assert _labels(out, 0) == ["Company", "Product Code", "Product Name", "List Price", "Dimensions", "Specs"]
     assert _labels(out, 1) == ["Company", "Product Code", "Product Name", "List Price", "Dimensions"]
     assert before["items"][1] == envelope["items"][1]  # untouched item, same object shape
+
+
+def test_product_details_names_no_property_and_still_shows_price_and_dimensions():
+    """D12 (owner ruling, 8 Sep 2026, turn 8f4a8526 "SRTJC802A-1500 product details"):
+    "product details" names no property (prompt fix, both bodies) - `requested_attributes`
+    reaches this function empty, which is the no-attribute path and always carried the
+    base fields. Pinned here as a named regression, not only via the generic no-attribute
+    test above."""
+    envelope = _family_envelope([_item("SRTJC802A-1500")], {})
+    out = fetch.output_structurer(envelope, {"semantic_input": {"requested_attributes": []}})
+    assert "*List Price:*" in out["response"]
+    assert "*Dimensions:*" in out["response"]

@@ -62,7 +62,9 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # +123 chars (D10, 8 Sep 2026, turn 69d9900e): one sentence in the incoming domain
 # description, in both bodies - the code in an incoming ask is the product, and only a
 # 4-letter + 7-digit token (a real container number) is a container. Intentional content.
-CONSTANT_CHARS = 48693
+# +99 chars (D12, 8 Sep 2026, turn 8f4a8526): one sentence in REQUESTED ATTRIBUTES, both
+# bodies - "details" / "product details" / "info" / "tell me about X" name no property.
+CONSTANT_CHARS = 48792
 
 
 def _without_growth_r1_addendum(text: str) -> str:
