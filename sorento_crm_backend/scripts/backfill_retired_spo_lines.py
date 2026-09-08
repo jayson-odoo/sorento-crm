@@ -12,21 +12,47 @@ was retired by one of those two events BEFORE the column existed carries no mark
 it still shows up in the SPO document lines tab, the allocations grid and the document
 rollups, which is the defect PLAN-hide-retired-spo-lines exists to fix.
 
-WHY THESE THREE CONDITIONS MEAN "RETIRED"
-------------------------------------------
-There is no audit trail for a pre-#740 retirement - `retired_at` itself did not exist yet,
-and nothing else records WHY a row was closed. The receipt columns are the only surviving
-evidence: an AutoCount row (`source_system = 'autocount'`) that is `line_status = 'closed'`
-with `quantity_received = 0` AND a receipt status that never reached `fully_received` was
-closed WITHOUT ever having been received. A line closes for exactly two reasons - a receipt
-completed it, or the ingest retired it - and the receipt evidence rules out the first, which
-leaves only the second. A row closed BY a receipt fails this test on `quantity_received = 0`
-alone (R2's own reasoning, restated backwards): if goods arrived, the row is not retired, it
-is the record of what came in.
+WHY "CLOSED, NEVER RECEIVED" IS NOT EVIDENCE (round 2 security review, B1)
+---------------------------------------------------------------------------
+The first cut of this script read `line_status = 'closed'` with a zero receipt as retirement.
+That is wrong: FOUR different writers close an `autocount` row, and only one of them is
+retirement.
+
+1. **A receipt.** The row is fully received - not retired, the record of what arrived.
+2. **The SCM outstanding book's absence sweep** (`outstanding_import_service._spo_lines_to_close`).
+   A file that no longer states a line means the goods ARRIVED and this channel does not carry
+   a receipt figure to write - the row closes with `quantity_received` untouched, deliberately.
+   Stamping `retired_at` here would hide a real arrival.
+3. **A cancelled document** (`ShippingOrderIngestService._write_row`, `force_closed`). Every line
+   of a cancelled shipping order closes at once, with `retired_at` explicitly cleared by the
+   SAME write (D28d: the payload still names the row, so it is live). None of this is retirement.
+4. **The deletion service, on a referenced row** (`DeletionService._delete_shipping_order`). A
+   row a GRN pick or a claim still points at is closed rather than deleted, with no receipt and
+   no later replacement anywhere - it is the document being removed, not one line being edited.
+
+Only D28d's own two events - the leftover sweep (a re-push that stops naming a line) and a
+DocKey change (the document was deleted and re-created) - are retirement, and both share ONE
+observable fact none of the four closers above share: AutoCount wrote a REPLACEMENT for it.
+The evidence this backfill looks for is therefore not the receipt, it is the replacement:
+
+- `source_ref IS NOT NULL` - an ESB-pushed line (a `scm_upload`/xlsx-era row carries no DtlKey
+  at all and is out of scope here regardless);
+- an OPEN sibling exists in the row's OWN `(company_id, spo_number, product_id, location)`
+  group (`procurement_service._spo_allocation_group_key`, the exact key the group receipt
+  recompute shares over - reused here, not restated) with `created_at` strictly LATER than
+  this row's own. That later, open, same-group row IS the line AutoCount replaced this one
+  with.
+
+A cancelled document has no open sibling anywhere in it, so every one of its lines drops out
+under this test. An absence-closed row has no later sibling either - nothing replaced it, the
+book just stopped stating it. A referenced row the deletion service closed has no later sibling
+for the same reason: the document is gone, not edited. Anything this test cannot tell apart is
+left alone - the ingest's own leftover sweep or DocKey-change path stamps it correctly the next
+time AutoCount pushes that number, exactly as it does for every row retired after #740 shipped.
 
 `retired_at IS NULL` narrows to rows this backfill (or a later ingest push) has not already
 marked - the query naturally excludes its own prior writes, so a second run finds nothing
-left to do (AC-H7).
+left to do (AC-H7, AC-H9).
 
 SAFETY / IDEMPOTENCY
 ---------------------
@@ -35,7 +61,8 @@ SAFETY / IDEMPOTENCY
 - One commit per document (`spo_number`), so an interrupted run leaves whole documents done
   and the rest untouched.
 - Re-running is a no-op: `retired_at IS NULL` is part of the selection, so an already-marked
-  row is not selected again.
+  row is not selected again, and stamping a row can only ever REMOVE it as a later sibling for
+  some earlier row in its own group, never add one - a second pass finds strictly less to do.
 - `retired_at = coalesce(updated_at, now())` - `updated_at` is the row's own last-touched
   time (the closest surviving estimate of when it was retired), `now()` covers the rows that
   have never been touched since insert.
@@ -52,23 +79,17 @@ import logging
 import os
 import sys
 from datetime import datetime, timezone
-from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from sqlalchemy import func
 
 from app.database import SessionLocal
 from app.models.base import company_scope
 from app.models.company import Company
 from app.models.procurement import SPOAllocation
 from app.services.company_scope import register_company_scope_listeners
+from app.services.procurement_service import _spo_allocation_group_key
 from app.services.rules import shipping_order_rules
-from app.services.shipping_order_ingest_service import (
-    LINE_CLOSED,
-    RECEIPT_FULLY_RECEIVED,
-    RECEIPT_PENDING,
-)
+from app.services.shipping_order_ingest_service import LINE_CLOSED, LINE_OPEN
 
 logger = logging.getLogger("scripts.backfill_retired_spo_lines")
 
@@ -76,28 +97,53 @@ logger = logging.getLogger("scripts.backfill_retired_spo_lines")
 def _candidate_rows(db, company_id: str) -> list[SPOAllocation]:
     """Every row this backfill has not already marked, oldest document first.
 
-    `source_system = 'autocount'` AND `line_status = 'closed'` AND
-    `coalesce(receipt_status, 'pending') != 'fully_received'` AND
-    `coalesce(quantity_received, 0) = 0` AND `retired_at IS NULL` - see the module
-    docstring for why those four conditions together mean "retired". Both COALESCEs are
-    real, not defensive dressing: `receipt_status`/`quantity_received` are NOT NULL columns
-    today, but a plain `!=` / `==` comparison reads a NULL as UNKNOWN and silently drops
-    the row rather than including it, which is the opposite of what a nullable-in-spirit
-    column (and any older row written before the NOT NULL constraint existed) needs here.
+    `source_system = 'autocount'` AND `line_status = 'closed'` AND `source_ref IS NOT NULL`
+    AND `retired_at IS NULL`, narrowed further in Python to only the rows whose own
+    `(company, spo_number, product, location)` group (`_spo_allocation_group_key`, reused
+    from `procurement_service` rather than restated) holds an OPEN row created strictly
+    LATER than this one - see the module docstring for why that sibling, not the receipt,
+    is the evidence of retirement.
     """
-    return (
+    candidates = (
         db.query(SPOAllocation)
         .filter(
             SPOAllocation.company_id == company_id,
             SPOAllocation.source_system == shipping_order_rules.AUTOCOUNT_SOURCE_SYSTEM,
             SPOAllocation.line_status == LINE_CLOSED,
-            func.coalesce(SPOAllocation.receipt_status, RECEIPT_PENDING) != RECEIPT_FULLY_RECEIVED,
-            func.coalesce(SPOAllocation.quantity_received, 0) == 0,
+            SPOAllocation.source_ref.isnot(None),
             SPOAllocation.retired_at.is_(None),
         )
         .order_by(SPOAllocation.spo_number, SPOAllocation.spo_line_number, SPOAllocation.id)
         .all()
     )
+    if not candidates:
+        return []
+
+    # The candidates' own OPEN siblings can only ever live among this company's OPEN
+    # autocount rows - loaded once, indexed by the same group key, so N candidates cost
+    # one query rather than N.
+    open_rows = (
+        db.query(SPOAllocation)
+        .filter(
+            SPOAllocation.company_id == company_id,
+            SPOAllocation.source_system == shipping_order_rules.AUTOCOUNT_SOURCE_SYSTEM,
+            SPOAllocation.line_status == LINE_OPEN,
+        )
+        .all()
+    )
+    latest_open_by_group: dict[tuple, datetime] = {}
+    for row in open_rows:
+        key = _spo_allocation_group_key(row)
+        current = latest_open_by_group.get(key)
+        if current is None or row.created_at > current:
+            latest_open_by_group[key] = row.created_at
+
+    eligible = []
+    for row in candidates:
+        latest_open = latest_open_by_group.get(_spo_allocation_group_key(row))
+        if latest_open is not None and latest_open > row.created_at:
+            eligible.append(row)
+    return eligible
 
 
 def run(db, company_id: str, dry_run: bool = True) -> dict[str, int]:

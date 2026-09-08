@@ -185,3 +185,47 @@ only effect would have been to make one whole document disappear. Round 2's narr
   user's decision was every listing, so it takes the clause too.
 - **N2.** The backfill keeps `print` for its per-document report: it is an operator-facing report
   like the dedupe script's, not application logging.
+
+## 10. As-built (round 2 + round 3, coder)
+
+**B1** (`scripts/backfill_retired_spo_lines.py`): `_candidate_rows` rewritten. Base predicate is
+now `company_id`, `source_system='autocount'`, `line_status='closed'`, `source_ref IS NOT NULL`,
+`retired_at IS NULL` (the receipt/`quantity_received` conditions from round 1 are GONE - they were
+the wrong evidence, not a second narrowing on top of the right one). A single extra query loads
+every OPEN autocount row for the company, indexed by `procurement_service._spo_allocation_group_key`
+(imported, not restated) to the latest `created_at` per group; a candidate is eligible only when its
+own group key has an entry with `created_at` strictly later than the candidate's own. Docstring
+rewritten: the "a line closes for exactly two reasons" claim is gone, replaced by the four closers
+(a receipt; the outstanding book's absence sweep; a cancelled document; the deletion service on a
+referenced row) and the positive replacement-sibling evidence.
+
+**B2** (`PickingHeaderService._sync_received_for_allocations`, `app/services/procurement_service.py`):
+the `if alloc.retired_at is not None: continue` branch now calls
+`self._write_received(alloc, max(int(alloc.stated_received or 0), self.compute_received_for_allocation(str(alloc.id))), may_reopen=False)`
+before continuing - so a retired row still recomputes off its OWN approved picking lines (never a
+group share), floored by whatever was stated for it before retirement, and can never reopen. AC-X40
+(`tests/test_spo_xlsx_supersede.py`) still passes unmodified: the floor covers the GRN-delete case
+the same way the old "never touched" behaviour did, by different means.
+
+**Round 3, all in `app/services/procurement_service.py` unless noted:**
+
+- `list_documents`: `is_visible` now defined before `is_outstanding` and folded into it
+  (`is_outstanding = and_(is_visible, *open_incoming_clauses(), allocated > received)`), so Balance,
+  status, worst-overdue and earliest-ETA can never count a hidden row regardless of its own
+  `line_status`. A new `visible_line_count_expr` (the same expression `line_count` already computed)
+  is shared by the SELECT label, the `sort_map` entry, and a new unconditional
+  `rollup.having(visible_line_count_expr > 0)` applied BEFORE the state-specific `having` - a document
+  with zero visible lines now drops out of every state (`outstanding`/`completed`/`all`), matching
+  `get_document`'s 404 for the same number instead of listing a 0-line row that errors on open.
+- `_document_supplier_rollup`: gained `*spo_supply.visible_line_clauses()` in its `.filter(...)`, so
+  the majority-supplier tie-break counts the same lines `get_document`'s own `supplier_counts` does.
+- `app/api/v1/procurement/packing_lists.py` (`get_packing_list`): both the per-product `totals` query
+  (feeds `line.spo_allocated_quantity`) and the `allocations` query (feeds
+  `line.related_spo_allocations`, the related-SPO strip) gained `*spo_supply.visible_line_clauses()`.
+  A retired line no longer inflates the shipment line's allocated total or appears in the strip.
+
+Verified: `tests/test_spo_xlsx_supersede.py` (53 passed, AC-X40 included), the root-path group and
+the `tests/scm/` group from section "verification commands" below both green before and after these
+four changes; `tests/test_migration_466_shipment_line_description.py`,
+`tests/test_shipment_lines_follow_header_company.py`, `tests/test_consolidated_packing_list.py`,
+`tests/test_packing_list_multi_supplier.py` (packing-list detail readers) unaffected.
