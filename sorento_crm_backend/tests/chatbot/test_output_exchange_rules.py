@@ -300,6 +300,295 @@ def test_r4_with_no_prior_domain_a_catalogue_ask_stays_a_catalogue_ask() -> None
 
 
 # --------------------------------------------------------------------------- #
+# R7 - a broaden beside a new activity domain is a switch (PLAN-broaden-domain-switch)
+# --------------------------------------------------------------------------- #
+
+# exec 15121180: "ANY INCOMING" after a stock turn on SRTWT04A. Parser v7 emitted
+# domain_hint incoming / intent_hint check_incoming / broaden_axis all / scope_intent
+# broaden / entity_op clear / entities [] - a COHERENT (incoming, check_incoming) pair,
+# not the "all products" mid-order wander the restore block exists for. The prompt
+# defines a widen as "KEEP domain_hint", so a coherent pair for a DIFFERENT, non-catalogue
+# domain is self-contradictory: the model switched, and the restore must not undo it.
+
+
+def test_ac1_broaden_beside_a_coherent_new_domain_switches_and_reuses_the_prior_product() -> None:
+    out = run(
+        parser_output(
+            domain_hint="incoming",
+            intent_hint="check_incoming",
+            broaden_axis="all",
+            scope_intent="broaden",
+            entity_op="clear",
+            entities=[],
+        ),
+        message="Any incoming",
+        state={
+            "domain_hint": "inventory",
+            "intent_hint": "check_stock",
+            "entities": [
+                {
+                    "raw": "srtwc286",
+                    "hint": "product",
+                    "canonical_code": "SRTWC286",
+                    "current_message": True,
+                    "confident": True,
+                }
+            ],
+        },
+    )
+    assert out["domain_hint"] == "incoming"
+    assert out["intent_hint"] == "check_incoming"
+    assert out["entity_op_applied"] == "reuse"
+    assert [e.get("raw") for e in out["entities"]] == ["srtwc286"]
+    assert out["broaden_axis"] is None
+    assert out["scope_intent"] is None
+    assert out["domain_switch_over_broaden"] == "inventory"
+    assert out.get("broaden_axis_domain_restored") is None
+
+
+def test_ac2_a_prior_hint_blocked_under_the_new_domain_is_not_reused() -> None:
+    """A carried customer entity has no place under `incoming` - stays cleared."""
+    out = run(
+        parser_output(
+            domain_hint="incoming",
+            intent_hint="check_incoming",
+            broaden_axis="all",
+            scope_intent="broaden",
+            entity_op="clear",
+            entities=[],
+        ),
+        message="Any incoming",
+        state={
+            "domain_hint": "order",
+            "intent_hint": "check_order",
+            "entities": [
+                {
+                    "raw": "hanlim",
+                    "hint": "customer",
+                    "canonical_code": None,
+                    "current_message": True,
+                    "confident": True,
+                }
+            ],
+        },
+    )
+    assert out["domain_hint"] == "incoming"
+    assert out["domain_switch_over_broaden"] == "order"
+    assert out["entity_op"] == "clear"
+    assert out["entities"] == []
+
+
+def test_ac3_a_current_message_entity_on_the_switch_leaves_entity_op_as_emitted() -> None:
+    """The model named its OWN entity this turn - the reuse rescue does not apply."""
+    out = run(
+        parser_output(
+            domain_hint="incoming",
+            intent_hint="check_incoming",
+            broaden_axis="all",
+            scope_intent="broaden",
+            entity_op="replace_combine",
+            entities=[
+                {
+                    "raw": "SRTWT04A",
+                    "hint": "product",
+                    "canonical_code": "SRTWT04A",
+                    "current_message": True,
+                    "confident": True,
+                }
+            ],
+        ),
+        message="Any incoming for SRTWT04A",
+        state={
+            "domain_hint": "inventory",
+            "intent_hint": "check_stock",
+            "entities": [
+                {
+                    "raw": "srtwc286",
+                    "hint": "product",
+                    "canonical_code": "SRTWC286",
+                    "current_message": True,
+                    "confident": True,
+                }
+            ],
+        },
+    )
+    assert out["domain_hint"] == "incoming"
+    assert out["domain_switch_over_broaden"] == "inventory"
+    assert out["entity_op"] == "replace_combine"
+    assert out["entity_op_applied"] == "replace_combine"
+    assert "SRTWT04A" in [e.get("raw") for e in out["entities"]]
+
+
+def test_ac5_model_domain_null_still_restores_the_prior_domain() -> None:
+    """Date widen (e4381b0d / 98526b81 shape): a null model domain is never a switch."""
+    out = run(
+        parser_output(
+            domain_hint=None,
+            intent_hint=None,
+            broaden_axis="date",
+            scope_intent="broaden",
+            entity_op="clear",
+        ),
+        message="last month",
+        state={"domain_hint": "order", "intent_hint": "check_order", "entities": []},
+    )
+    assert out["domain_hint"] == "order"
+    assert out["intent_hint"] == "check_order"
+    assert out["broaden_axis_domain_restored"] is True
+    assert out.get("domain_switch_over_broaden") is None
+
+
+def test_ac6_model_domain_equal_to_prior_domain_is_not_a_switch() -> None:
+    """Genuine "show me everything": same domain both sides, restore path as today."""
+    out = run(
+        parser_output(
+            domain_hint="inventory",
+            intent_hint="check_stock",
+            broaden_axis="all",
+            scope_intent="broaden",
+            entity_op="clear",
+            entities=[],
+        ),
+        message="show me everything",
+        state={
+            "domain_hint": "inventory",
+            "intent_hint": "check_stock",
+            "entities": [
+                {
+                    "raw": "srtwc286",
+                    "hint": "product",
+                    "canonical_code": "SRTWC286",
+                    "current_message": True,
+                    "confident": True,
+                }
+            ],
+        },
+    )
+    assert out["domain_hint"] == "inventory"
+    assert out["broaden_axis_domain_restored"] is True
+    assert out.get("domain_switch_over_broaden") is None
+    assert out["entity_op"] == "clear"
+    assert out["entities"] == []
+
+
+def test_ac7_an_incoherent_domain_intent_pair_is_not_a_switch() -> None:
+    """domain_hint incoming with intent_hint check_stock names no real incoming pair."""
+    out = run(
+        parser_output(
+            domain_hint="incoming",
+            intent_hint="check_stock",
+            broaden_axis="all",
+            scope_intent="broaden",
+            entity_op="clear",
+            entities=[],
+        ),
+        message="Any incoming",
+        state={"domain_hint": "order", "intent_hint": "check_order", "entities": []},
+    )
+    assert out["domain_hint"] == "order"
+    assert out["intent_hint"] == "check_order"
+    assert out["broaden_axis_domain_restored"] is True
+    assert out.get("domain_switch_over_broaden") is None
+
+
+# Review, blocker B2 (9 Sep 2026): `switched` narrowed to `ba == "all"` only. The prompt's
+# widen instruction says KEEP domain_hint for BOTH a `date` widen and an entity-hint widen,
+# so a differing domain beside either is a known MODEL violation of its own instruction -
+# the restore corrects it, exactly as it always has, and must NOT be read as a switch. Only
+# `"all"` has no KEEP clause in the prompt and only `"all"` has a real capture.
+
+
+def test_ac11_a_date_widen_naming_a_different_domain_still_restores() -> None:
+    """Regression (1): a `date` axis must not switch - the differing domain_hint is the
+    model's own violation of the prompt's "date widen KEEPS domain_hint" instruction, and
+    the restore corrects it exactly as it does for every other axis but "all"."""
+    out = run(
+        parser_output(
+            domain_hint="incoming",
+            intent_hint="check_incoming",
+            broaden_axis="date",
+            scope_intent="broaden",
+            entity_op="reuse",
+            entities=[],
+        ),
+        message="not just August",
+        state={"domain_hint": "order", "intent_hint": "check_order", "entities": []},
+    )
+    assert out["domain_hint"] == "order"
+    assert out["broaden_axis_domain_restored"] is True
+    assert out.get("domain_switch_over_broaden") is None
+
+
+def test_ac12_a_date_widen_beside_a_different_domain_still_wipes_the_window() -> None:
+    """Regression (2): had `switched` fired on `ba == "date"`, it would have nulled
+    `broaden_axis` before the reuse executor's own `all_time` check ever saw it, so the
+    OLD window would have been silently restored instead of wiped. Narrowed to "all" only,
+    `broaden_axis` reaches the executor untouched and the wipe fires as it always has."""
+    out = run(
+        parser_output(
+            domain_hint="order",
+            intent_hint="check_order",
+            broaden_axis="date",
+            scope_intent="broaden",
+            entity_op="reuse",
+            entities=[],
+            date_filter_start=None,
+            date_filter_end=None,
+        ),
+        message="not just August",
+        state={
+            "domain_hint": "promotion",
+            "intent_hint": "check_promotion",
+            "entities": [],
+            "date_filter_start": "2026-08-01",
+            "date_filter_end": "2026-08-31",
+        },
+    )
+    assert out["date_filter_start"] is None
+    assert out["date_filter_end"] is None
+
+
+def test_ac13_an_entity_hint_widen_beside_a_different_domain_drops_the_named_axis() -> None:
+    """Regression (3): had `switched` fired on `ba == "customer"`, it would have nulled
+    `broaden_axis` before the final `ba_final` drop pass ever saw it, so the customer the
+    turn asked to widen away would have survived to the tool call. Narrowed to "all" only,
+    the axis survives to the final pass and the named entity is dropped."""
+    out = run(
+        parser_output(
+            domain_hint="order",
+            intent_hint="check_order",
+            broaden_axis="customer",
+            scope_intent="broaden",
+            entity_op="reuse",
+            entities=[],
+        ),
+        message="for everyone",
+        state={
+            "domain_hint": "inventory",
+            "intent_hint": "check_stock",
+            "entities": [
+                {
+                    "raw": "hanlim",
+                    "hint": "customer",
+                    "canonical_code": None,
+                    "current_message": True,
+                    "confident": True,
+                },
+                {
+                    "raw": "srtwc286",
+                    "hint": "product",
+                    "canonical_code": "SRTWC286",
+                    "current_message": True,
+                    "confident": True,
+                },
+            ],
+        },
+    )
+    assert [e.get("raw") for e in out["entities"]] == ["srtwc286"]
+    assert [e.get("hint") for e in out["entities"]] == ["product"]
+
+
+# --------------------------------------------------------------------------- #
 # R5 - a compound access level splits into a tier token plus query_brands
 # --------------------------------------------------------------------------- #
 

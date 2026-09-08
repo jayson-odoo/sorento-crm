@@ -592,6 +592,46 @@ DIVERGENCES: list[Divergence] = [
             ("output", "incoming_hint_retyped_to_product"),
         ),
     ),
+    # PLAN-broaden-domain-switch (exec 15121180, 9 Sep 2026): "ANY INCOMING" after a stock
+    # turn on SRTWT04A came back domain_hint incoming / intent_hint check_incoming /
+    # broaden_axis all / scope_intent broaden / entity_op clear - a COHERENT (incoming,
+    # check_incoming) pair, which the AXIS BROADEN restore used to overwrite back to
+    # inventory because it could not tell that shape apart from a genuine "all products"
+    # wander. The port now keeps the model's own domain and reuses the carried SRTWT04A
+    # (its `product` hint is not blocked under `incoming`), which is exactly the fix. The
+    # capture PINS THE DEFECT: `domain_hint`, `intent_hint`, `routing`, `entities`,
+    # `entity_op` / `entity_op_applied`, `broaden_axis`, `scope_intent`,
+    # `broaden_axis_domain_restored` and the new `domain_switch_over_broaden` diagnostic
+    # all move; `domain_signal_source` does not (it is computed off the model's own raw
+    # emission BEFORE the restore/switch block runs, so it reads "intent_explicit" on both
+    # sides) and stays out of the list. Behaviour pinned by
+    # test_output_exchange_rules.py's "R7" section (AC-1, AC-2, AC-3, AC-5, AC-6, AC-7,
+    # AC-11, AC-12, AC-13) - AC-4 is the pre-existing "R4" test
+    # (`test_r4_widening_one_axis_keeps_the_question_it_was_asked_about`), not R7.
+    Divergence(
+        node="output_exchange",
+        fixture="parser-15121180",
+        hazard="PLAN-broaden-domain-switch",
+        reason=(
+            "the capture pins the pre-fix answer: a coherent (incoming, check_incoming) "
+            "pair beside broaden_axis restored to the PRIOR domain (inventory) and cleared "
+            "the carried product. The port now reads it as a domain switch, not a wander, "
+            "and reuses the carried entity. Field-scoped to the fields the switch rule "
+            "moves."
+        ),
+        strip_paths=(
+            ("output", "domain_hint"),
+            ("output", "intent_hint"),
+            ("output", "broaden_axis"),
+            ("output", "scope_intent"),
+            ("output", "entity_op"),
+            ("output", "entity_op_applied"),
+            ("output", "entities"),
+            ("output", "broaden_axis_domain_restored"),
+            ("output", "domain_switch_over_broaden"),
+            ("output", "routing"),
+        ),
+    ),
     # The three keys rules 2, 3 and 4 ADD to `output_exchange`'s emission. No
     # capture can contain a key the node did not emit when it was taken, so this
     # is the same class as the `pending` marker above and is handled the same
