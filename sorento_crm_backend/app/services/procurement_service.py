@@ -4453,11 +4453,25 @@ class PickingHeaderService:
                     # it before retirement (D28c) - the same floor a live member gets,
                     # so a later GRN delete cannot drop it below what was already
                     # proven (AC-X40: stated 29 beats a recomputed 0).
+                    #
+                    # Round 4 (security review, AC-H14): the SAME ownership gate the
+                    # non-AutoCount branch applies twenty lines below - skip a row that
+                    # is neither released nor picked against, because nothing here
+                    # computed its stored value. Without it a backfill-stamped row
+                    # carrying a real ESB-stated receipt but no `stated_received` floor
+                    # (every row written before migration 488) got written unconditionally
+                    # here on the next recompute - `max(0, own picking total 0) = 0` -
+                    # zeroing a real receipt and then hiding the row (visible under R2
+                    # only via `quantity_received > 0`). A retired row that IS picked
+                    # against still takes its own approved total (AC-H10 unchanged).
+                    alloc_id = str(alloc.id)
+                    if alloc_id not in released and not self._allocation_has_picking_line(alloc_id):
+                        continue
                     self._write_received(
                         alloc,
                         max(
                             int(alloc.stated_received or 0),
-                            self.compute_received_for_allocation(str(alloc.id)),
+                            self.compute_received_for_allocation(alloc_id),
                         ),
                         may_reopen=False,
                     )

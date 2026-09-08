@@ -203,7 +203,7 @@ only effect would have been to make one whole document disappear. Round 2's narr
 - **N2.** The backfill keeps `print` for its per-document report: it is an operator-facing report
   like the dedupe script's, not application logging.
 
-## 10. As-built (round 2 + round 3, coder)
+## 10a. As-built (round 2 + round 3, coder)
 
 **B1** (`scripts/backfill_retired_spo_lines.py`): `_candidate_rows` rewritten. Base predicate is
 now `company_id`, `source_system='autocount'`, `line_status='closed'`, `source_ref IS NOT NULL`,
@@ -304,3 +304,79 @@ The consumer check settled it without the number:
   as a reason for AC-H17 was simply wrong. The badge has its own hole, and it is the same defect as
   the incident: supply AutoCount deleted still counted. **AC-H19 fixes it here**, because it is a
   read with no persisted column and no purchasing arithmetic behind it.
+
+## 13. As-built (round 4 + round 5, coder)
+
+**Item 1, ownership gate (AC-H14, `PickingHeaderService._sync_received_for_allocations`,
+`app/services/procurement_service.py`)**: the retired branch now carries the SAME gate its
+non-AutoCount sibling twenty lines below already has - `if alloc_id not in released and not
+self._allocation_has_picking_line(alloc_id): continue` - inserted before the `_write_received`
+call, so a retired row nothing picks against and nobody released is left untouched instead of
+being written `max(stated 0, own picking total 0) = 0`. AC-H10's two tests (a picking line
+exists in both) still pass unmodified.
+
+**Item 2, backfill freeze (AC-H15, `scripts/backfill_retired_spo_lines.py`)**: `run()`'s write
+loop now computes `frozen = max(int(row.stated_received or 0), int(row.quantity_received or 0))`
+and assigns it to `row.stated_received` when positive, BEFORE `row.retired_at = stamp` - the
+same order `shipping_order_ingest_service.py` and `dedupe_spo_xlsx_superseded.py` use.
+
+**Item 3, no live line stamped (AC-H16, same file)**: `_candidate_rows`' base filter gained
+`func.coalesce(SPOAllocation.receipt_status, RECEIPT_PENDING) != RECEIPT_FULLY_RECEIVED` - not a
+return of round 1's dropped predicate (no `quantity_received = 0` requirement), only an exclusion
+of a row that is ALREADY the record of a completed receipt, which the sibling test alone could
+wrongly qualify (a live, fully-received line with a coincidental later open sibling for the same
+product/location).
+
+**AC-H18 (dry-run per-row evidence, addition mid-round-4)**: `_candidate_rows` now returns
+`list[tuple[SPOAllocation, SPOAllocation]]` (candidate, justifying sibling) instead of a bare
+row list - `latest_open_by_group` indexes the SIBLING ROW itself (not just its `created_at`), so
+its `source_ref` is available to print. `run()`'s per-document loop gained an inner per-row
+`print(...)` naming the candidate's id/`source_ref`/`source_doc_ref`/`created_at`/
+`quantity_received`/`receipt_status` and the justifying sibling's `source_ref`/`created_at`,
+before the per-document heading's summary counters; unconditional (both `--dry-run` and
+`--apply` print it, since the loop that builds the lines is shared and printing costs nothing on
+either path).
+
+**Item 4 (round 4, packing list) - REVERTED before landing, replaced by round 5's AC-H17
+(narrowed) + AC-H19:**
+
+Round 4 item 4 asked to also filter `refresh_shipment_line_statuses`'s `totals_alloc`
+(`app/services/procurement_service.py` ~1128-1132), the PERSISTED column. Before making that
+change, per the round-4 addendum's own instruction, the consumer check below was run. It found a
+real conflict, so line 1130 was never touched (confirmed by `git diff HEAD` showing no edit to
+`refresh_shipment_line_statuses` at any point in this lane) and round 5 formally ruled it out of
+scope (PLAN section 12).
+
+**Consumer inventory (`inbound_shipment_lines.spo_allocated_quantity` and its derived
+`line_status`), as requested:**
+
+| consumer | file | wants filtered? |
+| --- | --- | --- |
+| packing-list detail response | `app/api/v1/procurement/packing_lists.py` `get_packing_list` | YES - already re-queries with `visible_line_clauses()` (round 3 N1) and, as of this round, recomputes the response's `line_status` from the same filtered total (AC-H17, narrowed to the response only, nothing persisted) |
+| reorder/unallocated-gap arithmetic | `app/services/scm/container_request_service.py` `PL_UNALLOCATED_SQL` (~line 132), netted into the reorder ask (~line 1018), surfaced as `incoming_pl_unallocated` | NO - subtracts the persisted column from `quantity_shipped` to net supply already committed; filtering it raises the unallocated figure and nets MORE, moving a purchasing number as a side effect of a display lane |
+| allocation-decision validation | `app/services/scm/allocation_suggestion_service.py` (`outstanding = quantity_shipped - spo_allocated_quantity`, a hard 422 if a submitted split does not sum to it) | NO - moves with `container_request_service` (same persisted column, same reorder-adjacent arithmetic); narrowing it risks prompting an operator to double-allocate physical stock already covered by a retired-but-real predecessor line |
+| shipment "open"/"received" listing filter | `app/services/procurement_service.py` (`InboundShipment.shipment_lines.any(InboundShipmentLine.line_status != "received")`, ~line 840/844) | reads the SAME persisted `line_status` the two reorder consumers above depend on being unfiltered - left alone with them, not assessed independently, since splitting one reader of a shared column from its writer was not on the table |
+| n8n incoming-stock badge / `unallocated_quantity` gap | `app/services/incoming_stock_service.py` `_warehouse_allocations_for` | Originally cited as the reason for AC-H17 (round 4); the consumer check found this claim FALSE - this method never reads `inbound_shipment_lines.spo_allocated_quantity` or `line_status` at all, it runs its OWN direct `SPOAllocation` query. It is a genuine, SEPARATE consumer of raw `SPOAllocation` rows though, and DOES want the visible set - fixed directly (AC-H19), see below |
+| `incoming_stock_service.grn_records` (two `SPOAllocation` queries, ~953-1008) | same file | sibling check requested by round 5: NOT filtered, correctly - both are R3's "resolves via a GRN pick" carve-out ("has a GRN been created for this SPO/product"), not a quantity rollup; a retired allocation's `spo_number`/id is still the right key to find its GRN by |
+
+**Row-count measurement**: could not be taken meaningfully on the lane's local Postgres -
+`inbound_shipment_lines` holds 0 rows there (verified: a read-only differential query joining
+`spo_allocations` filtered/unfiltered by `visible_line_clauses()` against every
+`inbound_shipment_lines` row returned 0 total rows, 0 rows where the two allocation totals
+differ, 0 rows where the derived status differs). PLAN section 12 already recorded this as
+"by construction on two independent grounds, not by safety" and routed the real measurement to
+the user as a production-only ask; not repeated here.
+
+**AC-H17 (revised, `app/api/v1/procurement/packing_lists.py`)**: `get_packing_list`'s per-line
+loop now also computes `line.line_status` via `compute_inbound_shipment_line_status(quantity_shipped,
+visible_alloc, recv)` (imported from `procurement_service`) and sets it on the in-memory response
+object only - the same `setattr`-not-persisted pattern the `spo_allocated_quantity` and
+`quantity_received` overrides two lines above it already use. `refresh_shipment_line_statuses`'
+own persisted write (called earlier in the same route, via `service.refresh_shipment_line_statuses`)
+is untouched.
+
+**AC-H19 (`app/services/incoming_stock_service.py`)**: `_warehouse_allocations_for`'s query
+gained `*spo_supply.visible_line_clauses()` in its `.filter(...)`. This is the query behind both
+the n8n incoming-stock badge's per-warehouse allocation list and `_unallocated_quantity`'s gap
+(the gap widens now that a retired allocation no longer counts as coverage). No persisted column,
+no purchasing arithmetic - a pure read, filtered the same way every other listing in this lane is.

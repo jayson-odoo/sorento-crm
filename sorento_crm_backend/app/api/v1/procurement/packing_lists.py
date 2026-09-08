@@ -11,6 +11,7 @@ from app.models.procurement import SPOAllocation, PickingHeader, PickingLine
 from app.services.procurement_service import (
     DuplicatePackingListError,
     InboundShipmentService,
+    compute_inbound_shipment_line_status,
 )
 from app.schemas.procurement import (
     InboundShipmentCreate,
@@ -366,8 +367,25 @@ async def get_packing_list(
 
         for line in shipment.shipment_lines:
             product_key = str(line.product_id)
-            setattr(line, "spo_allocated_quantity", spo_by_product.get(product_key, 0))
-            setattr(line, "quantity_received", received_by_product.get(product_key, 0))
+            visible_alloc = spo_by_product.get(product_key, 0)
+            recv = received_by_product.get(product_key, 0)
+            setattr(line, "spo_allocated_quantity", visible_alloc)
+            setattr(line, "quantity_received", recv)
+            # Round 5, AC-H17 (narrowed - reviewer's consumer check): the STATUS this
+            # response reports is recomputed from the SAME visible total as the quantity
+            # above, so one payload never shows an allocated figure and a status that
+            # disagree about which lines counted. `refresh_shipment_line_statuses`'
+            # PERSISTED `line_status` (unfiltered) is left alone above - it feeds
+            # `container_request_service.PL_UNALLOCATED_SQL` and
+            # `allocation_suggestion_service`'s reorder/allocation arithmetic, and
+            # narrowing THAT column is a purchasing decision, not a display one. Set on
+            # the in-memory object only, exactly like the two `setattr` calls above it -
+            # nothing here is committed.
+            setattr(
+                line,
+                "line_status",
+                compute_inbound_shipment_line_status(line.quantity_shipped or 0, visible_alloc, recv),
+            )
             setattr(line, "related_spo_allocations", related_spo_by_product.get(product_key, []))
             setattr(line, "related_grns", related_grns_by_product.get(product_key, []))
         return shipment
