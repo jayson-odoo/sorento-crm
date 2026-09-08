@@ -1,4 +1,4 @@
-"""RED tests for hiding retired SPO allocation lines (AC-H1..AC-H6, AC-H8, AC-H10).
+"""RED tests for hiding retired SPO allocation lines (AC-H1..AC-H6, AC-H8, AC-H10..AC-H13).
 
 UAC: documentation/plans/autocount/hide-retired-spo-lines-acceptance-criteria.md
 PLAN: documentation/plans/autocount/PLAN-hide-retired-spo-lines.md
@@ -27,12 +27,18 @@ does not accept, so this file adds its own `_alloc`.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
-from app.models.procurement import PickingHeader, PickingLine, SPOAllocation
+from app.models.procurement import (
+    InboundShipment,
+    InboundShipmentLine,
+    PickingHeader,
+    PickingLine,
+    SPOAllocation,
+)
 from app.models.product import Product
 
 from tests._pg_fixture import unique_code
@@ -41,6 +47,7 @@ from tests.scm.test_spo_allocation_documents import (
     _chain,
     _client,
     _product,
+    _supplier,
     _u,
 )
 
@@ -55,6 +62,7 @@ pytestmark = requires_pg
 
 LIST_URL = "/api/v1/procurement/spo-allocations/"
 GRN_URL = "/api/v1/procurement/grn"
+PACKING_LISTS_URL = "/api/v1/procurement/packing-lists"
 
 
 def _now() -> datetime:
@@ -74,10 +82,11 @@ def _alloc(
     retired_at: datetime | None = None,
     source_system: str | None = "autocount",
     stated_received: int | None = None,
+    supplier_id: str | None = None,
 ) -> SPOAllocation:
     """One `spo_allocations` row, extended with `retired_at`/`source_system`/
-    `stated_received` - columns `test_spo_allocation_documents._line` does not
-    carry. `source_system="autocount"` by default so `list_allocations`'
+    `stated_received`/`supplier_id` - columns `test_spo_allocation_documents._line`
+    does not carry. `source_system="autocount"` by default so `list_allocations`'
     GRN-computed-receipt recompute (`_receipt_is_computed`, triggered for
     `source_system in {None, 'scm_spo_history'}`) never overwrites the seeded
     `quantity_received` out from under an assertion here.
@@ -94,6 +103,7 @@ def _alloc(
         retired_at=retired_at,
         source_system=source_system,
         stated_received=stated_received,
+        supplier_id=supplier_id,
     )
     db.add(allocation)
     db.flush()
@@ -575,3 +585,235 @@ class TestAcH10ReceiptAfterRetirement:
         assert stored.quantity_received == 29, stored.quantity_received
         assert stored.line_status == "closed", stored.line_status
         assert stored.receipt_status == "fully_received", stored.receipt_status
+
+
+# =================================================================================== #
+# AC-H11 (round 3, B2 "ghost document"): no visible line -> no listing, no page
+# =================================================================================== #
+
+
+class TestAcH11GhostDocumentNeverLists:
+    def test_a_document_whose_every_line_is_hidden_is_absent_from_every_state_and_404s(
+        self, scm_app
+    ):
+        """AC-H11. A document whose only two lines are BOTH retired with zero
+        receipt does not appear in `list_documents` under `state=all`,
+        `state=outstanding` or `state=completed`; `get_document` still 404s
+        for it, the same as a `spo_number` nothing was ever pushed under.
+
+        RED today (state=all / state=completed): `list_documents` groups
+        every `spo_number` regardless of visibility, gating only the
+        AGGREGATES on `is_visible` - a document with two hidden, `closed`
+        lines has `has_outstanding=False` (both are `line_status='closed'`,
+        so `open_incoming_clauses()` already excludes them), so it already
+        drops out of `state=outstanding` for free, but lists as a 0-line
+        ghost row under `state=all`/`state=completed` that 404s the moment
+        it is opened - the exact defect this AC exists to close.
+        `get_document` already 404s today (round 1's own
+        `visible_line_clauses()` filter on its main query empties `rows`),
+        so that half of this test is a guard rather than new RED.
+        """
+        client, db = _client(scm_app)
+        chain = _chain(db)
+        product = _product(db, chain)
+        doc = unique_code("SPO-H11")
+        _alloc(
+            db, spo_number=doc, line_no=1, product=product, allocated=10, received=0,
+            line_status="closed", retired_at=_now(),
+        )
+        _alloc(
+            db, spo_number=doc, line_no=2, product=product, allocated=5, received=0,
+            line_status="closed", retired_at=_now(),
+        )
+
+        for state in ("all", "outstanding", "completed"):
+            r = client.get(DOCUMENTS_URL, params={"state": state, "query": doc, "limit": 100})
+            assert r.status_code == 200, r.text
+            numbers = {row["spo_number"] for row in r.json()["data"]}
+            assert doc not in numbers, (state, numbers)
+
+        detail = client.get(f"{DOCUMENTS_URL}/{doc}")
+        assert detail.status_code == 404, detail.text
+
+
+# =================================================================================== #
+# AC-H12 (round 3, S1/S2): the list header agrees with the page it opens
+# =================================================================================== #
+
+
+class TestAcH12ListHeaderAgreesWithDetail:
+    def test_balance_status_and_supplier_agree_when_a_hidden_line_is_open_not_closed(
+        self, scm_app
+    ):
+        """AC-H12. A visible open line plus a HIDDEN line that is
+        `line_status='open'` (not closed - nothing enforces "retired
+        implies closed") with zero receipt and `retired_at` set: the list
+        row's Balance equals the detail's `balance`, `status` is not driven
+        by the hidden line, and the majority supplier name (a different
+        supplier on the hidden line) matches between list and detail.
+
+        RED today: `is_outstanding` in `list_documents` only reads
+        `open_incoming_clauses()` (line-status-gated, not visibility-gated),
+        so this open-but-retired line still counts as outstanding there even
+        though `get_document`'s own `rows` query has already filtered it out
+        entirely - the list's Balance/status disagree with the page it
+        opens. `_document_supplier_rollup` is unfiltered too, so the hidden
+        line's own supplier can win (or split) the majority vote the detail
+        page never counts at all.
+        """
+        client, db = _client(scm_app)
+        chain = _chain(db)
+        product = _product(db, chain)
+        doc = unique_code("SPO-H12")
+
+        supplier_visible = _supplier(db, name="Visible Supplier Co")
+        supplier_hidden = _supplier(db, name="Hidden Supplier Co")
+
+        _alloc(
+            db, spo_number=doc, line_no=1, product=product, allocated=10, received=0,
+            line_status="open", supplier_id=supplier_visible.id,
+        )
+        _alloc(
+            db, spo_number=doc, line_no=2, product=product, allocated=999, received=0,
+            line_status="open", retired_at=_now(), supplier_id=supplier_hidden.id,
+        )
+
+        detail = client.get(f"{DOCUMENTS_URL}/{doc}")
+        assert detail.status_code == 200, detail.text
+        detail_body = detail.json()
+
+        list_r = client.get(DOCUMENTS_URL, params={"state": "all", "query": doc, "limit": 100})
+        assert list_r.status_code == 200, list_r.text
+        row = next(r for r in list_r.json()["data"] if r["spo_number"] == doc)
+
+        assert row["balance"] == detail_body["balance"], (row, detail_body)
+        assert row["status"] == detail_body["status"], (row, detail_body)
+        assert row["supplier_name"] == "Visible Supplier Co", row
+        assert row["supplier_name"] == detail_body["supplier_name"], (row, detail_body)
+
+
+# =================================================================================== #
+# Round 3 coverage gaps (reviewer): list_documents' line_count and its sort_map
+# entries must read the SAME gated expression the SELECT itself uses.
+# =================================================================================== #
+
+
+class TestListDocumentsLineCountAndSortAreGated:
+    def test_line_count_is_visible_only_and_sorting_by_it_or_total_allocated_uses_the_gate(
+        self, scm_app
+    ):
+        """Two documents, scoped to one product so both are found by the same
+        `query=` filter: document X carries one visible line (allocated 100)
+        plus THREE hidden retired lines (allocated 1000 each, received 0);
+        document Y carries two ordinary visible lines (allocated 200 each).
+
+        Gated: X reads `line_count 1` / `total_allocated 100`; Y reads
+        `line_count 2` / `total_allocated 400` - X sorts BEFORE Y ascending
+        on either field. An UNGATED `line_count`/`total_allocated` would
+        read X as 4 lines / 3100 allocated, sorting X AFTER Y instead -
+        the opposite order, which is what pins this red rather than a
+        same-order coincidence.
+
+        RED today: `line_count` is already gated in the SELECT (round 1), so
+        the VALUE assertions below already pass; the `sort_map` entries for
+        `total_allocated`/`line_count` are NOT gated yet - both sort calls
+        return X after Y (the ungated order) instead of before.
+        """
+        client, db = _client(scm_app)
+        chain = _chain(db)
+        product = _product(db, chain)
+        doc_x = unique_code("SPO-H12X")
+        doc_y = unique_code("SPO-H12Y")
+
+        _alloc(db, spo_number=doc_x, line_no=1, product=product, allocated=100, received=0)
+        for n in (2, 3, 4):
+            _alloc(
+                db, spo_number=doc_x, line_no=n, product=product, allocated=1000, received=0,
+                line_status="closed", retired_at=_now(),
+            )
+        _alloc(db, spo_number=doc_y, line_no=1, product=product, allocated=200, received=0)
+        _alloc(db, spo_number=doc_y, line_no=2, product=product, allocated=200, received=0)
+
+        r = client.get(DOCUMENTS_URL, params={
+            "state": "all", "query": product.product_code, "limit": 100,
+        })
+        assert r.status_code == 200, r.text
+        by_number = {row["spo_number"]: row for row in r.json()["data"]}
+        assert by_number[doc_x]["line_count"] == 1, by_number[doc_x]
+        assert by_number[doc_x]["total_allocated"] == 100, by_number[doc_x]
+        assert by_number[doc_y]["line_count"] == 2, by_number[doc_y]
+        assert by_number[doc_y]["total_allocated"] == 400, by_number[doc_y]
+
+        for sort_field in ("total_allocated", "line_count"):
+            sorted_r = client.get(DOCUMENTS_URL, params={
+                "state": "all", "query": product.product_code, "limit": 100,
+                "sort": sort_field, "dir": "asc",
+            })
+            assert sorted_r.status_code == 200, sorted_r.text
+            order = [
+                row["spo_number"] for row in sorted_r.json()["data"]
+                if row["spo_number"] in (doc_x, doc_y)
+            ]
+            assert order == [doc_x, doc_y], (sort_field, order)
+
+
+# =================================================================================== #
+# AC-H13 (round 3, N1): the packing-list detail's related-SPO strip hides retired
+# =================================================================================== #
+
+
+class TestAcH13PackingListRelatedSpoStripHidesRetired:
+    def test_related_spo_strip_and_allocated_total_exclude_a_retired_allocation(
+        self, scm_app
+    ):
+        """AC-H13. A packing list's per-product related-SPO strip
+        (`GET /procurement/packing-lists/{shipment_id}`) hides a retired,
+        zero-receipt allocation the same rule as every other listing, and
+        excludes its quantity from `spo_allocated_quantity`.
+
+        RED today: `get_packing_list` queries `SPOAllocation` by
+        `inbound_shipment_id` alone, no visibility filter, so both the
+        related-SPO strip and the allocated total include the retired row
+        (999, dwarfing the visible line's 10 - chosen so an ungated sum is
+        unmistakable rather than a coincidental match).
+        """
+        client, db = _client(scm_app)
+        chain = _chain(db)
+        product = _product(db, chain)
+        doc = unique_code("SPO-H13")
+
+        shipment = InboundShipment(
+            id=_u(),
+            shipment_number=unique_code("SHIP-H13"),
+            shipment_date=date(2026, 7, 1),
+            shipment_status="in_transit",
+        )
+        db.add(shipment)
+        db.flush()
+        db.add(
+            InboundShipmentLine(
+                id=_u(), shipment_id=shipment.id, product_id=product.id, quantity_shipped=10,
+            )
+        )
+        db.flush()
+
+        visible = _alloc(db, spo_number=doc, line_no=1, product=product, allocated=10, received=0)
+        visible.inbound_shipment_id = shipment.id
+        retired = _alloc(
+            db, spo_number=doc, line_no=2, product=product, allocated=999, received=0,
+            line_status="closed", retired_at=_now(),
+        )
+        retired.inbound_shipment_id = shipment.id
+        db.flush()
+
+        r = client.get(f"{PACKING_LISTS_URL}/{shipment.id}")
+        assert r.status_code == 200, r.text
+        body = r.json()
+        product_lines = [
+            line for line in body["shipment_lines"] if line["product_id"] == product.id
+        ]
+        assert len(product_lines) == 1, product_lines
+        line_body = product_lines[0]
+        assert line_body["spo_allocated_quantity"] == 10, line_body
+        related_ids = {a["id"] for a in (line_body.get("related_spo_allocations") or [])}
+        assert related_ids == {visible.id}, related_ids
