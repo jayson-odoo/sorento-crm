@@ -304,3 +304,34 @@ def test_a_mocha_scoped_read_returns_no_sorento_receipts(db):
     # Mocha sees nothing of it.
     set_company_scope(db, frozenset({MOCHA_ID}))
     assert last_receipt_rows(db, top_n=10) == []
+
+
+def test_a_mocha_scoped_per_product_read_returns_no_sorento_owned_line(db):
+    """The SAME scope rule for the PER-PRODUCT branch (`product_ids` given).
+
+    That branch numbers the lines in a subquery and the outer query then names only
+    `Product` / `Warehouse`, so the `do_orm_execute` listener's `with_loader_criteria`
+    never reaches `SPOAllocation` at all: a `.subquery()` of an entity query loses the
+    criteria (the same hazard `order_service.py`'s `_order_summary` documents and ANDs
+    the predicate in by hand for). The unscoped branch is safe by accident - it names
+    `SPOAllocation` as an entity - which is why the leak needs its own test.
+
+    The seed is the shape that isolates the subquery: the PRODUCT is Mocha's, so the
+    outer join survives a Mocha scope, and the LINE is Sorento's, so only the missing
+    predicate can let it through.
+    """
+    from tests._mc_lookup_seed import MOCHA_ID, seed_mocha
+
+    seed_mocha(db)
+    mocha_product = product(db, company_id=MOCHA_ID, code="MCH-SCOPE-PP")
+    _allocation(db, product_id=mocha_product.id, quantity=99, spo_number="SPO-SORENTO-PP")
+    db.commit()
+
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    assert [
+        r["spo_number"]
+        for r in last_receipt_rows(db, product_ids=[str(mocha_product.id)], top_n=10)
+    ] == []  # Sorento owns the line but not the product, so the join hides it
+
+    set_company_scope(db, frozenset({MOCHA_ID}))
+    assert last_receipt_rows(db, product_ids=[str(mocha_product.id)], top_n=10) == []

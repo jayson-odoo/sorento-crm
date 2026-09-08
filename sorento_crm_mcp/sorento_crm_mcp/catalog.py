@@ -1056,7 +1056,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             ("purchase_orders.placed", "PO placed (on order) on stock answers"),
         ),
     ),
-    # --- procurement: SPO last receipt (A6, chatbot-growth-r1) ---
+    # --- procurement: the last SPO line per product (A6, chatbot-growth-r1; reworded
+    # 8 Sep 2026, chatbot-warehouse-entity-and-last-in - it is no longer a receipt read) ---
     ToolSpec(
         "crm_procurement_spo_allocations_last_receipt_list",
         (
@@ -1064,8 +1065,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "'last incoming qty', '上次进货', 'last 3 in'. GR is ignored entirely: this is "
             "purely the SPO's own delivery date, not a goods-received record, and a product "
             "with an open (not-yet-received) line still answers. Each row carries spo_number, "
-            "product_code, quantity (the ordered quantity), quantity_received (only when the "
-            "line has one), date (the SPO date that answered - see date_label), date_label "
+            "product_code, quantity (the ordered quantity), quantity_received (only when "
+            "something has actually been received - an open line shows no such field), "
+            "date (the SPO date that answered - see date_label), date_label "
             "(which column answered: 'Expected' = expected_date, 'Issued' = issue_date when "
             "expected_date is empty, 'Recorded' = neither is set, so created_at answered), "
             "and warehouse.\n\n"

@@ -461,12 +461,23 @@ def _purchase_orders_placed(rows: list[dict], b: _Builder) -> None:
 def _spo_last_receipt(rows: list[dict], b: _Builder) -> None:
     """Reworded 8 Sep 2026 (chatbot-warehouse-entity-and-last-in, AC-9): the tool now
     answers the last SPO LINE per product, not a receipt - `quantity` (the ordered
-    quantity) is the primary figure, `quantity_received` is a second field shown only
-    when the line actually has one (`b.item` drops a `None` pair on its own). `date_label`
-    still names WHICH column answered - never claim "Expected" when the row fell back to
-    `issue_date` or `created_at`."""
+    quantity) is the primary figure, and `quantity_received` is a second field shown only
+    when something really has been received.
+
+    `> 0`, not "is not None" (review S3, 8 Sep 2026): `spo_allocations.quantity_received`
+    defaults to 0 and is never null, and 917 lines carry exactly 0 - the OPEN lines this
+    rework exists to surface. Showing "Quantity Received: 0" on every one of them is noise
+    beside "Quantity", so the zero is dropped and a partial or full receipt still says so.
+
+    `date_label` still names WHICH column answered - never claim "Expected" when the row
+    fell back to `issue_date` or `created_at`."""
     for r in rows:
         date_label = r.get("date_label") or "Date"
+        received = r.get("quantity_received")
+        try:
+            has_receipt = received is not None and float(received) > 0
+        except (TypeError, ValueError):
+            has_receipt = _filled(received)
         b.item(
             r.get("spo_number"),
             [
@@ -474,7 +485,11 @@ def _spo_last_receipt(rows: list[dict], b: _Builder) -> None:
                 ("spo_number", "SPO Number", r.get("spo_number")),
                 ("product_code", "Product Code", r.get("product_code")),
                 ("quantity", "Quantity", _qty(r.get("quantity"))),
-                ("quantity_received", "Quantity Received", _qty(r.get("quantity_received"))),
+                (
+                    "quantity_received",
+                    "Quantity Received",
+                    _qty(received) if has_receipt else None,
+                ),
                 ("date", str(date_label), r.get("date")),
                 ("warehouse", "Warehouse", r.get("warehouse")),
             ],

@@ -428,6 +428,23 @@ def test_spo_last_receipt_renders_quantity_and_date_label_as_the_field_label():
     assert "Quantity Received" not in f
 
 
+def test_spo_last_receipt_hides_a_zero_quantity_received():
+    """Review S3, 8 Sep 2026. `quantity_received` is NEVER null - the column defaults to
+    0 - and 917 lines carry exactly 0, which are the open lines this rework is about. A
+    "Quantity Received: 0" beside "Quantity: 50" is noise on every one of them, so the
+    field appears only when something really has been received."""
+    out = env("crm_procurement_spo_allocations_last_receipt_list", {
+        "data": [{
+            "spo_number": "SPO-2026-04", "product_code": "P3",
+            "quantity": 50, "quantity_received": 0,
+            "date": "2026-06-01", "date_label": "Expected",
+        }],
+    })
+    f = {x["label"]: x["value"] for x in out["items"][0]["fields"]}
+    assert f["Quantity"] == "50"
+    assert "Quantity Received" not in f
+
+
 def test_spo_last_receipt_shows_quantity_received_only_when_present():
     """AC-9: a line that HAS been (partly) received also shows Quantity Received,
     alongside the ordered Quantity."""

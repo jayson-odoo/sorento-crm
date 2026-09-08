@@ -101,7 +101,17 @@ class TestZeroEntitySpoAllocationAsksInsteadOfFanningOut:
 
         out = not_found_error_message({}, parser=parser, resolved=resolved, gate=gate)
         assert out.get("is_clarification") is True
-        assert (out.get("escalate_message") or "").strip() != ""
+        message = (out.get("escalate_message") or "").strip()
+        assert message != ""
+        # The scope word is the CUSTOMER's word for the thing, never the domain key
+        # (`_HUMAN_SCOPE`'s own rule: printing an internal type asks the customer to speak
+        # our schema).
+        assert "SPO line" in message, message
+        assert "spo_allocation" not in message, message
+        # `crm_procurement_spo_allocations_last_receipt_list` takes no date parameter at
+        # all (`fetch.DATE_PARAMS`), so offering a date range asks for a filter nothing
+        # downstream could apply.
+        assert "date range" not in message, message
 
 
 class TestTransformerEmitsWarehouseIds:
@@ -355,3 +365,74 @@ class TestProductAndWarehouseResolveTogether:
         assert calls[0]["allowed_entity_types"] == ["product", "product"]
         assert calls[0]["tokens"] == ["SRT62GM", "SRTWC286SH"]
         assert entities is not None
+
+
+# --------------------------------------------------------------------------- #
+# `warehouse` is not a document filter (review S1, 8 Sep 2026).
+# --------------------------------------------------------------------------- #
+# `TYPE_TO_PARAM["warehouse"] = "warehouse_ids"` made `warehouse_ids` a NARROWING_PARAM,
+# so a carried warehouse token now satisfies `ENTITY_FILTER_REQUIRED_TOOLS` for
+# `crm_resource_attachments_list` - a tool with no warehouse parameter at all. Real
+# warehouse codes read like ordinary words (HOLD, DISPLAY, REPAIR), so a document turn
+# could be let through on a filter the document read cannot apply. Same fix, same reason,
+# as the brand / category row above it (live exec 11818957).
+
+
+def _emission(**over: Any) -> dict[str, Any]:
+    """A parser emission with every key `output_exchange`'s own validator requires."""
+    base: dict[str, Any] = {
+        "message_type": "business_query", "intent_hint": None, "domain_hint": None,
+        "scope_intent": None, "is_affirmative": None, "user_goal": None,
+        "access_levels": [], "date_mode": None, "date_filter_start": None,
+        "date_filter_end": None, "match_mode": "and", "demand_qty": None, "entities": [],
+        "entity_op": None, "scope_exclusive": None, "requested_attributes": [],
+        "contains_flyer": None, "reference_positions": [], "reference_target": None,
+        "person_mention": None, "is_active": None, "order_status": None,
+        "correction": None, "routing": {"suggested_team": None, "suggested_agent": None},
+        "escalation": {"is_escalation_confirmation": False, "company_pick": None},
+    }
+    base.update(over)
+    return base
+
+
+def _post(emission: dict[str, Any], latest: str) -> dict[str, Any]:
+    from app.services.chatbot.head.output_exchange import output_exchange
+
+    return output_exchange(
+        {"output": {"output": emission}},
+        {
+            "previous_conversation_state": {},
+            "latest_user_message": latest,
+            "previous_response": "",
+        },
+    )["output"]
+
+
+class TestAWarehouseIsNotADocumentFilter:
+    def test_a_warehouse_is_dropped_on_a_document_turn(self) -> None:
+        out = _post(
+            _emission(
+                intent_hint="get_resource_attachment",
+                domain_hint="resource_attachment",
+                entities=[
+                    {"raw": "hold", "hint": "warehouse", "current_message": True},
+                ],
+            ),
+            latest="send me the hold document",
+        )
+        assert [e["hint"] for e in out["entities"]] == []
+        assert out["broaden_dropped"] == ["warehouse:hold"]
+
+    def test_the_two_domains_whose_tools_take_warehouse_ids_still_keep_it(self) -> None:
+        """The negative that keeps the block narrow: `warehouse` is the whole point of the
+        entity on `inventory` and `spo_allocation`."""
+        for domain, intent in (("inventory", "check_stock"), ("spo_allocation", "check_spo")):
+            out = _post(
+                _emission(
+                    intent_hint=intent,
+                    domain_hint=domain,
+                    entities=[{"raw": "brw", "hint": "warehouse", "current_message": True}],
+                ),
+                latest=f"{intent} at brw",
+            )
+            assert [e["hint"] for e in out["entities"]] == ["warehouse"], (domain, out)

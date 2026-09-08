@@ -34,9 +34,11 @@ from typing import Any, Optional
 from sqlalchemy import Date, case, cast, func
 from sqlalchemy.orm import Session
 
+from app.models.base import get_company_scope
 from app.models.inventory import Warehouse
 from app.models.procurement import SPOAllocation
 from app.models.product import Product
+from app.services.company_scope import build_company_predicate
 
 
 def _plain_number(v: Any) -> Any:
@@ -103,6 +105,16 @@ def last_receipt_rows(
         ).filter(SPOAllocation.product_id.in_(product_ids))
         if warehouse_ids:
             numbered = numbered.filter(SPOAllocation.warehouse_id.in_(warehouse_ids))
+        # COMPANY SCOPE, EXPLICITLY. `.subquery()` loses the `with_loader_criteria` the
+        # session's `do_orm_execute` listener injects, and the outer query below names
+        # only `Product` / `Warehouse` - so nothing else in this branch scopes the LINES.
+        # Measured 8 Sep 2026: under a Mocha scope this returned a Sorento-owned line on
+        # a Mocha product. Same hand-ANDed predicate, same reason, as
+        # `order_service.py`'s `_order_summary`. The unscoped branch below needs none:
+        # it names `SPOAllocation` as an entity, so the listener fires there.
+        predicate = build_company_predicate(SPOAllocation, get_company_scope(db))
+        if predicate is not None:
+            numbered = numbered.filter(predicate)
         sub = numbered.subquery()
 
         rows = (
