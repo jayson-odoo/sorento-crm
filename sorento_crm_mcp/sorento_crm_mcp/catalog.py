@@ -1060,14 +1060,20 @@ CATALOG: tuple[ToolSpec, ...] = (
     ToolSpec(
         "crm_procurement_spo_allocations_last_receipt_list",
         (
-            "Most recently RECEIVED SPO allocation(s) for a product - 'last in for X', "
-            "'last incoming qty', '上次进货', 'last 3 in'. Each row carries spo_number, "
-            "product_code, quantity_received, date (the most recent one actually recorded - "
-            "see date_label), date_label (which column answered: 'Arrived' = warehouse "
-            "arrival, 'Arrived (port)' = the shipment's port arrival, 'Received' = "
-            "no shipment date at all, just when the receipt was recorded), and warehouse.\n\n"
+            "The last SPO line PER PRODUCT, by the SPO's expected date - 'last in for X', "
+            "'last incoming qty', '上次进货', 'last 3 in'. GR is ignored entirely: this is "
+            "purely the SPO's own delivery date, not a goods-received record, and a product "
+            "with an open (not-yet-received) line still answers. Each row carries spo_number, "
+            "product_code, quantity (the ordered quantity), quantity_received (only when the "
+            "line has one), date (the SPO date that answered - see date_label), date_label "
+            "(which column answered: 'Expected' = expected_date, 'Issued' = issue_date when "
+            "expected_date is empty, 'Recorded' = neither is set, so created_at answered), "
+            "and warehouse.\n\n"
             "FILTER BY UUID: `product_ids`, `warehouse_ids` (canonical UUIDs, csv / JSON / "
-            "repeated), both optional. `top_n` (default 1) - 'last 3 in' -> top_n=3.\n\n"
+            "repeated), both optional; `warehouse_ids` narrows BEFORE the per-product pick. "
+            "`top_n` (default 1) is LINES PER PRODUCT, not a total cap - 'last 3 in' for a "
+            "resolved product FAMILY returns up to `top_n` lines for EACH member, not "
+            "`top_n` rows overall.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),

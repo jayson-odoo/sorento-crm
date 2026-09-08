@@ -74,7 +74,7 @@ _DEFAULT_INTRO = {
     "crm_forms_management_forms_list": "Here are the forms I found.",
     "crm_portal_link_get": "Here is the link you requested.",
     "crm_procurement_po_placed_list": "Here is the PO placed I found.",
-    "crm_procurement_spo_allocations_last_receipt_list": "Here is the last receipt I found.",
+    "crm_procurement_spo_allocations_last_receipt_list": "Here is the last SPO line per product.",
 }
 
 _RESULT_TYPE = {
@@ -459,8 +459,12 @@ def _purchase_orders_placed(rows: list[dict], b: _Builder) -> None:
 
 
 def _spo_last_receipt(rows: list[dict], b: _Builder) -> None:
-    """A6 (AC-908): `date_label` names WHICH column answered - never claim
-    "Arrived" when the row is really a bare receipt-recorded timestamp."""
+    """Reworded 8 Sep 2026 (chatbot-warehouse-entity-and-last-in, AC-9): the tool now
+    answers the last SPO LINE per product, not a receipt - `quantity` (the ordered
+    quantity) is the primary figure, `quantity_received` is a second field shown only
+    when the line actually has one (`b.item` drops a `None` pair on its own). `date_label`
+    still names WHICH column answered - never claim "Expected" when the row fell back to
+    `issue_date` or `created_at`."""
     for r in rows:
         date_label = r.get("date_label") or "Date"
         b.item(
@@ -469,6 +473,7 @@ def _spo_last_receipt(rows: list[dict], b: _Builder) -> None:
                 ("company_name", "Company", r.get("company_name")),
                 ("spo_number", "SPO Number", r.get("spo_number")),
                 ("product_code", "Product Code", r.get("product_code")),
+                ("quantity", "Quantity", _qty(r.get("quantity"))),
                 ("quantity_received", "Quantity Received", _qty(r.get("quantity_received"))),
                 ("date", str(date_label), r.get("date")),
                 ("warehouse", "Warehouse", r.get("warehouse")),

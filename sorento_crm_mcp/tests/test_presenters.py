@@ -398,29 +398,60 @@ def test_purchase_orders_placed_group_by_supplier():
     assert {g["key"] for g in out["groups"]} == {"Acme", "Beta"}
 
 
-def test_spo_last_receipt_renders_date_label_as_the_field_label():
+def test_spo_last_receipt_intro_names_the_new_meaning():
+    """AC-9 (chatbot-warehouse-entity-and-last-in): the tool answers the last SPO line
+    per product, not a receipt."""
     out = env("crm_procurement_spo_allocations_last_receipt_list", {
         "data": [{
             "spo_number": "SPO-2026-01", "product_code": "SRTWC8517",
-            "quantity_received": 30, "date": "2026-06-10", "date_label": "Arrived",
+            "quantity": 30, "date": "2026-06-10", "date_label": "Expected",
+            "warehouse": "BRW",
+        }],
+    })
+    assert out["intro"] == "Here is the last SPO line per product."
+
+
+def test_spo_last_receipt_renders_quantity_and_date_label_as_the_field_label():
+    """AC-9: `Quantity` comes from `quantity` (the ordered qty); a row with no
+    `quantity_received` does not show that field at all."""
+    out = env("crm_procurement_spo_allocations_last_receipt_list", {
+        "data": [{
+            "spo_number": "SPO-2026-01", "product_code": "SRTWC8517",
+            "quantity": 30, "date": "2026-06-10", "date_label": "Expected",
             "warehouse": "BRW",
         }],
     })
     f = {x["label"]: x["value"] for x in out["items"][0]["fields"]}
-    assert f["Arrived"] == "2026-06-10"
-    assert f["Quantity Received"] == "30"
+    assert f["Expected"] == "2026-06-10"
+    assert f["Quantity"] == "30"
     assert f["Warehouse"] == "BRW"
+    assert "Quantity Received" not in f
 
 
-def test_spo_last_receipt_fallback_label_when_no_shipment_date():
+def test_spo_last_receipt_shows_quantity_received_only_when_present():
+    """AC-9: a line that HAS been (partly) received also shows Quantity Received,
+    alongside the ordered Quantity."""
     out = env("crm_procurement_spo_allocations_last_receipt_list", {
         "data": [{
-            "spo_number": "SPO-2026-02", "product_code": "P1",
-            "quantity_received": 5, "date": "2026-06-01", "date_label": "Received",
+            "spo_number": "SPO-2026-03", "product_code": "P2",
+            "quantity": 50, "quantity_received": 20,
+            "date": "2026-06-01", "date_label": "Recorded",
         }],
     })
     f = {x["label"]: x["value"] for x in out["items"][0]["fields"]}
-    assert f["Received"] == "2026-06-01"
+    assert f["Quantity"] == "50"
+    assert f["Quantity Received"] == "20"
+
+
+def test_spo_last_receipt_fallback_label_when_neither_spo_date_is_set():
+    out = env("crm_procurement_spo_allocations_last_receipt_list", {
+        "data": [{
+            "spo_number": "SPO-2026-02", "product_code": "P1",
+            "quantity": 5, "date": "2026-06-01", "date_label": "Recorded",
+        }],
+    })
+    f = {x["label"]: x["value"] for x in out["items"][0]["fields"]}
+    assert f["Recorded"] == "2026-06-01"
 
 
 def test_stock_omits_sellable_when_backend_did_not_send_it():
