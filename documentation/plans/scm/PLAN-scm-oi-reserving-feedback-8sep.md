@@ -83,6 +83,19 @@ documents is five lines tall, and purchasing scrolls a hundred of them.
   earlier "print it inline" draft of this line). Every document lives in the
   lightbox only.
 
+Owner feedback, 9 Sep 2026, against the running lane: the Qty column carried
+the same defect - a rejected row's reason (`RejectedNote`) or a changed row's
+Was/Now badge (`ChangedBadge`) rendered as a second line, so those rows read
+taller than every other one. "These can be informational icon also." The Qty
+cell becomes ONE line the same way: the quantity, and an info icon only when
+the row has a rejection note, a change stamp, or both (AC-A8..AC-A12). The
+icon is warning-coloured for a rejection and muted for a change-only row, so
+the two stay visually distinguishable without adding words to the cell; the
+dialog behind it carries whatever `RejectedNote`/`ChangedBadge` used to say,
+both facts when both apply - reversing the old rule that let a rejection hide
+a row's change history. Both components move into the new dialog; nothing
+else in the tree rendered them, so nothing is left behind.
+
 Nothing is removed from the API. This is a rendering change.
 
 ## Slice B. The document lightbox is a DataGrid (item 4)
@@ -331,6 +344,8 @@ I is retired by the owner and not built.
 ## Files
 
 * `sorento_crm_frontend/app/(protected)/project-sales/order-inquiries/components/orderInquiryWorklistColumns.tsx` (A)
+* `sorento_crm_frontend/app/(protected)/project-sales/order-inquiries/components/OrderInquiryBackingDocumentsDialog.tsx` (A)
+* `sorento_crm_frontend/app/(protected)/project-sales/order-inquiries/components/OrderInquiryQtyAnnotationDialog.tsx` (A, owner feedback 9 Sep)
 * `sorento_crm_frontend/app/(protected)/project-sales/order-inquiries/components/OrderInquiryDocumentDialog.tsx` (A, B, C)
 * `sorento_crm_frontend/app/(protected)/project-sales/_shared/components/PanelDataGrid.tsx` (B, reuse)
 * `sorento_crm_backend/app/services/project_order_inquiry_service.py` (D, E, H)

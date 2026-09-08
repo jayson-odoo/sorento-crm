@@ -3,29 +3,18 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { ColumnDef } from '@tanstack/react-table';
-import { CircleCheck, CircleDashed, History, Info } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { CircleCheck, CircleDashed, Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
-  ACK_LABELS,
   ackStateOf,
   isBulkRejectable,
   previousValueOf,
 } from '../../_shared/lib/orderInquiryAck';
-import { BoardChangeTable } from '../../fulfilment-planning/components/BoardChangeTable';
 import { OrderInquiryVerbPill } from '../../_shared/components/OrderInquiryVerbPill';
 import {
   flowExclusionLabel,
@@ -35,94 +24,10 @@ import {
 } from '../../_shared/lib/orderInquiryWorklist';
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
 import { OrderInquiryBackingDocumentsDialog } from './OrderInquiryBackingDocumentsDialog';
+import { OrderInquiryQtyAnnotationDialog } from './OrderInquiryQtyAnnotationDialog';
 
 function Muted({ children }: { children: React.ReactNode }) {
   return <span className="text-muted-foreground">{children}</span>;
-}
-
-/**
- * The Was/Now of a settled amendment, behind a lightbox: the row keeps only the clickable
- * "Changed <date>" badge (captain, 1 Sep - the inline table crowded the qty cell), and the
- * dialog is mounted only once it has been asked for, same as the document lightbox below.
- */
-function ChangedBadge({ row }: { row: OrderInquiryWorklistRow }) {
-  const [open, setOpen] = React.useState(false);
-  const previous = previousValueOf(row);
-  if (!previous) return null;
-  return (
-    <>
-      <button
-        type="button"
-        data-testid={`change-badge-trigger-${row.id}`}
-        className="cursor-pointer"
-        aria-label={`Show what changed on ${row.item_code ?? row.so_number ?? 'this row'}`}
-        onClick={(event) => {
-          event.stopPropagation();
-          setOpen(true);
-        }}
-      >
-        <Badge variant="warning" appearance="light" size="sm">
-          <History className="size-3" aria-hidden="true" />
-          {row.changed_at
-            ? `${ACK_LABELS.changed} ${formatDateInMalaysia(row.changed_at)}`
-            : ACK_LABELS.changed}
-        </Badge>
-      </button>
-      {open ? (
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogContent className="max-w-lg" data-testid={`change-detail-${row.id}`}>
-            <DialogHeader>
-              <DialogTitle className="tabular-nums">
-                {row.item_code ?? row.so_number ?? 'Changed'}
-              </DialogTitle>
-              <DialogDescription>
-                {row.changed_at
-                  ? `Changed ${formatDateInMalaysia(row.changed_at)}`
-                  : 'Changed by customer service'}
-              </DialogDescription>
-            </DialogHeader>
-            <DialogBody>
-              <BoardChangeTable
-                omitDecision
-                omitHeader
-                annotation={{
-                  rowId: row.id,
-                  soNumber: row.so_number ?? '',
-                  lineNo: 0,
-                  itemCode: row.item_code ?? '',
-                  // The batch's own change vocabulary is never shown (part 3) and this
-                  // table prints none of it; `qty_up` is the nearest true word for a row
-                  // CS amended, and nothing reads it here.
-                  kind: 'qty_up',
-                  closed: false,
-                  was: { qty: previous.qty, date: previous.date, decision: null },
-                  now: { qty: row.qty, date: row.delivery_date ?? null, decision: null },
-                  movedTransfer: null,
-                  projectLineId: null,
-                }}
-              />
-            </DialogBody>
-          </DialogContent>
-        </Dialog>
-      ) : null}
-    </>
-  );
-}
-
-/**
- * The rejected reason, wherever a rejected row is rendered (moved off its own Confirmed
- * column into the qty cell, S1 AC-1.5).
- */
-function RejectedNote({ row }: { row: OrderInquiryWorklistRow }) {
-  const reason = (row.rejected_reason ?? '').trim();
-  const line = reason
-    ? `Rejected: ${reason}`
-    : `Rejected${row.rejected_by_name ? ` by ${row.rejected_by_name}` : ''}`;
-  return (
-    <span className="block truncate text-2xs text-muted-foreground" title={line}>
-      {reason && row.rejected_by_name ? `${row.rejected_by_name}: ${reason}` : line}
-    </span>
-  );
 }
 
 /**
@@ -180,6 +85,58 @@ function BackingDocumentsButton({ row }: { row: OrderInquiryWorklistRow }) {
       </Button>
       {open ? (
         <OrderInquiryBackingDocumentsDialog row={row} open onOpenChange={setOpen} />
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * The Qty cell's own info icon (owner's 9 Sep feedback, live look at the running lane):
+ * the same one-line defect slice A fixed for the Outstanding column also sat here - a
+ * rejected row's reason or a changed row's Was/Now table rendered as a second line, so
+ * those rows read taller than every other one. Rendered ONLY when the row actually has
+ * something to say (a rejection, a change stamp, or both); a plain acknowledged row shows
+ * the quantity alone.
+ *
+ * The two states stay distinguishable at a glance without adding words to the cell: a
+ * REJECTED row's icon reads as a warning (the design system's own warning token, matching
+ * `Badge variant="warning"` elsewhere on this screen) because it is the one that needs
+ * purchasing to look again; a row that only carries a change stamp reads muted, the same
+ * colour every other icon-only trigger on this list uses, because it is informational.
+ * Both facts win the warning colour when both apply - a rejection is the more urgent of
+ * the two.
+ */
+function QtyAnnotationButton({ row }: { row: OrderInquiryWorklistRow }) {
+  const [open, setOpen] = React.useState(false);
+  const rejected = ackStateOf(row) === 'rejected';
+  const changed = Boolean(previousValueOf(row));
+  if (!rejected && !changed) return null;
+  const label = rejected
+    ? `Show why ${row.item_code ?? row.so_number ?? 'this row'} was rejected`
+    : `Show what changed on ${row.item_code ?? row.so_number ?? 'this row'}`;
+  return (
+    <>
+      <Button
+        type="button"
+        mode="icon"
+        variant="ghost"
+        size="sm"
+        data-testid={`qty-annotation-trigger-${row.id}`}
+        aria-label={label}
+        className={`size-5 shrink-0 ${
+          rejected
+            ? 'text-[var(--color-warning-accent,var(--color-yellow-700))]'
+            : 'text-muted-foreground'
+        }`}
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen(true);
+        }}
+      >
+        <Info className="size-3.5" aria-hidden />
+      </Button>
+      {open ? (
+        <OrderInquiryQtyAnnotationDialog row={row} open onOpenChange={setOpen} />
       ) : null}
     </>
   );
@@ -310,30 +267,22 @@ export function useOrderInquiryWorklistColumns({
         ),
       },
       {
-        // Qty carries the handshake now (S1, AC-1.5): there is no manual confirm left to
-        // put a Confirmed column about, so the two facts that still matter to a buyer
-        // scanning the row - a rejection and its reason, a settle-in-place and its
-        // Was/Now - render right under the figure they are about. A row that is simply
+        // Qty carries the handshake now (S1, AC-1.5): a rejection and its reason, or a
+        // settle-in-place and its Was/Now, are the two facts that still matter to a buyer
+        // scanning the row. ONE LINE (AC-A8, owner's 9 Sep feedback against the running
+        // lane - the same defect slice A fixed for the Outstanding column): the quantity,
+        // and an info icon only when there is something to say. A row that is simply
         // acknowledged (the ordinary case) shows the number and nothing else.
         accessorKey: 'qty',
         header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
         size: 150,
         meta: { headerTitle: 'Qty', skeleton: <Skeleton className="h-4 w-10" /> },
-        cell: ({ row }) => {
-          const state = ackStateOf(row.original);
-          return (
-            <div className="min-w-0 space-y-1">
-              <span className="block tabular-nums">
-                {formatInquiryQty(row.original.qty)}
-              </span>
-              {state === 'rejected' ? (
-                <RejectedNote row={row.original} />
-              ) : (
-                <ChangedBadge row={row.original} />
-              )}
-            </div>
-          );
-        },
+        cell: ({ row }) => (
+          <span className="flex min-w-0 items-center gap-1 tabular-nums">
+            {formatInquiryQty(row.original.qty)}
+            <QtyAnnotationButton row={row.original} />
+          </span>
+        ),
       },
       {
         accessorKey: 'delivery_date',

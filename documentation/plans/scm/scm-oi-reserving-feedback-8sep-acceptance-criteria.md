@@ -24,6 +24,27 @@ verified in a real browser (agent-browser, via the sidebar) as well as by test.
 * AC-A7 A row nothing covers still reads "Not found (new order)" and shows no
   icon.
 
+Owner feedback, 9 Sep 2026, against the running lane: the Qty column carried
+the same defect - a rejected row's reason or a changed row's Was/Now table
+rendered as a second line, so those rows read two lines tall while every
+other row read one. "These can be informational icon also."
+
+* AC-A8 The Qty cell is ONE LINE: the quantity, and an info icon ONLY when
+  the row carries a rejection note, a change stamp, or both. A plain
+  acknowledged row shows the number alone and no icon.
+* AC-A9 A rejected row's icon is visually distinguishable from a changed
+  row's at a glance, without adding words to the cell - the rejected icon
+  reads as a warning, the changed icon reads as muted. Clicking it opens a
+  dialog naming the item and stating who rejected it and their reason.
+* AC-A10 A changed row's icon opens a dialog naming the item and stating that
+  it changed, when, and the Was/Now detail the badge used to carry.
+* AC-A11 A row both rejected and once changed shows both facts in the
+  dialog, and the icon reads as the warning colour (rejection is the more
+  urgent of the two).
+* AC-A12 `RejectedNote` and `ChangedBadge` are gone from the cell path -
+  nothing else in the tree renders them, so they move into the dialog
+  wholesale rather than leaving a dead export behind.
+
 ## Slice B, the document lightbox
 
 * AC-B1 Opening a PO lightbox on a document with 89 lines renders a DataGrid,

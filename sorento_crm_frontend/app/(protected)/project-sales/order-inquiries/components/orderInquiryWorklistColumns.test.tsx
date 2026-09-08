@@ -387,16 +387,20 @@ describe('AC-A1/AC-A6: the cell prints no per-document detail any more - it all 
   });
 });
 
-describe('the qty cell: rejected reason and Was/Now (S1 AC-1.5, S7 review of PR #471)', () => {
-  it('prints only the quantity for the ordinary acknowledged row - nothing extra', () => {
+describe('the qty cell: one line, an info icon only when there is something to say (AC-A8..AC-A12, owner feedback 9 Sep 2026 against the running lane)', () => {
+  it('AC-A8: a plain acknowledged row is the quantity alone, one line, no icon', () => {
     renderQtyCell([worklistRow({ id: 'row-plain', qty: '10', ack_state: 'acknowledged' })]);
     const row = screen.getByTestId('row-row-plain');
     expect(within(row).getByText('10')).toBeInTheDocument();
-    expect(within(row).queryByText(/Rejected/)).not.toBeInTheDocument();
-    expect(within(row).queryByTestId('board-change-row-plain')).not.toBeInTheDocument();
+    // ONE LINE: the row's own rendered text is exactly the quantity, the same proof
+    // AC-A4 uses for the Outstanding column - no icon renders any text of its own.
+    expect(row.textContent).toBe('10');
+    expect(
+      within(row).queryByTestId('qty-annotation-trigger-row-plain'),
+    ).not.toBeInTheDocument();
   });
 
-  it('prints the reason under the qty for a rejected row, with who refused it', () => {
+  it('AC-A9: a rejected row shows the quantity and a warning-coloured icon, still one line', () => {
     renderQtyCell([
       worklistRow({
         id: 'row-rejected',
@@ -407,13 +411,17 @@ describe('the qty cell: rejected reason and Was/Now (S1 AC-1.5, S7 review of PR 
       }),
     ]);
     const row = screen.getByTestId('row-row-rejected');
-    expect(within(row).getByText('12')).toBeInTheDocument();
-    expect(
-      within(row).getByText('Joey Ang: No supplier until November'),
-    ).toBeInTheDocument();
+    expect(row.textContent).toBe('12');
+    const trigger = within(row).getByTestId('qty-annotation-trigger-row-rejected');
+    expect(trigger.className).toContain('color-warning-accent');
+
+    fireEvent.click(trigger);
+    // Rendered via a portal (Radix `Dialog`), so it is read off `screen`, not `row`.
+    const dialog = screen.getByTestId('qty-annotation-row-rejected');
+    expect(within(dialog).getByText('Joey Ang: No supplier until November')).toBeInTheDocument();
   });
 
-  it('prints "Rejected by <name>" alone when no reason survives', () => {
+  it('AC-A9: "Rejected by <name>" alone when no reason survives', () => {
     renderQtyCell([
       worklistRow({
         id: 'row-rejected-blank',
@@ -423,18 +431,15 @@ describe('the qty cell: rejected reason and Was/Now (S1 AC-1.5, S7 review of PR 
         rejected_reason: '   ',
       }),
     ]);
-    const row = screen.getByTestId('row-row-rejected-blank');
-    expect(within(row).getByText('Rejected by Joey Ang')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('qty-annotation-trigger-row-rejected-blank'));
+    const dialog = screen.getByTestId('qty-annotation-row-rejected-blank');
+    expect(within(dialog).getByText('Rejected by Joey Ang')).toBeInTheDocument();
   });
 
-  it('shows only the qty and a Changed badge for a settled row - the table is behind a lightbox now', () => {
+  it('AC-A10: a settled row shows the quantity and a MUTED icon, still one line', () => {
     // Driven by `previous_qty`, NOT `ack_state === 'changed'` (S1): a settle
     // auto-acknowledges the instant it stamps `changed_at` (G4), so the row this cell
     // reads is `acknowledged`, never `changed`, by the time the wire carries it.
-    //
-    // The Was/Now table used to render inline here; it now lives behind a lightbox
-    // (captain, 1 Sep - the inline table crowded the qty cell), so the row's own cell
-    // carries only the figure and the clickable badge, not the table's own "10"/"25".
     renderQtyCell([
       worklistRow({
         id: 'row-settled',
@@ -447,13 +452,13 @@ describe('the qty cell: rejected reason and Was/Now (S1 AC-1.5, S7 review of PR 
       }),
     ]);
     const row = screen.getByTestId('row-row-settled');
-    expect(within(row).getByText('25')).toBeInTheDocument();
-    expect(within(row).getByText(/Changed/)).toBeInTheDocument();
-    expect(within(row).queryByText('10')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('board-change-row-settled')).not.toBeInTheDocument();
+    expect(row.textContent).toBe('25');
+    const trigger = within(row).getByTestId('qty-annotation-trigger-row-settled');
+    expect(trigger.className).not.toContain('color-warning-accent');
+    expect(trigger.className).toContain('text-muted-foreground');
   });
 
-  it('opens the lightbox with the Was/Now table when the Changed badge is clicked', () => {
+  it('AC-A10: opens the dialog with the Was/Now table when the icon is clicked', () => {
     renderQtyCell([
       worklistRow({
         id: 'row-settled',
@@ -466,10 +471,10 @@ describe('the qty cell: rejected reason and Was/Now (S1 AC-1.5, S7 review of PR 
       }),
     ]);
 
-    fireEvent.click(screen.getByTestId('change-badge-trigger-row-settled'));
+    fireEvent.click(screen.getByTestId('qty-annotation-trigger-row-settled'));
 
-    // Rendered via a portal (Radix `Dialog`), so it is read off `screen`, not `row`.
-    const table = screen.getByTestId('board-change-row-settled');
+    const dialog = screen.getByTestId('qty-annotation-row-settled');
+    const table = within(dialog).getByTestId('board-change-row-settled');
     // "25" appears twice once open - the qty cell's own figure and the table's own Now
     // column - which is the point: both read the row's current qty and can never
     // disagree.
@@ -477,7 +482,10 @@ describe('the qty cell: rejected reason and Was/Now (S1 AC-1.5, S7 review of PR 
     expect(within(table).getByText('10')).toBeInTheDocument();
   });
 
-  it('never shows the Was/Now table on a rejected row, even if it once carried a previous value', () => {
+  it('AC-A11: a row rejected after once being changed carries BOTH facts in the dialog', () => {
+    // The old rule let a rejection hide a row's change history from the reader entirely
+    // ("never shows the Was/Now table on a rejected row"). Tucked behind an icon rather
+    // than crowding the cell, there is no reason to keep hiding it - both facts show.
     renderQtyCell([
       worklistRow({
         id: 'row-rejected-with-history',
@@ -485,20 +493,33 @@ describe('the qty cell: rejected reason and Was/Now (S1 AC-1.5, S7 review of PR 
         ack_state: 'rejected',
         rejected_by_name: 'Joey Ang',
         rejected_reason: 'No stock',
+        changed_at: '2026-08-05T09:00:00',
         previous_qty: '8',
         previous_delivery_date: '2026-08-01',
       }),
     ]);
     const row = screen.getByTestId('row-row-rejected-with-history');
+    expect(row.textContent).toBe('4');
+    const trigger = within(row).getByTestId(
+      'qty-annotation-trigger-row-rejected-with-history',
+    );
+    // Both apply: the warning colour wins, a rejection being the more urgent fact.
+    expect(trigger.className).toContain('color-warning-accent');
+
+    fireEvent.click(trigger);
+    const dialog = screen.getByTestId('qty-annotation-row-rejected-with-history');
+    expect(within(dialog).getByText(/No stock/)).toBeInTheDocument();
     expect(
-      within(row).queryByTestId('board-change-row-rejected-with-history'),
-    ).not.toBeInTheDocument();
-    expect(within(row).getByText(/No stock/)).toBeInTheDocument();
+      within(dialog).getByTestId('board-change-row-rejected-with-history'),
+    ).toBeInTheDocument();
   });
 
-  it('shows no Was/Now table for a row that has never been settled', () => {
+  it('AC-A8: shows no icon for a row that has never been rejected or settled', () => {
     renderQtyCell([worklistRow({ id: 'row-untouched', qty: '6', ack_state: 'acknowledged' })]);
     const row = screen.getByTestId('row-row-untouched');
-    expect(within(row).queryByTestId('board-change-row-untouched')).not.toBeInTheDocument();
+    expect(row.textContent).toBe('6');
+    expect(
+      within(row).queryByTestId('qty-annotation-trigger-row-untouched'),
+    ).not.toBeInTheDocument();
   });
 });
