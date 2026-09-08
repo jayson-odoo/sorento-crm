@@ -538,6 +538,18 @@ class SPOAllocation(Base, CompanyScopedMixin):
     #: was deleted, showing 58 open units on a 29-unit order. The group
     #: recompute skips a retired row entirely.
     retired_at = Column(DateTime(timezone=True), nullable=True)
+    # --- AutoCount linkage widen (V5, ingest-contract-2-2-so-links) ------------------
+    #: The SOURCE purchase-order line this shipping-order line was raised from,
+    #: same `"{database}:{DocKey}:{DtlKey}"` format as `source_ref` above. Raw
+    #: pass-through, never resolved into an id: `po_line_id` above already means
+    #: something narrower (a Sorento-raised SPO's own supply chain), and this is
+    #: what lets an order-inquiry row that reserved against this SPO print the
+    #: purchase order the buyer actually reads. NULL when the ESB has not stated
+    #: one; an omitted field on a re-push never clears a value already stored
+    #: (absent_vs_null, `shipping_order_ingest_service._line_values`).
+    from_po_line_ref = Column(String(255), nullable=True)
+    #: The source purchase order's own document number, alongside the ref above.
+    from_po_number = Column(String(100), nullable=True)
 
     inbound_shipment = relationship("InboundShipment", back_populates="spo_allocations")
     supplier = relationship("Supplier", foreign_keys=[supplier_id])

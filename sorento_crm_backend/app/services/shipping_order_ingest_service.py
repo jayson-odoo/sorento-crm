@@ -812,7 +812,7 @@ class ShippingOrderIngestService(MasterRefResolver):
         received = _round_qty(line.qty_received)
         outstanding = ordered - received
 
-        return {
+        values = {
             "product_id": product_id,
             "warehouse_id": warehouse_id,
             "location_code": location_code,
@@ -835,6 +835,18 @@ class ShippingOrderIngestService(MasterRefResolver):
             # by `_write_row`. No column exists for it on this table either.
             "line_number": getattr(line, "line_number", None),
         }
+        # V5 (AutoCount linkage widen, ingest-contract-2-2-so-links): raw
+        # pass-through onto `spo_allocations`, never resolved into an id
+        # (see the column comments in `app/models/procurement.py`). Left OUT
+        # of `values` entirely when the payload does not mention the field -
+        # `model_fields_set`, not truthiness - so an omitted field on a
+        # re-push never clears what an earlier push recorded (absent_vs_null,
+        # the same rule this whole surface follows for every other field).
+        if "from_po_line_ref" in line.model_fields_set:
+            values["from_po_line_ref"] = line.from_po_line_ref
+        if "from_po_number" in line.model_fields_set:
+            values["from_po_number"] = line.from_po_number
+        return values
 
     def _location_code(
         self, warehouse_id: Optional[str], sent_code: Optional[str]

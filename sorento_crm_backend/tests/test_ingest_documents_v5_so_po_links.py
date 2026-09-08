@@ -20,6 +20,8 @@ suite.
 """
 from __future__ import annotations
 
+from sqlalchemy import text
+
 from app.api.v1.external.contract import FIELDS_ADDED
 
 from tests.test_ingest_documents import (
@@ -38,6 +40,21 @@ from tests.test_ingest_shipping_orders import (
 __all__ = ["env"]
 
 CONTRACT_URL = "/api/v1/external/contract"
+
+
+def _spo_rows(env, spo_number: str):
+    """Byte-for-byte copy of `test_ingest_shipping_orders._spo_rows`."""
+    return (
+        env.db.execute(
+            text(
+                "SELECT * FROM spo_allocations WHERE company_id = :c AND spo_number = :n "
+                "ORDER BY spo_line_number"
+            ),
+            {"c": env.company_a, "n": spo_number},
+        )
+        .mappings()
+        .all()
+    )
 
 
 # ============================================================== AC-V5-1/2/3
@@ -118,3 +135,43 @@ class TestContractVersion22:
         for entity in ("purchase_orders", "shipping_orders"):
             got = set(FIELDS_ADDED.get(entity, []))
             assert wanted.issubset(got), (entity, wanted - got)
+
+
+# ================================================================== AC-V5-4
+class TestSpoAllocationPurchaseLink:
+    def test_from_po_fields_land_on_the_spo_allocation_row(self, env):
+        line = _spo_line(
+            env,
+            from_po_line_ref=f"{MARKER}:44909094:45021331",
+            from_po_number="202606-S0018",
+        )
+        record = _spo_record(env, lines=[line], supplier_ref=env.supplier_ref)
+
+        res = env.post(INGEST_SPO, [record])
+
+        assert res.json()["records"][0]["outcome"] == "created", res.text
+        row = _spo_rows(env, record["spo_number"])[0]
+        assert row["from_po_line_ref"] == f"{MARKER}:44909094:45021331"
+        assert row["from_po_number"] == "202606-S0018"
+
+    def test_an_omitted_field_on_repush_never_clears_a_stored_value(self, env):
+        line = _spo_line(
+            env,
+            from_po_line_ref=f"{MARKER}:44909094:45021331",
+            from_po_number="202606-S0018",
+        )
+        record = _spo_record(env, lines=[line], supplier_ref=env.supplier_ref)
+        first = env.post(INGEST_SPO, [record])
+        assert first.json()["records"][0]["outcome"] == "created", first.text
+
+        # Re-push the SAME line by source_ref, this time with neither key
+        # sent at all - the ordinary shape of a routine re-push.
+        repush_line = _spo_line(env, ref=line["source_ref"])
+        repush = dict(record, lines=[repush_line])
+
+        res = env.post(INGEST_SPO, [repush])
+
+        assert res.json()["records"][0]["outcome"] == "updated", res.text
+        row = _spo_rows(env, record["spo_number"])[0]
+        assert row["from_po_line_ref"] == f"{MARKER}:44909094:45021331"
+        assert row["from_po_number"] == "202606-S0018"
