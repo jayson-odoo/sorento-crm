@@ -197,7 +197,11 @@ def portal_get_price_tag_design(
     from app.api.v1.dealer_kit.price_tag_requests import resolve_tag_sheet_design
     from app.services.dealer_kit import tag_data_service
 
-    doc_fields = resolve_tag_sheet_design(db, page)
+    # prefer="version": the salesperson must see what was deliberately
+    # SAVED (and sent to them for review), never marketing's live
+    # in-progress autosave - the CRM designer stays draft-first (B1's own
+    # reasoning), this screen does not (review D11 follow-up).
+    doc_fields = resolve_tag_sheet_design(db, page, prefer="version")
     # L3: same company scope as the sibling lookups (portal_lookup_tag_items,
     # portal_lookup_promotions) - unscoped, a two-company contact's line
     # resolution could read the OTHER company's product row for a duplicated

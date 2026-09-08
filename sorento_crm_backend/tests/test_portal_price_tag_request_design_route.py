@@ -197,6 +197,34 @@ class TestAllowedStatuses:
         assert lines[0]["name"]
 
 
+class TestPrefersTheSavedVersionOverTheDraft:
+    def test_a_differing_draft_does_not_win_over_the_saved_version(self, client):
+        """Review fix (D11 follow-up): the portal must show what was
+        deliberately SAVED (and sent to the salesperson for review), never
+        marketing's live in-progress autosave - the CRM designer stays
+        draft-first (``get_tag_sheet_design``), this route does not."""
+        c, db, contact_id = client
+        from app.models.dealer_kit import Page
+        from app.models.price_tag import PriceTagRequest
+
+        request_id = _request_with_a_design(db, contact_id, status="proof_ready")
+        req = db.query(PriceTagRequest).filter(PriceTagRequest.id == request_id).first()
+        page = db.query(Page).filter(Page.id == req.page_id).first()
+        page.draft_doc = {
+            "kind": "tag_sheet",
+            "sheets": [{"id": "zzt-unsaved-draft-sheet"}],
+            "imposition": {},
+        }
+        db.commit()
+
+        res = c.get(_DESIGN_URL.format(id=request_id))
+
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["source"] == "version"
+        assert body["doc"]["sheets"] == []
+
+
 @pytest.mark.parametrize("status", ["new", "designing"])
 class TestDisallowedStatuses:
     def test_404_before_a_design_is_ready_to_be_seen(self, client, status):

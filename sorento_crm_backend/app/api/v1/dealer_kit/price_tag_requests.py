@@ -288,20 +288,29 @@ def _latest_version(db: Session, page: Page) -> PageVersion | None:
     )
 
 
-def resolve_tag_sheet_design(db: Session, page: Page) -> dict:
-    """The document a design VIEW should open on: the draft, else the latest
-    saved version (B1). Draft first - the autosaved draft is what marketing
-    was last looking at; the latest version is what they last deliberately
-    saved, and opening on it would silently discard everything since.
+def resolve_tag_sheet_design(db: Session, page: Page, *, prefer: str = "draft") -> dict:
+    """The document a design VIEW should open on.
 
-    Shared by this route (``get_tag_sheet_design``) and the portal's design
-    preview (D11, ``portal_price_tag.portal_get_price_tag_design``) so the
-    two screens can never resolve a different document for the same page.
-    Returns the ``TagSheetDocResponse`` fields as a plain dict, not the
-    schema itself - the portal route layers its own ``lines`` key on top.
+    ``prefer="draft"`` (default - the CRM designer's own GET, ``get_tag_sheet
+    _design``): the autosaved draft first, else the latest saved version.
+    The autosaved draft is what marketing was last looking at, and opening
+    on the version instead would silently discard everything since (B1).
+
+    ``prefer="version"`` (the portal's design preview, D11 review): the
+    latest SAVED version always wins, draft or not - a salesperson must
+    never see marketing's live in-progress autosave, only what was
+    deliberately saved (and, from proof_ready onward, sent for their
+    review).
+
+    Shared by this route and the portal's design preview
+    (``portal_price_tag.portal_get_price_tag_design``) so the two screens
+    read the SAME underlying data and can never disagree about it - only
+    which of the two documents they prefer differs. Returns the
+    ``TagSheetDocResponse`` fields as a plain dict, not the schema itself -
+    the portal route layers its own ``lines`` key on top.
     """
     latest = _latest_version(db, page)
-    if page.draft_doc is not None:
+    if prefer == "draft" and page.draft_doc is not None:
         return {
             "page_id": str(page.id),
             "version": latest.version if latest else 0,
