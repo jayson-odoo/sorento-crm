@@ -1,6 +1,6 @@
 # PLAN: warehouse as a chatbot entity, and "last in" as the last SPO line per product
 
-Status: IMPLEMENTED (8 Sep 2026) - AC-10 browser check pending. Owner rulings the same day, verbatim: "it is actually the
+Status: IMPLEMENTED, AC-10 verified in the browser 8 Sep 2026 (branch feat/chatbot-warehouse-entity-last-in).
 bare code, so it should be exact match ... brw ib, brwib should map to brw-ib, but when we
 say brw, it means brw, not the rest"; "last in should be per product, if we resolve to
 entire family then return the latest receipt for each of the product"; "last in doesn't
