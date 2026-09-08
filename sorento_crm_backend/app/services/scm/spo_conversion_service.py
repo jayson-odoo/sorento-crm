@@ -219,7 +219,7 @@ from decimal import Decimal
 from io import BytesIO
 from typing import Any, Optional, Sequence
 
-from sqlalchemy import func, or_, text
+from sqlalchemy import and_, func, or_, text
 from sqlalchemy.orm import Session
 
 from app.models.order import Customer, SalesOrder, SalesOrderLine
@@ -883,12 +883,20 @@ def coverage_for_so_lines(db: Session, so_line_ids: Sequence[str]) -> dict[str, 
     if not rows:
         return {}
 
+    from app.services.scm import spo_supply
+
     po_line_ids = {po_line_id for _so, _spo, _qty, po_line_id, _po_id in rows}
     alloc_by_line: dict[str, tuple[Optional[str], Optional[_date]]] = {}
-    for po_line_id, warehouse_code, eta in (
+    # R7/AC-E10: a po_line_id whose ONLY allocation row(s) are retired never earns a
+    # slot in `alloc_by_line`, and that emptiness is what marks the cover-strip entry
+    # itself hidden below - a po_line_id with no allocation row AT ALL (nothing
+    # allocated yet) stays visible with `location=None`, unchanged from before.
+    seen_hidden_only: set[str] = set()
+    for po_line_id, warehouse_code, eta, is_visible in (
         db.query(
             SPOAllocation.po_line_id, Warehouse.warehouse_code,
             InboundShipment.estimated_arrival_date,
+            and_(*spo_supply.visible_line_clauses()).label("is_visible"),
         )
         .outerjoin(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
         .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
@@ -896,12 +904,19 @@ def coverage_for_so_lines(db: Session, so_line_ids: Sequence[str]) -> dict[str, 
         .order_by(SPOAllocation.id.asc())
         .all()
     ):
-        # First allocation for this SPO line wins (a split line has several) - the docstring's
-        # own "first if several".
-        alloc_by_line.setdefault(str(po_line_id), (warehouse_code, eta))
+        key = str(po_line_id)
+        if is_visible:
+            # First VISIBLE allocation for this SPO line wins (a split line has
+            # several) - the docstring's own "first if several".
+            alloc_by_line.setdefault(key, (warehouse_code, eta))
+        elif key not in alloc_by_line:
+            seen_hidden_only.add(key)
+    seen_hidden_only -= set(alloc_by_line.keys())
 
     out: dict[str, list[dict]] = {}
     for so_line_id, spo_number, qty, po_line_id, purchase_order_id in rows:
+        if po_line_id in seen_hidden_only:
+            continue
         warehouse_code, eta = alloc_by_line.get(po_line_id, (None, None))
         out.setdefault(so_line_id, []).append({
             "kind": "spo",
@@ -1182,6 +1197,8 @@ def _project_coverage(db: Session, product_id: str) -> list[dict]:
     # the same shape `project_order_inquiry_service.links_for_rows` states for a project
     # row's own "Linked to" column, read locally rather than imported (that module is the
     # large stateful class the module docstring already gives the reason not to import).
+    from app.services.scm import spo_supply
+
     spo_names: dict[str, list[str]] = {}
     for row_id, spo_number in (
         db.query(OrderInquiryLink.row_id, SPOAllocation.spo_number)
@@ -1189,6 +1206,8 @@ def _project_coverage(db: Session, product_id: str) -> list[dict]:
         .filter(
             OrderInquiryLink.row_id.in_(row_ids),
             SPOAllocation.spo_number.isnot(None),
+            # R7/AC-E9: a retired line's number does not name what is "taken by".
+            *spo_supply.visible_line_clauses(),
         )
         .all()
     ):
@@ -2571,9 +2590,16 @@ def _own_state(
             "so_takes": so_takes,
         }
 
+    from app.services.scm import spo_supply
+
     alloc_rows = (
         db.query(SPOAllocation)
-        .filter(SPOAllocation.po_line_id.in_(list(line_by_po_line.keys())))
+        .filter(
+            SPOAllocation.po_line_id.in_(list(line_by_po_line.keys())),
+            # R7/AC-E10: a retired allocation neither lists nor rolls up into
+            # `received` here.
+            *spo_supply.visible_line_clauses(),
+        )
         .all()
     )
     alloc_line: dict[str, str] = {}

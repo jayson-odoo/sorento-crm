@@ -177,6 +177,11 @@ def spo_history_for_product(db, run_id: str, product_id: str) -> dict:
         .filter(
             SPOAllocation.product_id == product_id,
             SPOAllocation.warehouse_id.in_(pool_ids),
+            # R7: a retired line is omitted from both legs below, not only labelled
+            # by `open_incoming_clauses()` above - that tuple is a SELECTED LABEL
+            # here (`is_open`), never a filter, so without this a retired line would
+            # still land in "open" or "history".
+            *visible_line_clauses(),
         )
         .order_by(SPOAllocation.expected_date.desc().nullslast(),
                   SPOAllocation.spo_number)

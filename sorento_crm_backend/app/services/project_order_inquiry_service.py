@@ -2073,6 +2073,10 @@ class ProjectOrderInquiryService:
                 # would otherwise keep printing its documents on the SO detail beside the
                 # revision that replaced it.
                 OrderInquiryRow.state != INQUIRY_CANCELLED,
+                # R7/AC-E9: SPOAllocation is OUTER-joined, so this passes a plain PO
+                # link (its columns come back NULL) untouched and only excludes a
+                # link whose SPO side names a retired line.
+                *spo_supply.visible_line_clauses(),
             )
             .order_by(OrderInquiryLink.linked_at.asc(), OrderInquiryLink.id.asc())
             .all()
