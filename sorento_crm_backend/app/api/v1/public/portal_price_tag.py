@@ -423,6 +423,11 @@ def portal_approve_price_tag_request(
     # of its own, so this passes the request's own assignee - the marketing
     # person who designed it, and the natural "who asked for this PDF" answer
     # for an export the SALESPERSON'S approve click triggered.
+    if not req.assigned_to_id:
+        logger.warning(
+            "portal_approve_price_tag_request: %s has no assignee, export skipped",
+            req.id,
+        )
     result = PriceTagRequestService.transition_status(
         db, request_id, STATUS_APPROVED, user_id=req.assigned_to_id,
     )
