@@ -955,6 +955,8 @@ class InboundShipmentService:
 
             line_counts = _line_counts()
             non_received_counts = _line_counts(lines_table.c.line_status != "received")
+            from app.services.scm import spo_supply
+
             spo_counts = {
                 str(shipment_id): int(count or 0)
                 for shipment_id, count in (
@@ -962,7 +964,12 @@ class InboundShipmentService:
                         SPOAllocation.inbound_shipment_id,
                         func.count(SPOAllocation.id),
                     )
-                    .filter(SPOAllocation.inbound_shipment_id.in_(shipment_ids))
+                    .filter(
+                        SPOAllocation.inbound_shipment_id.in_(shipment_ids),
+                        # R7/AC-E8: a retired line is not counted, so this figure
+                        # agrees with the grouped allocation listing beside it.
+                        *spo_supply.visible_line_clauses(),
+                    )
                     .group_by(SPOAllocation.inbound_shipment_id)
                     .all()
                 )
