@@ -68,6 +68,17 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # resource_attachment domain description, both bodies - a document-class word plus a
 # brand or company name is get_resource_attachment with the attachment entity, never
 # promotion.
+#
+# +364 chars inside `GROWTH_R1_ADDENDUM` itself (migration 493_chatbot_positional_guard,
+# 8 Sep 2026, production turn 3114fc64): one sentence appended to the "A DELIVERY WORD PLUS
+# A NAME IS AN ORDER ASK" section - a bare reply INTO the previous numbered list ("2", "the
+# 2nd one") names nothing of its own and must never set domain_hint or intent_hint, only
+# reference_positions, so a carried product list from a prior turn no longer gets reread as
+# an order ask. Narrowed to "into the previous numbered list" (review, 8 Sep 2026) because
+# the carry this leans on only fires when reference_positions is non-empty - "that one" is
+# not a POSITIONAL REFERENCES shape and would have nulled both hints with nothing to carry.
+# This one lands in the addendum, not the body, so CONSTANT_CHARS below is unaffected by
+# construction (see the paragraph above); noted here anyway so the edit history stays complete.
 CONSTANT_CHARS = 48996
 
 
