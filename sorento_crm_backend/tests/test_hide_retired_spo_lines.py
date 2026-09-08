@@ -1,4 +1,4 @@
-"""RED tests for hiding retired SPO allocation lines (AC-H1..AC-H6, AC-H8, AC-H10..AC-H14, AC-H17).
+"""RED tests for hiding retired SPO allocation lines (AC-H1..AC-H6, AC-H8, AC-H10..AC-H14, AC-H17, AC-H19).
 
 UAC: documentation/plans/autocount/hide-retired-spo-lines-acceptance-criteria.md
 PLAN: documentation/plans/autocount/PLAN-hide-retired-spo-lines.md
@@ -29,9 +29,11 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from sqlalchemy import and_
+import pytest
+from sqlalchemy import and_, text
 from sqlalchemy.orm import Session
 
+from app.models.inventory import Warehouse
 from app.models.procurement import (
     InboundShipment,
     InboundShipmentLine,
@@ -39,9 +41,9 @@ from app.models.procurement import (
     PickingLine,
     SPOAllocation,
 )
-from app.models.product import Product
+from app.models.product import Product, ProductCategory, UnitOfMeasure
 
-from tests._pg_fixture import unique_code
+from tests._pg_fixture import blank_session, unique_code
 from tests.scm.test_spo_allocation_documents import (
     DOCUMENTS_URL,
     _chain,
@@ -920,30 +922,41 @@ class TestAcH13PackingListRelatedSpoStripHidesRetired:
 
 
 class TestAcH17PackingListQuantityAndStatusAgree:
-    def test_line_status_is_derived_from_the_same_visible_total_as_spo_allocated_quantity(
+    def test_response_recomputes_visible_only_while_the_persisted_row_stays_unfiltered(
         self, scm_app
     ):
-        """AC-H17. A shipment line whose product has one visible allocation
-        (10) and one retired, zero-receipt allocation (999) with an
-        `inbound_shipment_id` on the SAME shipment: `spo_allocated_quantity`
-        and the `line_status` derived from it must count the same visible
-        set. `quantity_shipped` is chosen (50) so the filtered total (10)
-        and the unfiltered total (1009) fall in DIFFERENT status branches of
+        """AC-H17 (revised, round 5). A shipment line whose product has one
+        visible allocation (10) and one retired, zero-receipt allocation
+        (999) with an `inbound_shipment_id` on the SAME shipment: the
+        packing-list RESPONSE recomputes both `spo_allocated_quantity` and
+        `line_status` from the VISIBLE set only. `quantity_shipped` is
+        chosen (50) so the filtered total (10) and the unfiltered total
+        (1009) fall in DIFFERENT status branches of
         `compute_inbound_shipment_line_status` - filtered:
         `quantity_shipped(50) > allocated(10)` -> `partially_allocated`;
         unfiltered: `quantity_shipped(50) <= allocated(1009)` and
         `received(0) == 0` -> `allocated` - so an ungated status cannot pass
         by coincidence.
 
-        RED today: `get_packing_list` persists `line_status` via
-        `refresh_shipment_line_statuses`, whose own `totals_alloc` query
-        carries no visibility filter at all (round 3 only filtered the
-        ROUTE's own `totals`/`allocations` re-queries, overwriting
-        `spo_allocated_quantity` in memory afterwards but never touching the
-        already-persisted `line_status`) - so the response shows
-        `spo_allocated_quantity 10` against a `line_status` computed from
-        1009, exactly the "3912 against a status computed from 8324"
-        disagreement the AC names.
+        `refresh_shipment_line_statuses`' PERSISTED column and status are
+        deliberately NOT filtered (they feed the reorder engine's ask, not
+        the screen), so the request is also asserted NOT to have narrowed
+        the stored row: `inbound_shipment_lines.line_status`/
+        `spo_allocated_quantity` read the UNFILTERED figures (1009 /
+        "allocated") after the very request whose own RESPONSE reports the
+        filtered ones (10 / "partially_allocated") - proving the fix lives
+        only in the response, and catching a future over-filter that would
+        silently starve the reorder engine's ask.
+
+        RED today at the response assertions: `get_packing_list` persists
+        `line_status` via `refresh_shipment_line_statuses`, whose own
+        `totals_alloc` query carries no visibility filter, and the route
+        never recomputes `line_status` afterwards - so the response shows
+        `spo_allocated_quantity 10` (round 3's own fix, already filtered)
+        against a `line_status` still computed from 1009, exactly the
+        disagreement the AC names. The persisted-row assertions already
+        pass today (nothing filters the write path at all yet); they are
+        the guard against a future fix reaching too far.
         """
         client, db = _client(scm_app)
         chain = _chain(db)
@@ -983,5 +996,151 @@ class TestAcH17PackingListQuantityAndStatusAgree:
         assert len(product_lines) == 1, product_lines
         line_body = product_lines[0]
 
+        # The RESPONSE: visible-only.
         assert line_body["spo_allocated_quantity"] == 10, line_body
         assert line_body["line_status"] == "partially_allocated", line_body
+
+        # The PERSISTED row: unchanged by the request's own visibility filter -
+        # still the unfiltered figures, exactly as `refresh_shipment_line_statuses`
+        # (unfiltered by design, round 5) computed and wrote them.
+        db.expire_all()
+        persisted = db.execute(
+            text(
+                "SELECT spo_allocated_quantity, line_status FROM inbound_shipment_lines "
+                "WHERE shipment_id = :sid AND product_id = :pid"
+            ),
+            {"sid": shipment.id, "pid": product.id},
+        ).mappings().first()
+        assert persisted["spo_allocated_quantity"] == 1009, persisted
+        assert persisted["line_status"] == "allocated", persisted
+
+
+# =================================================================================== #
+# AC-H19 (round 5): the incoming badge and its allocation gap exclude retired rows
+# =================================================================================== #
+#
+# `IncomingStockService._warehouse_allocations_for` feeds `incoming_list` (the payload
+# n8n actually reads - "n8n uses incoming_stock_list only"), `incoming_for_product` and
+# `shipment_incoming_products`. This suite exercises `incoming_list`. Fixture shape
+# matches `tests/test_incoming_allocation_gap.py`/`tests/test_incoming_list.py`
+# (`blank_session`, no HTTP, no `scm_app`) rather than this file's own `_client`/`_alloc`
+# helpers - those are scoped to the SPO-document HTTP surface and this AC is a plain
+# service-level read, so a second, purpose-built `blank_session` fixture here is truer
+# to the existing tests than bending `_alloc` (which has no `warehouse_id`/`spo_number`
+# free-text shape) to fit.
+
+
+@pytest.fixture()
+def incoming_db():
+    with blank_session() as session:
+        yield session
+
+
+def _h19_product(db, code: str) -> str:
+    category = ProductCategory(
+        id=_u(), category_code=f"CAT-{code}", category_name=f"Category {code}"
+    )
+    uom = UnitOfMeasure(id=_u(), uom_code=f"UOM-{code}", uom_name="Each")
+    db.add_all([category, uom])
+    db.flush()
+    pid = _u()
+    db.add(
+        Product(
+            id=pid, product_code=code, product_name=code, category_id=category.id,
+            base_uom_id=uom.id, list_price=0, is_active=True,
+        )
+    )
+    db.flush()
+    return pid
+
+
+def _h19_shipment(db, *, number: str, eta: date | None = date(2026, 2, 1)) -> str:
+    sid = _u()
+    db.add(
+        InboundShipment(
+            id=sid, shipment_number=number, shipment_date=date(2026, 1, 1),
+            estimated_arrival_date=eta,
+        )
+    )
+    db.flush()
+    return sid
+
+
+def _h19_line(db, shipment_id: str, product_id: str, *, shipped: int, received: int = 0) -> None:
+    db.add(
+        InboundShipmentLine(
+            id=_u(), shipment_id=shipment_id, product_id=product_id,
+            quantity_shipped=shipped, quantity_received=received, line_status="in_transit",
+        )
+    )
+    db.flush()
+
+
+def _h19_warehouse(db, code: str) -> str:
+    wid = _u()
+    db.add(Warehouse(id=wid, warehouse_code=code, warehouse_name=f"{code} Warehouse"))
+    db.flush()
+    return wid
+
+
+def _h19_alloc(
+    db, shipment_id: str, product_id: str, warehouse_id: str, qty: int, *,
+    spo: str, retired: bool = False, line_status: str = "open",
+) -> None:
+    db.add(
+        SPOAllocation(
+            id=_u(), spo_number=spo, inbound_shipment_id=shipment_id, product_id=product_id,
+            warehouse_id=warehouse_id, allocated_quantity=qty, quantity_received=0,
+            line_status=line_status, retired_at=_now() if retired else None,
+        )
+    )
+    db.flush()
+
+
+class TestAcH19IncomingBadgeExcludesRetiredAllocations:
+    def test_a_retired_allocation_does_not_count_as_allocated_and_the_gap_widens(
+        self, incoming_db
+    ):
+        """AC-H19. `_warehouse_allocations_for` counts a retired allocation
+        today - no line-status or retirement test at all - so the incoming
+        badge (`incoming_list`, the signal n8n actually reads) and its
+        `unallocated_quantity` gap both credit supply AutoCount deleted.
+
+        Seeded: one shipment line shipped 100, one VISIBLE allocation of 40
+        at warehouse BRW-H19, one RETIRED allocation of 999 at the SAME
+        warehouse and product (closed, zero receipt, `retired_at` set) - 999
+        chosen so an ungated sum (1039) exceeds `quantity_shipped` (100) and
+        the existing over-allocation clamp
+        (`test_list_over_allocated_clamps_to_none` in
+        `tests/test_incoming_allocation_gap.py`) hides the gap entirely,
+        worse than merely wrong: the badge would read
+        `unallocated_quantity: None` ("fully covered") when 60 units are
+        genuinely unclaimed.
+
+        RED today: `_warehouse_allocations_for` filters only
+        `allocated_quantity > 0`, no `visible_line_clauses()` - the retired
+        row's 999 is summed in, `warehouse_allocations` sums to 1039 instead
+        of 40, and `unallocated_quantity` clamps to None instead of reading
+        60.
+        """
+        db = incoming_db
+        product_id = _h19_product(db, "SKU-H19")
+        shipment_id = _h19_shipment(db, number="SH-H19")
+        warehouse_id = _h19_warehouse(db, "BRW-H19")
+        _h19_line(db, shipment_id, product_id, shipped=100)
+        _h19_alloc(db, shipment_id, product_id, warehouse_id, 40, spo="SPO-H19-VISIBLE")
+        _h19_alloc(
+            db, shipment_id, product_id, warehouse_id, 999, spo="SPO-H19-RETIRED",
+            retired=True, line_status="closed",
+        )
+        db.commit()
+
+        from app.services.incoming_stock_service import IncomingStockService
+
+        res = IncomingStockService(db).incoming_list(product_ids=[product_id])
+        assert res["empty"] is False, res
+        line = res["data"][0]["lines"][0]
+
+        allocated_sum = sum(a["allocated_quantity"] for a in line["warehouse_allocations"])
+        assert allocated_sum == 40, line["warehouse_allocations"]
+        assert line["unallocated_quantity"] == 60, line
