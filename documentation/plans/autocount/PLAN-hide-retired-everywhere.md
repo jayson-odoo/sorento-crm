@@ -120,3 +120,8 @@ does, and a WRITE never treats the absence of something we hid as an instruction
 - **The whole-line removal path deletes every allocation, hidden ones included**, and that is
   intended: the SPO line itself is going. It is not the AC-E18 defect and should not be "fixed" to
   match it.
+- **Do not filter `next_spo_line_number` or `create_allocation`'s line-number guard.** Skipping a
+  hidden allocation leaves its warehouse slot unconsumed, so a submitted split for that warehouse
+  falls through to an insert. That is safe only because both of those read line numbers UNFILTERED
+  and so number past the surviving hidden row. Filter either and this path starts answering 409,
+  "this SPO already carries that line number".
