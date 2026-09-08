@@ -663,6 +663,11 @@ class SPODocumentLine(BaseModel):
     grns: List[LinkedGRNSimple] = []
     #: R23, AC-J2 - the PO this line pulled from, null on a line with no `po_line_id`.
     po: Optional[SPODocumentLinePO] = None
+    #: The AutoCount book's own source purchase-order NUMBER, straight off
+    #: `spo_allocations.from_po_number` - text, never resolved into `po` above
+    #: (`PLAN-scm-book-linkage-on-document-lines.md` Slice B). `None` on most lines today:
+    #: no import path writes it yet, only the reconcile waves that will.
+    from_po_number: Optional[str] = None
     #: R23, AC-J2 - every sales order this allocation covers, empty when none.
     so_covered: List[SPODocumentLineSOCovered] = []
 

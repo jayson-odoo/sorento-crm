@@ -591,3 +591,100 @@ describe('SPODocumentDetail - Edit in planner (R24, AC-K5)', () => {
     expect(screen.queryByRole('link', { name: /edit in planner/i })).toBeNull();
   });
 });
+
+describe('SPODocumentDetail - the book\'s own PO linkage (AC-B1/B2/B3/B4)', () => {
+  it('prints the book\'s source purchase-order number as plain text', () => {
+    useSPODocument.mockReturnValue({
+      data: doc({ lines: [line({ from_po_number: 'PO-2020/01-0099', po: null })] }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('CW-BASIN-450').closest('tr') as HTMLElement;
+    expect(within(row).getByText('PO-2020/01-0099')).toBeInTheDocument();
+    // Plain text, never a link - `po` is the one column that resolves to a CRM row.
+    expect(within(row).queryByRole('link', { name: /PO-2020\/01-0099/ })).not.toBeInTheDocument();
+  });
+
+  it('reads a muted dash when the book named none', () => {
+    useSPODocument.mockReturnValue({
+      data: doc({ lines: [line({ from_po_number: null })] }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    // Several columns legitimately read '-' too (Packing List, PO, SO covered on this
+    // unlinked line) - find THIS one by its own column index rather than assuming it is
+    // the only dash on the row.
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent);
+    const colIndex = headers.indexOf('PO (book)');
+    expect(colIndex).toBeGreaterThan(-1);
+    const row = screen.getByText('CW-BASIN-450').closest('tr') as HTMLElement;
+    const cell = within(row).getAllByRole('cell')[colIndex];
+    expect(cell.textContent).toBe('-');
+  });
+
+  it('lets the two PO columns disagree without either being wrong (AC-B4)', () => {
+    const po = { po_number: 'CRM-SPO-0001', purchase_order_id: 'po-1', line_no: null };
+    useSPODocument.mockReturnValue({
+      data: doc({ lines: [line({ po, from_po_number: 'PO-2019/11-0007' })] }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('CW-BASIN-450').closest('tr') as HTMLElement;
+    // The CRM link, unchanged.
+    expect(within(row).getByRole('link', { name: /CRM-SPO-0001/ })).toHaveAttribute(
+      'href',
+      '/scm/purchase-orders/po-1',
+    );
+    // The book's own text, naming a DIFFERENT document, right beside it.
+    expect(within(row).getByText('PO-2019/11-0007')).toBeInTheDocument();
+  });
+
+  it('never prints from_po_line_ref anywhere (AC-B5)', () => {
+    useSPODocument.mockReturnValue({
+      data: doc({
+        lines: [
+          {
+            ...line({ from_po_number: 'PO-2020/02-0011' }),
+            // The server-side-only ref. Even carried on the object, the UI must not print it.
+            from_po_line_ref: 'DTL-99887',
+          } as unknown as SPODocumentLine,
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    expect(screen.queryByText('DTL-99887')).not.toBeInTheDocument();
+  });
+
+  it('leaves so_covered exactly as it was, still opening its own drill (AC-B6)', () => {
+    useSPODocument.mockReturnValue({
+      data: doc({
+        lines: [
+          line({
+            from_po_number: 'PO-2020/03-0022',
+            so_covered: [{ document: 'SO391853', customer: 'Acme', demand_class: 'project', qty: 100 }],
+          }),
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const row = screen.getByText('CW-BASIN-450').closest('tr') as HTMLElement;
+    expect(within(row).getByText('1 SO · 100')).toBeInTheDocument();
+  });
+});
