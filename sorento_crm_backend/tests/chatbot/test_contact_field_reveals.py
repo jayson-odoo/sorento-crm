@@ -217,22 +217,14 @@ class TestNullWorkspaceFallback:
 
 
 class TestFieldRevealKeys:
-    def test_lists_distinct_keys_from_active_tools(self, session_factory):
-        from app.models.access import McpTool
+    def test_lists_the_frozen_keys_sorted(self, session_factory):
+        """`field_reveal_keys` reads `FIELD_REVEAL_KEYS`, not `mcp_tools` - see the
+        service module's docstring for why a live query cannot be used here. No
+        `session_factory` row-seeding required; this test keeps the fixture arg only
+        to match the file's other cases' shape."""
+        _ = session_factory
 
-        db = session_factory()
-        db.add(
-            McpTool(
-                id=str(uuid.uuid4()),
-                tool_name=f"ZZT-tool-{uuid.uuid4().hex[:6]}",
-                http_path="/x",
-                http_method="GET",
-                is_active=True,
-                last_seen_at=__import__("datetime").datetime.utcnow(),
-                restricted_fields=[{"key": "inventory.sellable", "label": "Sellable stock"}],
-            )
-        )
-        db.commit()
+        keys = svc.field_reveal_keys()
 
-        keys = svc.field_reveal_keys(session_factory())
-        assert {"key": "inventory.sellable", "label": "Sellable stock"} in keys
+        assert keys == [{"key": key, "label": label} for key, label in sorted(svc.FIELD_REVEAL_KEYS)]
+        assert {"key": "inventory.sellable", "label": "Outstanding SO on stock answers"} in keys

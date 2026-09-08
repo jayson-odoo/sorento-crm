@@ -11,36 +11,47 @@ Default is HIDDEN: a contact with no row for a key never sees that field. A full
 list PUT does not delete non-listed rows - it flips them to `granted=False` - so
 the table keeps who granted or revoked a key and when, rather than losing that
 history on the next save.
+
+WHICH KEYS EXIST is a frozen literal here, not a read of `mcp_tools.restricted_fields`
+at request time. `mcp_tool_registry_service.sync_catalog` still writes that column at
+startup by importing `sorento_crm_mcp.catalog` - but the deployed backend image is built
+from `context: ./sorento_crm_backend` only (see `sorento_crm/docker-compose.yml` and
+`.github/workflows/deploy.yml`), `sorento_crm_mcp` is not in `requirements.txt`, and no
+volume mounts it in, so that import raises `ModuleNotFoundError` in every container and
+the startup sync never runs - the column stays at its migration-488 default of `[]`
+forever on prod, and this checklist read "No restricted field exists yet" even though the
+catalogue declares three. A local checkout works because the dev venv happens to have the
+MCP package installed, which is exactly what hid the bug. The precedent is
+`app/services/chatbot/lanes/business/fetch.py::CHATBOT_READ_ONLY_TOOLS`: a frozen set the
+container CAN read, kept honest by a CI test (`tests/chatbot/test_field_reveal_keys_pinned_to_catalog.py`)
+that imports the catalogue - which CI and a checkout both can - and asserts the two agree.
 """
 from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app.models.access import ContactFieldReveal, McpTool
+from app.models.access import ContactFieldReveal
+
+#: Every restricted key the catalogue declares, sorted by key, source of truth for the
+#: Contacts > Access > Field reveals checklist. Mirrors `ToolSpec.restricted_fields` on
+#: `crm_inventory_stock_balance_list` and `crm_procurement_po_placed_list` in
+#: `sorento_crm_mcp/sorento_crm_mcp/catalog.py`. A test pins this literal to the catalogue
+#: (see the module docstring above), so a new `restricted=` field on a presenter fails
+#: here until this tuple is updated to match, rather than silently missing the checklist.
+FIELD_REVEAL_KEYS: tuple[tuple[str, str], ...] = (
+    ("inventory.sellable", "Outstanding SO on stock answers"),
+    ("purchase_orders.placed", "PO placed (on order) on stock answers"),
+    ("purchase_orders.supplier", "PO supplier"),
+)
 
 
-def field_reveal_keys(db: Session) -> list[dict[str, str]]:
-    """Every restricted key declared on an active tool, deduped, with its label.
+def field_reveal_keys() -> list[dict[str, str]]:
+    """Every restricted key that exists, with its label, sorted by key.
 
-    Sourced from `mcp_tools.restricted_fields` (written by
-    `mcp_tool_registry_service.sync_catalog`), never hardcoded here - a new
-    `restricted=` field on a presenter reaches this list, and the checklist it
-    feeds, after the next sync with no FE or backend change.
+    Sourced from the `FIELD_REVEAL_KEYS` literal above, not from `mcp_tools` - see the
+    module docstring for why a live query cannot be used here.
     """
-    rows = (
-        db.query(McpTool.restricted_fields)
-        .filter(McpTool.is_active.is_(True))
-        .order_by(McpTool.tool_name)
-        .all()
-    )
-    seen: dict[str, str] = {}
-    for (fields,) in rows:
-        for entry in fields or []:
-            key = entry.get("key") if isinstance(entry, dict) else None
-            if not key or key in seen:
-                continue
-            seen[key] = entry.get("label") or key
-    return [{"key": key, "label": label} for key, label in sorted(seen.items())]
+    return [{"key": key, "label": label} for key, label in sorted(FIELD_REVEAL_KEYS)]
 
 
 def granted_keys(db: Session, respond_contact_id: str) -> list[str]:
