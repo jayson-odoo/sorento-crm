@@ -238,6 +238,30 @@ class TestTheTableIsComplete:
         )
         assert set(claimed) | undomained == CHATBOT_READ_ONLY_TOOLS
 
+    def test_the_boundary_module_agrees_with_domain_spec_exactly(self) -> None:
+        """D17 (8 Sep 2026): `app.services.mcp_tool_domains.CHATBOT_TOOL_DOMAINS` is a
+        SECOND, hand-authored copy of `DOMAIN_SPEC[domain].tools`, flattened - required
+        because `mcp_tool_registry_service.sync_catalog` (core) must never import
+        `app.services.chatbot` (AC-002), so it cannot read `DOMAIN_SPEC` directly. Kept
+        as a flat dict rather than derived FROM it (the smaller diff: deriving would
+        strand the per-tool reasoning comments living inside `DOMAIN_SPEC`'s own
+        `tools=(...)` tuples, e.g. why `crm_order_analytics` is excluded from `order`).
+        This is the guardrail that makes the pair behave as one fact: a tool added to
+        one side and not the other fails here, not as a live turn whose pool is
+        missing a tool no one noticed."""
+        from app.services.mcp_tool_domains import CHATBOT_TOOL_DOMAINS
+
+        expected = {
+            tool: domain
+            for domain, spec in contracts.DOMAIN_SPEC.items()
+            for tool in spec.tools
+        }
+        assert CHATBOT_TOOL_DOMAINS == expected, (
+            f"mcp_tool_domains.CHATBOT_TOOL_DOMAINS disagrees with DOMAIN_SPEC: "
+            f"only in map={dict(CHATBOT_TOOL_DOMAINS.items() - expected.items())}, "
+            f"only in DOMAIN_SPEC={dict(expected.items() - CHATBOT_TOOL_DOMAINS.items())}"
+        )
+
     def test_every_escalation_team_is_a_declared_team(self) -> None:
         for domain, spec in contracts.DOMAIN_SPEC.items():
             if spec.escalation_team is not None:

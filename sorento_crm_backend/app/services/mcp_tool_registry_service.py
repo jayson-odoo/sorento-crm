@@ -52,34 +52,15 @@ def _load_specs() -> Iterable:
     return tuple(merged_catalog(CATALOG))
 
 
-def _chatbot_domain_by_tool() -> dict[str, str]:
-    """Invert `DOMAIN_SPEC[domain].tools` into `{tool_name: domain}` (D9, 8 Sep 2026).
-
-    This is what `search_tool_chunks` filters a chatbot pool on instead of the tool
-    NAME - see `mcp_tools.chatbot_domain`'s own docstring for the leak that forced it.
-    A tool listed under two domains is a `DOMAIN_SPEC` authoring defect (one domain
-    per tool is the invariant `tests/chatbot/test_domain_spec.py` also checks
-    statically), so it raises here rather than silently picking one.
-    """
-    from app.services.chatbot.contracts import DOMAIN_SPEC
-
-    by_tool: dict[str, str] = {}
-    for domain, spec in DOMAIN_SPEC.items():
-        for tool_name in spec.tools:
-            existing_domain = by_tool.get(tool_name)
-            if existing_domain is not None and existing_domain != domain:
-                raise ValueError(
-                    f"Tool {tool_name!r} is listed under two DOMAIN_SPEC domains: "
-                    f"{existing_domain!r} and {domain!r}"
-                )
-            by_tool[tool_name] = domain
-    return by_tool
-
-
 def sync_catalog(db: Session) -> SyncReport:
     sync_started_at = datetime.utcnow()
     specs = list(_load_specs())
-    domain_by_tool = _chatbot_domain_by_tool()
+    # `CHATBOT_TOOL_DOMAINS` is what `search_tool_chunks` filters a chatbot pool on
+    # instead of the tool NAME - see `mcp_tools.chatbot_domain`'s own docstring for the
+    # leak that forced it. It lives in `app/services/`, not `app/services/chatbot/`:
+    # this is core, and core must never import the chatbot package (AC-002,
+    # `tests/chatbot/test_import_boundary.py`) - D17, after D15 got that backwards.
+    from app.services.mcp_tool_domains import CHATBOT_TOOL_DOMAINS
 
     added = 0
     updated = 0
@@ -88,7 +69,7 @@ def sync_catalog(db: Session) -> SyncReport:
         existing = (
             db.query(McpTool).filter(McpTool.tool_name == spec.name).one_or_none()
         )
-        chatbot_domain = domain_by_tool.get(spec.name)
+        chatbot_domain = CHATBOT_TOOL_DOMAINS.get(spec.name)
         if existing is None:
             db.add(
                 McpTool(

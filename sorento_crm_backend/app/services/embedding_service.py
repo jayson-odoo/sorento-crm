@@ -247,10 +247,16 @@ class EmbeddingReadService:
           `source_id LIKE '%<domain>%'` filter let it into every `order` pool (it was
           also renamed to `crm_procurement_po_placed_list` for the same reason, but
           this column is what protects every OTHER tool that shares a domain's word).
-          A `domain` that is a `DOMAIN_SPEC` key resolves through `mcp_tools`; an
-          unknown domain (should not happen - `domain` is always a `DOMAIN_HINTS`
-          member - but this is retrieval, not the ladder, so it degrades rather than
-          throws) falls back to the old LIKE so a caller never silently gets zero rows.
+          This method takes NO opinion on which `domain` strings are real - that
+          would mean importing `app.services.chatbot.contracts.DOMAIN_SPEC`, and this
+          is a core service the chatbot module calls INTO, never the reverse (AC-002,
+          `tests/chatbot/test_import_boundary.py` - D17, after D15 got that
+          backwards). Instead the `IN (...)` subquery's own EMPTINESS is the signal:
+          if no `mcp_tools` row carries this `chatbot_domain`, the query is run again
+          with the old `source_id LIKE '%<domain>%'` - covering both "the domain is
+          real but nothing is stamped with it yet" and "the domain string is not one
+          `mcp_tools.chatbot_domain` has ever heard of". One query in the common case,
+          two only when the first comes back empty - no separate existence check.
         * no ``embedding_documents`` join - a tool row is registry metadata, not a
           document, and requiring ``is_active`` would drop every tool.
         * no company predicate - MCP tool definitions are global, and there is no
@@ -262,39 +268,41 @@ class EmbeddingReadService:
         ported node body graded against captures of that shape.
         """
         distance = EmbeddingChunk.embedding.cosine_distance(query_embedding)
-        filters = [
+        base_filters = [
             EmbeddingChunk.source_type == source_type,
             EmbeddingChunk.is_current.is_(True),
         ]
-        if domain:
-            from app.services.chatbot.contracts import DOMAIN_SPEC
 
-            if domain in DOMAIN_SPEC:
-                domain_source_ids = self.db.query(
-                    func.concat("implemented::", McpTool.tool_name)
-                ).filter(McpTool.chatbot_domain == domain)
-                filters.append(EmbeddingChunk.source_id.in_(domain_source_ids))
-            else:
-                filters.append(EmbeddingChunk.source_id.like(f"%{domain}%"))
-        inner = (
-            self.db.query(
-                EmbeddingChunk.id.label("id"),
-                EmbeddingChunk.source_id.label("source_id"),
-                EmbeddingChunk.source_type.label("source_type"),
-                (1 - distance).label("similarity"),
-                distance.label("distance"),
+        def _run(extra_filters: list[Any]) -> list[Any]:
+            inner = (
+                self.db.query(
+                    EmbeddingChunk.id.label("id"),
+                    EmbeddingChunk.source_id.label("source_id"),
+                    EmbeddingChunk.source_type.label("source_type"),
+                    (1 - distance).label("similarity"),
+                    distance.label("distance"),
+                )
+                .filter(and_(*base_filters, *extra_filters))
+                .distinct(EmbeddingChunk.source_id)
+                .order_by(EmbeddingChunk.source_id, distance.asc())
+                .subquery()
             )
-            .filter(and_(*filters))
-            .distinct(EmbeddingChunk.source_id)
-            .order_by(EmbeddingChunk.source_id, distance.asc())
-            .subquery()
-        )
-        rows = (
-            self.db.query(inner)
-            .order_by(inner.c.distance.asc())
-            .limit(max(1, int(limit)))
-            .all()
-        )
+            return (
+                self.db.query(inner)
+                .order_by(inner.c.distance.asc())
+                .limit(max(1, int(limit)))
+                .all()
+            )
+
+        if domain:
+            domain_source_ids = self.db.query(
+                func.concat("implemented::", McpTool.tool_name)
+            ).filter(McpTool.chatbot_domain == domain)
+            rows = _run([EmbeddingChunk.source_id.in_(domain_source_ids)])
+            if not rows:
+                rows = _run([EmbeddingChunk.source_id.like(f"%{domain}%")])
+        else:
+            rows = _run([])
         return [
             {
                 "id": str(r.id),
