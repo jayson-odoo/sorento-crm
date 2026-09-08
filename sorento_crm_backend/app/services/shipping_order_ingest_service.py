@@ -864,17 +864,22 @@ class ShippingOrderIngestService(MasterRefResolver):
         # `model_fields_set`, not truthiness - so an omitted field on a
         # re-push never clears what an earlier push recorded (absent_vs_null,
         # the same rule this whole surface follows for every other field).
+        if "from_so_line_ref" in line.model_fields_set:
+            values["from_so_line_ref"] = line.from_so_line_ref
         if "from_po_line_ref" in line.model_fields_set:
             values["from_po_line_ref"] = line.from_po_line_ref
         if "from_po_number" in line.model_fields_set:
             values["from_po_number"] = line.from_po_number
-        # V5: the cross-book case - raw pass-through, same rule as the two
+        # V5: the cross-book case - raw pass-through, same rule as the
         # fields above. See `PurchaseOrderLine.from_so_external`'s column
         # comment for why this is not a claim row.
         if "from_so_external" in line.model_fields_set:
             external = line.from_so_external
+            # S4 review fix: `exclude_unset=True` so a partial object is
+            # stored exactly as sent - see the identical comment in
+            # `DocumentIngestService._line_values`.
             values["from_so_external"] = (
-                external.model_dump() if external is not None else None
+                external.model_dump(exclude_unset=True) if external is not None else None
             )
         return values
 

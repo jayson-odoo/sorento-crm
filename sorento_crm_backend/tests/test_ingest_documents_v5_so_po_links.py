@@ -360,3 +360,73 @@ class TestFromSoExternalRawStorage:
         assert row["from_so_external"] == {
             "db": "AED_OTHER", "doc_key": 1, "doc_no": None, "dtl_key": None,
         }
+
+
+# ==================================================================== S1
+class TestExplicitNullClears:
+    """`test_an_omitted_field_on_repush_never_clears_a_stored_value` passes
+    even under a truthiness check, since an OMITTED field yields `None` the
+    same way an explicit `null` does. These tests are what actually pins
+    `model_fields_set` (presence, not truthiness) and therefore the
+    `absent_vs_null: true` the contract advertises: an explicit `null` DOES
+    clear a stored value, on both `purchase_order_lines` and
+    `spo_allocations`.
+    """
+
+    def test_an_explicit_null_clears_from_po_line_ref_on_a_purchase_order_line(self, env):
+        line = _po_line(env, from_po_line_ref=f"{MARKER}:44909094:45021331")
+        record = _po_record(env, lines=[line])
+        first = env.post(INGEST_PO, [record])
+        assert first.json()["records"][0]["outcome"] == "created", first.text
+
+        repush_line = _po_line(env, ref=line["source_ref"], from_po_line_ref=None)
+        repush = dict(record, lines=[repush_line])
+        res = env.post(INGEST_PO, [repush])
+
+        assert res.json()["records"][0]["outcome"] == "updated", res.text
+        header = env.header("purchase_orders", record["source_ref"])
+        po_line = env.po_lines(header["id"])[0]
+        assert po_line["from_po_line_ref"] is None
+
+    def test_an_explicit_null_clears_from_po_line_ref_on_an_spo_line(self, env):
+        line = _spo_line(env, from_po_line_ref=f"{MARKER}:44909094:45021331")
+        record = _spo_record(env, lines=[line], supplier_ref=env.supplier_ref)
+        first = env.post(INGEST_SPO, [record])
+        assert first.json()["records"][0]["outcome"] == "created", first.text
+
+        repush_line = _spo_line(env, ref=line["source_ref"], from_po_line_ref=None)
+        repush = dict(record, lines=[repush_line])
+        res = env.post(INGEST_SPO, [repush])
+
+        assert res.json()["records"][0]["outcome"] == "updated", res.text
+        row = _spo_rows(env, record["spo_number"])[0]
+        assert row["from_po_line_ref"] is None
+
+    def test_an_explicit_null_clears_from_so_external_on_a_purchase_order_line(self, env):
+        line = _po_line(env, from_so_external={"db": "AED_OTHER", "doc_key": 1})
+        record = _po_record(env, lines=[line])
+        first = env.post(INGEST_PO, [record])
+        assert first.json()["records"][0]["outcome"] == "created", first.text
+
+        repush_line = _po_line(env, ref=line["source_ref"], from_so_external=None)
+        repush = dict(record, lines=[repush_line])
+        res = env.post(INGEST_PO, [repush])
+
+        assert res.json()["records"][0]["outcome"] == "updated", res.text
+        header = env.header("purchase_orders", record["source_ref"])
+        po_line = env.po_lines(header["id"])[0]
+        assert po_line["from_so_external"] is None
+
+    def test_an_explicit_null_clears_from_so_external_on_an_spo_line(self, env):
+        line = _spo_line(env, from_so_external={"db": "AED_OTHER", "doc_key": 1})
+        record = _spo_record(env, lines=[line], supplier_ref=env.supplier_ref)
+        first = env.post(INGEST_SPO, [record])
+        assert first.json()["records"][0]["outcome"] == "created", first.text
+
+        repush_line = _spo_line(env, ref=line["source_ref"], from_so_external=None)
+        repush = dict(record, lines=[repush_line])
+        res = env.post(INGEST_SPO, [repush])
+
+        assert res.json()["records"][0]["outcome"] == "updated", res.text
+        row = _spo_rows(env, record["spo_number"])[0]
+        assert row["from_so_external"] is None

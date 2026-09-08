@@ -1159,17 +1159,31 @@ class DocumentIngestService(MasterRefResolver):
         # every setattr site in `_sync_lines`/`_adopt_lines`. No column exists
         # for it on either line table.
         values["line_number"] = getattr(line, "line_number", None)
-        # V5 (AutoCount linkage widen): raw pass-through onto
-        # `purchase_order_lines.from_so_external` - see the column comment
-        # in `app/models/procurement.py`. `CanonicalSalesOrderLine` carries
-        # no such field, so `model_fields_set` never contains it for a
-        # sales-order line and this is a no-op there. Left out of `values`
+        # V5 (AutoCount linkage widen, B2 review fix - uniform on both line
+        # tables): raw pass-through onto `purchase_order_lines` - see the
+        # column comments in `app/models/procurement.py`.
+        # `CanonicalSalesOrderLine` carries none of these four fields, so
+        # `model_fields_set` never contains them for a sales-order line and
+        # this whole block is a no-op there. Each is left OUT of `values`
         # entirely when absent (absent_vs_null): an omitted field on a
-        # re-push must never clear what an earlier push recorded.
+        # re-push must never clear what an earlier push recorded - proven
+        # by an explicit `null`, which DOES clear (S1 review fix), since
+        # `model_fields_set` is presence, not truthiness.
+        if "from_so_line_ref" in line.model_fields_set:
+            values["from_so_line_ref"] = line.from_so_line_ref
+        if "from_po_line_ref" in line.model_fields_set:
+            values["from_po_line_ref"] = line.from_po_line_ref
+        if "from_po_number" in line.model_fields_set:
+            values["from_po_number"] = line.from_po_number
         if "from_so_external" in line.model_fields_set:
             external = line.from_so_external
+            # S4 review fix: `exclude_unset=True` so a partial object (the
+            # ESB naming only `db` and `doc_key`, say) is stored exactly as
+            # sent - `model_dump()` alone fills every OTHER field of the
+            # nested model with `None`, which is not what "raw, verbatim"
+            # means and would drop a key on a later, narrower re-push.
             values["from_so_external"] = (
-                external.model_dump() if external is not None else None
+                external.model_dump(exclude_unset=True) if external is not None else None
             )
         return values
 
