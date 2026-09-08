@@ -14,13 +14,13 @@ already carried these two before the widen. All nullable, no backfill, no
 default: every pre-existing row simply states nothing.
 
 Revision ID: 493_spo_alloc_from_po_link
-Revises: 492_mcp_tool_chatbot_domain
+Revises: ptag_0005
 """
 import sqlalchemy as sa
 from alembic import op
 
 revision = "493_spo_alloc_from_po_link"
-down_revision = "492_mcp_tool_chatbot_domain"
+down_revision = "ptag_0005"
 branch_labels = None
 depends_on = None
 
