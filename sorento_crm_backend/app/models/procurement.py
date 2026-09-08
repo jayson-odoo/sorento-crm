@@ -550,6 +550,9 @@ class SPOAllocation(Base, CompanyScopedMixin):
     from_po_line_ref = Column(String(255), nullable=True)
     #: The source purchase order's own document number, alongside the ref above.
     from_po_number = Column(String(100), nullable=True)
+    #: The cross-book case of a sales-order line reference - see the
+    #: identical comment on `PurchaseOrderLine.from_so_external` above.
+    from_so_external = Column(JSONB, nullable=True)
 
     inbound_shipment = relationship("InboundShipment", back_populates="spo_allocations")
     supplier = relationship("Supplier", foreign_keys=[supplier_id])
@@ -809,6 +812,15 @@ class PurchaseOrderLine(Base, CompanyScopedMixin):
     line_status = Column(String(50), default="open", nullable=False)
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
+    # V5 (AutoCount linkage widen, ingest-contract-2-2-so-links): the
+    # cross-book case of a sales-order line reference - the sales order
+    # lives in ANOTHER AutoCount database, so its key cannot resolve here.
+    # Recorded raw, verbatim from the payload's `from_so_external` object -
+    # the smallest honest place for a fact that never becomes a Sorento id
+    # (see `order_link_service.write_line_ref_claims`'s docstring for why
+    # this is not a `scm.order_link_claim` row: that table's identity
+    # requires a real `so_number`, which a cross-book key does not carry).
+    from_so_external = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False)
 

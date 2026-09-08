@@ -545,22 +545,36 @@ class ShippingOrderIngestService(MasterRefResolver):
         The claim-writing loop itself is `order_link_service
         .write_claims_for_lines` (S7 dedup), shared with
         `DocumentIngestService`'s own line claims.
+
+        V5 (AutoCount linkage widen): a line naming the EXACT sales-order
+        line it was raised for, via `from_so_line_ref`, resolves through
+        `order_link_service.write_line_ref_claims` - see
+        `DocumentIngestService._write_order_link_claims` for the shared
+        docstring, and `order_link_service.write_line_ref_claims`'s own for
+        the resolution rule.
         """
-        wanted = [
+        number_wanted = [
             (line.source_ref, [n for n in (line.from_so_numbers or []) if n])
             for line in payload.lines
             if getattr(line, "from_so_numbers", None)
         ]
-        if not wanted:
+        ref_wanted = [
+            (line.source_ref, line.from_so_line_ref)
+            for line in payload.lines
+            if getattr(line, "from_so_line_ref", None)
+        ]
+        if not number_wanted and not ref_wanted:
             return
 
-        refs = [source_ref for source_ref, _ in wanted]
+        refs = {source_ref for source_ref, _ in number_wanted} | {
+            source_ref for source_ref, _ in ref_wanted
+        }
         rows = (
             self.db.query(SPOAllocation)
             .filter(
                 SPOAllocation.company_id == self.company_id,
                 SPOAllocation.source_doc_ref == payload.source_ref,
-                SPOAllocation.source_ref.in_(refs),
+                SPOAllocation.source_ref.in_(list(refs)),
             )
             .all()
         )
@@ -569,7 +583,15 @@ class ShippingOrderIngestService(MasterRefResolver):
             company_id=self.company_id,
             document_number=payload.spo_number,
             rows=rows,
-            wanted=wanted,
+            wanted=number_wanted,
+            id_attr="spo_allocation_id",
+        )
+        order_link_service.write_line_ref_claims(
+            self.db,
+            company_id=self.company_id,
+            document_number=payload.spo_number,
+            rows=rows,
+            wanted=ref_wanted,
             id_attr="spo_allocation_id",
         )
 
@@ -846,6 +868,14 @@ class ShippingOrderIngestService(MasterRefResolver):
             values["from_po_line_ref"] = line.from_po_line_ref
         if "from_po_number" in line.model_fields_set:
             values["from_po_number"] = line.from_po_number
+        # V5: the cross-book case - raw pass-through, same rule as the two
+        # fields above. See `PurchaseOrderLine.from_so_external`'s column
+        # comment for why this is not a claim row.
+        if "from_so_external" in line.model_fields_set:
+            external = line.from_so_external
+            values["from_so_external"] = (
+                external.model_dump() if external is not None else None
+            )
         return values
 
     def _location_code(

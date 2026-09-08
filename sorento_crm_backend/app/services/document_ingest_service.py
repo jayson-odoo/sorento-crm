@@ -745,21 +745,34 @@ class DocumentIngestService(MasterRefResolver):
         claim-writing loop is `order_link_service.write_claims_for_lines`
         (S7 dedup), shared with `ShippingOrderIngestService`'s own line
         claims - only the row fetch differs between the two.
+
+        V5 (AutoCount linkage widen): a line naming the EXACT sales-order
+        line it was raised for, via `from_so_line_ref`, resolves through
+        `order_link_service.write_line_ref_claims` - the precise-match
+        sibling of `write_claims_for_lines`, run over the SAME row fetch
+        (one query covers both fields' refs) - see its own docstring.
         """
-        wanted = [
+        number_wanted = [
             (line.source_ref, [n for n in (line.from_so_numbers or []) if n])
             for line in payload.lines
             if getattr(line, "from_so_numbers", None)
         ]
-        if not wanted:
+        ref_wanted = [
+            (line.source_ref, line.from_so_line_ref)
+            for line in payload.lines
+            if getattr(line, "from_so_line_ref", None)
+        ]
+        if not number_wanted and not ref_wanted:
             return
 
-        refs = [source_ref for source_ref, _ in wanted]
+        refs = {source_ref for source_ref, _ in number_wanted} | {
+            source_ref for source_ref, _ in ref_wanted
+        }
         rows = (
             self.db.query(PurchaseOrderLine)
             .filter(
                 PurchaseOrderLine.purchase_order_id == str(header.id),
-                PurchaseOrderLine.source_ref.in_(refs),
+                PurchaseOrderLine.source_ref.in_(list(refs)),
             )
             .all()
         )
@@ -768,7 +781,15 @@ class DocumentIngestService(MasterRefResolver):
             company_id=self.company_id,
             document_number=payload.po_number,
             rows=rows,
-            wanted=wanted,
+            wanted=number_wanted,
+            id_attr="po_line_id",
+        )
+        order_link_service.write_line_ref_claims(
+            self.db,
+            company_id=self.company_id,
+            document_number=payload.po_number,
+            rows=rows,
+            wanted=ref_wanted,
             id_attr="po_line_id",
         )
 
@@ -1138,6 +1159,18 @@ class DocumentIngestService(MasterRefResolver):
         # every setattr site in `_sync_lines`/`_adopt_lines`. No column exists
         # for it on either line table.
         values["line_number"] = getattr(line, "line_number", None)
+        # V5 (AutoCount linkage widen): raw pass-through onto
+        # `purchase_order_lines.from_so_external` - see the column comment
+        # in `app/models/procurement.py`. `CanonicalSalesOrderLine` carries
+        # no such field, so `model_fields_set` never contains it for a
+        # sales-order line and this is a no-op there. Left out of `values`
+        # entirely when absent (absent_vs_null): an omitted field on a
+        # re-push must never clear what an earlier push recorded.
+        if "from_so_external" in line.model_fields_set:
+            external = line.from_so_external
+            values["from_so_external"] = (
+                external.model_dump() if external is not None else None
+            )
         return values
 
     def _sync_lines(

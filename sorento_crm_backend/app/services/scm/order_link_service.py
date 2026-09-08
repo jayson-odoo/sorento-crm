@@ -373,6 +373,93 @@ def write_claims_for_lines(
         resolve(db, so_numbers=so_numbers)
 
 
+def write_line_ref_claims(
+    db: Session,
+    *,
+    company_id: Optional[str],
+    document_number: str,
+    rows: Sequence,
+    wanted: list[tuple[str, str]],
+    id_attr: str,
+) -> None:
+    """V5 (AutoCount linkage widen): the exact-line sibling of
+    `write_claims_for_lines`, for a purchase-order or shipping-order line
+    that carries `from_so_line_ref` - the EXACT `sales_order_lines.source_ref`
+    it was raised for, rather than a bare SO number.
+
+    `wanted` is `(line_source_ref, from_so_line_ref)` pairs, read the same
+    way `write_claims_for_lines` reads `(line_source_ref, so_numbers)`;
+    `rows` are the already-flushed purchase-order or shipping-order line
+    rows, keyed by their OWN `source_ref`, and the same fetch the caller
+    already made for `write_claims_for_lines` is reused rather than a
+    second query.
+
+    A ref that resolves to a held `sales_order_lines` row writes the claim
+    with `so_line_id` FILLED at write time, through `claim_placed_on_po` -
+    the join is exact (AutoCount's own DtlKey), so there is nothing left for
+    `resolve()` to decide, and the same item appearing twice on one sales
+    order can no longer have its stock assigned to the wrong line. This is
+    deliberately NOT `claim_book_pairing`: that function's whole contract is
+    "a number, nothing more, resolution deferred" (see its own docstring),
+    and folding a sometimes-already-known `so_line_id` into it would change
+    what it means for every caller that only ever gives it a number.
+
+    A ref that does NOT resolve (the sales order has not been pushed yet -
+    the normal case, not an error) writes nothing here. There is no number
+    to open a claim WITH from a ref alone; the line's own `from_so_numbers`,
+    when the ESB also sends it, already opens one through
+    `write_claims_for_lines`, unaffected by this function running alongside
+    it - `resolve()`'s regular sweep fills that one in once the SO arrives.
+    """
+    if not wanted:
+        return
+
+    rows_by_ref = {row.source_ref: row for row in rows}
+    product_ids = {row.product_id for row in rows if row.product_id}
+    codes = (
+        dict(
+            db.query(Product.id, Product.product_code)
+            .filter(Product.id.in_(product_ids))
+            .all()
+        )
+        if product_ids
+        else {}
+    )
+
+    so_refs = {so_line_ref for _line_ref, so_line_ref in wanted}
+    so_line_rows = (
+        db.query(SalesOrderLine, SalesOrder.so_number)
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .filter(SalesOrderLine.source_ref.in_(list(so_refs)))
+        .all()
+        if so_refs
+        else []
+    )
+    so_by_ref = {
+        so_line.source_ref: (so_line, so_number) for so_line, so_number in so_line_rows
+    }
+
+    for line_source_ref, so_line_ref in wanted:
+        row = rows_by_ref.get(line_source_ref)
+        if row is None:
+            continue
+        found = so_by_ref.get(so_line_ref)
+        if found is None:
+            continue
+        so_line, so_number = found
+        item_code = codes.get(row.product_id)
+        claim_placed_on_po(
+            db,
+            company_id=company_id,
+            so_number=so_number,
+            po_number=document_number,
+            item_code=item_code,
+            so_line_id=str(so_line.id),
+            source=SOURCE_AUTOCOUNT,
+            **{id_attr: str(row.id)},
+        )
+
+
 def _linked_by_target(db: Session, target_ids: set[str]) -> dict[str, Decimal]:
     """What LINKS already occupy on each document line, keyed by target id."""
     out: dict[str, Decimal] = {}
