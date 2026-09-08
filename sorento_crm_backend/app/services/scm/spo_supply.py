@@ -103,6 +103,18 @@ def visible_line_clauses() -> tuple:
     )
 
 
+def is_visible_allocation(allocation: "SPOAllocation") -> bool:
+    """The Python twin of `visible_line_clauses()`, for a reader that already holds
+    loaded `SPOAllocation` ORM objects rather than building a query (R7, round 2
+    security review) - `spo_conversion_service.planner_state`'s DISPLAY, filtering the
+    writer-facing, deliberately-unfiltered rows `_own_state` hands back. Kept as the
+    one restatement of the same rule rather than a second inline copy, so the two can
+    never drift the way `open_incoming_clauses()`'s SQL/Python halves are already
+    warned about above.
+    """
+    return allocation.retired_at is None or float(allocation.quantity_received or 0) > 0
+
+
 def overdue_days(arrival_date: Optional[date], as_of: Optional[date] = None) -> int:
     """How many days late a promised arrival is. 0 when it is today, ahead, or unstated.
 

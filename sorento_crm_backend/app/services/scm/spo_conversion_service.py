@@ -832,6 +832,33 @@ def _spo_so_coverage_rows(
     return out
 
 
+def _hidden_spo_line_ids(db: Session, po_line_ids) -> set[str]:
+    """Which of these CRM SPO lines' own `spo_allocations` rows are ENTIRELY hidden
+    (R7/AC-E17) - a po_line_id with at least one VISIBLE allocation is not hidden, and
+    a po_line_id with no allocation row at all (nothing allocated yet) is not hidden
+    either. Only a po_line_id whose every EXISTING allocation fails
+    `spo_supply.visible_line_clauses()` earns a place here.
+    """
+    ids = {str(i) for i in po_line_ids if i}
+    if not ids:
+        return set()
+    from app.services.scm import spo_supply
+
+    visible_ids: set[str] = set()
+    hidden_ids: set[str] = set()
+    for po_line_id, is_visible in (
+        db.query(
+            SPOAllocation.po_line_id,
+            and_(*spo_supply.visible_line_clauses()).label("is_visible"),
+        )
+        .filter(SPOAllocation.po_line_id.in_(ids))
+        .all()
+    ):
+        key = str(po_line_id)
+        (visible_ids if is_visible else hidden_ids).add(key)
+    return hidden_ids - visible_ids
+
+
 def _spo_cover_by_so_line(db: Session, product_id: str) -> dict[str, list[dict]]:
     """Every CRM SPO line pointed at a retail sales-order line for THIS product, oldest SPO
     number first - `{so_line_id: [{"spo_number", "qty"}]}` (S5, `so_coverage[].taken_qty` /
@@ -845,11 +872,19 @@ def _spo_cover_by_so_line(db: Session, product_id: str) -> dict[str, list[dict]]
     A thin grouping over `_spo_so_coverage_rows`, which does the actual read. An unwound SPO
     takes its lines with it, so its record disappears with it, which is correct: the promise
     was undone.
+
+    R7/AC-E17: shares its row scan with `coverage_for_so_lines`, whose own hidden-line
+    handling this mirrors via `_hidden_spo_line_ids` - a po_line_id whose only allocation(s)
+    are retired is dropped here too, or the planner's `taken_by` would still name an SPO
+    the sales order's "Linked to" column (`coverage_for_so_lines`) already hides, exactly
+    the disagreement that module's own docstring says can never happen.
     """
+    rows = _spo_so_coverage_rows(db, product_id=product_id)
+    hidden = _hidden_spo_line_ids(db, {po_line_id for _so, _spo, _qty, po_line_id, _po_id in rows})
     out: dict[str, list[dict]] = {}
-    for so_line_id, spo_number, qty, _po_line_id, _purchase_order_id in _spo_so_coverage_rows(
-        db, product_id=product_id
-    ):
+    for so_line_id, spo_number, qty, po_line_id, _purchase_order_id in rows:
+        if po_line_id in hidden:
+            continue
         out.setdefault(so_line_id, []).append({"spo_number": spo_number, "qty": qty})
     return out
 
@@ -2590,16 +2625,16 @@ def _own_state(
             "so_takes": so_takes,
         }
 
-    from app.services.scm import spo_supply
-
+    # R7 amended, round 2 (AC-E16): this is a WRITER's view, read by `revise` (the SPO
+    # edit SAVE) as well as by `planner_state` (the display) - a save that could not see
+    # a hidden allocation would neither update nor delete it and would insert a SECOND
+    # row for the same (shipment line, warehouse), risking the unique constraint and
+    # double-counting in `refresh_shipment_line_statuses`'s deliberately unfiltered
+    # totals. `visible_line_clauses()` is applied by `planner_state` instead, on its own
+    # DISPLAY copy of this state, never here.
     alloc_rows = (
         db.query(SPOAllocation)
-        .filter(
-            SPOAllocation.po_line_id.in_(list(line_by_po_line.keys())),
-            # R7/AC-E10: a retired allocation neither lists nor rolls up into
-            # `received` here.
-            *spo_supply.visible_line_clauses(),
-        )
+        .filter(SPOAllocation.po_line_id.in_(list(line_by_po_line.keys())))
         .all()
     )
     alloc_line: dict[str, str] = {}
@@ -2661,6 +2696,8 @@ def planner_state(db: Session, shipment_id: str, purchase_order_id: str) -> dict
     ticks come from `so_takes` - and recomputing it against a quantity nobody has typed yet
     would state a default this screen is not going to apply.
     """
+    from app.services.scm import spo_supply
+
     shipment, po, links = _spo_scope(db, shipment_id, purchase_order_id)
     own = _own_state(db, po, links)
 
@@ -2700,6 +2737,17 @@ def planner_state(db: Session, shipment_id: str, purchase_order_id: str) -> dict
         held = own.get(sid)
         if held is None:
             continue
+        # R7 amended, round 2 (AC-E16): `_own_state` hands back EVERY allocation on
+        # purpose - `revise` (the save) reads `held` directly and must see a hidden
+        # one to update or delete it rather than insert a duplicate. This DISPLAY
+        # read is the one place the clause belongs, so a retired-only landing does
+        # not show in the split editor or the received rollup below.
+        visible_allocations = [
+            a for a in held["allocations"] if spo_supply.is_visible_allocation(a)
+        ]
+        visible_received = sum(
+            float(a.quantity_received or 0) for a in visible_allocations
+        )
         item_code, product_name = products.get(str(ln.product_id), (None, None))
         packed = float(ln.quantity_shipped or 0)
         already = already_spo.get(sid, {"qty": 0.0, "spo_numbers": []})
@@ -2782,7 +2830,7 @@ def planner_state(db: Session, shipment_id: str, purchase_order_id: str) -> dict
         options = list(location["options"])
         known = {o["warehouse_id"] for o in options}
         splits: list[dict] = []
-        for allocation in held["allocations"]:
+        for allocation in visible_allocations:
             if not allocation.warehouse_id:
                 continue
             warehouse_id = str(allocation.warehouse_id)
@@ -2841,7 +2889,7 @@ def planner_state(db: Session, shipment_id: str, purchase_order_id: str) -> dict
             "so_takes": [
                 {"key": key, "qty": qty} for key, qty in sorted(held["so_takes"].items())
             ],
-            "received_qty": held["received"],
+            "received_qty": visible_received,
         })
 
     return {
