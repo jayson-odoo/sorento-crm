@@ -1049,10 +1049,10 @@ export const AI_EXTRACT_FORM_KEYS: Record<PortalLandingKind, string> = {
   stock_inquiry: 'portal.stock_inquiry',
   purchase_request: 'portal.purchase_request',
   sponsorship_form: 'portal.sponsorship_form',
-  // D7: registered in the backend's FORM_SCHEMAS as its own top-level key
-  // (not `portal.`-prefixed like the four above) since it is a gated form
-  // with its own dedicated page, not a `SubmissionForm` kind.
-  price_tag_request: 'price_tag_request',
+  // D7: registered in the backend's FORM_SCHEMAS with the same `portal.`
+  // prefix as every other portal form key (Phase 1 briefly had this as a
+  // bare `price_tag_request` - wrong; fixed to match convention).
+  price_tag_request: 'portal.price_tag_request',
 };
 
 export async function aiExtractFromFiles(

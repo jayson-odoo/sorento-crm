@@ -83,7 +83,12 @@ TEXT_MAX_CHARS = 200_000
 # line per affected product (code + quantity), so they receive a `products`
 # array too. stock_inquiry / master.* still keep product codes inline.
 FORMS_WITH_LINE_ITEMS: frozenset[str] = frozenset(
-    {"portal.purchase_request", "portal.sponsorship_form", "portal.complaint"}
+    {
+        "portal.purchase_request",
+        "portal.sponsorship_form",
+        "portal.complaint",
+        "portal.price_tag_request",
+    }
 )
 
 

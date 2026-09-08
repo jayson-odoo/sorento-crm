@@ -388,11 +388,34 @@ def _build_master_schema_from_field_linkage(entity_type: str) -> list[ExtractFie
     return out
 
 
+_PORTAL_PRICE_TAG_REQUEST: list[ExtractFieldSpec] = [
+    ExtractFieldSpec(
+        name="customer_name",
+        label="Customer name",
+        kind="fk_customer",
+        note=(
+            "The BUYER / end-customer company the sales order is for - the debtor "
+            "name as printed on the document's 'Bill To' / 'Sold To' / 'Customer' "
+            "line. This is NOT the supplier/seller issuing the document, and NOT "
+            "the salesperson. Return the company name only."
+        ),
+        examples=["ACME Sdn Bhd", "Tan Construction Sdn Bhd"],
+    ),
+    ExtractFieldSpec(
+        name="so_number",
+        label="Sales order number",
+        kind="text",
+        note="The sales order document number as printed, if any.",
+    ),
+]
+
+
 FORM_SCHEMAS: dict[str, list[ExtractFieldSpec]] = {
     "portal.complaint": _PORTAL_COMPLAINT,
     "portal.stock_inquiry": _PORTAL_STOCK_INQUIRY,
     "portal.purchase_request": _PORTAL_PURCHASE_REQUEST,
     "portal.sponsorship_form": _PORTAL_SPONSORSHIP_FORM,
+    "portal.price_tag_request": _PORTAL_PRICE_TAG_REQUEST,
 }
 
 
