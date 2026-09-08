@@ -111,6 +111,20 @@ def _draft_line(db, *, product_id, warehouse_id, qty, po_id=None, number=None) -
     return po_id, line_id
 
 
+def _pool_warehouse(db, code: str) -> str:
+    """A warehouse that is genuinely a POOL by the FK `_pool_codes()` reads (slice H, 8 Sep
+    2026 - the automatic pass takes from the site pool alone, never a plain warehouse row
+    nothing else's `pool_warehouse_id` names). The tests that call this are explicitly
+    about G7's reservation arithmetic on a pool line, never about G12's project-bin lock,
+    so the destination has to be a genuine pool or the automatic cascade they depend on
+    would never reach it."""
+    from tests.scm.test_m3_run import _mk_warehouse
+
+    warehouse_id = _mk_warehouse(db, code)
+    _mk_warehouse(db, f"{code}-SIB", pool_warehouse_id=warehouse_id)
+    return warehouse_id
+
+
 def _claims_on(db, line_id) -> list[dict]:
     return [
         dict(r._mapping)
@@ -170,8 +184,17 @@ def test_a_plan_confirm_claims_its_bin_line_for_both_rows_that_sized_it(db):
     refuse to place the very rows that sized it unless the line is attributed to them.
 
     One line of 114 at BRW-IB sized by SO X (30) and SO Y (84): TWO claims, both
-    `crm_supply`, and both rows linked for their own quantity. One PO line, never two -
-    the claim is an attribution, not a split.
+    `crm_supply`, resolved onto the rows that sized it. One PO line, never two - the claim
+    is an attribution, not a split.
+
+    SLICE H, 8 Sep 2026: the write-time claim used to make this line `cascadable` too
+    (tier 1, `own_claim` clearing G12's project-bin lock), so both rows came out of the
+    confirm already linked. It no longer does - a project-bin line is never a POOL, and
+    the automatic pass now takes from the pool alone (AC-H1). The ATTRIBUTION still gets
+    written here, in the same transaction, because that is what tells a later reader (the
+    Link dialog, or slice E's SO-tied tier once it lands) whose line this is - the automatic
+    pass just does not act on it yet. Until then both rows stay raised and a buyer links
+    them by hand (AC-H7).
     """
     actor = seed_user(db, None)
     bin_id = _project_bin(db, f"{MARKER}-IB-{uuid.uuid4().hex[:6].upper()}")
@@ -188,8 +211,9 @@ def test_a_plan_confirm_claims_its_bin_line_for_both_rows_that_sized_it(db):
     assert all(c["so_line_id"] for c in claims), (
         "an unresolved claim is invisible to dedication, so the attribution would do nothing"
     )
-    assert _linked(db, x["inquiry_row"].id) == 30.0
-    assert _linked(db, y["inquiry_row"].id) == 84.0
+    # AC-H1: the attribution is written, but a project-bin line is never auto-taken.
+    assert _linked(db, x["inquiry_row"].id) == 0.0
+    assert _linked(db, y["inquiry_row"].id) == 0.0
     assert (
         db.execute(
             text(
@@ -246,6 +270,14 @@ def test_the_cascade_never_claims_a_project_bin_line_it_did_not_create(db):
 
     A project-bin line NOTHING attributed stays untaken and unclaimed, however good its
     location tier: the automatic pass may not manufacture its own permission.
+
+    SLICE H, 8 Sep 2026 changes what the CONTROL below can prove: a project-bin line is
+    never cascadable any more even once attributed (AC-H1), so "the same call now places
+    it" is no longer true and would be the wrong thing to assert. The control instead
+    proves the walk really SAW the attribution - `unattributed` clears the moment the book
+    claims the line - while `cascadable` stays `False` throughout, now for the pool-only
+    reason rather than G12's lock. That still rules out "the cascade was never reachable"
+    as the explanation for the two assertions above.
     """
     from tests.scm.test_channel_read_model import _confirmed_leg
     from tests.scm.test_m3_run import _mk_product
@@ -286,8 +318,9 @@ def test_the_cascade_never_claims_a_project_bin_line_it_did_not_create(db):
     )
 
     # THE CONTROL, so the assertions above cannot pass because the cascade was never
-    # reachable: attribute the SAME line to this row's own order and the same call places
-    # it. Nothing else changes.
+    # reachable: attribute the SAME line to this row's own order. `unattributed` clears -
+    # the walk really did see the claim - though `cascadable` stays `False` (AC-H1: a
+    # project-bin line, whoever it is attributed to).
     core_line_id = db.execute(
         text(
             "SELECT core_sales_order_line_id FROM projects.sales_order_lines "
@@ -310,11 +343,19 @@ def test_the_cascade_never_claims_a_project_bin_line_it_did_not_create(db):
     )
     db.flush()
 
+    service = ProjectOrderInquiryService(db)
+    candidate = next(
+        c for c in service._candidates_for_row(leg["inquiry_row"])
+        if c["target_id"] == line_id
+    )
+    assert candidate["unattributed"] is False, "the walk did not see the book's own claim"
+    assert candidate["cascadable"] is False, "AC-H1: a project-bin line is never auto-taken"
+
     ProjectOrderInquiryService(db).auto_place_for_products(
         [pid], actor_user_id=seed_user(db, None), trigger="test", include_awaiting=True,
     )
-    assert _linked(db, leg["inquiry_row"].id) == 30.0, (
-        "with the book's own attribution the identical pass places it"
+    assert _linked(db, leg["inquiry_row"].id) == 0.0, (
+        "AC-H1: even with the book's own attribution, a project-bin line stays untaken"
     )
 
 
@@ -338,7 +379,7 @@ def test_one_claim_backing_two_links_on_one_document_is_netted_once(db):
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
     actor = seed_user(db, None)
-    pool = _mk_warehouse(db, f"{MARKER}POOL{uuid.uuid4().hex[:5].upper()}")
+    pool = _pool_warehouse(db, f"{MARKER}POOL{uuid.uuid4().hex[:5].upper()}")
     pid = _mk_product(db, f"{MARKER}-{uuid.uuid4().hex[:6].upper()}")
     first = _confirmed_leg(db, product_id=pid, warehouse_id=pool, buy_qty=5)
     second = _confirmed_leg(db, product_id=pid, warehouse_id=pool, buy_qty=3)
@@ -957,7 +998,7 @@ def test_the_earlier_sales_order_can_still_auto_take_its_own_rationed_share(db):
     from tests.scm.test_m3_run import _mk_product, _mk_warehouse
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
-    pool = _mk_warehouse(db, f"{MARKER}POOL{uuid.uuid4().hex[:5].upper()}")
+    pool = _pool_warehouse(db, f"{MARKER}POOL{uuid.uuid4().hex[:5].upper()}")
     pid = _mk_product(db, f"{MARKER}-{uuid.uuid4().hex[:6].upper()}")
     po_id, line_id = _draft_line(db, product_id=pid, warehouse_id=pool, qty=100)
     db.execute(text("UPDATE purchase_orders SET status = 'active' WHERE id = :i"),

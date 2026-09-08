@@ -3456,6 +3456,12 @@ class ProjectOrderInquiryService:
         """The ownership groups whose OPEN PURCHASE ORDERS cannot cover their own backlog
         (ladder v4, section 1d).
 
+        SLICE H, 8 Sep 2026: since no group line is ever `cascadable` any more (the
+        automatic pass takes from the site pool alone), this set no longer bears on what
+        the automatic pass places - it still governs what `_candidates_for_row` OFFERS,
+        which is what the Link dialog lists and what a manual placement (`manual=True`) may
+        take. Left in place rather than removed for that reason.
+
         `group_net + everything still to come on the group's own purchase orders`. At or
         above zero the group has purchases nobody has claimed and a row may link to one;
         BELOW zero, every unit already on order is owed to demand the group carries and a
@@ -3513,6 +3519,11 @@ class ProjectOrderInquiryService:
     def _exempt_groups_for_row(self, row: OrderInquiryRow, product_id: str) -> set:
         """The deficit exemption THIS row has earned, and nobody else's (B1, code review
         27 Aug 2026).
+
+        SLICE H, 8 Sep 2026: the same note as `_groups_in_deficit` carries here - a group
+        line this exemption lifts is still never `cascadable`, so the exemption now bears
+        only on what `_candidates_for_row` OFFERS (the Link dialog) and on a manual
+        placement, never on what the automatic pass takes. Left in place for that reason.
 
         A group holding an acknowledged, still-unlinked row for the product may reach its
         own purchase order however short it is, because that row is the demand somebody
@@ -3698,12 +3709,29 @@ class ProjectOrderInquiryService:
             "line_label": line_label,
             "location": location,
             "tier": tier,
-            # What the automatic pass may take (the captain, 27 Aug): the row's own site
-            # pool and better, never a sibling group or another site. A row naming no
-            # location ranks nothing and keeps the whole list, as before. G12 narrows this
-            # further for a project-bin line this row's own SO has not claimed - refused
-            # to the automatic pass however good its location tier, because the SO that
-            # claims it is the only one allowed to auto-take it.
+            # What the automatic pass may take: the SITE POOL and nowhere else (the owner,
+            # correcting the reading of the 27 August ruling, 8 Sep 2026 - slice H). The 27
+            # August wording ("the site pool and better") read as a ceiling that also
+            # admitted the row's own location (tier 1) and its ownership group at another
+            # site (tier 2), and on real data that let the automatic pass take BRW-IB's own
+            # open line for SO391853 out from under it - stock standing at a project
+            # location is already spoken for by that project, and only the pool is
+            # uncommitted. So this is decided by POOL MEMBERSHIP alone - the candidate's
+            # own location is one of the codes `_pool_codes()` names - never by the tier
+            # number, and never by whether the row itself names a location: a row with no
+            # location ranked nothing above (every candidate reads tier 5) and is now dealt
+            # pool lines only too, the same as a well-specified one, rather than the least-
+            # specified row being allowed to take what the best-specified row may not.
+            #
+            # The tier and its sub-rank are UNCHANGED and still decide the ORDER a pool is
+            # tried in (the row's own site pool before the others) - this only narrows WHICH
+            # tier is ever taken automatically. The Link dialog is untouched: it still lists
+            # every tier, including a project-location line, and a buyer may take one by
+            # hand - that override path is `manual`, read below.
+            #
+            # G12 narrows this further for a project-bin line this row's own SO has not
+            # claimed - refused to the automatic pass however good its location tier,
+            # because the SO that claims it is the only one allowed to auto-take it.
             #
             # There is no trial, preview or self-claiming variant of this test, and there
             # must never be one (captain, 2 Sep 2026, on real data): the cascade writing
@@ -3712,7 +3740,9 @@ class ProjectOrderInquiryService:
             # SO381895. A project-bin line is attributed by the SUPPLY WRITER that created
             # it (`app/services/scm/supply_claim.py`) or by the book's own FromSODocList
             # column, never by the pass that wants to consume it.
-            "cascadable": (own_location is None or tier <= TIER_POOL) and not project_locked,
+            "cascadable": (
+                str(location or "").strip().upper() in pools
+            ) and not project_locked,
             "issue_date": issue_date,
             "expected_date": expected_date,
             "remaining": remaining,
@@ -3781,11 +3811,11 @@ class ProjectOrderInquiryService:
         for candidate in candidates:
             if still <= _ZERO:
                 break
-            # The cascade stops at the site pool (the captain, 27 Aug: "we should take
-            # from site pool only"). A sibling group's line, or one at another site, is
+            # Only a candidate the SITE POOL owns is ever taken automatically (slice H,
+            # correcting the 27 August reading - see `_candidate`'s own `cascadable`). A
+            # project-location line, a sibling group's line, or one at another site is
             # still LISTED in the Link dialog - a buyer may take it by hand - but the
-            # automatic pass never does: BRW-IB's purchase is BRW-IB's, and an order at
-            # MWH-IR taking 78 of it was the case that ruled it.
+            # automatic pass never does.
             if not candidate.get("cascadable", True):
                 continue
             remaining = candidate["remaining"]

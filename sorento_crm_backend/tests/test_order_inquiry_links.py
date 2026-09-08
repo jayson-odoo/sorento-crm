@@ -469,7 +469,15 @@ def test_a_candidate_states_both_dates_and_its_line_label(world):
     assert first["issue_date"] == date(2026, 4, 28)
     assert first["expected_date"] == date(2026, 8, 19)
     assert first["line_label"] == "L1"
-    assert first["default_take"] == "8", "the cascade's own preview, by the same walk"
+    # AC-H8: the top-ranked candidate is the row's own BRW-IB line - a project location,
+    # never cascadable - so the cascade's own preview reads zero for it. `default_take`
+    # lands on the BRW POOL line further down the same list instead (AC-D2: 165 on hand
+    # comfortably covers the 8 needed).
+    assert first["default_take"] == "0", "a project-location line is never auto-taken"
+    pool_candidate = next(
+        c for c in world.svc.po_candidates_for_row(row.id) if c["tier"] == TIER_POOL
+    )
+    assert pool_candidate["default_take"] == "8", "the pool line covers it instead"
 
 
 def test_an_order_row_is_offered_the_shipping_order_before_any_purchase_order(world):
@@ -1410,6 +1418,13 @@ def test_the_deficit_exemption_belongs_to_the_row_that_earned_it(world):
 
     The candidates are only RANKED by location, never filtered by it, so nothing further
     down the walk would have stopped it.
+
+    SLICE H, 8 Sep 2026: the exemption still decides what is OFFERED - only the owner's
+    candidate list carries the BRW-IB line - but a BRW-IB line is never `cascadable` any
+    more (AC-H1), owning row or not, so the automatic pass takes neither row's line and
+    BOTH stay raised. The exemption's effect is visible in the offered list above, and
+    would still matter to a MANUAL link (AC-H7) - it no longer changes what the automatic
+    pass writes.
     """
     world.stock("BRW-IB", 10)
     world.demand("BRW-IB", 9000)
@@ -1434,8 +1449,10 @@ def test_the_deficit_exemption_belongs_to_the_row_that_earned_it(world):
     world.db.refresh(stranger)
     world.db.refresh(owner)
 
+    # AC-H1: a project-location line - BRW-IB - is never taken by the automatic pass,
+    # whatever the deficit exemption offers it. Both rows stay raised.
     assert stranger.state == "raised"
-    assert owner.state == "placed"
+    assert owner.state == "raised"
 
 
 def test_a_deficit_group_offers_its_line_to_its_own_acknowledged_row(world):
@@ -1460,12 +1477,17 @@ def test_a_deficit_group_offers_its_line_to_its_own_acknowledged_row(world):
     assert [c["location"] for c in candidates] == ["BRW-IB", "BRW"]
 
 
-def test_the_cascade_places_a_deficit_groups_own_acknowledged_row(world):
-    """S4, the cascade half: the dialog and the cascade walk ONE list, so a line the
-    dialog now offers the group's own row is one the cascade must place.
+def test_the_cascade_never_takes_a_deficit_groups_own_project_location_line(world):
+    """S4 used to be the cascade half of the 27 August ruling: the dialog offering the
+    group's own row a line was, back then, a line the cascade placed too, because the
+    dialog and the cascade walked one list with one meaning of `cascadable`.
 
-    The pool-row control for this same book is the test above it - there the IB group
-    holds no acknowledged instruction, and the deficit stands.
+    SLICE H, 8 Sep 2026, reverses that half: `_candidates_for_row` still OFFERS the
+    group's own line (asserted on the same book, `test_a_deficit_group_offers_its_line_
+    to_its_own_acknowledged_row`), but BRW-IB is a project location, never a pool, and the
+    automatic pass may only take from the pool (AC-H1). The row's own exemption from the
+    deficit rule no longer buys it an automatic link - only a MANUAL one, which is what
+    AC-H7 keeps open in the Link dialog.
     """
     world.stock("BRW-IB", 10)
     world.demand("BRW-IB", 9000)
@@ -1479,7 +1501,7 @@ def test_the_cascade_places_a_deficit_groups_own_acknowledged_row(world):
     )
 
     world.db.refresh(row)
-    assert row.state == "placed", "the whole 60 taken off the group's own 500-line"
+    assert row.state == "raised", "AC-H1: a project-location line is never auto-taken"
 
 
 def test_the_groups_own_row_needs_no_override_to_reach_its_line(world):

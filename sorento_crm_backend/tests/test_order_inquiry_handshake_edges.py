@@ -286,8 +286,8 @@ def test_rejecting_a_partly_linked_row_takes_its_half_back_too(api):
 
     SLICE D, 8 Sep 2026: the AUTOMATIC pass no longer leaves a row PARTLY LINKED - 4 of 10
     cascadable is short of the whole 10, so acknowledging links nothing and the row stays
-    `raised` (AC-D1). `partly_linked` is still a real, reachable state (AC-D4); it now
-    comes from a PERSON naming a partial by hand in the Link dialog, which is what this
+    `raised` (AC-D1). `partly_linked` is still a real, reachable state (AC-D4/AC-H7); it
+    now comes from a PERSON naming a partial by hand in the Link dialog, which is what this
     test writes directly to keep testing what it always meant to - a refusal giving back
     whatever a row was holding, however it got there.
     """

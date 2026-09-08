@@ -38,6 +38,18 @@ def _linked_qty(db, row_id) -> float:
     ), {"r": row_id}).scalar() or 0)
 
 
+def _pool_warehouse(db, code: str) -> str:
+    """A warehouse that is genuinely a POOL by the FK `_pool_codes()` reads (slice H, 8 Sep
+    2026 - the automatic pass takes from the site pool alone). None of this file's tests are
+    about location FIT - they are about which of several ROWS a confirm's cascade serves, and
+    about the reorder-run horizon - so the destination just has to be one the automatic pass
+    may actually take from, or every assertion here would prove AC-H1 instead of what the
+    test names."""
+    warehouse_id = _mk_warehouse(db, code)
+    _mk_warehouse(db, f"{code}-SIB", pool_warehouse_id=warehouse_id)
+    return warehouse_id
+
+
 def test_the_confirm_links_the_two_rows_that_sized_the_line_not_the_older_one(scm_app):
     """POOL locations - codes with no `-<group>` suffix - and that is deliberate.
 
@@ -51,7 +63,7 @@ def test_the_confirm_links_the_two_rows_that_sized_the_line_not_the_older_one(sc
     """
     _, db, _, _ = scm_app
     actor = seed_user(db, None)
-    here = _mk_warehouse(db, f"{MARKER}HERE")
+    here = _pool_warehouse(db, f"{MARKER}HERE")
     elsewhere = _mk_warehouse(db, f"{MARKER}AWAY")
     pid = _mk_product(db, f"{MARKER}-SKU")
 
@@ -91,7 +103,7 @@ def test_a_product_with_a_located_and_an_unlocated_line_does_not_kill_the_cascad
     """
     _, db, _, _ = scm_app
     actor = seed_user(db, None)
-    here = _mk_warehouse(db, f"{MARKER}-MIXED")
+    here = _pool_warehouse(db, f"{MARKER}-MIXED")
     pid = _mk_product(db, f"{MARKER}-MIXSKU")
     row = _confirmed_leg(db, product_id=pid, warehouse_id=here, buy_qty=4)
 
@@ -199,7 +211,7 @@ def test_a_confirm_leaves_a_row_due_beyond_the_plans_horizon_unlinked(scm_app):
     the whole reason the date exists."""
     _, db, _, _ = scm_app
     actor = seed_user(db, None)
-    here = _mk_warehouse(db, f"{MARKER}HZN")
+    here = _pool_warehouse(db, f"{MARKER}HZN")
     pid = _mk_product(db, f"{MARKER}-HZNSKU")
     run = _plan_run(db, date(2026, 12, 31))
 
@@ -229,7 +241,7 @@ def test_a_confirm_links_under_the_horizon_of_the_run_it_was_drafted_off(scm_app
     """
     _, db, _, _ = scm_app
     actor = seed_user(db, None)
-    here = _mk_warehouse(db, f"{MARKER}OWNRUN")
+    here = _pool_warehouse(db, f"{MARKER}OWNRUN")
     pid = _mk_product(db, f"{MARKER}-OWNRUNSKU")
     own = _plan_run(db, date(2026, 12, 31), finished_at=datetime(2026, 8, 20, 9, 0, 0))
     _plan_run(db, date(2030, 12, 31), finished_at=datetime(2026, 8, 26, 9, 0, 0))
@@ -264,7 +276,7 @@ def test_a_confirm_off_a_run_that_named_no_horizon_links_under_none(scm_app):
     """
     _, db, _, _ = scm_app
     actor = seed_user(db, None)
-    here = _mk_warehouse(db, f"{MARKER}NOHZN")
+    here = _pool_warehouse(db, f"{MARKER}NOHZN")
     pid = _mk_product(db, f"{MARKER}-NOHZNSKU")
     own = _plan_run(db, None, finished_at=datetime(2026, 8, 20, 9, 0, 0))
     _plan_run(db, date(2026, 12, 31), finished_at=datetime(2099, 1, 1))
@@ -302,7 +314,7 @@ def test_two_purchase_orders_confirmed_together_each_link_under_their_own_run(sc
 
     made = {}
     for name, run in (("NEAR", near_run), ("FAR", far_run)):
-        warehouse = _mk_warehouse(db, f"{MARKER}BATCH{name}")
+        warehouse = _pool_warehouse(db, f"{MARKER}BATCH{name}")
         pid = _mk_product(db, f"{MARKER}-BATCH{name}SKU")
         soon = _confirmed_leg(db, product_id=pid, warehouse_id=warehouse, buy_qty=5)
         late = _confirmed_leg(db, product_id=pid, warehouse_id=warehouse, buy_qty=3)
@@ -336,7 +348,7 @@ def test_a_purchase_order_naming_two_runs_falls_back_to_the_latest_completed(scm
     says so in the log. Picking either of the two would be picking at random."""
     _, db, _, _ = scm_app
     actor = seed_user(db, None)
-    here = _mk_warehouse(db, f"{MARKER}TWORUNS")
+    here = _pool_warehouse(db, f"{MARKER}TWORUNS")
     pid = _mk_product(db, f"{MARKER}-TWORUNSSKU")
     older = _plan_run(db, date(2026, 12, 31), finished_at=datetime(2026, 8, 20, 9, 0, 0))
     newer = _plan_run(db, date(2031, 12, 31), finished_at=datetime(2099, 1, 1))
@@ -376,15 +388,16 @@ def _group_warehouse(db, code: str) -> str:
     return _mk_warehouse(db, code)
 
 
-def test_a_group_bought_to_exactly_the_plan_figure_is_still_offered(scm_app):
-    """The boundary, and it is the ordinary case rather than an edge one.
+def test_a_group_bought_to_exactly_the_plan_figure_is_never_auto_taken(scm_app):
+    """The boundary used to be the ordinary case: a purchase order raised off the plan buys
+    exactly what the plan said was short, landing the group on `group_net + remaining == 0`
+    - offered, never refused, so the rows that sized it were never stranded.
 
-    A purchase order raised off the plan buys exactly what the plan said was short, so the
-    group lands on `group_net + remaining == 0`. Read as "at or below zero is deficit" that
-    group is refused its own purchase order and the rows that sized it stay raised forever -
-    the buy is invisible to the cascade, to the PO-confirm pass and to the Link dialog.
-    Offered at zero: nothing is promised twice, because the demand this covers IS the
-    demand the group carries.
+    SLICE H, 8 Sep 2026: the deficit boundary still decides what `_groups_in_deficit`
+    OFFERS (a group location's candidate still appears in `_candidates_for_row`, greyed or
+    not), but a group location is never a POOL, so it is never `cascadable` any more and
+    the confirm's own cascade takes nothing from it (AC-H1, AC-H3). The row stays raised
+    and the buy has to be linked by hand.
     """
     _, db, _, _ = scm_app
     actor = seed_user(db, None)
@@ -407,16 +420,20 @@ def test_a_group_bought_to_exactly_the_plan_figure_is_still_offered(scm_app):
 
     PurchaseOrderService(db).bulk_confirm([poid], actor=actor)
 
-    assert _linked_qty(db, row["inquiry_row"].id) == 8.0, (
-        "a group bought to exactly the plan figure was refused its own purchase order"
+    assert _linked_qty(db, row["inquiry_row"].id) == 0.0, (
+        "AC-H1: a group location is never cascadable, however the deficit boundary reads"
     )
 
 
-def test_a_group_short_of_its_backlog_is_offered_for_an_acknowledged_unlinked_row(scm_app):
-    """The second half of the ruling. The group is genuinely short - it owes more than its
-    open purchase orders can cover - but it holds an ACKNOWLEDGED row nobody has linked,
-    and that row is the demand somebody bought this purchase order for. Refusing it would
-    leave a buy sitting open beside the instruction it answers.
+def test_a_group_short_of_its_backlog_is_still_never_auto_taken(scm_app):
+    """The second half of the old ruling used to say the group's own acknowledged, unlinked
+    row still reached its own purchase order however short the group's backlog was.
+
+    SLICE H, 8 Sep 2026: that exemption still governs what `_candidates_for_row` OFFERS
+    (asserted directly against the candidate walk in `test_order_inquiry_links.py` and
+    `test_order_inquiry_dedication.py`), but a group location is never cascadable, so the
+    automatic pass no longer places it (AC-H1) - the buy has to be linked by hand, which is
+    exactly the override the Link dialog keeps open (AC-H7).
     """
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
@@ -444,6 +461,7 @@ def test_a_group_short_of_its_backlog_is_offered_for_an_acknowledged_unlinked_ro
         [pid], actor_user_id=actor, trigger="worklist",
     )
 
-    assert _linked_qty(db, row["inquiry_row"].id) > 0, (
-        "the group's own acknowledged row was refused the purchase order bought for it"
+    assert _linked_qty(db, row["inquiry_row"].id) == 0.0, (
+        "AC-H1: a group location is never cascadable, even for the row that earned the "
+        "deficit exemption"
     )
