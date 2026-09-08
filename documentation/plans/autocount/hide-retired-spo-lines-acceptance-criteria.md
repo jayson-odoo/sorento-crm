@@ -30,3 +30,25 @@ row under a marker.
 
 - **AC-H8 [BE]** SPO-2026/09-0036 after the backfill: 33 lines' worth of open supply, Total qty
   38,777, no C-FHSS14 line of 4412.
+
+## Round 2 (security review, 2026-09-08)
+
+The plan's premise that a line closes for two reasons only is wrong. Four writers close an
+`autocount` line without retiring it: the SCM outstanding book's absence sweep
+(`outstanding_import_service`, which means the goods ARRIVED and deliberately writes no receipt),
+a cancelled document (`force_closed`), the deletion service keeping a referenced row, and a
+receipt. So "closed, never received" is not evidence of retirement.
+
+- **AC-H9 [S][T]** (B1, backfill evidence) The backfill stamps a row only when it also carries a
+  `source_ref` AND its `(company, spo_number, product_id, upper(location_code))` group holds an OPEN
+  row created strictly later. That is the replacement AutoCount wrote when it edited the line.
+  Negative cases, none of them stamped: a line closed by the outstanding book's absence sweep (no
+  later sibling), every line of a cancelled document (no OPEN sibling exists), a closed line whose
+  group has no later row at all, and a row with `source_ref` NULL.
+
+- **AC-H10 [BE][T]** (B2, receipt after retirement) Given a retired allocation (received 0) and a
+  goods-received note approved AFTER the retirement whose picking line draws 5 against it: the
+  allocation reads `quantity_received 5`, stays visible on the document, and counts in
+  `total_received`. It takes no share of its group's receipt and is never reopened. A retired line
+  whose stated receipt is 29 and whose goods-received note is then deleted still reads 29 (the D28c
+  floor, AC-X40 unchanged).
