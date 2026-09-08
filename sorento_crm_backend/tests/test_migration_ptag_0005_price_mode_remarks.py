@@ -2,22 +2,15 @@
 column on `price_tag_requests` and a line-level `remarks` column on
 `price_tag_request_lines`.
 
-Driven through `upgrade()`/`downgrade()` against the real database inside a
-rolled-back transaction, exactly as `test_migration_457_ptag_line_xco_repair
-.py` and `test_migration_454_tag_template_versions.py` do and for the same
-reason: this is additive DDL against real `price_tag_requests` /
-`price_tag_request_lines` tables, and the shared local Postgres this repo
-uses for tests converges through `Base.metadata.create_all`, never
-`alembic upgrade` (see `sorento_crm_backend/CLAUDE.md`) - so the only way to
-prove the migration itself is correct is to run it, not to inspect a schema
-someone else already brought up to date.
-
-RED note for the coder: this file imports
-`alembic/versions/ptag_0005_price_mode_remarks.py` by path, which does not
-exist yet - every test here fails on that import until the migration is
-written with `revision = "ptag_0005"`, `down_revision` chained onto
-whatever is `alembic heads` at merge time (measured on this branch: it was
-`492_mcp_tool_chatbot_domain`, re-check before landing).
+Driven through `upgrade()`/`downgrade()` over a BLANK schema rewound to the
+pre-migration shape, exactly as `test_migration_325_outbound_enabled.py`
+does it: `create_all` builds both tables from today's model, which already
+carries `price_mode`/`remarks`, so the `db` fixture drops them first. That
+makes this file independent of the shared dev database's own migration
+state - green whether or not `alembic upgrade head` has already been run
+there, unlike an earlier version of this file that asserted on the live
+`public` schema directly and broke the moment someone ran the real
+migration for browser verification.
 """
 from __future__ import annotations
 
@@ -30,7 +23,7 @@ from sqlalchemy import inspect, text
 
 from app.models.access import RespondContact
 from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
-from tests._pg_fixture import pg_session, unique_code
+from tests._pg_fixture import blank_session, unique_code
 
 _SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
 
@@ -63,7 +56,21 @@ def _run(db, direction: str = "upgrade") -> None:
 
 @pytest.fixture
 def db():
-    with pg_session() as session:
+    """The blank schema, rewound to the shape that existed before ptag_0005.
+
+    `create_all` builds both tables from today's model, which already
+    carries `price_mode`/`remarks` - so drop them first, same pattern as
+    `test_migration_325_outbound_enabled.py`.
+    """
+    with blank_session() as session:
+        session.execute(
+            text("ALTER TABLE price_tag_requests DROP COLUMN IF EXISTS price_mode")
+        )
+        session.execute(
+            text(
+                "ALTER TABLE price_tag_request_lines DROP COLUMN IF EXISTS remarks"
+            )
+        )
         yield session
 
 
@@ -145,6 +152,10 @@ def _seed_product_via_raw_sql(db) -> str:
 
 class TestUpgradeAddsBothColumns:
     def test_columns_absent_before_upgrade(self, db):
+        """Proves the FIXTURE rewound the schema, not a claim about the live
+        shared database - which `alembic upgrade head` may already have
+        migrated by the time this runs (browser verification runs against
+        it directly)."""
         assert not _has_price_mode(db)
         assert not _has_remarks(db)
 
