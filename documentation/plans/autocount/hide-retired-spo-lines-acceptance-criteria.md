@@ -99,3 +99,9 @@ afterwards.
   the `line_status` derived from it count the same visible set. Today the endpoint overwrites the
   quantity with a filtered total while the status still derives from the unfiltered one, so one
   response can show allocated 3912 against a status computed from 8324.
+
+- **AC-H18 [S][T]** (auditable dry run) The dry run prints one line per ROW, not per document,
+  carrying the allocation id, `source_ref`, `source_doc_ref`, `created_at`, `quantity_received` and
+  `receipt_status`, plus the `created_at` and `source_ref` of the OPEN sibling that justified the
+  stamp. Nothing can pre-measure this set, so the dry run is the only artifact anyone reviews before
+  an irreversible write, and the sibling evidence has to be spot-checkable against AutoCount.

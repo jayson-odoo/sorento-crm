@@ -48,6 +48,17 @@ Rows retired before #740 deploys carry no marker. One-off script, dry-run first,
 and the three conditions together mean "closed without having been received", which is retirement.
 Report per document before writing.
 
+### 3a. Named residual of the `fully_received` exclusion
+
+A pre-#740 line that was genuinely retired AND happens to be fully received is out of the backfill's
+reach for good, because nothing distinguishes it from a live fully received line that AutoCount
+still names. It keeps `retired_at` NULL, so `_is_live_group_member` treats it as live: it joins its
+group, can take a Seq-order share of a sibling's goods-received note, and can reopen when that note
+is deleted. That is the pre-#740 status quo rather than a regression, it self-heals the next time
+AutoCount pushes the number, and the population is zero on the production copy. The decision is to
+resolve an undecidable case toward the safer default and leave that subpopulation unrepaired, not
+to claim it cannot exist.
+
 ## 4. Slices
 
 - S1 [BE] `spo_supply.visible_line_clauses()` + R5 line balance + R4 rollups, with tests.
