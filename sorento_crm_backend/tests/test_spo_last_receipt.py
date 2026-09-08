@@ -1,7 +1,8 @@
-"""A6 - SPO last receipt (AC-908, AC-911).
+"""AC-4..AC-8 (chatbot-warehouse-entity-and-last-in): the last SPO line PER PRODUCT, GR
+ignored entirely.
 
-`documentation/plans/chatbot/PLAN-chatbot-growth-r1.md` Slice A;
-`documentation/plans/chatbot/chatbot-growth-r1-acceptance-criteria.md` section A.
+`documentation/plans/chatbot/PLAN-chatbot-warehouse-entity-and-last-in.md` section
+"Last in"; `chatbot-warehouse-entity-and-last-in-acceptance-criteria.md` AC-4..AC-8.
 
 Postgres only, blank schema, every row seeded here (CI's database has none).
 """
@@ -36,13 +37,14 @@ def db():
         yield s
 
 
-def _shipment(db, *, warehouse_arrival=None, actual_arrival=None):
+def _shipment(db, *, warehouse_arrival=None):
+    """Only used to prove AC-4: an inbound shipment's arrival date must NOT be read as
+    the ordering key any more - GR is ignored entirely."""
     row = InboundShipment(
         id=str(uuid.uuid4()),
         shipment_number=unique_code("SHP")[:50],
         shipment_date=date(2026, 1, 1),
         warehouse_arrival_date=warehouse_arrival,
-        actual_arrival_date=actual_arrival,
         company_id=DEFAULT_COMPANY_ID,
     )
     db.add(row)
@@ -56,8 +58,11 @@ def _allocation(
     product_id,
     warehouse_id=None,
     shipment_id=None,
-    qty_received=10,
-    status="fully_received",
+    expected_date=None,
+    issue_date=None,
+    quantity=10,
+    qty_received=0,
+    status="pending",
     spo_number=None,
     created_at=None,
 ):
@@ -67,8 +72,10 @@ def _allocation(
         product_id=product_id,
         warehouse_id=warehouse_id,
         inbound_shipment_id=shipment_id,
-        allocated_quantity=qty_received,
+        allocated_quantity=quantity,
         quantity_received=qty_received,
+        expected_date=expected_date,
+        issue_date=issue_date,
         receipt_status=status,
         company_id=DEFAULT_COMPANY_ID,
     )
@@ -83,77 +90,113 @@ def _allocation(
 # --------------------------------------------------------------------- service
 
 
-def test_last_receipt_uses_warehouse_arrival_date_when_populated(db):
-    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="SRTWC8517")
-    ship = _shipment(db, warehouse_arrival=date(2026, 6, 10), actual_arrival=date(2026, 6, 5))
-    _allocation(db, product_id=prod.id, shipment_id=ship.id, qty_received=20)
+def test_last_spo_line_gr_ignored_entirely(db):
+    """AC-4: three lines (A dated + fully received, B dated + PENDING, C undated +
+    fully received with a shipment arrival date). B wins - the shipment arrival is
+    never read as the key, and `receipt_status` is not filtered on."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    ship = _shipment(db, warehouse_arrival=date(2026, 8, 26))
+    _allocation(
+        db, product_id=prod.id, expected_date=date(2026, 2, 22), status="fully_received",
+        spo_number="A",
+    )
+    _allocation(
+        db, product_id=prod.id, expected_date=date(2026, 8, 30), status="pending",
+        spo_number="B",
+    )
+    _allocation(
+        db, product_id=prod.id, shipment_id=ship.id, status="fully_received",
+        created_at=datetime(2026, 8, 21, 9, 0, 0), spo_number="C",
+    )
     db.commit()
 
     rows = last_receipt_rows(db, product_ids=[prod.id])
     assert len(rows) == 1
-    assert rows[0]["date"] == "2026-06-10"
-    assert rows[0]["date_label"] == "Arrived"
-    assert rows[0]["quantity_received"] == 20
+    assert rows[0]["spo_number"] == "B"
+    assert rows[0]["date"] == "2026-08-30"
+    assert rows[0]["date_label"] == "Expected"
+
+    rows3 = last_receipt_rows(db, product_ids=[prod.id], top_n=3)
+    assert [r["spo_number"] for r in rows3] == ["B", "C", "A"]
+    assert rows3[1]["date"] == "2026-08-21"
+    assert rows3[1]["date_label"] == "Recorded"
+    # The shipment's warehouse_arrival_date (2026-08-26) never appears anywhere.
+    assert all(r["date"] != "2026-08-26" for r in rows3)
 
 
-def test_last_receipt_falls_back_to_actual_arrival_date(db):
+def test_issue_date_fallback_when_expected_date_is_null(db):
+    """AC-5."""
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
-    ship = _shipment(db, warehouse_arrival=None, actual_arrival=date(2026, 6, 5))
-    _allocation(db, product_id=prod.id, shipment_id=ship.id)
+    _allocation(db, product_id=prod.id, expected_date=None, issue_date=date(2026, 7, 1))
     db.commit()
 
     rows = last_receipt_rows(db, product_ids=[prod.id])
-    assert rows[0]["date"] == "2026-06-05"
-    assert rows[0]["date_label"] == "Arrived (port)"
+    assert rows[0]["date"] == "2026-07-01"
+    assert rows[0]["date_label"] == "Issued"
 
 
-def test_last_receipt_falls_back_to_created_at_when_no_shipment_dates(db):
-    """A0 measurement: both shipment date columns are ~0% populated on received
-    rows today, so this rung is the one that actually fires in practice."""
+def test_created_at_fallback_when_neither_date_is_set(db):
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
-    ship = _shipment(db, warehouse_arrival=None, actual_arrival=None)
-    alloc = _allocation(db, product_id=prod.id, shipment_id=ship.id)
+    alloc = _allocation(db, product_id=prod.id)
     db.commit()
     db.refresh(alloc)
 
     rows = last_receipt_rows(db, product_ids=[prod.id])
-    assert rows[0]["date_label"] == "Received"  # D5: no "(recorded)" for the customer
+    assert rows[0]["date_label"] == "Recorded"
     assert rows[0]["date"] == alloc.created_at.date().isoformat()
 
 
-def test_last_receipt_excludes_pending_allocations(db):
+def test_one_row_per_product_grouped_by_product_code(db):
+    """AC-6: two products, two lines each; top_n=1 -> one row per product, newest
+    first within the (implicit, single-row) group; top_n=2 -> four rows, two per
+    product, newest first within each, products in `product_code` order."""
+    p1 = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    p2 = product(db, company_id=DEFAULT_COMPANY_ID, code="P2")
+    _allocation(db, product_id=p1.id, expected_date=date(2026, 6, 1), spo_number="P1-OLD")
+    _allocation(db, product_id=p1.id, expected_date=date(2026, 6, 10), spo_number="P1-NEW")
+    _allocation(db, product_id=p2.id, expected_date=date(2026, 6, 2), spo_number="P2-OLD")
+    _allocation(db, product_id=p2.id, expected_date=date(2026, 6, 12), spo_number="P2-NEW")
+    db.commit()
+
+    rows1 = last_receipt_rows(db, product_ids=[p1.id, p2.id], top_n=1)
+    assert len(rows1) == 2
+    assert [r["product_code"] for r in rows1] == ["P1", "P2"]
+    assert [r["spo_number"] for r in rows1] == ["P1-NEW", "P2-NEW"]
+
+    rows2 = last_receipt_rows(db, product_ids=[p1.id, p2.id], top_n=2)
+    assert len(rows2) == 4
+    assert [r["spo_number"] for r in rows2] == ["P1-NEW", "P1-OLD", "P2-NEW", "P2-OLD"]
+
+
+def test_warehouse_filter_before_per_product_pick(db):
+    """AC-7."""
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
-    _allocation(db, product_id=prod.id, status="pending")
+    brw = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="BRW")
+    brw_ib = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="BRW-IB")
+    _allocation(
+        db, product_id=prod.id, warehouse_id=brw.id, expected_date=date(2026, 8, 20),
+        spo_number="AT-BRW-NEWER",
+    )
+    _allocation(
+        db, product_id=prod.id, warehouse_id=brw_ib.id, expected_date=date(2026, 8, 10),
+        spo_number="AT-BRW-IB-OLDER",
+    )
+    db.commit()
+
+    rows = last_receipt_rows(db, product_ids=[prod.id], warehouse_ids=[brw_ib.id])
+    assert len(rows) == 1
+    assert rows[0]["spo_number"] == "AT-BRW-IB-OLDER"
+    assert rows[0]["warehouse"] == "BRW-IB"
+
+
+def test_quantity_is_the_ordered_quantity_not_received(db):
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    _allocation(db, product_id=prod.id, quantity=25, qty_received=10, status="pending")
     db.commit()
 
     rows = last_receipt_rows(db, product_ids=[prod.id])
-    assert rows == []
-
-
-def test_last_receipt_top_n_returns_n_newest(db):
-    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
-    for i, d in enumerate([date(2026, 6, 1), date(2026, 6, 5), date(2026, 6, 10)]):
-        ship = _shipment(db, warehouse_arrival=d)
-        _allocation(db, product_id=prod.id, shipment_id=ship.id, spo_number=f"SPO-{i}")
-    db.commit()
-
-    rows = last_receipt_rows(db, product_ids=[prod.id], top_n=3)
-    assert len(rows) == 3
-    assert [r["date"] for r in rows] == ["2026-06-10", "2026-06-05", "2026-06-01"]
-
-    rows_default = last_receipt_rows(db, product_ids=[prod.id])
-    assert len(rows_default) == 1
-    assert rows_default[0]["date"] == "2026-06-10"
-
-
-def test_last_receipt_names_warehouse(db):
-    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
-    wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="BRW")
-    _allocation(db, product_id=prod.id, warehouse_id=wh.id)
-    db.commit()
-
-    rows = last_receipt_rows(db, product_ids=[prod.id])
-    assert rows[0]["warehouse"] == "BRW"
+    assert rows[0]["quantity"] == 25
+    assert rows[0]["quantity_received"] == 10
 
 
 # AC-911's DEFAULT_UNSUPPORTED_DOMAINS assertion lives in
@@ -189,27 +232,34 @@ def client(db, monkeypatch):
 
 def test_route_last_receipt_default_top_n_one(client, db):
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code="SRTWC8517")
-    ship = _shipment(db, warehouse_arrival=date(2026, 6, 10))
-    _allocation(db, product_id=prod.id, shipment_id=ship.id, qty_received=15)
+    _allocation(db, product_id=prod.id, expected_date=date(2026, 6, 10), quantity=15)
     db.commit()
 
     resp = client.get(f"{BASE}/last-receipt", params={"product_ids": prod.id})
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert len(body["data"]) == 1
-    assert body["data"][0]["quantity_received"] == 15
+    assert body["data"][0]["quantity"] == 15
+    assert body["empty"] is False
 
 
-def test_route_last_receipt_top_n_three(client, db):
+def test_route_last_receipt_with_warehouse_filter_and_top_n(client, db):
+    """AC-8."""
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code="SRTWC8517")
-    for d in [date(2026, 6, 1), date(2026, 6, 5), date(2026, 6, 10), date(2026, 6, 12)]:
-        ship = _shipment(db, warehouse_arrival=d)
-        _allocation(db, product_id=prod.id, shipment_id=ship.id)
+    brw = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="BRW")
+    for d in [date(2026, 6, 1), date(2026, 6, 5), date(2026, 6, 10)]:
+        _allocation(db, product_id=prod.id, warehouse_id=brw.id, expected_date=d)
     db.commit()
 
-    resp = client.get(f"{BASE}/last-receipt", params={"product_ids": prod.id, "top_n": 3})
+    resp = client.get(
+        f"{BASE}/last-receipt",
+        params={"product_ids": prod.id, "warehouse_ids": brw.id, "top_n": 3},
+    )
     assert resp.status_code == 200, resp.text
-    assert len(resp.json()["data"]) == 3
+    body = resp.json()
+    assert len(body["data"]) == 3
+    assert body["data"][0]["date_label"] is not None
+    assert body["empty"] is False
 
 
 # ------------------------------------- blocker 3: the company scope actually narrows
@@ -226,7 +276,7 @@ def test_a_mocha_scoped_read_returns_no_sorento_receipts(db):
 
     seed_mocha(db)
     sorento_product = product(db, company_id=DEFAULT_COMPANY_ID, code="SRT-SCOPE")
-    _allocation(db, product_id=sorento_product.id, qty_received=99, spo_number="SPO-SORENTO")
+    _allocation(db, product_id=sorento_product.id, quantity=99, spo_number="SPO-SORENTO")
     db.commit()
 
     # Sorento sees its own row.

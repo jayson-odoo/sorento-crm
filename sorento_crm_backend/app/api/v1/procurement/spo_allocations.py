@@ -39,16 +39,16 @@ async def get_spo_last_receipt(
     warehouse_ids: Optional[list[str]] = Query(
         None, description="Filter by canonical warehouse UUIDs (csv / JSON / repeated)."
     ),
-    top_n: int = Query(1, ge=1, le=50, description="How many most-recent receipts to return."),
+    top_n: int = Query(1, ge=1, le=50, description="How many lines per product to return."),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
-    """Most recently received SPO allocations, newest first.
+    """The last `top_n` SPO lines PER PRODUCT, newest first. GR is ignored entirely.
 
-    Date fallback order: `inbound_shipments.warehouse_arrival_date`, else
-    `.actual_arrival_date`, else `spo_allocations.created_at` - each row labels
-    which column it used (`date_label`), so the presenter never claims a date
-    it did not actually read.
+    Date fallback order: `spo_allocations.expected_date` (the line's promised delivery),
+    else `.issue_date`, else `.created_at` - each row labels which column it used
+    (`date_label`: "Expected" / "Issued" / "Recorded"), so the presenter never claims a
+    date it did not actually read. `warehouse_ids` narrows before the per-product pick.
     """
     try:
         rows = last_receipt_rows(
