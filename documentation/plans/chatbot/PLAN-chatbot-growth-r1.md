@@ -249,7 +249,12 @@ What still stands red, and who owns it:
    live section's attribute words with `product_spec_registry`'s keys is its own slice.
 
 **Post-deploy, Slice A (mandatory, not optional).** Two steps, in this order, and neither
-happens by itself:
+happens by itself. **Without step 1, every PO placed / last-in ask misses** ("But no
+purchase_order / spo_allocation matched these") whatever the customer's phrasing or the
+prompt version - verified on the restored 7 Sep 2026 prod copy: `embedding_documents` had
+112 `mcp_tool` rows and `embedding_chunks` 236, neither containing a source_id for either
+tool, and direct PO / last-in asks for four different, unrelated codes (C-FH14, SRTWC8517,
+SRTWT7445-LV-NEW, SRT62-GM) all missed identically until the two tools were seeded.
 
 1. **Seed the embeddings for the two new MCP tools.** Verified 7 Sep 2026:
    `app/main.py`'s `startup_event` calls `mcp_tool_registry_service.sync_catalog`, which

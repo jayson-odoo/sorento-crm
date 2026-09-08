@@ -298,21 +298,22 @@ cases:
   # A5 - PO placed, and D4: a dealer never sees the supplier (AC-907).
   # ======================================================================================
 
-  # RE-DERIVED 8 Sep 2026 against the restored prod copy (owner ruling, coordinator D-fix
-  # round): the original C-FH14/SRTWC8517 examples still HAVE open PO lines on this
-  # database (C-FH14: 138 lines, 11,928 pcs by the same query below) - the graded run's
-  # "But no purchase_order matched these" on both of them is NOT a data problem. Measured
-  # directly against the service and the resolver in isolation:
-  #   `purchase_orders_placed_rows(db, product_ids=<the 8 SRTWC8517% member uuids>)`
-  #   returns 6 `kind=spo` rows correctly (not Mocha-only - all 8 members are company
-  #   Sorento; `_unshipped_spo_query` carries no hidden scope beyond `product_ids`).
-  #   `resolve_reference_post` for token "srtwc8517" also correctly resolves all 8
-  #   family members. Neither of the coordinator's two suspects (Mocha-only scope,
-  #   kind=spo skipped on the direct tool) reproduces in isolation - the miss is most
-  #   likely the SAME parser variance under the fresh v9 unlabelled prompt that hit
-  #   ~13 other cases in the same graded run (a wrong domain_hint/tool pick on that one
-  #   cold call), not a deterministic service defect. Flagged rather than "fixed" with
-  #   a change that has no measured cause to attach to.
+  # RE-DERIVED 8 Sep 2026 against the restored prod copy. FOUND (E1, coordinator D-fix
+  # round): the actual cause of "But no purchase_order matched these" on C-FH14 AND
+  # SRTWC8517 alike was neither Mocha-only scope nor kind=spo being skipped (both
+  # measured clean - the service and the resolver work correctly given the right
+  # product_ids) - it was that `crm_procurement_purchase_orders_placed_list` and
+  # `crm_procurement_spo_allocations_last_receipt_list` had NO embeddings on this
+  # restored copy at all (measured: embedding_documents had 112 mcp_tool rows,
+  # embedding_chunks 236, neither containing a source_id for either tool - the
+  # deploy's tool-seed step was never run here), so the chatbot's tool search could
+  # never retrieve either tool for ANY phrasing. Seeded via
+  # `app.scripts.seed_mcp_tool_capabilities --only <tool>` + a direct
+  # `process_embedding_queue_item` call per new queue row (the DB's embedding_queue
+  # carries a 5,894-row pending backlog from other lanes; a whole-queue drain would
+  # have processed that too). Verified live: "any PO for SRTWT7445-LV-NEW", "last in
+  # for C-FH14", "last 3 received for C-FH14", "PO for SRTWC8517" and the owner's own
+  # "Srt62-Gm last stock in quantity and date" all now answer correctly.
   # SELECT p.product_code, count(*), sum(pl.qty_ordered - pl.qty_received)
   #   FROM purchase_order_lines pl JOIN products p ON p.id = pl.product_id
   #   WHERE pl.line_status='open' AND (pl.qty_ordered - pl.qty_received) > 0 AND p.product_code = 'C-FH14'
