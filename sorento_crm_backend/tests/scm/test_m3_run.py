@@ -43,12 +43,14 @@ def _mk_product(db, code):
     return pid
 
 
-def _mk_warehouse(db, code):
+def _mk_warehouse(db, code, *, pool_warehouse_id=None, segment=None):
     wid = str(uuid.uuid4())
     db.execute(text(
-        "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, created_at, updated_at) "
-        "VALUES (:id, :code, :name, true, now(), now())"
-    ), {"id": wid, "code": code, "name": f"M3 WH {code}"})
+        "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
+        "pool_warehouse_id, segment, created_at, updated_at) "
+        "VALUES (:id, :code, :name, true, :pool, :segment, now(), now())"
+    ), {"id": wid, "code": code, "name": f"M3 WH {code}", "pool": pool_warehouse_id,
+        "segment": segment})
     return wid
 
 

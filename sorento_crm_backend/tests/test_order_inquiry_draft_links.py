@@ -266,11 +266,19 @@ def test_a_shipping_order_line_outside_the_pool_is_never_drafted(api):
 
 
 def test_two_rows_are_never_drafted_onto_the_same_units(api):
+    """SLICE D, 8 Sep 2026 (S5, review of PR): the first row's draft takes the line's
+    whole balance up to its own need - 12 covers its 10 in full, leaving exactly 2 - and
+    the SECOND row needs exactly that 2, so the all-or-nothing rule (AC-D2, covered in
+    full) drafts it the remainder and no more. Sized this way rather than at 10 so the
+    test keeps a POSITIVE assertion: the second row takes exactly what is left, proving
+    the two never draft onto the same units, rather than a vacuous "gets nothing" that a
+    row needing more than the whole line would read the same either way.
+    """
     _client, world = api
     _open_po_line(world, qty=12)
 
     first = _raise_one_row(api, qty="10")["row"]
-    second = _raise_one_row(api, qty="10")["row"]
+    second = _raise_one_row(api, qty="2")["row"]
 
     assert sum(Decimal(str(l.qty)) for l in _links_of(world, first)) == Decimal("10")
     assert sum(Decimal(str(l.qty)) for l in _links_of(world, second)) == Decimal("2")
@@ -313,12 +321,16 @@ def test_confirm_stamps_the_row_and_moves_no_link(api):
     assert _link_documents(world, row) == [po.po_number]
 
 
-def test_confirm_fills_a_remainder_the_draft_could_not_cover(api):
-    """The press still cascades: a row half covered when it was raised is finished here."""
+def test_confirm_fills_a_remainder_a_draft_could_not_cover_in_full(api):
+    """The press still cascades. SLICE D, 8 Sep 2026: the raise itself now drafts NOTHING
+    when 4 falls short of the row's 10 (AC-D1) - there is no half-covered draft left to
+    finish. Once a second line brings the total to 10, Confirm's own cascade covers the
+    row in full in one pass.
+    """
     _client, world = api
     _open_po_line(world, qty=4)
     row = _raise_one_row(api, qty="10")["row"]
-    assert sum(Decimal(str(l.qty)) for l in _links_of(world, row)) == Decimal("4")
+    assert sum(Decimal(str(l.qty)) for l in _links_of(world, row)) == Decimal("0")
 
     _open_po_line(world, qty=6)
     with _as_purchasing(world) as buyer:

@@ -149,6 +149,10 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
     1, // the original site this rule copies - its own maxHeightClassName ScrollArea
   ],
   [
+    'app/(protected)/project-sales/order-inquiries/components/OrderInquiryDocumentDialog.tsx',
+    2, // two PanelDataGrid bodies (PO, SPO) inside one DialogBody that already owns the scroll
+  ],
+  [
     'app/(protected)/project-sales/order-inquiries/components/OrderInquiryMatrixCellDrilldown.tsx',
     1, // PanelDataGrid inside its DialogBody
   ],

@@ -3460,6 +3460,14 @@ class ProjectOrderInquiryService:
         """The ownership groups whose OPEN PURCHASE ORDERS cannot cover their own backlog
         (ladder v4, section 1d).
 
+        SLICE H, 8 Sep 2026: a group line is `cascadable` now only when it sits at the site
+        pool (it does not - a group line is a group line precisely because it is not one)
+        or when THIS row's own SO already claims it (`own_so_claim`, G12's `own_claim`).
+        This set therefore bears on the automatic pass only through that second, narrower
+        door; its main effect is still on what `_candidates_for_row` OFFERS, which is what
+        the Link dialog lists and what a manual placement (`manual=True`) may take. Left in
+        place rather than removed for that reason.
+
         `group_net + everything still to come on the group's own purchase orders`. At or
         above zero the group has purchases nobody has claimed and a row may link to one;
         BELOW zero, every unit already on order is owed to demand the group carries and a
@@ -3517,6 +3525,13 @@ class ProjectOrderInquiryService:
     def _exempt_groups_for_row(self, row: OrderInquiryRow, product_id: str) -> set:
         """The deficit exemption THIS row has earned, and nobody else's (B1, code review
         27 Aug 2026).
+
+        SLICE H, 8 Sep 2026: the same note as `_groups_in_deficit` carries here - a group
+        line this exemption lifts is `cascadable` only if it also clears the pool-or-own-
+        claim test in `_candidate`, so the exemption mostly bears on what
+        `_candidates_for_row` OFFERS (the Link dialog) and on a manual placement, and on
+        the automatic pass only for a line THIS row's own SO already claims. Left in place
+        for that reason.
 
         A group holding an acknowledged, still-unlinked row for the product may reach its
         own purchase order however short it is, because that row is the demand somebody
@@ -3702,21 +3717,48 @@ class ProjectOrderInquiryService:
             "line_label": line_label,
             "location": location,
             "tier": tier,
-            # What the automatic pass may take (the captain, 27 Aug): the row's own site
-            # pool and better, never a sibling group or another site. A row naming no
-            # location ranks nothing and keeps the whole list, as before. G12 narrows this
-            # further for a project-bin line this row's own SO has not claimed - refused
-            # to the automatic pass however good its location tier, because the SO that
-            # claims it is the only one allowed to auto-take it.
+            # What the automatic pass may take (the owner, 8 Sep 2026 - slice H, correcting
+            # the reading of the 27 August ruling, and the captain's own S1 ruling on the
+            # review round that followed): a line claimed by THIS row's own sales order, OR
+            # one that sits at the SITE POOL. Nothing else - not the row's own project
+            # location (tier 1), not its ownership group at another site (tier 2), not a
+            # sibling location at the site (tier 4). The 27 August wording ("the site pool
+            # and better") read as a ceiling that also admitted tiers 1 and 2, and on real
+            # data that let the automatic pass take BRW-IB's own open line for SO391853 out
+            # from under it - stock standing at a project location is already spoken for by
+            # that project UNLESS this row's own SO is the one holding it.
             #
-            # There is no trial, preview or self-claiming variant of this test, and there
-            # must never be one (captain, 2 Sep 2026, on real data): the cascade writing
-            # its OWN claim for a line it did not create is how PO 202607-S0067's 114
-            # units at BRW-IB - bought for SO391853 per the AutoCount book - were taken by
-            # SO381895. A project-bin line is attributed by the SUPPLY WRITER that created
-            # it (`app/services/scm/supply_claim.py`) or by the book's own FromSODocList
-            # column, never by the pass that wants to consume it.
-            "cascadable": (own_location is None or tier <= TIER_POOL) and not project_locked,
+            # `own_so_claim` is that exception, and it is G12's own `own_claim` - not a new
+            # mechanism. `is_site_pool(segment)` is the SAME predicate `project_locked`
+            # already reads it through (`project_locked = project_bin and not own_claim`,
+            # `project_bin = not is_site_pool(...)`), never `_pool_codes()`'s FK graph:
+            # S1, the captain's own ruling, corrects the first cut of this line, which
+            # tested FK pool membership - a SECOND, different definition of "pool" living
+            # beside `project_locked`'s. `pool_predicate.is_site_pool` is written to be the
+            # one spelling of a site pool, `segment`-based; `_pool_codes()` stays, but only
+            # for `link_location_tier`'s ORDERING below, a different question entirely. The
+            # algebra: with `own_claim` true, `project_locked` is always false regardless of
+            # `project_bin`, so `own_so_claim or not project_locked` already reduces to
+            # `own_so_claim or is_site_pool(segment)` - no second field to thread in.
+            #
+            # The tier and its sub-rank are UNCHANGED and still decide the ORDER a pool is
+            # tried in (the row's own site pool before the others). The Link dialog is
+            # untouched: it still lists every tier, including a project-location line, and
+            # a buyer may take one by hand - that override path is `manual`, read below.
+            #
+            # G12's OTHER half stands: a project-bin line claimed by ANOTHER SO, or by
+            # nobody, is refused to the automatic pass however good its location tier,
+            # because the SO that claims it is the only one allowed to auto-take it.
+            #
+            # There is no trial, preview or self-claiming variant of `own_so_claim`, and
+            # there must never be one (captain, 2 Sep 2026, on real data): the cascade
+            # writing its OWN claim for a line it did not create is how PO 202607-S0067's
+            # 114 units at BRW-IB - bought for SO391853 per the AutoCount book - were taken
+            # by SO381895. `own_so_claim` is computed ONCE, upstream, off attribution the
+            # SUPPLY WRITER that created the line wrote (`app/services/scm/supply_claim.py`),
+            # the book's own FromSODocList column, or a person in the Link dialog - never by
+            # the pass that wants to consume it; this rule only READS that value.
+            "cascadable": own_so_claim or not project_locked,
             "issue_date": issue_date,
             "expected_date": expected_date,
             "remaining": remaining,
@@ -3754,25 +3796,43 @@ class ProjectOrderInquiryService:
     def _cascade_take(
         candidates: Sequence[Dict[str, Any]], need: Decimal
     ) -> List[Tuple[Dict[str, Any], Decimal]]:
-        """`min(what is left on this line, what is still needed)` off each candidate in the
-        order it was given, until the need is covered or the candidates run out.
+        """`min(what is left on this line, what is still needed)` off each CASCADABLE
+        candidate in the order it was given, until the need is covered - or NOTHING at all,
+        ruled by the owner 8 Sep 2026 (slice D): when the cascadable candidates cannot
+        cover `need` IN FULL, this returns an empty list rather than the partial cover it
+        used to.
 
-        Partial coverage is allowed and is not a failure: a `need` bigger than every
-        candidate's remaining balance combined simply returns less than `need`, and the row
-        is left PARTLY LINKED with the rest still counting as demand. Before the links
-        table there was nowhere to record that, so the row had to be split for the
-        arithmetic to work.
+        Half covering a 493-piece row and buying the other 378 strands whatever the half
+        DID cover - it cannot be re-offered to another row that needed exactly that much -
+        while leaving the row PARTLY LINKED with the balance still counting as demand. The
+        row's whole quantity going to Buy is the honest outcome when nothing on hand can
+        answer it in full; a row already `partly_linked` from before this ruling is left
+        exactly as it is (not retro-applied), and `partly_linked` stays reachable through a
+        re-deal, a book re-upload, or a manual partial taken by hand in the Link dialog -
+        none of which calls this method (`place_on_po_allocations` walks `by_target`
+        directly and is never routed through the cascade).
         """
+        cascadable_total = sum(
+            (
+                candidate["remaining"]
+                for candidate in candidates
+                if candidate.get("cascadable", True)
+            ),
+            _ZERO,
+        )
+        if cascadable_total < need:
+            return []
         still = need
         takes: List[Tuple[Dict[str, Any], Decimal]] = []
         for candidate in candidates:
             if still <= _ZERO:
                 break
-            # The cascade stops at the site pool (the captain, 27 Aug: "we should take
-            # from site pool only"). A sibling group's line, or one at another site, is
-            # still LISTED in the Link dialog - a buyer may take it by hand - but the
-            # automatic pass never does: BRW-IB's purchase is BRW-IB's, and an order at
-            # MWH-IR taking 78 of it was the case that ruled it.
+            # Only a candidate the SITE POOL owns, or one THIS row's own SO already claims,
+            # is ever taken automatically (slice H, correcting the 27 August reading - see
+            # `_candidate`'s own `cascadable`). A project-location line claimed by nobody or
+            # by another SO, a sibling group's line, or one at another site is still LISTED
+            # in the Link dialog - a buyer may take it by hand - but the automatic pass
+            # never does.
             if not candidate.get("cascadable", True):
                 continue
             remaining = candidate["remaining"]
