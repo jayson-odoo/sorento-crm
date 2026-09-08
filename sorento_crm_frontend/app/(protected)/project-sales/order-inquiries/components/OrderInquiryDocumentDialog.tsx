@@ -3,6 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { ExternalLink } from 'lucide-react';
+import type { ColumnDef } from '@tanstack/react-table';
 import {
   Dialog,
   DialogBody,
@@ -11,7 +12,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { Skeleton } from '@/components/ui/skeleton';
+import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { statusPillClass } from '@/lib/status-pill';
 import {
@@ -19,7 +22,11 @@ import {
   useOrderInquirySpoDetail,
 } from '../../_shared/hooks/useOrderInquiry';
 import { formatInquiryQty } from '../../_shared/lib/orderInquiryWorklist';
-import type { OrderInquiryDocumentAllocation } from '../../_shared/types/orderInquiry.types';
+import type {
+  OrderInquiryDocumentAllocation,
+  OrderInquiryPoDetailLine,
+  OrderInquirySpoDetailLine,
+} from '../../_shared/types/orderInquiry.types';
 
 /**
  * ONE document, read-only, in a real dialog (R9; the captain, 27 Aug: "the popup on the
@@ -203,64 +210,157 @@ function AllocationsPanel({
   );
 }
 
-function LinesTable({
-  headers,
-  children,
-  empty,
-  isEmpty,
-}: {
-  headers: { label: string; align?: 'start' | 'end' }[];
-  children: React.ReactNode;
-  empty: string;
-  isEmpty: boolean;
-}) {
-  if (isEmpty) return <p className="text-xs text-muted-foreground">{empty}</p>;
+function SkuCellContent({ sku, name }: { sku?: string | null; name?: string | null }) {
   return (
-    <div className="overflow-x-auto overscroll-x-contain rounded-md border">
-      <table className="w-full min-w-[520px] text-xs tabular-nums">
-        <thead>
-          <tr className="border-b text-muted-foreground">
-            {headers.map((header) => (
-              <th
-                key={header.label}
-                className={`px-3 py-1.5 font-medium uppercase tracking-wide ${
-                  header.align === 'end' ? 'text-end' : 'text-start'
-                }`}
-              >
-                {header.label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>{children}</tbody>
-      </table>
+    <div className="min-w-0">
+      <span className="block truncate font-medium" title={sku ?? ''}>
+        {sku || <span className="text-muted-foreground">Unresolved</span>}
+      </span>
+      {name && name !== sku ? (
+        <span className="block truncate text-muted-foreground" title={name}>
+          {name}
+        </span>
+      ) : null}
     </div>
   );
 }
 
-function SkuCell({ sku, name }: { sku?: string | null; name?: string | null }) {
+function LocationCellContent({ location }: { location?: string | null }) {
   return (
-    <td className="max-w-[220px] px-3 py-1.5">
-      <div className="min-w-0">
-        <span className="block truncate font-medium" title={sku ?? ''}>
-          {sku || <span className="text-muted-foreground">Unresolved</span>}
-        </span>
-        {name && name !== sku ? (
-          <span className="block truncate text-muted-foreground" title={name}>
-            {name}
-          </span>
-        ) : null}
-      </div>
-    </td>
+    <span className="block truncate" title={location ?? undefined}>
+      {location || <span className="text-muted-foreground">no location</span>}
+    </span>
   );
 }
 
-function LocationCell({ location }: { location?: string | null }) {
-  return (
-    <td className="px-3 py-1.5">
-      {location || <span className="text-muted-foreground">no location</span>}
-    </td>
-  );
+/**
+ * The columns behind slice B (`PLAN-scm-oi-reserving-feedback-8sep.md`): the CRUD
+ * standard's grid, never a bare `<table>` - a PO with 89 lines was unreadable in one.
+ * Module-level, not `useMemo`'d in the body: nothing here closes over a prop.
+ */
+const PO_LINE_COLUMNS: ColumnDef<OrderInquiryPoDetailLine>[] = [
+  {
+    id: 'sku',
+    accessorFn: (line) => line.sku ?? '',
+    header: ({ column }) => <DataGridColumnHeader title="SKU" column={column} />,
+    cell: ({ row }) => (
+      <SkuCellContent sku={row.original.sku} name={row.original.product_name} />
+    ),
+    size: 220,
+    meta: { headerTitle: 'SKU' },
+  },
+  {
+    accessorKey: 'qty_ordered',
+    header: ({ column }) => (
+      <DataGridColumnHeader title="Ordered" column={column} className="justify-end" />
+    ),
+    cell: ({ row }) => (
+      <span className="block text-end tabular-nums">
+        {formatInquiryQty(row.original.qty_ordered)}
+      </span>
+    ),
+    size: 100,
+    meta: { headerTitle: 'Ordered' },
+  },
+  {
+    accessorKey: 'qty_received',
+    header: ({ column }) => (
+      <DataGridColumnHeader title="Received" column={column} className="justify-end" />
+    ),
+    cell: ({ row }) => (
+      <span className="block text-end tabular-nums">
+        {formatInquiryQty(row.original.qty_received)}
+      </span>
+    ),
+    size: 100,
+    meta: { headerTitle: 'Received' },
+  },
+  {
+    accessorKey: 'remaining',
+    header: ({ column }) => (
+      <DataGridColumnHeader title="Remaining" column={column} className="justify-end" />
+    ),
+    cell: ({ row }) => (
+      <span className="block text-end font-medium tabular-nums">
+        {formatInquiryQty(row.original.remaining)}
+      </span>
+    ),
+    size: 110,
+    meta: { headerTitle: 'Remaining' },
+  },
+  {
+    id: 'location',
+    accessorFn: (line) => line.location ?? '',
+    header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
+    cell: ({ row }) => <LocationCellContent location={row.original.location} />,
+    size: 140,
+    meta: { headerTitle: 'Location' },
+  },
+];
+
+const SPO_LINE_COLUMNS: ColumnDef<OrderInquirySpoDetailLine>[] = [
+  {
+    id: 'sku',
+    accessorFn: (line) => line.sku ?? '',
+    header: ({ column }) => <DataGridColumnHeader title="SKU" column={column} />,
+    cell: ({ row }) => (
+      <SkuCellContent sku={row.original.sku} name={row.original.product_name} />
+    ),
+    size: 220,
+    meta: { headerTitle: 'SKU' },
+  },
+  {
+    accessorKey: 'allocated',
+    header: ({ column }) => (
+      <DataGridColumnHeader title="Allocated" column={column} className="justify-end" />
+    ),
+    cell: ({ row }) => (
+      <span className="block text-end tabular-nums">
+        {formatInquiryQty(row.original.allocated)}
+      </span>
+    ),
+    size: 100,
+    meta: { headerTitle: 'Allocated' },
+  },
+  {
+    accessorKey: 'received',
+    header: ({ column }) => (
+      <DataGridColumnHeader title="Received" column={column} className="justify-end" />
+    ),
+    cell: ({ row }) => (
+      <span className="block text-end tabular-nums">
+        {formatInquiryQty(row.original.received)}
+      </span>
+    ),
+    size: 100,
+    meta: { headerTitle: 'Received' },
+  },
+  {
+    accessorKey: 'remaining',
+    header: ({ column }) => (
+      <DataGridColumnHeader title="Remaining" column={column} className="justify-end" />
+    ),
+    cell: ({ row }) => (
+      <span className="block text-end font-medium tabular-nums">
+        {formatInquiryQty(row.original.remaining)}
+      </span>
+    ),
+    size: 110,
+    meta: { headerTitle: 'Remaining' },
+  },
+  {
+    id: 'location',
+    accessorFn: (line) => line.location ?? '',
+    header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
+    cell: ({ row }) => <LocationCellContent location={row.original.location} />,
+    size: 140,
+    meta: { headerTitle: 'Location' },
+  },
+];
+
+/** Both SKU and location, one input (AC-B2/AC-B3) - case-insensitive substring, client-side. */
+function searchOfLine(line: { sku?: string | null; product_name?: string | null; location?: string | null }) {
+  return `${line.sku ?? ''} ${line.product_name ?? ''} ${line.location ?? ''}`;
 }
 
 function PoBody({ poId, open }: { poId: string | null; open: boolean }) {
@@ -308,8 +408,12 @@ function PoBody({ poId, open }: { poId: string | null; open: boolean }) {
             {data.expected_date ? formatDateInMalaysia(data.expected_date) : <NotStated />}
           </Field>
         </dl>
+        {/* AC-B5: a NEW tab, so the lightbox and the list behind it are both still there
+            on return - the whole reason this stayed a lightbox rather than a full page. */}
         <Link
           href={`/scm/purchase-orders/${data.id}`}
+          target="_blank"
+          rel="noopener noreferrer"
           className="inline-flex shrink-0 items-center gap-1 text-sm font-medium text-primary hover:underline"
         >
           Open document
@@ -317,32 +421,18 @@ function PoBody({ poId, open }: { poId: string | null; open: boolean }) {
         </Link>
       </div>
 
-      <section className="space-y-2">
-        <h3 className="text-sm font-semibold">Lines</h3>
-        <LinesTable
-          isEmpty={data.lines.length === 0}
-          empty="This purchase order carries no lines."
-          headers={[
-            { label: 'SKU' },
-            { label: 'Ordered', align: 'end' },
-            { label: 'Received', align: 'end' },
-            { label: 'Remaining', align: 'end' },
-            { label: 'Location' },
-          ]}
-        >
-          {data.lines.map((line, index) => (
-            <tr key={`${line.sku ?? 'line'}-${index}`} className="border-b last:border-b-0">
-              <SkuCell sku={line.sku} name={line.product_name} />
-              <td className="px-3 py-1.5 text-end">{formatInquiryQty(line.qty_ordered)}</td>
-              <td className="px-3 py-1.5 text-end">{formatInquiryQty(line.qty_received)}</td>
-              <td className="px-3 py-1.5 text-end font-medium">
-                {formatInquiryQty(line.remaining)}
-              </td>
-              <LocationCell location={line.location} />
-            </tr>
-          ))}
-        </LinesTable>
-      </section>
+      <PanelDataGrid<OrderInquiryPoDetailLine>
+        title="Lines"
+        columns={PO_LINE_COLUMNS}
+        rows={data.lines}
+        listingKey="projects.projects.view::order-inquiry-po-lines"
+        emptyTitle="This purchase order carries no lines."
+        searchOf={searchOfLine}
+        searchPlaceholder="Search product..."
+        pageSize={10}
+        // The DialogBody already owns the scroll viewport (overflow-y-auto).
+        scrollerMaxHeight={false}
+      />
 
       <AllocationsPanel allocations={data.allocations} />
     </div>
@@ -374,32 +464,17 @@ function SpoBody({ spoNumber, open }: { spoNumber: string; open: boolean }) {
         <Field label="Container">{data.container_no || <NotStated />}</Field>
       </dl>
 
-      <section className="space-y-2">
-        <h3 className="text-sm font-semibold">Lines</h3>
-        <LinesTable
-          isEmpty={data.lines.length === 0}
-          empty="This shipping order carries no lines."
-          headers={[
-            { label: 'SKU' },
-            { label: 'Allocated', align: 'end' },
-            { label: 'Received', align: 'end' },
-            { label: 'Remaining', align: 'end' },
-            { label: 'Location' },
-          ]}
-        >
-          {data.lines.map((line, index) => (
-            <tr key={`${line.sku ?? 'line'}-${index}`} className="border-b last:border-b-0">
-              <SkuCell sku={line.sku} name={line.product_name} />
-              <td className="px-3 py-1.5 text-end">{formatInquiryQty(line.allocated)}</td>
-              <td className="px-3 py-1.5 text-end">{formatInquiryQty(line.received)}</td>
-              <td className="px-3 py-1.5 text-end font-medium">
-                {formatInquiryQty(line.remaining)}
-              </td>
-              <LocationCell location={line.location} />
-            </tr>
-          ))}
-        </LinesTable>
-      </section>
+      <PanelDataGrid<OrderInquirySpoDetailLine>
+        title="Lines"
+        columns={SPO_LINE_COLUMNS}
+        rows={data.lines}
+        listingKey="projects.projects.view::order-inquiry-spo-lines"
+        emptyTitle="This shipping order carries no lines."
+        searchOf={searchOfLine}
+        searchPlaceholder="Search product..."
+        pageSize={10}
+        scrollerMaxHeight={false}
+      />
 
       <AllocationsPanel allocations={data.allocations} />
     </div>
