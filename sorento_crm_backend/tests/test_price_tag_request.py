@@ -415,6 +415,18 @@ class TestStatusTransitions:
         result = PriceTagRequestService.transition_status(db, req.id, STATUS_DESIGNING)
         assert result.status == STATUS_DESIGNING
 
+    def test_changes_requested_to_proof_ready(self, db: Session):
+        """Live bug: marketing revises a request the salesperson sent back
+        and clicks Mark design ready directly - the FE's own CTA already
+        shows at designing OR changes_requested and posts proof_ready
+        without a forced detour through designing first, but the service
+        only allowed the detour, so this 409d. See
+        test_price_tag_request_crm_routes.py for the route-level version
+        snapshot the same click also has to produce."""
+        req = self._create_request(db, STATUS_CHANGES_REQUESTED)
+        result = PriceTagRequestService.transition_status(db, req.id, STATUS_PROOF_READY)
+        assert result.status == STATUS_PROOF_READY
+
     def test_any_to_void(self, db: Session):
         for st in [STATUS_NEW, STATUS_DESIGNING, STATUS_PROOF_READY, STATUS_CHANGES_REQUESTED, STATUS_APPROVED]:
             req = self._create_request(db, st)

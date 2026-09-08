@@ -748,8 +748,12 @@ export function RequestTagDesigner({
       await transitionPriceTagRequest(request.id, 'proof_ready');
       toast.success('Design marked as ready');
       router.push(`/dealer-kit/price-tag-requests/${request.id}`);
-    } catch {
-      toast.error('Failed to mark the design ready');
+    } catch (e) {
+      // `transitionPriceTagRequest` already extracts the server's own
+      // message via `extractApiError` and throws it - a fixed string here
+      // swallowed the actual 409 reason (e.g. an invalid transition) and
+      // left the salesperson/marketing with no idea why the click failed.
+      toast.error(e instanceof Error ? e.message : 'Failed to mark the design ready');
     } finally {
       setTransitioning(false);
     }

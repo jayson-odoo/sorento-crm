@@ -54,6 +54,12 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
     },
     STATUS_CHANGES_REQUESTED: {
         STATUS_DESIGNING,
+        # Marketing revises and re-sends without a forced detour through
+        # `designing` first - the FE's own Mark design ready CTA already
+        # shows at designing OR changes_requested (RequestTagDesigner.tsx)
+        # and posts `proof_ready` directly; the extra hop served nobody and
+        # only produced a 409 the toast then swallowed.
+        STATUS_PROOF_READY,
         STATUS_REJECTED,
         STATUS_VOID,
     },
