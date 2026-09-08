@@ -734,6 +734,21 @@ def _ws_insensitive_lower(col):
     return func.lower(func.regexp_replace(col, r"[-\s]+", "", "g"))
 
 
+def _alnum_casefold(value: str) -> str:
+    """Casefold + strip every character that is not `[0-9A-Za-z]`.
+
+    Stricter than `_strip_all_ws` (dash/whitespace only): the warehouse exact-code rule
+    (owner ruling 8 Sep 2026, chatbot-warehouse-entity-and-last-in) needs "brw ib",
+    "brwib", "BRW-IB" and "Brw_IB" to all normalize to the same string, and a caller can
+    type an underscore or other punctuation a code-style field never stores."""
+    return re.sub(r"[^0-9A-Za-z]+", "", value or "").casefold()
+
+
+def _alnum_insensitive_lower(col):
+    """Postgres twin of :func:`_alnum_casefold`: `lower(regexp_replace(col, '[^0-9A-Za-z]+', '', 'g'))`."""
+    return func.lower(func.regexp_replace(col, r"[^0-9A-Za-z]+", "", "g"))
+
+
 def _norm_sql(expr: str) -> str:
     """Raw-SQL twin of :func:`_ws_insensitive_lower`, for ``text()`` blocks.
 
@@ -1459,17 +1474,27 @@ def _probe_grn(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]
 
 
 def _probe_warehouse(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """Exact match on `warehouse_code` ONLY, normalized by casefold + strip every
+    non-alphanumeric character on both sides (owner ruling 8 Sep 2026,
+    chatbot-warehouse-entity-and-last-in: "it is actually the bare code, so it should be
+    exact match ... brw ib, brwib should map to brw-ib, but when we say brw, it means brw,
+    not the rest"). No prefix and no fuzzy fan-out for this type - a token that is not an
+    exact normalized code is a miss here, and `_prefix_probe_warehouse` /
+    `_and_probe_warehouse` delegate back to this function rather than widen the match.
+    Inactive warehouses still resolve; the caller decides what to show."""
     result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
     if not tokens:
         return result
-    norm_to_token = {_strip_all_ws(t.lower()): t for t in tokens}
+    norm_to_token = {_alnum_casefold(t): t for t in tokens if _alnum_casefold(t)}
+    if not norm_to_token:
+        return result
     rows = (
         db.query(Warehouse.id, Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.location, Warehouse.is_active)
-        .filter(_ws_insensitive_lower(Warehouse.warehouse_code).in_(list(norm_to_token.keys())))
+        .filter(_alnum_insensitive_lower(Warehouse.warehouse_code).in_(list(norm_to_token.keys())))
         .all()
     )
     for wid, code, name, location, is_active in rows:
-        token = norm_to_token.get(_strip_all_ws(str(code).lower()))
+        token = norm_to_token.get(_alnum_casefold(str(code)))
         if not token:
             continue
         result[token].append(
@@ -1988,23 +2013,12 @@ def _prefix_probe_customer_debtor_name(db: Session, token: str) -> list[Resolved
 
 
 def _prefix_probe_warehouse(db: Session, token: str) -> list[ResolvedEntity]:
-    rows = (
-        db.query(Warehouse.id, Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.is_active)
-        .filter(_norm_prefix(Warehouse.warehouse_code, token))
-        .limit(PREFIX_LIMIT)
-        .all()
-    )
-    return [
-        ResolvedEntity(
-            entity_type="warehouse",
-            canonical_code=code,
-            uuid=str(wid) if wid else None,
-            match_field="warehouse_code",
-            match_tier="prefix",
-            display={"warehouse_name": name, "is_active": bool(is_active)},
-        )
-        for wid, code, name, is_active in rows
-    ]
+    """Not actually a prefix probe: the owner ruling (8 Sep 2026,
+    chatbot-warehouse-entity-and-last-in) bans prefix fan-out for warehouse ("brw" must
+    never surface `BRW-IB`/`BRW-IR`), so this Tier-2 slot delegates to the same exact
+    normalized-code match as `_probe_warehouse` and returns at most the one row a token
+    names outright."""
+    return _probe_warehouse(db, [token]).get(token, [])
 
 
 def _prefix_probe_supplier(db: Session, token: str) -> list[ResolvedEntity]:
@@ -3648,25 +3662,19 @@ def _and_probe_transporter(db: Session, tokens: list[str]) -> list[ResolvedEntit
 
 
 def _and_probe_warehouse(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
-    blob = _concat_ws(Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.location)
-    counts = _and_token_match_counts(blob, tokens)
-    base = db.query(Warehouse.id, Warehouse.warehouse_code, Warehouse.warehouse_name, Warehouse.location, Warehouse.is_active)
-    tier = _and_max_tier_filter(base, counts)
-    if tier is None:
-        return []
-    rows = base.filter(tier).limit(AND_MODE_LIMIT).all()
-    return [
-        ResolvedEntity(
-            entity_type="warehouse",
-            canonical_code=code,
-            uuid=str(wid) if wid else None,
-            match_field="warehouse_code",
-            match_tier="and",
-            match_blob=" ".join(x for x in (code, name, location) if x),
-            display={"warehouse_name": name, "location": location, "is_active": bool(is_active) if is_active is not None else True},
-        )
-        for wid, code, name, location, is_active in rows
-    ]
+    """Same ban as `_prefix_probe_warehouse`: no AND-mode fan-out for warehouse, exact
+    normalized code per token only, deduped across tokens."""
+    seen: set[str] = set()
+    out: list[ResolvedEntity] = []
+    hits = _probe_warehouse(db, tokens)
+    for tok in tokens:
+        for m in hits.get(tok, []):
+            if m.uuid:
+                if m.uuid in seen:
+                    continue
+                seen.add(m.uuid)
+            out.append(m)
+    return out
 
 
 def _and_probe_supplier(db: Session, tokens: list[str]) -> list[ResolvedEntity]:
