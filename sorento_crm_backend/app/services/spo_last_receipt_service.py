@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from app.models.inventory import Warehouse
 from app.models.procurement import InboundShipment, SPOAllocation
 from app.models.product import Product
+from app.services.scm import spo_supply
 
 
 def _plain_number(v: Any) -> Any:
@@ -47,13 +48,22 @@ def last_receipt_rows(
 ) -> list[dict]:
     """Most recently RECEIVED spo_allocations (`receipt_status='fully_received'` -
     the plan/UAC's "received" bucket; there is no literal 'received' value in
-    the column, see the AC-908 measurement note)."""
+    the column, see the AC-908 measurement note).
+
+    R7/R8/AC-E11: `visible_line_clauses()` tests `quantity_received`, never
+    `receipt_status`, so a retired line stamped `fully_received` with a ZEROED
+    receipt (D28c freezes the receipt at retirement) is still omitted - the
+    chatbot must not state a receipt no goods actually landed against.
+    """
     q = (
         db.query(SPOAllocation, Product, InboundShipment, Warehouse)
         .join(Product, Product.id == SPOAllocation.product_id)
         .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
         .outerjoin(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
-        .filter(SPOAllocation.receipt_status == "fully_received")
+        .filter(
+            SPOAllocation.receipt_status == "fully_received",
+            *spo_supply.visible_line_clauses(),
+        )
     )
     if product_ids:
         q = q.filter(SPOAllocation.product_id.in_(product_ids))
