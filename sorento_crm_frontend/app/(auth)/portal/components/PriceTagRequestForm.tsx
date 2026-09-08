@@ -1221,10 +1221,16 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       {/* Price mode (D5): List price by default, Selling price only once a
           promotion is picked - it has nothing to sell against otherwise. */}
       <div className="space-y-1.5">
-        <Label>Price</Label>
-        <div className="inline-flex items-center rounded-md border p-0.5">
+        <Label id="price-mode-label">Price</Label>
+        <div
+          role="radiogroup"
+          aria-labelledby="price-mode-label"
+          className="inline-flex items-center rounded-md border p-0.5"
+        >
           <button
             type="button"
+            role="radio"
+            aria-checked={priceMode === 'list'}
             className={cn(
               'rounded px-3 py-1.5 text-sm transition-colors',
               priceMode === 'list'
@@ -1238,6 +1244,8 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           {promotionId ? (
             <button
               type="button"
+              role="radio"
+              aria-checked={priceMode === 'selling'}
               className={cn(
                 'rounded px-3 py-1.5 text-sm transition-colors',
                 priceMode === 'selling'
@@ -1249,15 +1257,26 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
               Selling price
             </button>
           ) : (
+            // A native `disabled` button fires no mouse/focus events in real
+            // browsers, so a Tooltip watching it never opens. The SPAN is the
+            // trigger instead - focusable and hoverable - and the button
+            // inside it is merely inert (aria-disabled, no-op click,
+            // pointer-events-none so hover always reaches the span).
             <Tooltip>
               <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  disabled
-                  className="cursor-not-allowed rounded px-3 py-1.5 text-sm text-muted-foreground opacity-50"
-                >
-                  Selling price
-                </button>
+                <span tabIndex={0} className="inline-block">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={false}
+                    aria-disabled="true"
+                    tabIndex={-1}
+                    onClick={(e) => e.preventDefault()}
+                    className="pointer-events-none cursor-not-allowed rounded px-3 py-1.5 text-sm text-muted-foreground opacity-50"
+                  >
+                    Selling price
+                  </button>
+                </span>
               </TooltipTrigger>
               <TooltipContent>Select a promotion first</TooltipContent>
             </Tooltip>

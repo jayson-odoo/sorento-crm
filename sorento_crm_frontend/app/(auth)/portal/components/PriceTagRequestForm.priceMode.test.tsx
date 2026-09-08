@@ -168,21 +168,29 @@ describe('PriceTagRequestForm - price mode (D5, AC-S2-1)', () => {
   });
 
   it('Selling price is disabled until a promotion is picked (AC-S2-2)', async () => {
+    // role="radio" (review fix - the Price control is a radiogroup, not two
+    // plain buttons) and aria-disabled rather than the native `disabled`
+    // attribute (a natively disabled element fires no hover/focus events, so
+    // the tooltip explaining why never opened).
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Customer');
 
-    expect(screen.getByRole('button', { name: 'Selling price' })).toBeDisabled();
+    expect(
+      screen.getByRole('radio', { name: 'Selling price' }),
+    ).toHaveAttribute('aria-disabled', 'true');
 
     await selectOption('Promotion', 'promo-1');
 
-    expect(screen.getByRole('button', { name: 'Selling price' })).not.toBeDisabled();
+    expect(
+      screen.getByRole('radio', { name: 'Selling price' }),
+    ).not.toHaveAttribute('aria-disabled', 'true');
   });
 
   it('choosing Selling price with a promotion posts price_mode selling', async () => {
     render(<PriceTagRequestForm />);
     await fillMinimalRequiredFields();
     await selectOption('Promotion', 'promo-1');
-    fireEvent.click(screen.getByRole('button', { name: 'Selling price' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Selling price' }));
 
     submit();
 
@@ -194,7 +202,7 @@ describe('PriceTagRequestForm - price mode (D5, AC-S2-1)', () => {
     render(<PriceTagRequestForm />);
     await fillMinimalRequiredFields();
     await selectOption('Promotion', 'promo-1');
-    fireEvent.click(screen.getByRole('button', { name: 'Selling price' }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Selling price' }));
 
     // Clear the promotion: the mocked select's own empty option.
     fireEvent.change(screen.getByLabelText('Promotion'), {
@@ -202,7 +210,9 @@ describe('PriceTagRequestForm - price mode (D5, AC-S2-1)', () => {
     });
 
     await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Selling price' })).toBeDisabled(),
+      expect(
+        screen.getByRole('radio', { name: 'Selling price' }),
+      ).toHaveAttribute('aria-disabled', 'true'),
     );
 
     submit();
