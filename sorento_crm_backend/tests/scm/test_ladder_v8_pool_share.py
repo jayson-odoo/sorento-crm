@@ -596,14 +596,17 @@ def test_the_confirm_refuses_a_hand_typed_share_above_the_allowance():
         status, body = response.status_code, response.json()
 
     assert status == 422, body
-    assert "manual decision the engine never proposes" in body["failing_lines"][0]["reason"]
+    assert "or say why this differs from the proposal" in body["failing_lines"][0]["reason"]
 
 
-def test_the_confirm_admits_a_hand_typed_share_with_an_amend_reason():
-    """8 Sep 2026 ruling: the whole-line rule is lifted for a manual amendment. A share above
-    the allowance would still be refused for THAT reason, so this stays inside it (100 of a
-    pool that may spare 100) and only the mix itself is at stake - a stated `amend_reason` is
-    what turns this line's own composition from refused into confirmable."""
+def test_the_confirm_admits_a_hand_typed_share_above_the_allowance_with_a_reason():
+    """8 Sep 2026 ruling: the whole-line rule is lifted for a manual amendment - and the
+    project allowance `_is_pool_share_split` checks is a PROPOSAL-time bound, not a
+    confirm-time cap. At confirm the pool leg is bounded only by free stock, the five-pool
+    net (`pool_reserve_capacity`), and R14 - never by the project share, so 120 of a pool
+    that may spare 100 (the same composition the sibling test above refuses without a
+    reason) confirms once the planner says why, exactly as a whole-line over-share draw
+    off the pool already does today."""
     from tests._pg_fixture import blank_session
 
     with blank_session() as db:
@@ -611,8 +614,8 @@ def test_the_confirm_admits_a_hand_typed_share_with_an_amend_reason():
         response = _confirm_split(
             db, company_id, eling, order,
             {
-                **_split_payload(line, warehouse=pool, share="100", buy="50"),
-                "amend_reason": "customer takes 100 now, the rest on the next shipment",
+                **_split_payload(line, warehouse=pool, share="120", buy="30"),
+                "amend_reason": "customer takes 120 now, the rest on the next shipment",
             },
         )
         status, body = response.status_code, response.text
@@ -636,7 +639,7 @@ def test_the_confirm_refuses_a_split_for_a_line_beyond_the_immediate_window():
         status, body = response.status_code, response.json()
 
     assert status == 422, body
-    assert "manual decision the engine never proposes" in body["failing_lines"][0]["reason"]
+    assert "or say why this differs from the proposal" in body["failing_lines"][0]["reason"]
 
 
 def test_the_confirm_accepts_the_engines_own_proposal_on_an_oversold_chain():
@@ -690,7 +693,7 @@ def test_the_confirm_refuses_a_pool_split_that_outruns_the_five_pool_net():
 
     assert status == 422, body
     assert any(
-        "manual decision the engine never proposes" in row["reason"]
+        "or say why this differs from the proposal" in row["reason"]
         for row in body["failing_lines"]
     ), body
 
