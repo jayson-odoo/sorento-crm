@@ -190,6 +190,41 @@ def _post(session: Any, url: str, api_key: str, envelope: dict[str, Any], timeou
     return response.json()
 
 
+_RETRY_WAIT_SECONDS = 20.0
+
+
+def _is_429(body: dict[str, Any]) -> bool:
+    """A turn the parser's own OpenAI call hit a rate limit on - "429" appears either in
+    the endpoint's own HTTP error text or in a failed turn's `error` field (the parser
+    call's exception message, surfaced verbatim by `run_turn`'s failure path)."""
+    return "429" in str(body.get("_http_error") or "") or "429" in str(body.get("error") or "")
+
+
+def _post_with_pacing(
+    session: Any,
+    url: str,
+    api_key: str,
+    envelope: dict[str, Any],
+    timeout: float,
+    *,
+    sleep_seconds: float = 0.0,
+) -> dict:
+    """`_post`, plus the owner's two pacing rules (8 Sep 2026, a graded run sharing the
+    parser's OpenAI key with someone testing live): sleep `sleep_seconds` BEFORE every
+    call (so a caller that paces the whole run paces the first turn too), and a SINGLE
+    automatic retry, after a fixed 20s wait, of a turn whose error contains "429" - one
+    retry only, and it counts as ONE attempt in the report (the caller sees only the
+    retry's own result, not two graded turns for one customer message)."""
+    if sleep_seconds > 0:
+        time.sleep(sleep_seconds)
+    body = _post(session, url, api_key, envelope, timeout)
+    if _is_429(body):
+        print(f"      (429 from the parser - waiting {_RETRY_WAIT_SECONDS:g}s and retrying once)")
+        time.sleep(_RETRY_WAIT_SECONDS)
+        body = _post(session, url, api_key, envelope, timeout)
+    return body
+
+
 def _pending_kind(turn_id: str | None) -> str | None:
     """The escalation lane's `pending.kind`, off the row - it is not on the 200 body."""
     if not turn_id:
@@ -409,6 +444,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--api-key", default=os.getenv("EXTERNAL_API_KEY"))
     parser.add_argument("--timeout", type=float, default=180.0)
     parser.add_argument(
+        "--sleep-seconds",
+        type=float,
+        default=0.0,
+        help=(
+            "pace turns by sleeping this long between each one (default 0 = as fast as "
+            "the server answers). Owner ruling, 8 Sep 2026: a graded run shares the "
+            "parser's OpenAI key with anyone testing live at the same time, and a burst "
+            "of 58 back-to-back turns hit 429 on 6 of them plus 2 MCP timeouts."
+        ),
+    )
+    parser.add_argument(
         "--mock-parser",
         action="store_true",
         help="use each case's own `parser:` block instead of calling the model",
@@ -567,7 +613,9 @@ def _run_ad_hoc(args, session, url, run_id) -> int:
                 previous_state=previous_state,
                 prompt_version=args.prompt_version,
             )
-            body = _post(session, url, args.api_key, envelope, args.timeout)
+            body = _post_with_pacing(
+                session, url, args.api_key, envelope, args.timeout, sleep_seconds=args.sleep_seconds
+            )
             print(f"\n--- turn {index}  contact {contact} ---")
             print(f"> {text_in}")
             if "_http_error" in body:
@@ -611,7 +659,9 @@ def _run_cases(cases, session, url, args, default_contact, run_id) -> int:
                 previous_state=previous_state,
                 prompt_version=args.prompt_version,
             )
-            body = _post(session, url, args.api_key, envelope, args.timeout)
+            body = _post_with_pacing(
+                session, url, args.api_key, envelope, args.timeout, sleep_seconds=args.sleep_seconds
+            )
             pending = _pending_kind(body.get("turn_id"))
             reply = _customer_words(body)
             last_branch = body.get("branch_kind")
