@@ -78,6 +78,17 @@ Plan: `PLAN-scm-cs-planning-uat.md`. Verified in a real browser on :3060 via the
 - AC-L3 Group borrow from another sales order is never in the automatic proposal; it remains a manual pick.
 - AC-L4 Singleton-pool parity test unchanged byte for byte.
 - AC-L5 The engine's own proposals and the SO supply sheet never mix stock sources with Buy on one line (422 with the reason). **AMENDED 8 Sep 2026 (captain's ruling):** a board amendment MAY mix stock and Buy on one line when an `amend_reason` is given, because a mix reaching confirm from a person is a manual composition, not something the engine ever proposed; a mix with no reason is still refused with a 422 (reason: "A line is either met wholly from stock or wholly bought unless a reason is given. This one mixes {qty} from stock with a Buy of {qty}: take the whole {qty} from stock, buy the whole {qty}, or say why this differs from the proposal."). The Buy switch still clears the stock rows either way.
+- AC-L5a **TEMPORARY (captain, 8 Sep 2026, own-group cap lifted with a reason).** A Reserve at
+  the line's own ownership group's bins (its fulfilment location, or another bin of the same
+  group) is no longer capped by the group net when the confirm line carries a non-empty
+  `amend_reason` - still bounded by on hand less other lines' holds (R14) and by the location
+  gate. Without a reason, an oversold own bin still refuses the ask exactly as before
+  (`test_a_reserve_at_an_oversold_own_bin_without_a_reason_is_still_refused`). With a reason,
+  the same oversold own bin confirms
+  (`test_a_reserve_at_an_oversold_own_bin_confirms_with_a_reason`). A reason never pushes a
+  Reserve past what is physically on hand less other lines' confirmed holds
+  (`test_a_reason_does_not_push_a_reserve_past_on_hand`, refused 409 by R14). Revisit when the
+  oversold group's book is cleaned up or a queue-jumping complaint arrives, whichever first.
 - AC-L5b **[BE]** The confirmation judges INCOMING cover by the DATED walk as well as the undated group net (captain, 8 Sep 2026). Given an oversold ownership group (own bin holding nothing, an SPO of 3 arriving before the asking line's date, a sibling order in the same group owing 486 with a later date), when the walk proposes `Incoming 3` for the asking line and that composition is posted verbatim, then the confirmation writes it - the bound is the LARGER of the undated group-netted water share and the water the one assignment gave this unit by its own date, never their sum. A hand-typed 5 against the same world is still refused with "Timely SPO cover is now 3, not 5." Where the dated walk offers nothing either (AC-L10) nothing changes: the line still buys and a posted Incoming is still refused. Pinned by `tests/scm/test_confirm_timely_cover_dated.py`.
 - AC-L6 Amend on SO415472 L1 offers SO394803 L2 (same agent) as a donor regardless of rank, requires an authorisation reason, and on confirm raises an Order back OI row for SO394803 L2 with the donor's date; the donor cell reads "71 lent to SO415472".
 

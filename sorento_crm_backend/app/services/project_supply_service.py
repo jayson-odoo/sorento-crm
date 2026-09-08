@@ -4659,6 +4659,32 @@ class ProjectSupplyService:
             ask = qty - carried if qty > carried else _ZERO
             if ask <= _ZERO:
                 continue
+            # TEMPORARY LIFT (the captain, 8 Sep 2026): an ownership group's net can be
+            # oversold on paper (SO419417 line 9, BT012-CR at BRW-BB - on hand 1035, owed
+            # 6213, group net -5166) while the FLOOR at the line's own bin still has stock
+            # a planner can hand a customer today. The group-net-seeded `capacity` above
+            # reads every own-group bin as if it were already spoken for by the whole
+            # group's backlog, so a hand-composed Reserve at the line's own location could
+            # never be written even when the units are sitting there. With a stated
+            # `amend_reason` - the planner's own account of why this differs from the
+            # proposal - a Reserve at THIS LINE'S OWN GROUP's bins (its fulfilment
+            # location, or another bin carrying the same ownership group) is no longer
+            # capped by the group net; `capacity_left`'s "own" business is left alone for
+            # a pool. Still bounded: R14 (`_check_reserve_against_on_hand`, called on
+            # every checked line independent of this block) refuses anything past on hand
+            # less other lines' holds, the location gate above still limits this line to
+            # its own group's bins and the pools, and the ledger below still draws the
+            # take down so a later line of the same payload sees it spent. Pool
+            # locations, other groups' bins, borrow and Buy are unchanged.
+            #
+            # REVISIT when the BB group's book is cleaned up or a queue-jumping complaint
+            # arrives, whichever first (PLAN-scm-cs-planning-uat.md).
+            own_group_bin = warehouse == fact.own_code or (
+                sales_agent_service.group_of_warehouse_code(warehouse) == fact.group_code
+                and fact.group_code is not None
+            )
+            if own_group_bin and (getattr(entry, "amend_reason", None) or "").strip():
+                capacity[warehouse] = max(capacity.get(warehouse, _ZERO), qty)
             if warehouse not in capacity:
                 # The location IS this line's own or its pool; it simply has nothing left for
                 # this line. `pool_reserve_capacity` omits a location contributing zero, so
