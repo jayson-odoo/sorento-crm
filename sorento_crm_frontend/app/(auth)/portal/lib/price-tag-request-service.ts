@@ -342,7 +342,13 @@ export interface CreatePriceTagRequestInput {
   needed_by_date: string | null;
   notes: string | null;
   price_mode: PriceMode;
-  lines: Omit<PriceTagRequestLine, 'id' | 'name' | 'code' | 'sort_order'>[];
+  // `show_promo_price` is NOT sent (D5, review fix): the service derives it
+  // on every line save from the header's own `price_mode`, so a value the
+  // client sent was always dead weight, immediately overridden either way.
+  lines: Omit<
+    PriceTagRequestLine,
+    'id' | 'name' | 'code' | 'sort_order' | 'show_promo_price'
+  >[];
 }
 
 export async function createRequest(

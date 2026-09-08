@@ -105,7 +105,6 @@ interface DraftLine {
   product_set_id: string | null;
   name: string;
   code: string;
-  show_promo_price: boolean;
   quantity: number;
   alternatives: { product_id: string; name: string; code: string }[];
   included_accessories: string;
@@ -127,7 +126,6 @@ function emptyDraftLine(): DraftLine {
     product_set_id: null,
     name: '',
     code: '',
-    show_promo_price: true,
     quantity: 1,
     alternatives: [],
     included_accessories: '',
@@ -153,7 +151,9 @@ function lineToDraft(line: PriceTagRequestLine): DraftLine {
     product_set_id: line.product_set_id,
     name: line.name,
     code: line.code,
-    show_promo_price: line.show_promo_price,
+    // show_promo_price is read-only server state, not form state: it is
+    // derived from the header's price_mode on every save (D5), so the draft
+    // never carries or resends it (review fix).
     quantity: line.quantity,
     alternatives: line.alternatives,
     included_accessories: line.included_accessories ?? '',
@@ -480,7 +480,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
         product_set_id: match.kind === 'product_set' ? match.id : null,
         name: match.name || match.code,
         code: match.code,
-        show_promo_price: true,
         quantity: qty,
         alternatives: [],
         included_accessories: '',
@@ -581,7 +580,6 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
       line_type: l.line_type,
       product_id: l.product_id,
       product_set_id: l.product_set_id,
-      show_promo_price: l.show_promo_price,
       quantity: l.quantity,
       alternatives: l.alternatives,
       included_accessories: l.included_accessories || null,
