@@ -616,6 +616,11 @@ class TestAcE9ProjectCoverageHidesRetired:
 
 # =================================================================================== #
 # AC-E10: scm/spo_conversion_service.coverage_for_so_lines and _own_state
+#
+# AC-E10's own `_own_state` half is REVISED by AC-E16 (round 2, security review):
+# `_own_state` stays unfiltered (a writer's view, read by the SPO edit SAVE as well as
+# the planner display), and the filter moves to `planner_state`'s own display copy. See
+# `TestAcE16OwnStateIsAWritersViewNeverFiltered` below.
 # =================================================================================== #
 
 
@@ -661,8 +666,24 @@ class TestAcE10CoverageForSoLinesHidesRetired:
             assert spo_number not in after_numbers, after_numbers
 
 
-class TestAcE10OwnStateHidesRetired:
-    def test_own_state_excludes_a_retired_allocation_from_the_rollup(self):
+class TestAcE16OwnStateIsAWritersViewNeverFiltered:
+    """AC-E16 (round 2, revises AC-E10's `_own_state` half). `_own_state` feeds the SPO
+    edit SAVE (`revise`) as well as `planner_state` (the display) - a save that could not
+    see a hidden allocation would neither update nor delete it and would insert a SECOND
+    row for the same (shipment line, warehouse). So `_own_state` itself stays UNFILTERED
+    (R7 amended: a user-facing READ takes the clause, a read a WRITE depends on never
+    does); the filter moves to `planner_state`'s own DISPLAY copy of the same state.
+
+    Two tests, matching the UAC's "assert both halves": the writer's own read (direct
+    call, cheap - `_own_state`'s `po` argument is unused, so a `SimpleNamespace` link
+    stands in for the real `ShipmentLineSpoLink` row) still contains the hidden
+    allocation, and the planner DISPLAY (`planner_state`, built off a real `svc.create` +
+    `World` write - the same fixture `TestAcE10CoverageForSoLinesHidesRetired` uses, for
+    the same reason: a hand-built `po_line_id` only proves the query filters correctly,
+    not that a real "Create SPO" edit-mode reopen still hides it) omits it.
+    """
+
+    def test_own_state_itself_keeps_the_hidden_allocation_the_writer_needs(self):
         from types import SimpleNamespace
 
         from app.services.scm.spo_conversion_service import _own_state
@@ -670,7 +691,7 @@ class TestAcE10OwnStateHidesRetired:
         with blank_session() as db:
             chain = _chain(db)
             product = _product(db, chain)
-            po = PurchaseOrder(id=_u(), po_number=unique_code("PO-E10OWN"))
+            po = PurchaseOrder(id=_u(), po_number=unique_code("PO-E16OWN"))
             db.add(po)
             db.flush()
             po_line = PurchaseOrderLine(
@@ -681,11 +702,11 @@ class TestAcE10OwnStateHidesRetired:
             db.flush()
 
             visible = SPOAllocation(
-                id=_u(), spo_number=unique_code("SPOE10"), product_id=product.id,
+                id=_u(), spo_number=unique_code("SPOE16"), product_id=product.id,
                 allocated_quantity=20, quantity_received=5, po_line_id=po_line.id,
             )
             hidden = SPOAllocation(
-                id=_u(), spo_number=unique_code("SPOE10H"), product_id=product.id,
+                id=_u(), spo_number=unique_code("SPOE16H"), product_id=product.id,
                 allocated_quantity=999, quantity_received=0, po_line_id=po_line.id,
                 line_status="closed", retired_at=_now(),
             )
@@ -696,8 +717,109 @@ class TestAcE10OwnStateHidesRetired:
             out = _own_state(db, None, links)
             held = out["shipment-line-1"]
             alloc_ids = {a.id for a in held["allocations"]}
-            assert alloc_ids == {visible.id}, alloc_ids
+            # UNFILTERED: both rows, so a save can find - and update or delete - the
+            # hidden one instead of inserting a duplicate for its (line, warehouse).
+            assert alloc_ids == {visible.id, hidden.id}, alloc_ids
             assert held["received"] == 5.0, held["received"]
+
+    def test_planner_display_omits_the_hidden_allocation(self):
+        from app.services.scm import spo_conversion_service as svc
+        from tests.scm.test_spo_conversion import World
+        from tests.scm.test_spo_planner_selection import _confirm, _retail_demand
+
+        with pg_session() as db:
+            w = World(db)
+            supplier = w.supplier()
+            wh = w.warehouse()
+            w.po("A", supplier, [("A", 100, 0)])
+            retail, so = _retail_demand(
+                db, w, "A", wh, qty=30, required=date(2026, 9, 1),
+            )
+            shipment, lines = w.shipment([("A", 30, supplier)])
+            created = svc.create(
+                db, str(shipment.id),
+                [_confirm(
+                    lines[0], 30,
+                    location_splits=[{"warehouse_id": str(wh.id), "qty": 30}],
+                    so_takes=[{"key": f"retail:{retail.id}", "qty": 30}],
+                )],
+            )
+            spo_number = created["created_spos"][0]["po_number"]
+            spo_po_id = created["created_spos"][0]["purchase_order_id"]
+
+            # Retire every allocation this SPO wrote - hidden, but still on file for
+            # `_own_state`'s own writer read (pinned in the sibling test above).
+            db.query(SPOAllocation).filter(SPOAllocation.spo_number == spo_number).update(
+                {"retired_at": _now(), "line_status": "closed"}, synchronize_session=False
+            )
+            db.flush()
+
+            state = svc.planner_state(db, str(shipment.id), spo_po_id)
+            line = next(ln for ln in state["lines"] if ln["shipment_line_id"] == str(lines[0].id))
+            # The one allocation this SPO wrote (30 units at `wh`) is now hidden - the
+            # split editor's own table must not show it, or an operator reopening this
+            # SPO would see a location the document no longer names.
+            assert line["location_splits"] == [], line["location_splits"]
+
+
+# =================================================================================== #
+# AC-E17 (round 3, reviewer): _spo_cover_by_so_line and coverage_for_so_lines - one
+# answer per line. They share the same row scan (`_spo_so_coverage_rows`) but only
+# `coverage_for_so_lines` (AC-E10) took the clause; `_spo_cover_by_so_line` fed the
+# planner's own `taken_by` a name the sales order's "Linked to" column already hid,
+# contradicting the module's own docstring that the two can never disagree.
+# =================================================================================== #
+
+
+class TestAcE17PlannerAndLinkedToAgree:
+    def test_taken_by_and_linked_to_agree_once_the_only_allocation_is_retired(self):
+        from app.services.scm import spo_conversion_service as svc
+        from tests.scm.test_spo_conversion import World
+        from tests.scm.test_spo_planner_selection import _confirm, _retail_demand
+
+        with pg_session() as db:
+            w = World(db)
+            supplier = w.supplier()
+            wh = w.warehouse()
+            w.po("A", supplier, [("A", 100, 0)])
+            retail, so = _retail_demand(
+                db, w, "A", wh, qty=30, required=date(2026, 9, 1),
+            )
+            shipment, lines = w.shipment([("A", 30, supplier)])
+            created = svc.create(
+                db, str(shipment.id),
+                [_confirm(
+                    lines[0], 30,
+                    location_splits=[{"warehouse_id": str(wh.id), "qty": 30}],
+                    so_takes=[{"key": f"retail:{retail.id}", "qty": 30}],
+                )],
+            )
+            spo_number = created["created_spos"][0]["po_number"]
+            product = w.product("A")
+
+            def _readers():
+                cover = svc.coverage_for_so_lines(db, [str(retail.id)])
+                cover_numbers = {e["document"] for e in cover.get(str(retail.id), [])}
+                taken_by = svc._spo_cover_by_so_line(db, str(product.id))
+                taken_numbers = {e["spo_number"] for e in taken_by.get(str(retail.id), [])}
+                return cover_numbers, taken_numbers
+
+            # Sanity: before retiring, both readers name the same SPO for this line.
+            cover_before, taken_before = _readers()
+            assert spo_number in cover_before, cover_before
+            assert spo_number in taken_before, taken_before
+            assert cover_before == taken_before, (cover_before, taken_before)
+
+            # Retire the only allocation this SPO wrote.
+            db.query(SPOAllocation).filter(SPOAllocation.spo_number == spo_number).update(
+                {"retired_at": _now(), "line_status": "closed"}, synchronize_session=False
+            )
+            db.flush()
+
+            cover_after, taken_after = _readers()
+            assert spo_number not in cover_after, cover_after
+            assert spo_number not in taken_after, taken_after
+            assert cover_after == taken_after, (cover_after, taken_after)
 
 
 # =================================================================================== #

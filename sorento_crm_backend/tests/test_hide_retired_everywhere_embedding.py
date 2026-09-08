@@ -167,6 +167,106 @@ class TestAcE3WorkerDeactivatesInsteadOfReembedding:
 
 
 # =================================================================================== #
+# AC-E15 (round 2, extended round 3): the deactivation is reversible, both ways
+#
+# Round 2: a later push un-retires a line (clears `retired_at`) - its body is
+# byte-identical to the original, so `source_hash` is unchanged and the worker's
+# hash-skip branch is the ONLY place that can repair `is_active`. Round 3: the SAME gap
+# has a second path the round-2 ruling did not name - a retired line that later takes a
+# receipt (`quantity_received` 0 -> 5) becomes visible under R2 WITHOUT `retired_at`
+# ever clearing, and the canonical body does not read `quantity_received` either, so the
+# hash is unchanged there too. Both round trips are pinned; per the captain's steer, the
+# assertion in both is on the skip branch re-activating, never on any body-content
+# difference - there deliberately isn't one.
+# =================================================================================== #
+
+
+class TestAcE15DeactivationIsReversible:
+    def _embed_while_visible(self, db, embedding_worker, alloc) -> EmbeddingDocument:
+        """The FIRST drain, while the row is visible - the ordinary (non-skip) path
+        builds a REAL canonical body and a REAL `source_hash`, so the round trip's later
+        hash match is genuine rather than engineered by a hand-seeded stand-in."""
+        q = _pending_queue_row(db, alloc.id)
+        embedding_worker.process_embedding_queue_item(q.id)
+        db.expire_all()
+        return (
+            db.query(EmbeddingDocument)
+            .filter(
+                EmbeddingDocument.source_type == "spo_allocation",
+                EmbeddingDocument.source_id == alloc.id,
+            )
+            .one()
+        )
+
+    def _retire_and_drain(self, db, embedding_worker, alloc) -> None:
+        alloc.retired_at = _now()
+        alloc.line_status = "closed"
+        db.flush()
+        q = _pending_queue_row(db, alloc.id)
+        embedding_worker.process_embedding_queue_item(q.id)
+        db.expire_all()
+
+    def _rigged(self, db, monkeypatch):
+        """`SessionLocal` handed the test's own session (same connection, seeded rows
+        visible), its `.close()` neutralised, and the real embed provider call replaced
+        with deterministic dummy vectors - see the module docstring."""
+        from app.services import embedding_worker
+
+        monkeypatch.setattr(embedding_worker, "SessionLocal", lambda: db)
+        db.close = lambda: None  # type: ignore[method-assign]
+        monkeypatch.setattr(
+            embedding_worker, "_embed_text_chunks",
+            lambda chunks: [[0.0] * 1536 for _ in chunks],
+        )
+        return embedding_worker
+
+    def test_un_retiring_reactivates_the_document(self, db, monkeypatch):
+        embedding_worker = self._rigged(db, monkeypatch)
+        product = _product(db)
+        alloc = _alloc(db, product, retired=False)
+
+        doc = self._embed_while_visible(db, embedding_worker, alloc)
+        assert doc.is_active is True  # sanity: the ordinary path activates it
+
+        self._retire_and_drain(db, embedding_worker, alloc)
+        db.refresh(doc)
+        assert doc.is_active is False  # sanity: pinned by the deactivation test too
+
+        # A later push un-retires it - the leftover sweep no longer names it retired.
+        alloc.retired_at = None
+        alloc.line_status = "open"
+        db.flush()
+        q = _pending_queue_row(db, alloc.id)
+        embedding_worker.process_embedding_queue_item(q.id)
+
+        db.expire_all()
+        db.refresh(doc)
+        assert doc.is_active is True, doc.is_active
+
+    def test_a_receipt_landing_reactivates_the_document_under_r2(self, db, monkeypatch):
+        embedding_worker = self._rigged(db, monkeypatch)
+        product = _product(db)
+        alloc = _alloc(db, product, retired=False)
+
+        doc = self._embed_while_visible(db, embedding_worker, alloc)
+
+        self._retire_and_drain(db, embedding_worker, alloc)
+        db.refresh(doc)
+        assert doc.is_active is False  # sanity
+
+        # R2's own path: a goods-received note lands - `quantity_received` 0 -> 5,
+        # `retired_at` is NEVER touched.
+        alloc.quantity_received = 5
+        db.flush()
+        q = _pending_queue_row(db, alloc.id)
+        embedding_worker.process_embedding_queue_item(q.id)
+
+        db.expire_all()
+        db.refresh(doc)
+        assert doc.is_active is True, doc.is_active
+
+
+# =================================================================================== #
 # AC-E3, second half: embedding_backfill_service skips hidden rows
 #
 # `_fetch_rows` reads `self.db` directly - no separate `SessionLocal()`, unlike
