@@ -1029,6 +1029,13 @@ class InboundShipmentService:
         shipment and its own SPO allocation report different numbers for the same
         goods: a 60-of-100 short receipt read as 100 here and 60 there, and the
         container looked fully received when 40 of it never arrived.
+
+        AC-E14 (PLAN-hide-retired-everywhere): deliberately UNFILTERED by
+        `spo_supply.visible_line_clauses()`. This collects PickingLine receipts by
+        product across every allocation on the shipment to find what actually landed;
+        filtering could drop a REAL receipt rather than hide a phantom line - it looks
+        up receipts by number, and a receipt found through a retired line is still a
+        receipt.
         """
         received_totals: dict[str, int] = {}
 
