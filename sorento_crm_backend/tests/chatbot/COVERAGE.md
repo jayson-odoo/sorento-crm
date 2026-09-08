@@ -87,7 +87,7 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 | `miss-suggest-result` | 49 | 49 | 1 |
 | `not-found-error-message` | 7 | 5 | 1 |
 | `output-structurer` | 20 | 20 | 2 |
-| `output_exchange` | 325 | 249 | 98 |
+| `output_exchange` | 325 | 249 | 99 |
 | `promo-picker` | 63 | 5 | 1 |
 | `resolve-exit-continue` | 6 | 6 | 1 |
 | `resolve-exit-not-found` | 11 | 11 | 2 |

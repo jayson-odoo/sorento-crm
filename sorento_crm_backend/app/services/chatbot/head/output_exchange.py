@@ -365,6 +365,13 @@ DOMAIN_BLOCKED_HINTS: dict[str, list[str]] = {
     "purchase_order": ["forms", "form", "attachment", "promotion", "customer", "transporter", "order", "customer_order", "order_number", "spo", "grn", "goods_receive", "inbound_shipment", "warehouse", "access_levels", "category", "brand", "attachment_type", "flyer", "resource_attachment"],
 }
 
+# PLAN-broaden-domain-switch (owner ruling, 8 Sep 2026): the domains a "wander" actually
+# lands on. A wander names a KIND of thing ("all products"), never an ACTIVITY - nobody
+# reaches `incoming`, `order`, `promotion`, `inventory`, `goods_receive`, `purchase_order`
+# or `forms` by naming a kind of thing. Read by the AXIS BROADEN block below to decide
+# whether a coherent (domain, intent) pair beside `broaden_axis` is a genuine switch.
+CATALOGUE_DOMAINS = frozenset({"master_products", "product_attachment", "resource_attachment"})
+
 # OWNER RULING K, rule 3 (2026-09-06): which entity types are a FILTER on a carried
 # domain, as opposed to a new subject. Read only under a PENDING member offer, to tell a
 # customer narrowing the question the offer was made about ("rpacc", "hing seng") from one
@@ -1397,7 +1404,57 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     ba = jsc.lower_or_empty(o.get("broaden_axis"))
     prev_dom0 = prev_state_domain
     wandered_dom0 = o.get("domain_hint") if jsc.truthy(o.get("domain_hint")) else None
-    if ba and jsc.truthy(prev_dom0):
+
+    # PLAN-broaden-domain-switch (exec 15121180, 9 Sep 2026): "Any incoming" after a stock
+    # turn came back domain_hint incoming / intent_hint check_incoming / broaden_axis all /
+    # scope_intent broaden - a COHERENT (incoming, check_incoming) pair, not the "all
+    # products" wander this block exists for. The prompt defines a widen as "KEEP
+    # domain_hint", so a coherent pair naming a DIFFERENT, non-catalogue domain is
+    # self-contradictory: a wander lands on a CATALOGUE_DOMAINS entry (a KIND of thing);
+    # nobody reaches an activity domain that way, so this is a deliberate switch and the
+    # restore below must not undo it.
+    #
+    # Review, blocker B2 (9 Sep 2026): narrowed to `ba == "all"` only. `date` and an
+    # entity-hint axis are NOT wander-only shapes the way "all" is - the prompt's own
+    # widen instruction says KEEP domain_hint for both, so a DIFFERING domain there is a
+    # known MODEL violation of its own instruction, which the restore below exists to
+    # correct, not a deliberate switch. Firing on those axes measured three regressions:
+    # a `date` widen ("not just August") stuck in the wandered domain instead of
+    # restoring; a `date` widen's `broaden_axis: None` skipped the reuse arm's `all_time`
+    # wipe, silently restoring the OLD window instead of clearing it; and an entity-hint
+    # widen's `broaden_axis: None` left the final drop pass (`ba_final`, ~line 3270) with
+    # nothing to drop. Only `"all"` has no KEEP clause in the prompt and only `"all"` has
+    # a real capture (exec 15121180) - `date` and entity-hint axes stay on the restore
+    # path unconditionally.
+    switch_spec = DOMAIN_SPEC.get(wandered_dom0) if isinstance(wandered_dom0, str) else None
+    switched = bool(
+        ba == "all"
+        and jsc.truthy(prev_dom0)
+        and wandered_dom0 != prev_dom0
+        and switch_spec is not None
+        and o.get("intent_hint") in switch_spec.intents
+        and wandered_dom0 not in CATALOGUE_DOMAINS
+    )
+    if switched:
+        o["domain_switch_over_broaden"] = prev_dom0  # diagnostic
+        o["broaden_axis"] = None
+        o["scope_intent"] = None
+        has_current_ent = any(
+            jsc.truthy(e) and jsc.get(e, "current_message") is True
+            for e in jsc.array(o.get("entities"))
+        )
+        blocked_for_new = set(DOMAIN_BLOCKED_HINTS.get(wandered_dom0, []))
+        if (
+            not has_current_ent
+            and prev_state_entities
+            and all(
+                jsc.lower_or_empty(jsc.get(e, "hint")) not in blocked_for_new
+                for e in prev_state_entities
+            )
+        ):
+            o["entity_op"] = "reuse"
+        # else leave entity_op exactly as the model emitted it.
+    elif ba and jsc.truthy(prev_dom0):
         o["domain_hint"] = prev_dom0
         prev_intent = jsc.get(parent_input.get("previous_conversation_state"), "intent_hint")
         o["intent_hint"] = (
