@@ -650,6 +650,14 @@ class CoverageService:
                 SPOAllocation.warehouse_id,
                 SPOAllocation.allocated_quantity,
                 SPOAllocation.quantity_received.label("allocation_received"),
+                # R7/R10/AC-E7: SPOAllocation is OUTER-joined below, so this reads
+                # True for both "no allocation matched" and "matched a visible
+                # one" - the loop treats a HIDDEN match the same as no location
+                # known at all, which sends its quantity to `unattributed`
+                # instead of crediting a pool with cover a retired line does not
+                # actually offer. A plain WHERE filter here would drop the whole
+                # shipment-line ROW instead, losing its `outstanding` figure too.
+                and_(*spo_supply.visible_line_clauses()).label("allocation_visible"),
             )
             .join(InboundShipment, InboundShipment.id == InboundShipmentLine.shipment_id)
             # Whose line this is, else whose container it is. A mixed container has no
@@ -691,7 +699,11 @@ class CoverageService:
                 "elsewhere": 0.0,
                 "unplaceable": 0.0,
             })
-            if r.warehouse_id is None:
+            # R7/R10/AC-E7: a HIDDEN allocation is treated exactly like no allocation
+            # at all - its quantity is neither `here` nor `elsewhere`, so it falls
+            # through to `unattributed` below instead of crediting a pool with cover
+            # a retired line does not actually offer.
+            if r.warehouse_id is None or not r.allocation_visible:
                 continue
             # Each allocation's OWN outstanding quantity. `allocated_quantity` is never
             # decremented as goods arrive (stated at incoming_stock_service.py:78-80), so the
