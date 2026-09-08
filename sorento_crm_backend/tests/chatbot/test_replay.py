@@ -403,27 +403,6 @@ def _run_output_structurer(fixture: _corpus.Fixture) -> list:
     ]
 
 
-def _run_rag_query_params(fixture: _corpus.Fixture) -> list:
-    from app.services.chatbot.lanes.business.fetch import rag_query_params
-
-    embedding = ((fixture.input[0] or {}).get("json") or {}).get("data") or []
-    trigger = fixture.first("When Executed by Another Workflow")
-    return [
-        {
-            "json": rag_query_params(
-                (embedding[0] or {}).get("embedding") if embedding else [],
-                source_type=trigger.get("source_type"),
-                limit=trigger.get("limit"),
-                domain=trigger.get("domain"),
-            )
-        }
-    ]
-
-
-def _run_collapse_tool_rows(fixture: _corpus.Fixture) -> list:
-    from app.services.chatbot.lanes.business.fetch import collapse_tool_rows
-
-    return [{"json": {"tools": collapse_tool_rows([i.get("json") for i in fixture.input])}}]
 # --------------------------------------------------------------------------- #
 # S2, the tail. Two shapes of capture, and the difference is a BODY difference,
 # not a divergence: the live spine's `compile-current-state` predates RS-3 half
@@ -599,8 +578,12 @@ RUNNERS = {
     "fetch-result": _run_fetch_result,
     "entity-ids-transformer": _run_entity_ids_transformer,
     "output-structurer": _run_output_structurer,
-    "Code_in_JavaScript": _run_rag_query_params,
-    "Code_in_JavaScript1": _run_collapse_tool_rows,
+    # `sub-get-rag`'s two Code nodes (`Code_in_JavaScript`, the embedding to SQL
+    # parameters; `Code_in_JavaScript1`, the `source_id` to name collapse) have no
+    # runners because they have no ports: the tool RAG was dropped on 8 Sep 2026 and
+    # `fetch.rag_query_params` / `fetch.collapse_tool_rows` went with it. Their 76
+    # captures are ungraded rather than graded against nothing, and stay on disk until
+    # n8n's own copy of that sub is retired.
     "build-outcome": _run_build_outcome,
     "escalate-catalog": _run_escalate_catalog,
     "cs-roster-plan": _run_cs_roster_plan,

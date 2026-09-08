@@ -605,21 +605,30 @@ class TestOperatorSurfacesHideDryRunRows:
 
 
 class TestMcpToolPickRefusesWriteTools:
-    """`tool_filter` (fetch.py ~87-124) picks the single highest-similarity candidate
-    with no allow-list check. The embedded catalogue includes write tools -
-    `crm_it_support_ticket_create`, `crm_complaint_close`, `crm_order_cancel`,
-    `crm_purchase_request_approve`, `crm_purchase_request_reject` - and any one of them
-    can be the top hit for an ordinary business question."""
+    """`tool_filter` (fetch.py) picks the single candidate with no allow-list check of its
+    own. The finding was that the candidate came from an embedded catalogue containing
+    write tools - `crm_it_support_ticket_create`, `crm_complaint_close`,
+    `crm_order_cancel`, `crm_purchase_request_approve`, `crm_purchase_request_reject` -
+    so any one of them could be the top hit for an ordinary business question.
 
-    def test_a_post_tool_top_hit_is_never_called(self):
-        mcp_call = MagicMock(return_value='{"answers": []}')
-        services = FetchServices(
-            embed=lambda query: [0.1],
-            tool_search=lambda embedding, *, query, domain: [
-                {"name": "crm_order_cancel", "similarity": 0.99}
-            ],
-            mcp_call=mcp_call,
+    That door is shut at the source since the tool RAG was dropped: the candidate is
+    `DOMAIN_SPEC[domain].tools[0]`, and no domain lists a write tool. The EGRESS check is
+    what this class still grades, because it is the one that holds however the name
+    arrived, so the write tool is injected at the pick to reach it."""
+
+    def test_a_post_tool_top_hit_is_never_called(self, monkeypatch):
+        from app.services.chatbot.lanes.business import fetch as fetch_mod
+
+        # The state `select_tool` can no longer produce, forced, so the check downstream
+        # of it is still exercised rather than merely believed.
+        monkeypatch.setattr(
+            fetch_mod,
+            "select_tool",
+            lambda domain: [{"name": "crm_order_cancel", "similarity": 1.0}],
         )
+
+        mcp_call = MagicMock(return_value='{"answers": []}')
+        services = FetchServices(mcp_call=mcp_call)
         payload = {
             "_exit_kind": "continue",
             "gate": {
@@ -638,7 +647,7 @@ class TestMcpToolPickRefusesWriteTools:
         assert mcp_call.call_args_list == [], (
             "the read-only chatbot must never call a write (POST) MCP tool: mcp_call "
             f"was invoked with {mcp_call.call_args_list!r} - tool_filter picked "
-            "'crm_order_cancel' on similarity alone with no allow-list check "
+            "'crm_order_cancel' with no allow-list check "
             "(lanes/business/fetch.py::tool_filter)"
         )
         reason = json.dumps(fragment, default=str)

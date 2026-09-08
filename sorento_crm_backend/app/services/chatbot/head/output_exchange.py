@@ -1088,7 +1088,10 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # (c) F3 (review, 7 Sep 2026, evidence turn b5b19cec-dccc-4eda-b766-1aeb1362957b): a
     #     `domain_hint` outside the prompt's own enum - "purchasing", a TEAM name - zeroed
     #     `select_tool`'s `source_id LIKE '%purchasing%'` filter and ended the turn
-    #     `not_found`. Coerced here, the same place the literal string "null" already is,
+    #     `not_found`. That filter went with the tool RAG on 8 Sep 2026 (the lane reads
+    #     `DOMAIN_SPEC[domain].tools[0]`, which a team name has no row in), so today the
+    #     same hint would name no tool at all.
+    #     Coerced here, the same place the literal string "null" already is,
     #     so every downstream reader sees one clean signal. `coerce_domain_hint` carries
     #     the evidence and is the SAME guard the engine puts on the carried domain.
     o["domain_hint"] = coerce_domain_hint(o["domain_hint"])

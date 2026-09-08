@@ -689,15 +689,18 @@ class McpTool(Base):
         JSONB(astext_type=Text()), nullable=False, server_default=text("'[]'::jsonb")
     )
     #: The chatbot domain this tool answers FROM (a `DOMAIN_SPEC` key), stamped by
-    #: `sync_catalog` off `app.services.chatbot.contracts.DOMAIN_SPEC[domain].tools`.
-    #: NULL for a tool listed under no domain - it never enters a chatbot pool.
-    #: `EmbeddingReadService.search_tool_chunks` filters candidate tools on THIS
-    #: column, not on the tool name (owner ruling, 8 Sep 2026: "I don't accept the
-    #: leak" - the PO placed tool's old name contained "order" and was leaking
-    #: into the `order` pool under the old name-LIKE filter; it was renamed to
-    #: `crm_procurement_po_placed_list` so no name-substring filter, n8n's own
-    #: included, can match it - this column is the systemic fix for every OTHER
-    #: tool that still shares a word with a domain it does not belong to).
+    #: `sync_catalog` off `app.services.mcp_tool_domains.CHATBOT_TOOL_DOMAINS`.
+    #: NULL for a tool listed under no domain.
+    #:
+    #: **Written, never read (8 Sep 2026.)** It was added days earlier so the chatbot's
+    #: tool search could narrow a domain's pool on DATA rather than on the tool name
+    #: (owner ruling, "I don't accept the leak" - the PO placed tool's old name
+    #: contained "order" and leaked into the `order` pool under a name-LIKE filter).
+    #: That search is gone: the business lane reads
+    #: `contracts.DOMAIN_SPEC[domain].tools[0]` outright, so no name and no column
+    #: decides retrievability any more. The column stays until the next migration that
+    #: touches `mcp_tools` carries the drop - production never populated it, so there is
+    #: nothing to lose and no reason to churn the table on its own.
     chatbot_domain = Column(String(64), nullable=True)
 
     __table_args__ = (

@@ -104,17 +104,20 @@ def _second_message_envelope(contact: str, message_id: str) -> Any:
     )
 
 
-def _no_tool_fetch_services() -> FetchServices:
-    """AC-604: zero tools is `tool_filter`'s own `not_found` outcome, not an empty turn."""
+def _empty_result_fetch_services() -> FetchServices:
+    """AC-604: a read that finds nothing is an OUTCOME, not an empty turn.
+
+    It used to stub `tool_search` to `[]` so no tool was picked at all. Since the tool RAG
+    was dropped the domain names the tool (`forms` -> `crm_forms_management_forms_list`),
+    so the empty answer is produced where it is actually produced in production: by the
+    tool. The customer-facing outcome every cell below grades is the same one.
+    """
 
     def _mcp_call(name: str, args: dict) -> Any:
-        raise AssertionError("no MCP tool matched - tool_filter must return before this runs")
+        assert name == "crm_forms_management_forms_list", name
+        return '{"answers": [], "has_result": false}'
 
-    return FetchServices(
-        embed=lambda query: [0.0, 0.0, 0.0],
-        tool_search=lambda embedding, *, query, domain: [],
-        mcp_call=_mcp_call,
-    )
+    return FetchServices(mcp_call=_mcp_call)
 
 
 @pytest.fixture()
@@ -126,17 +129,17 @@ def redis_client():
 
 def _wire_business_lane(engine_mod_ref: Any, monkeypatch: Any) -> None:
     """The bundle every matrix cell wires when `chatbot_business_lane_enabled` is on: a
-    resolved-empty gate bundle plus a zero-tool fetch, so the shadow run (lane on, arm not
-    in `chatbot_completed_lanes`) and the CRM-answered run (both switches on) reach the
-    SAME `not_found` outcome through `run_until_exit` + `run_fetch`, run for real - the
-    only thing standing in for the network is `tool_search([]) -> []` and the two MCP
-    probes `_no_probe_answer_services` names as unreached on this arm."""
+    resolved-empty gate bundle plus a fetch whose tool answers empty, so the shadow run
+    (lane on, arm not in `chatbot_completed_lanes`) and the CRM-answered run (both
+    switches on) reach the SAME `not_found` outcome through `run_until_exit` +
+    `run_fetch`, run for real - the only thing standing in for the network is the MCP
+    seam and the two probes `_no_probe_answer_services` names as unreached on this arm."""
     bundle = _EngineWiring._stub_bundle([])
     monkeypatch.setattr(
         engine_mod_ref.business_services, "production_services", lambda db, *, space_id=None: bundle
     )
     monkeypatch.setattr(
-        engine_mod_ref.business_services, "fetch_services", lambda db: _no_tool_fetch_services()
+        engine_mod_ref.business_services, "fetch_services", lambda db: _empty_result_fetch_services()
     )
     monkeypatch.setattr(
         engine_mod_ref.business_services,

@@ -19,7 +19,7 @@ A branch under the bar is `exhausted` - not short - only when EVERY execution on
 | `sub-casual-llm-live` | `08bf56a5` | 13 | 13 | 13 | yes | 2026-09-05 | `construct-user-prompt`, `mark-casual-error` |
 | `sub-escalation-live` | `bac9613b` | 33 | 33 | 36 | yes | 2026-09-05 | `escalation-input`, `escalation-context`, `clarify-company-reply`, `escalation-result` |
 | `sub-fetch-results-live` | `live-5sep` | 772 | 772 | 772 | yes | 2026-09-05 | `tool-filter`, `tier-probe-plan`, `tier-probe-collect`, `fetch-result` |
-| `sub-get-rag-live` | `live-5sep` | 862 | 862 | 1050 | yes | 2026-09-05 | `Code_in_JavaScript`, `Code_in_JavaScript1` |
+| `sub-get-rag-live` | `live-5sep` | 862 | 862 | 1050 | yes | 2026-09-05 | (none ported) |
 | `sub-get-results` | `125e5c32` | 365 | 365 | 365 | yes | 2026-09-05 | `entity-ids-transformer`, `output-structurer` |
 | `sub-miss-suggest-live` | `f42de9c6` | 232 | 232 | 232 | yes | 2026-09-05 | `dym-transform`, `dym-annotate`, `sibling-transform`, `miss-suggest-result`, `promo-dym-plan` |
 | `sub-output-live` | `c32698c1` | 760 | 760 | 907 | yes | 2026-09-05 | `compile-current-state`, `crossdomain-compose`, `build-outcome`, `escalate-catalog`, `cs-roster-plan`, `build-cs-member-offer` |
@@ -51,8 +51,6 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 
 | node | fixtures | real captures | vendored (always run) |
 | --- | ---: | ---: | ---: |
-| `Code_in_JavaScript` | 38 | 38 | 1 |
-| `Code_in_JavaScript1` | 38 | 38 | 1 |
 | `access-level-choice-message` | 4 | 4 | 1 |
 | `annotate-customer-picker` | 4 | 4 | 1 |
 | `annotate-incoming-picker` | 8 | 5 | 2 |
@@ -108,8 +106,6 @@ A WORLD is one whole captured turn replayed through `run_turn` + `complete_turn`
 
 | node | branch | real captures | other | gate 0 |
 | --- | --- | ---: | ---: | --- |
-| `Code_in_JavaScript` | `all` | 38 | 0 | met |
-| `Code_in_JavaScript1` | `all` | 38 | 0 | met |
 | `access-level-choice-message` | `all` | 4 | 0 | SHORT |
 | `annotate-customer-picker` | `order` | 4 | 0 | exhausted (4) |
 | `annotate-incoming-picker` | `incoming` | 5 | 3 | met |

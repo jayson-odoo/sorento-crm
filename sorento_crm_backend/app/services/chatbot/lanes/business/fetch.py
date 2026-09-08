@@ -1,4 +1,4 @@
-"""Port of `sub-fetch-results` + `sub-get-rag` + `sub-get-results` (S6b, AC-604 to AC-606).
+"""Port of `sub-fetch-results` + `sub-get-results` (S6b, AC-604 to AC-606).
 
 The business lane's fetch step: pick ONE tool, call it over MCP, render the answer
 deterministically. Six node bodies become six functions, line for line against the exported
@@ -6,9 +6,12 @@ JavaScript, with the same `jsc` shim S6a uses for JS truthiness / `String()` / `
 
 Three hazards are fixed here rather than reproduced, and each says so at its own site:
 
-* **H53** - `sub-get-rag`'s pgvector SQL is RETIRED. Tool search is
-  `EmbeddingReadService.search_tool_chunks` behind the `tool_search` seam, so no query
-  leaves the service layer. Nothing in this module names a table or writes SQL.
+* **H53** - `sub-get-rag` is GONE, SQL and vector alike. The tool is read straight off
+  `contracts.DOMAIN_SPEC[domain].tools[0]` (`select_tool` below), so this module names no
+  table, writes no SQL, and makes no provider call. Measured over the 740 business turns
+  in the 7 Sep 2026 prod copy, the embedding pick WAS the domain's first-listed tool on
+  every turn, and the seeding chain the search depended on cannot run in the deployed
+  backend image at all: production's tool RAG has been frozen since 2 June 2026.
 * **H52** - the MCP endpoint is `settings.ai_assistant_mcp_url`, bound in `services.py`.
   n8n bakes a raw IP endpoint into TWO nodes; this module contains no host, no port and no
   scheme at all, and `call_tool` is a pass-through onto whatever client it is handed. The
@@ -16,18 +19,19 @@ Three hazards are fixed here rather than reproduced, and each says so at its own
 * **H11** - `tool-filter.js` returns `[]` on zero tools and that empty array is
   indistinguishable from "ran and found nothing to say". `tool_filter` keeps the empty
   item list for parity (D8) and adds `outcome`, which the caller can act on.
-* **H58** - the pick is an argmax over an embedded catalogue that contains WRITE tools
-  (`crm_order_cancel`, `crm_complaint_close`, the two purchase-request approvals,
-  `crm_it_support_ticket_create`, `crm_ideation_turn`), and `tool_filter` takes the top hit
-  with no further test. `CHATBOT_READ_ONLY_TOOLS` below is the allow-list: the chatbot's
-  retrieval seam (`services._tool_search`) drops everything else from the candidate list,
-  and `ensure_read_only` refuses it at both call seams anyway. The POOL keeps the write
-  tools, on purpose - the in-app AI assistant retrieves them and confirms with a human
-  before each one, which is a gate this chatbot does not have.
+* **H58** - the pick used to be an argmax over an embedded catalogue that contains WRITE
+  tools (`crm_order_cancel`, `crm_complaint_close`, the two purchase-request approvals,
+  `crm_it_support_ticket_create`, `crm_ideation_turn`), and `tool_filter` takes the single
+  candidate with no further test. `CHATBOT_READ_ONLY_TOOLS` below is the allow-list, and
+  since the candidate is now `DOMAIN_SPEC`'s own first tool the hazard is structural
+  rather than scored: nothing outside that table can be named, and `ensure_read_only`
+  refuses anything off the list at both call seams anyway. The embedded POOL keeps the
+  write tools, on purpose - the in-app AI assistant retrieves them and confirms with a
+  human before each one, which is a gate this chatbot does not have.
 
 **H43 is moot, not fixed.** The n8n query's `$4` is `domain`, LIKE-matched against
 `source_id`, and some live call sites never bind it. In process `domain` is a parameter of
-one function call, so `domain=None` means "no filter" by construction and can never mean
+one function call, so `domain=None` means "no tool" by construction and can never mean
 "the caller forgot to wire a parameter".
 
 **H49, the tool-selection distribution.** `crm_order_management_orders_by_product_list` has
@@ -52,6 +56,7 @@ from typing import Any, Literal
 from app.services.chatbot import jsc
 from app.services.chatbot.contracts import (
     DOMAIN_CLAIMED_TOOLS,
+    DOMAIN_SPEC,
     UNDOMAINED_CHATBOT_TOOLS,
 )
 from app.services.chatbot.contracts import is_timeline
@@ -99,18 +104,19 @@ def _label(tool: Any) -> str:
 def tool_filter(candidates: Any, *, has_product: bool | None) -> ToolPick:
     """ONE tool per turn: highest `similarity`, tiebreak `name` ASC.
 
-    Explicitly NOT the first array element - `sub-get-rag`'s final Code node collapses
-    `source_id` to a name and SUMS the similarities, so the SQL's best-first order stops
-    being provably maximal the moment a tool has two source ids.
+    The BODY is n8n's, unchanged and graded byte for byte against 38 captures (D8), which
+    is why the ranking is still here after the pick stopped being a ranking. `select_tool`
+    now hands it exactly one candidate off `DOMAIN_SPEC` (similarity 1.0), so the sort has
+    one element and the argmax is the identity - the node keeps working the way its
+    captures say it does, and nothing about how the candidate was chosen leaked into it.
 
     Emitting exactly one item is structural, not incidental: the per-tool fan-out that used
     to sit downstream is deleted, so two items here would run the whole fetch, compile and
     send chain twice - two WhatsApp messages to one customer.
 
-    F4 (review, 7 Sep 2026): the incoming-shipments-to-list collapse used to live here. It
-    moved to `services._tool_search` (the CRM-policy seam next to the read-only filter) so
-    this function stays a byte-for-byte ported node with no CRM-specific rule grafted onto
-    it - by the time a candidate list reaches this function it is already final.
+    By the time a candidate list reaches this function it is already final: `run_fetch`
+    stamps `_tool_pick.source` on the OUTPUT rather than reaching in here, so this stays a
+    ported node with no CRM-specific rule grafted onto it.
     """
     raw_tools = jsc.array(candidates)
     # `sort((a,b) => cmp(score(b), score(a)) || cmp(label(a), label(b)))`, and Python's
@@ -143,74 +149,58 @@ def tool_filter(candidates: Any, *, has_product: bool | None) -> ToolPick:
     )
 
 
-def rag_query_params(
-    embedding: list[float], *, source_type: Any, limit: Any, domain: Any
-) -> dict[str, Any]:
-    """`sub-get-rag`'s first Code node: the embedding becomes the SQL's bound parameters.
+def select_tool(domain: str | None) -> list[dict[str, Any]]:
+    """The domain's tool, read off `DOMAIN_SPEC`. No embedding, no database, no network.
 
-    Ported for REPLAY rather than for use: in process there is no `$1..$4` to bind, so the
-    only consumer is `test_replay.py`. It is here because the node has 38 real captures and
-    grading it is what proves the port reads the embedding response the same way n8n does -
-    `$json.data[0].embedding`, and the pgvector literal is `[a,b,c]` with no spaces.
+    `[{"name": DOMAIN_SPEC[domain].tools[0], "similarity": 1.0}]` for a domain with a
+    non-empty `tools` tuple, `[]` for everything else: no domain, a domain outside the
+    table, and the two domains that answer from nothing (`goods_receive`, `ideate`). The
+    empty list reaches `tool_filter` and ends the turn `not_found`, exactly as a zero-row
+    search did (H11).
+
+    NULL DOMAIN IS A NARROWING, and a deliberate one: the search ran UNFILTERED when
+    `domain` was null, so such a turn could still come back with a tool, and this returns
+    nothing. Measured on `sorento_ai_automation_0907`: of 994 `business_query` turns, 0
+    reached the fetch step with a null or missing `domain_hint`, so the narrowing has no
+    measured effect. A tool picked by cosine distance alone, with no domain to answer
+    from, was never a defensible answer anyway.
+
+    **Why the vector search went (owner ruling, 8 Sep 2026: "we can drop the rag from
+    chatbot lane").** The candidate set was already this literal, and it is small: 4 tools
+    for `master_products`, 3 for the next three domains, 2 for two more, 1 for the last
+    four - median 2. Measured over every business turn in the 7 Sep 2026 prod copy
+    (`sorento_ai_automation_0907`, `chatbot.turns.trace` `_tool_pick.chosen`, 740 turns),
+    the pick was the domain's FIRST-LISTED tool on all 740; not one variant
+    (`orders_by_product_list`, `incoming_stock_by_product`, `incoming_stock_shipments`,
+    `brands_list`, `product_categories_list`, `units_of_measure_list`,
+    `promotion_attachments_list`, `promotion_products_list`,
+    `resource_attachments_catalogue`, `resource_attachments_current_stock_list`,
+    `warehouses_list`, `certificates_list`) was ever chosen. One embedding call per turn
+    was deciding a question with one answer.
+
+    It also could not be trusted to keep deciding it. The search needed a registry row and
+    an embedded chunk per tool, and that seeding chain cannot run in the deployed backend
+    image (the MCP catalogue is not in it, PR #748), so production's tool pool has been
+    frozen since 2 June 2026: every tool added after that date was unretrievable, and "last
+    in for SRT62-GM" answered "no spo_allocation matched these" with 10 fully-received
+    allocations in the table. Reading the table makes that failure class impossible instead
+    of monitored.
+
+    The FIRST entry of each `tools` tuple is therefore a contract. The rest stay where they
+    are as allow-list members for the probes and the cross-domain rung
+    (`CHATBOT_READ_ONLY_TOOLS` is derived from `DOMAIN_CLAIMED_TOOLS`), not as candidates.
+
+    A `domain` outside the parser's own declared enum should never reach this call in the
+    first place - `contracts.coerce_domain_hint` guards both ways in: the parser's emission
+    in `output_exchange.py`, and the contact's carried memory in `engine.py`. Evidence turn
+    b5b19cec-dccc-4eda-b766-1aeb1362957b arrived with `domain_hint: "purchasing"`, a TEAM
+    name, and ended `not_found`; one that got past both guards would end the same way here,
+    by falling off the table rather than by zeroing a `LIKE` filter.
     """
-    return {
-        "vector_text": "[" + ",".join(jsc.js_string(v) for v in jsc.array(embedding)) + "]",
-        "source_type": source_type,
-        "limit": limit,
-        "domain": domain,
-    }
-
-
-def collapse_tool_rows(rows: Any) -> list[dict[str, Any]]:
-    """`sub-get-rag`'s second Code node: `source_id` -> name, similarities SUMMED.
-
-    `implemented::crm_forms_management_forms_list` becomes `crm_forms_management_forms_list`
-    and every chunk of the same tool adds to one score. This is exactly why `tool_filter`
-    cannot take the SQL's first row: once a tool has two source ids the best-first order
-    stops being provably maximal.
-    """
-    summed: dict[str, dict[str, Any]] = {}
-    for entry in jsc.array(rows):
-        raw = jsc.get(entry, "source_id") or ""
-        parts = jsc.js_string(raw).split("::")
-        # `raw.split('::')[1] || raw` - the `||` is load-bearing: a source id that ends in
-        # `::` splits to an EMPTY second segment, which is falsy, and the JS falls back to
-        # the whole id rather than keying every such row under "".
-        candidate = parts[1] if len(parts) > 1 else ""
-        name = candidate if jsc.truthy(candidate) else jsc.js_string(raw)
-        if name not in summed:
-            summed[name] = {"name": name, "similarity": 0}
-        # `+= undefined` is NaN in JS, not a TypeError. A row with no similarity therefore
-        # poisons its tool's score to NaN, which `_score` then reads as -Infinity: last.
-        summed[name]["similarity"] += jsc.js_number(
-            jsc.get(entry, "similarity", jsc.UNDEFINED)
-        )
-    return list(summed.values())
-
-
-def select_tool(db: Any, *, query: str, domain: str | None, services: Any) -> list[dict[str, Any]]:
-    """`sub-get-rag`, end to end: embed the query, search, collapse to `[{name, similarity}]`.
-
-    `db` is accepted and deliberately UNUSED: the seams are already bound to a session by
-    `services.py`, and taking the parameter keeps the call site honest about the fact that a
-    session existed - while this function itself holds none across the embedding call
-    (the plan's capacity rule).
-
-    A `domain` outside the parser's own declared enum must never reach this call in the
-    first place (evidence turn b5b19cec-dccc-4eda-b766-1aeb1362957b: `domain_hint:
-    "purchasing"`, a TEAM name, zeroed `search_tool_chunks`'s `source_id LIKE
-    '%purchasing%'` filter and the turn ended `not_found`) - `contracts.coerce_domain_hint`
-    guards both ways in: the parser's emission in `output_exchange.py`, and the contact's
-    carried memory in `engine.py` (turn fca4aa5e-806b-4403-aa2e-fc2d0961fb2d parsed as
-    `incoming` and still arrived here as `purchasing` before the second guard existed). So
-    `domain` here is trusted as-is with no retry. Since 8 Sep 2026 the `LIKE` in that
-    evidence is the FALLBACK path only (a `domain` outside `DOMAIN_SPEC` still hits it and
-    still zeroes out this way); a `DOMAIN_SPEC` member resolves through
-    `mcp_tools.chatbot_domain` instead - see `search_tool_chunks`'s own docstring.
-    """
-    _ = db
-    embedding = services.embed(query)
-    return services.tool_search(embedding, query=query, domain=domain)
+    spec = DOMAIN_SPEC.get(domain) if domain else None
+    if spec is None or not spec.tools:
+        return []
+    return [{"name": spec.tools[0], "similarity": 1.0}]
 
 
 # --------------------------------------------------------------------------- #
@@ -663,20 +653,19 @@ class ToolNotAllowed(RuntimeError):
 # The six the audit found, deliberately absent: `crm_complaint_close`, `crm_order_cancel`,
 # `crm_purchase_request_approve`, `crm_purchase_request_reject`,
 # `crm_it_support_ticket_create`, `crm_ideation_turn`. They stay in the MCP catalogue and
-# in the Tool-RAG pool - the in-app AI assistant retrieves them ON PURPOSE and gates each
+# in the in-app assistant's embedded pool - it retrieves them ON PURPOSE and gates each
 # behind a user confirmation and a permission check. The chatbot has no user to confirm
 # with, which is the whole difference.
 #
 # **Where the names live (D9, AC-931).** Still a frozen literal, for every reason above -
 # it is simply no longer a THIRD list. Each name is either claimed by exactly one domain
 # (`contracts.DOMAIN_SPEC[domain].tools`) or named in `contracts.UNDOMAINED_CHATBOT_TOOLS`
-# as claimed by nobody on purpose, and this set is their union. That is what makes "which
-# domain answers from this tool?" a question with an answer, which is what
-# `mcp_tool_registry_service.sync_catalog` stamps onto `mcp_tools.chatbot_domain` - the
-# column `search_tool_chunks` now narrows a known domain's pool on (8 Sep 2026; the tool
-# NAME no longer decides reachability, see that method's own docstring for the leak this
-# replaced). `tests/chatbot/test_tool_pool_is_read_only.py` still pins the whole union
-# against the MCP catalogue's read-only set, unchanged.
+# as claimed by nobody on purpose, and this set is their union. This list is the ALLOW-list
+# for every seam a tool name can reach the MCP client through (the probes and the
+# cross-domain rung name their tool directly); the one tool a turn is ANSWERED from is
+# `DOMAIN_SPEC[domain].tools[0]`, read by `select_tool`.
+# `tests/chatbot/test_tool_pool_is_read_only.py` still pins the whole union against the MCP
+# catalogue's read-only set, unchanged.
 CHATBOT_READ_ONLY_TOOLS: frozenset[str] = frozenset(
     DOMAIN_CLAIMED_TOOLS + UNDOMAINED_CHATBOT_TOOLS
 )
@@ -706,13 +695,12 @@ def call_tool(name: str, args: dict[str, Any], *, mcp: Any) -> Any:
     names no host, no scheme and no port.
 
     **The allow-list check is HERE, at the egress, and it is not defensive coding (H58).**
-    The tool is chosen by cosine similarity and `tool_filter` takes the single top hit with
-    no further test, so until now the only thing standing between a customer's phrasing and
-    `crm_order_cancel` was that no phrasing had scored it first. The chatbot's retrieval
-    seam (`services._tool_search`) drops write tools from the candidate list, which is what
-    stops them being PICKED; this is what stops one being CALLED however it was named -
-    including the tier probe and a tool name that arrived on a payload rather than from the
-    search.
+    The tool used to be chosen by cosine similarity over a pool that contains write tools,
+    so the only thing standing between a customer's phrasing and `crm_order_cancel` was
+    that no phrasing had scored it first. `select_tool` now reads the name off
+    `DOMAIN_SPEC`, so a write tool cannot be PICKED at all; this is what stops one being
+    CALLED however else it was named - the tier probe, and any tool name that arrived on a
+    payload rather than from the domain table.
     """
     ensure_read_only(name)
     return mcp.call_tool(name, args)

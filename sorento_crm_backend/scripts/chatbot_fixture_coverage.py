@@ -114,13 +114,18 @@ CAPTURE_REPORT: dict[str, dict] = {
         "captured_on": "2026-09-05",
         "nodes": ("entity-ids-transformer", "output-structurer"),
     },
+    # Both of this workflow's Code nodes were ported and are now RETIRED: the chatbot's
+    # tool RAG was dropped on 8 Sep 2026 (`fetch.select_tool` reads
+    # `contracts.DOMAIN_SPEC` instead), taking `rag_query_params` and
+    # `collapse_tool_rows` with it. The scan stays on record - the captures are real and
+    # still on disk - but no node of it is ported, so it contributes no coverage cell.
     "sub-get-rag-live": {
         "version": "live-5sep",
         "version_pool": 862,
         "scanned": 862,
         "all_versions": 1050,
         "captured_on": "2026-09-05",
-        "nodes": ("Code_in_JavaScript", "Code_in_JavaScript1"),
+        "nodes": (),
     },
     "sub-resolve-and-gate-rs": {
         "version": "4f367b1c",
@@ -565,7 +570,9 @@ def render(data: dict) -> str:
             f"{report['version_pool']} | {report['all_versions']} | "
             f"{'yes' if _pool_is_exhausted(report) else 'NO, partly scanned'} | "
             f"{report['captured_on']} | "
-            + ", ".join(f"`{n}`" for n in report["nodes"])
+            # A scanned workflow with no ported node left is a real state (see
+            # `sub-get-rag-live`), and an empty cell would read as a missing row.
+            + (", ".join(f"`{n}`" for n in report["nodes"]) or "(none ported)")
             + " |"
         )
     lines.append("")
