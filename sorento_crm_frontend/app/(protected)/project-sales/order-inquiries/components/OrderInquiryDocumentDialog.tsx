@@ -428,7 +428,7 @@ function PoBody({ poId, open }: { poId: string | null; open: boolean }) {
         listingKey="projects.projects.view::order-inquiry-po-lines"
         emptyTitle="This purchase order carries no lines."
         searchOf={searchOfLine}
-        searchPlaceholder="Search product..."
+        searchPlaceholder="Search product or location..."
         pageSize={10}
         // The DialogBody already owns the scroll viewport (overflow-y-auto).
         scrollerMaxHeight={false}
@@ -471,7 +471,7 @@ function SpoBody({ spoNumber, open }: { spoNumber: string; open: boolean }) {
         listingKey="projects.projects.view::order-inquiry-spo-lines"
         emptyTitle="This shipping order carries no lines."
         searchOf={searchOfLine}
-        searchPlaceholder="Search product..."
+        searchPlaceholder="Search product or location..."
         pageSize={10}
         scrollerMaxHeight={false}
       />

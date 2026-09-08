@@ -198,7 +198,7 @@ describe('PO lightbox body', () => {
 
     expect(await screen.findByText('SRTWB5400')).toBeInTheDocument();
 
-    const search = screen.getByPlaceholderText('Search product...');
+    const search = screen.getByPlaceholderText('Search product or location...');
     fireEvent.change(search, { target: { value: 'SRTWCX8605-S-RL-PJ' } });
     expect(screen.getAllByText('SRTWCX8605-S-RL-PJ')).toHaveLength(2);
     expect(screen.queryByText('SRTWB5400')).not.toBeInTheDocument();
@@ -326,7 +326,7 @@ describe('SPO lightbox body (AC-D19)', () => {
     expect(table).toHaveClass('table-fixed');
     expect(screen.getByText(/1 - 10 of 11/)).toBeInTheDocument();
 
-    const search = screen.getByPlaceholderText('Search product...');
+    const search = screen.getByPlaceholderText('Search product or location...');
     fireEvent.change(search, { target: { value: 'BRW-IB' } });
     expect(screen.getByText('SRTWCY7405-PJ')).toBeInTheDocument();
     expect(screen.queryByText('ZZT-1')).not.toBeInTheDocument();

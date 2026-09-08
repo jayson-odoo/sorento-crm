@@ -148,11 +148,7 @@ function DraftMark({ row }: { row: OrderInquiryWorklistRow }) {
     );
   }
   return (
-    <span
-      data-testid="link-draft-mark"
-      title="Not yet acknowledged"
-      aria-label="Not yet acknowledged"
-    >
+    <span data-testid="link-draft-mark" title="Proposed" aria-label="Proposed">
       <CircleDashed className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
     </span>
   );
@@ -463,7 +459,9 @@ export function useOrderInquiryWorklistColumns({
           return (
             <span className="flex min-w-0 items-center gap-1 text-xs font-medium tabular-nums">
               <DraftMark row={row.original} />
-              <span className="truncate">{summary.headline}</span>
+              <span className="truncate" title={summary.headline}>
+                {summary.headline}
+              </span>
               <BackingDocumentsButton row={row.original} />
             </span>
           );

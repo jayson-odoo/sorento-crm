@@ -180,8 +180,12 @@ describe('the "Outstanding PO/SPO" column: one line, no bar, no late badge (slic
     const row = screen.getByTestId('row-row-headline');
     expect(within(row).getByText('115 of 493')).toBeInTheDocument();
     expect(within(row).getByTestId('link-draft-mark')).toBeInTheDocument();
-    // No document count anywhere in the cell.
-    expect(within(row).queryByText(/document/i)).not.toBeInTheDocument();
+    // No document count, no document number, nothing else: the row's own rendered text
+    // (this test isolates the `po_number` column alone, see `OneColumnOnly`) is exactly
+    // the headline and nothing more - the mark and the info icon are both icon-only, no
+    // text node of their own. A `queryByText` regex would have passed just as wrongly
+    // with a "3 documents" count present, since it never reads an icon's aria-label.
+    expect(row.textContent).toBe('115 of 493');
   });
 });
 
@@ -204,6 +208,54 @@ describe('AC-A7: a row nothing can cover', () => {
     const row = screen.getByTestId('row-row-unlinked');
     expect(within(row).queryByTestId('link-draft-mark')).not.toBeInTheDocument();
     expect(within(row).queryByTestId('link-confirmed-mark')).not.toBeInTheDocument();
+  });
+});
+
+describe('a cancelled row (coverage restored after the old SupplyBar-only case was deleted)', () => {
+  it('an unlinked cancelled row reads "Not found (new order)", the same as any other unlinked row', () => {
+    // The old bar test proved a cancelled row "owes nothing" by checking the BAR drew
+    // nothing - moot now the bar is gone from this column entirely (AC-A2). This is the
+    // replacement: the cell itself never special-cases `state`, so a cancelled row with
+    // no links reads exactly as AC-A7 describes any other one.
+    renderRows([
+      worklistRow({
+        id: 'row-cancelled-unlinked',
+        qty: '6',
+        linked_qty: '0',
+        links: [],
+        state: 'cancelled',
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-row-cancelled-unlinked');
+    expect(within(row).getByText('Not found (new order)')).toBeInTheDocument();
+    expect(within(row).queryByTestId('supply-bar')).not.toBeInTheDocument();
+    expect(
+      within(row).queryByTestId('backing-documents-trigger-row-cancelled-unlinked'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('a cancelled row that still carries links from before it was cancelled still reads its headline and icon', () => {
+    // The cell reads `links[]` as it stands, never `state` - a cancelled row whose links
+    // were never unwound (the state cancels the INSTRUCTION, not the document history)
+    // shows the same headline and icon a live row would. Pinned explicitly so a reader
+    // does not assume the cell silently hides a cancelled row's own history.
+    renderRows([
+      worklistRow({
+        id: 'row-cancelled-linked',
+        qty: '6',
+        linked_qty: '6',
+        state: 'cancelled',
+        links: [{ id: 'l1', kind: 'po', document: '202607-S0105', qty: '6', location: 'BRW' }],
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-row-cancelled-linked');
+    expect(within(row).getByText('6 of 6')).toBeInTheDocument();
+    expect(within(row).queryByTestId('supply-bar')).not.toBeInTheDocument();
+    expect(
+      within(row).getByTestId('backing-documents-trigger-row-cancelled-linked'),
+    ).toBeInTheDocument();
   });
 });
 
