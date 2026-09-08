@@ -514,3 +514,32 @@ cases:
           reply_contains: ["HANLIM"]
           reply_not_contains: ["escalat"]
           no_uuid: true
+
+  # D10 (owner console pass, 8 Sep 2026, turn 69d9900e). `SRTWC8610-SH` is a product SET
+  # code (`product_sets.set_code`); no product of that code exists. The gate now marks a
+  # token whose only match is an incompatible type (D10 item 1, `gate_debug.
+  # incompatible_only`) so the miss lane treats it as unresolved rather than as a flat
+  # refusal, and `output_exchange` retypes a shipment/order-hinted product-shaped code to
+  # `product` under `incoming` (item 2) so the parser's own mistake does not compound it.
+  #
+  # KNOWN GAP, measured 8 Sep 2026 against this database: the resolver's own trigram
+  # "did-you-mean" search (`entity_resolver.py`, the `for tr in resolutions: if tr.matches:
+  # continue` skip) never runs for THIS token, because it already has a match - the
+  # incompatible `product_set` hit - and the skip does not know that hit is the wrong type
+  # for this domain. Measured directly against `POST /system/references/resolve` with the
+  # exact body `resolve_entity_body` builds for this turn: `alternatives: []`. The live
+  # n8n reply names SRTWC8611 / SRTWC8613 / SRTWC8614 by searching the BARE code
+  # `srtwc8610` (no `-SH`), which is not a call this lane makes. Reproducing that reply
+  # needs a change to `entity_resolver.py`'s alternatives gate, outside gate.py /
+  # output_exchange.py / the prompt - registered here rather than asserted silently.
+  # This case therefore grades what D10 actually changed today: the reply still ends in
+  # the escalate offer, by design (the miss-lane mechanism ran, found no candidates in
+  # this database, and fell back to it) - not the four-way disagreement the incompatible
+  # gate reason used to produce with no explanation at all.
+  - name: D10 - a product-set-only code on an incoming ask still gets an answerable miss
+    text: "srtwc8610-sh hav incoming?"
+    cold: true
+    expect:
+      branch_kind: business_query
+      reply_contains: ["srtwc8610-sh", "escalate"]
+      no_uuid: true

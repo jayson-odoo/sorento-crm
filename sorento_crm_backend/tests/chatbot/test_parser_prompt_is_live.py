@@ -59,7 +59,10 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # +262 chars (D6, 8 Sep 2026): the requested_attributes line scoped to that key, one
 # attachment_type canonical_code sentence in ATTACHMENT TYPE EXTRACTION, and "image" removed
 # from the canonical enum (it is "photo"). Intentional content.
-CONSTANT_CHARS = 48570
+# +123 chars (D10, 8 Sep 2026, turn 69d9900e): one sentence in the incoming domain
+# description, in both bodies - the code in an incoming ask is the product, and only a
+# 4-letter + 7-digit token (a real container number) is a container. Intentional content.
+CONSTANT_CHARS = 48693
 
 
 def _without_growth_r1_addendum(text: str) -> str:

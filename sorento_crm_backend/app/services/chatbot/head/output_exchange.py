@@ -435,6 +435,23 @@ def _looks_like_product_code(raw: Any) -> bool:
     return bool(_PRODUCT_CODE_SHAPE.match(text)) and any(c.isdigit() for c in text)
 
 
+# D10 (owner console pass, 8 Sep 2026, turn 69d9900e "srtwc8610-sh hav incoming?"): the
+# `incoming` domain's own version of the same hazard. The parser hinted the code
+# `inbound_shipment`, and `ALLOWED["incoming"]` in `lanes/business/gate.py` carries BOTH
+# `product` and `inbound_shipment` so nothing downstream throws the entity away - the
+# resolver simply answers with whatever the code actually is. A real container number
+# (ISO 6346: four letters then seven digits, e.g. `CMAU4318062`, no separator) is the one
+# shape this must never retype, so it is excluded explicitly rather than left to fall out
+# of the product-code shape by accident.
+_INCOMING_FAMILY_HINTS: frozenset[str] = frozenset({"inbound_shipment", "order"})
+_CONTAINER_CODE_SHAPE = re.compile(r"^[A-Za-z]{4}[0-9]{7}$")
+
+
+def _looks_like_container_code(raw: Any) -> bool:
+    """ISO 6346: four letters, seven digits, nothing else."""
+    return bool(_CONTAINER_CODE_SHAPE.match(jsc.nullish_str(raw).strip()))
+
+
 # Broaden-only blocked: hints that NARROW the result and therefore contradict an
 # "all / everything" request. Brand/access stay - they are context, not a subset filter.
 DOMAIN_BROADEN_BLOCKED_HINTS: dict[str, list[str]] = {
@@ -2214,6 +2231,26 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
         if po_retyped:
             # Stamped only when a type actually MOVED, same rule as `bare_entity_retyped`.
             o["order_hint_retyped_to_product"] = po_retyped
+
+    # -- incoming: a container/order-hinted PRODUCT CODE is a product (owner console pass,
+    # 8 Sep 2026) -- #
+    # Same shape as the PO/SPO backstop above, and separate from it because the hint family
+    # and the shape exclusion both differ: `incoming` never blocklists `inbound_shipment`
+    # (see `ALLOWED["incoming"]` in `gate.py`), so this is not "before the blocklist throws
+    # it away" - it is "before the resolver is asked to referee a code the parser mistyped".
+    if jsc.truthy(o.get("entities")) and jsc.is_array(o.get("entities")) and jsc.js_string(o.get("domain_hint")) == "incoming":
+        incoming_retyped: list[str] = []
+        for e in o["entities"]:
+            raw = jsc.get(e, "raw")
+            if (
+                jsc.lower_or_empty(jsc.get(e, "hint")) in _INCOMING_FAMILY_HINTS
+                and _looks_like_product_code(raw)
+                and not _looks_like_container_code(raw)
+            ):
+                e["hint"] = "product"
+                incoming_retyped.append(jsc.js_string(raw))
+        if incoming_retyped:
+            o["incoming_hint_retyped_to_product"] = incoming_retyped
 
     # -- domain-aware entity-type blocklist ---------------------------------------------- #
     if jsc.truthy(o.get("entities")) and jsc.is_array(o.get("entities")):

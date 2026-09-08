@@ -518,6 +518,51 @@ class TestOwner8SepPOAskTypesTheCodeAsAProduct:
         assert "carried_scope_refused" not in out
 
 
+class TestD10AnIncomingAskTypesTheCodeAsAProduct:
+    """D10 (owner console pass, 8 Sep 2026, turn 69d9900e "srtwc8610-sh hav incoming?").
+    The parser hinted the code `inbound_shipment`; the code in an incoming ask is the
+    product, and only a real container number is the shipment."""
+
+    @pytest.mark.parametrize("hint", ["inbound_shipment", "order"])
+    def test_a_shipment_hinted_product_code_is_retyped(self, hint) -> None:
+        out = _post(
+            _emission(
+                intent_hint="check_incoming",
+                domain_hint="incoming",
+                entities=[{"raw": "SRTWC8610-SH", "hint": hint, "current_message": True}],
+            ),
+            latest="srtwc8610-sh hav incoming?",
+        )
+        assert [e["hint"] for e in out["entities"]] == ["product"]
+        assert out["incoming_hint_retyped_to_product"] == ["SRTWC8610-SH"]
+
+    def test_a_real_container_number_is_not_retyped(self) -> None:
+        """The negative: four letters then seven digits, no separator - the ISO 6346
+        shape - must never become a product ask."""
+        out = _post(
+            _emission(
+                intent_hint="check_incoming",
+                domain_hint="incoming",
+                entities=[{"raw": "CMAU4318062", "hint": "inbound_shipment", "current_message": True}],
+            ),
+            latest="any eta for CMAU4318062",
+        )
+        assert [e["hint"] for e in out["entities"]] == ["inbound_shipment"]
+        assert "incoming_hint_retyped_to_product" not in out
+
+    def test_other_domains_are_untouched(self) -> None:
+        out = _post(
+            _emission(
+                intent_hint="check_order",
+                domain_hint="order",
+                entities=[{"raw": "SRTWC8610-SH", "hint": "order", "current_message": True}],
+            ),
+            latest="order for srtwc8610-sh",
+        )
+        assert [e["hint"] for e in out["entities"]] == ["order"]
+        assert "incoming_hint_retyped_to_product" not in out
+
+
 class TestOwner8SepANewAskIsNeverAnEscalationYes:
     """Defect 2. After a stock answer offering to escalate, "PO for SRTWC8517" came back
     `request_for_help` with `is_escalation_confirmation: true`, so a fresh product question

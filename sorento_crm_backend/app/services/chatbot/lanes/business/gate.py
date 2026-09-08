@@ -251,6 +251,12 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     gate_reason = "ok"
     gate_clarification = ""
     compatible_entities: list[dict[str, Any]] = entities
+    # D10 (owner console pass, 8 Sep 2026, turn 69d9900e "srtwc8610-sh hav incoming?"):
+    # per token, the incompatible types it ONLY matched - never populated for a token that
+    # also carries an allowed-type match. `token -> [types]`, so `miss_resolutions`
+    # (`miss_suggest.py`) can force such a token past its own "already resolved" guard
+    # WITHOUT this file knowing anything about the did-you-mean machinery it feeds.
+    incompatible_only: dict[str, list[str]] = {}
 
     if allowed is None:
         # `${domain}` in a JS template literal, where `domain` is `parser.domain_hint ??
@@ -271,6 +277,20 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
             got = ", ".join(dict.fromkeys(jsc.js_string(e["entity_type"]) for e in entities))
             gate_passed = False
             gate_reason = f"types [{got}] incompatible with '{domain}'"
+            # A flyer/set code (`product_set`) is the measured case, but the rule is
+            # general: ANY token whose matches are entirely outside this domain's matrix
+            # is indistinguishable, to the customer, from a token that matched nothing -
+            # both read "I don't have that". Per-token (OR-mode `resolutions`) only; an
+            # AND-mode intersection has no single token to blame the miss on.
+            for resolution in jsc.array(resolver.get("resolutions")):
+                matches = jsc.array(jsc.get(resolution, "matches"))
+                if not matches:
+                    continue
+                types = [jsc.get(m, "entity_type") for m in matches if jsc.truthy(m)]
+                if types and not any(t in allowed for t in types):
+                    token = jsc.get(resolution, "token")
+                    if jsc.truthy(token):
+                        incompatible_only[jsc.js_string(token)] = list(dict.fromkeys(types))
 
     # ── Required-type check (only if still passing) ─────────────────────────
     # Looks in resolver output AND raw parser hints, since an attachment_type may be a
@@ -1426,5 +1446,7 @@ def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting i
     if domain in ALLOWED:
         gate_debug["allowed_lookup"] = ALLOWED[domain]
     gate_debug["entities_count"] = len(entities)
+    if incompatible_only:
+        gate_debug["incompatible_only"] = incompatible_only
     out["gate_debug"] = gate_debug
     return out
