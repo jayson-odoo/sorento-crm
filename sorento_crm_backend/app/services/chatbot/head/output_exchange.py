@@ -342,7 +342,13 @@ DOMAIN_BLOCKED_HINTS: dict[str, list[str]] = {
     # brand='Sorento' in state, the next turn routed to resource_attachment and CARRIED
     # it, and 'Sorento' fuzzy-matched promotion PDFs. `crm_resource_attachments_list` has
     # no brand or category param, so these can only pollute a document lookup.
-    "resource_attachment": ["forms", "form", "product", "promotion", "customer", "transporter", "order", "customer_order", "order_number", "spo", "grn", "goods_receive", "inbound_shipment", "access_levels", "attachment_type", "flyer", "brand", "category"],
+    # 'warehouse' added 2026-09-08, same row, same reason, one step worse: since
+    # `TYPE_TO_PARAM["warehouse"] = "warehouse_ids"`, a warehouse token also SATISFIES
+    # `ENTITY_FILTER_REQUIRED_TOOLS` for this tool, which has no warehouse param at all -
+    # so a document turn could be let through on a filter the document read cannot apply.
+    # Warehouse codes read like ordinary words (HOLD, DISPLAY, REPAIR), so the collision
+    # is not hypothetical.
+    "resource_attachment": ["forms", "form", "product", "promotion", "customer", "transporter", "order", "customer_order", "order_number", "spo", "grn", "goods_receive", "inbound_shipment", "access_levels", "attachment_type", "flyer", "brand", "category", "warehouse"],
     "goods_receive": ["forms", "form", "product", "attachment", "promotion", "customer", "transporter", "order", "customer_order", "order_number", "spo", "grn", "goods_receive", "inbound_shipment", "access_levels", "category", "brand", "attachment_type", "flyer"],
     # 'product' removed by growth r1 A6 (AC-908). This row was written while the domain was
     # in `DEFAULT_UNSUPPORTED_DOMAINS` and every spo turn was refused before an entity

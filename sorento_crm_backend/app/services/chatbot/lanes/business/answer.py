@@ -32,7 +32,7 @@ from functools import cmp_to_key
 from typing import Any, Literal
 
 from app.services.chatbot import jsc
-from app.services.chatbot.lanes.business.fetch import space_id_or_default
+from app.services.chatbot.lanes.business.fetch import DATE_PARAMS, space_id_or_default
 
 # The did-you-mean helpers the JS carries in BOTH bodies with a "keep in lockstep" note.
 # `miss_suggest` owns them because that is where their node lives; this file imports them
@@ -2022,7 +2022,25 @@ _SCOPE_WORD = {
     "promotion": "promotion",
     "goods_receive": "goods receipt",
     "master_products": "product",
+    # 8 Sep 2026: `spo_allocation` reaches this branch now that its gate row requires a
+    # scoping entity, and with no word here the raw domain key printed to the customer.
+    "spo_allocation": "SPO line",
 }
+
+
+def _domain_takes_a_date_filter(domain: Any) -> bool:
+    """Does any tool this domain can call accept a date range?
+
+    Derived from the two declarations that already answer it - `DOMAIN_SPEC[domain].tools`
+    and `fetch.DATE_PARAMS` - rather than from a third hand-kept list that would drift
+    away from both. `spo_allocation`'s only tool
+    (`crm_procurement_spo_allocations_last_receipt_list`) takes no date parameter, so the
+    scoping ask offered the customer a filter nothing downstream could have applied.
+    """
+    from app.services.chatbot.contracts import DOMAIN_SPEC
+
+    spec = DOMAIN_SPEC.get(jsc.js_string(domain if jsc.truthy(domain) else "").lower())
+    return any(tool in DATE_PARAMS for tool in (spec.tools if spec is not None else ()))
 
 # `allowed_lookup` holds the resolver's INTERNAL entity types. Printing them raw asks the
 # customer to speak our schema, and several are the same thing to them.
@@ -2084,6 +2102,11 @@ def _human_list(values: list) -> str:
         return "a valid value"
     if len(kept) == 1:
         return jsc.js_string(kept[0])
+    if len(kept) == 2:
+        # "A or B", never "A, or B". A two-item list has no series to separate, so the
+        # comma is a tell that a three-item helper wrote the sentence (review S5,
+        # 8 Sep 2026: "Give me a product code, or warehouse, and I can look it up").
+        return f"{jsc.js_string(kept[0])} or {jsc.js_string(kept[1])}"
     head = ", ".join(jsc.js_string(v) for v in kept[:-1])
     return f"{head}, or {jsc.js_string(kept[-1])}"
 
@@ -2238,7 +2261,11 @@ def not_found_error_message(
                 asked.append(word)
         # The date range is one MORE option, so it belongs INSIDE the list; appending it after
         # a finished list produced "a order number, transporter, or customer, or a date range".
-        options = (asked[:3] if asked else ["customer", "product code"]) + ["date range"]
+        # Offered only where the domain's own tool takes one - see
+        # `_domain_takes_a_date_filter`.
+        options = (asked[:3] if asked else ["customer", "product code"]) + (
+            ["date range"] if _domain_takes_a_date_filter(domain_hint) else []
+        )
         article = "an" if _VOWEL_HEAD_RE.match(options[0]) else "a"
         escalate_message = (
             f"That would search every {scope_word} we have - I need at least one filter to "

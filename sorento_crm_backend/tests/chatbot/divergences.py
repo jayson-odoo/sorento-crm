@@ -677,6 +677,52 @@ DIVERGENCES: list[Divergence] = [
             "not_supported - the deliberate point of A6."
         ),
     ),
+    # AC-1 (chatbot-warehouse-entity-and-last-in, 8 Sep 2026): `ALLOWED` gained
+    # "warehouse" on `inventory` and a whole `spo_allocation` row, so the gate's DEBUG
+    # ECHO of the matrix lists one more type than every capture taken before the change.
+    # `gate_debug.allowed_lookup` is `ALLOWED[domain]` copied onto the output. No capture
+    # in the corpus feeds it into a decision; the one reader that derives anything from it
+    # (`answer.py`'s needs-scope message, which turns the allowed types into the "give me a
+    # product code or warehouse" option list) is graded separately, by
+    # tests/chatbot/test_warehouse_entity.py::TestZeroEntitySpoAllocationAsksInsteadOfFanningOut.
+    #
+    # FIELD-SCOPED to that one key, deliberately: `gate_passed`, `gate_reason`,
+    # `compatible_entities`, `require_specific` and every other byte are still graded, and
+    # no corpus capture carries a warehouse entity for the new type to change one of them
+    # (measured 8 Sep 2026: with the matrix row reverted, all 135 vendored replays pass,
+    # so the echo is the ONLY thing the matrix change moves). The five nested copies are
+    # the same object seen through the `resolve-exit-*` item's own spreads
+    # (`gate`, `ctx.gate`, `ctx_resolved`, `ctx_resolved.ctx.gate`), which is why one
+    # hazard needs five paths.
+    #
+    # Behaviour pinned by tests/chatbot/test_warehouse_entity.py::TestGateKeepsWarehouse.
+    *(
+        Divergence(
+            node=node,
+            fixture=None,
+            hazard="AC-1 (chatbot-warehouse-entity-and-last-in)",
+            reason=(
+                "ALLOWED gained 'warehouse' on inventory and a spo_allocation row, so "
+                "gate_debug.allowed_lookup - the gate's read-only echo of the matrix - "
+                "lists one more type than a capture taken before the change. Nothing "
+                "else about the node moves."
+            ),
+            strip_paths=(
+                ("gate_debug", "allowed_lookup"),
+                ("gate", "gate_debug", "allowed_lookup"),
+                ("ctx", "gate", "gate_debug", "allowed_lookup"),
+                ("ctx_resolved", "gate_debug", "allowed_lookup"),
+                ("ctx_resolved", "ctx", "gate", "gate_debug", "allowed_lookup"),
+            ),
+        )
+        for node in (
+            "disallowed-entity-gate",
+            "resolve-exit-continue",
+            "resolve-exit-not-found",
+            "resolve-exit-offer",
+            "sub-resolve-and-gate",
+        )
+    ),
 ]
 
 

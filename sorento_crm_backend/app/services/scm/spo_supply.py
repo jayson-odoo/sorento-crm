@@ -90,8 +90,10 @@ def visible_line_clauses() -> tuple:
 
     Readers: `procurement_service.SPOAllocationService.list_allocations`,
     `list_allocations_grouped_by_shipment`, `list_allocations_grouped_by_spo_number`,
-    `list_documents` (and its `total_allocated` / `total_received` rollups) and
-    `get_document` (its lines list and the same two rollups).
+    `list_documents` (and its `total_allocated` / `total_received` rollups),
+    `get_document` (its lines list and the same two rollups), and
+    `spo_last_receipt_service.last_receipt_rows` (the chatbot's "last in" - a line the
+    document no longer shows must not be able to answer as the newest one).
     """
     return (
         or_(
