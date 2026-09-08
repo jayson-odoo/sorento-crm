@@ -35,7 +35,8 @@ import AttachmentPreviewModal, {
 import {
   AI_EXTRACT_FORM_KEYS,
   AIExtractResult,
-  PortalSubmissionKind,
+  AIExtractedProductLine,
+  PortalLandingKind,
   aiExtractFromFiles,
 } from '../lib/portal-client';
 import { canPreviewLocally, portalFetchBytes } from '../lib/portal-preview';
@@ -57,17 +58,26 @@ export interface AIExtractApplyPayload {
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  kind: PortalSubmissionKind;
+  kind: PortalLandingKind;
   fieldDefs: FieldDef[];
   onApply: (payload: AIExtractApplyPayload) => void;
+  /** Fired once extraction lands and the dialog moves to Review, with the
+   *  raw product rows - a caller with its own matching (price tag: resolving
+   *  a product code) can start resolving before Apply is clicked. */
+  onExtracted?: (products: AIExtractedProductLine[]) => void;
+  /** An extra "Match" cell per product row, appended to the line items table
+   *  when provided. Kept minimal rather than forking the dialog for the one
+   *  caller (price tag requests) that needs a match state per row. */
+  renderRowStatus?: (product: AIExtractedProductLine, index: number) => ReactNode;
 }
 
 type Stage = 'upload' | 'review';
 
-const KINDS_WITH_LINE_ITEMS: PortalSubmissionKind[] = [
+const KINDS_WITH_LINE_ITEMS: PortalLandingKind[] = [
   'purchase_request',
   'sponsorship_form',
   'complaint',
+  'price_tag_request',
 ];
 
 export function AIExtractDialog({
@@ -76,6 +86,8 @@ export function AIExtractDialog({
   kind,
   fieldDefs,
   onApply,
+  onExtracted,
+  renderRowStatus,
 }: Props) {
   const [stage, setStage] = useState<Stage>('upload');
   const [files, setFiles] = useState<File[]>([]);
@@ -253,6 +265,7 @@ export function AIExtractDialog({
       setResult(r);
       setDiscarded(new Set());
       setStage('review');
+      onExtracted?.(r.products ?? []);
     } catch (e) {
       setExtractError(e instanceof Error ? e.message : 'AI extract failed.');
     } finally {
@@ -285,6 +298,15 @@ export function AIExtractDialog({
     [filledFieldEntries, discarded],
   );
 
+  // A form with NO header fields (price_tag_request: fieldDefs=[]) still has
+  // something to apply when there are line items - the "nothing extractable"
+  // state and the Confirm button's disabled state both have to look past
+  // fieldDefs alone or a fields-less form could never confirm anything.
+  const hasApplicableProductLines =
+    KINDS_WITH_LINE_ITEMS.includes(kind) &&
+    !!result?.products &&
+    result.products.length > 0;
+
   const handleConfirm = () => {
     if (!result) return;
     const out: Record<string, string | string[]> = {};
@@ -295,13 +317,19 @@ export function AIExtractDialog({
       values: out,
       files,
       alsoAttach,
-      productLines: KINDS_WITH_LINE_ITEMS.includes(kind)
-        ? (result.products ?? [])
-        : [],
+      productLines: hasApplicableProductLines ? (result.products ?? []) : [],
     });
-    toast.success(
-      `Applied ${remainingFieldEntries.length} field${remainingFieldEntries.length === 1 ? '' : 's'}.`,
-    );
+    const parts: string[] = [];
+    if (remainingFieldEntries.length > 0) {
+      parts.push(
+        `${remainingFieldEntries.length} field${remainingFieldEntries.length === 1 ? '' : 's'}`,
+      );
+    }
+    if (hasApplicableProductLines) {
+      const n = result.products?.length ?? 0;
+      parts.push(`${n} line${n === 1 ? '' : 's'}`);
+    }
+    toast.success(parts.length > 0 ? `Applied ${parts.join(' and ')}.` : 'Applied.');
     onOpenChange(false);
   };
 
@@ -433,12 +461,12 @@ export function AIExtractDialog({
               className="space-y-3 flex-1 min-h-0 overflow-y-auto -mx-1 px-1"
               data-testid="ai-extract-review"
             >
-              {remainingFieldEntries.length === 0 ? (
+              {remainingFieldEntries.length === 0 && !hasApplicableProductLines ? (
                 <p className="text-sm text-muted-foreground">
                   Nothing extractable was found. Go back and try with clearer
                   pages, or close to fill the form manually.
                 </p>
-              ) : (
+              ) : remainingFieldEntries.length > 0 ? (
                 <div className="rounded-md border border-border">
                   <ScrollArea>
                     <table className="w-auto min-w-full text-sm">
@@ -482,9 +510,9 @@ export function AIExtractDialog({
                     <ScrollBar orientation="horizontal" />
                   </ScrollArea>
                 </div>
-              )}
+              ) : null}
 
-              {KINDS_WITH_LINE_ITEMS.includes(kind) && result.products && result.products.length > 0 && (
+              {hasApplicableProductLines && (
                 <div className="rounded-md border border-border">
                   <div className="px-3 py-2 text-xs uppercase tracking-wide text-muted-foreground border-b border-border">
                     Line items ({result.products.length}) - will be applied to the items list
@@ -497,6 +525,7 @@ export function AIExtractDialog({
                       <thead className="text-xs text-muted-foreground">
                         <tr className="border-b border-border">
                           <th className="px-3 py-1.5 text-left font-normal">Product code</th>
+                          <th className="px-3 py-1.5 text-left font-normal">Description</th>
                           <th className="px-3 py-1.5 text-right font-normal">Qty</th>
                           {kind !== 'complaint' && (
                             <>
@@ -504,6 +533,9 @@ export function AIExtractDialog({
                               <th className="px-3 py-1.5 text-right font-normal">Total</th>
                               <th className="px-3 py-1.5 text-left font-normal">Notes</th>
                             </>
+                          )}
+                          {renderRowStatus && (
+                            <th className="px-3 py-1.5 text-left font-normal">Match</th>
                           )}
                         </tr>
                       </thead>
@@ -515,6 +547,7 @@ export function AIExtractDialog({
                             data-testid={`ai-extract-product-row-${i}`}
                           >
                             <td className="px-3 py-2 align-top break-words">{p.product_code ?? '-'}</td>
+                            <td className="px-3 py-2 align-top break-words">{p.product_name ?? '-'}</td>
                             <td className="px-3 py-2 align-top text-right">{p.quantity ?? '-'}</td>
                             {kind !== 'complaint' && (
                               <>
@@ -522,6 +555,11 @@ export function AIExtractDialog({
                                 <td className="px-3 py-2 align-top text-right">{p.total ?? '-'}</td>
                                 <td className="px-3 py-2 align-top break-words">{p.notes ?? ''}</td>
                               </>
+                            )}
+                            {renderRowStatus && (
+                              <td className="px-3 py-2 align-top break-words">
+                                {renderRowStatus(p, i)}
+                              </td>
                             )}
                           </tr>
                         ))}
@@ -558,7 +596,7 @@ export function AIExtractDialog({
               </Button>
               <Button
                 onClick={handleConfirm}
-                disabled={remainingFieldEntries.length === 0}
+                disabled={remainingFieldEntries.length === 0 && !hasApplicableProductLines}
                 data-testid="ai-extract-confirm"
               >
                 Confirm and prefill

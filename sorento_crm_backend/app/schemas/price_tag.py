@@ -21,6 +21,8 @@ class PriceTagRequestLineCreate(BaseModel):
     quantity: int = Field(default=1, ge=1)
     alternatives: list[dict] = Field(default_factory=list)
     included_accessories: Optional[str] = None
+    # Free-text note on the line (D6, r7).
+    remarks: Optional[str] = None
     # None, not 0: the portal posts the table in order and sends no sort_order,
     # and a default of 0 gave EVERY line the same one, so the relationship's
     # `order_by(sort_order)` returned them in whatever order Postgres liked. The
@@ -45,6 +47,7 @@ class PriceTagRequestLineResponse(BaseModel):
     quantity: int
     alternatives: list[Any] = []
     included_accessories: Optional[str] = None
+    remarks: Optional[str] = None
     sort_order: int
     # float, not Decimal, on every money field a CLIENT reads. Pydantic
     # serialises a Decimal as a JSON string, and the detail page does
@@ -87,6 +90,10 @@ class PriceTagRequestCreate(BaseModel):
     promotion_id: Optional[str] = None
     needed_by_date: Optional[date] = None
     notes: Optional[str] = None
+    # Header price mode (D5, r7): 'selling' requires a promotion, enforced on
+    # SUBMIT by `validate_submittable` (not here - a draft may pick Selling
+    # before it has a promotion, same as it may have no debtor yet).
+    price_mode: Literal["list", "selling"] = "list"
     lines: list[PriceTagRequestLineCreate] = Field(default_factory=list)
 
 
@@ -99,6 +106,13 @@ class PriceTagRequestUpdate(BaseModel):
     promotion_id: Optional[str] = None
     needed_by_date: Optional[date] = None
     notes: Optional[str] = None
+    # NOT Optional: the column is NOT NULL, and `price_mode: null` used to
+    # reach `setattr(req, "price_mode", None)` in the route (`exclude_unset`
+    # only drops an OMITTED field, not one explicitly sent as null) and 500
+    # on the flush. Omitted still means "leave it as it is" - `exclude_unset`
+    # handles that regardless of what the default is; an explicit null is
+    # now a 422, same as any other unknown price_mode value.
+    price_mode: Literal["list", "selling"] = "list"
     lines: Optional[list[PriceTagRequestLineCreate]] = None
 
 
@@ -141,6 +155,7 @@ class PriceTagRequestResponse(BaseModel):
     promotion_id: Optional[str] = None
     needed_by_date: Optional[date] = None
     notes: Optional[str] = None
+    price_mode: str = "list"
     status: str
     doc_number: str
     page_id: Optional[str] = None
@@ -806,6 +821,19 @@ class ResolvedLineData(BaseModel):
     quantity: int
     # Empty for a set line: a set has no barcode of its own (S7).
     barcode: Optional[str] = None
+
+
+class PortalTagSheetDesignResponse(BaseModel):
+    """The portal's design preview (D11): the same doc `TagSheetDocResponse`
+    carries, PLUS the resolved line data the CRM designer reads through a
+    SEPARATE `/resolve-prices` call - the portal has no such second call, so
+    this route answers both in one response."""
+
+    page_id: str
+    version: int
+    doc: Optional[dict] = None
+    source: Literal["draft", "version"] = "version"
+    lines: list[ResolvedLineData] = []
 
 
 class TagFont(BaseModel):

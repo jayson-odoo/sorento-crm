@@ -23,6 +23,7 @@ import pytest
 from app.services.ai_extract.extract_service import (
     AIExtractService,
     ExtractFile,
+    _form_has_line_items,
 )
 from app.services.ai_extract.form_schema_registry import (
     FORM_SCHEMAS,
@@ -170,6 +171,28 @@ def test_customer_and_project_fields_have_disambiguating_guidance(
     assert cust.note and "NOT" in cust.note
     # Project field tells the model it is not the customer company.
     assert proj.note and "NOT the customer" in proj.note
+
+
+# ---- portal.price_tag_request (D7, PLAN-price-tag-r7-request-ux AC-S6-4) --
+#
+# Review push-back accepted: the price tag request form has no header
+# FIELDS to mirror - Customer is a select, not free text, and there is no
+# sales order number input at all - only a LINE ITEMS section, so the
+# schema is registered with an EMPTY field list. FORMS_WITH_LINE_ITEMS is
+# what actually matters here.
+
+
+def test_price_tag_request_schema_is_empty_no_fields_to_mirror():
+    schema = get_form_schema("portal.price_tag_request")
+    assert schema == []
+
+
+def test_price_tag_request_has_line_items():
+    assert _form_has_line_items("portal.price_tag_request") is True
+
+
+def test_price_tag_request_key_is_namespaced_like_every_other_portal_form():
+    assert "portal.price_tag_request" in FORM_SCHEMAS
 
 
 # ---- Image attachers ------------------------------------------------------

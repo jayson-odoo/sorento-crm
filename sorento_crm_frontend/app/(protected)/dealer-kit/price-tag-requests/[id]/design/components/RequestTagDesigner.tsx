@@ -23,7 +23,7 @@
  * Autosave (D22, S8): every committed change - a layer edit, an arranged
  * pin - re-runs the `doc` memo below, and an effect on THAT schedules a
  * debounced save through `onAutosave`, which writes the request's DRAFT.
- * `onSave` - the manual button, Mark proof ready, Print sheet - is a
+ * `onSave` - the manual button, Mark design ready, Print sheet - is a
  * different act on a different route: it snapshots the design into an
  * immutable version, which is what export and proof rendering read (B1).
  * Autosaving through that route wrote a version per second and buried the
@@ -746,10 +746,14 @@ export function RequestTagDesigner({
       await saveNow();
       // A STATUS, not an action name: see the note on the detail page.
       await transitionPriceTagRequest(request.id, 'proof_ready');
-      toast.success('Proof marked as ready');
+      toast.success('Design marked as ready');
       router.push(`/dealer-kit/price-tag-requests/${request.id}`);
-    } catch {
-      toast.error('Failed to mark the proof ready');
+    } catch (e) {
+      // `transitionPriceTagRequest` already extracts the server's own
+      // message via `extractApiError` and throws it - a fixed string here
+      // swallowed the actual 409 reason (e.g. an invalid transition) and
+      // left the salesperson/marketing with no idea why the click failed.
+      toast.error(e instanceof Error ? e.message : 'Failed to mark the design ready');
     } finally {
       setTransitioning(false);
     }
@@ -1012,7 +1016,7 @@ export function RequestTagDesigner({
     <FocusShell active={focus} onExit={() => setFocus(false)}>
     <div className="flex h-full min-h-0 flex-1 flex-col">
       {/* Request bar: what this is, which half is showing, the Saved
-          indicator and - in design mode - the ONE action, Mark proof ready
+          indicator and - in design mode - the ONE action, Mark design ready
           (S7, AC-S7-1). Full screen, the Template dropdown and Save moved
           into the canvas toolbar's own trailing group below; arrange mode
           keeps its own Full screen + Save here, since ArrangeSheetView has
@@ -1093,7 +1097,7 @@ export function RequestTagDesigner({
             ) : (
               <Eye className="mr-1 size-3.5" />
             )}
-            Mark proof ready
+            Mark design ready
           </Button>
         )}
       </div>
@@ -1343,6 +1347,14 @@ function LinesRail({
                               ? ` / LP ${formatTagPrice(row.list_price)}`
                               : ''}
                         </p>
+                        {line.remarks && (
+                          <p
+                            className="mt-0.5 truncate text-2xs text-muted-foreground"
+                            title={line.remarks}
+                          >
+                            {line.remarks}
+                          </p>
+                        )}
                       </>
                     )}
                   </button>

@@ -230,11 +230,11 @@ describe('PriceTagRequestDetail', () => {
     const primary = await screen.findByTestId('price-tag-primary-cta');
     expect(primary.textContent).toContain('Design tags');
     // The secondary actions are NOT beside it.
-    expect(screen.queryByRole('button', { name: 'Mark proof ready' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Mark design ready' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Void' })).toBeNull();
 
     const gear = within(screen.getByTestId('gear-menu'));
-    expect(gear.getByRole('menuitem', { name: /Mark proof ready/ })).toBeTruthy();
+    expect(gear.getByRole('menuitem', { name: /Mark design ready/ })).toBeTruthy();
     expect(gear.getByRole('menuitem', { name: /Void/ })).toBeTruthy();
   });
 
@@ -288,11 +288,8 @@ describe('PriceTagRequestDetail', () => {
     switchTab('Lines');
     expect(await screen.findByText('No lines in this request.')).toBeTruthy();
 
-    switchTab('PO Attachments');
-    expect(await screen.findByText('No PO attachments uploaded.')).toBeTruthy();
-
-    switchTab('Proof');
-    expect(await screen.findByText(/Mark the proof ready to send it/)).toBeTruthy();
+    switchTab('Sales Order');
+    expect(await screen.findByText('No sales order files attached.')).toBeTruthy();
   });
 
   it('asks before voiding rather than voiding on the click', async () => {
@@ -338,7 +335,7 @@ describe('PriceTagRequestDetail', () => {
     renderDetail();
 
     await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
-    switchTab('PO Attachments');
+    switchTab('Sales Order');
 
     expect(await screen.findByText('ZZT-po.pdf')).toBeInTheDocument();
     expect(
@@ -357,38 +354,41 @@ describe('PriceTagRequestDetail', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tabs (D25, AC-S10-1..3): Request / Lines / PO Attachments / Proof replace
-// the four stacked cards; the standalone Proof card and its duplicate "Open
-// the designer" button are gone; the Lines tab carries a per-row Design
-// action and a per-line tag status.
+// Tabs (D25, D10, AC-S1-6, AC-S1-7): Request / Lines / Sales Order replace
+// the four stacked cards; the standalone Proof card, the Proof TAB and their
+// duplicate "Open the designer" button are gone - the design lives in the
+// designer, one click away through the header's own primary CTA. The Lines
+// tab carries a per-row Design action and a per-line tag status.
 // ---------------------------------------------------------------------------
 
 describe('PriceTagRequestDetail - tabs', () => {
-  it('renders the tabs in order: Request, Lines, PO Attachments, Proof', async () => {
+  it('renders the tabs in order: Request, Lines, Sales Order', async () => {
     mockGet.mockResolvedValue(requestWith());
     renderDetail();
 
     await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
     const tabLabels = screen.getAllByRole('tab').map((tab) => tab.textContent);
-    expect(tabLabels).toEqual(['Request', 'Lines', 'PO Attachments', 'Proof']);
+    expect(tabLabels).toEqual(['Request', 'Lines', 'Sales Order']);
   });
 
-  it('has no standalone Proof card outside the Proof tab, and no duplicate Open the designer button', async () => {
-    mockGet.mockResolvedValue(requestWith({ status: 'designing' }));
-    renderDetail();
+  it('has no standalone Proof card and no Proof tab at all, at any status (D10)', async () => {
+    // AC-S1-6: "No Proof tab at any status" - swept across the statuses that
+    // used to carry it (designing had the standalone card; proof_ready and
+    // approved are the statuses r7 explicitly calls out for the portal's
+    // design preview, so the CRM side is checked at the same three).
+    for (const status of ['designing', 'proof_ready', 'approved']) {
+      mockGet.mockResolvedValue(requestWith({ status }));
+      const { unmount } = renderDetail();
 
-    // Request tab is open by default - the old standalone Proof card lived
-    // alongside it as a fourth stacked card, so its heading must not appear
-    // here any more.
-    await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
-    expect(screen.queryByRole('heading', { name: 'Proof' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Open the designer' })).toBeNull();
+      await screen.findByRole('heading', { name: /PT-202608-0001/, level: 1 });
+      expect(screen.queryByRole('tab', { name: 'Proof' })).toBeNull();
+      expect(screen.queryByRole('heading', { name: 'Proof' })).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Open the designer' })).toBeNull();
+      const tabLabels = screen.getAllByRole('tab').map((tab) => tab.textContent);
+      expect(tabLabels).toEqual(['Request', 'Lines', 'Sales Order']);
 
-    switchTab('Proof');
-    expect(await screen.findByRole('heading', { name: 'Proof' })).toBeTruthy();
-    // The action moved into the header (the primary CTA), so the tab body
-    // never grows its own copy of it back.
-    expect(screen.queryByRole('button', { name: 'Open the designer' })).toBeNull();
+      unmount();
+    }
   });
 
   it('keeps exactly one Design entry point in the header for a claimed, designable request', async () => {

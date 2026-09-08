@@ -257,6 +257,38 @@ class TestTheDetailNamesWhoClaimedIt:
         assert body["assigned_to_id"] is None
         assert body["assigned_to_name"] is None
 
+    def test_the_detail_carries_price_mode_and_each_lines_remarks(self, api):
+        """AC-S2-7: `response_model` drops an undeclared field without a
+        word, so this has to be asserted on the wire, not just in the
+        service layer (`test_price_tag_request.py` covers that side)."""
+        client, db = api
+        promotion_id = _promotion(db, "ZZT r7 Promo")
+        contact = _contact(db, unique_code("ZZT Sales Sam"))
+        request = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=SORENTO,
+            data={
+                "debtor_name": "ZZT Dealer",
+                "promotion_id": promotion_id,
+                "price_mode": "selling",
+                "lines": [
+                    {
+                        "line_type": "product",
+                        "product_id": _product(db).id,
+                        "remarks": "Face out on the top shelf",
+                    }
+                ],
+            },
+        )
+        request.portal_draft_at = None
+        db.commit()
+
+        body = client.get(f"{_BASE}/{request.id}").json()
+
+        assert body["price_mode"] == "selling"
+        assert body["lines"][0]["remarks"] == "Face out on the top shelf"
+
 
 class TestTheListingCarriesWhatItDraws:
     def test_the_row_carries_the_line_count_and_the_names(self, api):

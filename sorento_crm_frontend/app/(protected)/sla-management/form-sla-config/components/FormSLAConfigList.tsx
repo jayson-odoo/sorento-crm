@@ -245,7 +245,7 @@ export default function FormSLAConfigList() {
         <Card>
           <CardContent className="pt-6 text-sm text-muted-foreground">
             No SLA configurations yet. Click &quot;Add stage&quot; to attach an SLA to
-            one of the four forms.
+            one of the forms.
           </CardContent>
         </Card>
       ) : (
