@@ -114,6 +114,68 @@ def _oversold_group_with_timely_water(db, *, asker_qty="3"):
     return order, line, eling, own, spo
 
 
+def _oversold_group_no_sibling(db, *, asker_qty="6", spo_qty=3):
+    """The same group, minus the sibling: nothing else competes for the SPO's water, so the
+    undated group-netted share and the dated own-date draw read the SAME figure instead of
+    two different ones.
+
+    Own bin holds nothing, an SPO of `spo_qty` lands before the asker's date, and the asker's
+    own open quantity outsells it alone: group net is `spo_qty - asker_qty` (negative), so
+    the undated share is `max(group_net + asker_qty, 0) == spo_qty`, and the dated walk hands
+    the asker the same `spo_qty` because nothing else is due against this bin. Returns
+    `(order, line, actor, own_bin, spo)`.
+    """
+    company_id, eling, project, product = _world(db)
+    _group, sites = _group_sites(db)
+    own, _pool = sites["BRW"]
+    _stock(db, product, own, on_hand=0)
+    _lead_time(db, product, LEAD_DAYS)
+    _policy(db)
+
+    spo = _spo(
+        db, product, own, qty=spo_qty, arrives=date.today() + timedelta(days=SPO_DAY),
+    )
+    order, line, _cso, _cline = _seed_line(
+        db, company_id, project, product, own, qty_ordered=str(asker_qty),
+        required_date=date.today() + timedelta(days=ASKER_DAY),
+        so_number=f"ZZT-SO-ASK{_uid()[:6]}",
+    )
+    return order, line, eling, own, spo
+
+
+def _oversold_group_water_at_sibling_bin(db, *, asker_qty="3", spo_qty=3):
+    """The oversold group of `_oversold_group_with_timely_water`, except the SPO lands at
+    the SIBLING bin (`MWH`) rather than the asker's own (`BRW`): both bins share one
+    ownership group, so the group net - and `_group_take_candidates` reading it empty - is
+    unchanged, and the dated walk still hands the asker the water, just from somewhere else.
+    Returns `(order, line, actor, own_bin, sibling_bin, spo)`.
+    """
+    company_id, eling, project, product = _world(db)
+    _group, sites = _group_sites(db)
+    own, _pool = sites["BRW"]
+    sibling, _sibling_pool = sites["MWH"]
+    _stock(db, product, own, on_hand=0)
+    _lead_time(db, product, LEAD_DAYS)
+    _policy(db)
+
+    spo = _spo(
+        db, product, sibling, qty=spo_qty, arrives=date.today() + timedelta(days=SPO_DAY),
+    )
+    # THE SIBLING ORDER, same as `_oversold_group_with_timely_water`: due after the asker,
+    # so the group nets negative while the dated walk still gives the asker the water first.
+    _seed_line(
+        db, company_id, project, product, own, qty_ordered=str(SIBLING_QTY),
+        required_date=date.today() + timedelta(days=SIBLING_DAY),
+        so_number=f"ZZT-SO-SIB{_uid()[:6]}",
+    )
+    order, line, _cso, _cline = _seed_line(
+        db, company_id, project, product, own, qty_ordered=str(asker_qty),
+        required_date=date.today() + timedelta(days=ASKER_DAY),
+        so_number=f"ZZT-SO-ASK{_uid()[:6]}",
+    )
+    return order, line, eling, own, sibling, spo
+
+
 # --------------------------------------------------------------------------- AC-L5b
 
 
@@ -164,18 +226,16 @@ def test_the_board_proposes_incoming_off_the_dated_walk_and_the_confirm_accepts_
     assert snapshot["reserve_qty"] == "0"
     # The frozen row names the bin the goods are coming to and the document behind them.
     #
-    # `rung` is ABSENT, and that is `_snapshot`'s water split still reading the UNDATED
-    # `_group_take_candidates` alone: on an oversold group it is empty, so the split falls
-    # through to its own "no water on offer" row - the retired rung 1's shape, at
-    # `fact.own_code`. Here that bin IS where the SPO lands, so the row is right and only
-    # its rung is missing; a unit whose dated water sits at a SIBLING bin would be named
-    # wrongly. Pinned rather than fixed: the ruling this test carries is about the BOUND,
-    # and the split is its own decision to take - recorded as (b) in the 8 Sep 2026 bullet
-    # in `PLAN-scm-cs-planning-uat.md` section 9.
+    # `rung` is `group_take`: `_snapshot`'s water split now falls back to
+    # `use_candidates_for`'s own-half water when the undated `_group_take_candidates` is
+    # empty (S2 review, 8 September 2026), and that dated draw carries the same rung the
+    # undated split does. See `test_dated_water_at_a_sibling_bin_is_frozen_there_not_at_
+    # the_own_bin` for the case that rung actually distinguishes - own bin and sibling bin
+    # coincide here, so this test alone could not have told the two splits apart.
     assert [
         (c["kind"], c["qty"], c["source_location"], c.get("rung"))
         for c in snapshot["components"]
-    ] == [("timely_spo", "3", own_code, None)], snapshot["components"]
+    ] == [("timely_spo", "3", own_code, "group_take")], snapshot["components"]
     assert spo_number in snapshot["components"][0]["reason"]
 
 
@@ -211,3 +271,73 @@ def test_a_timely_quantity_above_both_readings_is_still_refused_with_the_dated_f
         said = str(detail.get("failing_lines") or detail)
 
     assert "Timely SPO cover is now 3, not 5" in said, said
+
+
+def test_the_cover_is_the_larger_reading_never_the_sum():
+    """S3: the two readings are combined with `max`, never `+`. With no sibling to compete
+    for the SPO's water, the undated group-netted share and the dated own-date draw agree at
+    the same figure - 3 both ways - which is exactly where the two combining rules diverge:
+    `max(3, 3) == 3` refuses a posted 6, while `3 + 3 == 6` would wrongly accept it.
+
+    The asker is open for 6 so a posted 6 balances the line (reserve 0, buy 0) and the
+    composition invariant is never what trips - only the bound is.
+    """
+    with blank_session() as db:
+        order, line, actor, _own, _spo_row = _oversold_group_no_sibling(db)
+        service = ProjectSupplyService(db)
+
+        with pytest.raises(SupplyLinesRefused) as refused:
+            service.confirm(
+                order,
+                ConfirmSupplyBody(
+                    lines=[
+                        ConfirmLine(
+                            project_line_id=line.id,
+                            timely_spo_qty=Decimal("6"),
+                        )
+                    ]
+                ),
+                actor_user_id=actor,
+            )
+        detail = refused.value.detail
+        said = str(detail.get("failing_lines") or detail)
+
+    assert "Timely SPO cover is now 3, not 6" in said, said
+
+
+def test_dated_water_at_a_sibling_bin_is_frozen_there_not_at_the_own_bin():
+    """S2: `_snapshot`'s water split falls back to `use_candidates_for`'s own-half water
+    when the undated `_group_take_candidates` is empty - which on an oversold group it
+    always is - and that dated draw can name a SIBLING bin of the group rather than the
+    asker's own. The frozen row has to name the bin the goods are actually coming to; naming
+    the own bin here would be wrong, not merely imprecise, because the own bin holds nothing
+    at all.
+    """
+    from app.models.project_so import DECISION_ACTIVE, SOSupplyDecision
+
+    with blank_session() as db:
+        order, line, actor, _own, sibling, spo = _oversold_group_water_at_sibling_bin(db)
+
+        _confirm_as_proposed(db, order, actor)
+
+        decision = (
+            db.query(SOSupplyDecision)
+            .filter(
+                SOSupplyDecision.project_sales_order_id == order.id,
+                SOSupplyDecision.state == DECISION_ACTIVE,
+            )
+            .one()
+        )
+        snapshot = next(
+            snap for snap in decision.line_snapshots
+            if str(snap["project_line_id"]) == str(line.id)
+        )
+        sibling_code = sibling.warehouse_code
+        spo_number = spo.spo_number
+
+    assert snapshot["timely_spo_qty"] == "3"
+    assert [
+        (c["kind"], c["qty"], c["source_location"], c.get("rung"))
+        for c in snapshot["components"]
+    ] == [("timely_spo", "3", sibling_code, "group_take")], snapshot["components"]
+    assert spo_number in snapshot["components"][0]["reason"]
