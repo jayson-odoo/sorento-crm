@@ -73,3 +73,10 @@ that must stay visible (R2).
   shrink its shortfall. That is the more honest answer, since a deleted claim should stop competing,
   but the guarantee as written is false and must be narrowed to the retired-only case rather than
   left for the next reader to trust.
+
+- **AC-E18 [BE][T]** (round 4) A save never deletes a line the display hid. `planner_state` omits a
+  retired-only allocation from the split editor, so the browser posts splits without that warehouse
+  and `revise`'s delete branch would remove the row as a side effect of an unrelated save. Its
+  absence from the submitted splits is not a user decision, it is our own filtering coming back at
+  us. `revise` skips deleting an allocation that is not visible. Assert: a save that changes an
+  unrelated split leaves the hidden allocation present and untouched.

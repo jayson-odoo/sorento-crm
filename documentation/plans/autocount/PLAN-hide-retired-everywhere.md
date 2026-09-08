@@ -99,3 +99,13 @@ transitively. The exposed readers are exactly those with no open-status test.
   `incoming_stock_service.py:953-963` collects distinct SPO numbers off a shipment to find
   goods-received notes. It prints picking numbers rather than SPO numbers and falls under the
   AC-E14 rule, that a receipt found through a retired line is still a receipt.
+
+## 8. Round 4 (security review, 2026-09-08)
+
+The display/writer split has one asymmetry: what the display hides, the browser cannot send back,
+and `revise` reads that absence as "delete it". So hiding a row could hard-delete it on the next
+unrelated save. Unreachable on today's data, since no allocation carries a `po_line_id`, and the
+safe side of the two failure modes. Fixed anyway (AC-E18): "unreachable today" is the reasoning
+that produced the defect this lane exists to fix, and I rejected it once already in section 6.
+R7 gains its third clause: a user-facing read takes the clause, a read a writer depends on never
+does, and a WRITE never treats the absence of something we hid as an instruction.
