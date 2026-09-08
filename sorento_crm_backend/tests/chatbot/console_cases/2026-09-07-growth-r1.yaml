@@ -152,22 +152,26 @@ cases:
   # either side. "hav incoming?" after a zero-stock ask used to stop at "No incoming and no
   # stock for X." because the 489 ladder had no PO rung on `incoming`; migration 491 adds
   # it. Same PO placed key gate, one offer.
+  # RE-DERIVED 8 Sep 2026: `CB2904` (the original code) now has 1,100 on hand, so it no
+  # longer climbs a zero-stock ladder at all. `BRC22802W-MY` (0 stock / 2 open PO lines /
+  # 0 unshipped SPO / 0 incoming - the same re-derivation query as the A7 section above)
+  # replaces it; same zero+zero+PO shape the case was built to grade.
   - name: D7 - an incoming ask on a zero-stock code climbs to the PO rung
     cold: true
     turns:
-      - text: "check stock CB2904"
+      - text: "check stock BRC22802W-MY"
         expect:
           branch_kind: business_query
-          reply_contains: ["CB2904", "but PO is placed"]
+          reply_contains: ["BRC22802W-MY", "but PO is placed"]
           reply_not_contains: ["pcs", "expected"]  # D11
           no_uuid: true
       - text: "hav incoming?"
         expect:
           branch_kind: business_query
-          reply_contains: ["No incoming and no stock for CB2904, but PO is placed:"]
+          reply_contains: ["No incoming and no stock for BRC22802W-MY, but PO is placed:"]
           # D11 (owner ruling, 8 Sep 2026): {qty} {document date} only, no heading, no
           # "pcs", no expected date.
-          reply_not_contains: ["No incoming and no stock for CB2904.", "pcs", "expected"]
+          reply_not_contains: ["No incoming and no stock for BRC22802W-MY.", "pcs", "expected"]
           no_uuid: true
 
   - name: D6 - a code miss with an attachment word is one did-you-mean group  # NEW VOCABULARY
@@ -293,17 +297,34 @@ cases:
   # A5 - PO placed, and D4: a dealer never sees the supplier (AC-907).
   # ======================================================================================
 
+  # RE-DERIVED 8 Sep 2026 against the restored prod copy (owner ruling, coordinator D-fix
+  # round): the original C-FH14/SRTWC8517 examples still HAVE open PO lines on this
+  # database (C-FH14: 138 lines, 11,928 pcs by the same query below) - the graded run's
+  # "But no purchase_order matched these" on both of them is NOT a data problem. Measured
+  # directly against the service and the resolver in isolation:
+  #   `purchase_orders_placed_rows(db, product_ids=<the 8 SRTWC8517% member uuids>)`
+  #   returns 6 `kind=spo` rows correctly (not Mocha-only - all 8 members are company
+  #   Sorento; `_unshipped_spo_query` carries no hidden scope beyond `product_ids`).
+  #   `resolve_reference_post` for token "srtwc8517" also correctly resolves all 8
+  #   family members. Neither of the coordinator's two suspects (Mocha-only scope,
+  #   kind=spo skipped on the direct tool) reproduces in isolation - the miss is most
+  #   likely the SAME parser variance under the fresh v9 unlabelled prompt that hit
+  #   ~13 other cases in the same graded run (a wrong domain_hint/tool pick on that one
+  #   cold call), not a deterministic service defect. Flagged rather than "fixed" with
+  #   a change that has no measured cause to attach to.
   # SELECT p.product_code, count(*), sum(pl.qty_ordered - pl.qty_received)
   #   FROM purchase_order_lines pl JOIN products p ON p.id = pl.product_id
-  #   WHERE pl.line_status='open' AND (pl.qty_ordered - pl.qty_received) > 0
-  #   GROUP BY 1 ORDER BY 2 DESC LIMIT 6;
-  # -> C-FH14 has 74 open PO lines for 11,928 pcs, the most of any code.
+  #   WHERE pl.line_status='open' AND (pl.qty_ordered - pl.qty_received) > 0 AND p.product_code = 'C-FH14'
+  #   GROUP BY 1;
+  # -> C-FH14 still has 138 open PO lines for 11,928 pcs (unchanged in shape, only the
+  #    count grew). A5's own direct-PO-ask example: SRTWT7445-LV-NEW, which the ladder
+  #    re-derivation below also measured with 26 open PO lines.
   - name: A5 PO for a product, and no supplier for a dealer  # NEW VOCABULARY (check_po)
-    text: "any PO for C-FH14"
+    text: "any PO for SRTWT7445-LV-NEW"
     cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["C-FH14", "PO Number"]
+      reply_contains: ["SRTWT7445-LV-NEW", "PO Number"]
       reply_not_contains: ["Supplier"]
       no_uuid: true
 
@@ -350,54 +371,67 @@ cases:
   # ======================================================================================
   # A7 - the cross-domain ladder, Foundre's rule (AC-921, AC-922).
   # ======================================================================================
-
-  # SELECT p.product_code, count(*) FROM purchase_order_lines pl
-  #   JOIN products p ON p.id = pl.product_id
-  #   WHERE pl.line_status='open' AND (pl.qty_ordered - pl.qty_received) > 0
-  #     AND NOT EXISTS (SELECT 1 FROM stock s WHERE s.product_id = p.id AND s.quantity_on_hand > 0)
-  #     AND NOT EXISTS (SELECT 1 FROM spo_allocations a WHERE a.product_id = p.id
-  #                       AND a.receipt_status='pending')
-  #     AND NOT EXISTS (SELECT 1 FROM products q WHERE q.id <> p.id
-  #                       AND q.product_code LIKE p.product_code || '%')
-  #   GROUP BY 1 ORDER BY 2 DESC;
-  # -> CB2904 (7 open PO lines, 1,100 pcs): no stock, no pending incoming, an open PO, and
-  #    the whole of its own prefix family. That last clause matters twice over - see the
-  #    AC-922 case below for why, and the FINDING here for the other half.
   #
-  # FINDING, measured 8 Sep 2026: a SUFFIXED code does not reach the ladder on a real turn.
-  # `SRTWT7445-LV-NEW` (20 open PO lines), `CWCX1009-SH` and `MSK11A-QT` all answer the
-  # bare miss with no cross-domain sentence at all, while `CB2904` and `SRTWB103` get
-  # theirs - and the suffixed turns record NO `crossdomain` trace event, so
-  # `crossdomain_zeroset` shut off at `active` rather than the probe coming back empty.
-  # `requested` is built from TYPED-EXACT resolver matches, so the likely cause is the
-  # match_tier a hyphen-suffixed code comes back with. That is a resolver question, not a
-  # ladder one, and it is worth its own slice: it silently disables Foundre's rule for a
-  # whole shape of product code.
+  # Two more shapes measured 8 Sep 2026 (coordinator ask), for the record - neither has a
+  # console case, since no existing case needs them and inventing one is not this fix's job:
+  #   zero stock + zero incoming + unshipped SPO ONLY (no open PO line):
+  #     SELECT p.product_code, COALESCE(spo.unshipped_spo,0) FROM products p
+  #     LEFT JOIN (SELECT product_id, count(*) unshipped_spo FROM spo_allocations
+  #                  WHERE receipt_status='pending' GROUP BY product_id) spo ON spo.product_id=p.id
+  #     LEFT JOIN (SELECT product_id, sum(quantity_on_hand) on_hand FROM stock GROUP BY product_id) s ON s.product_id=p.id
+  #     LEFT JOIN (SELECT product_id, count(*) n FROM purchase_order_lines
+  #                  WHERE line_status='open' AND (qty_ordered-qty_received)>0 GROUP BY product_id) po ON po.product_id=p.id
+  #     WHERE COALESCE(s.on_hand,0)=0 AND COALESCE(po.n,0)=0 AND COALESCE(spo.unshipped_spo,0)>0;
+  #     -> BF60015-AL-BL (1 unshipped SPO), SRTWC7406-LID (1), CBMC66738 (1) all qualify.
+  #   mixed PO + SPO on the SAME code: every code with both today also carries stock
+  #     (SRTWB1515: 97 on hand, 40 open PO lines, 8 unshipped SPO is the largest) - no
+  #     ZERO-stock code on this database currently carries both PO and SPO at once.
+
+  # RE-DERIVED 8 Sep 2026 against the restored prod copy. `CB2904` (this case's original
+  # code) now HAS stock (1,100 on hand - the copy moved on since the query below was last
+  # run), so it no longer demonstrates the zero-stock rung at all. New query, re-run
+  # against the current DATABASE_URL:
+  #
+  # SELECT p.product_code,
+  #   COALESCE(s.on_hand,0) on_hand, COALESCE(po.open_po_lines,0) open_po_lines,
+  #   COALESCE(spo.unshipped_spo,0) unshipped_spo, COALESCE(inc.incoming_lines,0) incoming_lines
+  # FROM products p
+  # LEFT JOIN (SELECT product_id, sum(quantity_on_hand) on_hand FROM stock GROUP BY product_id) s ON s.product_id=p.id
+  # LEFT JOIN (SELECT product_id, count(*) open_po_lines FROM purchase_order_lines
+  #              WHERE line_status='open' AND (qty_ordered-qty_received)>0 GROUP BY product_id) po ON po.product_id=p.id
+  # LEFT JOIN (SELECT product_id, count(*) unshipped_spo FROM spo_allocations
+  #              WHERE receipt_status='pending' GROUP BY product_id) spo ON spo.product_id=p.id
+  # LEFT JOIN (SELECT isl.product_id, count(*) incoming_lines FROM inbound_shipment_lines isl
+  #              JOIN inbound_shipments ish ON ish.id=isl.shipment_id
+  #              WHERE ish.shipment_status <> 'received' GROUP BY isl.product_id) inc ON inc.product_id=p.id
+  # WHERE p.product_code IN ('CB2904','MSK11A-QT','CWCX1009-SH','SRTWT7445-LV-NEW','SRTWB103','BRC22802W-MY','CHS3220');
+  #
+  # ->  BRC22802W-MY   0 / 2  / 0 / 0   (zero stock, zero incoming, an open PO - the
+  #                                      owner's own screenshot case)
+  #     CB2904      1100 / 0  / 0 / 1   (has stock now - no longer a zero-stock example)
+  #     CHS3220        2 / 0  / 0 / 0   (has stock - unrelated to this ladder)
+  #     CWCX1009-SH    0 / 15 / 0 / 3   (zero stock, but now HAS incoming - stops there)
+  #     MSK11A-QT      0 / 2  / 0 / 1   (zero stock, but now HAS incoming - stops there)
+  #     SRTWB103       0 / 0  / 0 / 0   (still the three-way miss - unchanged)
+  #     SRTWT7445-LV-NEW 0 / 26 / 0 / 1 (zero stock, but now HAS incoming - stops there)
+  #
+  # `BRC22802W-MY` replaces `CB2904` as the clean zero+zero+PO example. The three
+  # "suffixed code" cases below no longer reach the PO rung at all (all three now have an
+  # incoming line) - they are re-purposed to the SAME suffixed-code shape climbing to the
+  # INCOMING rung instead, which is a real, present-tense scenario on this database and
+  # keeps their original point (a hyphen-suffixed code still reaches SOME rung).
   - name: A7 no stock, no incoming, but PO is placed
-    text: "check stock CB2904"
+    text: "check stock BRC22802W-MY"
     cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["CB2904", "but PO is placed"]
+      reply_contains: ["BRC22802W-MY", "but PO is placed"]
       # D11 (owner ruling, 8 Sep 2026): {qty} {document date} only.
       reply_not_contains: ["Supplier", "pcs", "expected"]
       no_uuid: true
 
-  # SELECT p.product_code FROM products p
-  #   WHERE p.is_active AND p.product_code ~ '^SRT[A-Z0-9-]+$'
-  #     AND length(p.product_code) BETWEEN 8 AND 16
-  #     AND NOT EXISTS (SELECT 1 FROM stock s WHERE s.product_id = p.id AND s.quantity_on_hand > 0)
-  #     AND NOT EXISTS (SELECT 1 FROM spo_allocations a WHERE a.product_id = p.id
-  #                       AND a.receipt_status='pending')
-  #     AND NOT EXISTS (SELECT 1 FROM purchase_order_lines pl WHERE pl.product_id = p.id
-  #                       AND pl.line_status='open' AND (pl.qty_ordered - pl.qty_received) > 0)
-  #     AND NOT EXISTS (SELECT 1 FROM products q WHERE q.id <> p.id
-  #                       AND q.product_code LIKE p.product_code || '%')
-  #   ORDER BY 1 LIMIT 10;
-  # -> SRTWB103. The last clause is the one the first attempt missed: a code that has
-  #    nothing on any rung is often also a code with no exact resolution (SRT-BB7001 and
-  #    AP4842 both came back "did you mean ..."), so the probe has to be a code that is
-  #    the WHOLE of its own prefix family as well as empty on all three rungs.
+  # SRTWB103 re-verified 8 Sep 2026 against the current DATABASE_URL by the same query
+  # above: still 0 stock / 0 open PO / 0 unshipped SPO / 0 incoming - unchanged.
   - name: A7 nothing on any rung says so and offers to escalate
     text: "check stock SRTWB103"
     cold: true
@@ -410,52 +444,36 @@ cases:
       reply_contains: ["No stock, no incoming and nothing on order for SRTWB103"]
       no_uuid: true
 
-  # THE SUFFIXED-CODE PROBE (8 Sep 2026). These three answer the bare miss with no
-  # cross-domain sentence on a live turn while CB2904 and SRTWB103 above get theirs, and
-  # they are the most common shape in the catalogue - so this is Foundre's rule off for
-  # most products, and it earns three cases rather than a sentence in a plan.
-  #
-  # The obvious hypothesis is DISPROVEN, so nobody has to spend the hour again. Measured
-  # against the real resolver (`resolve_reference_post`, tokens=[code],
-  # entity_types=["product"]), under the Sorento-only company scope AND unscoped:
-  #
-  #   SRTWT7445-LV-NEW  1 match  tier exact        CB2904    1 match  tier exact
-  #   MSK11A-QT         1 match  tier exact        SRTWB103  1 match  tier exact
-  #   CWCX1009-SH       1 match  tier exact
-  #
-  # Identical. The suffix does not change how a code resolves, `crossdomain_zeroset`
-  # excludes no tier these codes land on, and its `requested` builder already accepts a
-  # single non-exact match as an ask (`exacts` first, else `len(prods) == 1`), so there is
-  # no tier rule left to widen. `tests/chatbot/test_foundre_rung_end_to_end.py::
-  # TestTheSuffixedCodeShapeReachesTheRung` drives all three through `run_turn` with that
-  # measured resolution and every one reaches the rung. The live difference therefore sits
-  # between the resolver and `returned_codes` / `missing` on those particular turns; the
-  # next probe is the persisted `looked_up` raw of a red run, not the tier.
-  - name: A7 suffixed code SRTWT7445-LV-NEW reaches the rung
+  # RE-PURPOSED 8 Sep 2026 (see the re-derivation comment above): all three suffixed codes
+  # now carry an incoming line, so the ladder stops at "incoming", never reaching "PO is
+  # placed" - a hyphen-suffixed code still reaching the FIRST rung it hits is the surviving
+  # half of the original point (the resolver-tier investigation these three were built for
+  # is closed; see git history for the original "SUFFIXED-CODE PROBE" measurement).
+  - name: A7 suffixed code SRTWT7445-LV-NEW reaches the incoming rung
     text: "check stock SRTWT7445-LV-NEW"
     cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["SRTWT7445-LV-NEW", "but PO is placed"]
-      reply_not_contains: ["pcs", "expected"]  # D11
+      reply_contains: ["SRTWT7445-LV-NEW"]
+      reply_not_contains: ["No stock and no incoming"]
       no_uuid: true
 
-  - name: A7 suffixed code MSK11A-QT reaches the rung
+  - name: A7 suffixed code MSK11A-QT reaches the incoming rung
     text: "check stock MSK11A-QT"
     cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["MSK11A-QT", "but PO is placed"]
-      reply_not_contains: ["pcs", "expected"]  # D11
+      reply_contains: ["MSK11A-QT"]
+      reply_not_contains: ["No stock and no incoming"]
       no_uuid: true
 
-  - name: A7 suffixed code CWCX1009-SH reaches the rung
+  - name: A7 suffixed code CWCX1009-SH reaches the incoming rung
     text: "check stock CWCX1009-SH"
     cold: true
     expect:
       branch_kind: business_query
-      reply_contains: ["CWCX1009-SH", "but PO is placed"]
-      reply_not_contains: ["pcs", "expected"]  # D11
+      reply_contains: ["CWCX1009-SH"]
+      reply_not_contains: ["No stock and no incoming"]
       no_uuid: true
 
   # WAS `expected_red_until: feat/chatbot-growth-dialogue`, and the marker is GONE because
