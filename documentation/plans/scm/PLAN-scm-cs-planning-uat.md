@@ -675,6 +675,32 @@ The order-inquiry side (purchasing's board, place-on-PO UX) is the next planning
   `BoardLineDecisionPanel` (the sheet's `SupplyLineCard` still refuses the mix outright, no
   option passed).
 
+- **TEMPORARY: an own-group bin's capacity is not capped by the group net when a reason is
+  given (captain, 8 Sep 2026, lift TEMPORARY).** Measured on the lane DB: SO419417 line 9,
+  BT012-CR, fulfilment location BRW-BB - on hand at BRW-BB 1035, owed to sales orders in the
+  BB ownership group 6213, group net -5166. The engine proposed pool BRW 3 + Buy 9 ("Nothing
+  free at BRW-BB by the delivery date"). The planner hand-composed Reserve 3 at BRW-BB + Buy
+  9 with an amend reason; Confirm refused: "BRW-BB has nothing free for this line now, so
+  none of the 3 asked for can be reserved from it" - the group-net-seeded capacity read the
+  own bin as already spoken for by the whole group's backlog, so a Reserve could not be
+  written even though the units were sitting on the floor.
+  Rule: when the confirm line carries a non-empty `amend_reason`, a Reserve at the line's OWN
+  ownership group's bins (the fulfilment location itself, or another bin of the same group -
+  `sales_agent_service.group_of_warehouse_code(warehouse) == fact.group_code`) is NOT capped
+  by the group net. Still bounded: R14 (`_check_reserve_against_on_hand`) still refuses
+  anything past on hand less other lines' already-confirmed holds, the location gate still
+  limits the line to its own group's bins and the pools, and the confirmation's shared
+  capacity ledger still draws the take down so a later line of the same payload sees it
+  spent. Pool locations, other groups' bins, borrow, timely and Buy are unchanged.
+  Implemented in `project_supply_service.py::_check_line`, immediately before the reserve
+  loop's two group-net-based refusals. Tests: `test_a_reserve_at_an_oversold_own_bin_
+  without_a_reason_is_still_refused`, `test_a_reserve_at_an_oversold_own_bin_confirms_with_
+  a_reason`, `test_a_reason_does_not_push_a_reserve_past_on_hand` in
+  `test_so_supply_confirmation.py`. **Revisit when the BB group's book is cleaned up or when
+  a queue-jumping complaint arrives, whichever first** - this is a floor-reality escape
+  hatch for a group that cannot currently reconcile its own oversold book, not a permanent
+  reading of what "own group" capacity means.
+
 ### Open, found while building ladder v3 (25 Aug)
 
 - **RELEASE can no longer raise an order-inquiry row.** `planning_change_service._suggestion`
