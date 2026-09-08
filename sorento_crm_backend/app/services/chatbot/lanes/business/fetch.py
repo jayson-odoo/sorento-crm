@@ -203,7 +203,10 @@ def select_tool(db: Any, *, query: str, domain: str | None, services: Any) -> li
     guards both ways in: the parser's emission in `output_exchange.py`, and the contact's
     carried memory in `engine.py` (turn fca4aa5e-806b-4403-aa2e-fc2d0961fb2d parsed as
     `incoming` and still arrived here as `purchasing` before the second guard existed). So
-    `domain` here is trusted as-is with no retry.
+    `domain` here is trusted as-is with no retry. Since 8 Sep 2026 the `LIKE` in that
+    evidence is the FALLBACK path only (a `domain` outside `DOMAIN_SPEC` still hits it and
+    still zeroes out this way); a `DOMAIN_SPEC` member resolves through
+    `mcp_tools.chatbot_domain` instead - see `search_tool_chunks`'s own docstring.
     """
     _ = db
     embedding = services.embed(query)
@@ -382,7 +385,7 @@ DATE_PARAMS: dict[str, tuple[str, str]] = {
     "crm_resource_attachments_list": ("uploaded_at_from", "uploaded_at_to"),
     "crm_resource_attachments_catalogue": ("uploaded_at_from", "uploaded_at_to"),
     "crm_sla_conversation_event_logs_list": ("date_from", "date_to"),
-    "crm_procurement_purchase_orders_placed_list": ("expected_date_from", "expected_date_to"),
+    "crm_procurement_po_placed_list": ("expected_date_from", "expected_date_to"),
 }
 
 ORDER_TOOLS: frozenset[str] = frozenset(
@@ -395,7 +398,7 @@ ORDER_TOOLS: frozenset[str] = frozenset(
 GROUP_BY_TOOLS: frozenset[str] = frozenset(
     {
         "crm_order_management_orders_list",
-        "crm_procurement_purchase_orders_placed_list",
+        "crm_procurement_po_placed_list",
     }
 )
 
@@ -668,10 +671,11 @@ class ToolNotAllowed(RuntimeError):
 # it is simply no longer a THIRD list. Each name is either claimed by exactly one domain
 # (`contracts.DOMAIN_SPEC[domain].tools`) or named in `contracts.UNDOMAINED_CHATBOT_TOOLS`
 # as claimed by nobody on purpose, and this set is their union. That is what makes "which
-# domain answers from this tool?" a question with an answer, which is what the tool-search
-# reachability guard needs (`search_tool_chunks` narrows on `source_id LIKE '%<domain>%'`
-# over the tool NAME, so a domain whose tools do not contain its own name retrieves
-# nothing). `tests/chatbot/test_tool_pool_is_read_only.py` still pins the whole union
+# domain answers from this tool?" a question with an answer, which is what
+# `mcp_tool_registry_service.sync_catalog` stamps onto `mcp_tools.chatbot_domain` - the
+# column `search_tool_chunks` now narrows a known domain's pool on (8 Sep 2026; the tool
+# NAME no longer decides reachability, see that method's own docstring for the leak this
+# replaced). `tests/chatbot/test_tool_pool_is_read_only.py` still pins the whole union
 # against the MCP catalogue's read-only set, unchanged.
 CHATBOT_READ_ONLY_TOOLS: frozenset[str] = frozenset(
     DOMAIN_CLAIMED_TOOLS + UNDOMAINED_CHATBOT_TOOLS

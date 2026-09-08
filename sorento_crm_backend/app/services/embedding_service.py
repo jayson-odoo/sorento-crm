@@ -15,6 +15,7 @@ from sqlalchemy import false as sa_false
 from sqlalchemy import func, or_
 
 from app.config import settings
+from app.models.access import McpTool
 from app.models.base import get_company_scope
 from app.models.embeddings import EmbeddingQueue, EmbeddingDocument, EmbeddingChunk
 from app.services.queue_service import enqueue_job
@@ -240,7 +241,16 @@ class EmbeddingReadService:
         * DISTINCT ON (source_id) - one row per tool, its nearest chunk. ``search_current``
           returns chunks, and a tool with six chunks would crowd out five other tools
           before the caller ever sees them.
-        * ``$4`` LIKE on ``source_id`` - the domain filter, NULL meaning no filter.
+        * domain filter on `mcp_tools.chatbot_domain` (DATA), not on the tool NAME.
+          Owner ruling, 8 Sep 2026, "I don't accept the leak": the PO placed tool's
+          OLD name contained the word "order", and the old
+          `source_id LIKE '%<domain>%'` filter let it into every `order` pool (it was
+          also renamed to `crm_procurement_po_placed_list` for the same reason, but
+          this column is what protects every OTHER tool that shares a domain's word).
+          A `domain` that is a `DOMAIN_SPEC` key resolves through `mcp_tools`; an
+          unknown domain (should not happen - `domain` is always a `DOMAIN_HINTS`
+          member - but this is retrieval, not the ladder, so it degrades rather than
+          throws) falls back to the old LIKE so a caller never silently gets zero rows.
         * no ``embedding_documents`` join - a tool row is registry metadata, not a
           document, and requiring ``is_active`` would drop every tool.
         * no company predicate - MCP tool definitions are global, and there is no
@@ -257,7 +267,15 @@ class EmbeddingReadService:
             EmbeddingChunk.is_current.is_(True),
         ]
         if domain:
-            filters.append(EmbeddingChunk.source_id.like(f"%{domain}%"))
+            from app.services.chatbot.contracts import DOMAIN_SPEC
+
+            if domain in DOMAIN_SPEC:
+                domain_source_ids = self.db.query(
+                    func.concat("implemented::", McpTool.tool_name)
+                ).filter(McpTool.chatbot_domain == domain)
+                filters.append(EmbeddingChunk.source_id.in_(domain_source_ids))
+            else:
+                filters.append(EmbeddingChunk.source_id.like(f"%{domain}%"))
         inner = (
             self.db.query(
                 EmbeddingChunk.id.label("id"),

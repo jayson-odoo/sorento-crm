@@ -13,8 +13,9 @@ customer's sentence travels, one link at a time, with no LLM anywhere:
     -> entity_ids_transformer -> the tool's own arguments
 
 plus the two gates that can silently swallow a turn before any of it runs: the router's
-`not_supported` list, and the `source_id LIKE '%<domain>%'` filter the tool search narrows
-on.
+`not_supported` list, and the tool search's own domain filter (`mcp_tools.chatbot_domain`
+since 8 Sep 2026; `source_id LIKE '%<domain>%'` only as the fallback for a domain outside
+`DOMAIN_SPEC`).
 
 Whether the MODEL obeys the new vocabulary is a different question and a different gate -
 the shadow window (AC-952). What is pinned here is that if it obeys, the answer arrives.
@@ -55,7 +56,7 @@ from app.services.chatbot_parser_prompt import (
 #: copy: a corpus in two places is a corpus that disagrees with itself.
 PHRASES_FILE = Path(__file__).parent / "fixtures" / "parser_growth_r1_phrases.json"
 
-PO_TOOL = "crm_procurement_purchase_orders_placed_list"
+PO_TOOL = "crm_procurement_po_placed_list"
 SPO_TOOL = "crm_procurement_spo_allocations_last_receipt_list"
 ORDERS_TOOL = "crm_order_management_orders_list"
 
@@ -344,29 +345,71 @@ DOMAIN_TOOLS: dict[str, tuple[str, ...]] = {
 
 
 @pytest.mark.parametrize("domain,tools", sorted(DOMAIN_TOOLS.items()))
-def test_every_domain_can_retrieve_at_least_one_of_its_own_tools(
+def test_every_domain_tool_is_in_the_read_only_pool(
     domain: str, tools: tuple[str, ...]
 ) -> None:
-    """`EmbeddingReadService.search_tool_chunks` narrows the candidate pool with
-    `source_id LIKE '%<domain_hint>%'` over `implemented::<tool name>`. That is a SUBSTRING
-    match on the tool's NAME, not a mapping - `ToolSpec.domain` in the MCP catalogue is
-    documentation and nothing reads it at retrieval time - so a domain whose tools do not
-    contain its own name can never retrieve any of them and every turn in it ends
-    `not_found` with no error anywhere.
+    """A domain's tools must be candidates the chatbot may actually call. Unchanged by the
+    8 Sep 2026 retrieval fix below - `CHATBOT_READ_ONLY_TOOLS` gates a tool AFTER it is
+    retrieved, not before, so this is still a real way for a domain to end up unable to
+    answer.
 
-    Both known instances of this failure are growth r1's: turn b5b19cec
-    (`domain_hint: "purchasing"`, a team name, matching no tool) and A6's own
-    `crm_procurement_spo_last_receipt_list`, which the `spo_allocation` filter could not
-    match until it was renamed to `..._spo_allocations_last_receipt_list`.
-
-    `goods_receive` and `ideate` are absent from the table on purpose: neither has a
+    `goods_receive` and `ideate` are absent from `DOMAIN_TOOLS` on purpose: neither has a
     read-only tool at all, which is exactly why one is unsupported and the other is
     answered by its own lane rather than by a tool search.
     """
-    assert any(domain in tool for tool in tools), (
-        f"no tool listed for domain {domain!r} contains that string, so "
-        f"search_tool_chunks' `source_id LIKE '%{domain}%'` filter matches none of them: "
-        f"{tools}"
-    )
     for tool in tools:
-        assert tool in CHATBOT_READ_ONLY_TOOLS
+        assert tool in CHATBOT_READ_ONLY_TOOLS, f"{tool!r} ({domain!r}) is not read-only"
+
+
+def test_after_sync_every_domain_spec_tool_has_its_domain_stamped() -> None:
+    """This is reachability's real gate now, replacing the name-substring assertion this
+    test used to make (owner ruling, 8 Sep 2026, "I don't accept the leak" - the PO
+    placed tool's OLD name contained "order" and leaked into every `order` pool under
+    the old `source_id LIKE '%<domain_hint>%'` filter; it is also why that tool is now
+    named `crm_procurement_po_placed_list`).
+    `EmbeddingReadService.search_tool_chunks` narrows a known domain's pool on
+    `mcp_tools.chatbot_domain` instead, and that column is stamped by
+    `mcp_tool_registry_service.sync_catalog` straight off `DOMAIN_SPEC[domain].tools` - so
+    the property worth pinning is that a real sync lands the right value, not that a name
+    happens to contain a substring.
+
+    Runs a real sync against the shared database and rolls it back; skipped when
+    `mcp_tools` is empty (CI's database has no seed data - LESSONS-LEARNT).
+    """
+    import sys
+    from pathlib import Path
+
+    from app.database import SessionLocal
+    from app.models.access import McpTool
+    from app.services.mcp_tool_registry_service import sync_catalog
+
+    # The SIBLING tree first when this is the monorepo: the venv's editable install of
+    # `sorento_crm_mcp` (which `sync_catalog` imports) can point at another checkout (it
+    # does on the Mac mini), and a stale catalog would sync a stale set of tools -
+    # measured here: without this, the SPO tool was absent from the stale catalog and
+    # never got its `chatbot_domain` stamped. Same guard as
+    # `test_crossdomain_ladder.py::test_the_key_is_declared_on_the_po_toolspec`.
+    sibling = Path(__file__).resolve().parents[3] / "sorento_crm_mcp"
+    if sibling.is_dir() and str(sibling) not in sys.path:
+        sys.path.insert(0, str(sibling))
+        for mod in ("sorento_crm_mcp", "sorento_crm_mcp.catalog", "sorento_crm_mcp.module_loader"):
+            sys.modules.pop(mod, None)
+
+    db = SessionLocal()
+    try:
+        if db.query(McpTool).count() == 0:
+            pytest.skip("mcp_tools is empty (CI has no data)")
+        sync_catalog(db)
+        db.flush()
+        for domain, tools in DOMAIN_TOOLS.items():
+            for tool in tools:
+                row = db.query(McpTool).filter(McpTool.tool_name == tool).one_or_none()
+                if row is None:
+                    continue  # not every fixture tool exists in this install's catalogue
+                assert row.chatbot_domain == domain, (
+                    f"{tool!r} synced with chatbot_domain={row.chatbot_domain!r}, "
+                    f"expected {domain!r}"
+                )
+    finally:
+        db.rollback()
+        db.close()

@@ -144,7 +144,7 @@ CHATBOT_READ_ONLY_TOOLS_BEFORE = frozenset(
         "crm_order_management_orders_by_product_list",
         "crm_order_management_orders_list",
         "crm_portal_link_get",
-        "crm_procurement_purchase_orders_placed_list",
+        "crm_procurement_po_placed_list",
         "crm_procurement_spo_allocations_last_receipt_list",
         "crm_project_detail",
         "crm_project_forecast",

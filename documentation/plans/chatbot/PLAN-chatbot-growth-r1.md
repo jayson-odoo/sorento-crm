@@ -117,7 +117,7 @@ supplier | null`) and `top_n` (int or null, "last 3", "top 5").
 | A2 | stock balance, extended | existing stock balance route | add `open_so_qty` = SUM(`sales_order_lines.qty_ordered - qty_delivered`) over open lines per product (per warehouse where the line has one, else product total), `sellable` = `on_hand - open_so_qty` | unchanged | Both fields are `restricted` (Slice C): hidden unless the contact holds `inventory.sellable`. Wording: "Sellable (on hand minus open SO)". Never negative below zero without saying so: render "0 (oversold by N)". |
 | A3 | `crm_order_management_orders_list`, extended (owner: one order tool, SO beside DO, no new domain) | existing orders route | new bucket `order_status=so_outstanding` = `sales_order_lines` open with `qty_ordered - qty_delivered > 0` (ordered, no DO yet), header customer, `order_date`, `requested_delivery_date`. Existing buckets stay: `outstanding` = DO created not delivered, `delivered`. | `product_ids`, `customer_ids`, `transporter_ids`, date window, `group_by` in {customer, transporter, date, product}, `include_summary` | The list renders ONE bucket. `include_summary=true` returns a three-line pipeline in `summary_items`: SO outstanding / DO open / delivered, so "how many did ABC take" reads three numbers and "list DO" stays a list. Domain stays `order`; the parser's `order_status` enum gains `so_outstanding` with the vocabulary "SO outstanding", "ordered but no DO", "belum DO", "还没出DO". Summary shape is the one open item, see the review page. |
 | A4 | merged into A3 | | | | |
-| A5 | `crm_procurement_purchase_orders_placed_list` | `GET /procurement/purchase-orders/placed` | `purchase_order_lines` with `qty_ordered - qty_received > 0`, `line_status = open`, header `status`, `expected_date` (line, else header), supplier | `product_ids`, `expected_date_from/to`, `group_by` in {product, supplier, date}, `include_summary` | New domain `purchase_order`, intent `check_po`. `supplier` field is `restricted` (Slice C, key `purchase_orders.supplier`). Wording "PO placed, not yet shipped". PO and SPO are never netted (`spo_allocations.po_line_id` is NULL on every row, decision 6 Aug 2026), so this tool never subtracts incoming. |
+| A5 | `crm_procurement_po_placed_list` | `GET /procurement/purchase-orders/placed` | `purchase_order_lines` with `qty_ordered - qty_received > 0`, `line_status = open`, header `status`, `expected_date` (line, else header), supplier | `product_ids`, `expected_date_from/to`, `group_by` in {product, supplier, date}, `include_summary` | New domain `purchase_order`, intent `check_po`. `supplier` field is `restricted` (Slice C, key `purchase_orders.supplier`). Wording "PO placed, not yet shipped". PO and SPO are never netted (`spo_allocations.po_line_id` is NULL on every row, decision 6 Aug 2026), so this tool never subtracts incoming. |
 | A6 | `crm_procurement_spo_allocations_last_receipt_list` | `GET /procurement/spo-allocations/last-receipt` | `spo_allocations` with `receipt_status = received` joined to `inbound_shipments` (`warehouse_arrival_date`, else `actual_arrival_date`), `quantity_received`, `spo_number`, warehouse | `product_ids`, `top_n` (default 1), `warehouse_ids` | Unblocks domain `spo_allocation` (remove from `DEFAULT_UNSUPPORTED_DOMAINS`), intent `check_spo` gains "last in". Phase 2 first task: measure on the local prod copy that `warehouse_arrival_date` is populated for received allocations; if not, the fallback order is `actual_arrival_date`, then `updated_at`, and the presenter labels which date it shows. |
 
 Cross-domain ladder (Foundre's rule) lives here too: `answer.py`'s hard pair becomes a
@@ -266,7 +266,7 @@ SRTWT7445-LV-NEW, SRT62-GM) all missed identically until the two tools were seed
    ```bash
    # in sorento_crm_backend/, against the target environment's DATABASE_URL
    venv/bin/python -m app.scripts.seed_mcp_tool_capabilities \
-     --only crm_procurement_purchase_orders_placed_list --drain
+     --only crm_procurement_po_placed_list --drain
    venv/bin/python -m app.scripts.seed_mcp_tool_capabilities \
      --only crm_procurement_spo_allocations_last_receipt_list --drain
    ```
@@ -280,8 +280,24 @@ SRTWT7445-LV-NEW, SRT62-GM) all missed identically until the two tools were seed
    and the RQ worker picks them up instead. Idempotent - a second run supersedes the prior
    chunks rather than duplicating them. Verify with
    `SELECT source_id FROM embedding_chunks WHERE source_type = 'mcp_tool' AND source_id
-   LIKE '%purchase_orders_placed%' OR source_id LIKE '%spo_allocations_last_receipt%';`
+   LIKE '%po_placed_list%' OR source_id LIKE '%spo_allocations_last_receipt%';`
    (two rows expected).
+
+   **D15 (8 Sep 2026) renamed the PO tool** from `crm_procurement_purchase_orders_placed_list`
+   to `crm_procurement_po_placed_list` (see AC-999) - apply migration `492` first, then the
+   next backend reload's `sync_catalog` registers the NEW `mcp_tools` row and deactivates
+   the old one automatically. **Deploy runs this step's first command with the new name
+   even on an environment already seeded under the old one** - the old chunks do not
+   migrate themselves. Mark them not current with
+   `UPDATE embedding_chunks SET is_current = false, superseded_at = now() WHERE
+   source_type = 'mcp_tool' AND source_id = 'implemented::crm_procurement_purchase_orders_placed_list';`
+   (deleting the row is also fine; nothing reads a non-current chunk).
+
+   **n8n's own `sub-get-rag` query is untouched** (the owner is retiring n8n, not fixing
+   it) - it still runs `source_id LIKE '%<domain_hint>%'` over the tool NAME. The PO
+   tool's new name contains neither "order" nor "purchase_order", so that filter can never
+   match it under any domain; `mcp_tools.chatbot_domain` is what the CRM's OWN retrieval
+   reads instead (AC-999), and is unrelated to n8n's copy of the query.
 
 2. **Move the `chatbot_semantic_parser` `production` label** onto the version migration
    `490_chatbot_parser_growth` published, in Settings > AI Prompts. Until that move the

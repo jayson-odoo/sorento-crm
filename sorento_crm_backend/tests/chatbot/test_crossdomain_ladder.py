@@ -15,7 +15,7 @@ from typing import Any
 from app.services.chatbot.lanes.business.answer import run_crossdomain
 from app.services.chatbot.lanes.business.services import AnswerServices
 
-_PO_TOOL = "crm_procurement_purchase_orders_placed_list"
+_PO_TOOL = "crm_procurement_po_placed_list"
 _INCOMING_TOOL = "crm_incoming_stock_list"
 
 _PARSER = {

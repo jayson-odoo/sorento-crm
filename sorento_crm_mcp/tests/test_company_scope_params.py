@@ -52,7 +52,7 @@ SCOPED_TOOLS: frozenset[str] = frozenset({
     # params declared, FastMCP drops them (`extra="ignore"`) and
     # `_resolve_api_key_scope` falls through to every company, so a dealer's "PO for X"
     # would have answered across the whole group.
-    "crm_procurement_purchase_orders_placed_list",
+    "crm_procurement_po_placed_list",
     "crm_procurement_spo_allocations_last_receipt_list",
 })
 

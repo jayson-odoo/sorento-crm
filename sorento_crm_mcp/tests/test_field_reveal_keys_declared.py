@@ -3,7 +3,7 @@ be a static `(key, label)` pair on that tool's OWN `ToolSpec.restricted_fields`,
 versa.
 
 Found live, 8 Sep 2026: `crm_inventory_stock_balance_list` and
-`crm_procurement_purchase_orders_placed_list` both call `b.restrict(...)` in their
+`crm_procurement_po_placed_list` both call `b.restrict(...)` in their
 presenter to hide a field at render time, but neither `ToolSpec` declared
 `restricted_fields` - so `mcp_tool_registry_service.sync_catalog` (which reads ONLY the
 ToolSpec, never calls the tool) wrote an empty `mcp_tools.restricted_fields` for both, and
@@ -31,7 +31,7 @@ _PRESENTER_FUNCTIONS_BY_TOOL = {
     # both stock presenters restrict their own fields (D1, 8 Sep 2026): the detailed
     # row's Outstanding and the compact block's Total / warehouse suffixes
     "crm_inventory_stock_balance_list": ("_stock", "_stock_compact"),
-    "crm_procurement_purchase_orders_placed_list": ("_purchase_orders_placed",),
+    "crm_procurement_po_placed_list": ("_purchase_orders_placed",),
 }
 
 _RESTRICT_CALL_RE = re.compile(r'b\.restrict\([^,]+,\s*"([^"]+)"\)')
@@ -93,7 +93,7 @@ def test_the_two_growth_r1_keys_are_declared_exactly_where_expected():
     assert dict(specs_by_name["crm_inventory_stock_balance_list"].restricted_fields) == {
         "inventory.sellable": "Outstanding SO on stock answers",
     }
-    assert dict(specs_by_name["crm_procurement_purchase_orders_placed_list"].restricted_fields) == {
+    assert dict(specs_by_name["crm_procurement_po_placed_list"].restricted_fields) == {
         "purchase_orders.supplier": "PO supplier",
         "purchase_orders.placed": "PO placed (on order) on stock answers",
     }

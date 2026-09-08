@@ -45,7 +45,7 @@ from tests.chatbot.test_engine import (  # noqa: F401 - re-exported fixtures use
 CODE = "SRTWT7445-LV-NEW"
 SUFFIXED_CODES = ("SRTWT7445-LV-NEW", "MSK11A-QT", "CWCX1009-SH")
 PRODUCT_UUID = "11111111-1111-1111-1111-111111111111"
-PO_TOOL = "crm_procurement_purchase_orders_placed_list"
+PO_TOOL = "crm_procurement_po_placed_list"
 
 EMPTY_STOCK = {
     "result_type": "stock",

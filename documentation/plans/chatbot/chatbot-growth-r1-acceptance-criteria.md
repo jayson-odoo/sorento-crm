@@ -90,9 +90,13 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
      it at retrieval time). `crm_procurement_spo_allocations_last_receipt_list` does not contain
      "spo_allocation", so the filter matched nothing and every "last in" ended `not_found`.
      The tool is renamed `crm_procurement_spo_allocations_last_receipt_list`, which does.
-     `crm_procurement_purchase_orders_placed_list` already contains "purchase_order" and
-     needed no rename. Pinned for every domain by
-     `test_parser_growth_r1_reachability.py::test_every_domain_can_retrieve_at_least_one_of_its_own_tools`.
+     The PO placed tool (then still `crm_procurement_purchase_orders_placed_list`)
+     already contained "purchase_order" and needed no rename FOR THIS - AC-999 renames
+     it anyway on 8 Sep 2026, for the unrelated reason that it also contained "order"
+     and leaked into that domain's pool. Pinned for every domain (this specific
+     name-substring mechanism, superseded by AC-999) by
+     `test_parser_growth_r1_reachability.py::test_every_domain_tool_is_in_the_read_only_pool`
+     and `::test_after_sync_every_domain_spec_tool_has_its_domain_stamped`.
   2. `DOMAIN_BLOCKED_HINTS["spo_allocation"]` blocked `product` - harmless while the domain
      was refused before an entity mattered, fatal once it answers, because `product_ids` is
      the tool's only narrowing parameter. "last in for SRTWC8517" dropped the code and
@@ -305,3 +309,21 @@ Plan: `PLAN-chatbot-growth-r1.md`. Numbering: AC-9xx. Each criterion names its e
   `item 8 - seat cover material reaches the key that contains it`. Evidence:
   `tests/chatbot/test_product_spec_projection.py::TestSpecKeysByTokenContainment`,
   `TestOneMissLinePerAskedWord`.
+- AC-999 `[BE][MCP][T]` **D15 - a chatbot pool is chosen by DATA, not by a substring of the
+  tool's NAME.** Owner ruling, 8 Sep 2026, "I don't accept the leak":
+  `EmbeddingReadService.search_tool_chunks` narrows a `DOMAIN_SPEC` domain's candidate
+  tools on the new `mcp_tools.chatbot_domain` column (stamped by
+  `mcp_tool_registry_service.sync_catalog` off `DOMAIN_SPEC[domain].tools`, raising if a
+  tool is listed under two domains) instead of `source_id LIKE '%<domain>%'`; the LIKE
+  stays only as the fallback for a `domain` outside `DOMAIN_SPEC`. Same-commit follow-up
+  ruling: the PO placed tool is ALSO renamed `crm_procurement_purchase_orders_placed_list`
+  -> `crm_procurement_po_placed_list` (the old name contained "order", the trigger for
+  this fix) so that n8n's own untouched `LIKE` SQL - which this backend cannot edit, and
+  which the owner is retiring rather than fixing - can never match it either; `chatbot_domain`
+  is what protects every OTHER tool that still shares a word with a domain it does not
+  belong to. n8n keeps its LIKE filter unedited; the PO tool's new name is chosen so that
+  filter never matches it. Migration `492_mcp_tool_chatbot_domain`. Evidence:
+  `tests/test_mcp_tool_registry_service.py::test_sync_catalog_stamps_chatbot_domain_from_domain_spec`,
+  `::test_sync_catalog_raises_when_a_tool_is_listed_under_two_domains`,
+  `tests/chatbot/test_tool_search_domain_filter.py`,
+  `tests/chatbot/test_parser_growth_r1_reachability.py::test_after_sync_every_domain_spec_tool_has_its_domain_stamped`.

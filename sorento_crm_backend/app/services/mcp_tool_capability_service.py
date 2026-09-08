@@ -1181,7 +1181,7 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     # something from the path and nothing from the customer's actual words. Both still need
     # `python -m app.scripts.seed_mcp_tool_capabilities` after deploy: the startup
     # `sync_catalog` writes the `mcp_tools` ROW and no embedding.
-    "crm_procurement_purchase_orders_placed_list": ToolIntent(
+    "crm_procurement_po_placed_list": ToolIntent(
         category="general_enquiries.incoming_stock",
         intent="Purchase orders WE placed with a supplier that are not fully received yet.",
         description=(

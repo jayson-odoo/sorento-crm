@@ -370,7 +370,7 @@ def test_products_no_specs_key_no_vocabulary():
 
 
 def test_purchase_orders_placed_renders_fields_and_restricts_supplier():
-    out = env("crm_procurement_purchase_orders_placed_list", {
+    out = env("crm_procurement_po_placed_list", {
         "data": [{
             "po_number": "PO-1001", "product_code": "SRTWC8517",
             "outstanding_qty": 50, "expected_date": "2026-07-01",
@@ -388,7 +388,7 @@ def test_purchase_orders_placed_renders_fields_and_restricts_supplier():
 def test_purchase_orders_placed_group_by_supplier():
     row_a = {"po_number": "PO-1", "product_code": "P1", "supplier": "Acme"}
     row_b = {"po_number": "PO-2", "product_code": "P2", "supplier": "Beta"}
-    out = env("crm_procurement_purchase_orders_placed_list", {
+    out = env("crm_procurement_po_placed_list", {
         "data": [row_a, row_b],
         "groups": [
             {"key": "Acme", "label": "Acme", "rows": [row_a]},
@@ -1568,7 +1568,7 @@ def test_by_product_summary_without_the_key_renders_no_so_field():
 def test_purchase_orders_placed_po_date_sits_before_expected_date():
     """Owner ruling (8 Sep 2026): the PO document date rides on the row as `po_date`;
     absent -> no field, so every pre-existing envelope is byte-identical."""
-    out = env("crm_procurement_purchase_orders_placed_list", {
+    out = env("crm_procurement_po_placed_list", {
         "data": [{"po_number": "PO-1001", "product_code": "SRTWC8517", "outstanding_qty": 50,
                   "po_date": "2026-05-01", "expected_date": "2026-07-01"}],
     })
@@ -1576,7 +1576,7 @@ def test_purchase_orders_placed_po_date_sits_before_expected_date():
     labels = [f["label"] for f in fields]
     assert labels.index("PO Date") == labels.index("Expected Date") - 1
     assert next(f for f in fields if f["key"] == "po_date")["value"] == "2026-05-01"
-    without = env("crm_procurement_purchase_orders_placed_list", {
+    without = env("crm_procurement_po_placed_list", {
         "data": [{"po_number": "PO-1001", "product_code": "SRTWC8517", "outstanding_qty": 50,
                   "expected_date": "2026-07-01"}],
     })
@@ -1586,7 +1586,7 @@ def test_purchase_orders_placed_po_date_sits_before_expected_date():
 def test_purchase_orders_placed_source_names_the_kind_after_po_number():
     """Item 5 (8 Sep 2026): rows carry `kind` ("po" / "spo"); the presenter prints it as
     Source right after PO Number; absent -> nothing (byte identity for old envelopes)."""
-    out = env("crm_procurement_purchase_orders_placed_list", {
+    out = env("crm_procurement_po_placed_list", {
         "data": [
             {"po_number": "202607-S0031", "kind": "po", "product_code": "C-FH14", "outstanding_qty": 27},
             {"po_number": "SPO-2026/09-0001", "kind": "spo", "product_code": "C-FH14", "outstanding_qty": 7},
@@ -1596,7 +1596,7 @@ def test_purchase_orders_placed_source_names_the_kind_after_po_number():
         labels = [f["label"] for f in item["fields"]]
         assert labels.index("Source") == labels.index("PO Number") + 1
         assert next(f for f in item["fields"] if f["key"] == "kind")["value"] == expect
-    old = env("crm_procurement_purchase_orders_placed_list", {
+    old = env("crm_procurement_po_placed_list", {
         "data": [{"po_number": "PO-1001", "product_code": "SRTWC8517", "outstanding_qty": 50}],
     })
     assert "Source" not in [f["label"] for f in old["items"][0]["fields"]]

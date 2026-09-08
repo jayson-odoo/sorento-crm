@@ -681,10 +681,22 @@ class McpTool(Base):
     restricted_fields = Column(
         JSONB(astext_type=Text()), nullable=False, server_default=text("'[]'::jsonb")
     )
+    #: The chatbot domain this tool answers FROM (a `DOMAIN_SPEC` key), stamped by
+    #: `sync_catalog` off `app.services.chatbot.contracts.DOMAIN_SPEC[domain].tools`.
+    #: NULL for a tool listed under no domain - it never enters a chatbot pool.
+    #: `EmbeddingReadService.search_tool_chunks` filters candidate tools on THIS
+    #: column, not on the tool name (owner ruling, 8 Sep 2026: "I don't accept the
+    #: leak" - the PO placed tool's old name contained "order" and was leaking
+    #: into the `order` pool under the old name-LIKE filter; it was renamed to
+    #: `crm_procurement_po_placed_list` so no name-substring filter, n8n's own
+    #: included, can match it - this column is the systemic fix for every OTHER
+    #: tool that still shares a word with a domain it does not belong to).
+    chatbot_domain = Column(String(64), nullable=True)
 
     __table_args__ = (
         Index("ix_mcp_tools_module_key", "module_key"),
         Index("ix_mcp_tools_is_active", "is_active"),
+        Index("ix_mcp_tools_chatbot_domain", "chatbot_domain"),
     )
 
 

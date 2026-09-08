@@ -1012,7 +1012,7 @@ CATALOG: tuple[ToolSpec, ...] = (
     ),
     # --- procurement: purchase orders placed (A5, chatbot-growth-r1) ---
     ToolSpec(
-        "crm_procurement_purchase_orders_placed_list",
+        "crm_procurement_po_placed_list",
         (
             "List PURCHASE ORDER lines PLACED but not yet fully received (qty_ordered - "
             "qty_received > 0, line open) - 'PO for X', 'PO placed, not yet shipped', 'what did "
@@ -1075,7 +1075,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         (),
         ("product_ids", "warehouse_ids", "top_n", "contact_id", "space_id"),
         domain="spo_allocation",
-        related_tools=("crm_procurement_purchase_orders_placed_list", "crm_incoming_stock_by_product"),
+        related_tools=("crm_procurement_po_placed_list", "crm_incoming_stock_by_product"),
         escalation_team="procurement",
     ),
     # --- project sales (read-only; AC-K1 / AC-K2) ---

@@ -321,7 +321,7 @@ cases:
   # round): the actual cause of "But no purchase_order matched these" on C-FH14 AND
   # SRTWC8517 alike was neither Mocha-only scope nor kind=spo being skipped (both
   # measured clean - the service and the resolver work correctly given the right
-  # product_ids) - it was that `crm_procurement_purchase_orders_placed_list` and
+  # product_ids) - it was that `crm_procurement_po_placed_list` and
   # `crm_procurement_spo_allocations_last_receipt_list` had NO embeddings on this
   # restored copy at all (measured: embedding_documents had 112 mcp_tool rows,
   # embedding_chunks 236, neither containing a source_id for either tool - the

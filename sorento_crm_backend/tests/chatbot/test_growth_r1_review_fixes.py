@@ -196,7 +196,7 @@ class TestShouldFix4GroupedAnswersMatchTheNumbering:
 
 DEFAULT_LADDER = {"inventory": ["incoming", "purchase_order"], "incoming": ["inventory"]}
 NO_PO_LADDER = {"inventory": ["incoming"], "incoming": ["inventory"]}
-PO_TOOL = "crm_procurement_purchase_orders_placed_list"
+PO_TOOL = "crm_procurement_po_placed_list"
 INCOMING_TOOL = "crm_incoming_stock_list"
 
 PARSER = {

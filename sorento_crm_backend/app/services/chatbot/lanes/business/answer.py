@@ -925,7 +925,7 @@ def crossdomain_render(
 #: never a second lookup. Only "purchase_order" exists today; a ladder entry naming
 #: anything else is simply never reached (no tool to call), which is the same "widen only
 #: with an entry" shape `_CHATBOT_COLUMN_DEFAULTS` uses elsewhere.
-_CROSSDOMAIN_RUNG_TOOL: dict[str, str] = {"purchase_order": "crm_procurement_purchase_orders_placed_list"}
+_CROSSDOMAIN_RUNG_TOOL: dict[str, str] = {"purchase_order": "crm_procurement_po_placed_list"}
 _CROSSDOMAIN_RUNG_TEAM: dict[str, str] = {"purchase_order": "purchasing"}
 #: Item 5 (8 Sep 2026): the rung's tool returns PO lines AND unshipped SPO allocations
 #: (`kind` "po" / "spo", presented as Source "PO" / "SPO"), so its sentences speak of

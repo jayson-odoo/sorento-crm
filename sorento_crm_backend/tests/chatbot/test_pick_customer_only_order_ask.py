@@ -17,7 +17,7 @@ from app.services.chatbot.lanes.business.services import drop_by_product_without
 
 _BY_PRODUCT = "crm_order_management_orders_by_product_list"
 _ORDERS = "crm_order_management_orders_list"
-_PO = "crm_procurement_purchase_orders_placed_list"
+_PO = "crm_procurement_po_placed_list"
 
 
 def _hanlim_candidates() -> list[dict]:
