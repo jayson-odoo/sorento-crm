@@ -1,6 +1,6 @@
 # PLAN - Price Tag Request UX Round 7 (request form, assignment, portal design view)
 
-Status: Planned 8 Sep 2026, awaiting Phase 1
+Status: Implemented 8 Sep 2026, browser-verified, PR pending
 UAC: `documentation/plans/dealer-kit/price-tag-r7-request-ux-acceptance-criteria.md`
 Predecessor: `documentation/plans/dealer-kit/PLAN-price-tag-r6.md` (merged #734)
 Branch: `feat/price-tag-r7-request-ux`, worktree `.claude/worktrees/price-tag-r7`, stack FE :3081 / BE :8081

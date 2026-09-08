@@ -218,7 +218,7 @@ export default function PriceTagRequestsList() {
       {
         accessorKey: 'needed_by_date',
         header: ({ column }) => (
-          <DataGridColumnHeader title="Deadline" column={column} />
+          <DataGridColumnHeader title="Need by" column={column} />
         ),
         size: 130,
         cell: ({ row }) =>
@@ -226,7 +226,7 @@ export default function PriceTagRequestsList() {
             ? formatDate(new Date(row.original.needed_by_date))
             : '-',
         meta: {
-          headerTitle: 'Deadline',
+          headerTitle: 'Need by',
           skeleton: <Skeleton className="h-4 w-24" />,
         },
       },
