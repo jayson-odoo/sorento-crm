@@ -260,3 +260,25 @@ four changes; `tests/test_migration_466_shipment_line_description.py`,
   `spo_allocated_quantity` as well as the response), reversing the section 6 note that left it
   alone. The two halves disagreeing inside one payload is worse than either choice, and the user's
   decision was every listing.
+
+## 11. AC-H17 is gated on evidence (reviewer, 2026-09-08)
+
+`refresh_shipment_line_statuses` is not a display read: it persists `inbound_shipment_lines`'
+`spo_allocated_quantity` and the `line_status` derived from it, and that column is what the
+incoming-stock signal n8n consumes is built on. Filtering it changes stored values on real data, and
+a container whose expected total is partly made of retired rows flips status the first time anyone
+opens a packing list after the deploy.
+
+The ruling stands, because the direction of the change is toward truth: a line AutoCount deleted is
+not arriving, so counting it as expected supply overstates the container and the badge alike. But it
+ships with evidence, not on argument:
+
+- the count of `inbound_shipment_lines` whose derived `line_status` changes, measured on the
+  production copy, reported before merge;
+- the list of downstream consumers of `spo_allocated_quantity` and that `line_status`, with a
+  statement for each that the filtered figure is the one it wants;
+- the same count re-reported from production after the deploy, as the operate step's own check.
+
+If the measured change is large or a consumer needs the unfiltered figure, AC-H17 splits out of this
+lane and the packing list keeps one population on both halves by reverting the response-side filter
+instead.
