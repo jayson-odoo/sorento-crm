@@ -2327,6 +2327,160 @@ def test_a_line_wholly_from_stock_and_a_line_wholly_bought_both_confirm(api):
     assert response.status_code == 200, response.text
 
 
+# ------------------------ TEMPORARY LIFT (the captain, 8 Sep 2026): own-group bin ask
+
+
+def test_a_reserve_at_an_oversold_own_bin_without_a_reason_is_still_refused(api):
+    """The 8 Sep 2026 ruling's baseline: without a stated reason, an oversold ownership
+    group still caps a Reserve at the line's own location exactly as it always has.
+
+    10 on hand at the own location, a competing earlier order (ranked ahead by date)
+    owing 100 of it, and this line owing 5 - the group is deep in deficit, so this line's
+    own bin offers it nothing. `reserve 3 + buy 2` with no `amend_reason` fails on two
+    counts at once (the capacity refusal AND the AC-L5 mix-without-a-reason refusal), so
+    either capacity wording is asserted for, wherever it lands in `failing_lines`.
+    """
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=10)
+    theirs = _behind_ours(_core_so(db, world.company_id))
+    _core_line(
+        db, theirs, world.product, world.own_wh, qty_ordered="100",
+        required_date=REQUIRED_DATE - timedelta(days=10),
+    )
+
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="5")
+    line = _project_line(db, order, line_no=20, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                {
+                    "project_line_id": str(line.id),
+                    "timely_spo_qty": "0",
+                    "reserve": [{"warehouse_id": world.own_wh.id, "qty": "3"}],
+                    "buy_qty": "2",
+                }
+            ]
+        },
+    )
+    assert response.status_code == 422, response.text
+    failing = response.json()["failing_lines"]
+    assert any(
+        "has nothing free for this line now" in entry["reason"]
+        or "now has 0 free for this line" in entry["reason"]
+        for entry in failing
+    )
+
+
+def test_a_reserve_at_an_oversold_own_bin_confirms_with_a_reason(api):
+    """The 8 Sep 2026 ruling's lift: the SAME oversold group, the SAME composition, but a
+    stated `amend_reason` frees the own-location ask from the group-net cap - and, since a
+    reason is also what AC-L5 asks for to mix stock with a Buy, the same payload proves
+    both halves of the ruling end to end."""
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=10)
+    theirs = _behind_ours(_core_so(db, world.company_id))
+    _core_line(
+        db, theirs, world.product, world.own_wh, qty_ordered="100",
+        required_date=REQUIRED_DATE - timedelta(days=10),
+    )
+
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="5")
+    line = _project_line(db, order, line_no=20, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                {
+                    "project_line_id": str(line.id),
+                    "timely_spo_qty": "0",
+                    "reserve": [{"warehouse_id": world.own_wh.id, "qty": "3"}],
+                    "buy_qty": "2",
+                    "amend_reason": "customer collects 3 from the floor this week",
+                }
+            ]
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    snapshot = _active_snapshots(db, order.id)[0]
+    assert _shape(snapshot["components"]) == [
+        ("reserve", "3", world.own_wh.warehouse_code, "group_take"),
+        ("buy", "2", None, None),
+    ]
+    assert snapshot["amend_reason"] == "customer collects 3 from the floor this week"
+
+
+def test_a_reason_does_not_push_a_reserve_past_on_hand(api):
+    """The ruling's floor: the reason lifts the GROUP-NET cap, never R14
+    (`_check_reserve_against_on_hand`), which reads live on-hand less other lines'
+    already-confirmed holds independent of any reason. An earlier order confirms 2 of the
+    10 on hand at the own location; this line then asks for 15 more of it, with a reason -
+    R14 still refuses, because 15 is more than what physically remains (10 - 2 = 8).
+
+    R14 raises its own `ReserveOverHand` at 409 (not the 422 `SupplyLinesRefused` the
+    balance/mix checks raise), matching `tests/test_confirm_reserve_guard.py`'s AC-E1/AC-E2.
+    """
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=10)
+
+    earlier = _project_so(db, world.project)
+    earlier_core_so = _core_so(db, world.company_id)
+    earlier_core_line = _core_line(
+        db, earlier_core_so, world.product, world.own_wh, qty_ordered="2"
+    )
+    earlier_line = _project_line(
+        db, earlier, line_no=7, product=world.product, core_line=earlier_core_line
+    )
+    db.commit()
+    held = client.post(
+        f"{BASE}/sales-orders/{earlier.id}/confirm",
+        json={
+            "lines": [
+                _line_payload(
+                    earlier_line.id,
+                    reserve=[{"warehouse_id": world.own_wh.id, "qty": "2"}],
+                )
+            ]
+        },
+    )
+    assert held.status_code == 200, held.text
+
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="15")
+    line = _project_line(db, order, line_no=20, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                {
+                    "project_line_id": str(line.id),
+                    "timely_spo_qty": "0",
+                    "reserve": [{"warehouse_id": world.own_wh.id, "qty": "15"}],
+                    "buy_qty": "0",
+                    "amend_reason": "customer collects 15 from the floor this week",
+                }
+            ]
+        },
+    )
+    assert response.status_code == 409, response.text
+    assert "on hand" in response.json()["message"]
+
+
 # ------------------------------------------------- AC-D1: what the engine had said
 
 

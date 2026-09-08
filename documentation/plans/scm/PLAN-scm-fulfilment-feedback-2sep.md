@@ -424,3 +424,9 @@ SO381895 lines are the expected shape.
   It is now the LOWER of that pile and the lending group's whole open-book position. R40's
   two halves both stand - the walk still never DRAWS across a group, and the ladder still
   OFFERS - only the size of the offer changed.
+- R-F "Save decision persists on the server and answers" is superseded by the 8 Sep 2026
+  ruling in `documentation/plans/_archive/scm/scm-planning-inline-decisions-acceptance-criteria.md`
+  (reverses R11): an untouched, uncovered line is left undecided by Confirm, never posted as
+  the engine's suggestion. In grid view at day granularity, "Save all suggested" covers only
+  the on-screen window rather than the whole selection, unlike list view; captain's call was
+  to leave this as is, list view being the escape.
