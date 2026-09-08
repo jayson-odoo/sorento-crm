@@ -660,6 +660,21 @@ The order-inquiry side (purchasing's board, place-on-PO UX) is the next planning
 - **Group borrow from another SO:** manual Amend pick only.
 - **Style:** keep it simple and straight; no over-explaining.
 
+- **AC-L5 mix on a board amendment (captain, 8 Sep 2026).** The whole-line rule stays exactly
+  as ruled 25 Aug for the ENGINE's own proposals (ladder rule 6, untouched) and for the SO
+  supply sheet - neither ever mixes stock with Buy on one line. It is LIFTED for a manual
+  amendment on the fulfilment-planning board: a planner who hand-composes stock + Buy on one
+  line and states why (`amend_reason`) may save it. `amend_reason` on the confirm line IS the
+  manual-adjustment signal (schema comment: "Absent when they took the proposal as it stood"),
+  not a separate board-only flag - the engine never proposes a mix, so any mix reaching confirm
+  is a person's own composition, and the reason is what tells purchasing the split is
+  deliberate. Without a reason the mix is still refused (422), now: "Mixing stock with a Buy is
+  a manual decision the engine never proposes. Say why this differs from the proposal, then it
+  can be saved." Implemented in `project_supply_service.py::_check_line` (backend) and
+  `supplyComposition.ts::lineBlockers`'s `mixAllowed` option, passed only by
+  `BoardLineDecisionPanel` (the sheet's `SupplyLineCard` still refuses the mix outright, no
+  option passed).
+
 ### Open, found while building ladder v3 (25 Aug)
 
 - **RELEASE can no longer raise an order-inquiry row.** `planning_change_service._suggestion`
@@ -669,7 +684,11 @@ The order-inquiry side (purchasing's board, place-on-PO UX) is the next planning
   held ..."), and a wholly reserved one releases with nothing to tell purchasing. So the verb
   fires only on revisions frozen before AC-L5. Needs a ruling: either a release of a bought
   line should move its ORDER row to the pool (today it stays put with a DELAY row beside it),
-  or RELEASE retires with the mixes that justified it.
+  or RELEASE retires with the mixes that justified it. **Partly relieved 8 Sep 2026:** a board
+  amendment can carry a mix again when it states why, so a held composition reaching
+  `_release_rows` with both a reserve and a Buy is no longer necessarily a stale, pre-AC-L5
+  revision - it may be a live, reasoned one. The verb's own gap (nothing tells purchasing about
+  a wholly-reserved release) is unchanged and still needs the ruling above.
 - **AC-A1 needs a ruling on PLAN 3.3a, not on the rung order** - see the trail reading in the
   status block at the top of this file.
 - **The confirm-time proposal ledger tracks the own-site POOL only, not group-take capacity.**

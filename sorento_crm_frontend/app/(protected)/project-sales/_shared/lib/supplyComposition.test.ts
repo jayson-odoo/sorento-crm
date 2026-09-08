@@ -250,7 +250,8 @@ describe('lineBlockers', () => {
   it('refuses a line that mixes stock with a Buy, and says what to do instead', () => {
     // AC-L5, the captain 25 August 2026: "a line is either wholly covered from stock (own
     // group, pools, borrow, incoming in any mix) or wholly Buy". The server refuses the mix
-    // at confirm; this is the same rule said before the round trip.
+    // at confirm; this is the same rule said before the round trip. This is the SHEET's
+    // default - no `mixAllowed` - which still refuses it (8 Sep 2026 ruling).
     expect(
       lineBlockers(
         draft({ open_qty: '100', reserve: [reserve('40')], buy_qty: '60' }),
@@ -259,6 +260,19 @@ describe('lineBlockers', () => {
       'Line 1, CB6633: a line is either met wholly from stock or wholly bought. ' +
         'This one mixes 40 from stock with a Buy of 60.',
     ]);
+  });
+
+  it('lets the board admit the same mix when it passes mixAllowed (8 Sep 2026 ruling)', () => {
+    // The board never invents this on its own - `BoardLineDecisionPanel` only passes
+    // `mixAllowed: true` because a mix already needs `amend_reason` to Save
+    // (`amendNeedsReason`), so a reason is always the real gate.
+    expect(
+      lineBlockers(
+        draft({ open_qty: '100', reserve: [reserve('40')], buy_qty: '60' }),
+        undefined,
+        { mixAllowed: true },
+      ),
+    ).toEqual([]);
   });
 
   /**

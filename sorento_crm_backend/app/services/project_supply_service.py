@@ -4666,26 +4666,29 @@ class ProjectSupplyService:
             )
             return
 
-        # The whole-line rule, extended to AMEND (AC-L5, the captain 25 August 2026): "a line
-        # is either wholly covered from stock (own group, pools, borrow, incoming in any mix)
-        # or wholly Buy". The engine has refused to PROPOSE a mix since ladder v2's rule 6,
-        # but a person could still hand-compose one here, and half a line bought beside half
-        # reserved is the composition purchasing cannot act on: the inquiry asks for 15 of a
-        # line the customer owes 20 of, and nothing on the row says whether that is
-        # deliberate. Stated after the balance check, so a line that does not add up is told
-        # THAT rather than this.
+        # The whole-line rule (AC-L5, the captain 25 August 2026): "a line is either wholly
+        # covered from stock (own group, pools, borrow, incoming in any mix) or wholly Buy".
+        # The engine has refused to PROPOSE a mix since ladder v2's rule 6, and that still
+        # governs a first confirmation and the SO supply sheet.
+        #
+        # LIFTED for a manual amendment (the captain, 8 Sep 2026): the engine never proposes
+        # a mix, so any mix reaching confirm is a person's own composition, not a stale echo
+        # of the proposal. `entry.amend_reason` is that person's statement of why this line
+        # differs from the proposal (the schema comment: "Absent when they took the proposal
+        # as it stood"), so a reason present is what tells purchasing the split is deliberate,
+        # and is the gate here. Stated after the balance check, so a line that does not add
+        # up is told THAT rather than this.
         from_stock = timely + reserve_total + borrow_total
         if (
             from_stock > _ZERO
             and buy > _ZERO
             and not self._is_pool_share_split(fact, entry, from_stock)
+            and not (getattr(entry, "amend_reason", None) or "").strip()
         ):
             refuse(
                 invalid,
-                "A line is either met wholly from stock or wholly bought. This one mixes "
-                f"{qty_text(from_stock)} from stock with a Buy of {qty_text(buy)}: take the "
-                f"whole {qty_text(fact.open_qty)} from stock, or buy the whole "
-                f"{qty_text(fact.open_qty)}.",
+                "Mixing stock with a Buy is a manual decision the engine never proposes. "
+                "Say why this differs from the proposal, then it can be saved.",
             )
 
     def _is_pool_share_split(

@@ -194,7 +194,12 @@ export function BoardLineDecisionPanel({
    * has always admitted.
    */
   const poolLimits = React.useMemo(() => poolShareLimitsOf(locations), [locations]);
-  const blockers = lineBlockers(draft, poolLimits);
+  // `mixAllowed`: the 8 Sep 2026 ruling. AC-L5's whole-line rule is lifted on this panel
+  // because a board amendment that mixes stock and Buy carries `amend_reason` before Save
+  // will accept it (`needsReason` below, off `amendNeedsReason`) - the reason is the manual
+  // signal, not a flag this panel invents. The per-order sheet does not pass this and still
+  // refuses the mix (`SupplyLineCard`).
+  const blockers = lineBlockers(draft, poolLimits, { mixAllowed: true });
   const needsReason = amendNeedsReason(contribution, draft);
   // Which verdict Save takes, and therefore what it may be pressed for: approving the engine's
   // own composition is never blocked, because there is nothing about it to balance or justify.
@@ -262,7 +267,10 @@ export function BoardLineDecisionPanel({
   const setBorrow = (borrow: DraftBorrow[]) => editComposition({ ...draft, borrow });
 
   /**
-   * The whole line, one way or the other. Never a mix - the confirmation refuses one.
+   * The switch means WHOLLY bought, not "no mix allowed" - a stock-and-Buy mix is a legal
+   * hand composition on this panel (8 Sep 2026 ruling) that simply leaves the switch off; it
+   * needs a reason, which `amendNeedsReason` already requires because the engine never
+   * proposes a mix, so any mix here already differs from the frozen or suggested baseline.
    *
    * Switching Buy ON zeroes the stock side, and switching it OFF puts back exactly what was
    * there: the quantities, the donors and their reasons. The rows alone are not enough - a
