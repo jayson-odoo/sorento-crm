@@ -193,7 +193,15 @@ def _spo_delta():
 def _unshipped_spo_query(db: Session, *, product_ids: Optional[list[str]]):
     """`(SPOAllocation, Product, Supplier)` for every allocation still on order from the
     supplier: pending, not yet on a shipment, quantity unreceived (see the module
-    docstring for the `po_line_id` dedupe that is deliberately NOT here)."""
+    docstring for the `po_line_id` dedupe that is deliberately NOT here).
+
+    R7/R8/AC-E2: this had NO line-status test at all before `visible_line_clauses()` was
+    added - only `receipt_status == 'pending'` plus the quantity test above, both of
+    which a retired-and-closed line can still pass. Behind `crm_procurement_po_placed_
+    list`, so without it the chatbot stated a retired line's quantity as a live fact.
+    """
+    from app.services.scm import spo_supply
+
     q = (
         db.query(SPOAllocation, Product, Supplier)
         .join(Product, Product.id == SPOAllocation.product_id)
@@ -202,6 +210,7 @@ def _unshipped_spo_query(db: Session, *, product_ids: Optional[list[str]]):
             SPOAllocation.receipt_status == "pending",
             SPOAllocation.inbound_shipment_id.is_(None),
             _spo_delta() > 0,
+            *spo_supply.visible_line_clauses(),
         )
     )
     if product_ids:

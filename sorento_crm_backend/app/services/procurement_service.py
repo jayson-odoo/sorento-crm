@@ -955,6 +955,8 @@ class InboundShipmentService:
 
             line_counts = _line_counts()
             non_received_counts = _line_counts(lines_table.c.line_status != "received")
+            from app.services.scm import spo_supply
+
             spo_counts = {
                 str(shipment_id): int(count or 0)
                 for shipment_id, count in (
@@ -962,7 +964,12 @@ class InboundShipmentService:
                         SPOAllocation.inbound_shipment_id,
                         func.count(SPOAllocation.id),
                     )
-                    .filter(SPOAllocation.inbound_shipment_id.in_(shipment_ids))
+                    .filter(
+                        SPOAllocation.inbound_shipment_id.in_(shipment_ids),
+                        # R7/AC-E8: a retired line is not counted, so this figure
+                        # agrees with the grouped allocation listing beside it.
+                        *spo_supply.visible_line_clauses(),
+                    )
                     .group_by(SPOAllocation.inbound_shipment_id)
                     .all()
                 )
@@ -1022,6 +1029,13 @@ class InboundShipmentService:
         shipment and its own SPO allocation report different numbers for the same
         goods: a 60-of-100 short receipt read as 100 here and 60 there, and the
         container looked fully received when 40 of it never arrived.
+
+        AC-E14 (PLAN-hide-retired-everywhere): deliberately UNFILTERED by
+        `spo_supply.visible_line_clauses()`. This collects PickingLine receipts by
+        product across every allocation on the shipment to find what actually landed;
+        filtering could drop a REAL receipt rather than hide a phantom line - it looks
+        up receipts by number, and a receipt found through a retired line is still a
+        receipt.
         """
         received_totals: dict[str, int] = {}
 

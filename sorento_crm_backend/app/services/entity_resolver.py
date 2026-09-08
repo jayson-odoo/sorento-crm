@@ -52,6 +52,7 @@ from app.models.resources import Attachment, AttachmentType
 # here either - `incoming_stock_service` already excludes it from every list read, and an
 # assistant that could still NAME the draft via this resolver would ask incoming_list about
 # it and get told "nothing incoming for container X" instead of never hearing of it.
+from app.services.scm import spo_supply
 from app.services.scm.proforma_invoice_service import _DRAFT_SHIPMENT_STATUS
 
 
@@ -1408,13 +1409,22 @@ def _probe_inbound_shipment(db: Session, tokens: list[str]) -> dict[str, list[Re
 
 
 def _probe_spo(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEntity]]:
+    """R8/AC-E4: a number whose every line is retired must not resolve as a live
+    entity, so `visible_line_clauses()` is a WHERE filter here, not a post-filter -
+    a number with a visible sibling still resolves off that row's id, and a number
+    with none is simply absent from `rows`, which the loop below already treats as
+    "no match" for the token.
+    """
     result: dict[str, list[ResolvedEntity]] = {t: [] for t in tokens}
     if not tokens:
         return result
     norm_to_token = {_strip_all_ws(t.lower()): t for t in tokens}
     rows = (
         db.query(SPOAllocation.id, SPOAllocation.spo_number)
-        .filter(_ws_insensitive_lower(SPOAllocation.spo_number).in_(list(norm_to_token.keys())))
+        .filter(
+            _ws_insensitive_lower(SPOAllocation.spo_number).in_(list(norm_to_token.keys())),
+            *spo_supply.visible_line_clauses(),
+        )
         .distinct()
         .all()
     )
@@ -2042,9 +2052,13 @@ def _prefix_probe_supplier(db: Session, token: str) -> list[ResolvedEntity]:
 
 
 def _prefix_probe_spo(db: Session, token: str) -> list[ResolvedEntity]:
+    """R8/AC-E4: same WHERE-filter reasoning as `_probe_spo` above."""
     rows = (
         db.query(SPOAllocation.id, SPOAllocation.spo_number)
-        .filter(_norm_prefix(SPOAllocation.spo_number, token))
+        .filter(
+            _norm_prefix(SPOAllocation.spo_number, token),
+            *spo_supply.visible_line_clauses(),
+        )
         .distinct()
         .limit(PREFIX_LIMIT)
         .all()

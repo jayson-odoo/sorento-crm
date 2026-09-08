@@ -319,6 +319,7 @@ class PurchaseOrderService:
         warehouses. Everything on the row is a name; nothing is an id.
         """
         from app.models.procurement import InboundShipment, SPOAllocation
+        from app.services.scm import spo_supply
         from app.services.scm.spo_conversion_service import SOURCE_SYSTEM, parse_source_ref
 
         if not line_ids:
@@ -366,7 +367,10 @@ class PurchaseOrderService:
                 InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id
             )
             .filter(
-                SPOAllocation.po_line_id.in_([str(l.id) for _s, l, _p, _q in interesting])
+                SPOAllocation.po_line_id.in_([str(l.id) for _s, l, _p, _q in interesting]),
+                # R7: a retired line AutoCount stopped naming is not a place this
+                # quantity is landing.
+                *spo_supply.visible_line_clauses(),
             )
             .all()
         )

@@ -663,6 +663,34 @@ def _chunks_for_source(source_type: str, source: dict[str, Any]) -> list[str]:
     return _chunk_text(source["body_text"], settings.embedding_chunk_size, settings.embedding_chunk_overlap)
 
 
+def _spo_allocation_hidden(db: Session, source_id: str) -> bool:
+    """R9 (PLAN-hide-retired-everywhere): True when this `spo_allocations` row
+    still exists but is HIDDEN by `spo_supply.visible_line_clauses()` (retired,
+    nothing received).
+
+    Retiring a line is an UPDATE (the leftover sweep sets `retired_at`, never a
+    DELETE), so `embedding_change_listener`'s `after_update` enqueues it the same
+    as any other edit, and without this check `process_embedding_queue_item`
+    re-embeds the row's now-stale text and sets its document `is_active = True` -
+    the retirement marker never reaches the vector store, so a query can still
+    quote a line the document no longer names. A row that has been genuinely
+    deleted (no listener path exists for that today - out of this fix's scope)
+    reads as `False` here, not hidden, and is left to the pipeline's existing
+    `ValueError`/dead-letter behaviour.
+    """
+    from app.services.scm import spo_supply
+
+    exists = db.query(SPOAllocation.id).filter(SPOAllocation.id == source_id).first()
+    if exists is None:
+        return False
+    visible = (
+        db.query(SPOAllocation.id)
+        .filter(SPOAllocation.id == source_id, *spo_supply.visible_line_clauses())
+        .first()
+    )
+    return visible is None
+
+
 def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
     db = SessionLocal()
     # The embedding pipeline is a system process that materializes embeddings for
@@ -680,6 +708,28 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
 
         queue_item.status = "processing"
         db.commit()
+
+        # R9: a retired-and-hidden SPO line deactivates its document instead of
+        # being re-embedded - checked before `_canonical_for_source` builds any
+        # text off it, since the whole point is that this text must not persist
+        # as retrievable.
+        if queue_item.source_type == "spo_allocation" and _spo_allocation_hidden(
+            db, queue_item.source_id
+        ):
+            doc = (
+                db.query(EmbeddingDocument)
+                .filter(
+                    EmbeddingDocument.source_type == queue_item.source_type,
+                    EmbeddingDocument.source_id == queue_item.source_id,
+                )
+                .first()
+            )
+            if doc is not None:
+                doc.is_active = False
+            queue_item.status = "completed"
+            queue_item.processed_at = datetime.utcnow()
+            db.commit()
+            return {"status": "deactivated", "queue_id": queue_id}
 
         payload = queue_item.payload or {}
         source_payload = payload.get("payload") if isinstance(payload, dict) else None
@@ -713,6 +763,31 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
         # If multiple distinct source_hash values are current (duplicate batches), re-embed so
         # mark_previous_non_current + insert can consolidate.
         if len(distinct_current) == 1 and source_hash in distinct_current:
+            # R9/AC-E15 (round 2 + round 3, security review): keyed on "the document
+            # is inactive and this row is not hidden" - never on anything specific to
+            # retirement - because TWO paths reach this branch with a document still
+            # `is_active = False`. (1) An un-retire restates IDENTICAL values, so
+            # `source_hash` is unchanged. (2) A retired row whose `quantity_received`
+            # goes 0 -> >0 (R2) is VISIBLE again by `visible_line_clauses()` the
+            # instant that happens - `_spo_allocation_hidden` above already returned
+            # False for it - but the canonical body carries no receipt figure, so the
+            # hash is unchanged too. Both land here because nothing else in the
+            # pipeline ever sets `is_active` back to True. A body-text change (adding
+            # `retired_at`) fixes neither: a HIDDEN row never reaches body building at
+            # all (the branch above returns first), and a now-visible row's body is
+            # byte-identical to its original, so the hash matches either way.
+            # Re-activating here, before the skip, is the only place that can repair
+            # it - for any source_type, not only `spo_allocation`.
+            doc = (
+                db.query(EmbeddingDocument)
+                .filter(
+                    EmbeddingDocument.source_type == queue_item.source_type,
+                    EmbeddingDocument.source_id == queue_item.source_id,
+                )
+                .first()
+            )
+            if doc is not None and not doc.is_active:
+                doc.is_active = True
             queue_item.status = "skipped"
             queue_item.processed_at = datetime.utcnow()
             db.commit()

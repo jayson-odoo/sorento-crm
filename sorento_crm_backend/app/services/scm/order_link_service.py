@@ -37,6 +37,7 @@ from app.models.order import SalesOrder, SalesOrderLine
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation
 from app.models.product import Product
 from app.models.scm import OrderLinkClaim
+from app.services.scm import spo_supply
 from app.services.scm.po_listing_reader import FAMILY_SPO, doc_family
 from app.services.sla_service import MALAYSIA_TZ, to_naive_datetime
 
@@ -182,7 +183,13 @@ def _purchase_side(db: Session, po_numbers: set[str]):
     spo_rows = (
         db.query(SPOAllocation.spo_number, Product.product_code, SPOAllocation.id)
         .join(Product, Product.id == SPOAllocation.product_id)
-        .filter(SPOAllocation.spo_number.in_(list(spo_numbers)))
+        .filter(
+            SPOAllocation.spo_number.in_(list(spo_numbers)),
+            # Section 4 ruling: a claim's TARGET is never resolved onto a line
+            # AutoCount deleted - `by_key`/`by_number` below pick the first
+            # surviving row, or leave the claim unresolved on this side.
+            *spo_supply.visible_line_clauses(),
+        )
         .order_by(
             SPOAllocation.spo_number,
             Product.product_code,

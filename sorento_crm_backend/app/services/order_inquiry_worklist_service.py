@@ -1001,11 +1001,15 @@ class OrderInquiryWorklistService:
         way - a foreign company's document resolves to nothing, exactly as an unknown
         number does.
 
-        EVERY line is listed, including one at a location outside the pool set that the
-        cascade will never draft onto (R11). Hiding it would leave the buyer reading a
+        EVERY VISIBLE line is listed, including one at a location outside the pool set that
+        the cascade will never draft onto (R11). Hiding it would leave the buyer reading a
         document that says 50 while the page offers none of it, with nothing on screen to
-        explain the difference.
+        explain the difference. A retired line (PLAN-hide-retired-everywhere R7) is not
+        listed at all, and the header's eta, supplier and container below are derived from
+        the visible lines only, so a retired line cannot set any of the three.
         """
+        from app.services.scm import spo_supply
+
         wanted = (spo_number or "").strip()
         rows = (
             self.db.query(
@@ -1017,7 +1021,10 @@ class OrderInquiryWorklistService:
             .select_from(SPOAllocation)
             .outerjoin(Product, Product.id == SPOAllocation.product_id)
             .outerjoin(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
-            .filter(SPOAllocation.spo_number == wanted)
+            .filter(
+                SPOAllocation.spo_number == wanted,
+                *spo_supply.visible_line_clauses(),
+            )
             .order_by(
                 SPOAllocation.spo_line_number.asc().nulls_last(),
                 SPOAllocation.id.asc(),
