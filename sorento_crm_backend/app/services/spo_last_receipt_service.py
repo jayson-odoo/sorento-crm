@@ -40,6 +40,13 @@ a per-row lookup. 74,300 allocations carry `quantity_received > 0` with no appro
 at all (the ESB-stated path): those show a GR quantity and no GR date, which is what "if
 any" means.
 
+A RETIRED line never answers (#753). `spo_supply.visible_line_clauses()` is applied to
+both branches, before the per-product window, so the line this tool calls "the last SPO
+line" is one the SPO document itself still shows. Reused rather than restated as
+`retired_at IS NULL`: that predicate is stricter than every other listing and would hide a
+retired line carrying a receipt, which #753 keeps visible on purpose (R2 - stock
+physically arrived against it, and this is the one question that is about receipts).
+
 Follow-up (8 Sep 2026): one row per product only applies when the caller actually NAMED
 products. `product_ids` empty is an unscoped ask - the tool is reachable directly by the
 AI assistant, not gated behind a resolved product - and one row per product across the
@@ -59,6 +66,7 @@ from app.models.inventory import Warehouse
 from app.models.procurement import PickingHeader, PickingLine, SPOAllocation
 from app.models.product import Product
 from app.services.company_scope import build_company_predicate
+from app.services.scm.spo_supply import visible_line_clauses
 
 
 def _plain_number(v: Any) -> Any:
@@ -119,6 +127,10 @@ def last_receipt_rows(
     (or, unscoped, within the single overall list), newest key first, `created_at DESC`
     breaking a tie on the same date.
 
+    A line hidden from the SPO listings by #753 (`visible_line_clauses()`: retired AND
+    never received) is excluded from BOTH branches, before the window - so a retired line
+    can never be picked as the newest and then displace the newest visible one.
+
     Row keys: `spo_number`, `product_id`, `product_code`, `product_name`, `spo_quantity`,
     `gr_quantity` (None when nothing received), `spo_date`, `spo_date_source`, `gr_date`
     (None when no approved GRN line), `warehouse`.
@@ -154,7 +166,7 @@ def last_receipt_rows(
             key_expr.label("spo_date"),
             source_expr.label("spo_date_source"),
             rn,
-        ).filter(SPOAllocation.product_id.in_(product_ids))
+        ).filter(SPOAllocation.product_id.in_(product_ids), *visible_line_clauses())
         if warehouse_ids:
             numbered = numbered.filter(SPOAllocation.warehouse_id.in_(warehouse_ids))
         # COMPANY SCOPE, EXPLICITLY. `.subquery()` loses the `with_loader_criteria` the
@@ -207,6 +219,7 @@ def last_receipt_rows(
             .join(Product, Product.id == SPOAllocation.product_id)
             .outerjoin(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
             .outerjoin(gr, gr.c.allocation_id == SPOAllocation.id)
+            .filter(*visible_line_clauses())
         )
         if warehouse_ids:
             q = q.filter(SPOAllocation.warehouse_id.in_(warehouse_ids))

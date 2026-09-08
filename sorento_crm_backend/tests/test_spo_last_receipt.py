@@ -65,6 +65,7 @@ def _allocation(
     status="pending",
     spo_number=None,
     created_at=None,
+    retired_at=None,
 ):
     row = SPOAllocation(
         id=str(uuid.uuid4()),
@@ -77,6 +78,7 @@ def _allocation(
         expected_date=expected_date,
         issue_date=issue_date,
         receipt_status=status,
+        retired_at=retired_at,
         company_id=DEFAULT_COMPANY_ID,
     )
     db.add(row)
@@ -318,6 +320,48 @@ def test_the_unscoped_branch_carries_the_gr_date_too(db):
     rows = last_receipt_rows(db, top_n=5)
     assert rows[0]["gr_date"] == "2026-06-18"
     assert rows[0]["gr_quantity"] == 25
+
+
+def test_a_retired_line_is_never_the_last_spo_line(db):
+    """AC-4, #753. A line AutoCount stopped naming (`retired_at` set, nothing received)
+    is hidden from every SPO listing, so it must not be able to answer "last in" either -
+    the newest line the customer can see would otherwise be one the document itself no
+    longer shows."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    _allocation(
+        db, product_id=prod.id, expected_date=date(2026, 8, 30), spo_number="RETIRED-NEWER",
+        retired_at=datetime(2026, 9, 1, 0, 0, 0), qty_received=0,
+    )
+    _allocation(
+        db, product_id=prod.id, expected_date=date(2026, 8, 10), spo_number="LIVE-OLDER",
+    )
+    db.commit()
+
+    rows = last_receipt_rows(db, product_ids=[prod.id])
+    assert [r["spo_number"] for r in rows] == ["LIVE-OLDER"]
+
+    # The unscoped branch answers the same question and must hide the same line.
+    assert [r["spo_number"] for r in last_receipt_rows(db, top_n=5)] == ["LIVE-OLDER"]
+
+
+def test_a_retired_line_that_carries_a_receipt_still_answers(db):
+    """#753 R2, and the reason this reuses `spo_supply.visible_line_clauses()` rather
+    than a bare `retired_at IS NULL`: a retired line with `quantity_received > 0` stays
+    VISIBLE everywhere, because stock physically arrived against it. Hiding it here would
+    hide a real receipt from the one question that is about receipts."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    _allocation(
+        db, product_id=prod.id, expected_date=date(2026, 8, 30), spo_number="RETIRED-RECEIVED",
+        retired_at=datetime(2026, 9, 1, 0, 0, 0), quantity=40, qty_received=40,
+    )
+    _allocation(
+        db, product_id=prod.id, expected_date=date(2026, 8, 10), spo_number="LIVE-OLDER",
+    )
+    db.commit()
+
+    rows = last_receipt_rows(db, product_ids=[prod.id])
+    assert [r["spo_number"] for r in rows] == ["RETIRED-RECEIVED"]
+    assert rows[0]["gr_quantity"] == 40
 
 
 # AC-911's DEFAULT_UNSUPPORTED_DOMAINS assertion lives in

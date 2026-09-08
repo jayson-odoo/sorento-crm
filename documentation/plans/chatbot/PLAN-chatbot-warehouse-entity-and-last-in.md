@@ -77,6 +77,13 @@ UAC: `chatbot-warehouse-entity-and-last-in-acceptance-criteria.md`.
    - `warehouse_ids` filters lines to those warehouses before the per-product pick.
    - Ties on the same date: `created_at DESC` stays as the deterministic tiebreak, stated
      in the docstring as a tiebreak and nothing more.
+   - A RETIRED line never answers (#753, merged 8 Sep 2026): both branches apply
+     `spo_supply.visible_line_clauses()` before the window, so the line this tool calls
+     "the last SPO line" is one the SPO document itself still shows. The shared predicate
+     is reused rather than restated as `retired_at IS NULL`, which would be stricter than
+     every other listing and would hide a retired line carrying a receipt - #753 keeps
+     that one visible on purpose (R2: stock physically arrived against it, and this is the
+     one question that is about receipts).
 5. Presenter `_spo_last_receipt` and its intro line ("Here is the last receipt I found.")
    are reworded for the new meaning: intro "Here is the last SPO line per product."
 

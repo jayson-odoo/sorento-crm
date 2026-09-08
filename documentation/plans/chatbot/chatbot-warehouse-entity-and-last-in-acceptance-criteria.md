@@ -20,7 +20,11 @@ the dates named.
   2026-08-26). `last_receipt_rows(product_ids=[P])` returns B first with
   `spo_date = 2026-08-30`, `spo_date_source = "expected"`; with `top_n = 3` the order is
   B, C (`spo_date = 2026-08-21`, `spo_date_source = "recorded"`), A. The shipment arrival
-  is never used as the key.
+  is never used as the key. A RETIRED line never answers (#753): a product whose newest
+  line has `retired_at` set and nothing received returns the older LIVE line instead, from
+  both the per-product and the unscoped branch - but a retired line carrying a receipt
+  (`quantity_received > 0`) still answers, because `spo_supply.visible_line_clauses()`
+  keeps it visible everywhere else too (R2).
 - AC-5 Issue-date fallback. A line with `expected_date` NULL and `issue_date` set uses
   `issue_date` with `spo_date_source = "issued"`.
 - AC-6 One row per product. Products P1 and P2 each with two lines; `product_ids=[P1, P2]`,
