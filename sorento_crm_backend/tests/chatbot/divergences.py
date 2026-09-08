@@ -524,6 +524,30 @@ DIVERGENCES: list[Divergence] = [
         ),
         strip_paths=(("output", "escalation"),),
     ),
+    # D10 (owner console pass, 8 Sep 2026, turn 69d9900e "srtwc8610-sh hav incoming?"):
+    # an `incoming`-domain entity hinted `inbound_shipment` or `order` whose raw is
+    # product-code-shaped (and not a real ISO 6346 container number) is retyped to
+    # `product` before the resolver has to referee the parser's own guess - n8n's live
+    # body has no such arm, so it left the model's `inbound_shipment` hint standing. This
+    # capture ("MWC7625-SH") is the one graded corpus member the retype actually fires
+    # on. Field-scoped to the entity list and the retype's own diagnostic; the domain,
+    # the intent and everything else on the capture still grades byte for byte. Pinned by
+    # `tests/chatbot/test_growth_r1_review_fixes.py::TestD10AnIncomingAskTypesTheCodeAsAProduct`.
+    Divergence(
+        node="output_exchange",
+        fixture="exec-13488887",
+        hazard="owner ruling D10 (8 Sep 2026, AC-816-adjacent)",
+        reason=(
+            "the capture records the model's own `inbound_shipment` hint for a "
+            "product-shaped code under `incoming`; the port retypes it to `product` "
+            "before resolution. Field-scoped to the entity list and "
+            "`incoming_hint_retyped_to_product`."
+        ),
+        strip_paths=(
+            ("output", "entities"),
+            ("output", "incoming_hint_retyped_to_product"),
+        ),
+    ),
     # The three keys rules 2, 3 and 4 ADD to `output_exchange`'s emission. No
     # capture can contain a key the node did not emit when it was taken, so this
     # is the same class as the `pending` marker above and is handled the same

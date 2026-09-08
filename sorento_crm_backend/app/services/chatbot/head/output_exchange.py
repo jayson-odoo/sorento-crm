@@ -255,7 +255,7 @@ DOMAIN_SUBJECT_HINT: dict[str, str] = {
     "forms": "form",
     "order": "order",
     "promotion": "promotion",
-    # Growth r1 A5: `crm_procurement_purchase_orders_placed_list` narrows by `product_ids`
+    # Growth r1 A5: `crm_procurement_po_placed_list` narrows by `product_ids`
     # and nothing else, so the hint a bare subject takes under this domain is `product` -
     # the same answer `inventory` and `incoming` give, for the same reason.
     "purchase_order": "product",
@@ -355,7 +355,7 @@ DOMAIN_BLOCKED_HINTS: dict[str, list[str]] = {
     # Growth r1 A5. Same shape as `incoming` (a product-narrowed read with a date window),
     # minus `warehouse` because a PO line has no warehouse, plus the order words: a customer,
     # a DO number or an SO number under a PO question is a topic switch, not a filter -
-    # `crm_procurement_purchase_orders_placed_list` has no parameter that could use one.
+    # `crm_procurement_po_placed_list` has no parameter that could use one.
     "purchase_order": ["forms", "form", "attachment", "promotion", "customer", "transporter", "order", "customer_order", "order_number", "spo", "grn", "goods_receive", "inbound_shipment", "warehouse", "access_levels", "category", "brand", "attachment_type", "flyer", "resource_attachment"],
 }
 
@@ -2238,7 +2238,28 @@ def _post_process(output: dict, json_item: dict, parent_input: dict) -> dict:  #
     # and the shape exclusion both differ: `incoming` never blocklists `inbound_shipment`
     # (see `ALLOWED["incoming"]` in `gate.py`), so this is not "before the blocklist throws
     # it away" - it is "before the resolver is asked to referee a code the parser mistyped".
-    if jsc.truthy(o.get("entities")) and jsc.is_array(o.get("entities")) and jsc.js_string(o.get("domain_hint")) == "incoming":
+    #
+    # NEVER while a pending state is open (roster, picker, clarify...). `_INCOMING_FAMILY_
+    # HINTS` includes `inbound_shipment`, which is EXACTLY the hint
+    # `resolve_gate._shipment_hint_retype` (AC-816 rule 4's bare-entity inheritance)
+    # targets, and that mechanism needs the ORIGINAL hint to referee against what the
+    # RESOLVER actually found, including the domain-carry side effect rule 4 depends on. A
+    # shape-only retype here first steals the entity out from under it, so the whole
+    # mechanism never runs and the domain stays the invented `incoming` instead of falling
+    # back to the carried one (measured 8 Sep 2026,
+    # test_r3_pending_end_to_end.py::TestAPendingOrderRosterDoesNotSwallowABareProductCode).
+    # Resolution itself does not need this backstop to run first in that case:
+    # `ALLOWED["incoming"]` already carries both `product` and `inbound_shipment`, so the
+    # resolver searches both types regardless of which hint survives.
+    _incoming_pending_kind = jsc.get(
+        jsc.get(parent_input.get("previous_conversation_state"), "pending"), "kind"
+    )
+    if (
+        jsc.truthy(o.get("entities"))
+        and jsc.is_array(o.get("entities"))
+        and jsc.js_string(o.get("domain_hint")) == "incoming"
+        and not jsc.truthy(_incoming_pending_kind)
+    ):
         incoming_retyped: list[str] = []
         for e in o["entities"]:
             raw = jsc.get(e, "raw")
