@@ -66,6 +66,10 @@ private_key.pem
 # clearance data, and is per-environment. Keep it on the box, out of the repo.
 sorento_crm_backend/scripts/container_status_trial_snapshot.json
 
+# Operator-script backup/preview JSON (e.g. dedupe_spo_number_format.py). Per-run,
+# per-environment, holds full row dumps - never shipped.
+sorento_crm_backend/scripts/out/
+
 # Session handoff artifacts are machine-local, never shipped
 /HANDOFF-*.md
 
