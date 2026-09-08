@@ -15,7 +15,6 @@ from sqlalchemy import false as sa_false
 from sqlalchemy import func, or_
 
 from app.config import settings
-from app.models.access import McpTool
 from app.models.base import get_company_scope
 from app.models.embeddings import EmbeddingQueue, EmbeddingDocument, EmbeddingChunk
 from app.services.queue_service import enqueue_job
@@ -223,95 +222,6 @@ class EmbeddingReadService:
             .all()
         )
         return rows
-
-    def search_tool_chunks(
-        self,
-        query_embedding: list[float],
-        *,
-        source_type: str,
-        limit: int,
-        domain: Optional[str] = None,
-    ) -> list[dict[str, Any]]:
-        """Nearest chunk per `source_id`, for the chatbot's tool search (H53).
-
-        This is `sub-get-rag`'s pgvector query, moved into the service layer so no SQL
-        leaves it. Kept as its own method rather than folded into ``search_current``
-        because the two ask different questions and the differences are all deliberate:
-
-        * DISTINCT ON (source_id) - one row per tool, its nearest chunk. ``search_current``
-          returns chunks, and a tool with six chunks would crowd out five other tools
-          before the caller ever sees them.
-        * domain filter on `mcp_tools.chatbot_domain` (DATA), not on the tool NAME.
-          Owner ruling, 8 Sep 2026, "I don't accept the leak": the PO placed tool's
-          OLD name contained the word "order", and the old
-          `source_id LIKE '%<domain>%'` filter let it into every `order` pool (it was
-          also renamed to `crm_procurement_po_placed_list` for the same reason, but
-          this column is what protects every OTHER tool that shares a domain's word).
-          This method takes NO opinion on which `domain` strings are real - that
-          would mean importing `app.services.chatbot.contracts.DOMAIN_SPEC`, and this
-          is a core service the chatbot module calls INTO, never the reverse (AC-002,
-          `tests/chatbot/test_import_boundary.py` - D17, after D15 got that
-          backwards). Instead the `IN (...)` subquery's own EMPTINESS is the signal:
-          if no `mcp_tools` row carries this `chatbot_domain`, the query is run again
-          with the old `source_id LIKE '%<domain>%'` - covering both "the domain is
-          real but nothing is stamped with it yet" and "the domain string is not one
-          `mcp_tools.chatbot_domain` has ever heard of". One query in the common case,
-          two only when the first comes back empty - no separate existence check.
-        * no ``embedding_documents`` join - a tool row is registry metadata, not a
-          document, and requiring ``is_active`` would drop every tool.
-        * no company predicate - MCP tool definitions are global, and there is no
-          per-company variant of ``crm_master_products_list`` to leak. ``search_current``'s
-          company filter exists for business rows, which these are not.
-
-        Returns raw ``{id, source_id, source_type, similarity}`` dicts, exactly what the
-        n8n node emitted, because its consumer (the chatbot's ``collapse_tool_rows``) is a
-        ported node body graded against captures of that shape.
-        """
-        distance = EmbeddingChunk.embedding.cosine_distance(query_embedding)
-        base_filters = [
-            EmbeddingChunk.source_type == source_type,
-            EmbeddingChunk.is_current.is_(True),
-        ]
-
-        def _run(extra_filters: list[Any]) -> list[Any]:
-            inner = (
-                self.db.query(
-                    EmbeddingChunk.id.label("id"),
-                    EmbeddingChunk.source_id.label("source_id"),
-                    EmbeddingChunk.source_type.label("source_type"),
-                    (1 - distance).label("similarity"),
-                    distance.label("distance"),
-                )
-                .filter(and_(*base_filters, *extra_filters))
-                .distinct(EmbeddingChunk.source_id)
-                .order_by(EmbeddingChunk.source_id, distance.asc())
-                .subquery()
-            )
-            return (
-                self.db.query(inner)
-                .order_by(inner.c.distance.asc())
-                .limit(max(1, int(limit)))
-                .all()
-            )
-
-        if domain:
-            domain_source_ids = self.db.query(
-                func.concat("implemented::", McpTool.tool_name)
-            ).filter(McpTool.chatbot_domain == domain)
-            rows = _run([EmbeddingChunk.source_id.in_(domain_source_ids)])
-            if not rows:
-                rows = _run([EmbeddingChunk.source_id.like(f"%{domain}%")])
-        else:
-            rows = _run([])
-        return [
-            {
-                "id": str(r.id),
-                "source_id": r.source_id,
-                "source_type": r.source_type,
-                "similarity": float(r.similarity),
-            }
-            for r in rows
-        ]
 
     def queue_metrics(self) -> dict[str, int]:
         rows = (

@@ -11,6 +11,7 @@ from app.models.procurement import SPOAllocation, PickingHeader, PickingLine
 from app.services.procurement_service import (
     DuplicatePackingListError,
     InboundShipmentService,
+    compute_inbound_shipment_line_status,
 )
 from app.schemas.procurement import (
     InboundShipmentCreate,
@@ -259,14 +260,23 @@ async def get_packing_list(
     try:
         service = InboundShipmentService(db)
         shipment = service.get_shipment(shipment_id)
+        from app.services.scm import spo_supply
+
         # Refresh and persist line_status so n8n/API always have current value in DB
         service.refresh_shipment_line_statuses(shipment_id)
         # Reload shipment so line_status is in memory (refresh committed)
         shipment = service.get_shipment(shipment_id)
-        # SPO allocated total per product on this shipment
+        # SPO allocated total per product on this shipment. Round 3 N1 (reviewer): this
+        # and the related-SPO strip below are a listing, same as every grid
+        # PLAN-hide-retired-spo-lines already hides a retired line from - a retired
+        # line AutoCount stopped naming must not inflate this total or appear in the
+        # strip either.
         totals = (
             db.query(SPOAllocation.product_id, func.sum(SPOAllocation.allocated_quantity).label("total"))
-            .filter(SPOAllocation.inbound_shipment_id == shipment_id)
+            .filter(
+                SPOAllocation.inbound_shipment_id == shipment_id,
+                *spo_supply.visible_line_clauses(),
+            )
             .group_by(SPOAllocation.product_id)
             .all()
         )
@@ -274,7 +284,10 @@ async def get_packing_list(
         received_by_product = service.get_received_quantities_by_product(shipment_id)
         allocations = (
             db.query(SPOAllocation)
-            .filter(SPOAllocation.inbound_shipment_id == shipment_id)
+            .filter(
+                SPOAllocation.inbound_shipment_id == shipment_id,
+                *spo_supply.visible_line_clauses(),
+            )
             .order_by(SPOAllocation.created_at.asc())
             .all()
         )
@@ -354,8 +367,25 @@ async def get_packing_list(
 
         for line in shipment.shipment_lines:
             product_key = str(line.product_id)
-            setattr(line, "spo_allocated_quantity", spo_by_product.get(product_key, 0))
-            setattr(line, "quantity_received", received_by_product.get(product_key, 0))
+            visible_alloc = spo_by_product.get(product_key, 0)
+            recv = received_by_product.get(product_key, 0)
+            setattr(line, "spo_allocated_quantity", visible_alloc)
+            setattr(line, "quantity_received", recv)
+            # Round 5, AC-H17 (narrowed - reviewer's consumer check): the STATUS this
+            # response reports is recomputed from the SAME visible total as the quantity
+            # above, so one payload never shows an allocated figure and a status that
+            # disagree about which lines counted. `refresh_shipment_line_statuses`'
+            # PERSISTED `line_status` (unfiltered) is left alone above - it feeds
+            # `container_request_service.PL_UNALLOCATED_SQL` and
+            # `allocation_suggestion_service`'s reorder/allocation arithmetic, and
+            # narrowing THAT column is a purchasing decision, not a display one. Set on
+            # the in-memory object only, exactly like the two `setattr` calls above it -
+            # nothing here is committed.
+            setattr(
+                line,
+                "line_status",
+                compute_inbound_shipment_line_status(line.quantity_shipped or 0, visible_alloc, recv),
+            )
             setattr(line, "related_spo_allocations", related_spo_by_product.get(product_key, []))
             setattr(line, "related_grns", related_grns_by_product.get(product_key, []))
         return shipment

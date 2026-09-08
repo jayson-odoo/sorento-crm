@@ -2905,6 +2905,10 @@ _DYM_CTRL_KEYS = (
     "dym_probe_meta",
     "dym_capped_codes",
     "probe_cap_applied",
+    # #750: the two keys `dym-annotate` carries for THIS node's own uuid-to-code projection
+    # and its noun. Stripped here with the rest, so the object this node emits is unchanged.
+    "dym_probe_row_keys",
+    "dym_probe_type_name",
 )
 
 _YES = "Yes, escalate"
@@ -2915,6 +2919,71 @@ _DATE_LIKE_DMY_RE = re.compile(r"^[0-9]{1,2}[-/][0-9]{1,2}[-/][0-9]{2,4}\Z")
 _ALNUM_ANY_RE = re.compile(r"[a-z0-9]", re.IGNORECASE)
 _PICKER_LINE_RE = re.compile(r"^\s*[0-9]+\.\s+(.+?)\s*\Z")
 _CERT_PREFIX_RE = re.compile(r"^cert", re.IGNORECASE)
+# `gate.py`'s own "CODE (Company)" suffix, appended to a picker line whose code is duplicated
+# across companies (`product_attachment` only). The label is what the customer picks on, so it
+# is never rewritten here - it is only read back apart, to find which twin the line names.
+_COMPANY_SUFFIX_RE = re.compile(r"^\s*(.+?)\s*\(([^()]+)\)\s*\Z")
+
+
+def _dym_code_space(dym_ann: Any, dym_meta: Any) -> tuple[set[str], set[str]]:
+    """`(probed, has)` for a UUID-keyed probe, keyed the way the renders key: by CODE.
+
+    `product_attachment` is stamped per uuid (Fix 4 / Fix 5) because one product code can
+    belong to two companies, and the answer rows carry no product id. The renders print codes,
+    so the two uuid sets are projected back through the planner's own `(uuid, code, company)`
+    rows, which `dym-annotate` carries for exactly this.
+
+    Two keys per row, both only when they name ONE uuid: the bare `code` (what D1 prints and
+    what an unsuffixed picker line reads), and the `code|company` composite (what a
+    company-suffixed picker line reads). A code owned by two uuids therefore has no bare key
+    and renders BARE unless the line itself says which company, and an owner the annotator
+    could not attribute (`dym_ambiguous_uuids` / `dym_ambiguous_codes`, F1) is dropped from
+    both. Never guess: a false "has" costs the customer a dead-end pick.
+    """
+    probed_uuids = {_ms_norm(u) for u in jsc.array(jsc.get(dym_meta, "probed"))}
+    has_uuids = {_ms_norm(u) for u in jsc.array(jsc.get(dym_ann, "dym_available_codes"))}
+    ambiguous_uuids = {_ms_norm(u) for u in jsc.array(jsc.get(dym_ann, "dym_ambiguous_uuids"))}
+    ambiguous_codes = {_ms_norm(c) for c in jsc.array(jsc.get(dym_ann, "dym_ambiguous_codes"))}
+
+    owners: dict[str, set[str]] = {}
+    for row in jsc.array(jsc.get(dym_ann, "dym_probe_row_keys")):
+        code = _ms_norm(jsc.get(row, "code"))
+        uuid = _ms_norm(jsc.get(row, "uuid"))
+        if not code or not uuid or code in ambiguous_codes or uuid in ambiguous_uuids:
+            continue
+        owners.setdefault(code, set()).add(uuid)
+        owners.setdefault(f"{code}|{_ms_norm(jsc.get(row, 'company'))}", set()).add(uuid)
+
+    probed: set[str] = set()
+    has: set[str] = set()
+    for key, uuids in owners.items():
+        if len(uuids) != 1:
+            continue  # two owners behind one key: nothing to attribute the answer row to
+        uuid = next(iter(uuids))
+        if uuid not in probed_uuids:
+            continue
+        probed.add(key)
+        if uuid in has_uuids:
+            has.add(key)
+    return probed, has
+
+
+def _dym_lookup(label: Any, keys: set[str]) -> str | None:
+    """The key `label` was probed / found under, or None.
+
+    The bare label first, so a code-keyed turn resolves exactly as it did before this existed;
+    then the `code|company` composite a "CODE (Company)" picker line implies.
+    """
+    text = jsc.js_string(label)
+    key = _ms_norm(text)
+    if key in keys:
+        return key
+    match = _COMPANY_SUFFIX_RE.match(text)
+    if match:
+        composite = f"{_ms_norm(match.group(1))}|{_ms_norm(match.group(2))}"
+        if composite in keys:
+            return composite
+    return None
 
 # `entity-ids-transformer`'s own TYPE_TO_PARAM keys. A type added there and not here merely
 # fails OPEN (no silence), which is the safe direction.
@@ -3315,12 +3384,28 @@ def build_suggest_offer(
     dym_ann = dym_annotate if isinstance(dym_annotate, dict) else None
     dym_meta = jsc.get(dym_ann, "dym_probe_meta") if dym_ann is not None else None
     dym_ok = bool(jsc.truthy(dym_ann) and jsc.truthy(dym_meta) and jsc.get(dym_meta, "ok") is True)
-    dym_has = {_ms_norm(c) for c in jsc.array(jsc.get(dym_ann, "dym_available_codes"))} if dym_ok else set()
-    dym_probed = {_ms_norm(c) for c in jsc.array(jsc.get(dym_meta, "probed"))} if dym_ok else set()
+    # #750: `product_attachment` is stamped PER UUID (`probe_uuid_keyed`, Fix 4 / Fix 5), and
+    # every surface below keys by the CODE it printed, so the two sets are projected into code
+    # space ONCE, here, and the three renders are untouched. A code that cannot be attributed
+    # to exactly one uuid stays OUT of both sets and renders bare, which is the same promise
+    # the annotator's own F1 amendment makes.
+    if dym_ok and jsc.get(dym_meta, "key_mode") == "uuid":
+        dym_probed, dym_has = _dym_code_space(dym_ann, dym_meta)
+    elif dym_ok:
+        dym_has = {_ms_norm(c) for c in jsc.array(jsc.get(dym_ann, "dym_available_codes"))}
+        dym_probed = {_ms_norm(c) for c in jsc.array(jsc.get(dym_meta, "probed"))}
+    else:
+        dym_has = set()
+        dym_probed = set()
     # Normalise the certificate family for the customer-facing suffix ONLY - `attachment_noun`
     # itself is left alone so D2's "No {noun} for {code}" text stays byte-identical.
     if dym_ok:
         noun_source = jsc.get(dym_meta, "noun")
+        if not jsc.truthy(noun_source):
+            # #750: the RESOLVED attachment type the probe was scoped to, before the
+            # customer's own word for it. `attachment_noun()` stays the last resort, so a
+            # turn whose probe carried no type entity reads exactly as it does today.
+            noun_source = jsc.get(dym_ann, "dym_probe_type_name")
         noun_source = noun_source if jsc.truthy(noun_source) else attachment_noun()
         text = jsc.nullish_str(noun_source).strip()
         dym_noun: Any = "certificate" if _CERT_PREFIX_RE.match(text) else (text or "document")
@@ -3329,8 +3414,8 @@ def build_suggest_offer(
 
     # 4th surface: the REQUIRE-SPECIFIC PICKER. The gate renders a numbered list into
     # `gate_clarification`, which the miss renderer copies verbatim into `escalate_message`.
-    # D1 never fires on these turns, which is why the surface stayed bare while D1 annotated
-    # the very same codes. NO reordering: the numbers are the pick affordance, suffixes only.
+    # D1 never fires on these turns, which is why this surface needs its own pass over the
+    # rendered text. NO reordering: the numbers are the pick affordance, suffixes only.
     if require_spec and dym_ok and isinstance(out.get("escalate_message"), str) and out["escalate_message"]:
         lines = []
         for line in out["escalate_message"].split("\n"):
@@ -3340,8 +3425,8 @@ def build_suggest_offer(
             if not match:
                 lines.append(line)  # header / non-item line
                 continue
-            key = _ms_norm(match.group(1))
-            if key not in dym_probed:
+            key = _dym_lookup(match.group(1), dym_probed)
+            if key is None:
                 lines.append(line)  # unprobed (e.g. multi-uuid) renders BARE
                 continue
             lines.append(line + (f" - has {dym_noun}" if key in dym_has else f" - no {dym_noun}"))
@@ -3407,9 +3492,9 @@ def build_suggest_offer(
                 # preserved by construction. The suffix never touches `p.label`, so
                 # `suggest_last_result_set[].label` stays BARE and the numbered pick still
                 # round-trips on idx / value. Unprobed renders BARE, never a misleading "no".
-                key = _ms_norm(jsc.get(match, "canonical_code"))
+                key = _dym_lookup(jsc.get(match, "canonical_code"), dym_probed) if dym_ok else None
                 sfx = ""
-                if dym_ok and key in dym_probed:
+                if key is not None:
                     sfx = f" - has {dym_noun}" if key in dym_has else f" - no {dym_noun}"
                 cand_lines.append(f"  {idx}. {jsc.js_string(pick['label'])}{sfx}")
                 out["suggest_last_result_set"].append(
@@ -3524,20 +3609,25 @@ def build_suggest_offer(
                 # and the pick round trip stay index-consistent. `suggest_quick_reply` stays
                 # BARE CODES: the pick round-trips on that exact button string.
                 dym_annotate_on = dym_ok and any(
-                    _ms_norm(jsc.get(p["m"], "canonical_code")) in dym_probed for p in picks
+                    _dym_lookup(jsc.get(p["m"], "canonical_code"), dym_probed) is not None
+                    for p in picks
                 )
                 if dym_annotate_on:
                     # STABLE PARTITION, no tiebreak: a comparator tiebreak here would
                     # alphabetise and destroy the resolver's similarity ranking.
-                    picks.sort(key=lambda p: 0 if _ms_norm(jsc.get(p["m"], "canonical_code")) in dym_has else 1)
+                    picks.sort(
+                        key=lambda p: 0
+                        if _dym_lookup(jsc.get(p["m"], "canonical_code"), dym_has) is not None
+                        else 1
+                    )
                 codes = [jsc.get(p["m"], "canonical_code") for p in picks]
                 if dym_annotate_on:
                     dym_lines = []
                     for i, p in enumerate(picks):
                         code = jsc.js_string(jsc.get(p["m"], "canonical_code"))
-                        key = _ms_norm(code)
+                        key = _dym_lookup(code, dym_probed)
                         sfx = ""
-                        if key in dym_probed:
+                        if key is not None:
                             sfx = f" - has {dym_noun}" if key in dym_has else f" - no {dym_noun}"
                         dym_lines.append(f"{i + 1}. {code}{sfx}")
                     out["suggest_response"] = (

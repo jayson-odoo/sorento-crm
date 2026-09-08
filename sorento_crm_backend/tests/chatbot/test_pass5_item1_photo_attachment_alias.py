@@ -66,16 +66,16 @@ exactly as ambiguous as before; corrected to join through `product_attachments`.
 **How `send_attachments` is actually reached, crossed at the real seam (review of this
 item, round 1, B1/Q1/#727).** The first cut's `_no_tool_fetch_services` stubbed
 `tool_search` to `[]`, which makes `lanes/business/__init__.py::run_fetch` return
-`not_found` at its own `pick.outcome == "not_found"` guard (~289-292) BEFORE `mcp_call` is
+`not_found` at its own `pick.outcome == "not_found"` guard BEFORE `mcp_call` is
 ever reached - so the stub's own decision, not a missing fetch mechanism, is what kept
 `send_attachments` out of `result.actions`. `product_attachment` DOES have a fetch path:
-`crm_master_product_attachments_list`, chosen by `tool_search` (an embedding call, needing
-`OPENAI_API_KEY`) and then called over MCP (`mcp_call`, returning a STRING -
-`MCPRuntimeClient.call_tool`'s own return shape, `"\n".join(content[].text)`). Both are
-`FetchServices` seams (`services.py:95-105`) a test may stub independently: `tool_search`
-is faked here (deterministic tool choice, the same test-worthy substitute the resolver
-seam tests already make for `embed`/vector search); `mcp_call` uses the REAL production
-binding, with only `MCPRuntimeClient.call_tool` monkeypatched to the STRING shape it
+`crm_master_product_attachments_list`, which is `DOMAIN_SPEC["product_attachment"]`'s
+first tool and therefore the one `select_tool` reads for this turn (it was chosen by an
+embedding search until 8 Sep 2026; the seam and its `OPENAI_API_KEY` are gone), then
+called over MCP (`mcp_call`, returning a STRING -
+`MCPRuntimeClient.call_tool`'s own return shape, `"\n".join(content[].text)`). `mcp_call`
+is the one `FetchServices` seam left, and it uses the REAL production
+binding here, with only `MCPRuntimeClient.call_tool` monkeypatched to the STRING shape it
 actually returns - the same recipe
 `test_s6a_gate_dry_run_and_seams.py::TestOwnerRulingATheCustomerPickerReachesTheProductionProbeSeam`
 already uses for the resolver's own probe seam. AC-604 (module docstring ~770-773 of
@@ -218,9 +218,13 @@ _PRODUCT_ATTACHMENTS_TOOL = "crm_master_product_attachments_list"
 
 
 def _photo_fetch_services(db: Any, monkeypatch: Any, *, calls: list[tuple[str, dict]]) -> FetchServices:
-    """Crosses the REAL fetch seam (review of this item, round 1, Q1/#727): `tool_search`
-    is faked to a deterministic pick (an embedding call needs `OPENAI_API_KEY`, which is
-    absent everywhere this suite runs), and `mcp_call` is the PRODUCTION binding
+    """Crosses the REAL fetch seam (review of this item, round 1, Q1/#727).
+
+    NOTHING about the tool choice is faked any more: the turn parses as
+    `product_attachment`, and `select_tool` reads that domain's own tool
+    (`_PRODUCT_ATTACHMENTS_TOOL`) off `DOMAIN_SPEC` with no embedding call - which is why
+    the `tool_search` fake this used to carry, and the `OPENAI_API_KEY` it stood in for,
+    are both gone. `mcp_call` stays the PRODUCTION binding
     (`business_services.fetch_services(db).mcp_call`) with only
     `MCPRuntimeClient.call_tool` monkeypatched to the STRING shape it actually returns -
     the same recipe `test_s6a_gate_dry_run_and_seams.py::
@@ -270,12 +274,7 @@ def _photo_fetch_services(db: Any, monkeypatch: Any, *, calls: list[tuple[str, d
 
     monkeypatch.setattr(MCPRuntimeClient, "call_tool", _fake_call_tool)
 
-    base = business_services_mod.fetch_services(db)
-
-    def _tool_search(embedding: Any, *, query: str, domain: Any) -> Any:
-        return [{"name": _PRODUCT_ATTACHMENTS_TOOL, "similarity": 0.95}]
-
-    return FetchServices(embed=lambda query: [0.0], tool_search=_tool_search, mcp_call=base.mcp_call)
+    return FetchServices(mcp_call=business_services_mod.fetch_services(db).mcp_call)
 
 
 def _photo_attachment_type_entities() -> list[dict[str, Any]]:

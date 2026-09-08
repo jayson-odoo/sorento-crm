@@ -6,8 +6,14 @@ and had `mcp_tool_registry_service.sync_catalog` invert it directly - which is c
 importing the chatbot package, the one direction AC-002 forbids (D17, CI run on
 bf8814585). This module is the fix: the mapping lives here, in `app/services/`, so
 `sync_catalog` (and any other core service) can read it with no import across the
-boundary; `search_tool_chunks` needs no import of this module at all (see its own
-docstring for the emptiness-signal it uses instead).
+boundary.
+
+**Nothing READS the stamped column today (8 Sep 2026).** Its one reader was the
+chatbot's tool search, and that search is gone: the business lane picks
+`contracts.DOMAIN_SPEC[domain].tools[0]` outright. Both the column and this mapping
+stay because dropping them is a migration on a column production never populated, and
+that is a follow-up with its own trigger (the next migration that touches
+`mcp_tools`), not a reason to churn the table now.
 
 `contracts.DOMAIN_SPEC[domain].tools` stays the hand-authored, richly-commented
 version the chatbot module itself reads (`CHATBOT_READ_ONLY_TOOLS`, the fetch lane's

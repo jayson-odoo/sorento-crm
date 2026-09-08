@@ -147,9 +147,20 @@ class IncomingStockService:
 
         Returns {(shipment_id, product_id): [{warehouse_code, warehouse_name, allocated_quantity}]}.
         Only SPO allocations with allocated_quantity > 0 are included. No receipt data leaks.
+
+        AC-H19 (round 5, PLAN-hide-retired-spo-lines): also excludes a RETIRED allocation
+        (`spo_supply.visible_line_clauses()`) - this is the query behind the n8n incoming-
+        stock badge and its `unallocated_quantity` gap (`_unallocated_quantity` above), a
+        read with no persisted column and no purchasing arithmetic behind it, unlike
+        `refresh_shipment_line_statuses`' stored `spo_allocated_quantity` (AC-H17, narrowed
+        away from this file for exactly that reason). A line AutoCount stopped naming is
+        not allocated supply for this container any more than it is anywhere else, so
+        counting it here credited coverage that no longer exists and understated the gap.
         """
         if not shipment_product_pairs:
             return {}
+        from app.services.scm import spo_supply
+
         shipment_ids = list({sid for sid, _ in shipment_product_pairs})
         product_ids = list({pid for _, pid in shipment_product_pairs})
         rows = (
@@ -165,6 +176,7 @@ class IncomingStockService:
                 SPOAllocation.inbound_shipment_id.in_(shipment_ids),
                 SPOAllocation.product_id.in_(product_ids),
                 SPOAllocation.allocated_quantity > 0,
+                *spo_supply.visible_line_clauses(),
             )
             .group_by(
                 SPOAllocation.inbound_shipment_id,

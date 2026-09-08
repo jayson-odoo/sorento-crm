@@ -158,11 +158,11 @@ def _run_stock_turn(session_factory, monkeypatch, *, po_response, code: str = CO
     monkeypatch.setattr(
         engine_mod.business_services,
         "fetch_services",
+        # The tool is not stubbed: the parse below carries `domain_hint` = `origin`, and
+        # `select_tool` reads that domain's own tool off `DOMAIN_SPEC`
+        # (`incoming` -> `crm_incoming_stock_list`, `inventory` ->
+        # `crm_inventory_stock_balance_list`) - the two names this used to hand back.
         lambda db: FetchServices(
-            embed=lambda query: [0.0, 0.0, 0.0],
-            tool_search=lambda embedding, *, query, domain: [
-                {"name": "crm_incoming_stock_list" if origin == "incoming" else "crm_inventory_stock_balance_list", "similarity": 0.9}
-            ],
             mcp_call=lambda name, args: json.dumps(EMPTY_INCOMING if origin == "incoming" else EMPTY_STOCK),
         ),
     )

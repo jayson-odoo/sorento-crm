@@ -304,6 +304,50 @@ DIVERGENCES: list[Divergence] = [
         ),
     ),
     # ------------------------------------------------------------------ #
+    # ISSUE #750 (owner, 8 Sep 2026): the `product_attachment` pickers stamp
+    # "- has Product Photos" / "- no Product Photos" per line. The annotator keys
+    # that probe PER UUID (Fix 4 / Fix 5, because one product code can belong to
+    # two companies) and every render prints CODES, so `dym-annotate` now carries
+    # the planner's own `(uuid, code, company)` map for the composer to translate
+    # with, plus the resolved type's name for the noun. Neither key can be
+    # fixture-visible: n8n's own body emits neither, so every capture of this node
+    # records their absence by construction.
+    #
+    # Measured over the whole graded corpus for this node (16 captures): exactly 5
+    # emit either key, they are exactly the 5 that now differ, and on all 5 the
+    # ADDITION is the only disagreement - every other key is byte-equal. The other
+    # 11 are untouched (10 equal, `exec-13469053` its own pre-existing entry), and
+    # `build-suggest-offer`'s own captures stay byte-equal because that node strips
+    # both keys again with the rest of `_DYM_CTRL_KEYS`. Field-scoped, so a real
+    # change to `dym_available_codes`, `dym_probe_meta` or the passed-through
+    # not-found payload still fails here. Pinned by
+    # tests/chatbot/test_product_attachment_picker_stamp.py.
+    *(
+        Divergence(
+            node="dym-annotate",
+            fixture=name,
+            hazard="issue #750 (product_attachment picker stamp, 8 Sep 2026)",
+            reason=(
+                "the node carries `dym_probe_row_keys` (the uuid-to-code map the "
+                "renders need, since this domain is probed per uuid) and "
+                "`dym_probe_type_name` (the resolved attachment type, so the line "
+                "reads 'Product Photos' rather than the customer's own word). Live "
+                "emits neither. Field-scoped to those two keys."
+            ),
+            strip_paths=(
+                ("dym_probe_row_keys",),
+                ("dym_probe_type_name",),
+            ),
+        )
+        for name in (
+            "ms-14992829",
+            "ms-14993042",
+            "ms-15144245",
+            "ms-15151889",
+            "ms-15157100",
+        )
+    ),
+    # ------------------------------------------------------------------ #
     # OWNER RULING K, rule 4 (6 Sep 2026): a BARE entity turn is typed by the
     # carried domain, not by the model's guess at the token's shape. Four
     # captures show the old typing, and all THREE are one class: a

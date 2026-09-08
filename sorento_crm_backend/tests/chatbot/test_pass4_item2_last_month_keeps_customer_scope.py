@@ -254,14 +254,11 @@ def _wire(session_factory, monkeypatch) -> list[tuple[str, dict]]:
         return json.dumps({"answers": [{"note": "stub"}], "has_result": True})
 
     def fake_fetch_services(db: Any):
+        # Only the MCP seam is stubbed. The turn parses as `order`, whose `DOMAIN_SPEC`
+        # tool is `crm_order_management_orders_list` - the name this used to hand back as
+        # a search hit.
         FetchServices = business_services_mod.FetchServices
-        return FetchServices(
-            embed=lambda query: [0.1],
-            tool_search=lambda embedding, *, query, domain: [
-                {"name": "crm_order_management_orders_list", "similarity": 0.9}
-            ],
-            mcp_call=recording_mcp_call,
-        )
+        return FetchServices(mcp_call=recording_mcp_call)
 
     monkeypatch.setattr(engine_mod.business_services, "fetch_services", fake_fetch_services)
     return calls
