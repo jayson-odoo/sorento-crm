@@ -1019,6 +1019,10 @@ class TestAcE18ReviseNeverDeletesAHiddenAllocation:
             hidden_alloc_id = hidden_alloc.id
             hidden_alloc.retired_at = _now()
             hidden_alloc.line_status = "closed"
+            # The frozen floor an ingest-adopted retired row carries (D28c) - a delete
+            # would destroy this along with the row's own identity, leaving the ingest
+            # nothing to reconcile against when it later un-retires the line.
+            hidden_alloc.stated_received = 12
             db.flush()
 
             # Sanity: the split editor no longer offers it - this is WHY the payload
@@ -1053,6 +1057,7 @@ class TestAcE18ReviseNeverDeletesAHiddenAllocation:
             )
             assert still_there.allocated_quantity == 30, still_there.allocated_quantity
             assert still_there.retired_at is not None, "still retired, untouched either way"
+            assert still_there.stated_received == 12, still_there.stated_received
 
             visible_alloc = (
                 db.query(SPOAllocation)
@@ -1063,3 +1068,121 @@ class TestAcE18ReviseNeverDeletesAHiddenAllocation:
                 .one()
             )
             assert visible_alloc.allocated_quantity == 55, visible_alloc.allocated_quantity
+
+    def test_a_visible_and_a_hidden_allocation_at_the_same_warehouse_are_told_apart(self):
+        """AC-E18 case (b) - the one that matters most. `wanted` (the reconciliation
+        loop's own map of the submitted splits) is a plain dict keyed by warehouse id,
+        consumed by `.pop()` on the FIRST allocation the loop reaches for that
+        warehouse. So a guard written as "the warehouse was absent from the payload"
+        (case (a)'s shape) passes case (a) and STILL fails here: the operator DID
+        submit a split for this warehouse, it just lands on whichever row - visible or
+        hidden - the (unordered) scan happens to reach first. Only a guard written as
+        "never delete/mutate a HIDDEN allocation, whatever `wanted` says" survives
+        both cases.
+
+        `svc.create` cannot produce two allocations at one warehouse for a line on its
+        own (a split collapses to one row per warehouse), and `revise` UPDATES the
+        existing row in place rather than duplicating it - so this two-rows-one-
+        warehouse shape is an invariant-violating state the normal service flow never
+        reaches by itself. Both rows are seeded directly instead, the same way
+        `TestAcE16OwnStateIsAWritersViewNeverFiltered`'s own writer-view test seeds its
+        retired row - `svc.create` builds the real po_line/links machinery `revise`
+        needs, then a second `SPOAllocation` is added by hand at the SAME warehouse.
+
+        Insertion order matters and is deliberate: the HIDDEN row (the one `create`
+        made, now retired) is on file FIRST, the VISIBLE row is added SECOND. An
+        unordered scan of a small, freshly-populated table within one transaction
+        returns rows in that same (insertion) order in practice - `_own_state`'s own
+        query carries no `ORDER BY` - so this is what forces the reconciliation loop
+        to reach the hidden row BEFORE its visible sibling, which is the one order
+        that actually exercises the collision: reached first, the hidden row wrongly
+        claims the operator's split (mutating a row that must stay untouched) and the
+        visible row - now finding its own warehouse already consumed - falls into the
+        unconditional delete branch.
+        """
+        from app.services.scm import spo_conversion_service as svc
+        from tests.scm.test_spo_conversion import World
+        from tests.scm.test_spo_planner_selection import _confirm
+
+        with pg_session() as db:
+            w = World(db)
+            supplier = w.supplier()
+            wh_a = w.warehouse("A")
+            w.po("A", supplier, [("A", 100, 0)])
+            shipment, lines = w.shipment([("A", 100, supplier)])
+
+            created = svc.create(
+                db, str(shipment.id),
+                [_confirm(
+                    lines[0], 30,
+                    location_splits=[{"warehouse_id": str(wh_a.id), "qty": 30}],
+                )],
+            )
+            po_id = created["created_spos"][0]["purchase_order_id"]
+            po_number = created["created_spos"][0]["po_number"]
+            po_line = (
+                db.query(PurchaseOrderLine)
+                .filter(PurchaseOrderLine.purchase_order_id == po_id)
+                .one()
+            )
+
+            # Row 1, already on file: retire it, and freeze a `stated_received` on it
+            # - the floor a delete would destroy along with the row's identity.
+            hidden_alloc = (
+                db.query(SPOAllocation)
+                .filter(
+                    SPOAllocation.spo_number == po_number,
+                    SPOAllocation.warehouse_id == wh_a.id,
+                )
+                .one()
+            )
+            hidden_alloc_id = hidden_alloc.id
+            hidden_alloc.retired_at = _now()
+            hidden_alloc.line_status = "closed"
+            hidden_alloc.stated_received = 12
+            db.flush()
+
+            # Row 2, added SECOND, at the SAME warehouse - the sibling the normal
+            # service flow never produces on its own.
+            visible_alloc = SPOAllocation(
+                id=_u(), spo_number=po_number, product_id=lines[0].product_id,
+                warehouse_id=wh_a.id, allocated_quantity=25, quantity_received=0,
+                po_line_id=po_line.id,
+            )
+            db.add(visible_alloc)
+            db.flush()
+            visible_alloc_id = visible_alloc.id
+
+            # A NORMAL split for WH-A - the operator DID submit for this warehouse.
+            svc.revise(
+                db, str(shipment.id), po_id,
+                [_confirm(
+                    lines[0], 40,
+                    location_splits=[{"warehouse_id": str(wh_a.id), "qty": 40}],
+                )],
+            )
+            db.flush()
+
+            db.expire_all()
+            still_hidden = (
+                db.query(SPOAllocation)
+                .filter(SPOAllocation.id == hidden_alloc_id)
+                .one_or_none()
+            )
+            assert still_hidden is not None, (
+                "the hidden sibling must survive a save that names its own warehouse - "
+                "the submitted split belongs to its VISIBLE sibling, not to it"
+            )
+            assert still_hidden.allocated_quantity == 30, still_hidden.allocated_quantity
+            assert still_hidden.stated_received == 12, still_hidden.stated_received
+            assert still_hidden.retired_at is not None
+
+            still_visible = (
+                db.query(SPOAllocation)
+                .filter(SPOAllocation.id == visible_alloc_id)
+                .one_or_none()
+            )
+            assert still_visible is not None, (
+                "the visible row the operator's split actually names must survive"
+            )
+            assert still_visible.allocated_quantity == 40, still_visible.allocated_quantity
