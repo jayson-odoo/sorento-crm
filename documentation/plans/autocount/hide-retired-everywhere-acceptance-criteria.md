@@ -52,3 +52,24 @@ that must stay visible (R2).
   (shipment line, warehouse) whose row is merely hidden. The filtering moves to the display
   consumer. Assert both halves: the planner display omits a retired line, and the save's held state
   still contains it. AC-E10's `_own_state` half is revised accordingly.
+
+## Round 3 (reviewer, 2026-09-08)
+
+- **AC-E15 (extended)** The re-activation must also cover R2's own path, not only the un-retire: a
+  retired line whose `quantity_received` goes from 0 to 5 when a goods-received note lands becomes
+  visible by the clause, and its document must be active again. The hash is unchanged there too, so
+  the same skip-branch repair covers both. Both cases get a test.
+
+- **AC-E17 [BE][T]** (one answer per line) `spo_conversion_service._spo_cover_by_so_line` shares the
+  same scan as `coverage_for_so_lines` and was left unfiltered, so the planner's `taken_by` still
+  names an SPO the "Linked to" column hides, contradicting its own docstring that the two can never
+  name a different SPO for the same line. Filter both.
+
+- **AC-E14 (unmet, restated)** The comment at `get_received_quantities_by_product` saying why it is
+  deliberately unfiltered was never written. Write it.
+
+- **R10 and AC-E7 narrowed.** "The engine buys more, never less" holds for the retired-only case but
+  not universally: the pro-rate means removing a hidden claim can raise another pool's share and
+  shrink its shortfall. That is the more honest answer, since a deleted claim should stop competing,
+  but the guarantee as written is false and must be narrowed to the retired-only case rather than
+  left for the next reader to trust.

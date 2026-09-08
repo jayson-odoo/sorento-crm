@@ -29,8 +29,9 @@ transitively. The exposed readers are exactly those with no open-status test.
   quotable in any answer. A hidden row's document is deactivated instead, and the backfill skips it.
 - **R10 Planning arithmetic with no open test is a defect, not a carve-out.** Two purchasing reads
   have no line-status test at all, so they credit cover that AutoCount deleted. They take the
-  clause. The direction of the correction is to buy more, never less, which is the safe side of a
-  stockout.
+  clause. For a retired-only allocation the correction removes phantom cover and grows the shortfall. It is
+  NOT a universal guarantee: the pro-rate means removing a hidden claim can raise another pool's
+  share, which is the honest answer since a deleted claim should stop competing for the same water.
 - **Unchanged from #753:** id-resolved reads, writers, the ingest, the deletion service and the
   receipt recompute stay unfiltered (R3), and `refresh_shipment_line_statuses`' persisted column
   stays unfiltered because the reorder engine nets it (AC-H17 as narrowed).
@@ -86,3 +87,15 @@ transitively. The exposed readers are exactly those with no open-status test.
   this lane exists to fix, so it is corrected rather than named as a residual. The filter moves to
   the display consumer. R7 is amended: a user-facing READ takes the clause; a read that a WRITE
   depends on never does.
+
+## 7. Round 3 (reviewer, 2026-09-08)
+
+- The one-way deactivation has a second reachable path the round-2 ruling did not name: a retired
+  line that later takes a receipt becomes visible under R2, and its document stays inactive for the
+  same hash reason. The skip-branch repair covers both; both get a test.
+- `_spo_cover_by_so_line` is filtered alongside `coverage_for_so_lines` (AC-E17), so the planner and
+  the "Linked to" column cannot name different SPOs for one line.
+- Deliberately left, now named so the next sweep does not re-open it:
+  `incoming_stock_service.py:953-963` collects distinct SPO numbers off a shipment to find
+  goods-received notes. It prints picking numbers rather than SPO numbers and falls under the
+  AC-E14 rule, that a receipt found through a retired line is still a receipt.
