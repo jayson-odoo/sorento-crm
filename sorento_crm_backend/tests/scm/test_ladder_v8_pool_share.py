@@ -583,7 +583,8 @@ def test_the_confirm_accepts_the_split_at_a_bin_with_no_pool_of_its_own():
 
 def test_the_confirm_refuses_a_hand_typed_share_above_the_allowance():
     """S6, the other side: the carve-out is the ALLOWANCE, not the pool. 120 of a pool that
-    may spare 100 is not the engine's composition and the whole-line rule still refuses it."""
+    may spare 100 is not the engine's composition and the whole-line rule still refuses it
+    when no amend reason is given (8 Sep 2026 ruling)."""
     from tests._pg_fixture import blank_session
 
     with blank_session() as db:
@@ -595,13 +596,38 @@ def test_the_confirm_refuses_a_hand_typed_share_above_the_allowance():
         status, body = response.status_code, response.json()
 
     assert status == 422, body
-    assert "wholly from stock or wholly bought" in body["failing_lines"][0]["reason"]
+    assert "or say why this differs from the proposal" in body["failing_lines"][0]["reason"]
+
+
+def test_the_confirm_admits_a_hand_typed_share_above_the_allowance_with_a_reason():
+    """8 Sep 2026 ruling: the whole-line rule is lifted for a manual amendment - and the
+    project allowance `_is_pool_share_split` checks is a PROPOSAL-time bound, not a
+    confirm-time cap. At confirm the pool leg is bounded only by free stock, the five-pool
+    net (`pool_reserve_capacity`), and R14 - never by the project share, so 120 of a pool
+    that may spare 100 (the same composition the sibling test above refuses without a
+    reason) confirms once the planner says why, exactly as a whole-line over-share draw
+    off the pool already does today."""
+    from tests._pg_fixture import blank_session
+
+    with blank_session() as db:
+        company_id, eling, order, line, pool = _split_world(db)
+        response = _confirm_split(
+            db, company_id, eling, order,
+            {
+                **_split_payload(line, warehouse=pool, share="120", buy="30"),
+                "amend_reason": "customer takes 120 now, the rest on the next shipment",
+            },
+        )
+        status, body = response.status_code, response.text
+
+    assert status == 200, body
 
 
 def test_the_confirm_refuses_a_split_for_a_line_beyond_the_immediate_window():
     """S8: beyond `immediate_window_days` the pool is whole or nothing (R-B), so the engine
     never proposes a part share there - and a hand-composed one is refused for the reason
-    every other mix is: purchasing cannot act on half a line."""
+    every other mix is, when no amend reason is given (8 Sep 2026 ruling): purchasing cannot
+    act on half a line."""
     from tests._pg_fixture import blank_session
 
     with blank_session() as db:
@@ -613,7 +639,7 @@ def test_the_confirm_refuses_a_split_for_a_line_beyond_the_immediate_window():
         status, body = response.status_code, response.json()
 
     assert status == 422, body
-    assert "wholly from stock or wholly bought" in body["failing_lines"][0]["reason"]
+    assert "or say why this differs from the proposal" in body["failing_lines"][0]["reason"]
 
 
 def test_the_confirm_accepts_the_engines_own_proposal_on_an_oversold_chain():
@@ -645,6 +671,7 @@ def test_the_confirm_refuses_a_pool_split_that_outruns_the_five_pool_net():
     nothing against the pile the five pools share, so `DC1 100 + BRW 50 + Buy 50` passed
     the whole-line rule on a chain netting 100 - the same over-draw the engine itself used
     to compose. Each pool is inside its own allowance; the three of them together are not.
+    Still refused when no amend reason is given (8 Sep 2026 ruling).
     """
     from tests._pg_fixture import blank_session
 
@@ -666,7 +693,7 @@ def test_the_confirm_refuses_a_pool_split_that_outruns_the_five_pool_net():
 
     assert status == 422, body
     assert any(
-        "wholly from stock or wholly bought" in row["reason"]
+        "or say why this differs from the proposal" in row["reason"]
         for row in body["failing_lines"]
     ), body
 

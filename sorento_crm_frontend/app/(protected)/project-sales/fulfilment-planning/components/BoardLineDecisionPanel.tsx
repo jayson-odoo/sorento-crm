@@ -98,6 +98,9 @@ export function BoardLineDecisionPanel({
   const [draft, setDraft] = React.useState<DraftLine>(() =>
     draftFor(contribution, decision),
   );
+  // Seeded from the frozen decision's own `amend_reason`, not blank - the server's whole-line
+  // mix rule (`mixAllowed` below) now depends on this reaching Save even when nothing about
+  // the draft has changed since.
   const [reason, setReason] = React.useState(
     () => decision?.reason ?? contribution.decision?.amend_reason ?? '',
   );
@@ -194,7 +197,13 @@ export function BoardLineDecisionPanel({
    * has always admitted.
    */
   const poolLimits = React.useMemo(() => poolShareLimitsOf(locations), [locations]);
-  const blockers = lineBlockers(draft, poolLimits);
+  // `mixAllowed`: the 8 Sep 2026 ruling. AC-L5's whole-line rule is lifted on this panel
+  // because `reason` (seeded from the frozen decision's own `amend_reason` above, or typed
+  // fresh) is what Save sends as `amend_reason` on the confirm line - `needsReason` below
+  // only forces a NEW one when the draft has moved since that baseline (`amendNeedsReason`),
+  // so an unchanged frozen mix re-saves on the reason it already carried. The per-order sheet
+  // does not pass this and still refuses the mix (`SupplyLineCard`).
+  const blockers = lineBlockers(draft, poolLimits, { mixAllowed: true });
   const needsReason = amendNeedsReason(contribution, draft);
   // Which verdict Save takes, and therefore what it may be pressed for: approving the engine's
   // own composition is never blocked, because there is nothing about it to balance or justify.
@@ -262,7 +271,10 @@ export function BoardLineDecisionPanel({
   const setBorrow = (borrow: DraftBorrow[]) => editComposition({ ...draft, borrow });
 
   /**
-   * The whole line, one way or the other. Never a mix - the confirmation refuses one.
+   * The switch means WHOLLY bought, not "no mix allowed" - a stock-and-Buy mix is a legal
+   * hand composition on this panel (8 Sep 2026 ruling) that simply leaves the switch off; it
+   * needs a reason, which `amendNeedsReason` already requires because the engine never
+   * proposes a mix, so any mix here already differs from the frozen or suggested baseline.
    *
    * Switching Buy ON zeroes the stock side, and switching it OFF puts back exactly what was
    * there: the quantities, the donors and their reasons. The rows alone are not enough - a

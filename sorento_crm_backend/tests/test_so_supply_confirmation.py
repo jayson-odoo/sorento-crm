@@ -2192,15 +2192,19 @@ def test_re_confirming_the_reserve_at_a_different_location_competes_fully(api):
 # ------------------------------------------ the whole-line rule, extended to Amend (AC-L5)
 
 
-def test_a_line_mixing_stock_with_a_buy_is_refused_the_whole_line_rule_reaches_amend(api):
+def test_a_line_mixing_stock_with_a_buy_without_a_reason_is_refused(api):
     """AC-L5, the captain 25 August 2026: "a line is either wholly covered from stock (own
     group, pools, borrow, incoming in any mix) or wholly Buy".
 
     The engine has refused to PROPOSE such a mix since ladder v2's rule 6, but a person could
-    still hand-compose one in Amend, and half a line bought while the other half is reserved
-    is exactly the composition purchasing cannot act on: the order inquiry asks for 15 of a
+    still hand-compose one, and half a line bought while the other half is reserved is
+    exactly the composition purchasing cannot act on: the order inquiry asks for 15 of a
     line the customer owes 20 of, at a location holding the other 5, and nobody can tell from
     the row whether that is a partial buy or a mistake.
+
+    The 8 Sep 2026 ruling lifts the rule for a MANUAL AMENDMENT that states why (see the
+    sibling test below); without a reason it still refuses, and now names the reason as the
+    way out.
 
     LADDER V8 (R-C) carves ONE case out of the rule - the site pool's own share plus a Buy of
     the rest, which is a proposal the engine itself now makes - so the mix pinned here is
@@ -2233,13 +2237,58 @@ def test_a_line_mixing_stock_with_a_buy_is_refused_the_whole_line_rule_reaches_a
     failing = response.json()["failing_lines"]
     assert failing[0]["line_no"] == 10
     assert failing[0]["reason"] == (
-        "A line is either met wholly from stock or wholly bought. This one mixes 5 from "
-        "stock with a Buy of 15: take the whole 20 from stock, or buy the whole 20."
+        "A line is either met wholly from stock or wholly bought unless a reason is given. "
+        "This one mixes 5 from stock with a Buy of 15: take the whole 20 from stock, buy "
+        "the whole 20, or say why this differs from the proposal."
     )
 
 
+def test_a_line_mixing_stock_with_a_buy_with_an_amend_reason_confirms(api):
+    """The 8 Sep 2026 ruling's other half: the SAME composition as the test above, but with
+    a stated `amend_reason`, saves - and BOTH halves of the split are frozen with the line,
+    beside the reason, so purchasing sees the whole decision on reload.
+
+    `amend_reason` is the manual-adjustment signal itself (the schema comment on
+    `ConfirmLine.amend_reason`: "Absent when they took the proposal as it stood"), not a
+    board-only flag - the whole-line rule reads it directly off the confirm line.
+    """
+    client, world = api
+    db = world.db
+    _stock(db, world.product, world.own_wh, on_hand=100)
+    order = _project_so(db, world.project)
+    core_so = _core_so(db, world.company_id)
+    core_line = _core_line(db, core_so, world.product, world.own_wh, qty_ordered="20")
+    line = _project_line(db, order, line_no=10, product=world.product, core_line=core_line)
+    db.commit()
+
+    response = client.post(
+        f"{BASE}/sales-orders/{order.id}/confirm",
+        json={
+            "lines": [
+                {
+                    "project_line_id": str(line.id),
+                    "timely_spo_qty": "0",
+                    "reserve": [{"warehouse_id": world.own_wh.id, "qty": "5"}],
+                    "buy_qty": "15",
+                    "amend_reason": "Customer takes 5 now, the rest on the next shipment",
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200, response.text
+
+    snapshot = _active_snapshots(db, order.id)[0]
+    assert _shape(snapshot["components"]) == [
+        ("reserve", "5", world.own_wh.warehouse_code, "group_take"),
+        ("buy", "15", None, None),
+    ]
+    assert snapshot["amend_reason"] == "Customer takes 5 now, the rest on the next shipment"
+
+
 def test_a_line_wholly_from_stock_and_a_line_wholly_bought_both_confirm(api):
-    """The other side of AC-L5: the rule refuses the MIX, not either pure composition."""
+    """The other side of AC-L5: the rule refuses the MIX without a reason, not either pure
+    composition."""
     client, world = api
     db = world.db
     _stock(db, world.product, world.pool_wh, on_hand=100)

@@ -77,7 +77,7 @@ Plan: `PLAN-scm-cs-planning-uat.md`. Verified in a real browser on :3060 via the
 - AC-L2 Within the window, a BRW-BB line with 40 available at BRW-BB, 30 at DC1-BB and 1000 at pool BRW proposes own 40 + own 30 + shared 30 for a need of 100 (group before pool).
 - AC-L3 Group borrow from another sales order is never in the automatic proposal; it remains a manual pick.
 - AC-L4 Singleton-pool parity test unchanged byte for byte.
-- AC-L5 Amend refuses a composition mixing stock sources and Buy on one line (422 with the reason); the dialog's Buy switch clears the stock rows.
+- AC-L5 The engine's own proposals and the SO supply sheet never mix stock sources with Buy on one line (422 with the reason). **AMENDED 8 Sep 2026 (captain's ruling):** a board amendment MAY mix stock and Buy on one line when an `amend_reason` is given, because a mix reaching confirm from a person is a manual composition, not something the engine ever proposed; a mix with no reason is still refused with a 422 (reason: "A line is either met wholly from stock or wholly bought unless a reason is given. This one mixes {qty} from stock with a Buy of {qty}: take the whole {qty} from stock, buy the whole {qty}, or say why this differs from the proposal."). The Buy switch still clears the stock rows either way.
 - AC-L6 Amend on SO415472 L1 offers SO394803 L2 (same agent) as a donor regardless of rank, requires an authorisation reason, and on confirm raises an Order back OI row for SO394803 L2 with the donor's date; the donor cell reads "71 lent to SO415472".
 
 ## Ladder v4 (group netting, ruled 26 Aug)
