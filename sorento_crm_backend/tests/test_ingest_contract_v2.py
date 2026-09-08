@@ -138,12 +138,16 @@ class TestContractEndpoint:
         v2.1 shape (`fields_added`/`fields_removed`/`status_optional`
         /`absent_vs_null`/`warnings`); this test still proves the entity
         list and the 200/401/403 gating this file's own name is about.
+
+        Bumped again 2026-09-08 (V5, ingest-contract-2-2-so-links): "2.2"
+        adds from_so_line_ref/from_so_external/from_po_line_ref/
+        from_po_number to purchase_orders/shipping_orders lines.
         """
         res = env.client.get(CONTRACT_URL)
 
         assert res.status_code == 200, res.text
         body = res.json()
-        assert body["version"] == "2.1"
+        assert body["version"] == "2.2"
         entities = set(body["entities"])
         for expected in (
             "sales_orders",

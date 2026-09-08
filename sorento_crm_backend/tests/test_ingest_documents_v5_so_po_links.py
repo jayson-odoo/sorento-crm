@@ -20,6 +20,8 @@ suite.
 """
 from __future__ import annotations
 
+from app.api.v1.external.contract import FIELDS_ADDED
+
 from tests.test_ingest_documents import (
     INGEST_PO,
     MARKER,
@@ -34,6 +36,8 @@ from tests.test_ingest_shipping_orders import (
 )
 
 __all__ = ["env"]
+
+CONTRACT_URL = "/api/v1/external/contract"
 
 
 # ============================================================== AC-V5-1/2/3
@@ -87,3 +91,30 @@ class TestSchemaAcceptance:
         entry = res.json()["records"][0]
         assert entry["outcome"] == "failed", res.text
         assert "lines.0.from_so_external.db" in entry["errors"], entry
+
+
+# ==================================================================== V5 contract
+class TestContractVersion22:
+    def test_contract_reports_2_2_and_lists_the_four_fields(self, env):
+        res = env.client.get(CONTRACT_URL)
+
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["version"] == "2.2"
+        wanted = {
+            "from_so_line_ref", "from_so_external", "from_po_line_ref", "from_po_number",
+        }
+        for entity in ("purchase_orders", "shipping_orders"):
+            got = set(body["fields_added"].get(entity, []))
+            assert wanted.issubset(got), (entity, wanted - got)
+
+    def test_the_registry_constant_itself_carries_the_same_fields(self):
+        """Pin at the source, not just at the HTTP surface - a future
+        refactor of `get_contract()`'s response shape should not be able to
+        silently drop these from `FIELDS_ADDED` unnoticed."""
+        wanted = {
+            "from_so_line_ref", "from_so_external", "from_po_line_ref", "from_po_number",
+        }
+        for entity in ("purchase_orders", "shipping_orders"):
+            got = set(FIELDS_ADDED.get(entity, []))
+            assert wanted.issubset(got), (entity, wanted - got)
