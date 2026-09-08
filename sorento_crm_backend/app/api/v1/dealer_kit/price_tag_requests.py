@@ -297,6 +297,34 @@ def _latest_version(db: Session, page: Page) -> PageVersion | None:
     )
 
 
+def resolve_tag_sheet_design(db: Session, page: Page) -> dict:
+    """The document a design VIEW should open on: the draft, else the latest
+    saved version (B1). Draft first - the autosaved draft is what marketing
+    was last looking at; the latest version is what they last deliberately
+    saved, and opening on it would silently discard everything since.
+
+    Shared by this route (``get_tag_sheet_design``) and the portal's design
+    preview (D11, ``portal_price_tag.portal_get_price_tag_design``) so the
+    two screens can never resolve a different document for the same page.
+    Returns the ``TagSheetDocResponse`` fields as a plain dict, not the
+    schema itself - the portal route layers its own ``lines`` key on top.
+    """
+    latest = _latest_version(db, page)
+    if page.draft_doc is not None:
+        return {
+            "page_id": str(page.id),
+            "version": latest.version if latest else 0,
+            "doc": page.draft_doc,
+            "source": "draft",
+        }
+    return {
+        "page_id": str(page.id),
+        "version": latest.version if latest else 0,
+        "doc": latest.doc if latest else None,
+        "source": "version",
+    }
+
+
 def _snapshot_draft(
     db: Session, page: Page, doc: dict, user_id: str | None, commit_message: str | None
 ) -> PageVersion:
@@ -347,20 +375,7 @@ def get_tag_sheet_design(
     ``doc`` actually is.
     """
     _req, page = _require_request_page(db, request_id)
-    latest = _latest_version(db, page)
-    if page.draft_doc is not None:
-        return TagSheetDocResponse(
-            page_id=str(page.id),
-            version=latest.version if latest else 0,
-            doc=page.draft_doc,
-            source="draft",
-        )
-    return TagSheetDocResponse(
-        page_id=str(page.id),
-        version=latest.version if latest else 0,
-        doc=latest.doc if latest else None,
-        source="version",
-    )
+    return TagSheetDocResponse(**resolve_tag_sheet_design(db, page))
 
 
 @router.put("/{request_id}/design/draft", response_model=TagSheetDocResponse)

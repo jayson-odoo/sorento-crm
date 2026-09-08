@@ -819,6 +819,19 @@ class ResolvedLineData(BaseModel):
     barcode: Optional[str] = None
 
 
+class PortalTagSheetDesignResponse(BaseModel):
+    """The portal's design preview (D11): the same doc `TagSheetDocResponse`
+    carries, PLUS the resolved line data the CRM designer reads through a
+    SEPARATE `/resolve-prices` call - the portal has no such second call, so
+    this route answers both in one response."""
+
+    page_id: str
+    version: int
+    doc: Optional[dict] = None
+    source: Literal["draft", "version"] = "version"
+    lines: list[ResolvedLineData] = []
+
+
 class TagFont(BaseModel):
     """A brand font the editor and the print page load through ``@font-face``."""
 
