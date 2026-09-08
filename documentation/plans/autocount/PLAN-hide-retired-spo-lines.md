@@ -1,7 +1,7 @@
 # PLAN: hide retired SPO allocation lines from the UI
 
-Status: DRAFT 2026-09-08 (captain's decision, user's call). UAC: `hide-retired-spo-lines-acceptance-criteria.md`.
-Depends on: PR #740 (D28d `spo_allocations.retired_at`) merged and deployed.
+Status: IN PROGRESS 2026-09-08 (user's call). UAC: `hide-retired-spo-lines-acceptance-criteria.md`.
+Depends on: PR #740 (D28d `spo_allocations.retired_at`), MERGED a5d4bcac2 2026-09-07T23:16Z.
 
 ## 1. Why
 
@@ -56,8 +56,22 @@ Report per document before writing.
   allocations grid and the document header in a browser at 375px and 1280px.
 - S4 operate: merge, deploy, run the backfill dry-run, then apply, then re-check SPO-2026/09-0036.
 
-## 5. Open question for the user
+## 5. Decided
 
-Whether a retired line should also disappear from the SPO allocations grid's All tab, which today is
-the only place an operator can see the full history of a document. R3 keeps it out of both; if the
-All tab should keep showing everything, that is a one-line difference in S1.
+The All tab hides retired lines too (user, 2026-09-08: "hide the retired rows everywhere"). A
+document's full history stays reachable in the database and through any read that resolves an
+allocation by its own id (R3), but no listing offers it.
+
+## 6. Display read sites (measured, `app/services/procurement_service.py`)
+
+| line | reader | what changes |
+| --- | --- | --- |
+| 1716 | `list_allocations` | the flat grid |
+| 1830 | `list_allocations_grouped_by_shipment` | grid grouped by shipment |
+| 1970 | `list_allocations_grouped_by_spo_number` | grid grouped by document |
+| 2152 | `list_documents` | header rollups, `total_allocated` at 2264 / 2299 |
+| 2424 | `get_document` | the lines list and `total_allocated` / `total_received` at 2673 |
+| 1129 | per-product allocated total | check whether it is a display or a planning read |
+
+Every planning reader already excludes these rows, because a retired line is closed and
+`spo_supply.open_incoming_clauses()` requires open. Only the display readers above show them.
