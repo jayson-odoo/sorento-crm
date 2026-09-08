@@ -3818,11 +3818,27 @@ def token_word_coverage_for_rows(
         coverage: list[dict[str, Any]] = []
         for etype in sorted(blobs_by_type):
             blobs = blobs_by_type[etype]
+            norm_blobs = [_strip_all_ws(b) for b in blobs]
             matched: list[str] = []
             unmatched: list[str] = []
-            for word in [w for w in tok.split() if w]:
+            # D13 (owner turn, 8 Sep 2026, "CB6622-PP?"). Two separate fixes:
+            #  1. a trailing "?" (or !.,) on the query is punctuation, not a fifth
+            #     character of the code beside it - a row's own `_match_blob` never
+            #     carries it, so an un-stripped word read as "unmatched" against a row
+            #     that answered it exactly.
+            #  2. the CALLER's own token is already dash/ws-stripped by the time it
+            #     reaches here (`resolve_entity_body`/`_strip_entity_stopwords` send
+            #     "cb6622pp"), while `_match_blob` is the RAW column value
+            #     ("CB6622-PP") - the same §3a normalization the code PROBE itself
+            #     used to decide this row was the answer (`_ws_insensitive_lower`)
+            #     has to run here too, or a dash-insensitive match reads as unanswered
+            #     by a coverage check that never dropped the dash.
+            for word in [w.rstrip("?!.,") for w in tok.split() if w.rstrip("?!.,")]:
                 variants = [v.lower() for v in _word_variants(word)]
-                hit = any(v in blob for blob in blobs for v in variants)
+                norm_variants = [_strip_all_ws(v) for v in variants]
+                hit = any(v in blob for blob in blobs for v in variants) or any(
+                    nv and nv in nblob for nblob in norm_blobs for nv in norm_variants
+                )
                 (matched if hit else unmatched).append(word)
             coverage.append(
                 {

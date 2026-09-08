@@ -1466,6 +1466,29 @@ def _result_has_zero_matches(result: dict[str, Any]) -> bool:
     return True
 
 
+def _every_caller_token_resolved(result: dict[str, Any]) -> bool:
+    """D13 (owner turn, 8 Sep 2026, "CB6622-PP?"): every token the caller supplied
+    already resolved COMPLETELY, so the spec fallback - built for a word that did NOT -
+    must never run over it. AND mode: `intersection` is non-empty and EVERY row in it
+    is `match_tier == "exact"`. AND-mode's own product probe stamps every row
+    `match_tier="and"` today (there is no exact tier on that path - see
+    `_and_probe_product`), so this branch is currently a no-op backstop for AND mode
+    and the CB6622-PP repro is actually closed by `token_word_coverage_for_rows`'s own
+    dash-normalization fix (below); kept here, harmless when idle, for OR-mode-shaped
+    intersections and any future AND-mode exact tier. A max-coverage row that merely
+    CONTAINS a code word (`prefix`/`substring`) is a PARTIAL answer and must stay False
+    (SA-P1, "wall hung basin" matching a code that only contains "wall hung"). OR mode:
+    every token's own resolution carries at least one match.
+    """
+    if "intersection" in result:
+        rows = result.get("intersection") or []
+        return bool(rows) and all((r or {}).get("match_tier") == "exact" for r in rows)
+    resolutions = result.get("resolutions")
+    if not isinstance(resolutions, list) or not resolutions:
+        return False
+    return all(bool(tr.get("matches")) for tr in resolutions if isinstance(tr, dict))
+
+
 def _product_words_unanswered(result: dict[str, Any]) -> bool:
     """AND-shaped result whose returned PRODUCT rows do not, between them,
     contain every word the customer used.
@@ -2187,12 +2210,31 @@ def _emit_spec_matches(
         # is rewritten to OR shape before spec search runs, so the result
         # reaching here normally has `resolutions` and no `intersection`. Kept
         # because the rewrite is a behaviour of the caller's flags, not a law.
-        result["intersection"] = spec_matches
+        #
+        # D13: an EXACT row survives, a PARTIAL one does not. A `match_tier="exact"`
+        # row is a complete answer to its own token - two tokens, one coded and
+        # found, one descriptive and not, must keep the coded one when spec search
+        # runs for the other. A non-exact row (prefix/substring code overlap, or
+        # AND-mode's own `match_tier="and"`) is exactly what spec search exists to
+        # supersede - "wall hung basin" matching a code that only CONTAINS "wall
+        # hung" has not answered the description, and keeping that row beside the
+        # real answer would clutter the reply with what `_product_words_unanswered`'s
+        # own docstring calls a non-answer. Deduped by uuid so a code the ranker ALSO
+        # surfaces is not counted twice. (Today's AND-mode probe never stamps
+        # "exact" - see `_every_caller_token_resolved` - so in practice this branch
+        # protects an OR-mode-shaped intersection; kept as the honest rule either
+        # way, not a special case for one shape.)
+        existing = [
+            m for m in (result.get("intersection") or []) if (m or {}).get("match_tier") == "exact"
+        ]
+        existing_uuids = {m.get("uuid") for m in existing if isinstance(m, dict)}
+        merged = existing + [m for m in spec_matches if m.get("uuid") not in existing_uuids]
+        result["intersection"] = merged
         by_type: dict[str, list[dict[str, Any]]] = {}
-        for match in spec_matches:
+        for match in merged:
             by_type.setdefault(match["entity_type"], []).append(match)
         result["by_entity_type"] = by_type
-        result["empty"] = not spec_matches
+        result["empty"] = not merged
         # Coverage was computed inside _resolve_input over rows this branch just
         # REPLACED - recompute over what the route actually sends, or the field
         # describes rows that no longer exist. Spec rows carry no scored text,
@@ -2329,11 +2371,20 @@ def resolve_reference_post(
     # The response stays byte-identical for every existing caller and for every
     # request that resolves a code fully. The product probes themselves are
     # untouched: see _and_probe_product's "CODE-ONLY by design" note.
-    if payload.spec_fallback and (
-        _result_has_zero_matches(result)
-        or _product_words_unanswered(result)
-        or _has_unresolved_tokens(result)
-        or _no_product_row_answered(result, payload.domain_hint)
+    #
+    # D13: `_every_caller_token_resolved` is checked FIRST and short-circuits the
+    # whole block - every other signal here answers "is a WORD unanswered", and a
+    # query whose every token already resolved exactly has no unanswered word by
+    # definition, whatever a coverage claim over punctuation says.
+    if (
+        payload.spec_fallback
+        and not _every_caller_token_resolved(result)
+        and (
+            _result_has_zero_matches(result)
+            or _product_words_unanswered(result)
+            or _has_unresolved_tokens(result)
+            or _no_product_row_answered(result, payload.domain_hint)
+        )
     ):
         import time
 
