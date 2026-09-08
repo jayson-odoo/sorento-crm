@@ -965,3 +965,101 @@ class TestAcE13PurchaseSideNeverResolvesToARetiredLine:
             by_key, by_number = _purchase_side(db, {shared, all_retired})
             assert by_number[shared] == ("spo_allocation_id", visible.id), by_number[shared]
             assert all_retired not in by_number, by_number
+
+
+# =================================================================================== #
+# AC-E18 (round 4, security review): a save never deletes a line the display hid.
+#
+# `planner_state` omits a retired-only allocation from the split editor (AC-E16), so the
+# browser posts `location_splits` without that warehouse. `revise`'s per-(shipment line,
+# warehouse) reconciliation loop reads an allocation absent from the submitted splits as
+# "the user removed this split" and deletes it - the hidden row's own absence, which is
+# OUR filtering, not a decision the operator made. R7's third clause: a WRITE never
+# treats the absence of something we hid as an instruction.
+# =================================================================================== #
+
+
+class TestAcE18ReviseNeverDeletesAHiddenAllocation:
+    def test_a_save_that_omits_a_hidden_allocation_leaves_it_untouched(self):
+        from app.services.scm import spo_conversion_service as svc
+        from tests.scm.test_spo_conversion import World
+        from tests.scm.test_spo_planner_selection import _confirm
+        from tests.scm.test_spo_revise import _state_line
+
+        with pg_session() as db:
+            w = World(db)
+            supplier = w.supplier()
+            wh_visible, wh_hidden = w.warehouse("VIS"), w.warehouse("HID")
+            w.po("A", supplier, [("A", 100, 0)])
+            shipment, lines = w.shipment([("A", 100, supplier)])
+
+            created = svc.create(
+                db, str(shipment.id),
+                [_confirm(
+                    lines[0], 70,
+                    location_splits=[
+                        {"warehouse_id": str(wh_visible.id), "qty": 40},
+                        {"warehouse_id": str(wh_hidden.id), "qty": 30},
+                    ],
+                )],
+            )
+            po_id = created["created_spos"][0]["purchase_order_id"]
+            po_number = created["created_spos"][0]["po_number"]
+
+            # Retire the wh_hidden allocation only - the shape AC-E16's own test builds
+            # (a visible allocation and a retired-only one at a DIFFERENT warehouse).
+            hidden_alloc = (
+                db.query(SPOAllocation)
+                .filter(
+                    SPOAllocation.spo_number == po_number,
+                    SPOAllocation.warehouse_id == wh_hidden.id,
+                )
+                .one()
+            )
+            hidden_alloc_id = hidden_alloc.id
+            hidden_alloc.retired_at = _now()
+            hidden_alloc.line_status = "closed"
+            db.flush()
+
+            # Sanity: the split editor no longer offers it - this is WHY the payload
+            # below cannot name it either.
+            state = svc.planner_state(db, str(shipment.id), po_id)
+            line = _state_line(state, str(lines[0].id))
+            assert str(wh_hidden.id) not in {
+                s["warehouse_id"] for s in line["location_splits"]
+            }, line["location_splits"]
+
+            # Save changes ONLY the visible split - the hidden warehouse is entirely
+            # omitted from the payload, exactly what the browser sends after reading
+            # `planner_state`.
+            svc.revise(
+                db, str(shipment.id), po_id,
+                [_confirm(
+                    lines[0], 55,
+                    location_splits=[{"warehouse_id": str(wh_visible.id), "qty": 55}],
+                )],
+            )
+            db.flush()
+
+            db.expire_all()
+            still_there = (
+                db.query(SPOAllocation)
+                .filter(SPOAllocation.id == hidden_alloc_id)
+                .one_or_none()
+            )
+            assert still_there is not None, (
+                "an unrelated save deleted the hidden allocation - its own absence "
+                "from the payload is our filtering, not the operator's decision"
+            )
+            assert still_there.allocated_quantity == 30, still_there.allocated_quantity
+            assert still_there.retired_at is not None, "still retired, untouched either way"
+
+            visible_alloc = (
+                db.query(SPOAllocation)
+                .filter(
+                    SPOAllocation.spo_number == po_number,
+                    SPOAllocation.warehouse_id == wh_visible.id,
+                )
+                .one()
+            )
+            assert visible_alloc.allocated_quantity == 55, visible_alloc.allocated_quantity
