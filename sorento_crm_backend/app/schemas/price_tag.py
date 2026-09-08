@@ -21,6 +21,8 @@ class PriceTagRequestLineCreate(BaseModel):
     quantity: int = Field(default=1, ge=1)
     alternatives: list[dict] = Field(default_factory=list)
     included_accessories: Optional[str] = None
+    # Free-text note on the line (D6, r7).
+    remarks: Optional[str] = None
     # None, not 0: the portal posts the table in order and sends no sort_order,
     # and a default of 0 gave EVERY line the same one, so the relationship's
     # `order_by(sort_order)` returned them in whatever order Postgres liked. The
@@ -45,6 +47,7 @@ class PriceTagRequestLineResponse(BaseModel):
     quantity: int
     alternatives: list[Any] = []
     included_accessories: Optional[str] = None
+    remarks: Optional[str] = None
     sort_order: int
     # float, not Decimal, on every money field a CLIENT reads. Pydantic
     # serialises a Decimal as a JSON string, and the detail page does
@@ -87,6 +90,10 @@ class PriceTagRequestCreate(BaseModel):
     promotion_id: Optional[str] = None
     needed_by_date: Optional[date] = None
     notes: Optional[str] = None
+    # Header price mode (D5, r7): 'selling' requires a promotion, enforced on
+    # SUBMIT by `validate_submittable` (not here - a draft may pick Selling
+    # before it has a promotion, same as it may have no debtor yet).
+    price_mode: Literal["list", "selling"] = "list"
     lines: list[PriceTagRequestLineCreate] = Field(default_factory=list)
 
 
@@ -99,6 +106,9 @@ class PriceTagRequestUpdate(BaseModel):
     promotion_id: Optional[str] = None
     needed_by_date: Optional[date] = None
     notes: Optional[str] = None
+    # None means "leave it as it is" - the header PUT is a partial edit and
+    # every other field here follows the same convention.
+    price_mode: Optional[Literal["list", "selling"]] = None
     lines: Optional[list[PriceTagRequestLineCreate]] = None
 
 
@@ -141,6 +151,7 @@ class PriceTagRequestResponse(BaseModel):
     promotion_id: Optional[str] = None
     needed_by_date: Optional[date] = None
     notes: Optional[str] = None
+    price_mode: str = "list"
     status: str
     doc_number: str
     page_id: Optional[str] = None

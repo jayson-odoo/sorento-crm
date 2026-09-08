@@ -143,6 +143,7 @@ class PriceTagRequestService:
                 promotion_id=data.get("promotion_id"),
                 needed_by_date=data.get("needed_by_date"),
                 notes=data.get("notes"),
+                price_mode=data.get("price_mode") or "list",
                 doc_number=doc_number,
                 portal_draft_at=datetime.utcnow(),
             ),
@@ -191,7 +192,15 @@ class PriceTagRequestService:
 
     @staticmethod
     def _add_lines(db: Session, request: PriceTagRequest, lines: list[dict]) -> None:
-        """Append lines in the order given, which is the order the form shows."""
+        """Append lines in the order given, which is the order the form shows.
+
+        ``show_promo_price`` is DERIVED from the request's header ``price_mode``
+        (D5), never taken from the payload: the per-line switch is gone, and
+        every line save - create, replace on update - re-derives every line
+        from whatever the header says right now, so a header flip never leaves
+        a stale line behind.
+        """
+        show_promo_price = request.price_mode == "selling"
         for idx, line_data in enumerate(lines):
             sort_order = line_data.get("sort_order")
             db.add(
@@ -200,10 +209,11 @@ class PriceTagRequestService:
                     line_type=line_data["line_type"],
                     product_id=line_data.get("product_id"),
                     product_set_id=line_data.get("product_set_id"),
-                    show_promo_price=line_data.get("show_promo_price", True),
+                    show_promo_price=show_promo_price,
                     quantity=line_data.get("quantity", 1),
                     alternatives=line_data.get("alternatives", []),
                     included_accessories=line_data.get("included_accessories"),
+                    remarks=line_data.get("remarks"),
                     sort_order=idx if sort_order is None else sort_order,
                 )
             )
@@ -310,21 +320,28 @@ class PriceTagRequestService:
             missing.append(("needed_by_date", "a needed by date"))
         if not request.lines:
             missing.append(("lines", "at least one line"))
-        if not missing:
-            return
+        if missing:
+            labels = [label for _, label in missing]
+            wanted = (
+                labels[0]
+                if len(labels) == 1
+                else ", ".join(labels[:-1]) + " and " + labels[-1]
+            )
+            raise AppException(
+                status_code=422,
+                message=f"This request needs {wanted} before it can be submitted.",
+                detail=",".join(key for key, _ in missing),
+                code="SUBMIT_INCOMPLETE",
+            )
 
-        labels = [label for _, label in missing]
-        wanted = (
-            labels[0]
-            if len(labels) == 1
-            else ", ".join(labels[:-1]) + " and " + labels[-1]
-        )
-        raise AppException(
-            status_code=422,
-            message=f"This request needs {wanted} before it can be submitted.",
-            detail=",".join(key for key, _ in missing),
-            code="SUBMIT_INCOMPLETE",
-        )
+        # D5: Selling price has nothing to sell against without a promotion.
+        if request.price_mode == "selling" and not request.promotion_id:
+            raise AppException(
+                status_code=422,
+                message="Selling price needs a promotion before this request can be submitted.",
+                detail="promotion_id",
+                code="PRICE_MODE_NEEDS_PROMOTION",
+            )
 
     @staticmethod
     def validate_claimable(request: PriceTagRequest) -> None:

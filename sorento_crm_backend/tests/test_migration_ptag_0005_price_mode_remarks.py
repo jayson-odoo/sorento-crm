@@ -29,6 +29,7 @@ import pytest
 from sqlalchemy import inspect, text
 
 from app.models.access import RespondContact
+from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from tests._pg_fixture import pg_session, unique_code
 
 _SORENTO_COMPANY_ID = "00000000-0000-0000-0000-000000000001"
@@ -112,6 +113,36 @@ def _seed_request_via_raw_sql(db) -> str:
     return request_id
 
 
+def _seed_product_via_raw_sql(db) -> str:
+    """A `products` row, so a `price_tag_request_lines` INSERT below can
+    satisfy `ck_price_tag_request_lines_one_ref` (a `product` line needs a
+    real `product_id`) - unrelated to what this migration touches, so the
+    ORM is fine here (only `price_tag_requests`/`price_tag_request_lines`
+    columns are mid-migration on this transaction).
+    """
+    category = ProductCategory(
+        id=str(uuid.uuid4()),
+        category_code=unique_code("cat"),
+        category_name=unique_code("Category"),
+    )
+    brand = Brand(id=str(uuid.uuid4()), brand_code=unique_code("br"), brand_name=unique_code("Brand"))
+    uom = UnitOfMeasure(id=str(uuid.uuid4()), uom_code=unique_code("uom"), uom_name="Each")
+    db.add_all([category, brand, uom])
+    db.flush()
+    product = Product(
+        id=str(uuid.uuid4()),
+        product_code=unique_code("prod"),
+        product_name=unique_code("Product"),
+        category_id=category.id,
+        brand_id=brand.id,
+        base_uom_id=uom.id,
+        list_price=100.00,
+    )
+    db.add(product)
+    db.flush()
+    return product.id
+
+
 class TestUpgradeAddsBothColumns:
     def test_columns_absent_before_upgrade(self, db):
         assert not _has_price_mode(db)
@@ -187,6 +218,7 @@ class TestUpgradeAddsBothColumns:
 
     def test_remarks_is_null_on_an_existing_line_after_upgrade(self, db):
         request_id = _seed_request_via_raw_sql(db)
+        product_id = _seed_product_via_raw_sql(db)
         line_id = str(uuid.uuid4())
         # Seeded BEFORE upgrade, so the column literally cannot exist yet -
         # confirms upgrade() does not choke on rows it has to retrofit.
@@ -194,9 +226,9 @@ class TestUpgradeAddsBothColumns:
             text(
                 "INSERT INTO price_tag_request_lines "
                 "(id, request_id, line_type, product_id, quantity) "
-                "VALUES (:id, :request_id, 'product', NULL, 1)"
+                "VALUES (:id, :request_id, 'product', :product_id, 1)"
             ),
-            {"id": line_id, "request_id": request_id},
+            {"id": line_id, "request_id": request_id, "product_id": product_id},
         )
 
         _run(db)
