@@ -198,10 +198,15 @@ def portal_get_price_tag_design(
     from app.services.dealer_kit import tag_data_service
 
     doc_fields = resolve_tag_sheet_design(db, page)
-    lines = [
-        ResolvedLineData.model_validate(row)
-        for row in tag_data_service.resolve_request_line_data(db, req)
-    ]
+    # L3: same company scope as the sibling lookups (portal_lookup_tag_items,
+    # portal_lookup_promotions) - unscoped, a two-company contact's line
+    # resolution could read the OTHER company's product row for a duplicated
+    # code instead of the one this request actually points at.
+    with company_scope(db, frozenset({_resolve_company(db, token)})):
+        lines = [
+            ResolvedLineData.model_validate(row)
+            for row in tag_data_service.resolve_request_line_data(db, req)
+        ]
     return PortalTagSheetDesignResponse(**doc_fields, lines=lines)
 
 
