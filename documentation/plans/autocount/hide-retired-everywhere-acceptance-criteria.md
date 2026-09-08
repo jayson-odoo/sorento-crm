@@ -78,5 +78,11 @@ that must stay visible (R2).
   retired-only allocation from the split editor, so the browser posts splits without that warehouse
   and `revise`'s delete branch would remove the row as a side effect of an unrelated save. Its
   absence from the submitted splits is not a user decision, it is our own filtering coming back at
-  us. `revise` skips deleting an allocation that is not visible. Assert: a save that changes an
-  unrelated split leaves the hidden allocation present and untouched.
+  us. `revise` skips deleting an allocation that is not visible. Two inputs, both tested:
+  (a) a retired-only landing at WH-A, so the display shows no split for it and an unrelated save
+  would delete it; (b) a visible AND a hidden allocation at the SAME warehouse, where `wanted` is
+  keyed by warehouse id and the entry is consumed by the first match, so whichever row the loop
+  reaches second falls into the delete branch even though the operator DID submit a split for that
+  warehouse. Assert in both that the hidden allocation survives with its quantities untouched.
+  Deleting a retired row would also destroy the frozen `stated_received` and the `source_doc_ref`
+  identity the ingest needs to un-retire it on the next push.

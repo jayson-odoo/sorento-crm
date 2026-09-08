@@ -109,3 +109,14 @@ safe side of the two failure modes. Fixed anyway (AC-E18): "unreachable today" i
 that produced the defect this lane exists to fix, and I rejected it once already in section 6.
 R7 gains its third clause: a user-facing read takes the clause, a read a writer depends on never
 does, and a WRITE never treats the absence of something we hid as an instruction.
+
+### 8a. Two things not to undo later
+
+- **Do not re-filter `_own_state`.** Beyond the save, `_project_coverage`'s `taken_qty` counts every
+  order-inquiry link quantity unfiltered, and `planner_state` balances it with `taken_qty -= mine` /
+  `qty += mine`. That only balances while `mine` is unfiltered too. Round 1's filtered version would
+  have left the coverage row overstating what is taken and understating what is free, letting the
+  planner under-tick.
+- **The whole-line removal path deletes every allocation, hidden ones included**, and that is
+  intended: the SPO line itself is going. It is not the AC-E18 defect and should not be "fixed" to
+  match it.
