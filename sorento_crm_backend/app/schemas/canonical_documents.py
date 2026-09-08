@@ -127,11 +127,22 @@ class CanonicalPurchaseOrderLine(_CanonicalLine):
     # `source_ref` (`"{database}:{DocKey}:{DtlKey}"`). A resolvable ref lets
     # the claim resolver skip the number+item-code match `from_so_numbers`
     # relies on, which cannot tell apart two lines of the same item on one
-    # sales order. Absent when the source SO lives elsewhere (see
-    # `from_so_external`) or is simply not yet known.
+    # sales order. Absent when it is simply not yet known - NOT mutually
+    # exclusive with `from_so_external` below (retracted guarantee, see its
+    # own comment): the two come from different AutoCount columns and can
+    # both be sent on one line.
     from_so_line_ref: Optional[str] = Field(None, max_length=255)
-    # V5: the cross-book case - see `_SalesOrderExternalRef`. Never sent
-    # alongside a same-book `from_so_line_ref` for the same sales order.
+    # V5: the cross-book case - see `_SalesOrderExternalRef`. MAY be present
+    # ALONGSIDE `from_so_line_ref` on the SAME line - AutoCount's
+    # `FromSODtlKey` (same-book, gives `from_so_line_ref`) and the ICB
+    # plugin's UDFs (gives this field) are different columns describing
+    # different books, and a line raised from a same-book sales order AND
+    # tagged by the ICB plugin legitimately carries both (the ESB withdrew
+    # an earlier guarantee that this never happens - no validator was ever
+    # written to enforce it, so there is nothing to relax here beyond this
+    # comment). The two never describe the SAME book; this one is recorded
+    # and never resolved into a Sorento id, because its key belongs to a
+    # database Sorento does not hold.
     from_so_external: Optional[_SalesOrderExternalRef] = None
     # V5: the SOURCE purchase-order line this one was raised from (an
     # inter-company book transfer chain), same `source_ref` format.

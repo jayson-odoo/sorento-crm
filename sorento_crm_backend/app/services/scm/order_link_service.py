@@ -144,6 +144,21 @@ def _exact_so_line_for(db: Session, claims: Sequence[OrderLinkClaim]) -> dict[st
     exactly this: a later sweep re-reads it and recovers the EXACT line,
     rather than falling back to `(so_number, item_code)`, which cannot tell
     two same-item lines of one sales order apart.
+
+    D1 (review fix - regression this function introduced): the ref column
+    lives on the PURCHASE line, one value shared by every claim that ever
+    points at that line - `from_so_numbers` can carry up to 50 entries, so
+    more than one claim can share one purchase line, each naming a
+    DIFFERENT sales order. Resolving the ref to a bare `SalesOrderLine`
+    with no check against which order it actually belongs to let a claim
+    for SO-A be assigned SO-B's line the moment SO-B's ref happened to sit
+    on the same purchase row - reachable on an ordinary first push, no
+    exotic data (`from_so_numbers=["SO-A","SO-B"]` plus a ref naming an
+    SO-B line). Fixed the same way `write_line_ref_claims` is already safe
+    by construction: `so_number` is read off the JOIN, and a resolved line
+    is trusted only when that so_number matches the CLAIM's own - never
+    the other way around, which would let a mismatched ref silently name
+    a different order.
     """
     out: dict[str, SalesOrderLine] = {}
     open_claims = [c for c in claims if c.so_line_id is None]
@@ -178,12 +193,16 @@ def _exact_so_line_for(db: Session, claims: Sequence[OrderLinkClaim]) -> dict[st
     if not all_refs:
         return out
 
-    so_line_by_ref = {
-        line.source_ref: line
-        for line in db.query(SalesOrderLine)
+    # D1: joined to `SalesOrder` so every resolved line carries the
+    # so_number it ACTUALLY belongs to, read off the row rather than
+    # trusted from the claim - the same shape `write_line_ref_claims` uses.
+    rows = (
+        db.query(SalesOrderLine, SalesOrder.so_number)
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
         .filter(SalesOrderLine.source_ref.in_(list(all_refs)))
         .all()
-    }
+    )
+    so_by_ref = {line.source_ref: (line, so_number) for line, so_number in rows}
 
     for claim in open_claims:
         ref = ref_by_po.get(str(claim.po_line_id)) if claim.po_line_id else None
@@ -191,9 +210,13 @@ def _exact_so_line_for(db: Session, claims: Sequence[OrderLinkClaim]) -> dict[st
             ref = ref_by_spo.get(str(claim.spo_allocation_id))
         if ref is None:
             continue
-        line = so_line_by_ref.get(ref)
-        if line is not None:
-            out[str(claim.id)] = line
+        found = so_by_ref.get(ref)
+        # D1: the resolved line is trusted ONLY when its own so_number
+        # matches what THIS claim already names - a ref that resolves to a
+        # DIFFERENT sales order's line is not a match, it is data this
+        # claim has nothing to do with.
+        if found is not None and found[1] == claim.so_number:
+            out[str(claim.id)] = found[0]
     return out
 
 

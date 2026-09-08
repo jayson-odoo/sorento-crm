@@ -38,6 +38,7 @@ from sqlalchemy import text
 
 from app.api.v1.external.contract import FIELDS_ADDED
 from app.models.order import SalesOrder, SalesOrderLine
+from app.services.scm import order_link_service
 
 from tests.test_ingest_documents import (
     INGEST_PO,
@@ -474,13 +475,19 @@ class TestExplicitNullClears:
         record = _po_record(env, lines=[line])
         first = env.post(INGEST_PO, [record])
         assert first.json()["records"][0]["outcome"] == "created", first.text
+        # D3 review fix: prove the field was actually WRITTEN on the first
+        # push, before checking the null clears it - otherwise "is None
+        # after the null re-push" is identically true whether the write
+        # path works or was never wired at all.
+        header = env.header("purchase_orders", record["source_ref"])
+        po_line = env.po_lines(header["id"])[0]
+        assert po_line["from_po_line_ref"] == f"{MARKER}:44909094:45021331"
 
         repush_line = _po_line(env, ref=line["source_ref"], from_po_line_ref=None)
         repush = dict(record, lines=[repush_line])
         res = env.post(INGEST_PO, [repush])
 
         assert res.json()["records"][0]["outcome"] == "updated", res.text
-        header = env.header("purchase_orders", record["source_ref"])
         po_line = env.po_lines(header["id"])[0]
         assert po_line["from_po_line_ref"] is None
 
@@ -489,6 +496,8 @@ class TestExplicitNullClears:
         record = _spo_record(env, lines=[line], supplier_ref=env.supplier_ref)
         first = env.post(INGEST_SPO, [record])
         assert first.json()["records"][0]["outcome"] == "created", first.text
+        row = _spo_rows(env, record["spo_number"])[0]
+        assert row["from_po_line_ref"] == f"{MARKER}:44909094:45021331"
 
         repush_line = _spo_line(env, ref=line["source_ref"], from_po_line_ref=None)
         repush = dict(record, lines=[repush_line])
@@ -498,18 +507,53 @@ class TestExplicitNullClears:
         row = _spo_rows(env, record["spo_number"])[0]
         assert row["from_po_line_ref"] is None
 
+    def test_an_explicit_null_clears_from_so_line_ref_on_a_purchase_order_line(self, env):
+        line = _po_line(env, from_so_line_ref=f"{MARKER}:45700100:45700148")
+        record = _po_record(env, lines=[line])
+        first = env.post(INGEST_PO, [record])
+        assert first.json()["records"][0]["outcome"] == "created", first.text
+        header = env.header("purchase_orders", record["source_ref"])
+        po_line = env.po_lines(header["id"])[0]
+        assert po_line["from_so_line_ref"] == f"{MARKER}:45700100:45700148"
+
+        repush_line = _po_line(env, ref=line["source_ref"], from_so_line_ref=None)
+        repush = dict(record, lines=[repush_line])
+        res = env.post(INGEST_PO, [repush])
+
+        assert res.json()["records"][0]["outcome"] == "updated", res.text
+        po_line = env.po_lines(header["id"])[0]
+        assert po_line["from_so_line_ref"] is None
+
+    def test_an_explicit_null_clears_from_so_line_ref_on_an_spo_line(self, env):
+        line = _spo_line(env, from_so_line_ref=f"{MARKER}:45700100:45700148")
+        record = _spo_record(env, lines=[line], supplier_ref=env.supplier_ref)
+        first = env.post(INGEST_SPO, [record])
+        assert first.json()["records"][0]["outcome"] == "created", first.text
+        row = _spo_rows(env, record["spo_number"])[0]
+        assert row["from_so_line_ref"] == f"{MARKER}:45700100:45700148"
+
+        repush_line = _spo_line(env, ref=line["source_ref"], from_so_line_ref=None)
+        repush = dict(record, lines=[repush_line])
+        res = env.post(INGEST_SPO, [repush])
+
+        assert res.json()["records"][0]["outcome"] == "updated", res.text
+        row = _spo_rows(env, record["spo_number"])[0]
+        assert row["from_so_line_ref"] is None
+
     def test_an_explicit_null_clears_from_so_external_on_a_purchase_order_line(self, env):
         line = _po_line(env, from_so_external={"db": "AED_OTHER", "doc_key": 1})
         record = _po_record(env, lines=[line])
         first = env.post(INGEST_PO, [record])
         assert first.json()["records"][0]["outcome"] == "created", first.text
+        header = env.header("purchase_orders", record["source_ref"])
+        po_line = env.po_lines(header["id"])[0]
+        assert po_line["from_so_external"] == {"db": "AED_OTHER", "doc_key": 1}
 
         repush_line = _po_line(env, ref=line["source_ref"], from_so_external=None)
         repush = dict(record, lines=[repush_line])
         res = env.post(INGEST_PO, [repush])
 
         assert res.json()["records"][0]["outcome"] == "updated", res.text
-        header = env.header("purchase_orders", record["source_ref"])
         po_line = env.po_lines(header["id"])[0]
         assert po_line["from_so_external"] is None
 
@@ -518,6 +562,8 @@ class TestExplicitNullClears:
         record = _spo_record(env, lines=[line], supplier_ref=env.supplier_ref)
         first = env.post(INGEST_SPO, [record])
         assert first.json()["records"][0]["outcome"] == "created", first.text
+        row = _spo_rows(env, record["spo_number"])[0]
+        assert row["from_so_external"] == {"db": "AED_OTHER", "doc_key": 1}
 
         repush_line = _spo_line(env, ref=line["source_ref"], from_so_external=None)
         repush = dict(record, lines=[repush_line])
@@ -526,6 +572,48 @@ class TestExplicitNullClears:
         assert res.json()["records"][0]["outcome"] == "updated", res.text
         row = _spo_rows(env, record["spo_number"])[0]
         assert row["from_so_external"] is None
+
+
+# ==================================================================== D4
+class TestExcludeUnsetPinning:
+    """`exclude_unset=True` was unpinned - both existing from_so_external
+    tests send all four keys, so they pass identically under plain
+    `model_dump()`. These pin the actual difference: a NARROWER object
+    stores ONLY the keys sent (no filled-in nulls for the ones omitted),
+    and an explicit inner `null` IS stored as null (present, not dropped).
+    """
+
+    def test_a_narrower_object_stores_only_the_keys_sent(self, env):
+        line = _po_line(env, from_so_external={"db": "AED_OTHER", "doc_key": 45700100})
+        record = _po_record(env, lines=[line])
+
+        res = env.post(INGEST_PO, [record])
+
+        assert res.json()["records"][0]["outcome"] == "created", res.text
+        header = env.header("purchase_orders", record["source_ref"])
+        po_line = env.po_lines(header["id"])[0]
+        # Exactly the two keys sent - no doc_no/dtl_key filled in as None,
+        # which is what a plain model_dump() (no exclude_unset) would do.
+        assert po_line["from_so_external"] == {"db": "AED_OTHER", "doc_key": 45700100}
+
+    def test_an_explicit_inner_null_is_stored_as_null(self, env):
+        line = _spo_line(
+            env,
+            from_so_external={
+                "db": "AED_OTHER", "doc_key": 45700100, "doc_no": None, "dtl_key": 2,
+            },
+        )
+        record = _spo_record(env, lines=[line], supplier_ref=env.supplier_ref)
+
+        res = env.post(INGEST_SPO, [record])
+
+        assert res.json()["records"][0]["outcome"] == "created", res.text
+        row = _spo_rows(env, record["spo_number"])[0]
+        # doc_no was SENT as null, not omitted - it must be PRESENT as null,
+        # distinct from a key that was never mentioned at all.
+        assert row["from_so_external"] == {
+            "db": "AED_OTHER", "doc_key": 45700100, "doc_no": None, "dtl_key": 2,
+        }
 
 
 # ================================================================ AC-V8-7 (S3)
@@ -559,3 +647,167 @@ class TestDryRunWritesNoRefClaim:
         assert entry["outcome"] == "created", res.text
         assert _claims_for(env, po_number=record["po_number"]) == []
         assert env.header("purchase_orders", record["source_ref"]) is None
+
+
+# ==================================================================== D1
+class TestExactRefNeverCrossesSalesOrders:
+    """D1 (blocker, reviewer-confirmed regression - reproduces the review's
+    own walkthrough exactly). `_exact_so_line_for` used to query
+    `SalesOrderLine` alone, with no join to `SalesOrder` and no check
+    against the claim's OWN `so_number`, so it could point a claim at a
+    line belonging to a DIFFERENT sales order than the one it names, and
+    `resolve()` assigned the result unconditionally - stamping
+    `resolved_at` and putting the wrong pairing out of reach for good.
+
+    `from_so_numbers=["SO-A", "SO-B"]` plus a `from_so_line_ref` naming an
+    SO-B line: the ref path (`write_line_ref_claims`) resolves and writes
+    the SO-B claim fully paired, at push time, deriving `so_number` FROM
+    the resolved line - safe by construction. The number path
+    (`write_claims_for_lines`) opens a SEPARATE SO-A claim (SO-A is never
+    even seeded, so the ambiguous match cannot resolve it either) and calls
+    `resolve()`, which - pre-fix - read the ref off the SAME purchase
+    line's `from_so_line_ref` (one column, shared by every claim that
+    points at that line) with no check against which so_number the claim
+    in hand actually names, and assigned SO-B's line to the SO-A claim.
+
+    Confirmed by running this test against c2c1e5148 (the commit the D1
+    regression shipped in, before this fix): it FAILED there - the SO-A
+    claim's `so_line_id` was SO-B's line id and `resolved_at` was set.
+    """
+
+    def test_the_so_a_claim_never_lands_on_the_so_b_line(self, env):
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        so_a = f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}"
+        so_b = f"{MARKER}-SOB-{uuid.uuid4().hex[:8]}"
+        ref_b = _ref("SOL")
+        so_b_row, so_b_line = _seed_so_line(
+            env, so_number=so_b, product_id=product_id, source_ref=ref_b,
+        )
+
+        line = _po_line(env, from_so_numbers=[so_a, so_b], from_so_line_ref=ref_b)
+        record = _po_record(env, lines=[line])
+
+        res = env.post(INGEST_PO, [record])
+
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", res.text
+        claims = _claims_for(env, po_number=record["po_number"])
+        by_so = {c["so_number"]: c for c in claims}
+        assert set(by_so) == {so_a, so_b}, claims
+
+        # SO-B resolved correctly and immediately, through the exact ref.
+        assert str(by_so[so_b]["so_line_id"]) == str(so_b_line.id)
+        assert by_so[so_b]["resolved_at"] is not None
+
+        # SO-A must NEVER be assigned SO-B's line - the whole point of D1.
+        assert by_so[so_a]["so_line_id"] is None, by_so[so_a]
+        assert by_so[so_a]["resolved_at"] is None, by_so[so_a]
+
+
+# ==================================================================== D2
+class TestExactRefRecoveryOnLaterSweep:
+    """D2 (should-fix treated as blocking per PRINCIPLES: a green kill test
+    is a defect on its own). The `_exact_so_line_for` half of `resolve()`'s
+    sweep was entirely unexercised - deleting
+    `exact_so_line.get(str(claim.id)) or` from the assignment in
+    `resolve()` left the whole suite green. This is the test AC-V8-5
+    actually describes: a `from_so_line_ref` that could not resolve at
+    push time (the sales order had not been pushed yet) is recovered on a
+    LATER `resolve()` sweep, once it arrives - the reason the ref is
+    persisted on the purchase-side row at all (B2) rather than merely
+    consumed and discarded.
+    """
+
+    def test_resolve_sweep_recovers_the_exact_line_over_the_ambiguous_match(self, env):
+        so_number = f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}"
+        wanted_ref = _ref("SOL")
+        line = _po_line(env, from_so_numbers=[so_number], from_so_line_ref=wanted_ref)
+        record = _po_record(env, lines=[line])
+
+        res = env.post(INGEST_PO, [record])
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", res.text
+
+        # The sales order did not exist at push time, so the ref could not
+        # resolve - today's from_so_numbers path opened the claim, unresolved.
+        claims = _claims_for(env, po_number=record["po_number"])
+        assert len(claims) == 1, claims
+        assert claims[0]["so_line_id"] is None
+        assert claims[0]["resolved_at"] is None
+
+        # NOW the sales order arrives - the WANTED (ref-named) line seeded
+        # FIRST and a same-item DECOY line SECOND, so the ambiguous
+        # (so_number, item_code) match (last-wins over an ORDER-BY-less
+        # SELECT - see TestRefTakesPrecedenceOverAmbiguousNumberMatch's own
+        # comment) would pick the DECOY if the exact-ref recovery below
+        # were not running.
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        so = SalesOrder(so_number=so_number, status="open", company_id=env.company_a)
+        env.db.add(so)
+        env.db.flush()
+        wanted_line = SalesOrderLine(
+            sales_order_id=so.id, product_id=product_id, qty_ordered=5,
+            source_ref=wanted_ref, company_id=env.company_a,
+        )
+        env.db.add(wanted_line)
+        env.db.flush()
+        decoy_line = SalesOrderLine(
+            sales_order_id=so.id, product_id=product_id, qty_ordered=10,
+            source_ref=_ref("SOL"), company_id=env.company_a,
+        )
+        env.db.add(decoy_line)
+        env.db.flush()
+        env.db.commit()
+
+        result = order_link_service.resolve(env.db)
+
+        assert result["resolved"] == 1, result
+        claims = _claims_for(env, po_number=record["po_number"])
+        assert len(claims) == 1, claims
+        assert str(claims[0]["so_line_id"]) == str(wanted_line.id), claims
+        assert claims[0]["resolved_at"] is not None
+
+
+# ============================================================ retraction pin
+class TestFromSoLineRefAndExternalCanCoexist:
+    """The ESB retracted an earlier guarantee that `from_so_external` is
+    never sent alongside a same-book `from_so_line_ref` on one line - the
+    two come from different AutoCount columns (`FromSODtlKey` versus the
+    ICB plugin's UDFs) and describe different books, so a line raised from
+    a same-book sales order AND tagged by the ICB plugin legitimately
+    carries both. No mutual-exclusion validator was ever written to enforce
+    the old guarantee (both fields are plain `Optional`), so there was
+    nothing to relax in code - this pins the CURRENT rule so nobody adds
+    that validator later: both may be present, the ref resolves normally
+    into a claim, and the external object is stored untouched alongside it.
+    """
+
+    def test_a_line_with_both_fields_is_accepted_ref_resolves_and_external_stored(self, env):
+        product_id = env.refs.resolve(entity_type="products", source_ref=env.product_ref)
+        so_ref = _ref("SOL")
+        so, so_line = _seed_so_line(
+            env,
+            so_number=f"{MARKER}-SOA-{uuid.uuid4().hex[:8]}",
+            product_id=product_id,
+            source_ref=so_ref,
+        )
+        external = {
+            "db": "AED_OTHER", "doc_key": 45700100, "doc_no": "SO-9", "dtl_key": 45700148,
+        }
+        line = _po_line(env, from_so_line_ref=so_ref, from_so_external=external)
+        record = _po_record(env, lines=[line])
+
+        res = env.post(INGEST_PO, [record])
+
+        entry = res.json()["records"][0]
+        assert entry["outcome"] == "created", res.text
+
+        claims = _claims_for(env, po_number=record["po_number"])
+        assert len(claims) == 1, claims
+        assert str(claims[0]["so_line_id"]) == str(so_line.id)
+        assert claims[0]["resolved_at"] is not None
+
+        header = env.header("purchase_orders", record["source_ref"])
+        po_line = env.po_lines(header["id"])[0]
+        assert po_line["from_so_line_ref"] == so_ref
+        assert po_line["from_so_external"] == external
