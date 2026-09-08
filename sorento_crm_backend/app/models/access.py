@@ -675,9 +675,16 @@ class McpTool(Base):
     #: per gated field: `[{"key": "inventory.sellable", "label": "Sellable stock"}]`.
     #: Written by `sync_catalog` from `ToolSpec.restricted_fields` (a static
     #: declaration, since sync reads the code catalog and never calls the tool).
-    #: `[]` for a tool with nothing restricted - the common case. This is what
-    #: `GET /system/chatbot/field-reveal-keys` reads, so a new restricted field
-    #: reaches the Contacts > Access checklist after a sync with no FE change.
+    #: `[]` for a tool with nothing restricted - the common case. `sync_catalog` only
+    #: ever runs where `sorento_crm_mcp` is importable (a local checkout, the seed
+    #: script) - the deployed backend image cannot import it (compose builds the
+    #: image with `context: ./sorento_crm_backend`, the package is not in
+    #: `requirements.txt`), so this column stays at its migration-488 default of
+    #: `[]` on every environment that runs from that image. `GET
+    #: /system/chatbot/field-reveal-keys` does NOT read this column for that reason;
+    #: it serves `contact_field_reveal_service.FIELD_REVEAL_KEYS`, a frozen literal a
+    #: CI test pins to the catalogue. This column remains useful wherever the sync
+    #: does run and as the historical record of what was declared at each sync.
     restricted_fields = Column(
         JSONB(astext_type=Text()), nullable=False, server_default=text("'[]'::jsonb")
     )

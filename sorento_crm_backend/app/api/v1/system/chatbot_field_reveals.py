@@ -6,9 +6,16 @@ presenter marks a field `restricted=<key>` in `field_vocabulary`; these three
 routes are the admin surface over the grant table:
 
 * `GET /field-reveal-keys` - every restricted key that exists, with a label, for
-  the Contacts > Access checklist. Sourced from `mcp_tools.restricted_fields`
-  (written by the MCP catalog sync), never hardcoded - a new `restricted=` field
-  on a presenter appears here after the next sync with no FE change (AC-964).
+  the Contacts > Access checklist. Sourced from the frozen
+  `contact_field_reveal_service.FIELD_REVEAL_KEYS` literal, NOT a live read of
+  `mcp_tools.restricted_fields`: the deployed backend image cannot import
+  `sorento_crm_mcp` (compose builds it with `context: ./sorento_crm_backend`, the
+  package is not in `requirements.txt`), so the startup catalog sync that writes
+  that column never runs in production and the column stays at its migration-488
+  default of `[]` forever. `mcp_tool_registry_service.sync_catalog` still writes
+  it in an environment that CAN import the catalogue (a local checkout, the seed
+  script); this route just does not depend on that having happened. A CI test
+  pins the literal to the catalogue so the two cannot drift (AC-964).
 * `GET /contacts/{respond_contact_id}/field-reveals` - the keys this contact
   currently holds.
 * `PUT /contacts/{respond_contact_id}/field-reveals` - full-list replace.
@@ -51,11 +58,10 @@ def _require_contact(db: Session, respond_contact_id: str) -> RespondContact:
 @router.get("/field-reveal-keys", response_model=FieldRevealKeysResponse)
 def list_field_reveal_keys(
     current_user: dict = Depends(require_permission(CONTACT_VIEW)),
-    db: Session = Depends(get_db),
 ):
     """Every restricted key that exists, with its label (AC-963, AC-964)."""
     _ = current_user
-    return FieldRevealKeysResponse(items=service.field_reveal_keys(db))
+    return FieldRevealKeysResponse(items=service.field_reveal_keys())
 
 
 @router.get(
@@ -83,7 +89,7 @@ def set_contact_field_reveals(
     """Full-list replace: exactly `payload.granted` ends up granted (AC-963)."""
     _require_contact(db, respond_contact_id)
 
-    allowed = {item["key"] for item in service.field_reveal_keys(db)}
+    allowed = {item["key"] for item in service.field_reveal_keys()}
     unknown = sorted(set(payload.granted) - allowed)
     if unknown:
         raise handle_unprocessable(

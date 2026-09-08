@@ -1,5 +1,10 @@
 """`GET /system/chatbot/field-reveal-keys` and `GET|PUT
 .../contacts/{id}/field-reveals` (chatbot growth r1, Slice C1, AC-963, AC-964).
+
+`field-reveal-keys` is served from the frozen `contact_field_reveal_service.
+FIELD_REVEAL_KEYS` literal, not a live `mcp_tools` query (see that service module's
+docstring), so these tests assert against the real literal's keys instead of seeding an
+`McpTool` row.
 """
 from __future__ import annotations
 
@@ -12,7 +17,7 @@ from fastapi.testclient import TestClient
 import app.main  # noqa: F401  isort:skip - registers every model before any query
 from app.main import app
 from app.dependencies import get_current_user, get_current_user_or_api_key, get_db
-from app.models.access import McpTool
+from app.services.contact_field_reveal_service import FIELD_REVEAL_KEYS
 from app.services.user_service import UserPermissionService
 
 from tests.chatbot.test_turns_admin_api import db  # noqa: F401 - reuses the blank-schema fixture
@@ -72,34 +77,12 @@ def _contact(db) -> str:
     return db.execute(text("SELECT id FROM respond_contacts ORDER BY created_at DESC LIMIT 1")).scalar()
 
 
-def _seed_restricted_tool(db) -> None:
-    from datetime import datetime
-
-    db.add(
-        McpTool(
-            id=str(uuid.uuid4()),
-            tool_name=f"ZZT-tool-{uuid.uuid4().hex[:6]}",
-            http_path="/x",
-            http_method="GET",
-            is_active=True,
-            last_seen_at=datetime.utcnow(),
-            restricted_fields=[
-                {"key": "inventory.sellable", "label": "Sellable stock"},
-                {"key": "purchase_orders.supplier", "label": "PO supplier"},
-            ],
-        )
-    )
-    db.commit()
-
-
 class TestFieldRevealKeys:
     def test_lists_keys_with_labels(self, client, db):
-        _seed_restricted_tool(db)
         resp = client.get(f"{BASE}/field-reveal-keys")
         assert resp.status_code == 200, resp.text
         keys = {item["key"]: item["label"] for item in resp.json()["items"]}
-        assert keys["inventory.sellable"] == "Sellable stock"
-        assert keys["purchase_orders.supplier"] == "PO supplier"
+        assert dict(FIELD_REVEAL_KEYS) == keys
 
     def test_requires_permission(self, client, db):
         _GRANTS.discard(CONTACT_VIEW)
@@ -116,7 +99,6 @@ class TestContactFieldReveals:
 
     def test_put_replaces_and_get_reflects_it(self, client, db):
         contact_id = _contact(db)
-        _seed_restricted_tool(db)
 
         put_resp = client.put(
             f"{BASE}/contacts/{contact_id}/field-reveals",
@@ -141,7 +123,6 @@ class TestContactFieldReveals:
 
     def test_put_rejects_an_unknown_key(self, client, db):
         contact_id = _contact(db)
-        _seed_restricted_tool(db)
 
         resp = client.put(
             f"{BASE}/contacts/{contact_id}/field-reveals",
