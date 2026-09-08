@@ -27,13 +27,6 @@ import {
 } from '../../_shared/lib/orderInquiryAck';
 import { BoardChangeTable } from '../../fulfilment-planning/components/BoardChangeTable';
 import { OrderInquiryVerbPill } from '../../_shared/components/OrderInquiryVerbPill';
-import { SupplyBar } from '../../_shared/components/SupplyBar';
-import {
-  KIND_COLOURS,
-  KIND_LABELS,
-  fullyLinked,
-  segmentsOfRow,
-} from '../../_shared/lib/orderInquiryKinds';
 import {
   flowExclusionLabel,
   formatInquiryQty,
@@ -41,7 +34,7 @@ import {
   orderInquiryRowHref,
 } from '../../_shared/lib/orderInquiryWorklist';
 import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
-import { OrderInquiryDocumentLink } from './OrderInquiryDocumentDialog';
+import { OrderInquiryBackingDocumentsDialog } from './OrderInquiryBackingDocumentsDialog';
 
 function Muted({ children }: { children: React.ReactNode }) {
   return <span className="text-muted-foreground">{children}</span>;
@@ -162,6 +155,37 @@ function DraftMark({ row }: { row: OrderInquiryWorklistRow }) {
     >
       <CircleDashed className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
     </span>
+  );
+}
+
+/**
+ * The "Outstanding PO/SPO" cell's own info icon (AC-A5): opens
+ * `OrderInquiryBackingDocumentsDialog`, mounted only once asked for so a page of a hundred
+ * rows does not carry a hundred dialogs - the same pattern `OrderInquiryDocumentLink` uses.
+ */
+function BackingDocumentsButton({ row }: { row: OrderInquiryWorklistRow }) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <>
+      <Button
+        type="button"
+        mode="icon"
+        variant="ghost"
+        size="sm"
+        data-testid={`backing-documents-trigger-${row.id}`}
+        aria-label={`Show documents backing ${row.item_code ?? row.so_number ?? 'this row'}`}
+        className="size-5 shrink-0 text-muted-foreground"
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen(true);
+        }}
+      >
+        <Info className="size-3.5" aria-hidden />
+      </Button>
+      {open ? (
+        <OrderInquiryBackingDocumentsDialog row={row} open onOpenChange={setOpen} />
+      ) : null}
+    </>
   );
 }
 
@@ -401,11 +425,12 @@ export function useOrderInquiryWorklistColumns({
           ),
       },
       {
-        // WHERE the quantity sits (AC-D16/AC-D17). One row holds many links
-        // (`projects.order_inquiry_links`), so the cell states the coverage first -
-        // `8 of 8` - and then names each document with the LOCATION and quantity it
-        // holds, which is the shape the buyer keys into AutoCount. Either kind of
-        // document number opens the lightbox.
+        // WHERE the quantity sits (AC-A1..AC-A7, owner's 8 Sep cut of the mock). The cell
+        // is ONE LINE: the draft/confirmed mark, the coverage headline - `115 of 493` -
+        // and, when there is something to explain, an info icon that opens
+        // `OrderInquiryBackingDocumentsDialog`. No SupplyBar (a proportion of a number the
+        // cell already prints in full), no document number, no count and no lateness -
+        // every one of those moved behind the icon or off the cell entirely.
         //
         // The column id stays `po_number` even though the header no longer says PO: it
         // is what a saved column layout is keyed by, and renaming it would silently
@@ -415,7 +440,7 @@ export function useOrderInquiryWorklistColumns({
         header: ({ column }) => (
           <DataGridColumnHeader title="Outstanding PO/SPO" column={column} />
         ),
-        size: 280,
+        size: 220,
         meta: { headerTitle: 'Outstanding PO/SPO', skeleton: <Skeleton className="h-4 w-28" /> },
         cell: ({ row }) => {
           const summary = linkedSummary(
@@ -423,89 +448,24 @@ export function useOrderInquiryWorklistColumns({
             row.original.linked_qty,
             row.original.links,
           );
-          // The same bar the schedule draws, off the same three kinds (AC-I14), so the
-          // two views of this worklist cannot read differently: an unlinked row is a
-          // faded rose bar over the words that say so (faded because nothing has been
-          // committed to yet), a row linked 5 of 8 is sky over rose. No legend beside it
-          // - the cards above the list carry the words.
-          const bar = (
-            <SupplyBar
-              segments={segmentsOfRow(row.original)}
-              decided={fullyLinked([row.original])}
-              labels={KIND_LABELS}
-              colours={KIND_COLOURS}
-              className="mt-1 max-w-[120px]"
-            />
-          );
           if (!summary) {
             // Nothing in either book can cover this row, so it is a NEW order rather
-            // than an oversight (AC-D2). "Not linked" read as a step somebody had
+            // than an oversight (AC-A7). "Not linked" read as a step somebody had
             // forgotten to take; the links are drafted the moment a row is raised now,
-            // so an empty cell means the cascade looked and found nothing.
+            // so an empty cell means the cascade looked and found nothing. No icon: there
+            // is nothing behind it to open.
             return (
               <div className="min-w-0">
                 <Muted>Not found (new order)</Muted>
-                {bar}
               </div>
             );
           }
           return (
-            <div className="min-w-0">
-              <span className="flex min-w-0 items-center gap-1 text-xs font-medium tabular-nums">
-                <DraftMark row={row.original} />
-                <span className="truncate">{summary.headline}</span>
-              </span>
-              {bar}
-              {summary.documents.map((entry) => {
-                const link = (row.original.links ?? []).find(
-                  (candidate) =>
-                    candidate.document === entry.document && candidate.kind === entry.kind,
-                );
-                const lateWords =
-                  entry.lateDays !== null
-                    ? ` - lands ${entry.lateDays} day${entry.lateDays === 1 ? '' : 's'} after ${
-                        row.original.delivery_date
-                          ? formatDateInMalaysia(row.original.delivery_date)
-                          : 'the required date'
-                      }`
-                    : entry.late
-                      ? ' - arrives late'
-                      : '';
-                // The line label lives HERE and nowhere else (AC-D16): it names which
-                // line of the document holds the quantity, which matters once the
-                // document is open and never while the list is being scanned.
-                const label = `${entry.document}: ${entry.partsTitle}${lateWords}`;
-                return (
-                  <span
-                    key={`${entry.kind}-${entry.document}`}
-                    className="flex min-w-0 items-center gap-1"
-                    title={label}
-                  >
-                    <span className="shrink-0 rounded-sm bg-muted px-1 py-0.5 text-[10px] font-medium uppercase text-muted-foreground">
-                      {entry.kind}
-                    </span>
-                    <OrderInquiryDocumentLink
-                      kind={entry.kind}
-                      document={entry.document}
-                      poId={link?.po_id}
-                    />
-                    <span className="truncate text-xs text-muted-foreground">
-                      {entry.parts}
-                    </span>
-                    {/* AC-D17: it lands after this row needs it, and by how much. Said,
-                        never acted on - nothing is unlinked for lateness. */}
-                    {entry.late ? (
-                      <span
-                        data-testid={`link-late-${entry.document}`}
-                        className="shrink-0 rounded-sm bg-amber-100 px-1 py-0.5 text-[10px] font-medium text-amber-800"
-                      >
-                        {entry.lateDays !== null ? `late ${entry.lateDays} d` : 'late'}
-                      </span>
-                    ) : null}
-                  </span>
-                );
-              })}
-            </div>
+            <span className="flex min-w-0 items-center gap-1 text-xs font-medium tabular-nums">
+              <DraftMark row={row.original} />
+              <span className="truncate">{summary.headline}</span>
+              <BackingDocumentsButton row={row.original} />
+            </span>
           );
         },
       },

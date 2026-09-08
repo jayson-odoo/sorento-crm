@@ -1,11 +1,13 @@
 /**
- * The list's own "Outstanding PO/SPO" column (AC-D2/AC-D3/AC-D16/AC-D17, item 5 and 11 of
- * `PLAN-scm-oi-draft-links.md`): the SAME `SupplyBar` the schedule matrix draws, off the
- * same three kinds, under the coverage headline, plus the draft/confirmed mark and the
- * per-document location-first summary. Rendered here as a bare `<table>` off
- * `useOrderInquiryWorklistColumns()` directly - just the one column, so a DataGrid's own
- * chrome (which needs `useListingColumnPreferences` mocked under jsdom, see
- * `OrderInquiriesClient.test.tsx`) never has to enter this test at all.
+ * The list's own "Outstanding PO/SPO" column (AC-A1..AC-A7, `PLAN-scm-oi-reserving-
+ * feedback-8sep.md` slice A): ONE LINE per row - the draft/confirmed mark, the coverage
+ * headline, and an info icon that opens `OrderInquiryBackingDocumentsDialog`. No
+ * `SupplyBar`, no per-document text, no lateness in the cell any more - every one of those
+ * either moved behind the icon or was dropped outright (8 Sep owner cut of the mock).
+ * Rendered here as a bare `<table>` off `useOrderInquiryWorklistColumns()` directly - just
+ * the one column, so a DataGrid's own chrome (which needs `useListingColumnPreferences`
+ * mocked under jsdom, see `OrderInquiriesClient.test.tsx`) never has to enter this test at
+ * all.
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -83,8 +85,8 @@ function renderQtyCell(rows: OrderInquiryWorklistRow[]) {
   return renderRows(rows, 'qty');
 }
 
-describe('the "Outstanding PO/SPO" column: the bar (AC-I14)', () => {
-  it('draws the bar on a row wholly linked to a purchase order', () => {
+describe('the "Outstanding PO/SPO" column: one line, no bar, no late badge (slice A, 8 Sep 2026)', () => {
+  it('AC-A2: no supply-bar renders in this column, on a wholly linked row', () => {
     renderRows([
       worklistRow({
         id: 'row-linked',
@@ -96,14 +98,10 @@ describe('the "Outstanding PO/SPO" column: the bar (AC-I14)', () => {
     ]);
 
     const row = screen.getByTestId('row-row-linked');
-    const bar = within(row).getByTestId('supply-bar');
-    expect(bar).toHaveAttribute('data-decided', 'true');
-    const segments = [...bar.querySelectorAll('span[data-kind]')];
-    expect(segments).toHaveLength(1);
-    expect(segments[0].getAttribute('data-kind')).toBe('po');
+    expect(within(row).queryByTestId('supply-bar')).not.toBeInTheDocument();
   });
 
-  it('draws a split sky/rose bar for a row linked 5 of 8 to a purchase order', () => {
+  it('AC-A2: no supply-bar renders on a partly linked row either', () => {
     renderRows([
       worklistRow({
         id: 'row-split',
@@ -117,37 +115,87 @@ describe('the "Outstanding PO/SPO" column: the bar (AC-I14)', () => {
     ]);
 
     const row = screen.getByTestId('row-row-split');
-    const bar = within(row).getByTestId('supply-bar');
-    expect(bar).toHaveAttribute('data-decided', 'false');
-    const kinds = [...bar.querySelectorAll('span[data-kind]')].map((el) =>
-      el.getAttribute('data-kind'),
-    );
-    expect(kinds).toEqual(['po', 'buy']);
+    expect(within(row).queryByTestId('supply-bar')).not.toBeInTheDocument();
   });
 
-  it('draws no bar at all for a cancelled row - it owes nothing', () => {
+  it('AC-A3: no link-late element renders anywhere in the column, even on a late document', () => {
     renderRows([
-      worklistRow({ id: 'row-cancelled', qty: '6', linked_qty: '0', links: [], state: 'cancelled' }),
+      worklistRow({
+        id: 'row-late',
+        qty: '5',
+        linked_qty: '5',
+        delivery_date: '2026-08-01',
+        po_number: '202607-S0105',
+        links: [
+          {
+            id: 'l1',
+            kind: 'po',
+            document: '202607-S0105',
+            qty: '5',
+            location: 'BRW',
+            late: true,
+            late_days: 12,
+          },
+        ],
+      }),
     ]);
 
-    const row = screen.getByTestId('row-row-cancelled');
-    expect(within(row).queryByTestId('supply-bar')).not.toBeInTheDocument();
+    const row = screen.getByTestId('row-row-late');
+    expect(within(row).queryByTestId('link-late-202607-S0105')).not.toBeInTheDocument();
+    expect(row.querySelector('[title*="lands"]')).not.toBeInTheDocument();
+    expect(row.querySelector('[title*="arrives late"]')).not.toBeInTheDocument();
+  });
+
+  it('AC-A6: a row backing exactly one document prints NO document number in the cell', () => {
+    renderRows([
+      worklistRow({
+        id: 'row-one-doc',
+        qty: '5',
+        linked_qty: '5',
+        po_number: '202607-S0105',
+        links: [{ id: 'l1', kind: 'po', document: '202607-S0105', qty: '5', location: 'BRW' }],
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-row-one-doc');
+    expect(within(row).queryByText('202607-S0105')).not.toBeInTheDocument();
+    expect(
+      within(row).queryByTestId('document-detail-trigger-202607-S0105'),
+    ).not.toBeInTheDocument();
+    // Still offers the icon (AC-A6's other half).
+    expect(within(row).getByTestId('backing-documents-trigger-row-one-doc')).toBeInTheDocument();
+  });
+
+  it('AC-A4: the cell prints only the coverage headline and the draft/confirmed mark', () => {
+    renderRows([
+      worklistRow({
+        id: 'row-headline',
+        qty: '493',
+        linked_qty: '115',
+        po_number: '202607-S0105',
+        links: [{ id: 'l1', kind: 'po', document: '202607-S0105', qty: '115', location: 'BRW' }],
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-row-headline');
+    expect(within(row).getByText('115 of 493')).toBeInTheDocument();
+    expect(within(row).getByTestId('link-draft-mark')).toBeInTheDocument();
+    // No document count anywhere in the cell.
+    expect(within(row).queryByText(/document/i)).not.toBeInTheDocument();
   });
 });
 
-describe('AC-D2: a row nothing can cover', () => {
-  it('reads "Not found (new order)" - never "Not linked", which read as an oversight', () => {
+describe('AC-A7: a row nothing can cover', () => {
+  it('reads "Not found (new order)" - never "Not linked", which read as an oversight - and shows no icon', () => {
     renderRows([worklistRow({ id: 'row-unlinked', qty: '85', linked_qty: '0', links: [] })]);
 
     const row = screen.getByTestId('row-row-unlinked');
     expect(within(row).getByText('Not found (new order)')).toBeInTheDocument();
     expect(within(row).queryByText('Not linked')).not.toBeInTheDocument();
-    // The bar still draws - a solid rose Buy segment - so the row is not a blank cell.
-    const bar = within(row).getByTestId('supply-bar');
-    expect(bar).toHaveAttribute('data-decided', 'false');
-    const segments = [...bar.querySelectorAll('span[data-kind]')];
-    expect(segments).toHaveLength(1);
-    expect(segments[0].getAttribute('data-kind')).toBe('buy');
+    expect(within(row).queryByTestId('supply-bar')).not.toBeInTheDocument();
+    expect(
+      within(row).queryByTestId('backing-documents-trigger-row-unlinked'),
+    ).not.toBeInTheDocument();
   });
 
   it('carries no draft/confirmed mark at all when there is nothing to mark', () => {
@@ -156,6 +204,52 @@ describe('AC-D2: a row nothing can cover', () => {
     const row = screen.getByTestId('row-row-unlinked');
     expect(within(row).queryByTestId('link-draft-mark')).not.toBeInTheDocument();
     expect(within(row).queryByTestId('link-confirmed-mark')).not.toBeInTheDocument();
+  });
+});
+
+describe('AC-A5: the info icon opens the backing-documents lightbox', () => {
+  it('lists every backing document with kind, number, location, quantity, expected date and standing', () => {
+    renderRows([
+      worklistRow({
+        id: 'row-multi',
+        qty: '493',
+        linked_qty: '115',
+        ack_state: 'acknowledged',
+        po_number: '202607-S0105',
+        links: [
+          {
+            id: 'l1',
+            kind: 'po',
+            document: '202607-S0105',
+            qty: '52',
+            location: 'BRW-IB',
+            expected_date: '2026-08-19',
+          },
+          {
+            id: 'l2',
+            kind: 'spo',
+            document: 'SPO-2026/08-0061',
+            qty: '63',
+            location: 'BRW',
+            expected_date: '2026-09-01',
+          },
+        ],
+      }),
+    ]);
+
+    const row = screen.getByTestId('row-row-multi');
+    fireEvent.click(screen.getByTestId('backing-documents-trigger-row-multi'));
+
+    // Rendered via a portal (Radix `Dialog`), so it is read off `screen`, not `row`.
+    const dialog = screen.getByTestId('backing-documents-row-multi');
+    expect(within(dialog).getByText('202607-S0105')).toBeInTheDocument();
+    expect(within(dialog).getByText('SPO-2026/08-0061')).toBeInTheDocument();
+    expect(dialog.textContent).toContain('BRW-IB');
+    expect(dialog.textContent).toContain('52');
+    expect(dialog.textContent).toContain('63');
+    expect(within(dialog).getAllByText('Confirmed').length).toBeGreaterThan(0);
+    // Closing returns the trigger to view without unmounting the row (AC-A5).
+    expect(row).toBeInTheDocument();
   });
 });
 
@@ -207,13 +301,13 @@ describe('AC-D1/D3: the draft vs confirmed mark reads off ack_state, not a link 
   });
 });
 
-describe('AC-D16/AC-D17: the per-document summary reads location first, late N d', () => {
-  it('reads the pool warehouse code and quantity, the line label only in the title', () => {
+describe('AC-A1/AC-A6: the cell prints no per-document detail any more - it all moved behind the icon', () => {
+  it('a row backing three documents renders no per-document location/quantity text in the cell', () => {
     renderRows([
       worklistRow({
         id: 'row-spo',
-        qty: '1',
-        linked_qty: '1',
+        qty: '493',
+        linked_qty: '115',
         po_number: 'SPO-2026/08-0015',
         links: [
           {
@@ -222,62 +316,22 @@ describe('AC-D16/AC-D17: the per-document summary reads location first, late N d
             document: 'SPO-2026/08-0015',
             line_label: 'L14',
             location: 'BRW',
-            qty: '1',
+            qty: '52',
           },
+          { id: 'l2', kind: 'po', document: '202607-S0105', qty: '30', location: 'BRW-IB' },
+          { id: 'l3', kind: 'po', document: '202608-S0016', qty: '33', location: null },
         ],
       }),
     ]);
 
     const row = screen.getByTestId('row-row-spo');
-    // The visible text is "BRW 1" - never "L14 1".
-    expect(within(row).getByText('BRW 1')).toBeInTheDocument();
-    expect(within(row).queryByText('L14 1')).not.toBeInTheDocument();
-    // The document's title carries the label AND the location.
-    expect(within(row).getByTitle(/L14 BRW 1/)).toBeInTheDocument();
-  });
-
-  it('reads "no location" when the book named none', () => {
-    renderRows([
-      worklistRow({
-        id: 'row-noloc',
-        qty: '5',
-        linked_qty: '5',
-        po_number: '202607-S0105',
-        links: [
-          { id: 'l1', kind: 'po', document: '202607-S0105', qty: '5', location: null },
-        ],
-      }),
-    ]);
-
-    const row = screen.getByTestId('row-row-noloc');
-    expect(within(row).getByText('no location 5')).toBeInTheDocument();
-  });
-
-  it('reads "late N d" with the full dates in the title', () => {
-    renderRows([
-      worklistRow({
-        id: 'row-late',
-        qty: '5',
-        linked_qty: '5',
-        delivery_date: '2026-08-01',
-        po_number: '202607-S0105',
-        links: [
-          {
-            id: 'l1',
-            kind: 'po',
-            document: '202607-S0105',
-            qty: '5',
-            location: 'BRW',
-            late: true,
-            late_days: 12,
-          },
-        ],
-      }),
-    ]);
-
-    const row = screen.getByTestId('row-row-late');
-    const badge = within(row).getByTestId('link-late-202607-S0105');
-    expect(badge).toHaveTextContent('late 12 d');
+    // AC-A1: three documents behind one row still reads as ONE line - none of the old
+    // per-document text (location, quantity, line label) is rendered in the cell.
+    expect(within(row).queryByText(/BRW 52/)).not.toBeInTheDocument();
+    expect(within(row).queryByText('L14')).not.toBeInTheDocument();
+    expect(within(row).queryByText('no location')).not.toBeInTheDocument();
+    expect(within(row).getByText('115 of 493')).toBeInTheDocument();
+    expect(within(row).getByTestId('backing-documents-trigger-row-spo')).toBeInTheDocument();
   });
 });
 
