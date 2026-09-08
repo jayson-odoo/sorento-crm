@@ -1727,13 +1727,15 @@ class SPOAllocationService:
         """List SPO allocations. quantity_received is computed on load from approved GRN lines."""
         from sqlalchemy.orm import joinedload
         from app.schemas.procurement import SPOAllocationResponse
+        from app.services.scm import spo_supply
         q = self.db.query(SPOAllocation).options(
             joinedload(SPOAllocation.product),
             joinedload(SPOAllocation.warehouse),
             joinedload(SPOAllocation.inbound_shipment),
         )
-        
-        filters = []
+
+        # R1/R6: a retired line AutoCount stopped naming is hidden from the grid.
+        filters = [*spo_supply.visible_line_clauses()]
 
         shipment_ids = resolve_identifier(
             self.db,
@@ -1843,6 +1845,7 @@ class SPOAllocationService:
             InboundShipmentSimple,
             ShipmentAllocationSummaryGroup,
         )
+        from app.services.scm import spo_supply
 
         # Subquery / join: shipments that have at least one allocation matching filters
         q_shipments = (
@@ -1864,7 +1867,9 @@ class SPOAllocationService:
                 "empty": True,
             }
 
-        shipment_filters = []
+        # R1/R6: a retired line AutoCount stopped naming is hidden from the grid, and a
+        # shipment whose only allocations are hidden must not appear as a group of its own.
+        shipment_filters = [*spo_supply.visible_line_clauses()]
         if resolved_warehouse_ids:
             shipment_filters.append(SPOAllocation.warehouse_id.in_(resolved_warehouse_ids))
         if receipt_status and receipt_status != "all":
@@ -1889,7 +1894,7 @@ class SPOAllocationService:
         if shipment_filters:
             q_shipments = q_shipments.filter(and_(*shipment_filters))
 
-        allocation_filters = []
+        allocation_filters = [*spo_supply.visible_line_clauses()]
         if resolved_warehouse_ids:
             allocation_filters.append(SPOAllocation.warehouse_id.in_(resolved_warehouse_ids))
         if receipt_status and receipt_status != "all":
@@ -1986,10 +1991,13 @@ class SPOAllocationService:
             SPOAllocationWithShippedResponse,
             SPOWithAllocationsGroup,
         )
+        from app.services.scm import spo_supply
 
         # Base filter query (no eager load) - reuse for count and for page of spo_numbers
         q_base = self.db.query(SPOAllocation).filter(SPOAllocation.spo_number.isnot(None))
-        filters = []
+        # R1/R6: a retired line AutoCount stopped naming is hidden from the grid, both from
+        # the count/page-of-numbers query and from the allocations loaded per number below.
+        filters = [*spo_supply.visible_line_clauses()]
         resolved_warehouse_ids = resolve_identifier(
             self.db,
             warehouse_id,
@@ -2177,7 +2185,18 @@ class SPOAllocationService:
         # does not agree is late.
         today = date.today()
 
+        # R1/R4/R6: a retired line AutoCount stopped naming is hidden from the header
+        # rollups (`total_allocated`, `total_received`, `line_count`) the same as it is
+        # from every other grid - one clause, imported from `spo_supply`.
+        is_visible = and_(*spo_supply.visible_line_clauses())
+        # Round 3 S1 (reviewer): `is_outstanding` gates on visibility too, not only on
+        # `open_incoming_clauses()` - a hidden row is never "closed" by any DB
+        # constraint (retirement and line_status are independent columns), so without
+        # this a hidden-but-line_status='open' row could still count towards Balance,
+        # status, worst overdue and earliest ETA here while `get_document` (which
+        # already filters the row out entirely) does not agree.
         is_outstanding = and_(
+            is_visible,
             *spo_supply.open_incoming_clauses(),
             SPOAllocation.allocated_quantity > func.coalesce(SPOAllocation.quantity_received, 0),
         )
@@ -2200,6 +2219,14 @@ class SPOAllocationService:
             func.min(SPOAllocation.issue_date),
             cast(func.min(SPOAllocation.created_at), Date),
         )
+        # Round 3 B2 (reviewer, "the ghost document"): shared by the SELECT's
+        # `line_count`, the sort_map's `line_count` entry, and the unconditional HAVING
+        # below that drops a document with no visible line from every state - the
+        # aggregates were already gated on `is_visible`, but document MEMBERSHIP was
+        # not, so a document whose every line retirement hid still grouped as a 0-line
+        # row here and 404ed the moment `get_document` (which filters the rows out
+        # entirely) was opened for it.
+        visible_line_count_expr = func.count(case((is_visible, SPOAllocation.id), else_=None))
 
         # Which DOCUMENTS have >=1 line matching product/warehouse/query (Q10) - filters
         # match LINES, the list shows the whole document (every other line included).
@@ -2261,9 +2288,19 @@ class SPOAllocationService:
             self.db.query(
                 SPOAllocation.spo_number.label("spo_number"),
                 doc_date_expr.label("doc_date"),
-                func.sum(SPOAllocation.allocated_quantity).label("total_allocated"),
-                func.sum(func.coalesce(SPOAllocation.quantity_received, 0)).label("total_received"),
-                func.count(SPOAllocation.id).label("line_count"),
+                func.coalesce(
+                    func.sum(case((is_visible, SPOAllocation.allocated_quantity), else_=0)), 0
+                ).label("total_allocated"),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (is_visible, func.coalesce(SPOAllocation.quantity_received, 0)),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("total_received"),
+                visible_line_count_expr.label("line_count"),
                 has_outstanding_expr.label("has_outstanding"),
                 balance_sum_expr.label("balance"),
                 worst_overdue_expr.label("worst_overdue_days"),
@@ -2276,6 +2313,11 @@ class SPOAllocationService:
             rollup = rollup.filter(match_filter)
         rollup = rollup.group_by(SPOAllocation.spo_number)
 
+        # Round 3 B2: unconditional, every state - a document with no visible line
+        # does not appear here under "outstanding", "completed" OR "all". `get_document`
+        # keeps its 404 for the same number, so the two now agree instead of the list
+        # offering a 0-line row that errors the moment it is opened.
+        rollup = rollup.having(visible_line_count_expr > 0)
         state_norm = (state or "outstanding").strip().lower()
         if state_norm == "outstanding":
             rollup = rollup.having(has_outstanding_expr.is_(True))
@@ -2296,8 +2338,8 @@ class SPOAllocationService:
             "spo_number": SPOAllocation.spo_number,
             "doc_date": doc_date_expr,
             "created_at": doc_date_expr,
-            "total_allocated": func.sum(SPOAllocation.allocated_quantity),
-            "line_count": func.count(SPOAllocation.id),
+            "total_allocated": func.sum(case((is_visible, SPOAllocation.allocated_quantity), else_=0)),
+            "line_count": visible_line_count_expr,
             "balance": balance_sum_expr,
             "worst_overdue_days": worst_overdue_expr,
             "earliest_eta": earliest_eta_expr,
@@ -2354,6 +2396,8 @@ class SPOAllocationService:
         """
         if not spo_numbers:
             return {}
+        from app.services.scm import spo_supply
+
         # ONE join, not two (review: a SECOND `aliased(Supplier)` join is not a
         # SQLAlchemy/Postgres limitation - `project_supply_service._spo_rows` joins
         # `Supplier` unaliased AND `aliased(Supplier)` in the same query and works fine).
@@ -2370,7 +2414,14 @@ class SPOAllocationService:
             )
             .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
             .outerjoin(Supplier, Supplier.id == supplier_key)
-            .filter(SPOAllocation.spo_number.in_(spo_numbers))
+            .filter(
+                SPOAllocation.spo_number.in_(spo_numbers),
+                # Round 3 S2 (reviewer): the same clause `get_document`'s own
+                # `supplier_counts` reads (below), or the majority supplier this list
+                # shows can differ from the one the page it opens shows - a hidden
+                # line's supplier must not vote.
+                *spo_supply.visible_line_clauses(),
+            )
             .group_by(SPOAllocation.spo_number, Supplier.supplier_name)
             .all()
         )
@@ -2451,7 +2502,12 @@ class SPOAllocationService:
                 joinedload(SPOAllocation.product),
                 joinedload(SPOAllocation.warehouse),
             )
-            .filter(SPOAllocation.spo_number == spo_number)
+            .filter(
+                SPOAllocation.spo_number == spo_number,
+                # R1/R6: a retired line AutoCount stopped naming is hidden from the
+                # document's own lines list and its rollups below.
+                *spo_supply.visible_line_clauses(),
+            )
             .order_by(SPOAllocation.spo_line_number.asc().nullslast(), SPOAllocation.id)
             .all()
         )
@@ -2623,12 +2679,16 @@ class SPOAllocationService:
         for allocation, shipment, supplier_name, is_open in rows:
             allocated = allocation.allocated_quantity or 0
             received = allocation.quantity_received or 0
-            balance = max(allocated - received, 0)
             arrival = None
             if shipment is not None:
                 arrival = shipment.eta_delay_date or shipment.estimated_arrival_date
             arrival = arrival or allocation.expected_date
             outstanding = bool(is_open) and allocated > received
+            # R5: a line that is not outstanding reads balance 0, so the grid can never
+            # again disagree with its own header - `total_allocated`/`balance` above
+            # already sum outstanding-only, this was the one reader still computing a
+            # closed line's balance as if it were still owed.
+            balance = max(allocated - received, 0) if outstanding else 0
             overdue_days = spo_supply.overdue_days(arrival, today) if outstanding else 0
             supplier_counts[supplier_name] = supplier_counts.get(supplier_name, 0) + 1
 
@@ -4380,10 +4440,41 @@ class PickingHeaderService:
                 shipment_ids.add(alloc.inbound_shipment_id)
             if (alloc.source_system or "") == shipping_order_rules.AUTOCOUNT_SOURCE_SYSTEM:
                 if alloc.retired_at is not None:
-                    # D28d: the ESB no longer names this line. Nothing here
-                    # writes to it - not even when a GRN pointing at it was
-                    # just deleted and it arrives in the released set - and it
-                    # anchors no group of its own.
+                    # D28d + B2 (round 2 security review, PLAN-hide-retired-spo-lines):
+                    # a retired line anchors no group of its own and takes no share
+                    # of a sibling's receipt - it is never written by the group path
+                    # below, and `may_reopen` is never passed for it, so it can never
+                    # reopen. But a receipt approved AFTER retirement (a GRN picked
+                    # against it while it was still open, approved once the ingest
+                    # retired it) must still reach `quantity_received`, or the row is
+                    # hidden (`visible_line_clauses()` R2) with an approved
+                    # goods-received note pointing at nothing. Written from its OWN
+                    # approved picking lines only, floored by whatever was stated for
+                    # it before retirement (D28c) - the same floor a live member gets,
+                    # so a later GRN delete cannot drop it below what was already
+                    # proven (AC-X40: stated 29 beats a recomputed 0).
+                    #
+                    # Round 4 (security review, AC-H14): the SAME ownership gate the
+                    # non-AutoCount branch applies twenty lines below - skip a row that
+                    # is neither released nor picked against, because nothing here
+                    # computed its stored value. Without it a backfill-stamped row
+                    # carrying a real ESB-stated receipt but no `stated_received` floor
+                    # (every row written before migration 488) got written unconditionally
+                    # here on the next recompute - `max(0, own picking total 0) = 0` -
+                    # zeroing a real receipt and then hiding the row (visible under R2
+                    # only via `quantity_received > 0`). A retired row that IS picked
+                    # against still takes its own approved total (AC-H10 unchanged).
+                    alloc_id = str(alloc.id)
+                    if alloc_id not in released and not self._allocation_has_picking_line(alloc_id):
+                        continue
+                    self._write_received(
+                        alloc,
+                        max(
+                            int(alloc.stated_received or 0),
+                            self.compute_received_for_allocation(alloc_id),
+                        ),
+                        may_reopen=False,
+                    )
                     continue
                 key = _spo_allocation_group_key(alloc)
                 if key in done_groups:
