@@ -144,12 +144,15 @@ cases:
         expect:
           branch_kind: business_query
           reply_contains: ["CB2904", "but PO is placed"]
+          reply_not_contains: ["pcs", "expected"]  # D11
           no_uuid: true
       - text: "hav incoming?"
         expect:
           branch_kind: business_query
           reply_contains: ["No incoming and no stock for CB2904, but PO is placed:"]
-          reply_not_contains: ["No incoming and no stock for CB2904."]
+          # D11 (owner ruling, 8 Sep 2026): {qty} {document date} only, no heading, no
+          # "pcs", no expected date.
+          reply_not_contains: ["No incoming and no stock for CB2904.", "pcs", "expected"]
           no_uuid: true
 
   - name: D6 - a code miss with an attachment word is one did-you-mean group  # NEW VOCABULARY
@@ -361,7 +364,8 @@ cases:
     expect:
       branch_kind: business_query
       reply_contains: ["CB2904", "but PO is placed"]
-      reply_not_contains: ["Supplier"]
+      # D11 (owner ruling, 8 Sep 2026): {qty} {document date} only.
+      reply_not_contains: ["Supplier", "pcs", "expected"]
       no_uuid: true
 
   # SELECT p.product_code FROM products p
@@ -418,6 +422,7 @@ cases:
     expect:
       branch_kind: business_query
       reply_contains: ["SRTWT7445-LV-NEW", "but PO is placed"]
+      reply_not_contains: ["pcs", "expected"]  # D11
       no_uuid: true
 
   - name: A7 suffixed code MSK11A-QT reaches the rung
@@ -426,6 +431,7 @@ cases:
     expect:
       branch_kind: business_query
       reply_contains: ["MSK11A-QT", "but PO is placed"]
+      reply_not_contains: ["pcs", "expected"]  # D11
       no_uuid: true
 
   - name: A7 suffixed code CWCX1009-SH reaches the rung
@@ -434,6 +440,7 @@ cases:
     expect:
       branch_kind: business_query
       reply_contains: ["CWCX1009-SH", "but PO is placed"]
+      reply_not_contains: ["pcs", "expected"]  # D11
       no_uuid: true
 
   # WAS `expected_red_until: feat/chatbot-growth-dialogue`, and the marker is GONE because

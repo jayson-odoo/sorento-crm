@@ -209,7 +209,8 @@ class TestAC921ThePORungReachesTheCustomer:
         assert PO_TOOL in probes, "the PO rung never ran on a real turn"
         assert "but PO is placed" in said, said
         assert CODE in said
-        assert "1000" in said and "2026" in said
+        # D11: PO_ROWS carries no `po_date`, so the line is the quantity alone.
+        assert "1000" in said
 
     def test_the_supplier_is_never_in_the_rung_text(
         self, session_factory, seeded, stock_parse, system_settings_row, monkeypatch
@@ -414,7 +415,9 @@ class TestOwner8SepTheRungIsPerContactAndOffersOnce:
         )
         assert result.status == "done", result.error
         assert PO_TOOL in probes
-        assert "PO 202607-S0031 dated 2026-06-30:\n27 pcs expected 2027-02-01" in said, said
+        # D11 (owner ruling, 8 Sep 2026): `{outstanding_qty} {document_date}`, no heading.
+        assert "but PO is placed:\n27 2026-06-30" in said, said
+        assert "pcs" not in said and "expected" not in said and "202607-S0031" not in said
         # `said` joins the reply with every send action's copy of it; the count is on the
         # reply text alone.
         text = (result.reply or {}).get("text") or ""
@@ -463,7 +466,10 @@ class TestD7AnIncomingAskReachesThePORung:
         # the incoming lane's own picker probe may sit beside them; the climb is what matters
         assert probes.index("crm_inventory_stock_balance_list") < probes.index(PO_TOOL)
         assert f"No incoming and no stock for {CODE}, but PO is placed:" in said, said
-        assert "1000 pcs expected 2026-06-01" in said
+        # D11: PO_ROWS carries no `po_date`, so the line is the quantity alone; the
+        # (irrelevant) expected date never renders either way.
+        assert "but PO is placed:\n1000" in said
+        assert "expected" not in said and "2026-06-01" not in said
         assert "GUANGDONG" not in said
         text = (result.reply or {}).get("text") or ""
         assert text.count("Would you like me to escalate") == 1

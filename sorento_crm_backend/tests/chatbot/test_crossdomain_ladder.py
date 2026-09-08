@@ -184,8 +184,9 @@ class TestAC921StockMissIncomingMissPOPlaced:
         block = result["render"]["_xdBlock"]["block"]
         assert "No stock and no incoming for SRTWC8517" in block
         assert "but PO is placed" in block
-        # Owner ruling (8 Sep 2026, D2): one heading per document, then its lines.
-        assert "but PO is placed:\nPO PO-1001 dated 2026-05-01:\n50 pcs expected 2026-07-01" in block
+        # D11 (owner ruling, 8 Sep 2026): `{outstanding_qty} {document_date}`, nothing
+        # else - no "PO PO-1001 dated ..." heading, no "pcs", no expected date.
+        assert "but PO is placed:\n50 2026-05-01" in block
         # The rung writes NO offer: `crossdomain_compose` is the one writer (turns
         # 0184d84d / 5f73ddb0 / 90a1637a carried the question twice).
         assert "escalate" not in block.lower()
@@ -320,18 +321,23 @@ class TestOwner8SepTheOfferIsWrittenOnce:
         assert text.count(self._PHRASE) == 1
 
 
-class TestOwner8SepThePORungLineCarriesTheDocumentDate:
-    def test_expected_part_is_omitted_when_null(self) -> None:
+class TestD11ThePORungLineIsQuantityAndDocumentDateOnly:
+    """D11 (owner ruling, 8 Sep 2026): the rung's own render is reduced to exactly
+    `{outstanding_qty} {document_date}` per line - no per-document heading naming the
+    PO/SPO number, no "pcs", no expected/ETA date (the owner: it is not accurate)."""
+
+    def test_the_line_is_quantity_and_document_date(self) -> None:
         result, _ = _run(
             ladder=_LADDER_WITH_PO,
             incoming_response={"answers": [], "has_result": False},
-            po_response={"answers": [_po_row(12, None)], "has_result": True},
+            po_response={"answers": [_po_row(12, "2027-01-01")], "has_result": True},
         )
         block = result["render"]["_xdBlock"]["block"]
-        assert "PO PO-1001 dated 2026-05-01:\n12 pcs" in block
-        assert "expected" not in block
+        assert "but PO is placed:\n12 2026-05-01" in block
+        assert "expected" not in block and "pcs" not in block
+        assert "PO-1001" not in block
 
-    def test_a_row_with_no_po_number_still_reads(self) -> None:
+    def test_the_po_number_never_reaches_the_line_even_when_absent(self) -> None:
         row = _po_row(12, "2026-07-01", po_date=None)
         row["fields"] = [f for f in row["fields"] if f["key"] != "po_number"]
         result, _ = _run(
@@ -339,16 +345,17 @@ class TestOwner8SepThePORungLineCarriesTheDocumentDate:
             incoming_response={"answers": [], "has_result": False},
             po_response={"answers": [row], "has_result": True},
         )
-        assert "PO:\n12 pcs expected 2026-07-01" in result["render"]["_xdBlock"]["block"]
+        assert "but PO is placed:\n12" in result["render"]["_xdBlock"]["block"]
 
-    def test_dated_part_is_omitted_when_the_document_has_no_date(self) -> None:
+    def test_the_date_part_is_omitted_when_the_document_has_no_date(self) -> None:
         result, _ = _run(
             ladder=_LADDER_WITH_PO,
             incoming_response={"answers": [], "has_result": False},
             po_response={"answers": [_po_row(12, "2026-07-01", po_date=None)], "has_result": True},
         )
         block = result["render"]["_xdBlock"]["block"]
-        assert "PO PO-1001:\n12 pcs expected 2026-07-01" in block
+        assert "but PO is placed:\n12" in block
+        assert "2026-07-01" not in block  # the (irrelevant) expected date never renders
 
 
 class TestOwner8SepThePORungIsPerContact:
@@ -401,28 +408,28 @@ class TestItem5UnshippedSPOIsOnOrderFromTheSupplier:
     def test_an_spo_row_reads_on_order_from_supplier(self) -> None:
         block = self._block([_po_row(7, "2026-10-05", po_number="SPO-2026/09-0001", po_date="2026-08-20", kind="SPO")])
         assert "but stock is on order from the supplier:" in block
-        assert "SPO SPO-2026/09-0001 dated 2026-08-20 (on order from supplier):\n7 pcs expected 2026-10-05" in block
+        # D11: `{qty} {issue_date}`, no SPO number.
+        assert "but stock is on order from the supplier:\n7 2026-08-20" in block
+        assert "SPO-2026/09-0001" not in block
         assert "but PO is placed" not in block
 
     def test_spo_parts_are_omitted_when_null(self) -> None:
         block = self._block([_po_row(7, None, po_number="SPO-1", po_date=None, kind="SPO")])
-        assert "SPO SPO-1 (on order from supplier):\n7 pcs" in block
-        assert "dated" not in block and "expected" not in block
+        assert "but stock is on order from the supplier:\n7" in block
+        assert "dated" not in block and "expected" not in block and "SPO-1" not in block
 
-    def test_a_mixed_set_keeps_the_po_header_and_words_each_row_by_kind(self) -> None:
+    def test_a_mixed_set_keeps_the_po_header_and_lines_follow_one_another(self) -> None:
         block = self._block([
             _po_row(50, "2026-07-01", kind="PO"),
             _po_row(7, "2026-10-05", po_number="SPO-9", po_date="2026-08-20", kind="SPO"),
         ])
-        assert "but PO is placed:" in block
-        assert "PO PO-1001 dated 2026-05-01:\n50 pcs expected 2026-07-01" in block
-        assert "SPO SPO-9 dated 2026-08-20 (on order from supplier):\n7 pcs expected 2026-10-05" in block
+        assert "but PO is placed:\n50 2026-05-01\n7 2026-08-20" in block
+        assert "SPO-9" not in block and "PO-1001" not in block
 
     def test_a_row_with_no_kind_is_read_as_a_po(self) -> None:
         """An older envelope (no `kind` field) is today's PO row."""
         block = self._block([_po_row(50, "2026-07-01", kind=None)])
-        assert "but PO is placed:" in block
-        assert "PO PO-1001 dated 2026-05-01:\n50 pcs expected 2026-07-01" in block
+        assert "but PO is placed:\n50 2026-05-01" in block
 
 
 class TestThePORungGrantKey:
@@ -464,11 +471,13 @@ class TestThePORungGrantKey:
             assert key in declared, f"{key} is not declared on {_CROSSDOMAIN_RUNG_TOOL[rung]}"
 
 
-class TestD2OneHeadingPerDocument:
-    """D2 (owner console pass, 8 Sep 2026): seven lines each repeating "on PO 202607-S0054
-    dated 2026-07-17" - the rows are grouped by document, heading then lines."""
+class TestD11LinesFollowOneAnotherInToolOrder:
+    """D11 (owner ruling, 8 Sep 2026), which retires D2's heading-per-document shape:
+    `{outstanding_qty} {document_date}` per line, nothing else - no "PO 202607-S0054
+    dated ..." heading, no "pcs", no expected date. Lines from several documents just
+    follow one another in the rows' own (the tool's) order."""
 
-    def test_lines_of_one_po_sit_under_one_heading_in_tool_order(self) -> None:
+    def test_the_exact_block(self) -> None:
         rows = [
             _po_row(42, "2026-07-13", po_number="202607-S0054", po_date="2026-07-17"),
             _po_row(12, "2026-07-31", po_number="202607-S0054", po_date="2026-07-17"),
@@ -483,14 +492,14 @@ class TestD2OneHeadingPerDocument:
         block = result["render"]["_xdBlock"]["block"]
         assert block == (
             "No stock and no incoming for SRTWC8517, but PO is placed:\n"
-            "PO 202607-S0054 dated 2026-07-17:\n"
-            "42 pcs expected 2026-07-13\n"
-            "12 pcs expected 2026-07-31\n"
-            "3 pcs\n"
-            "SPO SPO-9 dated 2026-08-20 (on order from supplier):\n"
-            "7 pcs expected 2026-10-05"
+            "42 2026-07-17\n"
+            "12 2026-07-17\n"
+            "7 2026-08-20\n"
+            "3 2026-07-17"
         )
-        assert block.count("202607-S0054") == 1
+        assert "202607-S0054" not in block
+        assert "SPO-9" not in block
+        assert "pcs" not in block and "expected" not in block
 
 
 class TestD7AnIncomingAskClimbsToThePORung:
@@ -508,7 +517,7 @@ class TestD7AnIncomingAskClimbsToThePORung:
         )
         assert [name for name, _ in calls] == [_STOCK_TOOL, _PO_TOOL]
         block = result["render"]["_xdBlock"]["block"]
-        assert block.startswith("No incoming and no stock for SRTWC8517, but PO is placed:\nPO 202607-S0054 dated 2026-07-17:\n42 pcs expected 2026-07-13")
+        assert block.startswith("No incoming and no stock for SRTWC8517, but PO is placed:\n42 2026-07-17")
         assert result["render"]["_xdBlock"]["team"] == "purchasing"
         assert _composed_text(result).count("Would you like me to escalate") == 1
 

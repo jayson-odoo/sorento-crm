@@ -1058,44 +1058,23 @@ def _crossdomain_rung_row(it: Any, field_by_key: Any) -> dict[str, Any]:
 
 
 def _crossdomain_rung_text(rows: list[dict[str, Any]]) -> str:
-    """D2 (owner console pass, 8 Sep 2026): one heading per DOCUMENT, then its lines -
-    seven lines each repeating "on PO 202607-S0054 dated 2026-07-17" was the defect.
+    """D11 (owner ruling, 8 Sep 2026): one line per PO/SPO LINE, `{outstanding_qty}
+    {document_date}` - `po_date` is `purchase_orders.issue_date` (the SPO's issue date on
+    an SPO row), never the expected/ETA date (owner: it is not accurate). No per-document
+    heading naming the PO/SPO number - D2's heading-per-document shape is retired - and no
+    "pcs". Lines from several documents just follow one another in the rows' own order:
 
-        PO 202607-S0054 dated 2026-07-17:
-        42 pcs expected 2026-07-13
-        12 pcs expected 2026-07-31
-        SPO SPO-2026/09-0001 dated 2026-08-20 (on order from supplier):
-        7 pcs expected 2026-10-05
+        10 2026-07-29
+        20 2026-07-29
 
-    Grouped by (kind, number) in first-seen order (the tool's own sort); the PO document
-    date (`po_date` = `purchase_orders.issue_date`, or the SPO's issue date) on the
-    heading, the arrival estimate on the line. Every part is omitted when null.
+    Every part is omitted when null, same as before.
     """
-    order: list[tuple[str, Any]] = []
-    by_doc: dict[tuple[str, Any], list[dict[str, Any]]] = {}
-    for row in rows:
-        key = (row.get("kind") or "po", row.get("number"))
-        if key not in by_doc:
-            by_doc[key] = []
-            order.append(key)
-        by_doc[key].append(row)
     out: list[str] = []
-    for kind, number in order:
-        docs = by_doc[(kind, number)]
-        po_date = next((r.get("po_date") for r in docs if r.get("po_date") not in (None, "")), None)
-        head = "SPO" if kind == "spo" else "PO"
-        if number not in (None, ""):
-            head += f" {_fmt_xd_value(number)}"
-        if po_date is not None:
-            head += f" dated {_fmt_xd_value(po_date)}"
-        if kind == "spo":
-            head += " (on order from supplier)"
-        out.append(head + ":")
-        for r in docs:
-            line = f"{_fmt_xd_value(r.get('qty'))} pcs"
-            if r.get("expected") not in (None, ""):
-                line += f" expected {_fmt_xd_value(r.get('expected'))}"
-            out.append(line)
+    for row in rows:
+        qty = _fmt_xd_value(row.get("qty"))
+        po_date = row.get("po_date")
+        line = qty if po_date in (None, "") else f"{qty} {_fmt_xd_value(po_date)}"
+        out.append(line)
     return "\n".join(out)
 
 
