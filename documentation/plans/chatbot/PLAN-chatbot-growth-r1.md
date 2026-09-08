@@ -299,6 +299,19 @@ SRTWT7445-LV-NEW, SRT62-GM) all missed identically until the two tools were seed
    match it under any domain; `mcp_tools.chatbot_domain` is what the CRM's OWN retrieval
    reads instead (AC-999), and is unrelated to n8n's copy of the query.
 
+   **Dev note (8 Sep 2026): a worktree's venv can be a symlink to the PRIMARY checkout,
+   whose editable `sorento_crm_mcp` install points at the primary tree, not the
+   worktree's own copy.** Any one-off script that imports `sorento_crm_mcp` (this
+   step's seed command, `mcp_tool_registry_service.sync_catalog`, a manual
+   `sync_catalog()` call) must be run with
+   `PYTHONPATH="<worktree>/sorento_crm_backend:<worktree>/sorento_crm_mcp"` or it
+   silently syncs against a STALE catalog - measured here: a sync without it saw a
+   40-tool catalog missing both new tools, and deactivated all 161 `mcp_tools` rows,
+   including the two just-renamed ones, because none of them matched what that stale
+   catalog listed. `test_crossdomain_ladder.py::test_the_key_is_declared_on_the_po_toolspec`
+   already carries the equivalent `sys.path` guard for a pytest process; a bare
+   `venv/bin/python -c "..."` has no such guard and needs the env var instead.
+
 2. **Move the `chatbot_semantic_parser` `production` label** onto the version migration
    `490_chatbot_parser_growth` published, in Settings > AI Prompts. Until that move the
    parser has no vocabulary for `so_outstanding`, `purchase_order` / `check_po`, the SPO
