@@ -52,11 +52,18 @@ ALLOWED: dict[str, list[str]] = {
         "certificate",
     ],
     "promotion": ["product", "promotion", "category", "brand"],
-    "inventory": ["product", "category", "brand"],
+    "inventory": ["product", "warehouse", "category", "brand"],
     "order": ["order", "customer_order", "transporter", "customer", "product"],
     "incoming": ["product", "inbound_shipment", "category", "brand"],
     "forms": ["form"],
     "portal_link": [],
+    # 8 Sep 2026 (chatbot-warehouse-entity-and-last-in): replaces the old unscoped
+    # pass-through (no row = "domain not in matrix", see `run_gate` below) now that the
+    # tool takes `warehouse_ids`. Side effect: `ALLOWS_EMPTY` carries no `spo_allocation`
+    # row, so a bare "last in" with ZERO entities now fails the gate instead of passing
+    # through unscoped, as it used to. Per the plan, the owner accepted this matrix as
+    # written; not adding an `ALLOWS_EMPTY` row is deliberate, not an oversight.
+    "spo_allocation": ["product", "warehouse", "category", "brand"],
 }
 
 # S1 (promotion-picker): a promotion cannot be answered by a general search. Flipping

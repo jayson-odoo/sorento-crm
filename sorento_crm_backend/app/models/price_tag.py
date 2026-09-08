@@ -104,6 +104,10 @@ class PriceTagRequest(Base, CompanyScopedMixin):
     )
     needed_by_date = Column(Date, nullable=True)  # nullable since D48a, see debtor_name
     notes = Column(Text, nullable=True)
+    # Header-level price mode (D5, r7): 'list' | 'selling'. Replaces the old
+    # per-line `show_promo_price` switch as the thing the salesperson picks;
+    # every line's `show_promo_price` is re-derived from this on save.
+    price_mode = Column(String(16), nullable=False, server_default="list")
     status = Column(String(30), nullable=False, server_default="new")
     doc_number = Column(String(30), nullable=False, unique=True)
     page_id = Column(
@@ -181,6 +185,8 @@ class PriceTagRequestLine(Base):
     quantity = Column(Integer, nullable=False, server_default="1")
     alternatives = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
     included_accessories = Column(Text, nullable=True)
+    # Free-text note on the line (D6, r7).
+    remarks = Column(Text, nullable=True)
     sort_order = Column(Integer, nullable=False, server_default="0")
     marketing_price_override = Column(Numeric(15, 2), nullable=True)
     marketing_override_reason = Column(Text, nullable=True)

@@ -227,7 +227,10 @@ CASES = [
     Case("shipment_number", "ZZT-SHP-9001", _shipment, er._probe_inbound_shipment, er._prefix_probe_inbound_shipment),
     Case("container_number", "ZZT-CONT-4455", _shipment_by_container, er._probe_inbound_shipment, er._prefix_probe_inbound_shipment),
     Case("forwarder_order_ref", "ZZT-SO-6601", _shipment_by_forwarder_order_ref, er._probe_inbound_shipment, er._prefix_probe_inbound_shipment),
-    Case("warehouse_code", "ZZT-WH-01", _warehouse, er._probe_warehouse, er._prefix_probe_warehouse),
+    # `partial=False`: the warehouse Tier-2 slot is exact-only (owner ruling 8 Sep 2026,
+    # chatbot-warehouse-entity-and-last-in bans prefix fan-out for this type), so a
+    # truncated token is correctly a miss here, unlike every other case in this matrix.
+    Case("warehouse_code", "ZZT-WH-01", _warehouse, er._probe_warehouse, er._prefix_probe_warehouse, partial=False),
     Case("supplier_code", "ZZT-SUP-77", _supplier, er._probe_supplier, er._prefix_probe_supplier),
     Case("spo_number", "ZZT-SPO-3321", _spo, er._probe_spo, er._prefix_probe_spo),
     Case("grn_number", "ZZT-GRN-8812", _grn, er._probe_grn, er._prefix_probe_grn),

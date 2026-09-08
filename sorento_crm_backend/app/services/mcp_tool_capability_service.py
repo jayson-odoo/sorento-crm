@@ -1204,12 +1204,14 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
     ),
     "crm_procurement_spo_allocations_last_receipt_list": ToolIntent(
         category="general_enquiries.incoming_stock",
-        intent="The most recently RECEIVED SPO allocation for a product - 'last in', 'last received'.",
+        intent="The last SPO line per product, by the SPO's own date - 'last in', 'last received'.",
         description=(
-            "Most recent received SPO allocation rows for a product: spo_number, "
-            "quantity_received, the date actually recorded plus a date_label naming which "
-            "column answered ('Arrived', 'Arrived (port)', 'Received'), and "
-            "warehouse. Use this for 'when did we last receive this and how much'. NOT for "
+            "The last SPO line per product, ordered by the SPO's own date: spo_number, "
+            "product_code, spo_quantity (ordered), gr_quantity (received, only when "
+            "something has been), spo_date with spo_date_source naming which column "
+            "answered ('expected' / 'issued' / 'recorded'), gr_date (only when an approved "
+            "GRN header points at the line), and warehouse. Use this for 'when is this due "
+            "and how much', including a line nothing has been received against yet. NOT for "
             "current stock on hand (crm_inventory_stock_balance_list) and NOT for what is still "
             "on the way (crm_incoming_stock_by_product). top_n defaults to 1; 'last 3 in' is "
             "top_n=3."

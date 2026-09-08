@@ -3,8 +3,10 @@
  *
  * One Add line button, one Item dropdown offering sets AND products, and a
  * payload whose shape did not move: `line_type` of `product` or `product_set`
- * with the matching id. The set row's Alternatives cell is disabled, which is
- * the capability the Set card this replaced never had.
+ * with the matching id. r7 (PLAN-price-tag-r7-request-ux D3/AC-S1-3) removed
+ * the Alternatives column from the table entirely - `alternatives` stays in
+ * the payload shape (so an existing row still round-trips) but there is no
+ * longer a control to edit it.
  *
  * Also D46a: an EMPTY debtor lookup explains itself; a FAILED one does not.
  */
@@ -79,22 +81,6 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   },
 }));
 
-vi.mock('@/components/common/SearchableMultiSelect', () => ({
-  SearchableMultiSelect: (props: {
-    value: string[];
-    disabled?: boolean;
-    placeholder?: string;
-  }) => (
-    <select
-      multiple
-      aria-label="Alternatives"
-      disabled={props.disabled}
-      value={props.value}
-      onChange={() => {}}
-    />
-  ),
-}));
-
 import {
   createRequest,
   lookupDebtors,
@@ -155,7 +141,7 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
     render(<PriceTagRequestForm />);
     await selectOption('Debtor', 'ZZTD01');
     // The deadline starts empty since D48a, and Submit asks for it by name.
-    fireEvent.change(screen.getByLabelText(/Needed by/), {
+    fireEvent.change(screen.getByLabelText(/Need by/), {
       target: { value: '2026-09-30' },
     });
 
@@ -178,18 +164,16 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
     });
   });
 
-  it('a picked set posts line_type product_set and disables that row Alternatives', async () => {
+  it('a picked set posts line_type product_set with no product id', async () => {
     render(<PriceTagRequestForm />);
     await selectOption('Debtor', 'ZZTD01');
     // The deadline starts empty since D48a, and Submit asks for it by name.
-    fireEvent.change(screen.getByLabelText(/Needed by/), {
+    fireEvent.change(screen.getByLabelText(/Need by/), {
       target: { value: '2026-09-30' },
     });
 
     await addLine();
     await selectOption('Search a set or product...', 'product_set:set-uuid-1');
-
-    expect(screen.getByLabelText('Alternatives')).toBeDisabled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
     await waitFor(() => expect(createRequest).toHaveBeenCalled());
@@ -199,17 +183,31 @@ describe('PriceTagRequestForm - one lines table, one item dropdown (D47)', () =>
       product_set_id: 'set-uuid-1',
       product_id: null,
     });
+    // The field stays in the payload shape (an existing row still round-trips,
+    // D3) even though there is no longer a control to edit it.
     expect(payload.lines[0].alternatives).toEqual([]);
   });
 
-  it('a product row keeps its Alternatives cell enabled', async () => {
+  it('a set row has no Alternatives column (D3/AC-S1-3)', async () => {
+    render(<PriceTagRequestForm />);
+    await screen.findByLabelText('Debtor');
+
+    await addLine();
+    await selectOption('Search a set or product...', 'product_set:set-uuid-1');
+
+    expect(screen.queryByLabelText('Alternatives')).toBeNull();
+    expect(screen.queryByText('Alternatives')).toBeNull();
+  });
+
+  it('a product row has no Alternatives column either', async () => {
     render(<PriceTagRequestForm />);
     await screen.findByLabelText('Debtor');
 
     await addLine();
     await selectOption('Search a set or product...', 'product:prod-uuid-1');
 
-    expect(screen.getByLabelText('Alternatives')).not.toBeDisabled();
+    expect(screen.queryByLabelText('Alternatives')).toBeNull();
+    expect(screen.queryByText('Alternatives')).toBeNull();
   });
 
   it('removes a row without asking for a confirmation', async () => {

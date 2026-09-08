@@ -168,18 +168,9 @@ def claim_price_tag_request(
     )
 
     # Auto-create a tag_sheet page for this request if one does not exist.
-    if not result.page_id:
-        page = Page(
-            name=f"Tags - {result.doc_number}",
-            slug=f"tag-sheet-{result.doc_number.lower()}",
-            kind="tag_sheet",
-            request_id=result.id,
-            company_id=result.company_id,
-            created_by=_user_id(user),
-        )
-        db.add(page)
-        db.flush()
-        result.page_id = page.id
+    # Shared with auto_assign_from_tracker (D8, B1) so a request claimed by
+    # either path ends up with the same page.
+    PriceTagRequestService.ensure_tag_sheet_page(db, result, _user_id(user))
 
     db.commit()
     # Answered through the same resolver as the detail route: the page renders
@@ -297,6 +288,43 @@ def _latest_version(db: Session, page: Page) -> PageVersion | None:
     )
 
 
+def resolve_tag_sheet_design(db: Session, page: Page, *, prefer: str = "draft") -> dict:
+    """The document a design VIEW should open on.
+
+    ``prefer="draft"`` (default - the CRM designer's own GET, ``get_tag_sheet
+    _design``): the autosaved draft first, else the latest saved version.
+    The autosaved draft is what marketing was last looking at, and opening
+    on the version instead would silently discard everything since (B1).
+
+    ``prefer="version"`` (the portal's design preview, D11 review): the
+    latest SAVED version always wins, draft or not - a salesperson must
+    never see marketing's live in-progress autosave, only what was
+    deliberately saved (and, from proof_ready onward, sent for their
+    review).
+
+    Shared by this route and the portal's design preview
+    (``portal_price_tag.portal_get_price_tag_design``) so the two screens
+    read the SAME underlying data and can never disagree about it - only
+    which of the two documents they prefer differs. Returns the
+    ``TagSheetDocResponse`` fields as a plain dict, not the schema itself -
+    the portal route layers its own ``lines`` key on top.
+    """
+    latest = _latest_version(db, page)
+    if prefer == "draft" and page.draft_doc is not None:
+        return {
+            "page_id": str(page.id),
+            "version": latest.version if latest else 0,
+            "doc": page.draft_doc,
+            "source": "draft",
+        }
+    return {
+        "page_id": str(page.id),
+        "version": latest.version if latest else 0,
+        "doc": latest.doc if latest else None,
+        "source": "version",
+    }
+
+
 def _snapshot_draft(
     db: Session, page: Page, doc: dict, user_id: str | None, commit_message: str | None
 ) -> PageVersion:
@@ -347,20 +375,7 @@ def get_tag_sheet_design(
     ``doc`` actually is.
     """
     _req, page = _require_request_page(db, request_id)
-    latest = _latest_version(db, page)
-    if page.draft_doc is not None:
-        return TagSheetDocResponse(
-            page_id=str(page.id),
-            version=latest.version if latest else 0,
-            doc=page.draft_doc,
-            source="draft",
-        )
-    return TagSheetDocResponse(
-        page_id=str(page.id),
-        version=latest.version if latest else 0,
-        doc=latest.doc if latest else None,
-        source="version",
-    )
+    return TagSheetDocResponse(**resolve_tag_sheet_design(db, page))
 
 
 @router.put("/{request_id}/design/draft", response_model=TagSheetDocResponse)
@@ -485,33 +500,22 @@ def export_tag_sheet(
     - Request must be in ``approved`` or ``ready`` status.
     - If the request has a promotion, it must not be expired (409).
     - On first export after ``approved``, transitions to ``ready``.
+
+    ``request_tag_sheet_export`` itself enqueues the render (B2) - this route
+    just calls it and reports the download; the CRM re-export button and
+    ``transition_status``'s own auto-export on approve (D12) share the one
+    enqueue.
     """
     from app.services.dealer_kit.tag_sheet_export_service import (
         request_tag_sheet_export,
     )
-    from app.services.download_service import DownloadService
-    from app.services.queue_service import enqueue_job
-    from app.tasks.dealer_kit_export_tasks import generate_tag_sheet_pdf
 
-    download, sheet_ids = request_tag_sheet_export(
+    download, _sheet_ids = request_tag_sheet_export(
         db,
         request_id=request_id,
         user_id=_user_id(user) or "",
         sheet_ids=payload.sheet_ids,
     )
-
-    try:
-        enqueue_job(
-            generate_tag_sheet_pdf,
-            str(download.id),
-            sheet_ids,
-            queue_name="catalogue_render",
-            job_timeout=900,
-        )
-    except Exception as exc:  # noqa: BLE001
-        DownloadService(db).mark_failed(
-            str(download.id), f"Could not queue PDF generation: {exc}"
-        )
 
     db.refresh(download)
     return TagSheetExportOut(

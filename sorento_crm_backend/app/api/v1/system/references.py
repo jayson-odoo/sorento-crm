@@ -1470,13 +1470,16 @@ def _every_caller_token_resolved(result: dict[str, Any]) -> bool:
     """D13 (owner turn, 8 Sep 2026, "CB6622-PP?"): every token the caller supplied
     already resolved COMPLETELY, so the spec fallback - built for a word that did NOT -
     must never run over it. AND mode: `intersection` is non-empty and EVERY row in it
-    is `match_tier == "exact"`. AND-mode's own product probe stamps every row
-    `match_tier="and"` today (there is no exact tier on that path - see
-    `_and_probe_product`), so this branch is currently a no-op backstop for AND mode
-    and the CB6622-PP repro is actually closed by `token_word_coverage_for_rows`'s own
-    dash-normalization fix (below); kept here, harmless when idle, for OR-mode-shaped
-    intersections and any future AND-mode exact tier. A max-coverage row that merely
-    CONTAINS a code word (`prefix`/`substring`) is a PARTIAL answer and must stay False
+    is `match_tier == "exact"`. AND-mode's own PRODUCT probe stamps every row
+    `match_tier="and"` (there is no exact tier on that path - see `_and_probe_product`),
+    so for a product intersection this stays a backstop and the CB6622-PP repro is
+    actually closed by `token_word_coverage_for_rows`'s own dash-normalization fix
+    (below). It is NOT idle in general: `_and_probe_warehouse` delegates to
+    `_probe_warehouse`, whose rows carry `match_tier="exact"` (8 Sep 2026,
+    chatbot-warehouse-entity-and-last-in), so a warehouse-only intersection does reach
+    this branch - which is right, an exact warehouse code is a complete answer to its own
+    token. A max-coverage row that merely CONTAINS a code word
+    (`prefix`/`substring`) is a PARTIAL answer and must stay False
     (SA-P1, "wall hung basin" matching a code that only contains "wall hung"). OR mode:
     every token's own resolution carries at least one match.
     """
@@ -2220,10 +2223,11 @@ def _emit_spec_matches(
         # hung" has not answered the description, and keeping that row beside the
         # real answer would clutter the reply with what `_product_words_unanswered`'s
         # own docstring calls a non-answer. Deduped by uuid so a code the ranker ALSO
-        # surfaces is not counted twice. (Today's AND-mode probe never stamps
-        # "exact" - see `_every_caller_token_resolved` - so in practice this branch
-        # protects an OR-mode-shaped intersection; kept as the honest rule either
-        # way, not a special case for one shape.)
+        # surfaces is not counted twice. (AND-mode's PRODUCT probe never stamps
+        # "exact" - see `_every_caller_token_resolved` - so for a product intersection
+        # this protects an OR-mode-shaped one; `_and_probe_warehouse` does stamp exact,
+        # via `_probe_warehouse`, and a warehouse row surviving here is correct. The rule
+        # is the same either way, not a special case for one shape.)
         existing = [
             m for m in (result.get("intersection") or []) if (m or {}).get("match_tier") == "exact"
         ]

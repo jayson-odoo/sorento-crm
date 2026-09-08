@@ -54,6 +54,12 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
     },
     STATUS_CHANGES_REQUESTED: {
         STATUS_DESIGNING,
+        # Marketing revises and re-sends without a forced detour through
+        # `designing` first - the FE's own Mark design ready CTA already
+        # shows at designing OR changes_requested (RequestTagDesigner.tsx)
+        # and posts `proof_ready` directly; the extra hop served nobody and
+        # only produced a 409 the toast then swallowed.
+        STATUS_PROOF_READY,
         STATUS_REJECTED,
         STATUS_VOID,
     },
@@ -143,6 +149,7 @@ class PriceTagRequestService:
                 promotion_id=data.get("promotion_id"),
                 needed_by_date=data.get("needed_by_date"),
                 notes=data.get("notes"),
+                price_mode=data.get("price_mode") or "list",
                 doc_number=doc_number,
                 portal_draft_at=datetime.utcnow(),
             ),
@@ -191,7 +198,15 @@ class PriceTagRequestService:
 
     @staticmethod
     def _add_lines(db: Session, request: PriceTagRequest, lines: list[dict]) -> None:
-        """Append lines in the order given, which is the order the form shows."""
+        """Append lines in the order given, which is the order the form shows.
+
+        ``show_promo_price`` is DERIVED from the request's header ``price_mode``
+        (D5), never taken from the payload: the per-line switch is gone, and
+        every line save - create, replace on update - re-derives every line
+        from whatever the header says right now, so a header flip never leaves
+        a stale line behind.
+        """
+        show_promo_price = request.price_mode == "selling"
         for idx, line_data in enumerate(lines):
             sort_order = line_data.get("sort_order")
             db.add(
@@ -200,10 +215,11 @@ class PriceTagRequestService:
                     line_type=line_data["line_type"],
                     product_id=line_data.get("product_id"),
                     product_set_id=line_data.get("product_set_id"),
-                    show_promo_price=line_data.get("show_promo_price", True),
+                    show_promo_price=show_promo_price,
                     quantity=line_data.get("quantity", 1),
                     alternatives=line_data.get("alternatives", []),
                     included_accessories=line_data.get("included_accessories"),
+                    remarks=line_data.get("remarks"),
                     sort_order=idx if sort_order is None else sort_order,
                 )
             )
@@ -254,6 +270,89 @@ class PriceTagRequestService:
         return request
 
     @staticmethod
+    def auto_assign_from_tracker(db: Session, request: PriceTagRequest) -> str | None:
+        """D8: copy the form SLA tracker's resolved assignee onto the request.
+
+        Reads the newest OPEN ``price_tag_request`` tracker for this request -
+        the one ``emit_form_event`` just opened, if an active config placed it
+        (``_start_for_config`` commits as part of opening it, so this read
+        always sees it: no explicit flush needed). No tracker, or a tracker
+        with no assignee, leaves the request ``new`` and unclaimed - the Claim
+        path is unchanged (AC-S3-2). Returns the assignee id, or ``None``.
+
+        The write (status, assignee, the tag_sheet page) runs inside its own
+        SAVEPOINT: ``assigned_to_id`` is set only after ``transition_status``
+        has actually succeeded, and a failure anywhere in the block rolls the
+        savepoint back rather than leaving a half-write (assigned but still
+        ``new``, or vice versa) for the caller's own ``db.commit()`` to
+        persist. Called from ``portal_submit_price_tag_request`` in its OWN
+        try/except: a failure here must not fail the submit (AC-S3-3).
+        """
+        from app.models.sla import ConversationSLATracking
+        from app.services.sla_scope import open_tracker_scope
+
+        tracker = (
+            db.query(ConversationSLATracking)
+            .filter(
+                ConversationSLATracking.source_entity_type == "price_tag_request",
+                ConversationSLATracking.source_entity_id == str(request.id),
+                *open_tracker_scope(),
+            )
+            .order_by(ConversationSLATracking.initiated_at.desc())
+            .first()
+        )
+        if not tracker or not tracker.assigned_to_id:
+            return None
+
+        savepoint = db.begin_nested()
+        try:
+            PriceTagRequestService.transition_status(
+                db, str(request.id), STATUS_DESIGNING, user_id=tracker.assigned_to_id,
+            )
+            request.assigned_to_id = tracker.assigned_to_id
+            # B1: a request auto-assigned straight into `designing` needs the
+            # same tag_sheet page Claim creates - without this GET
+            # .../design 404s NO_PAGE, and auto-assign has already claimed
+            # it, so there is no Claim button left to fix it from.
+            PriceTagRequestService.ensure_tag_sheet_page(
+                db, request, tracker.assigned_to_id,
+            )
+            db.flush()
+            savepoint.commit()
+        except Exception:
+            savepoint.rollback()
+            raise
+        return tracker.assigned_to_id
+
+    @staticmethod
+    def ensure_tag_sheet_page(
+        db: Session, request: PriceTagRequest, user_id: str | None,
+    ) -> None:
+        """The tag_sheet ``Page`` a request needs before design can happen.
+
+        Idempotent: a no-op once ``request.page_id`` is set. Extracted from
+        the CRM claim route (``claim_price_tag_request``) so BOTH claim and
+        ``auto_assign_from_tracker`` (D8) create it the same way - a request
+        that lands in ``designing`` with no page 404s NO_PAGE on
+        ``GET .../design`` (B1).
+        """
+        if request.page_id:
+            return
+        from app.models.dealer_kit import Page
+
+        page = Page(
+            name=f"Tags - {request.doc_number}",
+            slug=f"tag-sheet-{request.doc_number.lower()}",
+            kind="tag_sheet",
+            request_id=request.id,
+            company_id=request.company_id,
+            created_by=user_id,
+        )
+        db.add(page)
+        db.flush()
+        request.page_id = page.id
+
+    @staticmethod
     def transition_status(
         db: Session,
         request_id: str,
@@ -288,6 +387,30 @@ class PriceTagRequestService:
 
         request.status = new_status
         db.flush()
+
+        # D12: an approve auto-queues one tag-sheet export, so the salesperson
+        # never has to ask marketing to run it separately. Function-local
+        # module import (not a from-import) - tag_sheet_export_service
+        # imports STATUS_APPROVED/STATUS_READY from THIS module at ITS own
+        # top level, so a top-level import here would be circular, and tests
+        # monkeypatch this module's `request_tag_sheet_export` attribute,
+        # which only a call through the module (not a bound name) picks up.
+        # Own try/except: a failure here must never turn a successful
+        # approve into a failed one (AC-S5-2) - logged, nothing raised.
+        if new_status == STATUS_APPROVED:
+            try:
+                from app.services.dealer_kit import tag_sheet_export_service
+
+                tag_sheet_export_service.request_tag_sheet_export(
+                    db, request_id=request_id, user_id=user_id, sheet_ids=None,
+                )
+            except Exception:
+                logger.warning(
+                    "Auto-export failed for price_tag_request %s",
+                    request_id,
+                    exc_info=True,
+                )
+
         return request
 
     @staticmethod
@@ -310,21 +433,28 @@ class PriceTagRequestService:
             missing.append(("needed_by_date", "a needed by date"))
         if not request.lines:
             missing.append(("lines", "at least one line"))
-        if not missing:
-            return
+        if missing:
+            labels = [label for _, label in missing]
+            wanted = (
+                labels[0]
+                if len(labels) == 1
+                else ", ".join(labels[:-1]) + " and " + labels[-1]
+            )
+            raise AppException(
+                status_code=422,
+                message=f"This request needs {wanted} before it can be submitted.",
+                detail=",".join(key for key, _ in missing),
+                code="SUBMIT_INCOMPLETE",
+            )
 
-        labels = [label for _, label in missing]
-        wanted = (
-            labels[0]
-            if len(labels) == 1
-            else ", ".join(labels[:-1]) + " and " + labels[-1]
-        )
-        raise AppException(
-            status_code=422,
-            message=f"This request needs {wanted} before it can be submitted.",
-            detail=",".join(key for key, _ in missing),
-            code="SUBMIT_INCOMPLETE",
-        )
+        # D5: Selling price has nothing to sell against without a promotion.
+        if request.price_mode == "selling" and not request.promotion_id:
+            raise AppException(
+                status_code=422,
+                message="Selling price needs a promotion before this request can be submitted.",
+                detail="promotion_id",
+                code="PRICE_MODE_NEEDS_PROMOTION",
+            )
 
     @staticmethod
     def validate_claimable(request: PriceTagRequest) -> None:

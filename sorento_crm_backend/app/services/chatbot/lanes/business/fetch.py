@@ -320,6 +320,10 @@ TYPE_TO_PARAM: dict[str, str] = {
     "attachment_type": "attachment_type_ids",
     "attachment": "attachment_ids",
     "certificate": "certificate_ids",
+    # Three tools accept it: `crm_inventory_stock_balance_list`,
+    # `crm_inventory_warehouses_list` and
+    # `crm_procurement_spo_allocations_last_receipt_list`.
+    "warehouse": "warehouse_ids",
 }
 
 _UUID_RE = re.compile(

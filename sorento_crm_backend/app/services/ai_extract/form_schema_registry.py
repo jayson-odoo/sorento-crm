@@ -388,11 +388,21 @@ def _build_master_schema_from_field_linkage(entity_type: str) -> list[ExtractFie
     return out
 
 
+# Review push-back (D7 trimmed): the price tag request form has no
+# customer_name/so_number FIELDS to fill in - Customer is a select, and
+# there is no sales order number input at all - only a LINE ITEMS section,
+# so the header field mirror the dialog shows would extract values nothing
+# on the form ever reads. Empty on purpose; FORMS_WITH_LINE_ITEMS below is
+# what actually matters for this form.
+_PORTAL_PRICE_TAG_REQUEST: list[ExtractFieldSpec] = []
+
+
 FORM_SCHEMAS: dict[str, list[ExtractFieldSpec]] = {
     "portal.complaint": _PORTAL_COMPLAINT,
     "portal.stock_inquiry": _PORTAL_STOCK_INQUIRY,
     "portal.purchase_request": _PORTAL_PURCHASE_REQUEST,
     "portal.sponsorship_form": _PORTAL_SPONSORSHIP_FORM,
+    "portal.price_tag_request": _PORTAL_PRICE_TAG_REQUEST,
 }
 
 

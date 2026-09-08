@@ -796,7 +796,7 @@ function SubmissionCard({
         )}
         {row.needed_by_date && (
           <p className="text-sm text-foreground/80">
-            <span className="text-muted-foreground">Needed by: </span>
+            <span className="text-muted-foreground">Need by: </span>
             {row.needed_by_date}
           </p>
         )}

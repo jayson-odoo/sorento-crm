@@ -90,8 +90,10 @@ def visible_line_clauses() -> tuple:
 
     Readers: `procurement_service.SPOAllocationService.list_allocations`,
     `list_allocations_grouped_by_shipment`, `list_allocations_grouped_by_spo_number`,
-    `list_documents` (and its `total_allocated` / `total_received` rollups) and
-    `get_document` (its lines list and the same two rollups).
+    `list_documents` (and its `total_allocated` / `total_received` rollups),
+    `get_document` (its lines list and the same two rollups), and
+    `spo_last_receipt_service.last_receipt_rows` (the chatbot's "last in" - a line the
+    document no longer shows must not be able to answer as the newest one).
     """
     return (
         or_(
@@ -99,6 +101,18 @@ def visible_line_clauses() -> tuple:
             func.coalesce(SPOAllocation.quantity_received, 0) > 0,
         ),
     )
+
+
+def is_visible_allocation(allocation: "SPOAllocation") -> bool:
+    """The Python twin of `visible_line_clauses()`, for a reader that already holds
+    loaded `SPOAllocation` ORM objects rather than building a query (R7, round 2
+    security review) - `spo_conversion_service.planner_state`'s DISPLAY, filtering the
+    writer-facing, deliberately-unfiltered rows `_own_state` hands back. Kept as the
+    one restatement of the same rule rather than a second inline copy, so the two can
+    never drift the way `open_incoming_clauses()`'s SQL/Python halves are already
+    warned about above.
+    """
+    return allocation.retired_at is None or float(allocation.quantity_received or 0) > 0
 
 
 def overdue_days(arrival_date: Optional[date], as_of: Optional[date] = None) -> int:
@@ -177,6 +191,11 @@ def spo_history_for_product(db, run_id: str, product_id: str) -> dict:
         .filter(
             SPOAllocation.product_id == product_id,
             SPOAllocation.warehouse_id.in_(pool_ids),
+            # R7: a retired line is omitted from both legs below, not only labelled
+            # by `open_incoming_clauses()` above - that tuple is a SELECTED LABEL
+            # here (`is_open`), never a filter, so without this a retired line would
+            # still land in "open" or "history".
+            *visible_line_clauses(),
         )
         .order_by(SPOAllocation.expected_date.desc().nullslast(),
                   SPOAllocation.spo_number)

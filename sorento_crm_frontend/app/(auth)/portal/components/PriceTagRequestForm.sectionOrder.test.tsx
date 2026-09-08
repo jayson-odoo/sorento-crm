@@ -1,7 +1,9 @@
 /**
  * PLAN-price-tag-feedback-r2 S2, AC-S2-1: the read-only view renders the SAME
- * sections in the SAME order as the edit form - Debtor, Promotion, Needed by,
- * Notes, Lines, Purchase Order.
+ * sections in the SAME order as the edit form - Customer, Promotion, Price,
+ * Need by, Notes, Lines, Sales Order (r7 renamed Debtor -> Customer, Needed
+ * by -> Need by, Purchase Order -> Sales Order, and added the Price field -
+ * PLAN-price-tag-r7-request-ux D1/D4/D5).
  *
  * The other read-only suites assert individual sections' content; this one
  * asserts nothing about content and everything about ORDER, reading the
@@ -60,7 +62,7 @@ beforeEach(() => {
 });
 
 describe('read-only view section order (AC-S2-1)', () => {
-  it('renders Debtor, Promotion, Needed by, Notes, Lines, Purchase Order in that order', async () => {
+  it('renders Customer, Promotion, Price, Need by, Notes, Lines, Sales Order in that order', async () => {
     asMock(getRequest).mockResolvedValue({
       id: 'req-1',
       doc_number: 'PT-202609-0001',
@@ -70,9 +72,12 @@ describe('read-only view section order (AC-S2-1)', () => {
       promotion_name: 'ZZT August Promo',
       needed_by_date: '2026-09-10',
       notes: 'Handle with care',
-      // A non-editable, non-proof status: proof-review appends its own
-      // sections beneath this layout (AC-S2-2), which is out of scope here.
-      status: 'ready',
+      // A non-editable, non-design-preview status: r7 widened the design
+      // preview to proof_ready|changes_requested|approved|ready (D11), so
+      // this now has to pick a status OUTSIDE that set to stay isolated to
+      // the base layout order, which is all this test asserts (AC-S2-2 /
+      // AC-S4-1 cover the design preview section itself).
+      status: 'rejected',
       line_count: 1,
       created_at: '2026-09-01T00:00:00Z',
       portal_draft_at: null,
@@ -109,12 +114,13 @@ describe('read-only view section order (AC-S2-1)', () => {
     const normalized = texts.map((t) => (t.startsWith('Lines') ? 'Lines' : t));
 
     expect(normalized).toEqual([
-      'Debtor',
+      'Customer',
       'Promotion',
-      'Needed by',
+      'Price',
+      'Need by',
       'Notes',
       'Lines',
-      'Purchase Order',
+      'Sales Order',
     ]);
   });
 });

@@ -1056,18 +1056,34 @@ CATALOG: tuple[ToolSpec, ...] = (
             ("purchase_orders.placed", "PO placed (on order) on stock answers"),
         ),
     ),
-    # --- procurement: SPO last receipt (A6, chatbot-growth-r1) ---
+    # --- procurement: the last SPO line per product (A6, chatbot-growth-r1; reworded
+    # 8 Sep 2026, chatbot-warehouse-entity-and-last-in - it is no longer a receipt read) ---
     ToolSpec(
         "crm_procurement_spo_allocations_last_receipt_list",
         (
-            "Most recently RECEIVED SPO allocation(s) for a product - 'last in for X', "
-            "'last incoming qty', '上次进货', 'last 3 in'. Each row carries spo_number, "
-            "product_code, quantity_received, date (the most recent one actually recorded - "
-            "see date_label), date_label (which column answered: 'Arrived' = warehouse "
-            "arrival, 'Arrived (port)' = the shipment's port arrival, 'Received' = "
-            "no shipment date at all, just when the receipt was recorded), and warehouse.\n\n"
+            "The last SPO line PER PRODUCT, by the SPO's expected date - 'last in for X', "
+            "'last incoming qty', '上次进货', 'last 3 in'. GR never decides WHICH line "
+            "answers: the ordering is purely the SPO's own delivery date, and a product "
+            "whose latest line is still open (nothing received) still answers. GR is "
+            "REPORTED on the line that answered, when there is any.\n\n"
+            "Each row reads in this order: spo_number; product_code; spo_quantity (the "
+            "ordered quantity); gr_quantity (the received quantity, present ONLY when "
+            "something has actually been received - an open line has no such field); "
+            "spo_date (the SPO date that answered) with spo_date_source naming which "
+            "column it came from ('expected' = expected_date, 'issued' = issue_date when "
+            "expected_date is empty, 'recorded' = neither is set, so created_at answered "
+            "and the field is labelled 'SPO Date (recorded)' so it is not read as a "
+            "promised delivery); gr_date (the goods-received date, present ONLY when an "
+            "APPROVED GRN header points at the line - it comes from picking_lines -> "
+            "picking_headers.picking_date with picking_status 'approved'; a line received "
+            "through the ESB-stated path has a gr_quantity and no gr_date, which is "
+            "normal); and warehouse.\n\n"
             "FILTER BY UUID: `product_ids`, `warehouse_ids` (canonical UUIDs, csv / JSON / "
-            "repeated), both optional. `top_n` (default 1) - 'last 3 in' -> top_n=3.\n\n"
+            "repeated), both optional; `warehouse_ids` narrows BEFORE the pick. `top_n` "
+            "(default 1) = lines per product when `product_ids` is given, else lines "
+            "overall - 'last 3 in' for a resolved product FAMILY returns up to `top_n` "
+            "lines for EACH member, not `top_n` rows overall; 'last 3 in' with NO product "
+            "named returns the 3 newest lines across every product, NOT 3 per product.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
             "results to that contact's company/companies; omit both for all-company results."
         ),

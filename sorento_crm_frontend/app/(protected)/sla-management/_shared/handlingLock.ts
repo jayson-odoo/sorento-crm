@@ -108,4 +108,5 @@ export const HANDLING_LOCK_TYPE_LABELS: Record<FormSLASourceType, string> = {
   complaint: 'Complaint',
   ticket: 'Ticket',
   workflow_submission: 'Workflow Submission',
+  price_tag_request: 'Price Tag Request',
 };

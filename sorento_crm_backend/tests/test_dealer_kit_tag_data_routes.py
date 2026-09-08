@@ -504,11 +504,13 @@ def test_resolve_prices_for_lines_returns_engine_prices(api):
             "debtor_name": "ZZT Dealer",
             "needed_by_date": date.today() + timedelta(days=7),
             "promotion_id": promotion.id,
+            # D5: price_mode drives show_promo_price on save, not the line
+            # payload.
+            "price_mode": "selling",
             "lines": [
                 {
                     "line_type": "product",
                     "product_id": product.id,
-                    "show_promo_price": True,
                     "quantity": 1,
                 }
             ],
@@ -574,11 +576,13 @@ def test_request_detail_lines_carry_code_name_and_prices(api):
             "debtor_name": "ZZT Dealer",
             "needed_by_date": date.today() + timedelta(days=7),
             "promotion_id": promotion.id,
+            # D5: price_mode drives show_promo_price on save, not the line
+            # payload.
+            "price_mode": "selling",
             "lines": [
                 {
                     "line_type": "product",
                     "product_id": product.id,
-                    "show_promo_price": True,
                     "quantity": 1,
                 }
             ],

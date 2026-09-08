@@ -126,10 +126,11 @@ describe('read-only view attachments (PortalAttachment shape)', () => {
     ]);
   });
 
-  it('renders the Purchase Order card with an empty state when the request carries no attachments', async () => {
+  it('renders the Sales Order card with an empty state when the request carries no attachments', async () => {
     // S2 (ADR: View = Edit): the section is the SAME one the edit form
     // shows, always present - a reader must not wonder whether the form
-    // even has a PO section, the way an entirely-hidden card would leave it.
+    // even has a Sales Order section, the way an entirely-hidden card would
+    // leave it. Section renamed Purchase Order -> Sales Order in r7 (D4).
     asMock(getRequest).mockResolvedValue({
       id: 'req-2',
       doc_number: 'PT-202609-0002',
@@ -151,7 +152,9 @@ describe('read-only view attachments (PortalAttachment shape)', () => {
     render(<PriceTagRequestForm requestId="req-2" />);
 
     await screen.findByText('PT-202609-0002');
-    expect(await screen.findByText('Purchase Order')).toBeInTheDocument();
-    expect(screen.getByText('No PO files attached.')).toBeInTheDocument();
+    expect(await screen.findByText('Sales Order')).toBeInTheDocument();
+    expect(
+      screen.getByText('No sales order files attached.'),
+    ).toBeInTheDocument();
   });
 });
