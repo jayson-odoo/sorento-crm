@@ -66,6 +66,12 @@ to claim it cannot exist.
 - S3 [FE] nothing to build if the backend stops returning the rows; verify the lines tab, the
   allocations grid and the document header in a browser at 375px and 1280px.
 - S4 operate: merge, deploy, run the backfill dry-run, then apply, then re-check SPO-2026/09-0036.
+  **Before anyone calls AC-H8 done, the production dry run must NAME SPO-2026/09-0036 with its four
+  rows.** It is in no local database, so the rule has never been exercised against the shape that
+  motivated it. The rule also fires only while each retired line's replacement is still
+  `line_status='open'`: if a replacement has since been received and closed, the old line stays
+  visible and the next ESB push naming the document is what stamps it. Read the per-row evidence
+  (AC-H18) for a few documents against AutoCount before `--apply`.
 
 ## 5. Decided
 
