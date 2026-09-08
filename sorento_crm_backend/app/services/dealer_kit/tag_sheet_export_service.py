@@ -206,6 +206,29 @@ def request_tag_sheet_export(
     # For now, sheet_ids are passed via the print URL query parameter.
     # The render payload endpoint reads them from there.
 
+    # B2: the enqueue lives HERE, not in each caller - the CRM export route
+    # and transition_status's own auto-export on approve (D12) both call
+    # this function, and a caller that only wrote the PENDING
+    # UserDownload/ExportRequest rows and never queued the render left the
+    # PDF permanently un-generated. On a queueing failure the download is
+    # marked failed rather than left PENDING forever.
+    from app.services.download_service import DownloadService
+    from app.services.queue_service import enqueue_job
+    from app.tasks.dealer_kit_export_tasks import generate_tag_sheet_pdf
+
+    try:
+        enqueue_job(
+            generate_tag_sheet_pdf,
+            str(download.id),
+            sheet_ids,
+            queue_name="catalogue_render",
+            job_timeout=900,
+        )
+    except Exception as exc:  # noqa: BLE001
+        DownloadService(db).mark_failed(
+            str(download.id), f"Could not queue PDF generation: {exc}"
+        )
+
     return download, sheet_ids
 
 

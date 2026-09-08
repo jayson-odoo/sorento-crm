@@ -491,33 +491,22 @@ def export_tag_sheet(
     - Request must be in ``approved`` or ``ready`` status.
     - If the request has a promotion, it must not be expired (409).
     - On first export after ``approved``, transitions to ``ready``.
+
+    ``request_tag_sheet_export`` itself enqueues the render (B2) - this route
+    just calls it and reports the download; the CRM re-export button and
+    ``transition_status``'s own auto-export on approve (D12) share the one
+    enqueue.
     """
     from app.services.dealer_kit.tag_sheet_export_service import (
         request_tag_sheet_export,
     )
-    from app.services.download_service import DownloadService
-    from app.services.queue_service import enqueue_job
-    from app.tasks.dealer_kit_export_tasks import generate_tag_sheet_pdf
 
-    download, sheet_ids = request_tag_sheet_export(
+    download, _sheet_ids = request_tag_sheet_export(
         db,
         request_id=request_id,
         user_id=_user_id(user) or "",
         sheet_ids=payload.sheet_ids,
     )
-
-    try:
-        enqueue_job(
-            generate_tag_sheet_pdf,
-            str(download.id),
-            sheet_ids,
-            queue_name="catalogue_render",
-            job_timeout=900,
-        )
-    except Exception as exc:  # noqa: BLE001
-        DownloadService(db).mark_failed(
-            str(download.id), f"Could not queue PDF generation: {exc}"
-        )
 
     db.refresh(download)
     return TagSheetExportOut(

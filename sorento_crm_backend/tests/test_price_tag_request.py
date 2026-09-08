@@ -542,14 +542,42 @@ class TestAutoExportOnApprove:
         assert len(calls) == 1
         assert calls[0]["request_id"] == req.id
 
+    def test_approving_a_request_with_a_page_enqueues_the_render_job(
+        self, db: Session, monkeypatch
+    ):
+        """AC-S5-1, B2: `request_tag_sheet_export` enqueues the render
+        itself, not just writes the UserDownload/ExportRequest rows - a
+        caller that only wrote those rows and never queued the render left
+        the PDF permanently un-generated. `enqueue_job` is imported
+        function-locally inside `request_tag_sheet_export`, so patching the
+        module attribute here is picked up at call time."""
+        from app.services import queue_service
+
+        calls: list[dict] = []
+
+        def _fake_enqueue(func, *args, **kwargs):
+            calls.append({"func": func, "args": args, "kwargs": kwargs})
+            return None
+
+        monkeypatch.setattr(queue_service, "enqueue_job", _fake_enqueue)
+
+        req = self._request_with_page_and_version(db)
+        user_id = str(uuid.uuid4())
+
+        PriceTagRequestService.transition_status(
+            db, req.id, STATUS_APPROVED, user_id=user_id,
+        )
+
+        assert len(calls) == 1
+        assert calls[0]["kwargs"].get("queue_name") == "catalogue_render"
+
     def test_approving_with_a_real_page_writes_a_user_download_row(self, db: Session):
         """AC-S5-1, the real function: a `UserDownload` row of kind
-        `dealer_kit_tag_sheet_pdf` for this request exists after approve, no
-        RQ worker needed - `request_tag_sheet_export` itself only writes the
-        row and returns it; queuing the render job is the CALLER's job
-        (`export_tag_sheet` in `price_tag_requests.py` enqueues via
-        `app.services.queue_service.enqueue_job` after the call returns), so
-        nothing here needs mocking for the row to land.
+        `dealer_kit_tag_sheet_pdf` for this request exists after approve.
+        No RQ worker needed - only the row's EXISTENCE is asserted here;
+        whether the enqueue itself succeeds (Redis reachable or not) does
+        not change that `request_tag_sheet_export` already wrote and
+        committed the row before attempting to queue anything.
         """
         from app.models.download import UserDownload
         from app.services.dealer_kit.tag_sheet_export_service import KIND
