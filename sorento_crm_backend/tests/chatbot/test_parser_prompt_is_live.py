@@ -56,7 +56,10 @@ LIVE_CHARS = 46942  # the fetched file, leading `=` included
 # Intentional content, woven in where the definition lives, not drift.
 # +197 chars (item 8, 8 Sep 2026): one line in REQUESTED ATTRIBUTES - the customer's
 # attribute phrase is emitted whole, and a base property is a requested attribute too.
-CONSTANT_CHARS = 48308
+# +262 chars (D6, 8 Sep 2026): the requested_attributes line scoped to that key, one
+# attachment_type canonical_code sentence in ATTACHMENT TYPE EXTRACTION, and "image" removed
+# from the canonical enum (it is "photo"). Intentional content.
+CONSTANT_CHARS = 48570
 
 
 def _without_growth_r1_addendum(text: str) -> str:
