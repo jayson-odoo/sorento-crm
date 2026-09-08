@@ -74,7 +74,11 @@ import POCrossCheckViewer from './POCrossCheckViewer';
 import { AttachmentDropzone } from './AttachmentDropzone';
 import AttachmentPreviewModal from '@/components/common/AttachmentPreviewModal';
 import { toPreviewItem, portalFetchBytes } from '../lib/portal-preview';
-import { uploadAttachment, type PortalAttachment } from '../lib/portal-client';
+import {
+  uploadAttachment,
+  getPriceTagDesign,
+  type PortalAttachment,
+} from '../lib/portal-client';
 import type { ResolvedLineData } from '@/app/(public)/c/print/tag-sheet/[downloadId]/components/TagSheetRenderer';
 import type { TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 import { cn } from '@/lib/utils';
@@ -159,6 +163,14 @@ const MISSING_DEBTOR = 'Select the dealer these tags are for.';
 const MISSING_DEADLINE = 'Pick the date you need them by.';
 const MISSING_LINES = 'Add at least one line.';
 const EMPTY_LINE = 'Pick a set or a product for this line.';
+
+/** Statuses the real design (D11) is visible at, once one exists to show. */
+const DESIGN_PREVIEW_STATUSES = new Set([
+  'proof_ready',
+  'changes_requested',
+  'approved',
+  'ready',
+]);
 
 /**
  * The field keys a refusal named, if it named any.
@@ -275,6 +287,11 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
   const isDraft = Boolean(request?.portal_draft_at);
   const isEditable = isNew || isDraft;
   const isProofReady = request?.status === 'proof_ready';
+  // The design preview shows for longer than the approve/request-changes
+  // actions do (D11/AC-S4-4): once approved the salesperson can still look
+  // at what they approved, but Approve/Request Changes only make sense while
+  // the design is actually waiting on them.
+  const showDesignPreview = !!request && DESIGN_PREVIEW_STATUSES.has(request.status);
   // The id to save/flush against: the route param when one exists, else
   // whatever a create call in THIS session already answered with.
   const effectiveId = requestId ?? createdRequestId ?? undefined;
@@ -949,12 +966,13 @@ export function PriceTagRequestForm({ requestId, slug }: Props) {
           fetchBytes={portalFetchBytes}
         />
 
-        {/* Design review appends beneath the same layout (AC-S2-2); nothing
-            below here renders for a plain read-only status. */}
+        {/* Design preview appends beneath the same layout (AC-S2-2); nothing
+            below here renders for a plain read-only status. It shows for
+            longer than the review actions do (D11/AC-S4-4). */}
+        {showDesignPreview && <ProofPreviewSection request={request} />}
+
         {isProofReady && (
           <>
-            <ProofPreviewSection request={request} />
-
             {/* Same `attachments` state the Sales Order card above reads
                 (not `request.attachments`, which is only ever the snapshot
                 from the initial fetch) - one source, so the two can never
@@ -1447,117 +1465,82 @@ function LineRow({
 }
 
 // ---------------------------------------------------------------------------
-// Proof preview
+// Design preview (D11)
 // ---------------------------------------------------------------------------
 
 /**
- * Renders a scaled-down proof preview of the tag sheets.
- *
- * Phase 1: builds a mock tag sheet doc from the request lines for demonstration.
- * Phase 2: fetches the actual tag sheet doc from the backend.
+ * Fetches the request's real tag sheet design and renders it through
+ * `PriceTagProofViewer` - the same `TagSheetRenderer` the CRM designer and the
+ * PDF export use, so what the salesperson sees here is what gets printed.
  */
 function ProofPreviewSection({
   request,
 }: {
   request: PriceTagRequestDetail;
 }) {
-  // Build mock resolved data from the request's lines.
-  const resolvedData: Record<string, ResolvedLineData> = {};
-  for (const line of request.lines) {
-    resolvedData[line.id] = {
-      line_id: line.id,
-      code: line.code,
-      name: line.name,
-      dimensions: '',
-      spec_lines: '',
-      list_price: null,
-      sell_price: null,
-      show_promo_price: line.show_promo_price,
-      included_accessories: line.included_accessories ?? '',
-      quantity: line.quantity,
+  const [doc, setDoc] = useState<TagSheetDoc | null>(null);
+  const [resolvedData, setResolvedData] = useState<Record<string, ResolvedLineData>>({});
+  const [loading, setLoading] = useState(true);
+  const [notAvailable, setNotAvailable] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setNotAvailable(false);
+    getPriceTagDesign(request.id)
+      .then((data) => {
+        if (cancelled) return;
+        if (!data) {
+          setNotAvailable(true);
+          setDoc(null);
+          return;
+        }
+        const nextResolved: Record<string, ResolvedLineData> = {};
+        for (const line of data.lines) {
+          nextResolved[line.line_id] = line;
+        }
+        setResolvedData(nextResolved);
+        setDoc(data.doc);
+      })
+      .catch(() => {
+        if (!cancelled) setNotAvailable(true);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
     };
+  }, [request.id]);
+
+  if (loading) {
+    return (
+      <Card>
+        <CardHeader className="py-3 px-4">
+          <CardTitle className="text-base">Design Preview</CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4">
+          <Skeleton className="h-64 w-full" />
+        </CardContent>
+      </Card>
+    );
   }
 
-  // Phase 1: build a mock tag sheet doc. Phase 2 fetches the real one.
-  const mockDoc: TagSheetDoc = {
-    kind: 'tag_sheet',
-    imposition: {
-      preset: 'a4_3up',
-      page_width_mm: 210,
-      page_height_mm: 297,
-      bleed_mm: 3,
-      gap_mm: 2,
-    },
-    sheets: [
-      {
-        id: 's1',
-        tags: request.lines.map((line, i) => ({
-          id: `t${i}`,
-          template_id: '',
-          request_line_id: line.id,
-          x_mm: 10,
-          y_mm: 10 + i * 100,
-          width_mm: 95,
-          height_mm: 90,
-          layers: [
-            {
-              id: `l${i}-name`,
-              type: 'text' as const,
-              x_mm: 5,
-              y_mm: 5,
-              width_mm: 85,
-              height_mm: 15,
-              rotation_deg: 0,
-              z_index: 1,
-              locked: false,
-              visible: true,
-              slot_binding: 'name' as const,
-              text_override: null,
-              props: {
-                kind: 'text' as const,
-                text: line.name,
-                fontFamily: 'DM Sans',
-                fontSize: 12,
-                fontWeight: 600,
-                color: '#000000',
-                align: 'left' as const,
-                lineHeight: 1.2,
-                letterSpacing: 0,
-              },
-            },
-            {
-              id: `l${i}-code`,
-              type: 'text' as const,
-              x_mm: 5,
-              y_mm: 22,
-              width_mm: 85,
-              height_mm: 10,
-              rotation_deg: 0,
-              z_index: 2,
-              locked: false,
-              visible: true,
-              slot_binding: 'code' as const,
-              text_override: null,
-              props: {
-                kind: 'text' as const,
-                text: line.code,
-                fontFamily: 'DM Sans',
-                fontSize: 9,
-                fontWeight: 400,
-                color: '#666666',
-                align: 'left' as const,
-                lineHeight: 1.2,
-                letterSpacing: 0,
-              },
-            },
-          ],
-        })),
-      },
-    ],
-  };
+  if (notAvailable || !doc) {
+    return (
+      <Card>
+        <CardHeader className="py-3 px-4">
+          <CardTitle className="text-base">Design Preview</CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4">
+          <p className="text-sm text-muted-foreground text-center py-6">
+            Design not available yet.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
-  return (
-    <PriceTagProofViewer doc={mockDoc} resolvedData={resolvedData} />
-  );
+  return <PriceTagProofViewer doc={doc} resolvedData={resolvedData} />;
 }
 

@@ -16,6 +16,7 @@ import type {
   PortalLandingKind,
   PortalSubmissionKind,
 } from '@/lib/portal-form-kinds';
+import type { LineTagData, TagSheetDoc } from '@/lib/dealer-kit/tag-template-types';
 
 const TOKEN_KEY = 'sorento.portalToken';
 
@@ -1066,4 +1067,38 @@ export async function aiExtractFromFiles(
     form,
   );
   return unwrap<AIExtractResult>(res, 'AI extract failed.');
+}
+
+// ---------------------------------------------------------------------------
+// Price tag request design preview (D11/S4)
+// ---------------------------------------------------------------------------
+
+/**
+ * The tag sheet doc plus its resolved line data, in one answer - the CRM's
+ * equivalent design route (`GET .../price-tag-requests/{id}/design`) returns
+ * only the doc and resolves prices through a second, staff-only route; the
+ * portal has no such second call, so this one carries both.
+ */
+export interface PriceTagDesignResponse {
+  page_id: string;
+  version: number;
+  doc: TagSheetDoc | null;
+  source: 'draft' | 'version';
+  lines: LineTagData[];
+}
+
+/**
+ * The salesperson's real design preview (D11), status-gated server-side to
+ * `proof_ready | changes_requested | approved | ready` (404 otherwise, no
+ * doc leak while a request is still being designed). Returns `null` on 404
+ * so the caller can show "Design not available yet." rather than throw.
+ */
+export async function getPriceTagDesign(
+  id: string,
+): Promise<PriceTagDesignResponse | null> {
+  const res = await portalFetch(
+    `/api/v1/public/portal/submissions/price_tag_request/${encodeURIComponent(id)}/design`,
+  );
+  if (res.status === 404) return null;
+  return unwrap<PriceTagDesignResponse>(res, 'Failed to load the design.');
 }
