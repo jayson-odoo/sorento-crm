@@ -133,9 +133,11 @@ class PurchaseOrderService:
     def serialize(self, po: PurchaseOrder, gr_reference: Optional[str] = None, *,
                   allocated_qty: float = 0.0,
                   allocations: Optional[list[dict]] = None,
-                  spo_plan: Optional[dict] = None) -> dict:
+                  spo_plan: Optional[dict] = None,
+                  so_links: Optional[dict[str, list[dict]]] = None) -> dict:
         # Warehouse is carried at the line level; surface the first line's warehouse
         # as the PO's warehouse (M1 POs are effectively single-destination).
+        so_links = so_links or {}
         wh_code = None
         wh_name = None
         total_qty = 0.0
@@ -204,6 +206,12 @@ class PurchaseOrderService:
                 "expected_date": (
                     ln.expected_date.isoformat() if ln.expected_date else None
                 ),
+                # The AutoCount book's own SO linkage for this LINE, distinct from the
+                # allocations panel below (`_allocations_for`, which answers "who reserved
+                # this line through our own order-inquiry flow"). Empty on most lines - the
+                # book only links what a buyer raised through Transfer from S/O
+                # (`PLAN-scm-book-linkage-on-document-lines.md`).
+                "so_links": so_links.get(str(ln.id), []),
             })
         return {
             "id": po.id,
@@ -816,12 +824,18 @@ class PurchaseOrderService:
             from app.services.scm.spo_conversion_service import plan_of
 
             spo_plan = plan_of(self.db, str(po.id))
+        # ONE query for the whole document (AC-A5), never one per line - `202405-S0045`
+        # alone has 89 of them.
+        so_links = order_link_service.so_links_by_po_line(
+            self.db, [str(ln.id) for ln in po.lines]
+        )
         return self.serialize(
             po,
             gr_refs.get(po.id),
             allocated_qty=self._allocated_by_po([str(po.id)]).get(str(po.id), 0.0),
             allocations=self._allocations_for(po),
             spo_plan=spo_plan,
+            so_links=so_links,
         )
 
     def list_supplier_options(

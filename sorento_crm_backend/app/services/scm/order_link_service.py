@@ -673,6 +673,54 @@ def placed_by_claim(db: Session, claim_ids: Sequence[str]) -> dict[str, Decimal]
     return out
 
 
+def so_links_by_po_line(
+    db: Session, po_line_ids: Sequence[str]
+) -> dict[str, list[dict]]:
+    """The DISTINCT sales orders the book links to each purchase-order LINE.
+
+    Keyed by `po_line_id`, ONE query for however many lines the caller asks about - the PO
+    Lines tab needs every line of a document in one call, not one per line
+    (`PLAN-scm-book-linkage-on-document-lines.md` AC-A5). `po_line_id` is matched
+    EXACTLY, never falling back to `po_number`: a document-level claim (the `**SO:174830**`
+    PO-note case, no line pinned) is not this line's business, and a fallback on the
+    document number would put one customer's stock under another customer's sales order
+    (AC-A4). `OrderLinkClaim` is `CompanyScopedMixin`, so the plain ORM filter below is
+    already company-scoped by the `do_orm_execute` event (AC-A6) - no explicit
+    `company_id` filter is needed or wanted here.
+
+    Distinct on `(po_line_id, so_number)`: several claims - different `source`s, or a
+    still-open one alongside a resolved one - can name the same sales order for the same
+    line, and the screen asks "which sales orders", not "how many claims".
+    """
+    out: dict[str, list[dict]] = {}
+    wanted = [str(x) for x in po_line_ids]
+    if not wanted:
+        return out
+    rows = (
+        db.query(
+            OrderLinkClaim.po_line_id,
+            OrderLinkClaim.so_number,
+            OrderLinkClaim.so_line_id,
+            OrderLinkClaim.source,
+        )
+        .filter(OrderLinkClaim.po_line_id.in_(wanted))
+        .order_by(OrderLinkClaim.so_number, OrderLinkClaim.claimed_at)
+        .all()
+    )
+    seen: set[tuple[str, str]] = set()
+    for po_line_id, so_number, so_line_id, source in rows:
+        key = (str(po_line_id), so_number)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.setdefault(str(po_line_id), []).append({
+            "so_number": so_number,
+            "so_line_id": str(so_line_id) if so_line_id else None,
+            "source": source,
+        })
+    return out
+
+
 def _claim_rows(db: Session, *, target_ids=None, so_line_ids=None) -> list[dict]:
     """Every RESOLVED claim naming a purchase line, as raw rows.
 
