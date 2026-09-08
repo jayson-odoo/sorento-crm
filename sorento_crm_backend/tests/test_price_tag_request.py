@@ -456,6 +456,198 @@ class TestStatusTransitions:
 
 
 # ---------------------------------------------------------------------------
+# 2a. Auto-export on approve (D12, PLAN-price-tag-r7-request-ux AC-S5-1/2)
+#
+# `transition_status(..., STATUS_APPROVED)` does not call the export service
+# at all today. D12 adds that: on the `proof_ready -> approved` edge, AFTER
+# the status is committed, call `request_tag_sheet_export(db, request_id=...,
+# user_id=..., sheet_ids=None)`. Patch target for the monkeypatched tests:
+# `app.services.dealer_kit.tag_sheet_export_service.request_tag_sheet_export`
+# - that module defines the function, and it has to be imported function-
+# local inside `transition_status` (the module docstring already notes
+# `tag_sheet_export_service` imports STATUS_APPROVED/STATUS_READY from THIS
+# module at ITS OWN top level, so a top-level import here is circular) -
+# monkeypatching the attribute on its OWN module works either way, since a
+# function-local `from ... import x` re-resolves the name at call time.
+# ---------------------------------------------------------------------------
+
+
+class TestAutoExportOnApprove:
+    def _request_with_page_and_version(self, db: Session) -> PriceTagRequest:
+        """A request in `proof_ready`, with a tag_sheet page carrying one
+        saved version - what `request_tag_sheet_export` itself requires
+        (status approved/ready, a page, a version) before it will queue
+        anything."""
+        from app.models.dealer_kit import Page, PageVersion
+
+        contact = _make_contact(db)
+        req = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={
+                "debtor_name": "ZZT Dealer",
+                "needed_by_date": date.today() + timedelta(days=7),
+                "lines": [],
+            },
+        )
+        page = Page(
+            name=f"ZZT Tags - {req.doc_number}",
+            slug=unique_code("tag-sheet"),
+            kind="tag_sheet",
+            request_id=req.id,
+            company_id=_SORENTO_COMPANY_ID,
+        )
+        db.add(page)
+        db.flush()
+        req.page_id = page.id
+        db.add(
+            PageVersion(
+                page_id=page.id,
+                version=1,
+                doc={"kind": "tag_sheet", "sheets": [], "imposition": {}},
+            )
+        )
+        req.status = STATUS_PROOF_READY
+        db.flush()
+        return req
+
+    def test_approving_a_request_with_a_page_enqueues_one_export(
+        self, db: Session, monkeypatch
+    ):
+        """AC-S5-1: the export call fires exactly once, with the just-
+        approved request's id."""
+        from app.services.dealer_kit import tag_sheet_export_service
+
+        calls: list[dict] = []
+
+        def _fake_export(db_arg, *, request_id, user_id, sheet_ids=None):
+            calls.append(
+                {"request_id": request_id, "user_id": user_id, "sheet_ids": sheet_ids}
+            )
+            return (None, None)
+
+        monkeypatch.setattr(
+            tag_sheet_export_service, "request_tag_sheet_export", _fake_export
+        )
+
+        req = self._request_with_page_and_version(db)
+        user_id = str(uuid.uuid4())
+
+        result = PriceTagRequestService.transition_status(
+            db, req.id, STATUS_APPROVED, user_id=user_id,
+        )
+
+        assert result.status == STATUS_APPROVED
+        assert len(calls) == 1
+        assert calls[0]["request_id"] == req.id
+
+    def test_approving_with_a_real_page_writes_a_user_download_row(self, db: Session):
+        """AC-S5-1, the real function: a `UserDownload` row of kind
+        `dealer_kit_tag_sheet_pdf` for this request exists after approve, no
+        RQ worker needed - `request_tag_sheet_export` itself only writes the
+        row and returns it; queuing the render job is the CALLER's job
+        (`export_tag_sheet` in `price_tag_requests.py` enqueues via
+        `app.services.queue_service.enqueue_job` after the call returns), so
+        nothing here needs mocking for the row to land.
+        """
+        from app.models.download import UserDownload
+        from app.services.dealer_kit.tag_sheet_export_service import KIND
+
+        req = self._request_with_page_and_version(db)
+        user_id = str(uuid.uuid4())
+
+        PriceTagRequestService.transition_status(
+            db, req.id, STATUS_APPROVED, user_id=user_id,
+        )
+
+        rows = (
+            db.query(UserDownload)
+            .filter(
+                UserDownload.source_entity_type == "price_tag_request",
+                UserDownload.source_entity_id == req.id,
+                UserDownload.kind == KIND,
+            )
+            .all()
+        )
+        assert len(rows) == 1
+
+    def test_approving_a_request_with_no_page_still_approves(self, db: Session):
+        """AC-S5-2: the export precondition (no page_id) fails, and the
+        approve must still go through - the failure is logged, not raised."""
+        req = self._create_request(db, STATUS_PROOF_READY)
+        assert req.page_id is None
+
+        result = PriceTagRequestService.transition_status(
+            db, req.id, STATUS_APPROVED, user_id=str(uuid.uuid4()),
+        )
+
+        assert result.status == STATUS_APPROVED
+
+    def test_approving_with_no_page_writes_no_download_row(self, db: Session):
+        from app.models.download import UserDownload
+        from app.services.dealer_kit.tag_sheet_export_service import KIND
+
+        req = self._create_request(db, STATUS_PROOF_READY)
+
+        PriceTagRequestService.transition_status(
+            db, req.id, STATUS_APPROVED, user_id=str(uuid.uuid4()),
+        )
+
+        rows = (
+            db.query(UserDownload)
+            .filter(
+                UserDownload.source_entity_type == "price_tag_request",
+                UserDownload.source_entity_id == req.id,
+                UserDownload.kind == KIND,
+            )
+            .all()
+        )
+        assert rows == []
+
+    def test_an_export_exception_does_not_prevent_the_approve(
+        self, db: Session, monkeypatch
+    ):
+        """The failure is logged (per the module's own posture on the SLA
+        emit elsewhere in this codebase), never propagated to the caller."""
+        from app.services.dealer_kit import tag_sheet_export_service
+
+        def _boom(db_arg, *, request_id, user_id, sheet_ids=None):
+            raise RuntimeError("ZZT export boom")
+
+        monkeypatch.setattr(
+            tag_sheet_export_service, "request_tag_sheet_export", _boom
+        )
+
+        req = self._request_with_page_and_version(db)
+
+        result = PriceTagRequestService.transition_status(
+            db, req.id, STATUS_APPROVED, user_id=str(uuid.uuid4()),
+        )
+
+        assert result.status == STATUS_APPROVED
+
+    def _create_request(self, db: Session, status: str) -> PriceTagRequest:
+        """Mirrors `TestStatusTransitions._create_request` - duplicated
+        rather than imported across classes since it is one small helper and
+        the two classes' fixtures otherwise stay independent."""
+        contact = _make_contact(db)
+        req = PriceTagRequestService.create_request(
+            db,
+            contact_id=contact.id,
+            company_id=_SORENTO_COMPANY_ID,
+            data={
+                "debtor_name": "ZZT Dealer",
+                "needed_by_date": date.today() + timedelta(days=7),
+                "lines": [],
+            },
+        )
+        req.status = status
+        db.flush()
+        return req
+
+
+# ---------------------------------------------------------------------------
 # 3. Portal form visibility
 # ---------------------------------------------------------------------------
 

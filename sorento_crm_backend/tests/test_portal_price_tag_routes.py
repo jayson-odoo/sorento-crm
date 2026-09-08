@@ -367,6 +367,277 @@ class TestSubmitRefusals:
 
 
 # ---------------------------------------------------------------------------
+# Price mode + line remarks (D5, D6, PLAN-price-tag-r7-request-ux AC-S2-5/7)
+#
+# `price_mode` replaces the old per-line `show_promo_price` switch as a
+# header-level control: `list | selling`, `selling` requires a promotion, and
+# on save the service re-derives EVERY line's `show_promo_price` from it
+# (`show_promo_price = price_mode == 'selling'`). These tests pin the
+# contract; the coder implements the header column, the line column and the
+# derivation the same way `PriceTagRequestService.replace_lines` already
+# owns writing every other line field.
+# ---------------------------------------------------------------------------
+
+
+class TestPriceModeAndRemarks:
+    def test_create_defaults_price_mode_to_list_and_carries_it_on_the_response(
+        self, client
+    ):
+        c, db, _ = client
+        product_id = _seed_product(db)
+
+        res = c.post(
+            _BASE,
+            json={"lines": [{"line_type": "product", "product_id": product_id}]},
+        )
+
+        assert res.status_code == 201, res.text
+        assert res.json()["price_mode"] == "list"
+
+    def test_create_accepts_price_mode_selling(self, client):
+        c, db, _ = client
+        product_id = _seed_product(db)
+        promotion_id = _seed_promotion(db)
+
+        res = c.post(
+            _BASE,
+            json={
+                "promotion_id": promotion_id,
+                "price_mode": "selling",
+                "lines": [{"line_type": "product", "product_id": product_id}],
+            },
+        )
+
+        assert res.status_code == 201, res.text
+        assert res.json()["price_mode"] == "selling"
+
+    def test_create_rejects_an_unknown_price_mode_with_422(self, client):
+        c, db, _ = client
+        product_id = _seed_product(db)
+
+        res = c.post(
+            _BASE,
+            json={
+                "price_mode": "bogus",
+                "lines": [{"line_type": "product", "product_id": product_id}],
+            },
+        )
+
+        assert res.status_code == 422, res.text
+
+    def test_update_accepts_price_mode(self, client):
+        c, db, _ = client
+        product_id = _seed_product(db)
+        promotion_id = _seed_promotion(db)
+        created = c.post(
+            _BASE,
+            json={"lines": [{"line_type": "product", "product_id": product_id}]},
+        ).json()
+        assert created["price_mode"] == "list"
+
+        res = c.put(
+            f"{_BASE}/{created['id']}",
+            json={"promotion_id": promotion_id, "price_mode": "selling"},
+        )
+
+        assert res.status_code == 200, res.text
+        assert res.json()["price_mode"] == "selling"
+
+    def test_update_rejects_an_unknown_price_mode_with_422(self, client):
+        c, db, _ = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE,
+            json={"lines": [{"line_type": "product", "product_id": product_id}]},
+        ).json()
+
+        res = c.put(f"{_BASE}/{created['id']}", json={"price_mode": "bogus"})
+
+        assert res.status_code == 422, res.text
+
+    def test_line_create_accepts_remarks_and_the_response_carries_it(self, client):
+        c, db, _ = client
+        product_id = _seed_product(db)
+
+        res = c.post(
+            _BASE,
+            json={
+                "lines": [
+                    {
+                        "line_type": "product",
+                        "product_id": product_id,
+                        "remarks": "Face out on the top shelf",
+                    }
+                ]
+            },
+        )
+
+        assert res.status_code == 201, res.text
+        assert res.json()["lines"][0]["remarks"] == "Face out on the top shelf"
+
+    def test_line_update_replaces_remarks(self, client):
+        c, db, _ = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE,
+            json={
+                "lines": [
+                    {
+                        "line_type": "product",
+                        "product_id": product_id,
+                        "remarks": "Old note",
+                    }
+                ]
+            },
+        ).json()
+
+        res = c.put(
+            f"{_BASE}/{created['id']}",
+            json={
+                "lines": [
+                    {
+                        "line_type": "product",
+                        "product_id": product_id,
+                        "remarks": "New note",
+                    }
+                ]
+            },
+        )
+
+        assert res.status_code == 200, res.text
+        assert res.json()["lines"][0]["remarks"] == "New note"
+
+    def test_a_line_with_no_remarks_carries_null_not_a_missing_key(self, client):
+        c, db, _ = client
+        product_id = _seed_product(db)
+
+        res = c.post(
+            _BASE,
+            json={"lines": [{"line_type": "product", "product_id": product_id}]},
+        )
+
+        assert res.status_code == 201, res.text
+        body = res.json()["lines"][0]
+        assert "remarks" in body
+        assert body["remarks"] is None
+
+    def test_submit_with_selling_and_no_promotion_is_refused(self, client):
+        c, db, _ = client
+        product_id = _seed_product(db)
+        created = c.post(
+            _BASE,
+            json={
+                "debtor_name": "ZZT Dealer",
+                "needed_by_date": str(date.today() + timedelta(days=7)),
+                "price_mode": "selling",
+                "lines": [{"line_type": "product", "product_id": product_id}],
+            },
+        ).json()
+        assert created["price_mode"] == "selling"
+
+        res = c.post(f"{_BASE}/{created['id']}/submit")
+
+        assert res.status_code == 422, res.text
+        assert res.json()["code"] == "PRICE_MODE_NEEDS_PROMOTION"
+
+    def test_submit_with_selling_and_a_promotion_succeeds_and_shows_promo_price_on_every_line(
+        self, client
+    ):
+        c, db, _ = client
+        first = _seed_product(db)
+        second = _seed_product(db)
+        promotion_id = _seed_promotion(db)
+        created = c.post(
+            _BASE,
+            json={
+                "debtor_name": "ZZT Dealer",
+                "needed_by_date": str(date.today() + timedelta(days=7)),
+                "promotion_id": promotion_id,
+                "price_mode": "selling",
+                "lines": [
+                    # `show_promo_price` explicitly FALSE on the way in - a
+                    # line schema default of True would make this pass for
+                    # the wrong reason (proving nothing about price_mode
+                    # derivation). The service must override it to True
+                    # because the HEADER says selling.
+                    {
+                        "line_type": "product",
+                        "product_id": first,
+                        "show_promo_price": False,
+                    },
+                    {
+                        "line_type": "product",
+                        "product_id": second,
+                        "show_promo_price": False,
+                    },
+                ],
+            },
+        ).json()
+
+        res = c.post(f"{_BASE}/{created['id']}/submit")
+
+        assert res.status_code == 200, res.text
+        from app.models.price_tag import PriceTagRequestLine
+
+        rows = (
+            db.query(PriceTagRequestLine)
+            .filter(PriceTagRequestLine.request_id == created["id"])
+            .all()
+        )
+        assert len(rows) == 2
+        assert all(row.show_promo_price is True for row in rows)
+
+    def test_switching_the_header_back_to_list_sets_every_lines_show_promo_price_false(
+        self, client
+    ):
+        c, db, _ = client
+        first = _seed_product(db)
+        second = _seed_product(db)
+        promotion_id = _seed_promotion(db)
+        created = c.post(
+            _BASE,
+            json={
+                "promotion_id": promotion_id,
+                "price_mode": "selling",
+                "lines": [
+                    {"line_type": "product", "product_id": first},
+                    {"line_type": "product", "product_id": second},
+                ],
+            },
+        ).json()
+        from app.models.price_tag import PriceTagRequestLine
+
+        db.expire_all()
+        rows = (
+            db.query(PriceTagRequestLine)
+            .filter(PriceTagRequestLine.request_id == created["id"])
+            .all()
+        )
+        assert all(row.show_promo_price is True for row in rows)
+
+        res = c.put(
+            f"{_BASE}/{created['id']}",
+            json={
+                "price_mode": "list",
+                "lines": [
+                    {"line_type": "product", "product_id": first},
+                    {"line_type": "product", "product_id": second},
+                ],
+            },
+        )
+
+        assert res.status_code == 200, res.text
+        db.expire_all()
+        rows = (
+            db.query(PriceTagRequestLine)
+            .filter(PriceTagRequestLine.request_id == created["id"])
+            .all()
+        )
+        assert len(rows) == 2
+        assert all(row.show_promo_price is False for row in rows)
+
+
+# ---------------------------------------------------------------------------
 # The grant gates every route, lookups included
 # ---------------------------------------------------------------------------
 

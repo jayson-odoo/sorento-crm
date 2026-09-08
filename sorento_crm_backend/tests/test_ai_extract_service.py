@@ -23,6 +23,7 @@ import pytest
 from app.services.ai_extract.extract_service import (
     AIExtractService,
     ExtractFile,
+    _form_has_line_items,
 )
 from app.services.ai_extract.form_schema_registry import (
     FORM_SCHEMAS,
@@ -170,6 +171,34 @@ def test_customer_and_project_fields_have_disambiguating_guidance(
     assert cust.note and "NOT" in cust.note
     # Project field tells the model it is not the customer company.
     assert proj.note and "NOT the customer" in proj.note
+
+
+# ---- portal.price_tag_request (D7, PLAN-price-tag-r7-request-ux AC-S6-4) --
+#
+# Not registered yet: `get_form_schema("portal.price_tag_request")` raises
+# `KeyError` and `"portal.price_tag_request"` is absent from both
+# `FORM_SCHEMAS` and `FORMS_WITH_LINE_ITEMS` until the coder adds it to
+# `app/services/ai_extract/form_schema_registry.py` /
+# `app/services/ai_extract/extract_service.py` per D7.
+
+
+def test_price_tag_request_schema_is_exactly_two_header_fields():
+    schema = get_form_schema("portal.price_tag_request")
+    names = {f.name for f in schema}
+    assert names == {"customer_name", "so_number"}
+
+
+def test_price_tag_request_customer_name_field_is_a_customer_lookup():
+    fields = {f.name: f for f in get_form_schema("portal.price_tag_request")}
+    assert fields["customer_name"].kind == "fk_customer"
+
+
+def test_price_tag_request_has_line_items():
+    assert _form_has_line_items("portal.price_tag_request") is True
+
+
+def test_price_tag_request_key_is_namespaced_like_every_other_portal_form():
+    assert "portal.price_tag_request" in FORM_SCHEMAS
 
 
 # ---- Image attachers ------------------------------------------------------
