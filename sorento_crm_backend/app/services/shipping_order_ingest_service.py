@@ -552,6 +552,10 @@ class ShippingOrderIngestService(MasterRefResolver):
         `DocumentIngestService._write_order_link_claims` for the shared
         docstring, and `order_link_service.write_line_ref_claims`'s own for
         the resolution rule.
+
+        CALL ORDER (B1 review fix): `write_line_ref_claims` runs FIRST, same
+        rule and same reason as `DocumentIngestService`'s own call site - see
+        its docstring.
         """
         number_wanted = [
             (line.source_ref, [n for n in (line.from_so_numbers or []) if n])
@@ -578,14 +582,9 @@ class ShippingOrderIngestService(MasterRefResolver):
             )
             .all()
         )
-        order_link_service.write_claims_for_lines(
-            self.db,
-            company_id=self.company_id,
-            document_number=payload.spo_number,
-            rows=rows,
-            wanted=number_wanted,
-            id_attr="spo_allocation_id",
-        )
+        # N1 review fix: one row/product-code index, shared by both calls
+        # below instead of each running its own identical `Product` query.
+        index = order_link_service.index_claim_rows(self.db, rows)
         order_link_service.write_line_ref_claims(
             self.db,
             company_id=self.company_id,
@@ -593,6 +592,16 @@ class ShippingOrderIngestService(MasterRefResolver):
             rows=rows,
             wanted=ref_wanted,
             id_attr="spo_allocation_id",
+            index=index,
+        )
+        order_link_service.write_claims_for_lines(
+            self.db,
+            company_id=self.company_id,
+            document_number=payload.spo_number,
+            rows=rows,
+            wanted=number_wanted,
+            id_attr="spo_allocation_id",
+            index=index,
         )
 
     def _guard_spo_number_conflict(self, payload: CanonicalShippingOrder) -> None:

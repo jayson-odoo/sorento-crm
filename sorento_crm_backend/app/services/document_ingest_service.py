@@ -751,6 +751,14 @@ class DocumentIngestService(MasterRefResolver):
         `order_link_service.write_line_ref_claims` - the precise-match
         sibling of `write_claims_for_lines`, run over the SAME row fetch
         (one query covers both fields' refs) - see its own docstring.
+
+        CALL ORDER (B1 review fix): `write_line_ref_claims` runs FIRST. It
+        can write a claim already fully resolved; `write_claims_for_lines`'s
+        own `resolve()` call only fills a STILL-missing `so_line_id` and,
+        once set, that claim is out of `resolve()`'s reach for good - the
+        reverse order let an exact ref on the same line as a
+        `from_so_numbers` entry lose to whichever line the ambiguous
+        `(so_number, item_code)` match happened to pick.
         """
         number_wanted = [
             (line.source_ref, [n for n in (line.from_so_numbers or []) if n])
@@ -776,14 +784,9 @@ class DocumentIngestService(MasterRefResolver):
             )
             .all()
         )
-        order_link_service.write_claims_for_lines(
-            self.db,
-            company_id=self.company_id,
-            document_number=payload.po_number,
-            rows=rows,
-            wanted=number_wanted,
-            id_attr="po_line_id",
-        )
+        # N1 review fix: one row/product-code index, shared by both calls
+        # below instead of each running its own identical `Product` query.
+        index = order_link_service.index_claim_rows(self.db, rows)
         order_link_service.write_line_ref_claims(
             self.db,
             company_id=self.company_id,
@@ -791,6 +794,16 @@ class DocumentIngestService(MasterRefResolver):
             rows=rows,
             wanted=ref_wanted,
             id_attr="po_line_id",
+            index=index,
+        )
+        order_link_service.write_claims_for_lines(
+            self.db,
+            company_id=self.company_id,
+            document_number=payload.po_number,
+            rows=rows,
+            wanted=number_wanted,
+            id_attr="po_line_id",
+            index=index,
         )
 
     def _status(self, spec: DocumentSpec, canonical: str) -> str:

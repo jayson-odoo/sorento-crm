@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from sqlalchemy import func, nullslast, or_
 from sqlalchemy.orm import Session
@@ -79,16 +79,26 @@ def resolve(db: Session, *, so_numbers: Optional[set[str]] = None) -> dict:
 
     so_line_by_key, so_line_by_number = _sales_side(db, {c.so_number for c in claims})
     po_line_by_key, po_line_by_number = _purchase_side(db, {c.po_number for c in claims})
+    exact_so_line = _exact_so_line_for(db, claims)
 
     resolved = so_side = po_side = 0
     now = _now()
 
     for claim in claims:
         if claim.so_line_id is None:
-            # A claim with an item resolves to THAT line; one without (a PO note) can only
-            # name the order, so it takes the order's first line as its anchor and stays
-            # honest about the fact by having no item code.
-            line = (
+            # B2 review fix: an EXACT ref stored on the claim's purchase-side
+            # row wins over the ambiguous (so_number, item_code) match below
+            # - this is what lets a claim opened by `from_so_numbers` before
+            # its `from_so_line_ref` counterpart resolved (the PO arrived
+            # before its SO) recover the precise line on a later sweep,
+            # instead of settling for whichever of two same-item lines the
+            # dict match below happens to pick.
+            #
+            # A claim with an item otherwise resolves to THAT line; one
+            # without (a PO note) can only name the order, so it takes the
+            # order's first line as its anchor and stays honest about the
+            # fact by having no item code.
+            line = exact_so_line.get(str(claim.id)) or (
                 so_line_by_key.get((claim.so_number, claim.item_code))
                 if claim.item_code
                 else so_line_by_number.get(claim.so_number)
@@ -120,6 +130,71 @@ def resolve(db: Session, *, so_numbers: Optional[set[str]] = None) -> dict:
         "po_side": po_side,
         "still_open": sum(1 for c in claims if c.resolved_at is None),
     }
+
+
+def _exact_so_line_for(db: Session, claims: Sequence[OrderLinkClaim]) -> dict[str, SalesOrderLine]:
+    """Claim id -> the `SalesOrderLine` its purchase side's OWN stored
+    `from_so_line_ref` names, for every open claim still missing `so_line_id`
+    (B2 review fix).
+
+    A claim's purchase side (`po_line_id` or `spo_allocation_id`) may carry a
+    `from_so_line_ref` that did not resolve at write time - the sales order
+    had not been pushed yet, `write_line_ref_claims`'s normal case - and is
+    now persisted on the row (`purchase_order_lines`/`spo_allocations`) for
+    exactly this: a later sweep re-reads it and recovers the EXACT line,
+    rather than falling back to `(so_number, item_code)`, which cannot tell
+    two same-item lines of one sales order apart.
+    """
+    out: dict[str, SalesOrderLine] = {}
+    open_claims = [c for c in claims if c.so_line_id is None]
+    if not open_claims:
+        return out
+
+    po_ids = {str(c.po_line_id) for c in open_claims if c.po_line_id}
+    spo_ids = {str(c.spo_allocation_id) for c in open_claims if c.spo_allocation_id}
+
+    ref_by_po: dict[str, str] = {}
+    if po_ids:
+        ref_by_po = dict(
+            db.query(PurchaseOrderLine.id, PurchaseOrderLine.from_so_line_ref)
+            .filter(
+                PurchaseOrderLine.id.in_(list(po_ids)),
+                PurchaseOrderLine.from_so_line_ref.isnot(None),
+            )
+            .all()
+        )
+    ref_by_spo: dict[str, str] = {}
+    if spo_ids:
+        ref_by_spo = dict(
+            db.query(SPOAllocation.id, SPOAllocation.from_so_line_ref)
+            .filter(
+                SPOAllocation.id.in_(list(spo_ids)),
+                SPOAllocation.from_so_line_ref.isnot(None),
+            )
+            .all()
+        )
+
+    all_refs = {str(v) for v in ref_by_po.values()} | {str(v) for v in ref_by_spo.values()}
+    if not all_refs:
+        return out
+
+    so_line_by_ref = {
+        line.source_ref: line
+        for line in db.query(SalesOrderLine)
+        .filter(SalesOrderLine.source_ref.in_(list(all_refs)))
+        .all()
+    }
+
+    for claim in open_claims:
+        ref = ref_by_po.get(str(claim.po_line_id)) if claim.po_line_id else None
+        if ref is None and claim.spo_allocation_id:
+            ref = ref_by_spo.get(str(claim.spo_allocation_id))
+        if ref is None:
+            continue
+        line = so_line_by_ref.get(ref)
+        if line is not None:
+            out[str(claim.id)] = line
+    return out
 
 
 def _purchase_side_of(claim: OrderLinkClaim) -> Optional[str]:
@@ -307,6 +382,31 @@ def claim_book_pairing(
     return claim
 
 
+def index_claim_rows(db: Session, rows: Sequence) -> tuple[dict[str, Any], dict[str, str]]:
+    """The row-by-`source_ref` index and product-code lookup `write_claims_for_lines`
+    and `write_line_ref_claims` both need over the SAME `rows` (N1 review fix, V5).
+
+    `rows` is already fetched once by the caller (`DocumentIngestService
+    ._write_order_link_claims` / `ShippingOrderIngestService
+    ._write_order_link_claims`) before either write function runs - computed
+    HERE, once, and passed into both via their `index` parameter, rather than
+    each running its own identical `Product` query over the same rows in the
+    same request.
+    """
+    rows_by_ref = {row.source_ref: row for row in rows}
+    product_ids = {row.product_id for row in rows if row.product_id}
+    codes = (
+        dict(
+            db.query(Product.id, Product.product_code)
+            .filter(Product.id.in_(product_ids))
+            .all()
+        )
+        if product_ids
+        else {}
+    )
+    return rows_by_ref, codes
+
+
 def write_claims_for_lines(
     db: Session,
     *,
@@ -315,6 +415,7 @@ def write_claims_for_lines(
     rows: Sequence,
     wanted: list[tuple[str, list[str]]],
     id_attr: str,
+    index: Optional[tuple[dict[str, Any], dict[str, str]]] = None,
 ) -> None:
     """The shared body of a document's or a shipping order's `from_so_numbers`
     claim writing (V4, S7 dedup - previously duplicated between
@@ -329,21 +430,29 @@ def write_claims_for_lines(
     this row's id lands in - `"po_line_id"` for a purchase-order line,
     `"spo_allocation_id"` for a shipping-order line - so ONE loop serves
     both callers without either knowing about the other's table.
+
+    `index`, when passed, is `index_claim_rows(db, rows)`'s own return value,
+    shared with a sibling `write_line_ref_claims` call over the SAME `rows`
+    (N1 review fix) so the two do not each run their own identical `Product`
+    query. Computed here when the caller has no reason to share it (a lone
+    call, a test).
+
+    CALL ORDER (B1 review fix): a caller that ALSO calls `write_line_ref_claims`
+    for the same document MUST call it FIRST. That function can write a claim
+    already fully resolved (`so_line_id` known at write time); this function's
+    OWN `resolve()` call at the end only fills `so_line_id` on a claim still
+    missing one via the ambiguous `(so_number, item_code)` match, and once
+    `resolved_at` is set that claim is permanently out of `resolve()`'s reach
+    (it filters `resolved_at IS NULL`). Called in the wrong order, an exact
+    ref that arrives on the SAME line as a `from_so_numbers` entry is silently
+    discarded: `claim_placed_on_po`'s fill-never-repoint guard finds
+    `so_line_id` already set to whatever the ambiguous match picked and never
+    corrects it.
     """
     if not wanted:
         return
 
-    rows_by_ref = {row.source_ref: row for row in rows}
-    product_ids = {row.product_id for row in rows if row.product_id}
-    codes = (
-        dict(
-            db.query(Product.id, Product.product_code)
-            .filter(Product.id.in_(product_ids))
-            .all()
-        )
-        if product_ids
-        else {}
-    )
+    rows_by_ref, codes = index if index is not None else index_claim_rows(db, rows)
 
     seen: set[tuple[str, str, Optional[str]]] = set()
     so_numbers: set[str] = set()
@@ -381,6 +490,7 @@ def write_line_ref_claims(
     rows: Sequence,
     wanted: list[tuple[str, str]],
     id_attr: str,
+    index: Optional[tuple[dict[str, Any], dict[str, str]]] = None,
 ) -> None:
     """V5 (AutoCount linkage widen): the exact-line sibling of
     `write_claims_for_lines`, for a purchase-order or shipping-order line
@@ -390,9 +500,10 @@ def write_line_ref_claims(
     `wanted` is `(line_source_ref, from_so_line_ref)` pairs, read the same
     way `write_claims_for_lines` reads `(line_source_ref, so_numbers)`;
     `rows` are the already-flushed purchase-order or shipping-order line
-    rows, keyed by their OWN `source_ref`, and the same fetch the caller
-    already made for `write_claims_for_lines` is reused rather than a
-    second query.
+    rows, keyed by their OWN `source_ref`. `index` is `index_claim_rows`'s
+    return value, shared with a sibling `write_claims_for_lines` call over
+    the same `rows` (N1 review fix) - computed here when the caller has no
+    reason to share it.
 
     A ref that resolves to a held `sales_order_lines` row writes the claim
     with `so_line_id` FILLED at write time, through `claim_placed_on_po` -
@@ -409,22 +520,20 @@ def write_line_ref_claims(
     to open a claim WITH from a ref alone; the line's own `from_so_numbers`,
     when the ESB also sends it, already opens one through
     `write_claims_for_lines`, unaffected by this function running alongside
-    it - `resolve()`'s regular sweep fills that one in once the SO arrives.
+    it - `resolve()`'s regular sweep fills that one in once the SO arrives,
+    now preferring the same exact ref (`_exact_so_line_for`) over the
+    ambiguous `(so_number, item_code)` match, since `from_po_line_ref`'s
+    sibling `from_so_line_ref` is now persisted on the purchase-side row
+    itself (B2 review fix) and survives past this call.
+
+    CALL ORDER (B1 review fix): the caller MUST call this function BEFORE
+    `write_claims_for_lines` for the same document - see that function's own
+    docstring for why the reverse order silently discards an exact ref.
     """
     if not wanted:
         return
 
-    rows_by_ref = {row.source_ref: row for row in rows}
-    product_ids = {row.product_id for row in rows if row.product_id}
-    codes = (
-        dict(
-            db.query(Product.id, Product.product_code)
-            .filter(Product.id.in_(product_ids))
-            .all()
-        )
-        if product_ids
-        else {}
-    )
+    rows_by_ref, codes = index if index is not None else index_claim_rows(db, rows)
 
     so_refs = {so_line_ref for _line_ref, so_line_ref in wanted}
     so_line_rows = (

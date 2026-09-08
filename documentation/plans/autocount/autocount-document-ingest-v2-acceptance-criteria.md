@@ -214,6 +214,47 @@ the existing upload drawer is not involved. (No notification surface is added in
   a payload without it still adopts by steps 1-2 and falls back to payload order for step 3.
   Shipping-order row adoption (AC-V3-4) uses the same three steps.
 
+## Group V8 - AutoCount linkage widen: from_so_line_ref / from_so_external / from_po_line_ref / from_po_number (`tests/test_ingest_documents_v5_so_po_links.py`)
+
+No PLAN file for this slice (coder brief: `ingest-contract-2-2-so-links`, contract version
+bumped `"2.1" -> "2.2"`). Continues the AC-V4-* claims work; labelled V8 rather than the
+next-looking V5 because **V5 is already taken** by "Post-write hooks and committed demand"
+above - V6/V7 are taken too, so this is the first free letter, not a sequential continuation
+of V4.
+
+- **AC-V8-1 [BE]** A purchase-order line (or shipping-order line) carrying all four new
+  fields is ACCEPTED; a v2.1-shaped payload with none of them still ingests unchanged.
+- **AC-V8-2 [BE]** `from_so_external` with no `db` fails validation and names the field
+  (`lines.N.from_so_external.db`); `db` is required only when the object itself is present.
+- **AC-V8-3 [BE]** `from_so_line_ref`, `from_po_line_ref` (String 255) and `from_po_number`
+  (String 100) persist uniformly on BOTH `purchase_order_lines` and `spo_allocations` -
+  never on one table alone. An OMITTED field on a re-push never clears a stored value
+  (`model_fields_set`, not truthiness); an EXPLICIT `null` DOES clear it, on both tables
+  (`absent_vs_null: true`, the contract's own advertised rule).
+- **AC-V8-4 [BE]** Given a line carrying BOTH `from_so_numbers` and a resolvable
+  `from_so_line_ref`, when the referenced sales order holds the SAME item on two lines, then
+  the resulting claim's `so_line_id` names the line the REF points to, never whichever line
+  the ambiguous `(so_number, item_code)` match in `resolve()` happens to pick. Requires
+  `write_line_ref_claims` to run BEFORE `write_claims_for_lines` at both call sites - the
+  reverse order lets the ambiguous match set `so_line_id` (and `resolved_at`) first, and
+  `claim_placed_on_po`'s fill-never-repoint guard then discards the exact ref.
+- **AC-V8-5 [BE]** An unresolvable `from_so_line_ref` (the sales order has not been pushed
+  yet - the normal case, not an error) writes nothing of its own; the line's own
+  `from_so_numbers`, when also sent, still opens today's ordinary claim. On a LATER
+  `resolve()` sweep, a claim whose purchase-side row carries a stored `from_so_line_ref`
+  that NOW resolves recovers the EXACT line (`_exact_so_line_for`), taking precedence over
+  the ambiguous `(so_number, item_code)` match - this is what a PO pushed before its SO
+  recovers precision from, since the ref survives on the row (AC-V8-3) past the push that
+  could not yet resolve it.
+- **AC-V8-6 [BE]** `from_so_external` is recorded raw (`model_dump(exclude_unset=True)` -
+  exactly the keys the ESB sent, no filled-in nulls for keys it omitted) on the line it
+  landed on, on both tables, and is NEVER resolved into a Sorento id or turned into an
+  `scm.order_link_claim` row (no `so_number` a cross-book key can name).
+- **AC-V8-7 [BE]** Dry run writes no ref-based claim either - `claim_placed_on_po` (the
+  function a resolvable ref writes through) does an unconditional `db.flush()` of its own,
+  so it is the route-level dry-run SAVEPOINT rollback that makes this safe, same as AC-V4-4
+  for the number path.
+
 ## Group V6 - Definition of done
 
 - **AC-V6-1 [T]** Full backend suite green on an EMPTY scratch database (CI rule).
