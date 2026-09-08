@@ -174,7 +174,7 @@ export default function PriceTagProofViewer({
             full sheet reachable (AC-S4-2). */}
         <div
           ref={containerRef}
-          className="overflow-auto bg-muted/30 rounded-lg p-4 max-h-[70vh]"
+          className="overflow-auto bg-muted/30 rounded-lg p-4 max-h-[70dvh]"
         >
           {isMeasuringFit ? (
             <Skeleton className="h-64 w-full" />
