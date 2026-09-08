@@ -488,13 +488,14 @@ describe('RequestTagDesigner - full screen (AC-S6-1)', () => {
 
 // ---------------------------------------------------------------------------
 // One CTA (S7, AC-S7-1/S7-6): the request bar's right side holds the Saved
-// indicator and exactly one button, Mark proof ready. Full screen, the
-// Template dropdown and Save moved into the canvas toolbar's own trailing
-// group.
+// indicator and exactly one button, Mark design ready (r7 renamed "proof"
+// to "design" throughout - PLAN-price-tag-r7-request-ux D9). Full screen,
+// the Template dropdown and Save moved into the canvas toolbar's own
+// trailing group.
 // ---------------------------------------------------------------------------
 
 describe('RequestTagDesigner - one CTA in the request bar (S7, AC-S7-1)', () => {
-  it('the request bar holds exactly one button in designing state - Mark proof ready', async () => {
+  it('the request bar holds exactly one button in designing state - Mark design ready', async () => {
     mockListTemplates.mockResolvedValue([]);
     mockResolveRequestLines.mockResolvedValue([lineTagData()]);
 
@@ -510,7 +511,7 @@ describe('RequestTagDesigner - one CTA in the request bar (S7, AC-S7-1)', () => 
     );
     const names = barButtons.map((btn) => btn.textContent?.trim());
 
-    expect(names.filter((t) => t?.includes('Mark proof ready'))).toHaveLength(1);
+    expect(names.filter((t) => t?.includes('Mark design ready'))).toHaveLength(1);
     // Nothing else button-shaped sits out here - Back and the Design/Arrange
     // toggle are navigation, not "the one action", and are asserted
     // separately below by name.
