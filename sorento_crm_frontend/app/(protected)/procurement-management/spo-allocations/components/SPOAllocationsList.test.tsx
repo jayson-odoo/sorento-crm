@@ -244,6 +244,28 @@ describe('SPOAllocationsList - status pill + overdue formatting (AC-2)', () => {
   });
 });
 
+// ── AC-S1.1: Date column right of SPO No, no sub-line under the SPO number ──
+
+describe('SPOAllocationsList - Date column (AC-S1.1)', () => {
+  it('renders a Date header and the row doc_date, dd/mm/yyyy', () => {
+    mockList([row({ id: 'SPO-1', spo_number: 'SPO-1', doc_date: '2026-08-05' })]);
+    renderList();
+
+    expect(screen.getByRole('columnheader', { name: /Date/i })).toBeInTheDocument();
+    expect(rows().getByText('05/08/2026')).toBeInTheDocument();
+  });
+
+  it('no longer stacks the date under the SPO No cell', () => {
+    mockList([row({ id: 'SPO-1', spo_number: 'SPO-1', doc_date: '2026-08-05' })]);
+    renderList();
+
+    const spoLink = screen.getByRole('link', { name: 'SPO-1' });
+    // The date used to render as a sibling <span> under the link, inside the same cell.
+    const cell = spoLink.closest('td') as HTMLElement;
+    expect(within(cell).queryByText('05/08/2026')).toBeNull();
+  });
+});
+
 // ── AC-8: bulk delete wires the selected spo_numbers into useDeferredBulkAction ─
 
 describe('SPOAllocationsList - bulk delete (AC-8, AC-16b, review B4)', () => {

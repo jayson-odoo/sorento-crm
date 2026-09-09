@@ -5,9 +5,12 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import {
   ColumnDef,
+  SortingState,
   VisibilityState,
   getCoreRowModel,
+  getFilteredRowModel,
   getPaginationRowModel,
+  getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
 import { toast } from '@/lib/toast';
@@ -42,6 +45,8 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
@@ -109,6 +114,19 @@ function seedDraft(line: SPODocumentLine): LineDraft {
 // own (captain's correction), so the detail lives in `title` instead.
 function grnLinkTitle(grn: LinkedGRNRef): string | undefined {
   return [grn.picking_number, grn.picking_status].filter(Boolean).join(' - ') || undefined;
+}
+
+/** Does this line answer the search above the Lines grid? Product code/name or
+ *  warehouse code/name (AC-S1.3) - the same shape the PO/SO detail line search uses. */
+function lineMatches(line: SPODocumentLine, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return (
+    (line.product?.product_code ?? '').toLowerCase().includes(q) ||
+    (line.product?.product_name ?? '').toLowerCase().includes(q) ||
+    (line.warehouse?.warehouse_code ?? '').toLowerCase().includes(q) ||
+    (line.warehouse?.warehouse_name ?? '').toLowerCase().includes(q)
+  );
 }
 
 function Field({ label, htmlFor, children }: { label: string; htmlFor?: string; children: ReactNode }) {
@@ -180,6 +198,15 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
     rejected: false,
     overdue: false,
   });
+  // Sorting and search over the lines already loaded (AC-S1.2/S1.3) - the same shape the
+  // PO and SO detail line grids already use: no second request, no page boundary to work
+  // across.
+  const [sorting, setSorting] = useState<SortingState>([]);
+  const {
+    value: lineSearchInput,
+    setValue: setLineSearchInput,
+    debouncedValue: lineSearch,
+  } = useDebouncedSearch();
 
   const updateLineMutation = useUpdateSPOAllocation();
   const deleteLineMutation = useDeleteSPOAllocation();
@@ -378,6 +405,7 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
     () => [
       {
         id: 'product',
+        accessorFn: (l) => l.product?.product_code ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
         cell: ({ row }) => {
           const line = row.original;
@@ -397,6 +425,14 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
               />
             );
           }
+          // AC-S1.6: the sub-line renders only when the product name is non-empty AND
+          // differs from the code (case-insensitive, trimmed) - same rule the PO form
+          // view's own Product cell uses (`PurchaseOrderDetail.tsx`). Without this every
+          // row printed its own code twice (e.g. "C-FHSS14" over "C-FHSS14").
+          const showProductName =
+            !!line.product?.product_name?.trim() &&
+            line.product.product_name.trim().toLowerCase() !==
+              (line.product?.product_code ?? '').trim().toLowerCase();
           return (
             <div className={cn('flex items-start gap-2', removed && 'opacity-50')}>
               {matches ? (
@@ -411,9 +447,14 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
                   {line.product?.product_code ?? '-'}
                   {removed ? <span className="ms-1 text-xs font-normal text-muted-foreground">(removed)</span> : null}
                 </span>
-                <span className="truncate text-xs text-muted-foreground" title={line.product?.product_name}>
-                  {line.product?.product_name ?? ''}
-                </span>
+                {showProductName ? (
+                  <span
+                    className="truncate text-xs text-muted-foreground"
+                    title={line.product?.product_name}
+                  >
+                    {line.product?.product_name}
+                  </span>
+                ) : null}
               </div>
             </div>
           );
@@ -423,6 +464,7 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
       },
       {
         id: 'warehouse',
+        accessorFn: (l) => l.warehouse?.warehouse_code ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Warehouse" column={column} />,
         cell: ({ row }) => {
           const line = row.original;
@@ -682,6 +724,7 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
       },
       {
         id: 'plan',
+        accessorFn: (l) => l.planning_span ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Plan" column={column} />,
         cell: ({ row }) => {
           const pill = planningSpanBadge(row.original.planning_span);
@@ -696,7 +739,8 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
       },
       {
         id: 'packing_list',
-        header: 'Packing List',
+        accessorFn: (l) => l.inbound_shipment?.shipment_number ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="Packing List" column={column} />,
         cell: ({ row }) => {
           const ship = row.original.inbound_shipment;
           if (!ship) return <span className="text-muted-foreground">-</span>;
@@ -790,6 +834,7 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
       },
       {
         id: 'status',
+        accessorFn: (l) => l.receipt_status ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         cell: ({ row }) => (
           <Badge status={row.original.receipt_status} size="sm">
@@ -835,13 +880,22 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
     columns,
     data: visibleLines,
     getRowId: (row) => row.id,
-    state: { columnVisibility },
+    state: { columnVisibility, sorting, globalFilter: lineSearch },
     onColumnVisibilityChange: setColumnVisibility,
+    onSortingChange: setSorting,
+    // Nothing calls table.setGlobalFilter directly - the box drives lineSearch
+    // (debounced) instead - but a controlled globalFilter still requires this.
+    onGlobalFilterChange: () => {},
+    getColumnCanGlobalFilter: () => true,
+    globalFilterFn: (row, _columnId, value) => lineMatches(row.original, String(value ?? '')),
     getCoreRowModel: getCoreRowModel(),
+    getSortedRowModel: getSortedRowModel(),
+    getFilteredRowModel: getFilteredRowModel(),
     getPaginationRowModel: getPaginationRowModel(),
     columnResizeMode: 'onChange',
     enableColumnResizing: true,
   });
+  const visibleLineCount = table.getFilteredRowModel().rows.length;
 
   // Back lives on the PAGE-level header row now (UAT AC-21, page.tsx), the same spot
   // the Purchase Order form view puts it - not here any more.
@@ -1075,10 +1129,10 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
           ) : null}
           <DataGrid
             table={table}
-            recordCount={visibleLines.length}
+            recordCount={visibleLineCount}
             isLoading={false}
             tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
-            emptyMessage="This SPO document has no lines."
+            emptyMessage={lineSearch.trim() ? 'No lines match' : 'This SPO document has no lines.'}
             // A real key, not the pathname fallback (review S2): every document's URL is
             // different, so a per-pathname key would fragment one reader's column prefs
             // across every SPO number they ever open instead of sharing ONE preference.
@@ -1093,6 +1147,13 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
                     the same Columns control the Purchase Order form view's line
                     table already uses. */}
                 <CardToolbar className="flex-wrap">
+                  <ListSearchInput
+                    value={lineSearchInput}
+                    onChange={setLineSearchInput}
+                    aria-label="Search lines"
+                    placeholder="Search product or warehouse"
+                    className="w-64"
+                  />
                   <DataGridColumnVisibility
                     table={table}
                     trigger={

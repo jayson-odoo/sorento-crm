@@ -24,6 +24,7 @@ import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EM_DASH, fmtDate, fmtInt, fmtMoney } from '../../lib/format';
+import { describeWindow } from '../lib/runListing';
 import { runHistoryKey, todayRunKey, useReorderRuns } from '../hooks/useReorderRun';
 import { createReorderRun, type ReorderRunHistoryItem } from '../services/reorderRunService';
 import { runStatusReading, runStartedLabel } from '../lib/runListing';
@@ -98,6 +99,7 @@ export function ReorderRunsGrid({ autoOpenRun = false }: { autoOpenRun?: boolean
         warehouse_codes: inputs.warehouse_codes,
         product_codes: inputs.product_codes,
         budget_id: null,
+        plan_horizon_start: inputs.plan_horizon_start || null,
         plan_horizon_date: inputs.plan_horizon_date || null,
       });
       setModalOpen(false);
@@ -143,22 +145,29 @@ export function ReorderRunsGrid({ autoOpenRun = false }: { autoOpenRun?: boolean
         meta: { headerTitle: 'Plan', skeleton: <Skeleton className="h-4 w-32" /> },
       },
       {
+        // S8 (Phase 3 fix round): both ends of the window, the same wording the header
+        // and subtitle already use (`describeWindow`), so the plans list never states the
+        // end alone while a run also carries a start.
         id: 'plan_horizon_date',
         accessorFn: (row) => row.plan_horizon_date ?? '',
         header: ({ column }) => (
-          <DataGridColumnHeader title="Sales order cut-off" visibility column={column} />
+          <DataGridColumnHeader title="Sales orders needed" visibility column={column} />
         ),
-        cell: ({ row }) =>
-          row.original.plan_horizon_date ? (
-            <span className="tabular-nums">{fmtDate(row.original.plan_horizon_date)}</span>
-          ) : (
+        cell: ({ row }) => {
+          const text = describeWindow(
+            row.original.plan_horizon_start, row.original.plan_horizon_date,
+          );
+          return text === 'every open order' ? (
             <span className="text-muted-foreground" title="Every open order counted">
-              {EM_DASH}
+              {text}
             </span>
-          ),
-        size: 150,
+          ) : (
+            <span className="tabular-nums">{text}</span>
+          );
+        },
+        size: 190,
         enableSorting: true,
-        meta: { headerTitle: 'Sales order cut-off', skeleton: <Skeleton className="h-4 w-20" /> },
+        meta: { headerTitle: 'Sales orders needed', skeleton: <Skeleton className="h-4 w-20" /> },
       },
       {
         id: 'warehouses',

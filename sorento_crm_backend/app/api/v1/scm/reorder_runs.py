@@ -94,6 +94,7 @@ def create_reorder_run(
         actor=(_user or {}).get("id"),
         include_market=payload.include_market,
         plan_horizon_date=payload.plan_horizon_date,
+        plan_horizon_start=payload.plan_horizon_start,
     )
     if response is not None:
         response.status_code = 202
@@ -123,6 +124,7 @@ def replan_reorder_run(
         warehouse_codes=payload.warehouse_codes or [],
         product_codes=payload.product_codes or [],
         plan_horizon_date=payload.plan_horizon_date,
+        plan_horizon_start=payload.plan_horizon_start,
         actor=(_user or {}).get("id"),
     )
     if response is not None:
@@ -214,6 +216,7 @@ def list_reorder_runs(
         SELECT id, status, buy_scope, warehouse_ids, product_ids, created_by,
                started_at, finished_at, run_log,
                decision_grain, front_planning_contract_version, plan_horizon_date,
+               plan_horizon_start,
                -- Denormalised at write time by `decision_service._refresh_run_counts`
                -- and at run completion (S3 perf, AC-3.3) - a plain column instead of the
                -- LEFT JOIN against the whole `purchase_order_lines` table this page used
@@ -320,6 +323,7 @@ def _list_item(
         "decision_grain": r["decision_grain"],
         "front_planning_contract_version": r["front_planning_contract_version"],
         "plan_horizon_date": _iso(r["plan_horizon_date"]),
+        "plan_horizon_start": _iso(_key(r, "plan_horizon_start")),
         # The scheduler passes no actor, so a run nobody is named on is the daily one.
         "is_scheduled": _key(r, "created_by") is None,
         # A run launched with no warehouse scope stores every ACTIVE warehouse, so "60
@@ -486,7 +490,8 @@ def get_reorder_run(
     co, co_params = company_sql_predicate(db, "company_id", param_prefix="crg")
     row = db.execute(text(
         "SELECT id, status, buy_scope, error_text, run_log, decision_grain, "
-        "       front_planning_contract_version, plan_horizon_date, started_at, "
+        "       front_planning_contract_version, plan_horizon_date, plan_horizon_start, "
+        "       started_at, "
         "       warehouse_ids, product_ids, supersedes_run_id, superseded_by_run_id "
         "  FROM scm.reorder_run "
         f"WHERE id = :id AND {co or 'true'}"
@@ -517,6 +522,7 @@ def get_reorder_run(
         "decision_grain": row["decision_grain"],
         "front_planning_contract_version": row["front_planning_contract_version"],
         "plan_horizon_date": _iso(row["plan_horizon_date"]),
+        "plan_horizon_start": _iso(row["plan_horizon_start"]),
         # The plan header is "Plan dd/mm/yyyy HH:mm" (C1) and this is the only response
         # that page reads.
         "started_at": _iso(row["started_at"]),
@@ -1285,6 +1291,12 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         "last_purchase_date": (inp.get("last_purchase") or {}).get("at"),
         "last_purchase_ref": (inp.get("last_purchase") or {}).get("ref"),
         "last_purchase_basis": inp.get("last_purchase_basis"),
+        # S11 (round 2, 9 Sep): who this purchase actually named, so the panel can prefill
+        # its supplier select to the LAST PURCHASE supplier rather than the engine's own
+        # default link (measured: SRTSS8710's default link is a stale MYR 121.80 while the
+        # last purchase was CNY 48.00 from KAIPING HANSHUN). A code, never the raw id.
+        "last_purchase_supplier_code": (inp.get("last_purchase") or {}).get("supplier_code"),
+        "last_purchase_supplier_name": (inp.get("last_purchase") or {}).get("supplier_name"),
         "policy_type": inp.get("policy_type"),
         "supplier_selection": inp.get("selection"),
         # --- M4 cash co-pilot (buy rows only; non-buy leave these null) ---

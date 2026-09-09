@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { confirmDecisions } from '../services/decisionService';
 import { savePlanEdits, type PlanEditRow } from '../services/planEditsService';
@@ -11,6 +11,7 @@ import {
   editedProductCount,
   hasRowEdit,
   recIdsForLine,
+  withConfirmLifecycle,
   type ConfirmSummary,
   type PlanRowEdit,
   type PlanRowEditMap,
@@ -18,6 +19,7 @@ import {
 import type { CoverProposal } from '../lib/coverPlan';
 import type { PoReceipt } from '../lib/poCover';
 import type { PlanLine } from '../lib/planLine';
+import type { ProductEconomics } from '../lib/productHealth';
 import { planRowDecisionsKey } from './usePlanLines';
 
 /**
@@ -40,6 +42,10 @@ export function usePlanEdits(
   decisions: PlanDecisionMap,
   coverFor?: (line: PlanLine) => CoverProposal,
   poFor?: (line: PlanLine) => PoReceipt[],
+  /** S8 (G4, 9 Sep 2026): what the health class suggests for a line, read on Confirm so
+   *  every confirmed product's lifecycle answer is written even where the buyer never
+   *  touched the radio. */
+  economicsFor?: (line: PlanLine) => ProductEconomics | undefined,
 ) {
   const qc = useQueryClient();
   const [edits, setEdits] = useState<PlanRowEditMap>({});
@@ -50,23 +56,22 @@ export function usePlanEdits(
     setEdits((prev) => ({ ...prev, [line.id]: { ...prev[line.id], ...patch } }));
   }, []);
 
-  /** Drop a row's draft entirely - "Use suggestion" is the absence of an edit, not a
-   *  fourth kind of one. */
-  const resetRow = useCallback((line: PlanLine) => {
-    setEdits((prev) => {
-      if (!prev[line.id]) return prev;
-      const next = { ...prev };
-      delete next[line.id];
-      return next;
-    });
-  }, []);
-
   const clearAll = useCallback(() => setEdits({}), []);
 
+  // S12 (round 2, 9 Sep, review fix): which rows' own Save (`saveRow`) is in flight -
+  // a REF for the synchronous double-click guard inside `saveRow` itself (React state
+  // updates are not synchronous, so two clicks inside the same tick would both read the
+  // OLD state and both fire), mirrored into state so the panel can disable the button.
+  const savingRowIdsRef = useRef<Set<string>>(new Set());
+  const [savingRowIds, setSavingRowIds] = useState<Set<string>>(new Set());
+
   const saveCount = useMemo(() => editedProductCount(edits, lines), [edits, lines]);
+  // G5 (S6, 9 Sep 2026): `confirmSummary` no longer sizes an undecided row off the
+  // engine's own suggestion, so it has no more use for `coverFor`/`poFor` - kept as this
+  // hook's own params below since `PlanLinesSection` still wires them in.
   const confirmable = useMemo<ConfirmSummary>(
-    () => confirmSummary(edits, decisions, lines, coverFor, poFor),
-    [edits, decisions, lines, coverFor, poFor],
+    () => confirmSummary(edits, decisions, lines),
+    [edits, decisions, lines],
   );
 
   /**
@@ -89,44 +94,121 @@ export function usePlanEdits(
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [saveCount]);
 
-  /** The draft map, flattened to one row per RECOMMENDATION - the wire shape. */
-  const payloadRows = useCallback((): PlanEditRow[] => {
-    const rows: PlanEditRow[] = [];
-    for (const line of lines) {
-      const edit = edits[line.id];
-      if (!hasRowEdit(edit)) continue;
+  /** One row's draft, in the wire shape - the fan-out `payloadRows` and `saveRow` both
+   *  build on. Empty when the row carries nothing drafted. */
+  const rowsForLine = useCallback(
+    (line: PlanLine, edit: PlanRowEdit | undefined): PlanEditRow[] => {
+      if (!hasRowEdit(edit)) return [];
       const decision = editedDecisionFor(edit as PlanRowEdit, decisionForLine(line, decisions));
-      for (const recId of recIdsForLine(line)) {
-        rows.push({
-          rec_id: recId,
-          ...(decision ? { decision } : {}),
-          ...(edit?.moq !== undefined ? { moq: edit.moq } : {}),
-          ...(edit?.level !== undefined ? { level: edit.level } : {}),
-          ...(edit?.reorderQty !== undefined ? { reorder_qty: edit.reorderQty } : {}),
-          ...(edit?.lifecycle !== undefined ? { lifecycle: edit.lifecycle } : {}),
-        });
-      }
-    }
-    return rows;
-  }, [edits, lines, decisions]);
+      return recIdsForLine(line).map((recId) => ({
+        rec_id: recId,
+        ...(decision ? { decision } : {}),
+        ...(edit?.moq !== undefined ? { moq: edit.moq } : {}),
+        ...(edit?.level !== undefined ? { level: edit.level } : {}),
+        ...(edit?.reorderQty !== undefined ? { reorder_qty: edit.reorderQty } : {}),
+        ...(edit?.lifecycle !== undefined ? { lifecycle: edit.lifecycle } : {}),
+      }));
+    },
+    [decisions],
+  );
 
-  const save = useCallback(async () => {
-    if (!runId) return null;
-    const rows = payloadRows();
-    if (!rows.length) return null;
-    setIsSaving(true);
-    try {
-      const result = await savePlanEdits(runId, rows);
-      clearAll();
-      await qc.invalidateQueries({ queryKey: planRowDecisionsKey(runId) });
-      await qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'level-suggestions'] });
-      await qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'product-economics'] });
-      await qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'buy'] });
-      return result;
-    } finally {
-      setIsSaving(false);
-    }
-  }, [runId, payloadRows, clearAll, qc]);
+  /** The draft map, flattened to one row per RECOMMENDATION - the wire shape. Takes an
+   *  explicit edits map (defaulting to the live draft) so `confirm` can save an AUGMENTED
+   *  copy - one that also carries the health suggestion for every row it is about to
+   *  confirm (S8, G4) - without writing that suggestion into the draft state itself. */
+  const payloadRows = useCallback(
+    (sourceEdits: PlanRowEditMap = edits): PlanEditRow[] => {
+      const rows: PlanEditRow[] = [];
+      for (const line of lines) rows.push(...rowsForLine(line, sourceEdits[line.id]));
+      return rows;
+    },
+    // `edits` is the default for `sourceEdits`, so a stale closure over it would call with
+    // last render's draft whenever a caller omits the argument (`save()`'s own default).
+    [lines, edits, rowsForLine],
+  );
+
+  const invalidatePlanQueries = useCallback(async () => {
+    if (!runId) return;
+    await qc.invalidateQueries({ queryKey: planRowDecisionsKey(runId) });
+    await qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'level-suggestions'] });
+    await qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'product-economics'] });
+    await qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'buy'] });
+  }, [runId, qc]);
+
+  const save = useCallback(
+    async (sourceEdits: PlanRowEditMap = edits) => {
+      if (!runId) return null;
+      const rows = payloadRows(sourceEdits);
+      if (!rows.length) return null;
+      setIsSaving(true);
+      try {
+        const result = await savePlanEdits(runId, rows);
+        clearAll();
+        await invalidatePlanQueries();
+        return result;
+      } finally {
+        setIsSaving(false);
+      }
+    },
+    [runId, edits, payloadRows, clearAll, invalidatePlanQueries],
+  );
+
+  /**
+   * S12 (round 2, 9 Sep): the panel's own "Save" - persists just THIS row's draft,
+   * immediately, rather than waiting on the toolbar's Save (N) to sweep up every row on
+   * the plan. Was "Use suggestion" (dropped the draft instead of persisting it).
+   *
+   * `pendingPatch` (AC-S12.5, review fix round 3) is the panel's own Buy field, which -
+   * unlike MOQ/level/reorder qty, which write through `onEdit` on every keystroke - holds
+   * its typed value in LOCAL state until blur, so it does not fight the buyer over
+   * rounding mid-type. Clicking Save without blurring first left that value stranded:
+   * `edits[line.id]` had nothing in it yet, so this saw an empty draft and returned
+   * `null` with no PUT and no toast. Merging `pendingPatch` in HERE, synchronously,
+   * rather than asking the panel to call `onEdit` then `onSave` as two separate calls,
+   * sidesteps the async setState round-trip entirely - a `setEdits` the panel triggered
+   * one line above would not be visible to `edits` in THIS closure until the next
+   * render, by which point this function has already read the (still stale) draft.
+   *
+   * Own `savingRowIds` guard, separate from the toolbar's `isSaving` (review fix round
+   * 2): a row's own Save must not disable every OTHER row's button or the toolbar's,
+   * and the ref check below is what actually stops a second click from firing a second
+   * PUT - the disabled attribute the panel reads off `savingRowIds` is the visible half
+   * of the same guard, not the only one.
+   */
+  const saveRow = useCallback(
+    async (line: PlanLine, pendingPatch?: PlanRowEdit) => {
+      if (!runId) return null;
+      if (savingRowIdsRef.current.has(line.id)) return null;
+      const mergedEdit: PlanRowEdit | undefined = pendingPatch
+        ? { ...edits[line.id], ...pendingPatch }
+        : edits[line.id];
+      const rows = rowsForLine(line, mergedEdit);
+      if (!rows.length) return null;
+      // The flushed value belongs in the shared draft too, not only in this one PUT -
+      // a save that fails (or a slow one the buyer reopens the row during) must not
+      // lose the Buy figure back to whatever the row last had committed.
+      if (pendingPatch) {
+        setEdits((prev) => ({ ...prev, [line.id]: { ...prev[line.id], ...pendingPatch } }));
+      }
+      savingRowIdsRef.current.add(line.id);
+      setSavingRowIds(new Set(savingRowIdsRef.current));
+      try {
+        const result = await savePlanEdits(runId, rows);
+        setEdits((prev) => {
+          if (!prev[line.id]) return prev;
+          const next = { ...prev };
+          delete next[line.id];
+          return next;
+        });
+        await invalidatePlanQueries();
+        return result;
+      } finally {
+        savingRowIdsRef.current.delete(line.id);
+        setSavingRowIds(new Set(savingRowIdsRef.current));
+      }
+    },
+    [runId, edits, rowsForLine, invalidatePlanQueries],
+  );
 
   /**
    * Confirm = save, then confirm. One button (plan 4.5): a buyer who edited three rows and
@@ -137,7 +219,10 @@ export function usePlanEdits(
     if (!runId) return null;
     setIsConfirming(true);
     try {
-      await save();
+      // S8 (G4, 9 Sep 2026): the health suggestion persists on Confirm for every product
+      // being bought, even where the buyer never touched the radio - `withConfirmLifecycle`
+      // fills it in for exactly the rows `confirmable` already counts, nothing more.
+      await save(withConfirmLifecycle(edits, decisions, lines, economicsFor));
       const result = await confirmDecisions(runId, []);
       await qc.invalidateQueries({ queryKey: planRowDecisionsKey(runId) });
       await qc.invalidateQueries({ queryKey: ['scm', 'purchase-orders'] });
@@ -145,12 +230,13 @@ export function usePlanEdits(
     } finally {
       setIsConfirming(false);
     }
-  }, [runId, save, qc]);
+  }, [runId, save, qc, edits, decisions, lines, economicsFor]);
 
   return {
     edits,
     setRowEdit,
-    resetRow,
+    saveRow,
+    savingRowIds,
     clearAll,
     saveCount,
     confirmable,

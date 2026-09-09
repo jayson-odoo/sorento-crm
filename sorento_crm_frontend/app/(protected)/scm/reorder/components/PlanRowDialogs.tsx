@@ -200,7 +200,19 @@ function DemandTabs({
   channel: 'project' | 'retail';
 }) {
   const recId = anyRecId(line);
-  const open = useRecommendationDemand(runId, recId ?? '', Boolean(runId && recId), channel);
+  // AC-S3.1: a grouped (product-grain) row's own Project/Retail cell sums every member
+  // location, so the "open" tab has to query the SAME scope the history tab already does
+  // (`scope=product`) - reading only `recId`'s one member location otherwise, which is the
+  // "Project 3, 0 open" mismatch the plan measured. An ungrouped row has no members to widen
+  // to and keeps reading exactly as it did before (no scope argument at all).
+  const groupScopeArgs: ['product'] | [] = isGroupedLine(line) ? ['product'] : [];
+  const open = useRecommendationDemand(
+    runId,
+    recId ?? '',
+    Boolean(runId && recId),
+    channel,
+    ...groupScopeArgs,
+  );
   const history = useRecommendationDemand(
     runId,
     recId ?? '',

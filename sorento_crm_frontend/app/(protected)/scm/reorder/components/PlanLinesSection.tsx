@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Save } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
@@ -10,6 +10,7 @@ import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
 import { usePlanLines } from '../hooks/usePlanLines';
 import { usePlanEdits } from '../hooks/usePlanEdits';
+import type { PlanRowEdit } from '../lib/planEdits';
 import type { PlanLine, PlanLineStatus } from '../lib/planLine';
 import { planTotals, type PlanTotals } from '../lib/planDecisions';
 import { groupPlanLinesByChannel } from '../lib/planLineGrouping';
@@ -178,6 +179,7 @@ export function PlanLinesSection({
     planLines.decisions,
     planLines.coverFor,
     planLines.poFor,
+    planLines.economicsFor,
   );
 
   useEffect(() => {
@@ -194,7 +196,7 @@ export function PlanLinesSection({
     confirmUnpriced > 0
       ? ` ${fmtInt(confirmUnpriced)} of them carry no price yet and are drafted unpriced.`
       : ''
-  } Products nobody touched are confirmed as the plan suggested; skipped ones are left out.`;
+  } Only rows you decided are bought; untouched and skipped rows are left out.`;
 
   const doSave = async () => {
     try {
@@ -207,6 +209,41 @@ export function PlanLinesSection({
       toast.error(e instanceof Error ? e.message : 'Could not save the changes.');
     }
   };
+
+  /**
+   * S12 (round 2, 9 Sep, review fix - AC-S12.1/AC-S12.5): the SAME try/await/toast shape
+   * as the toolbar's own `doSave`, so a row's own Save gives the buyer the same feedback
+   * a bulk save already does - an unwrapped `planEdits.saveRow` left a rejected save
+   * silent, and "Saved" now says which end. `pendingPatch` is the panel's own un-blurred
+   * Buy value, flushed straight into the save (`saveRow` merges it before reading the
+   * draft - see its own doc for why this cannot go through `onEdit` first). A row with
+   * NOTHING drafted (`result === null`, review fix round 3, AC-S12.5) says so rather than
+   * firing a PUT for nothing or - the bug this closes - staying silent as if the click
+   * never happened. `savingRowIds` (also on the hook) is the per-row disabled guard the
+   * panel reads to keep a second click from firing a second PUT.
+   */
+  const doSaveRow = useCallback(async (line: PlanLine, pendingPatch?: PlanRowEdit) => {
+    try {
+      const result = await planEdits.saveRow(line, pendingPatch);
+      if (!result) {
+        toast.info('Nothing to save on this row.');
+        return;
+      }
+      toast.success('Row saved.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not save this row.');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planEdits.saveRow]);
+
+  const onSaveRow = useCallback(
+    (l: PlanLine, pendingPatch?: PlanRowEdit) => void doSaveRow(l, pendingPatch),
+    [doSaveRow],
+  );
+  const savingFor = useCallback(
+    (l: PlanLine) => planEdits.savingRowIds.has(l.id),
+    [planEdits.savingRowIds],
+  );
 
   const doConfirm = async () => {
     try {
@@ -243,7 +280,13 @@ export function PlanLinesSection({
       <Button
         onClick={() => setConfirmOpen(true)}
         disabled={confirmProducts === 0 || planEdits.isConfirming}
-        title="Save, then turn this plan into draft purchase orders"
+        // AC-S6.3: Confirm (0) explains itself - a buyer who has decided nothing sees why
+        // the button is dead rather than assuming the plan is broken.
+        title={
+          confirmProducts === 0
+            ? 'Decide at least one row first'
+            : 'Save, then turn this plan into draft purchase orders'
+        }
       >
         <CheckCircle2 className="size-4" />
         {`Confirm (${fmtInt(confirmProducts)})`}
@@ -287,7 +330,8 @@ export function PlanLinesSection({
         decisions={planLines.decisions}
         edits={planEdits.edits}
         onRowEdit={planEdits.setRowEdit}
-        onResetRow={planEdits.resetRow}
+        onSaveRow={onSaveRow}
+        savingFor={savingFor}
         toolbarPrimary={toolbarPrimary}
         coverFor={planLines.coverFor}
         priceFor={planLines.priceFor}

@@ -87,6 +87,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       item_type: null,
       is_active: true,
       is_searchable: true,
+      exclude_from_planning: false,
       list_price: 0,
       cost_price: null,
       invoice_price: null,
@@ -145,6 +146,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
       item_type: product.item_type || null,
       is_active: product.is_active,
       is_searchable: product.is_searchable ?? true,
+      exclude_from_planning: product.exclude_from_planning ?? false,
       list_price: product.list_price,
       cost_price: product.cost_price || null,
       invoice_price: product.invoice_price || null,
@@ -209,6 +211,7 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
         item_type: data.item_type ?? (isEditMode ? null : undefined),
         is_active: data.is_active,
         is_searchable: data.is_searchable,
+        exclude_from_planning: data.exclude_from_planning,
       };
 
       if (isEditMode && productId) {
@@ -511,6 +514,27 @@ export default function ProductForm({ productId, initialProduct, onSuccess }: Pr
                           <FormLabel className="text-base">Chat Search</FormLabel>
                           <FormDescription>
                             Allow the chatbot to answer with this product
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="exclude_from_planning"
+                    render={({ field }) => (
+                      <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                        <div className="space-y-0.5">
+                          <FormLabel className="text-base">Exclude from reorder planning</FormLabel>
+                          <FormDescription>
+                            Never appears in a reorder run, even when named directly
                           </FormDescription>
                         </div>
                         <FormControl>

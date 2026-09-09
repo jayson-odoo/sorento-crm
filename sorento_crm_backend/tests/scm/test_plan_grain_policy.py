@@ -682,7 +682,7 @@ def test_confirm_decisions_over_http_refuses_a_legacy_run(decision_api):
     assert res.json()["code"] == "legacy_run_read_only"
 
 
-def test_confirm_decisions_over_http_reaches_a_product_grain_run_but_ignores_rec_status(
+def test_confirm_decisions_over_http_reaches_a_product_grain_run_and_skips_the_untouched_row(
     decision_api,
 ):
     """Reversed doctrine (captain, 21 Aug): confirming is no longer refused outright on
@@ -693,11 +693,10 @@ def test_confirm_decisions_over_http_reaches_a_product_grain_run_but_ignores_rec
     directly here rather than through the guarded Accept endpoint) is not what confirm
     reads.
 
-    It IS confirmed, and at the engine's own quantity - but for the other reason, R3
-    (`PLAN-scm-reorder-revamp.md`): "Confirm covers untouched rows as the engine
-    suggestion". The row nobody decided is bought at what the engine sized, which is the
-    same answer whatever its status column happens to say. Before R3 this read
-    `confirmed_count == 0`; the status played no part then either."""
+    G5 (superseding R3, `PLAN-scm-reorder-revamp.md`): a row nobody decided is NOT
+    bought at the engine's own suggestion any more - only a row the buyer actually
+    decided (a `PlanRowDecision`) drafts a line. So an untouched row, whatever its
+    stray `status` column says, confirms nothing."""
     f = decision_api
     run = _run(f["db"], decision_grain="product", contract_version=1)
     rec = _recommendation(f["db"], run, f["product"], f["warehouse"], qty=50)
@@ -709,13 +708,13 @@ def test_confirm_decisions_over_http_reaches_a_product_grain_run_but_ignores_rec
 
     assert res.status_code == 200, res.text
     body = res.json()
-    assert body["confirmed_count"] == 1, "untouched, so bought at the suggestion (R3)"
-    assert body["po_count"] == 1
+    assert body["confirmed_count"] == 0, "untouched rows are not bought (G5)"
+    assert body["po_count"] == 0
 
     qty = f["db"].execute(_text(
         "SELECT qty_ordered FROM purchase_order_lines WHERE source_ref = :r"
     ), {"r": rec.id}).scalar()
-    assert float(qty) == 50, "the ENGINE's quantity, never anything the status implied"
+    assert qty is None, "no decision, no draft PO line - the status column played no part"
 
 
 def test_reset_decisions_over_http_refuses_a_legacy_run(decision_api):

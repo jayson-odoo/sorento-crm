@@ -18,10 +18,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { EM_DASH, fmtDecimal, fmtInt, fmtMoney, fmtSupplierCost } from '../../lib/format';
+import { EM_DASH, fmtDecimal, fmtInt, fmtSupplierCost } from '../../lib/format';
 import { applySourceEdits, sourceEditsForTotal, type CoverProposal } from '../lib/coverPlan';
+import { lineCost, type LineCostMoney } from '../lib/lineCost';
 import { roundBuyQty } from '../lib/orderQtyLedger';
-import { m8CashImpact } from '../lib/planRow';
 import type { PlanLine } from '../lib/planLine';
 import type { PlanDecision } from '../lib/planDecisions';
 import { suggestedDecisionFor, type PlanRowEdit } from '../lib/planEdits';
@@ -38,7 +38,7 @@ import {
   levelTerms,
   type LevelSuggestion,
 } from '../lib/levelSuggestion';
-import { healthVerdict, type ProductEconomics } from '../lib/productHealth';
+import { healthVerdict, suggestedLifecycle, type ProductEconomics } from '../lib/productHealth';
 import type { PoReceipt } from '../lib/poCover';
 import type { PlanRowPriceMode } from '../types/decisions.types';
 
@@ -55,11 +55,14 @@ const ApexChart = dynamic(() => import('react-apexcharts').then((mod) => mod.def
  * backend the moment it closed - so a buyer changing their mind produced four requests and
  * the row's own numbers moved under them mid-thought.
  *
- * NOTHING here writes. Every control calls `onEdit`, which lands in the page's draft map;
- * the pill turns Unsaved and Save persists the lot in one request. The per-location stock
- * table that used to live here moved into the On hand lightbox (R12) and SPO is stated as a
- * fact rather than offered as an input (R2) - it is already inside the net, so a "take SPO"
- * quantity would count it twice.
+ * Every control calls `onEdit`, which lands in the page's draft map; the pill turns
+ * Unsaved. The toolbar's Save (N) persists every drafted row at once; `onSave` (S12,
+ * round 2, 9 Sep - was "Use suggestion", which reset the draft to the engine's own
+ * mixture) persists just THIS row's draft the moment the buyer is done with it, without
+ * waiting on the rest of the plan. The per-location stock table that used to live here
+ * moved into the On hand lightbox (R12) and SPO is stated as a fact rather than offered as
+ * an input (R2) - it is already inside the net, so a "take SPO" quantity would count it
+ * twice.
  */
 export function PlanRowPanel({
   line,
@@ -73,9 +76,10 @@ export function PlanRowPanel({
   economics,
   healthWindows,
   disabled = false,
+  saving = false,
   lockReason = null,
   onEdit,
-  onUseSuggestion,
+  onSave,
 }: {
   line: PlanLine;
   /** The unsaved draft on this row, when there is one. */
@@ -91,10 +95,17 @@ export function PlanRowPanel({
   healthWindows?: { sold_window_months?: number; bought_window_months?: number };
   /** A legacy run: the panel still renders, every input is dead (D8). */
   disabled?: boolean;
+  /** THIS row's own Save is in flight (review fix round 2, 9 Sep) - disables just the
+   *  Save button, never the rest of the panel, and stops a second click from firing a
+   *  second PUT while the first is still on the wire. */
+  saving?: boolean;
   lockReason?: string | null;
   onEdit: (patch: PlanRowEdit) => void;
-  /** Drop this row's draft and go back to the engine's own mixture. */
-  onUseSuggestion: () => void;
+  /** Persist THIS row's current draft now, rather than waiting for the toolbar's Save.
+   *  `pendingPatch` (AC-S12.5) carries an un-blurred Buy value straight into the save
+   *  that is about to fire - see `pendingBuyPatch` below for why this cannot instead go
+   *  through `onEdit` first and `onSave` second as two separate calls. */
+  onSave: (pendingPatch?: PlanRowEdit) => void;
 }) {
   const [chartOpen, setChartOpen] = useState(false);
 
@@ -116,7 +127,12 @@ export function PlanRowPanel({
 
   const moq = line.order_qty_inputs.moq;
   const masterMoq = line.order_qty_inputs.master_moq;
-  const moqValue = edit?.moq !== undefined ? edit.moq : moq;
+  // S13 (round 2, 9 Sep): when the row carries neither a buyer override nor a frozen
+  // master figure, fall back to the remembered product-supplier link (`rec.supplier.moq`)
+  // before giving up - a just-remembered MOQ (AC-S13.1) shows here immediately, on the
+  // SAME plan, rather than waiting on the next run to freeze it onto `master_moq`.
+  const moqValue =
+    edit?.moq !== undefined ? edit.moq : (moq ?? line.rec.supplier?.moq ?? null);
 
   const hasPriceOnFile = Boolean(price?.last) || (line.unit_cost ?? 0) > 0;
   // Never purchased means there is no last price to use, so the row starts on the only
@@ -127,23 +143,37 @@ export function PlanRowPanel({
     current.priceMode ??
     decision?.priceMode ??
     (hasPriceOnFile ? 'use_last' : 'ask_new');
-  // Clearing the select is "no override", which is the engine's own proposed supplier -
-  // so an empty value falls back to it here and sends no `supplier_code` on save.
+  // Clearing the select is "no override", which now falls back to the LAST PURCHASE
+  // supplier when this row's history names one (S11, round 2, 9 Sep) - not the engine's
+  // default link, which is only a candidate ranking and can go stale (measured:
+  // SRTSS8710's default link priced at RM 121.80 while the last purchase actually paid
+  // CNY 48.00 to a different supplier). Absent that, the engine's own pick is still the
+  // fallback, and an empty value sends no `supplier_code` on save either way.
   const supplierCode =
-    edit?.supplierCode || current.supplierCode || line.supplier?.code || null;
+    edit?.supplierCode ||
+    current.supplierCode ||
+    line.rec.last_purchase_supplier_code ||
+    line.supplier?.code ||
+    null;
   const picked = (line.alternatives ?? []).find((a) => a.value === supplierCode) ?? null;
 
-  /** The unit the line is costed at: nothing while a new price is being asked for. */
-  const unitCostBase =
-    priceMode === 'ask_new'
-      ? null
-      : picked && picked.value !== line.supplier?.code
-        ? picked.unit_cost_base
-        : line.unit_cost_base;
-  const lineCost =
-    unitCostBase === null || unitCostBase === undefined
-      ? null
-      : m8CashImpact({ order_qty: buyQty, unit_cost: line.unit_cost, unit_cost_base: unitCostBase });
+  // S11 (finding 4, review fix round 2, 9 Sep): the row's TRUE last purchase, whoever it
+  // was bought from - the SAME fact the "Last price" line below prints and the figure
+  // "at last price" actually names. ONE source, so the two never disagree: the loaded
+  // price-advice purchase (`price.last`, keyed to the currently chosen supplier) when it
+  // has arrived, else the frozen rec's own `last_purchase` fields (the pool/segment-
+  // attributed fact every row is built from before the price-advice fetch resolves).
+  const lastPurchase: LineCostMoney = price?.last
+    ? { unit_cost: price.last.unit_cost, currency: price.last.currency }
+    : { unit_cost: line.rec.last_purchase_cost, currency: line.rec.last_purchase_currency };
+  const hasLastPurchase = lastPurchase.unit_cost !== null && lastPurchase.unit_cost !== undefined;
+  // The chosen supplier's own quote, in ITS OWN currency - the "at supplier price" basis,
+  // used only when there is no last price to cost against or a fresh quote was asked for.
+  const supplierQuote: LineCostMoney =
+    picked && picked.value !== line.supplier?.code
+      ? { unit_cost: picked.unit_cost, currency: picked.currency }
+      : { unit_cost: line.unit_cost, currency: line.currency };
+  const cost = lineCost({ buyQty, priceMode, last: lastPurchase, supplier: supplierQuote });
 
   /** Write a whole mixture back to the draft, keeping the buyer's price call with it. */
   const setDecision = (next: PlanDecision) => onEdit({ decision: { ...next } });
@@ -182,13 +212,23 @@ export function PlanRowPanel({
     setDecision({ ...current, skip: undefined, po: Math.min(num(raw), poMax) });
 
   const [buyDraft, setBuyDraft] = useState<string | null>(null);
+  /** The Buy patch `commitBuy` would apply, computed but NOT applied - Save reads this
+   *  to flush an un-blurred typed value into the very save it is about to fire (AC-S12.5,
+   *  review fix round 3), rather than waiting on `onEdit`'s own state update, which would
+   *  not be visible to `usePlanEdits.saveRow` until the NEXT render. */
+  const pendingBuyPatch = (): PlanRowEdit | undefined =>
+    buyDraft === null
+      ? undefined
+      : {
+          // The supplier's MoQ and order multiple do not stop applying because the
+          // figure was typed by hand - a buy is rounded wherever it is recorded.
+          decision: { ...current, skip: undefined, buy: roundBuyQty(num(buyDraft), line.order_qty_inputs) },
+        };
   const commitBuy = () => {
-    if (buyDraft === null) return;
-    // The supplier's MoQ and order multiple do not stop applying because the figure was
-    // typed by hand - a buy is rounded wherever it is recorded.
-    const rounded = roundBuyQty(num(buyDraft), line.order_qty_inputs);
+    const patch = pendingBuyPatch();
+    if (!patch) return;
     setBuyDraft(null);
-    setDecision({ ...current, skip: undefined, buy: rounded });
+    onEdit(patch);
   };
 
   const level = levelSuggestion;
@@ -211,8 +251,11 @@ export function PlanRowPanel({
          null);
 
   const health = healthVerdict(economics, healthWindows);
+  // AC-S8.1 (G4 ruling, 9 Sep 2026): a stored decision always wins; short of one, the
+  // radio preselects from the health class rather than sitting with neither option
+  // checked - Dead suggests Discontinue, everything else suggests Keep selling.
   const lifecycle =
-    edit?.lifecycle !== undefined ? edit.lifecycle : (economics?.lifecycle_decision ?? null);
+    edit?.lifecycle ?? economics?.lifecycle_decision ?? suggestedLifecycle(economics?.movement_class);
 
   const months = level?.basis.months ?? [];
 
@@ -329,10 +372,17 @@ export function PlanRowPanel({
               size="sm"
               variant="outline"
               className="h-7"
-              disabled={disabled}
-              onClick={onUseSuggestion}
+              disabled={disabled || saving}
+              onClick={() => {
+                // AC-S12.5: an un-blurred Buy value is flushed straight into this save
+                // rather than left stranded in local state - `commitBuy`'s own onBlur
+                // still runs too on whichever browser event order gets there first, but
+                // Save must not depend on blur having already happened.
+                setBuyDraft(null);
+                onSave(pendingBuyPatch());
+              }}
             >
-              Use suggestion
+              {saving ? 'Saving...' : 'Save'}
             </Button>
             <Button
               size="sm"
@@ -353,9 +403,13 @@ export function PlanRowPanel({
           <div className="flex items-baseline justify-between gap-2 text-xs">
             <span className="text-muted-foreground">Last price</span>
             <span className="min-w-0 text-end">
-              {hasPriceOnFile ? (
+              {hasLastPurchase ? (
                 <span className="tabular-nums font-medium">
-                  {fmtSupplierCost(price?.last?.unit_cost ?? line.unit_cost ?? 0, line.currency)}
+                  {/* AC-S2.3/AC-S11.2 (finding 4): the SAME `lastPurchase` fact the line
+                      cost below costs against - never the chosen supplier's own quote,
+                      which is a different fact and, for an item never purchased, used to
+                      print here mislabelled as a price we had actually paid. */}
+                  {fmtSupplierCost(lastPurchase.unit_cost, lastPurchase.currency)}
                 </span>
               ) : (
                 <span className="text-muted-foreground">No price on file</span>
@@ -416,13 +470,20 @@ export function PlanRowPanel({
             </label>
           </RadioGroup>
 
+          {/* S11 (round 2, 9 Sep): read in the purchase's OWN currency, never converted -
+              "at last price" names the row's true last purchase, "at supplier price" the
+              chosen supplier's own quote, and nothing is claimed when neither exists. The
+              "No MYR rate" hint this replaced is retired (AC-S11.3): most buying is CNY,
+              and there was never a market rate to ask for in the first place. */}
           <p className="text-xs">
             <span className="text-muted-foreground">Line cost </span>
             <span className="tabular-nums font-medium">
-              {lineCost === null ? EM_DASH : fmtMoney(lineCost)}
+              {cost ? fmtSupplierCost(cost.amount, cost.currency) : EM_DASH}
             </span>
-            {priceMode === 'use_last' && lineCost !== null ? (
-              <span className="text-2xs text-muted-foreground"> at last price</span>
+            {cost ? (
+              <span className="text-2xs text-muted-foreground">
+                {cost.basis === 'last' ? ' at last price' : ' at supplier price'}
+              </span>
             ) : null}
           </p>
         </section>

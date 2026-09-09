@@ -148,6 +148,10 @@ def create_views() -> None:
     # 420's, and the two disagree by the whole unshipped book - which is how CI read 90 units
     # on order where the dev database read 115.
     _m420 = _load("420_spo_docs_in_allocations.py")
+    # 501 adds `warehouse_segment` to `consumption_v` (S7, PLAN-reorder-feedback-9sep.md) -
+    # the level suggestion's retail-only filter reads it. Appended last, after every other
+    # replay above, since it is the latest revision in the chain to touch a view here.
+    ordered.extend(_load("501_consumption_v_wh_segment.py")._REDEFINED_VIEWS)
     with engine.begin() as conn:
         for ddl in ordered:
             # The migration's DDL uses bare CREATE VIEW; make re-runs idempotent.
@@ -570,6 +574,53 @@ def seed_customer_import_aliases() -> None:
     log.info("customer import aliases seeded -> %d", inserted)
 
 
+def seed_products_list_query_fields() -> None:
+    """The `products` list-query filter catalog, minimally replayed for bootstrap.
+
+    `list_query_resources` / `list_query_fields` are ENTIRELY migration-seeded data
+    (101, 128, 503, ...) with no seed function of their own anywhere in this script, so a
+    bootstrapped database carries both tables completely empty - not just missing
+    `exclude_from_planning`, missing the `products` resource row itself. Only what
+    `test_product_exclude_from_planning.py` pins is replayed here: a bare `products`
+    resource (101's own shape) and the `exclude_from_planning` field (503, via its own
+    `seed()` so the two paths cannot drift). The ~40 other master fields 128 seeds are NOT
+    replayed - nothing in the suite currently reads them off a bootstrapped database, and
+    the full catalog belongs in its own seed pass the day something does.
+    """
+    import importlib.util
+    import uuid
+    from pathlib import Path
+
+    from sqlalchemy import text
+
+    from app.database import engine
+
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT id FROM list_query_resources WHERE resource_key = 'products'")
+        ).fetchone()
+        if not row:
+            conn.execute(
+                text(
+                    "INSERT INTO list_query_resources "
+                    "(id, resource_key, display_name, description, is_active) "
+                    "VALUES (CAST(:id AS uuid), 'products', 'Products', "
+                    "'Product master list', true)"
+                ),
+                {"id": str(uuid.uuid4())},
+            )
+
+        versions = Path(__file__).resolve().parent.parent / "alembic" / "versions"
+        spec = importlib.util.spec_from_file_location(
+            "_products_flt_seed_503", versions / "503_product_exclude_planning_flt.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        inserted = module.seed(conn)
+    log.info("products list-query field catalog seeded -> exclude_from_planning: %s",
+             "added" if inserted else "already present")
+
+
 def _seed_default_company() -> None:
     """Idempotently insert the fixed Sorento company row (mirrors migration 302).
 
@@ -715,6 +766,7 @@ def main() -> int:
         seed_scm_module_data()
         seed_fulfilment_planning_flags()
         seed_customer_import_aliases()
+        seed_products_list_query_fields()
     stamp_head()
     log.info("bootstrap complete")
     return 0
