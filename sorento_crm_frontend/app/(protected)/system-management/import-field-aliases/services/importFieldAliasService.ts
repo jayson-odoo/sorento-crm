@@ -5,15 +5,7 @@
  * Layering: ImportFieldAliasesList / ImportFieldAliasFormDialog / the upload dialogs'
  * "Map to..." chip -> THIS service -> lib/api-client -> backend.
  *
- * ── PHASE-1 / PHASE-2 SWAP ──────────────────────────────────────────────────
- * `USE_IMPORT_FIELD_ALIAS_MOCKS` is the single flag toggling this feature between the
- * deterministic prototype store (`lib/importFieldAliasMock.ts`) and the live backend, the
- * same shape `companies/services/companyService.ts` uses for the same reason. Phase 1 =
- * true (no backend). Phase 2 flips it to false; every mock branch below already has its
- * real `apiFetch` counterpart wired to the contract, so the swap is one line + deleting
- * the mock import.
- *
- * ── PHASE-2 BACKEND CONTRACT (app/api/v1/system/import_field_aliases.py) ───────────────
+ * ── BACKEND CONTRACT (app/api/v1/system/import_field_aliases.py) ───────────────
  *
  *  GET    /api/v1/system/import-field-aliases?doc_type=
  *    -> 200 ImportFieldAliasGroup[], one row per system field of that doc type (even a
@@ -43,24 +35,14 @@ import type {
   ImportFieldAliasFieldOption,
   ImportFieldAliasGroup,
 } from '../types/importFieldAlias.types';
-import {
-  mockCreateImportFieldAlias,
-  mockDeleteImportFieldAlias,
-  mockFieldsFor,
-  mockListImportFieldAliases,
-} from '../lib/importFieldAliasMock';
 
 export type { ImportFieldAliasDocType };
-
-/** Phase-1 flag - true = deterministic mock store, false = live backend. */
-export const USE_IMPORT_FIELD_ALIAS_MOCKS = true;
 
 const BASE = '/api/v1/system/import-field-aliases';
 
 export async function listImportFieldAliases(
   docType: ImportFieldAliasDocType,
 ): Promise<ImportFieldAliasGroup[]> {
-  if (USE_IMPORT_FIELD_ALIAS_MOCKS) return mockListImportFieldAliases(docType);
   const res = await apiFetch(`${BASE}?doc_type=${docType}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load import column mappings'));
   return res.json();
@@ -69,7 +51,6 @@ export async function listImportFieldAliases(
 export async function listImportFieldAliasFields(
   docType: ImportFieldAliasDocType,
 ): Promise<ImportFieldAliasFieldOption[]> {
-  if (USE_IMPORT_FIELD_ALIAS_MOCKS) return mockFieldsFor(docType);
   const res = await apiFetch(`${BASE}/fields?doc_type=${docType}`);
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the field list'));
   return res.json();
@@ -81,7 +62,6 @@ export async function createImportFieldAlias(data: {
   alias: string;
   locale?: string | null;
 }): Promise<ImportFieldAliasGroup> {
-  if (USE_IMPORT_FIELD_ALIAS_MOCKS) return mockCreateImportFieldAlias(data);
   const res = await apiFetch(BASE, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -92,10 +72,6 @@ export async function createImportFieldAlias(data: {
 }
 
 export async function deleteImportFieldAlias(id: string): Promise<void> {
-  if (USE_IMPORT_FIELD_ALIAS_MOCKS) {
-    mockDeleteImportFieldAlias(id);
-    return;
-  }
   const res = await apiFetch(`${BASE}/${id}`, { method: 'DELETE' });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to remove that mapping'));
 }

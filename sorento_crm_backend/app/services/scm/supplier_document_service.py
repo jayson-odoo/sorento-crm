@@ -440,12 +440,23 @@ def _file_preview(db: Session, name: str, data: bytes) -> dict[str, Any]:
         else None
     )
 
+    # AC-E2: header cells the resolver could not place, from whichever reader(s) ran -
+    # a combined file's two readers each report their OWN missed headers, never each
+    # other's genuinely-different column set.
+    unmapped_headers = list(
+        dict.fromkeys(
+            (pi_result.unmapped_headers if pi_result else [])
+            + (pl_result.unmapped_headers if pl_result else [])
+        )
+    )
+
     return {
         "name": name,
         "kind": kind if not errors else "unreadable",
         "blocks": blocks,
         "header": _header_of(pi_result, pl_result),
         "unmatched": sorted(set(unmatched))[:200],
+        "unmapped_headers": unmapped_headers,
         "errors": errors,
         "footer_note": footer_note,
         # Popped by `preview()` before the response goes out - kept OFF the block dicts
