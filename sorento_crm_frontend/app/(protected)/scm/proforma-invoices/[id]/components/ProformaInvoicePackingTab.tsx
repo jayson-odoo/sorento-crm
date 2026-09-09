@@ -22,8 +22,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { useMockDeferredWindow } from '@/hooks/useMockDeferredWindow';
-import { useProformaInvoicePacking, useProformaInvoicePackingMutations } from '../../../hooks/useProformaInvoicePacking';
+import { useDeferredRowAction, type UseDeferredRowActionResult } from '@/hooks/useDeferredRowAction';
+import {
+  proformaInvoicePackingQueryKey,
+  useProformaInvoicePacking,
+  useProformaInvoicePackingMutations,
+} from '../../../hooks/useProformaInvoicePacking';
+import { proformaInvoiceDetailQueryKey } from '../../../hooks/useProformaInvoices';
 import { EM_DASH, fmtDate, fmtQty, fmtTrimmedDecimal } from '../../../lib/format';
 import type { ProformaInvoiceDetail } from '../../../services/proformaInvoiceService';
 import type { ProformaInvoicePackingLine } from '../../types/packingLine.types';
@@ -32,6 +37,10 @@ import MatchToProductDialog from '../../../components/MatchToProductDialog';
 /** Keyed off the read permission plus a stable id, matching the Lines grid's own
  *  `scm.dashboard.view::proforma-invoice-lines` convention next door. */
 const LISTING_KEY = 'scm.dashboard.view::proforma-invoice-packing-lines';
+
+/** One frozen empty array for "nothing yet", so the grid's `data` identity is stable while
+ *  the query is in flight. */
+const NO_ROWS: ProformaInvoicePackingLine[] = [];
 
 function dims(row: ProformaInvoicePackingLine): string {
   const { carton_length_cm: l, carton_width_cm: w, carton_height_cm: h } = row;
@@ -48,14 +57,17 @@ function MatchedCell({
   invoiceId,
   supplierId,
   canAdjust,
+  dismissal,
 }: {
   row: ProformaInvoicePackingLine;
   invoiceId: string;
   supplierId: string | null;
   canAdjust: boolean;
+  /** Parked on the server, one window for the whole grid - the countdown lives in a toast
+   *  because a grid row has nowhere of its own to put one (S6-07). */
+  dismissal: UseDeferredRowActionResult;
 }) {
   const mutations = useProformaInvoicePackingMutations(invoiceId);
-  const deferred = useMockDeferredWindow(5);
   const [matching, setMatching] = useState(false);
 
   if (row.match_state === 'matched') {
@@ -109,16 +121,12 @@ function MatchedCell({
             size="sm"
             className="h-6 px-1.5 text-2xs text-destructive hover:text-destructive"
             onClick={() =>
-              deferred.run({
+              dismissal.run({
                 id: row.id,
-                entityType: 'proforma_invoice_packing_line',
-                apply: () => mutations.dismiss(row.id),
-                undo: () => mutations.undoDismiss(row.id),
-                // A grid row has nowhere of its own to put a countdown (S6-07) - the
-                // affordance travels to a toast, same as every other list row's
-                // deferred delete, rather than living inside this cell (which a
-                // packing-query invalidation elsewhere on the page can re-render).
-                toast: { verb: 'Dismissing', subject: row.item_code },
+                subject: row.item_code,
+                // `invoice_id` scopes the row at commit time, exactly as the route does -
+                // the handler must not be able to reach a row under another invoice.
+                payload: { invoice_id: invoiceId },
               })
             }
           >
@@ -130,10 +138,16 @@ function MatchedCell({
         open={matching}
         onOpenChange={setMatching}
         supplierId={supplierId}
-        supplierCode={matching ? row.supplier_code : null}
+        // `item_code`, never `supplier_code`: the alias table is keyed on the code the
+        // reader took the row's identity from, and matching on the other column wrote a
+        // ruling nothing would ever look up.
+        supplierCode={matching ? row.item_code : null}
         supplierLabel={row.description}
         onMatched={() => {
-          mutations.match(row.id);
+          // The picker wrote the supplier's manual alias, which rebound this row, linked
+          // it to the invoice line of that product and re-rolled the line's figures
+          // server-side - all this has to do is read the invoice again.
+          mutations.refresh();
           setMatching(false);
         }}
       />
@@ -159,8 +173,24 @@ export function ProformaInvoicePackingTab({
   onAttach: () => void;
   onReplace: () => void;
 }) {
+  const dismissal = useDeferredRowAction({
+    actionKey: 'proforma_invoice_packing_line.dismiss',
+    entityType: 'proforma_invoice_packing_line',
+    verb: 'Dismissing',
+    successMessage: 'Row dismissed',
+    // Both: the rows hang off the invoice detail payload, and the tab reads them through
+    // its own key.
+    invalidateKeys: [
+      proformaInvoiceDetailQueryKey(invoice.id),
+      proformaInvoicePackingQueryKey(invoice.id),
+    ],
+  });
   const { data, isLoading } = useProformaInvoicePacking(invoice);
-  const rows = data?.rows ?? [];
+  // ONE array when there is nothing to show, never a fresh `[]` per render: TanStack reads
+  // `data` by identity and `autoResetPageIndex` writes its own state when that identity
+  // changes, which is a render loop with a clean console
+  // (`data-grid.stable-data.inventory.test.ts`).
+  const rows = data?.rows ?? NO_ROWS;
   const file = data?.file ?? null;
   // Read by the footer + Packed-lookup cells INSTEAD of `rows` directly (same pattern
   // `packingRowsRef`/`footerTotalsRef` use next door, PackingListLinesTab.tsx): `rows`
@@ -314,7 +344,11 @@ export function ProformaInvoicePackingTab({
       {
         accessorKey: 'container_no',
         header: ({ column }) => <DataGridColumnHeader title="Container" column={column} />,
-        cell: ({ row }) => row.original.container_no || EM_DASH,
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.container_no ?? undefined}>
+            {row.original.container_no || EM_DASH}
+          </span>
+        ),
         size: 120,
         meta: { headerTitle: 'Container' },
       },
@@ -327,6 +361,7 @@ export function ProformaInvoicePackingTab({
             invoiceId={invoice.id}
             supplierId={invoice.supplier_id}
             canAdjust={canAdjust}
+            dismissal={dismissal}
           />
         ),
         size: 220,
@@ -334,7 +369,7 @@ export function ProformaInvoicePackingTab({
         meta: { headerTitle: 'Matched' },
       },
     ],
-    [invoice, canAdjust],
+    [invoice, canAdjust, dismissal],
   );
 
   const table = useReactTable({
@@ -348,7 +383,11 @@ export function ProformaInvoicePackingTab({
 
   if (isLoading) return null;
 
-  if (!file) {
+  // The ROWS are the packing list, not the file. A packing list attached before this lane
+  // filed anything, and a combined invoice+packing sheet whose one file is filed under the
+  // invoice's own type, both have rows and no packing file - gating the grid on the file
+  // hid them behind the empty state and its "Attach packing list" CTA.
+  if (rows.length === 0) {
     return (
       <Card>
         <CardContentEmpty onAttach={onAttach} canAdjust={canAdjust} />
@@ -369,9 +408,11 @@ export function ProformaInvoicePackingTab({
         <CardHeader>
           <CardHeading>
             <CardTitle>Packing</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              {file.name} · uploaded {fmtDate(file.uploaded_at)}
-            </p>
+            {file ? (
+              <p className="text-xs text-muted-foreground">
+                {file.name} · uploaded {fmtDate(file.uploaded_at)}
+              </p>
+            ) : null}
           </CardHeading>
           {canAdjust ? (
             <CardToolbar>

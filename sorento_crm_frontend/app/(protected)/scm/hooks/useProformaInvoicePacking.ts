@@ -3,12 +3,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import {
-  attachPackingListMock,
-  dismissPackingLine,
   getProformaInvoicePacking,
-  markPackingLineMatched,
   undoDismissPackingLine,
-  USE_PACKING_LINE_MOCKS,
   type ProformaInvoicePackingState,
 } from '../proforma-invoices/services/proformaInvoicePackingService';
 import { proformaInvoiceDetailQueryKey } from './useProformaInvoices';
@@ -16,35 +12,39 @@ import type { ProformaInvoiceDetail } from '../services/proformaInvoiceService';
 
 const KEY = ['scm', 'proforma-invoices', 'packing'] as const;
 
+export function proformaInvoicePackingQueryKey(invoiceId: string | null) {
+  return [...KEY, invoiceId] as const;
+}
+
 /** The invoice's packing rows and filed packing list (S2, AC-B9/B10) - reads off the
  *  ALREADY-fetched invoice detail (`useProformaInvoice`), never a second network call. */
 export function useProformaInvoicePacking(invoice: ProformaInvoiceDetail | undefined) {
   return useQuery<ProformaInvoicePackingState>({
-    queryKey: [...KEY, invoice?.id ?? null],
+    queryKey: proformaInvoicePackingQueryKey(invoice?.id ?? null),
     queryFn: () => getProformaInvoicePacking(invoice as ProformaInvoiceDetail),
     enabled: !!invoice,
   });
 }
 
-/** Dismiss / undo / attach all invalidate the SAME cache key their reader watches, so the
- *  Packing tab, the Packed column and the convert dialog stay in step with each other.
- *  Dismiss/undo (S2, AC-B7) are real writes now - each returns the whole invoice, and the
- *  detail cache is SEEDED with it (same convention `useInvoiceWrite` uses) rather than
- *  invalidated and re-fetched, so the Packed column and the row's own state move together
- *  on the same render. */
+/**
+ * The writes the Packing tab makes, and the refetch every one of them needs.
+ *
+ * Dismiss is NOT here: it parks `proforma_invoice_packing_line.dismiss` as a pending
+ * action (`useDeferredRowAction`, AC-B12) and the server applies it when the window
+ * lapses. What is here is the two writes with no window - Undo dismiss on an
+ * already-dismissed row, and the refresh after a match or an upload - each seeding the
+ * detail cache with what the server returned (the same convention `useInvoiceWrite` uses)
+ * so the Packed column and the row's own state move together on one render.
+ */
 export function useProformaInvoicePackingMutations(invoiceId: string | undefined) {
   const qc = useQueryClient();
-  const invalidate = () => void qc.invalidateQueries({ queryKey: [...KEY, invoiceId ?? null] });
+  const invalidate = () =>
+    void qc.invalidateQueries({ queryKey: proformaInvoicePackingQueryKey(invoiceId ?? null) });
   const seedDetail = (invoice: ProformaInvoiceDetail | void) => {
     if (invoice) qc.setQueryData(proformaInvoiceDetailQueryKey(invoiceId ?? null), invoice);
     invalidate();
   };
 
-  const dismissMutation = useMutation({
-    mutationFn: (rowId: string) => dismissPackingLine(invoiceId as string, rowId),
-    onSuccess: seedDetail,
-    onError: (e: Error) => toast.error(e.message),
-  });
   const undoDismissMutation = useMutation({
     mutationFn: (rowId: string) => undoDismissPackingLine(invoiceId as string, rowId),
     onSuccess: seedDetail,
@@ -52,34 +52,15 @@ export function useProformaInvoicePackingMutations(invoiceId: string | undefined
   });
 
   return {
-    dismiss: (rowId: string) => {
-      if (!invoiceId) return;
-      if (USE_PACKING_LINE_MOCKS) {
-        dismissPackingLine(invoiceId, rowId);
-        invalidate();
-        return;
-      }
-      dismissMutation.mutate(rowId);
-    },
     undoDismiss: (rowId: string) => {
       if (!invoiceId) return;
-      if (USE_PACKING_LINE_MOCKS) {
-        undoDismissPackingLine(invoiceId, rowId);
-        invalidate();
-        return;
-      }
       undoDismissMutation.mutate(rowId);
     },
-    /** `MatchToProductDialog`'s own `onMatched` (AC-B12) - the real write is
-     *  `useMatchSupplierCode`, unchanged; this only flips the row's own mock
-     *  `match_state` so the Packing tab reflects it without a second fetch. */
-    match: (rowId: string) => {
+    /** After a match made through the in-row picker (which writes the alias itself) or an
+     *  upload that attached a packing list: re-read the invoice, rows and all. */
+    refresh: () => {
       if (!invoiceId) return;
-      markPackingLineMatched(invoiceId, rowId);
-      invalidate();
-    },
-    attach: (invoice: ProformaInvoiceDetail) => {
-      attachPackingListMock(invoice);
+      void qc.invalidateQueries({ queryKey: proformaInvoiceDetailQueryKey(invoiceId) });
       invalidate();
     },
   };

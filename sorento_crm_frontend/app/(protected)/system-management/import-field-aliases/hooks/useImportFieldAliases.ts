@@ -38,9 +38,11 @@ export function useCreateImportFieldAlias(docType: ImportFieldAliasDocType) {
   });
 }
 
-/** No mutation hook for delete: the chip's × is a deferred action (AC-E3) driven by
- *  `useMockDeferredWindow` (Phase 1) - see `ImportFieldAliasesList.tsx`. `deleteImportFieldAlias`
- *  itself is called directly from there once the window lapses. */
+/** No mutation hook for delete, and no direct service call from the list either: the
+ *  chip's × parks `import_field_alias.forget` on the server (`useDeferredRowAction`,
+ *  AC-E3), and the SERVER deletes the row when the window lapses. `deleteImportFieldAlias`
+ *  stays as the immediate route behind that action, and is what a caller with no window
+ *  would use. */
 export { deleteImportFieldAlias };
 
 export function importFieldAliasListQueryKey(docType: ImportFieldAliasDocType) {

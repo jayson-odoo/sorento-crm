@@ -1371,6 +1371,64 @@ register(
 )
 
 
+def _dismiss_packing_line(db: Session, payload: dict):
+    from app.services.scm import proforma_invoice_packing_service
+
+    # `invoice_id` scopes the row, exactly as the route does: a row id under ANOTHER
+    # invoice must not be reachable off a guess.
+    out = proforma_invoice_packing_service.dismiss_packing_line(
+        db,
+        str(payload.get("invoice_id") or ""),
+        _entity_id(payload),
+        actor=_scm_actor(db, payload),
+    )
+    db.commit()
+    return {"id": str(out.id), "match_state": out.match_state}
+
+
+register(
+    FormAction(
+        key="proforma_invoice_packing_line.dismiss",
+        entity_types=("proforma_invoice_packing_line",),
+        execute=_dismiss_packing_line,
+        # Reversible: the row stays on the invoice, and Undo dismiss is on its own gear
+        # afterwards. Same window and same reasoning as `supplier_code_alias.forget`,
+        # which is the ruling this one writes.
+        window=WINDOW_REVERSIBLE,
+        permission="scm.proforma_invoice.upload",
+        label="Dismiss packing row",
+    )
+)
+
+
+def _forget_import_field_alias(db: Session, payload: dict):
+    from app.models.import_alias import ImportFieldAlias
+    from app.services.error_handler import handle_not_found
+
+    alias_id = _entity_id(payload)
+    row = db.query(ImportFieldAlias).filter(ImportFieldAlias.id == alias_id).first()
+    if row is None:
+        raise handle_not_found("Import column mapping", alias_id)
+    db.delete(row)
+    db.commit()
+    return {"deleted": 1}
+
+
+register(
+    FormAction(
+        key="import_field_alias.forget",
+        entity_types=("import_field_alias",),
+        execute=_forget_import_field_alias,
+        # Reversible, and named `forget` rather than `delete` for the same reason
+        # `supplier_code_alias.forget` is: what goes is a REMEMBERED spelling, re-added
+        # from the same page in one line if it turns out to have been wanted.
+        window=WINDOW_REVERSIBLE,
+        permission="system.import_field_aliases.edit",
+        label="Remove import column mapping",
+    )
+)
+
+
 def _delete_shipment_line_photo(db: Session, payload: dict):
     from app.services.scm import shipment_line_photos
 
