@@ -41,14 +41,20 @@ vi.mock('@/lib/toast', () => ({
 const previewSupplierDocuments = vi.fn();
 const applySupplierDocuments = vi.fn();
 
+const getFulfilmentSuppliers = vi.fn(
+  async (): Promise<{ value: string; label: string }[]> => [],
+);
+
 vi.mock('@/app/(protected)/scm/services/fulfilmentService', () => ({
   previewSupplierDocuments: (...a: unknown[]) => previewSupplierDocuments(...a),
   applySupplierDocuments: (...a: unknown[]) => applySupplierDocuments(...a),
+  // Server-searched supplier picker (fix round 1, item 17): the dialog fetches through the
+  // service with the typed query, instead of holding an unparameterised top-100 list.
+  getFulfilmentSuppliers: (...a: unknown[]) => getFulfilmentSuppliers(...(a as [])),
 }));
 
-const useFulfilmentSuppliers = vi.fn(() => ({ data: [] as { value: string; label: string }[], isLoading: false }));
-vi.mock('@/app/(protected)/scm/hooks/useFulfilment', () => ({
-  useFulfilmentSuppliers: () => useFulfilmentSuppliers(),
+vi.mock('@/app/(protected)/scm/services/proformaInvoiceService', () => ({
+  listProformaInvoices: vi.fn(async () => ({ data: [], total: 0 })),
 }));
 
 import { SupplierDocumentsUploadDialog } from './SupplierDocumentsUploadDialog';
@@ -177,7 +183,7 @@ function supplierSelect(): HTMLElement | null {
 beforeEach(() => {
   previewSupplierDocuments.mockReset().mockResolvedValue(PREVIEW);
   applySupplierDocuments.mockReset();
-  useFulfilmentSuppliers.mockReset().mockReturnValue({ data: [], isLoading: false });
+  getFulfilmentSuppliers.mockReset().mockResolvedValue([]);
 });
 
 describe('SupplierDocumentsUploadDialog - the dialog now reads "Upload supplier documents"', () => {
@@ -212,7 +218,7 @@ describe('SupplierDocumentsUploadDialog - Test reads every file and classifies i
     await waitFor(() =>
       expect(previewSupplierDocuments).toHaveBeenCalledWith(
         [expect.any(File), expect.any(File)],
-        { supplierId: 'sup-1', currency: null },
+        { supplierId: 'sup-1', currency: null, attachTo: undefined, attachToBlocks: [] },
       ),
     );
 
@@ -276,6 +282,8 @@ describe('SupplierDocumentsUploadDialog - Confirm', () => {
         supplierId: 'sup-1',
         currency: null,
         translations: [],
+        attachTo: undefined,
+        attachToBlocks: [],
       }),
     );
     expect(await screen.findByText(/Created 2 invoices and 2 draft packing lists/)).toBeInTheDocument();
@@ -376,6 +384,8 @@ describe('SupplierDocumentsUploadDialog - translations, English beside the Chine
         supplierId: 'sup-1',
         currency: null,
         translations: [{ source_text: '座厕 S-250出水 对冲', target_text: 'Toilet bowl S-250' }],
+        attachTo: undefined,
+        attachToBlocks: [],
       }),
     );
   });
@@ -429,10 +439,9 @@ describe('SupplierDocumentsUploadDialog - translations, English beside the Chine
 
 describe('SupplierDocumentsUploadDialog - self-serve supplier picker (no supplierId prop)', () => {
   beforeEach(() => {
-    useFulfilmentSuppliers.mockReturnValue({
-      data: [{ value: 'sup-1', label: 'Kailu Hardware Factory' }],
-      isLoading: false,
-    });
+    getFulfilmentSuppliers.mockResolvedValue([
+      { value: 'sup-1', label: 'Kailu Hardware Factory' },
+    ]);
   });
 
   it('offers a Supplier picker when no supplierId/supplierName is passed', () => {
@@ -455,12 +464,13 @@ describe('SupplierDocumentsUploadDialog - self-serve supplier picker (no supplie
     expect(screen.getByRole('button', { name: /^Confirm/ })).toBeDisabled();
   });
 
-  it('names the chosen supplier in the header once picked', () => {
+  it('names the chosen supplier in the header once picked', async () => {
     openDialogSelfServe();
     fireEvent.click(supplierSelect()!);
-    fireEvent.click(screen.getByRole('option', { name: 'Kailu Hardware Factory' }));
+    // Fetched, not held: the options arrive from the server search (item 17).
+    fireEvent.click(await screen.findByRole('option', { name: 'Kailu Hardware Factory' }));
 
-    expect(screen.getByText(/Uploading as Kailu Hardware Factory/)).toBeInTheDocument();
+    expect(await screen.findByText(/Uploading as Kailu Hardware Factory/)).toBeInTheDocument();
   });
 });
 
@@ -479,6 +489,8 @@ describe('SupplierDocumentsUploadDialog - the currency, asked for only when noth
         supplierId: 'sup-1',
         currency: null,
         translations: [],
+        attachTo: undefined,
+        attachToBlocks: [],
       }),
     );
   });

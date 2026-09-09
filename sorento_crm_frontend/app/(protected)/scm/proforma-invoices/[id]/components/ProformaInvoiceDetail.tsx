@@ -480,6 +480,14 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
           : '';
       // An invoice with nothing left to place is NAMED rather than quietly left out of the
       // count, so the operator can see which of their selection did not move (AC-F7).
+      // The selected invoices named different containers, so the draft's header was left
+      // blank rather than given one of them (AC-D2c). The server decides this, and it is
+      // said out loud here rather than guessed at in the dialog beforehand.
+      if (result.header_conflicts?.length) {
+        toast.warning(
+          `The invoices name different containers, so the container number, seal and bill of lading were left blank.`,
+        );
+      }
       if (result.skipped_invoices?.length) {
         toast.warning(
           `Not converted: ${result.skipped_invoices
@@ -1611,10 +1619,9 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         supplierName={invoice.supplier_name}
         attachTo={{ id: invoice.id, pi_number: invoice.pi_number }}
         onImported={() => {
-          // Phase 1 mock: stand in for the real apply's packing_lines/packing_file
-          // (see `proformaInvoicePackingService.ts`) - re-seeds this invoice's rows
-          // from what it already invoices, so the tab reads populated at once.
-          packingMutations.attach(invoice);
+          // The apply wrote the rows onto this invoice; read it again so the tab, the
+          // Packed column and the Source files block all show what landed.
+          packingMutations.refresh();
         }}
       />
     </div>

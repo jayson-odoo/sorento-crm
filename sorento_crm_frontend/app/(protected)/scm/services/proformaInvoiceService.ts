@@ -161,13 +161,14 @@ export interface ProformaInvoiceListRow {
   pi_number: string;
   /** The supplier's own reference for this document (S1, AC-A2/A5) - `null` when the
    *  file states none, distinct from `pi_number`, which is now OURS, minted at apply
-   *  (`PI-{yy}{month:02d}-{seq}`). MOCKED optional here: the real list/detail routes do
-   *  not send this field until S1's backend adds the `scm.proforma_invoice.supplier_ref`
-   *  column - every existing caller already tolerates it being absent. */
-  supplier_ref?: string | null;
+   *  (`PI-{yy}{month:02d}-{seq}`). Search matches either. */
+  supplier_ref: string | null;
   invoice_date: string | null;
   currency: string | null;
   container_no: string | null;
+  /** The seal the packing document stated for that container - carried onto the draft
+   *  packing list at convert (AC-D2c), beside the container it belongs to. */
+  seal_no: string | null;
   bl_no: string | null;
   total_amount: number | null;
   line_count: number;
@@ -376,6 +377,10 @@ export interface ConvertToDraftShipmentResult {
   /** Invoices in the selection that had nothing left to place - named, never silently
    *  dropped from the count (AC-F7). */
   skipped_invoices: { id: string; pi_number: string; reason: string }[];
+  /** Header fields the selected invoices disagreed about, so the draft was left blank
+   *  there rather than given one of the two answers (AC-D2c) - e.g.
+   *  `['container_number']`. */
+  header_conflicts?: string[];
 }
 
 export interface BulkDeleteProformaResult {

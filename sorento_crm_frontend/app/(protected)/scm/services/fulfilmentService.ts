@@ -1191,26 +1191,38 @@ export interface SupplierDocumentHeader {
 }
 
 /**
- * Which proforma invoice a packing-list file attaches to (S2, AC-B5), and how that was
- * decided - the file's stated invoice number against a PI's `supplier_ref`, the one PI of
- * the supplier sharing the file's date, or the dialog's own `attach_to` when opened from a
- * PI detail (AC-B10, `how: 'manual'`).
- *
- * MOCKED in Phase 1 (`decorateWithMockAttachTo` below): the real `/supplier-documents/
- * preview` route does not send this field yet - S2's backend resolves it against
- * `supplier_ref` once that column lands (S1). Absent on a proforma-invoice-only file.
+ * Which proforma invoice ONE packing-list block attaches to (S2, AC-B5/B13), and how that
+ * was decided - the server's own answer (`resolve_attach`), never worked out here: the
+ * file's stated invoice number against a PI's `supplier_ref`, the container it names, the
+ * one PI of the supplier sharing its date, or the pick this dialog posted back
+ * (`how: 'explicit'`).
  */
 export interface SupplierDocumentAttachTarget {
   id: string;
   pi_number: string;
-  how: 'invoice_number' | 'date' | 'manual';
+  supplier_ref: string | null;
+  how: 'explicit' | 'invoice_number' | 'container' | 'date';
 }
 
-/** A packing-list file with no invoice to attach to (AC-B5, AC-B16) - named with the
- *  supplier and the date the file states, so the reason reads without a UUID anywhere. */
+/** A packing-list block with no invoice to attach to (AC-B5, AC-B16) - named with the
+ *  supplier and the date the packing list itself states, so the reason reads without a
+ *  UUID anywhere. */
 export interface SupplierDocumentRefusal {
   code: string;
   message: string;
+}
+
+/**
+ * One packing-list BLOCK's attach question and its answer. Per block, not per file:
+ * Jiexia's one packing list carries two containers, and each container's rows belong to
+ * that container's own invoice - so the dialog shows one Attaches-to line per block and
+ * posts a change back for that block alone.
+ */
+export interface SupplierDocumentPackingAttach {
+  block_index: number;
+  container_no: string | null;
+  attach_to: SupplierDocumentAttachTarget | null;
+  refusal: SupplierDocumentRefusal | null;
 }
 
 export interface SupplierDocumentFilePreview {
@@ -1224,14 +1236,11 @@ export interface SupplierDocumentFilePreview {
    *  than repeated inside every block, even though every shipment this file creates
    *  stores it in its own `notes` column. Null when the file states none. */
   footer_note: SupplierDocumentTextItem | null;
-  /** Present only on a packing-list (or combined) file. */
-  attach_to?: SupplierDocumentAttachTarget | null;
-  /** Present only when no PI could be resolved for a packing-list file. */
-  refusal?: SupplierDocumentRefusal | null;
+  /** One entry per packing-list block, on a packing-list file only: a COMBINED sheet
+   *  states its own invoice and attaches to the one it creates, so it asks nothing. */
+  packing_attach?: SupplierDocumentPackingAttach[];
   /** Header cells this file's table row carried that resolved to no system field (S5,
-   *  AC-E2) - e.g. Jinbaichuan's `尺寸（mm）`. MOCKED empty in Phase 1: the real backend
-   *  reader does not report this yet (see `import-field-aliases/services/
-   *  importFieldAliasService.ts`'s own Phase 2 contract). */
+   *  AC-E2) - e.g. Jinbaichuan's `尺寸（mm）`. */
   unmapped_headers?: string[];
 }
 
@@ -1262,121 +1271,52 @@ export interface SupplierDocumentTranslation {
   target_text: string;
 }
 
-function supplierDocumentsForm(
-  files: File[],
-  opts: {
-    supplierId?: string | null;
-    currency?: string | null;
-    translations?: SupplierDocumentTranslation[];
-  },
-): FormData {
+/** The Attaches-to pick on ONE packing-list block (AC-B13) - `file` is the file's own
+ *  name, the same key the preview response comes back under. */
+export interface SupplierDocumentBlockAttach {
+  file: string;
+  block_index: number;
+  invoice_id: string;
+}
+
+interface SupplierDocumentsFormOptions {
+  supplierId?: string | null;
+  currency?: string | null;
+  translations?: SupplierDocumentTranslation[];
+  /** One invoice for the WHOLE upload - the dialog opened from a PI's own "Attach
+   *  packing list" (AC-B10), where every block belongs to that invoice. */
+  attachTo?: { id: string; pi_number: string } | null;
+  /** Per block, what the operator picked instead of what the server resolved. */
+  attachToBlocks?: SupplierDocumentBlockAttach[];
+}
+
+function supplierDocumentsForm(files: File[], opts: SupplierDocumentsFormOptions): FormData {
   const body = new FormData();
   for (const file of files) body.append('files', file);
   if (opts.supplierId) body.append('supplier_id', opts.supplierId);
   if (opts.currency) body.append('currency', opts.currency);
   if (opts.translations?.length) body.append('translations', JSON.stringify(opts.translations));
+  if (opts.attachTo) body.append('attach_to', opts.attachTo.id);
+  if (opts.attachToBlocks?.length) {
+    body.append('attach_to_blocks', JSON.stringify(opts.attachToBlocks));
+  }
   return body;
-}
-
-/**
- * `attach_to` / `refusal` on a packing-list file (S2, AC-B5, AC-B13) - MOCKED here against
- * the ALREADY-real proforma-invoice list, since the preview route does not send either
- * field yet. Resolution order: the caller's own `attachTo` (the dialog opened from a PI
- * detail, AC-B10, locked) - the file's stated invoice number against a candidate's
- * `pi_number` (S1 renames this check onto `supplier_ref`) - the one candidate sharing the
- * file's date - else a refusal (AC-B16). Deleted whole once the backend sends these
- * fields directly; every other line of this function is the real, unmocked call.
- */
-async function decorateWithMockAttachTo(
-  preview: SupplierDocumentsPreview,
-  supplierId?: string | null,
-  attachTo?: { id: string; pi_number: string } | null,
-): Promise<SupplierDocumentsPreview> {
-  const needsAttach = preview.files.some(
-    (f) => f.kind === 'packing_list' || f.kind === 'combined',
-  );
-  if (!needsAttach) return preview;
-  if (attachTo) {
-    return {
-      ...preview,
-      files: preview.files.map((f) =>
-        f.kind === 'packing_list' || f.kind === 'combined'
-          ? { ...f, attach_to: { ...attachTo, how: 'manual' as const }, refusal: null }
-          : f,
-      ),
-    };
-  }
-  if (!supplierId) return preview;
-  let candidates: { id: string; pi_number: string; invoice_date: string | null }[] = [];
-  try {
-    const { listProformaInvoices } = await import('./proformaInvoiceService');
-    const res = await listProformaInvoices({ supplierId, limit: 100 });
-    candidates = res.data;
-  } catch {
-    return preview; // best-effort mock only - never blocks the real preview on failure
-  }
-  return {
-    ...preview,
-    files: preview.files.map((f) => {
-      if (f.kind !== 'packing_list' && f.kind !== 'combined') return f;
-      const byNumber = f.header.pi_number
-        ? candidates.find((c) => c.pi_number === f.header.pi_number)
-        : undefined;
-      const sameDate = f.header.invoice_date
-        ? candidates.filter((c) => c.invoice_date === f.header.invoice_date)
-        : [];
-      const match = byNumber ?? (sameDate.length === 1 ? sameDate[0] : undefined);
-      if (match) {
-        return {
-          ...f,
-          attach_to: {
-            id: match.id,
-            pi_number: match.pi_number,
-            how: byNumber ? ('invoice_number' as const) : ('date' as const),
-          },
-        };
-      }
-      return {
-        ...f,
-        refusal: {
-          code: 'proforma_invoice_required',
-          message: f.header.invoice_date
-            ? `No proforma invoice on file for this supplier dated ${f.header.invoice_date}.`
-            : 'No proforma invoice on file for this supplier.',
-        },
-      };
-    }),
-  };
 }
 
 export async function previewSupplierDocuments(
   files: File[],
-  opts: {
-    supplierId?: string | null;
-    currency?: string | null;
-    /** The PI this upload attaches to, already chosen (AC-B10) - locks every packing-list
-     *  file's `attach_to` rather than resolving one. */
-    attachTo?: { id: string; pi_number: string } | null;
-  } = {},
+  opts: SupplierDocumentsFormOptions = {},
 ): Promise<SupplierDocumentsPreview> {
   const res = await apiFetch('/api/v1/scm/supplier-documents/preview', {
     method: 'POST',
     body: supplierDocumentsForm(files, opts),
   });
-  const preview = await readJson<SupplierDocumentsPreview>(
-    res,
-    'Failed to read the supplier documents',
-  );
-  return decorateWithMockAttachTo(preview, opts.supplierId, opts.attachTo);
+  return readJson<SupplierDocumentsPreview>(res, 'Failed to read the supplier documents');
 }
 
 export async function applySupplierDocuments(
   files: File[],
-  opts: {
-    supplierId?: string | null;
-    currency?: string | null;
-    translations?: SupplierDocumentTranslation[];
-  } = {},
+  opts: SupplierDocumentsFormOptions = {},
 ): Promise<SupplierDocumentsApplyResult> {
   const res = await apiFetch('/api/v1/scm/supplier-documents/apply', {
     method: 'POST',

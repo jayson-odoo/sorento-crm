@@ -84,21 +84,16 @@ export function ConvertToPackingListDialog({
   const rowsForLine = (lineId: string): ProformaInvoicePackingLine[] =>
     packingRows.filter((r) => r.proforma_invoice_line_id === lineId && r.match_state === 'matched');
 
-  /** Container / seal / BL carried onto the draft (AC-D2c) - agreeing rows prefill it,
-   *  disagreeing ones leave it blank and name the conflict. Phase 1 mock: packing rows
-   *  carry a container number only (no seal on the row shape, AC-B1); BL comes off the
-   *  invoice's own header field, which every row of one PI necessarily shares. */
-  const headerCarryOver = useMemo(() => {
-    const containers = new Set(
-      packingRows.filter((r) => r.match_state === 'matched' && r.container_no).map((r) => r.container_no),
-    );
-    const container = containers.size === 1 ? [...containers][0] : null;
-    return {
-      container,
-      conflict: containers.size > 1,
-      bl: invoice?.bl_no ?? null,
-    };
-  }, [packingRows, invoice?.bl_no]);
+  /** Container / seal / BL carried onto the draft (AC-D2c), read off the INVOICE's own
+   *  header - the packing document already filled those three there at apply, and the
+   *  convert reads the same fields. Nothing is derived here: a second rule on this screen
+   *  would be a second answer, and where several invoices disagree it is the convert's own
+   *  `header_conflicts` that says so (the response, on the page behind this dialog). */
+  const headerCarryOver = {
+    container: invoice?.container_no ?? null,
+    seal: invoice?.seal_no ?? null,
+    bl: invoice?.bl_no ?? null,
+  };
 
   const defaultSize = useMemo(
     () => (containerSizes.data ?? []).find((s) => s.is_default) ?? null,
@@ -197,19 +192,14 @@ export function ConvertToPackingListDialog({
             <div className="space-y-2">
               {/* Header carry-over (S4, AC-D2c) - shown whether or not there is anything
                   to place, since it is a fact about the packing rows, not the selection. */}
-              {packingRows.length > 0 ? (
+              {headerCarryOver.container || headerCarryOver.seal || headerCarryOver.bl ? (
                 <div className="rounded-lg border border-dashed p-2.5 text-2xs">
                   <p className="font-medium text-foreground">Carried onto the draft</p>
-                  {headerCarryOver.conflict ? (
-                    <p className="text-muted-foreground">
-                      Container - the packing rows name more than one; left blank.
-                    </p>
-                  ) : (
-                    <p className="text-muted-foreground">
-                      Container {headerCarryOver.container ?? EM_DASH}
-                      {headerCarryOver.bl ? ` · BL ${headerCarryOver.bl}` : ''}
-                    </p>
-                  )}
+                  <p className="text-muted-foreground">
+                    Container {headerCarryOver.container ?? EM_DASH}
+                    {headerCarryOver.seal ? ` · Seal ${headerCarryOver.seal}` : ''}
+                    {headerCarryOver.bl ? ` · BL ${headerCarryOver.bl}` : ''}
+                  </p>
                 </div>
               ) : null}
               {placeable.length === 0 ? (

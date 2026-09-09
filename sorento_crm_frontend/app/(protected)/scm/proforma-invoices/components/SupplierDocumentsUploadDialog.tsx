@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { LoaderCircle, TestTube, TriangleAlert } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -20,16 +20,18 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { MAX_SIZE_MB } from '@/app/(protected)/scm/reorder/hooks/useTwoStepUpload';
 import { EM_DASH, fmtInt } from '@/app/(protected)/scm/lib/format';
-import { useFulfilmentSuppliers } from '@/app/(protected)/scm/hooks/useFulfilment';
 import {
   applySupplierDocuments,
+  getFulfilmentSuppliers,
   previewSupplierDocuments,
+  type SupplierDocumentBlockAttach,
   type SupplierDocumentFilePreview,
   type SupplierDocumentsApplyResult,
   type SupplierDocumentsPreview,
   type SupplierDocumentTextItem,
   type SupplierDocumentTranslation,
 } from '@/app/(protected)/scm/services/fulfilmentService';
+import { listProformaInvoices } from '@/app/(protected)/scm/services/proformaInvoiceService';
 import {
   createImportFieldAlias,
   type ImportFieldAliasDocType,
@@ -200,6 +202,12 @@ function confirmCounts(preview: SupplierDocumentsPreview | null): { invoices: nu
  *  headers on (Jinbaichuan's `尺寸（mm）`, `孔距`, `认证编码`). */
 const IMPORT_DOC_TYPE: ImportFieldAliasDocType = 'packing_list';
 
+/** Ours and theirs, in that order - the operator recognises the supplier's own reference,
+ *  and our number is what the invoice is filed under. */
+function invoiceLabel(piNumber: string, supplierRef: string | null): string {
+  return supplierRef ? `${piNumber} · ${supplierRef}` : piNumber;
+}
+
 export function SupplierDocumentsUploadDialog({
   open,
   onOpenChange,
@@ -224,12 +232,11 @@ export function SupplierDocumentsUploadDialog({
   onImported?: (result: SupplierDocumentsApplyResult) => void;
 }) {
   const selfServe = supplierIdProp === undefined;
-  const suppliers = useFulfilmentSuppliers();
-  const [internalSupplierId, setInternalSupplierId] = useState<string | null>(null);
-  const supplierId = selfServe ? internalSupplierId : (supplierIdProp ?? null);
-  const supplierName = selfServe
-    ? ((suppliers.data ?? []).find((o) => o.value === internalSupplierId)?.label ?? null)
-    : (supplierNameProp ?? null);
+  const [internalSupplier, setInternalSupplier] = useState<{ value: string; label: string } | null>(
+    null,
+  );
+  const supplierId = selfServe ? (internalSupplier?.value ?? null) : (supplierIdProp ?? null);
+  const supplierName = selfServe ? (internalSupplier?.label ?? null) : (supplierNameProp ?? null);
 
   const [files, setFiles] = useState<File[]>([]);
   const [currency, setCurrency] = useState('');
@@ -245,10 +252,12 @@ export function SupplierDocumentsUploadDialog({
   // `translate_service`'s memory reads off the database. Only touched cells are sent on
   // Confirm; an untouched one keeps whatever the memory/AI already said.
   const [translationEdits, setTranslationEdits] = useState<Record<string, string>>({});
-  // A header this session has already mapped (S5, AC-E4) - keyed `file name::header` so
-  // the chip disappears everywhere that exact pair would otherwise still show it, without
-  // waiting on a re-preview the mock cannot genuinely deliver (see `mapHeader` below).
-  const [mappedHeaders, setMappedHeaders] = useState<Record<string, true>>({});
+  // What the operator picked on a packing-list block's own Attaches-to select (AC-B13),
+  // keyed `file name::block index`. Sent back with the next Test and with Confirm, so the
+  // SERVER resolves attachment either way - this only records the override.
+  const [attachPicks, setAttachPicks] = useState<Record<string, string>>({});
+  // Which file is being re-read after a "Map to..." (AC-E4) or an Attaches-to change.
+  const [repreviewing, setRepreviewing] = useState<string | null>(null);
 
   // Cleared on every open, like every other upload dialog here: a file, a verdict or a
   // currency left over from the last upload must never silently apply to the next one.
@@ -262,9 +271,30 @@ export function SupplierDocumentsUploadDialog({
     setPreviewing(false);
     setApplying(false);
     setTranslationEdits({});
-    setMappedHeaders({});
-    if (selfServe) setInternalSupplierId(null);
+    setAttachPicks({});
+    setRepreviewing(null);
+    if (selfServe) setInternalSupplier(null);
   }, [open, selfServe]);
+
+  /** The supplier's invoices for a block's Attaches-to picker - server-searched, so a
+   *  supplier with a year of invoices is still reachable by typing. */
+  const fetchInvoiceOptions = async (query: string) => {
+    if (!supplierId) return [];
+    const res = await listProformaInvoices({ supplierId, query, limit: 25 });
+    return res.data.map((pi) => ({
+      value: pi.id,
+      label: invoiceLabel(pi.pi_number, pi.supplier_ref ?? null),
+    }));
+  };
+
+  /** Every per-block override this dialog is holding, in the shape both routes take. */
+  const blockAttachments = (only?: string): SupplierDocumentBlockAttach[] =>
+    Object.entries(attachPicks)
+      .map(([key, invoiceId]) => {
+        const at = key.lastIndexOf('::');
+        return { file: key.slice(0, at), block_index: Number(key.slice(at + 2)), invoice_id: invoiceId };
+      })
+      .filter((entry) => !only || entry.file === only);
 
   const runTest = async () => {
     if (!files.length || !supplierId) return;
@@ -275,6 +305,7 @@ export function SupplierDocumentsUploadDialog({
         supplierId,
         currency: trimmedCurrency,
         attachTo,
+        attachToBlocks: blockAttachments(),
       });
       setPreview(read);
       setTranslationEdits({});
@@ -283,6 +314,56 @@ export function SupplierDocumentsUploadDialog({
     } finally {
       setPreviewing(false);
     }
+  };
+
+  /**
+   * Test again for ONE file (AC-E4, AC-B13) - after a header is mapped, and after an
+   * Attaches-to pick. The file is re-READ, so a mapping that names a real column fills it
+   * in and the chip goes because the server no longer reports it, not because this screen
+   * decided to hide it. The other files' rows, and every translation the operator has
+   * typed, are left exactly as they are.
+   */
+  const repreviewFile = async (fileName: string, picks: SupplierDocumentBlockAttach[]) => {
+    const file = files.find((f) => f.name === fileName);
+    if (!file || !supplierId) return;
+    setRepreviewing(fileName);
+    setError(null);
+    try {
+      const read = await previewSupplierDocuments([file], {
+        supplierId,
+        currency: trimmedCurrency,
+        attachTo,
+        attachToBlocks: picks,
+      });
+      const fresh = read.files[0];
+      if (!fresh) return;
+      setPreview((prev) =>
+        prev
+          ? { ...prev, files: prev.files.map((f) => (f.name === fileName ? fresh : f)) }
+          : prev,
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to read that file again.');
+    } finally {
+      setRepreviewing(null);
+    }
+  };
+
+  /** The Attaches-to select on one block: record the pick and let the SERVER answer with
+   *  it (`how: 'explicit'`), rather than painting the choice on locally. */
+  const pickAttachTo = (fileName: string, blockIndex: number, invoiceId: string) => {
+    const key = `${fileName}::${blockIndex}`;
+    const next = { ...attachPicks, [key]: invoiceId };
+    setAttachPicks(next);
+    void repreviewFile(
+      fileName,
+      Object.entries(next)
+        .map(([k, id]) => {
+          const at = k.lastIndexOf('::');
+          return { file: k.slice(0, at), block_index: Number(k.slice(at + 2)), invoice_id: id };
+        })
+        .filter((entry) => entry.file === fileName),
+    );
   };
 
   const runConfirm = async () => {
@@ -297,6 +378,8 @@ export function SupplierDocumentsUploadDialog({
         supplierId,
         currency: trimmedCurrency,
         translations,
+        attachTo,
+        attachToBlocks: blockAttachments(),
       });
       setResult(applied);
       onImported?.(applied);
@@ -308,26 +391,31 @@ export function SupplierDocumentsUploadDialog({
   };
 
   /**
-   * "Map to..." on an unmapped header chip (S5, AC-E4): write the alias, then mark the
-   * chip mapped so it disappears at once. The AC calls for a re-preview of just this file
-   * afterwards; the Phase 1 mock never produced the header names from real file bytes in
-   * the first place (`unmapped_headers` is mocked empty, see `fulfilmentService.ts`), so
-   * there is nothing for a re-preview to change yet - Phase 2 swaps this optimistic hide
-   * for the real re-preview once the backend reports headers for real.
+   * "Map to..." on an unmapped header chip (S5, AC-E4): write the alias, then read that
+   * file again with it. The chip goes because the reader placed the column this time -
+   * and the figures under it appear in the same pass, which is the point.
    */
   const mapHeader = async (fileName: string, header: string, field: string) => {
     try {
       await createImportFieldAlias({ doc_type: IMPORT_DOC_TYPE, field, alias: header });
-      setMappedHeaders((prev) => ({ ...prev, [`${fileName}::${header}`]: true }));
+      await repreviewFile(fileName, blockAttachments(fileName));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to map that header.');
     }
   };
 
   const unreadable = preview?.files.filter((f) => f.kind === 'unreadable') ?? [];
-  const refused = preview?.files.filter((f) => f.refusal) ?? [];
+  // One refused BLOCK is enough to hold Confirm: half a packing list is not an outcome
+  // anybody asked for (AC-B13).
+  const refused =
+    preview?.files.flatMap((f) => (f.packing_attach ?? []).filter((b) => b.refusal)) ?? [];
   const canConfirm =
-    !!supplierId && files.length > 0 && !applying && unreadable.length === 0 && refused.length === 0;
+    !!supplierId &&
+    files.length > 0 &&
+    !applying &&
+    !repreviewing &&
+    unreadable.length === 0 &&
+    refused.length === 0;
   const counts = confirmCounts(preview);
   const confirmLabel = preview
     ? `Confirm: ${fmtInt(counts.invoices)} invoice${counts.invoices === 1 ? '' : 's'}, ` +
@@ -355,9 +443,17 @@ export function SupplierDocumentsUploadDialog({
               <SearchableSelect
                 id="supplier-documents-supplier"
                 className="w-full"
-                value={internalSupplierId ?? ''}
-                onChange={(v: string) => setInternalSupplierId(v || null)}
-                options={suppliers.data ?? []}
+                value={internalSupplier?.value ?? ''}
+                onChange={(v: string) => {
+                  if (!v) setInternalSupplier(null);
+                }}
+                onOptionChange={(option) => setInternalSupplier(option)}
+                // Server-searched and paged, like the sibling upload dialog next door: an
+                // unparameterised fetch returned the first 100 suppliers by name, so a
+                // factory further down the alphabet could not be found by typing at all.
+                fetchOptions={getFulfilmentSuppliers}
+                paginated
+                selectedOption={internalSupplier ?? undefined}
                 placeholder="Choose a supplier"
                 clearable
                 disabled={previewing || applying}
@@ -414,10 +510,10 @@ export function SupplierDocumentsUploadDialog({
           {preview && !result ? (
             <div className="divide-y divide-border rounded-lg border">
               {preview.files.map((f) => {
-                const isPackingListLike = f.kind === 'packing_list' || f.kind === 'combined';
-                const unmappedHeaders = (f.unmapped_headers ?? []).filter(
-                  (h) => !mappedHeaders[`${f.name}::${h}`],
-                );
+                // Straight off the server's last read of this file: a header stops being
+                // unmapped when the READER places it, never because this screen hid it
+                // (AC-E4).
+                const unmappedHeaders = f.unmapped_headers ?? [];
                 return (
                 <div key={f.name} className="space-y-1 p-2.5">
                   <div className="flex items-center justify-between gap-2">
@@ -460,44 +556,48 @@ export function SupplierDocumentsUploadDialog({
                       ) : null}
                     </div>
                   )}
-                  {isPackingListLike ? (
-                    <div className="pt-1">
+                  {(f.packing_attach ?? []).map((block) => (
+                    <div key={block.block_index} className="pt-1">
                       <Label
-                        htmlFor={`attach-to-${f.name}`}
+                        htmlFor={`attach-to-${f.name}-${block.block_index}`}
                         className="mb-1 block text-2xs text-muted-foreground"
                       >
-                        Attaches to
+                        {/* Named by container once there is more than one: each container's
+                            rows go to that container's own invoice (AC-B13). */}
+                        {(f.packing_attach ?? []).length > 1
+                          ? `Attaches to (${block.container_no || `block ${block.block_index + 1}`})`
+                          : 'Attaches to'}
                       </Label>
-                      {f.refusal ? (
+                      {block.refusal ? (
                         <p className="flex items-center gap-1.5 text-2xs text-destructive">
                           <TriangleAlert className="size-3.5 shrink-0" />
-                          {f.refusal.message}
+                          {block.refusal.message}
                         </p>
-                      ) : (
-                        <SearchableSelect
-                          id={`attach-to-${f.name}`}
-                          size="sm"
-                          value={f.attach_to?.id ?? ''}
-                          onChange={() => {
-                            /* Phase 1 mock: the resolved invoice is read-only here - the
-                             * real S2 backend route reruns resolution when it changes. */
-                          }}
-                          options={
-                            f.attach_to
-                              ? [{ value: f.attach_to.id, label: f.attach_to.pi_number }]
-                              : []
-                          }
-                          selectedOption={
-                            f.attach_to
-                              ? { value: f.attach_to.id, label: f.attach_to.pi_number }
-                              : undefined
-                          }
-                          placeholder="No proforma invoice resolved"
-                          disabled={!!attachTo}
-                        />
-                      )}
+                      ) : null}
+                      <SearchableSelect
+                        id={`attach-to-${f.name}-${block.block_index}`}
+                        size="sm"
+                        value={block.attach_to?.id ?? ''}
+                        onChange={(v: string) => {
+                          if (v) pickAttachTo(f.name, block.block_index, v);
+                        }}
+                        fetchOptions={fetchInvoiceOptions}
+                        selectedOption={
+                          block.attach_to
+                            ? {
+                                value: block.attach_to.id,
+                                label: invoiceLabel(
+                                  block.attach_to.pi_number,
+                                  block.attach_to.supplier_ref,
+                                ),
+                              }
+                            : undefined
+                        }
+                        placeholder="Choose the proforma invoice"
+                        disabled={!!attachTo || repreviewing === f.name}
+                      />
                     </div>
-                  ) : null}
+                  ))}
                   {unmappedHeaders.length ? (
                     <div className="space-y-1 pt-1">
                       <p className="text-2xs font-medium text-foreground">Unmapped headers</p>
@@ -593,7 +693,9 @@ export function SupplierDocumentsUploadDialog({
                   : unreadable.length
                     ? `Could not read ${unreadable.map((f) => f.name).join(', ')}`
                     : refused.length
-                      ? `No proforma invoice to attach ${refused.map((f) => f.name).join(', ')} to`
+                      ? `No proforma invoice to attach ${refused
+                          .map((b) => b.container_no || `block ${b.block_index + 1}`)
+                          .join(', ')} to`
                       : undefined
               }
             >
