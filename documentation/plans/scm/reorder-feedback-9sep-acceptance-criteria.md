@@ -299,3 +299,35 @@ label. MOQ edits land only as `set_moq_override` on the recommendation (per run)
 - AC-X.1 Usable at 375px and 1280px on every touched screen.
 - AC-X.2 No new Playwright spec; agent-browser evidence run recorded per slice.
 - AC-X.3 Every touched listing keeps `tableLayout` fixed + resizable columns.
+
+### Round 3 (captain, 10 Sep, screenshots 21-24): S14 the sheet reads like the paper one
+
+- AC-S14.1 [BE] `write_rows` freezes `pool_on_hand` (site pool stock only: a product with
+  100 at BRW and 40 at a project bin freezes 100) and `reorder_level` (the run's own
+  `inputs.reorder_level`; NULL when no recommendation carries one). Migration 504, additive.
+- AC-S14.2 [BE] `incoming_spo_qty` counts open SPO allocations at site pool warehouses only:
+  an allocation at a project bin or with no warehouse is not counted.
+- AC-S14.3 [BE] `delivery_by_month` and `project_customers` come from Order Inquiry ORDER
+  rows (qty > 0, state not cancelled, active supply decision) for the product; a retail SO
+  line with a required_date contributes NOTHING to `delivery_by_month`; a cancelled ORDER
+  row contributes nothing; raised and placed rows both count; the customer label is
+  "<customer> / <project title>" when the project SO names a project, else the customer.
+  The sum of `project_customers` qty equals the sum of `delivery_by_month` qty.
+- AC-S14.4 [BE] Export columns, in order: Item code, BRW on hand, Reorder level, Project
+  qty, Dealer o/s, Order qty, Delivery, Project / customer, Supplier, BRW PO qty, BRW
+  incoming qty, Last in qty, Last in date, Remarks. Project qty = sum of
+  `project_customers`. Remarks = "MOQ n" or blank. Last in date = dd/mm/yyyy.
+- AC-S14.5 [BE] Delivery cell = one "Mon - qty" per line, oldest first, "Undated - qty"
+  last; Project / customer = one "Name - qty" per line; blank when the product has no
+  inquiry rows.
+- AC-S14.6 [BE] xlsx: header row bold, white font, solid dark fill; every written cell has
+  a thin border on all four sides and wrap_text on; freeze panes at A2; column widths set;
+  a multi-entry Delivery cell contains a newline. Quantities stay numbers.
+- AC-S14.7 [BE] PDF html: header cells dark-filled white bold text, borders on every cell,
+  `pre-line` on the two list cells, thead repeats per page; landscape A4 unchanged.
+- AC-S14.8 [FE] `lib/orderSheetText.ts` and its test are gone; vitest and lint stay green.
+- AC-S14.9 [T] pytest in `tests/scm/test_order_summary_sheet.py` pins S14.1-S14.7 on a
+  seeded chain (own category/uom/products/warehouses - the CI DB is empty).
+- AC-S14.10 [E2E] Actions > Order sheet Excel on the lane's latest completed plan: the
+  workbook opens with the 14 headers styled, a project row shows its inquiry customers one
+  per line, BRW on hand differs from the grid's On hand where a project bin holds stock.

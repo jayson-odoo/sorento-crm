@@ -1,6 +1,6 @@
 # PLAN: Reorder planning feedback batch (9 Sep 2026)
 
-Status: BUILT 9 Sep 2026, PR #784 draft, pending captain review. All rulings settled (captain, lavish review 9 Sep 14:20). Issues #770-#778 (S1-S9 in order).
+Status: BUILT 9 Sep 2026, PR #784 ready; round 3 (S14, the sheet's layout and sources) in build 10 Sep. All rulings settled (captain, lavish review 9 Sep 14:20). Issues #770-#778 (S1-S9 in order).
 UAC: `reorder-feedback-9sep-acceptance-criteria.md` (journey J1-J7 lives there).
 Lane: worktree `.claude/worktrees/reorder-feedback-9sep`, branch `feat/reorder-feedback-9sep`
 off `origin/main` 3c3738ad7.
@@ -218,6 +218,73 @@ MOQ is master data and is never nulled by a plan row. MOQ, lead time and price t
 cost and MOQ agree with each other and with the next run. Lines whose currency has no MYR rate
 contribute nothing to the cash tiles (honest until the rate is keyed). Goldens re-pinned.
 Recorded as AC-S13.6.
+
+### Round 3 (captain, 10 Sep, screenshots 21-24): S14 the sheet reads like the paper one
+
+Rulings (captain, 10 Sep): the printed sheet is the buyer's paper sheet, not a grid dump.
+The header row is emphasised (dark fill, white bold text), every cell is bordered, cells
+wrap and grow so a month list or a customer list sits one entry per line. Delivery and
+Project / customer come from the project ORDER INQUIRY, not the SO book, and Delivery is
+shown only for project inquiry rows (a row with no inquiry has a blank Delivery). Remarks
+stops being a sentence: BRW PO qty, BRW incoming qty, Last in qty and Last in date become
+their own columns. Reorder level gets a column beside on hand, and "HQ on hand" becomes
+"BRW on hand" - BRW meaning the site pool (active, non-project warehouses, the SAME
+`pool_predicate.ACTIVE_SITE_POOL_SQL` the PO column already uses), for on hand, PO and
+incoming alike.
+
+Measured (0907, run 914bacdc 9 Sep, 374 rows): `project_demand` (SO book, demand_class =
+project) is > 0 on 86 rows, but the Order Inquiry book holds 46 ORDER rows (34 placed, 12
+raised, 1 ORDER_BACK cancelled) on 28 products, all dated; so an inquiry-sourced Project
+qty / Delivery / customer column is populated on far fewer rows than today's SO-book one,
+by the captain's ruling. `on_hand` today is `network_positions` over every
+`counts_as_available` warehouse, project bins included (BRW-BB alone holds 108,969 pcs);
+site pool stock: HQ 697,053 / BRW 632,883 / DC1 124,707 / MWH 96,870 / WH3 58,479.
+`incoming_spo_qty` today is network-wide: open SPO allocations sit 371,053 at BRW,
+~26,500 at project bins, 294 with no warehouse. `scm.reorder_level` warehouse-scoped rows
+carry NO level (0 of 2,260 BRW rows); the engine plans against ONE product-wide level
+(`_product_level`: buyer's product-wide row, else AutoCount master) and freezes it on every
+recommendation as `inputs.reorder_level` (950 of 950 recs on the run carry the key).
+`orderSheetText.ts` has no importer but its own test since S10 removed the page.
+
+Design (S14):
+- Columns, in order (replaces `_EXPORT_COLUMNS`): Item code, BRW on hand, Reorder level,
+  Project qty, Dealer o/s, Order qty, Delivery, Project / customer, Supplier, BRW PO qty,
+  BRW incoming qty, Last in qty, Last in date, Remarks.
+- `write_rows` freezes two more columns (migration 504, additive): `pool_on_hand` (sum of
+  `stock.quantity_on_hand` at site pool warehouses) and `reorder_level` (the run's own
+  `inputs.reorder_level` for the product - first rec carrying one; NULL when none). Neither
+  replaces `on_hand`, which the grid still reads.
+- `incoming_spo_qty` re-scoped in place to site pool warehouses (join `warehouses` on the
+  allocation's `warehouse_id`, `ACTIVE_SITE_POOL_SQL`; an allocation naming no warehouse is
+  not counted, the PO column's own rule). No migration - same column, the sheet's meaning.
+- `delivery_by_month` and `project_customers` re-sourced to the Order Inquiry: ORDER rows
+  with `qty > 0`, state not cancelled (raised, partly_linked, placed all count - placed is
+  need already covered by a PO, which the BRW PO column shows), on an active supply
+  decision, through `oir.so_line_id -> projects.sales_order_lines -> core sales_order_lines`
+  for the product; month = `oir.delivery_date` (undated last, as now); label =
+  "<customer> / <project title>" via `projects.sales_orders.project_id -> projects.projects`,
+  else customer. Not windowed by the run horizon - the two cells and Project qty must tie.
+  The retail SO leg leaves `delivery_by_month` entirely. Raw SQL with
+  `company_sql_predicate` (M2).
+- Export Project qty = the sum of `project_customers` qty (ties by construction). The
+  API's `project_demand` is untouched.
+- Text cells: Delivery = one "Mon - qty" per line ("Jul - 1\nAug - 1", undated last as
+  "Undated - qty"); Project / customer = one "Name - qty" per line; Remarks = "MOQ 1000" or
+  blank. Last in date = dd/mm/yyyy.
+- PDF (`_render_export_pdf`): title "Order Summary" + as-of date; header row dark fill
+  (#404040) white bold centred, repeated on every page; 1px solid #333 borders on every
+  cell; `white-space: pre-line` on the two list cells; numbers right-aligned; product code
+  bold; vertical-align middle; landscape A4 stays.
+- Excel (`_render_export_xlsx`): header row bold white on #404040 fill, thin borders on
+  every written cell, `wrap_text` + top alignment on every cell, explicit column widths
+  (item 16, numbers 10-12, Delivery 14, Project / customer 44, Supplier 20, Remarks 16),
+  freeze panes at A2, row height left unset so the application autofits wrapped rows.
+  Multi-line cells carry "\n". `_xlsx_safe_text` still wraps every string.
+- FE: delete `lib/orderSheetText.ts` and its test (orphans since S10). No other FE change:
+  the sheet is export-only.
+
+Out: the grid's own columns; a per-warehouse reorder level (none is set); windowing the
+inquiry legs by horizon.
 
 ## 5. Build order
 
