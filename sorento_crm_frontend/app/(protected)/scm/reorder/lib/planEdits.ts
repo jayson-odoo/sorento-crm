@@ -17,6 +17,7 @@ import { poOffset, type PoReceipt } from './poCover';
 import type { PlanLine } from './planLine';
 import { decidedCost, groupDecisionState, type PlanDecision, type PlanDecisionMap } from './planDecisions';
 import { isGroupedLine } from './planLineGrouping';
+import { suggestedLifecycle, type ProductEconomics } from './productHealth';
 import { fmtInt } from '../../lib/format';
 import type { PlanRowPriceMode } from '../types/decisions.types';
 
@@ -176,11 +177,15 @@ export function editedProductCount(edits: PlanRowEditMap, lines: PlanLine[]): nu
 /**
  * What Confirm would send: how many PRODUCTS and how much cash.
  *
- * Every purchasable row with a BUY counts - edited, already saved, or untouched (R3: an
- * untouched row confirms as the engine's suggestion). Three kinds are left out, because
- * Confirm would draft nothing for them: a skipped row, a row whose mixture is all stock or
- * all open PO, and a row already confirmed into a draft purchase order that nobody has
- * edited since.
+ * Every purchasable row with a BUY counts - edited or already saved, NEVER an untouched
+ * one (G5, S6, 9 Sep 2026: "Confirm never sweeps" - this reverses R3's "an untouched row
+ * confirms as the engine's suggestion"). A row nobody decided - no drafted edit, no
+ * persisted decision - is simply not counted, however the engine itself would have sized
+ * it; the `suggestedDecisionFor` fallback that used to sit here is gone rather than left
+ * unused, so a future caller cannot wire the sweep back in without reading why it left.
+ * Left out for the same reason as before: a skipped row, a row whose mixture is all stock
+ * or all open PO (Confirm would draft nothing for it), and a row already confirmed into a
+ * draft purchase order that nobody has edited since.
  *
  * `cash` is what the buys can be costed at; `unpriced` counts the ones that cannot be, and
  * they are never summed as zero - a line we cannot price still has to be bought, it simply
@@ -192,16 +197,19 @@ export interface ConfirmSummary {
   unpriced: number;
 }
 
-export function confirmSummary(
+/**
+ * Every row Confirm would actually draft a purchase-order line for (G5) - decided, not
+ * skipped, with something to buy. `confirmSummary` reduces this into counts/cash;
+ * `withConfirmLifecycle` (S8) uses the same set to know which rows get the health
+ * suggestion written on Confirm, even where the buyer never touched the radio for them.
+ * The ONE rule lives here so the two never drift apart.
+ */
+export function confirmableLines(
   edits: PlanRowEditMap,
   decisions: PlanDecisionMap,
   lines: PlanLine[],
-  coverFor?: (line: PlanLine) => CoverProposal,
-  poFor?: (line: PlanLine) => PoReceipt[],
-): ConfirmSummary {
-  const products = new Set<string>();
-  let cash = 0;
-  let unpriced = 0;
+): PlanLine[] {
+  const out: PlanLine[] = [];
   for (const line of lines) {
     if (!line.purchasable) continue;
     const edit = edits[line.id];
@@ -210,20 +218,61 @@ export function confirmSummary(
     // reconciles it to the same line, so counting it left the button live over a plan
     // with no work in it - "Confirm (2)" on two rows that both read Confirmed.
     if (!hasRowEdit(edit) && persisted?.confirmed) continue;
-    const effective =
-      edit?.decision ??
-      persisted ??
-      suggestedDecisionFor(line, coverFor?.(line) ?? NO_COVER, poFor?.(line) ?? []);
+    // G5: no engine-suggestion fallback - a row with neither a drafted edit nor a
+    // persisted decision is undecided, and Confirm does not touch it.
+    const effective = edit?.decision ?? persisted;
+    if (!effective) continue;
     if (effective.skip) continue;
     // Counted only where there is something to BUY. Confirm drafts purchase orders, and a
     // row covered entirely from stock or an open PO drafts nothing at all - so counting it
     // made the button read "Confirm (12)" and produce three lines, and left it live over a
     // plan where every remaining row was already covered.
     if ((effective.buy ?? 0) <= 0) continue;
+    out.push(line);
+  }
+  return out;
+}
+
+export function confirmSummary(
+  edits: PlanRowEditMap,
+  decisions: PlanDecisionMap,
+  lines: PlanLine[],
+): ConfirmSummary {
+  const products = new Set<string>();
+  let cash = 0;
+  let unpriced = 0;
+  for (const line of confirmableLines(edits, decisions, lines)) {
+    const effective = (edits[line.id]?.decision ?? decisionForLine(line, decisions))!;
     products.add(line.product_id ?? line.id);
     const cost = decidedCost(line, { buy: effective.buy });
     if (cost === null) unpriced += 1;
     else cash += cost;
   }
   return { products: products.size, cash, unpriced };
+}
+
+/**
+ * The draft map, with a health suggestion filled in for every row Confirm is about to
+ * draft (G4, S8, 9 Sep 2026: "the preselected suggestion persists on Confirm"). A
+ * suggestion is a suggestion right up until the moment a product is actually bought - the
+ * buyer never had to click the radio to mean it, and a row nobody is confirming gets
+ * nothing written (only `confirmableLines` qualifies). A row where the buyer DID answer
+ * (`edit.lifecycle` set, including an explicit withdrawal to `null`) is left exactly as
+ * they left it.
+ */
+export function withConfirmLifecycle(
+  edits: PlanRowEditMap,
+  decisions: PlanDecisionMap,
+  lines: PlanLine[],
+  economicsFor?: (line: PlanLine) => ProductEconomics | undefined,
+): PlanRowEditMap {
+  const augmented: Record<string, PlanRowEdit | undefined> = { ...edits };
+  for (const line of confirmableLines(edits, decisions, lines)) {
+    const edit = edits[line.id];
+    if (edit?.lifecycle !== undefined) continue;
+    const econ = economicsFor?.(line);
+    const lifecycle = econ?.lifecycle_decision ?? suggestedLifecycle(econ?.movement_class);
+    augmented[line.id] = { ...edit, lifecycle };
+  }
+  return augmented;
 }

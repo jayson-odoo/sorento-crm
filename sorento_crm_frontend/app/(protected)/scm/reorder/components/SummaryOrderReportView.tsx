@@ -11,7 +11,7 @@ import {
   getSortedRowModel,
   useReactTable,
 } from '@tanstack/react-table';
-import { AlertCircle, ArrowLeft, CheckCircle2, ClipboardList } from 'lucide-react';
+import { AlertCircle, ArrowLeft, CheckCircle2, ClipboardList, Download } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -19,12 +19,15 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
+import { toast } from '@/lib/toast';
 import { EM_DASH, fmtInt } from '../../lib/format';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { computedAtLabel, dayLabel } from '../lib/coverageTimeline';
+import { customersText, monthText, remarksText } from '../lib/orderSheetText';
 import { decisionLockReason, isLegacyRun, planGrainLabel } from '../lib/planGrain';
 import { decimalPlacesOf, fmtQty } from '../lib/qtyPrecision';
 import {
@@ -32,6 +35,7 @@ import {
   useOrderSummary,
   useRecordOrderDecision,
 } from '../hooks/useSummaryOrder';
+import { downloadOrderSummaryExport } from '../services/summaryOrderService';
 import type {
   OrderSummaryDecisionResult,
   OrderSummaryRow,
@@ -150,6 +154,20 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
   const [decisionError, setDecisionError] = useState<string | null>(null);
   /** The decision just recorded, so its location split is visible immediately. */
   const [justSaved, setJustSaved] = useState<OrderSummaryDecisionResult | null>(null);
+  // AC-S9.4: the sheet as PDF or Excel, through the shared file-download helper -
+  // never a hand-rolled fetch+blob.
+  const [exportingFormat, setExportingFormat] = useState<'pdf' | 'xlsx' | null>(null);
+  const runExport = async (format: 'pdf' | 'xlsx') => {
+    if (!reportRunId) return;
+    setExportingFormat(format);
+    try {
+      await downloadOrderSummaryExport(reportRunId, format);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to export the order summary');
+    } finally {
+      setExportingFormat(null);
+    }
+  };
 
   const rows = useMemo<OrderSummaryRow[]>(() => data?.rows ?? [], [data]);
   const reportRunId = data?.run_id ?? runId ?? null;
@@ -499,6 +517,77 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
         size: 200,
         meta: { headerTitle: 'Supplier' },
       },
+      {
+        // S9 (AC-S9.2): the sheet's own Delivery column - open retail SO lines by
+        // required_date plus project OI rows by delivery_date, grouped by month.
+        id: 'delivery_by_month',
+        accessorFn: (row) => row.delivery_by_month ?? [],
+        header: ({ column }) => <DataGridColumnHeader title="Delivery" column={column} />,
+        cell: ({ row }) => {
+          const text = monthText(row.original.delivery_by_month ?? []);
+          return text ? (
+            <span className="truncate" title={text}>
+              {text}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">{EM_DASH}</span>
+          );
+        },
+        size: 200,
+        enableSorting: false,
+        meta: { headerTitle: 'Delivery' },
+      },
+      {
+        id: 'project_customers',
+        accessorFn: (row) => row.project_customers ?? [],
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Project / customer" column={column} />
+        ),
+        cell: ({ row }) => {
+          const text = customersText(row.original.project_customers ?? []);
+          return text ? (
+            <span className="truncate" title={text}>
+              {text}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">{EM_DASH}</span>
+          );
+        },
+        size: 220,
+        enableSorting: false,
+        meta: { headerTitle: 'Project / customer' },
+      },
+      {
+        // BRW PO qty, incoming SPO qty, last receipt, MOQ - the pen sheet's own
+        // Remarks column, composed rather than typed twice (`lib/orderSheetText.ts`).
+        id: 'remarks',
+        accessorFn: (row) =>
+          remarksText({
+            po_open_qty: row.po_open_qty ?? 0,
+            incoming_spo_qty: row.incoming_spo_qty ?? 0,
+            last_receipt: row.last_receipt ?? null,
+            moq: row.moq ?? null,
+          }),
+        header: ({ column }) => <DataGridColumnHeader title="Remarks" column={column} />,
+        cell: ({ row }) => {
+          const text = remarksText({
+            po_open_qty: row.original.po_open_qty ?? 0,
+            incoming_spo_qty: row.original.incoming_spo_qty ?? 0,
+            last_receipt: row.original.last_receipt ?? null,
+            moq: row.original.moq ?? null,
+          });
+          return text ? (
+            <span className="truncate" title={text}>
+              {text}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">{EM_DASH}</span>
+          );
+        },
+        size: 260,
+        enableSorting: false,
+        meta: { headerTitle: 'Remarks' },
+      },
     ],
     [reportRunId, lockReason],
   );
@@ -660,6 +749,40 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
               aria-label="Search product or supplier"
               className="w-full sm:w-64"
             />
+            {/* AC-S9.4: the sheet as PDF (landscape A4, the nine sheet columns) or Excel -
+                the same data this grid renders, never a second report page. A Popover,
+                not a DropdownMenu: two plain choices, not a command menu. */}
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  disabled={!reportRunId || exportingFormat !== null}
+                >
+                  <Download className="size-4" />
+                  Export
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-40 p-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start"
+                  onClick={() => void runExport('pdf')}
+                >
+                  PDF
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start"
+                  onClick={() => void runExport('xlsx')}
+                >
+                  Excel
+                </Button>
+              </PopoverContent>
+            </Popover>
           </CardHeader>
           <CardTable>
             {/* The report is wide by nature - eleven figures per product - so it

@@ -351,6 +351,45 @@ describe('PlanRowPanel - Price and supplier zone (D4)', () => {
     });
     expect(screen.getByRole('combobox')).toHaveValue('S1');
   });
+
+  // S2 (AC-S2.3, AC-S2.4, 9 Sep 2026): the last price is labelled in the PURCHASE's own
+  // currency, never a mismatched "RM 110.00" beside a "CNY 110.00" sub-line, and a
+  // foreign-currency purchase with no MYR rate on file says so instead of a bare "-".
+  describe('money says which money it is (AC-S2.3, AC-S2.4)', () => {
+    const cnyPrice: PriceAdvice = {
+      ...price,
+      last: { po_number: 'PO-CNY', issue_date: '2026-05-01', unit_cost: 110, currency: 'CNY', qty: 50 },
+    } as unknown as PriceAdvice;
+
+    it('labels the last price in the purchase\'s own currency, matching the sub-line', () => {
+      renderPanel({ price: cnyPrice, line: line({ unit_cost: 10, currency: 'MYR' }) });
+
+      expect(screen.getByText('CNY 110.00')).toBeInTheDocument();
+      expect(screen.getByText(/CNY 110\.00, on PO-CNY/)).toBeInTheDocument();
+      expect(screen.queryByText('RM 110.00')).not.toBeInTheDocument();
+    });
+
+    it('falls back to the line\'s own currency only when there is no purchase on file', () => {
+      renderPanel({ price: undefined, line: line({ unit_cost: 15, currency: 'USD' }) });
+      expect(screen.getByText('USD 15.00')).toBeInTheDocument();
+    });
+
+    it('shows "No MYR rate for CNY, set it under SCM policies" when the purchase currency has no rate on file', () => {
+      renderPanel({
+        price: cnyPrice,
+        line: line({ unit_cost: 110, currency: 'CNY', cash_impact: null }),
+      });
+
+      expect(screen.getByText(/No MYR rate for CNY, set it under/)).toBeInTheDocument();
+      const link = screen.getByRole('link', { name: 'SCM policies' });
+      expect(link).toHaveAttribute('href', '/scm/policies');
+    });
+
+    it('says nothing when the base currency line has no MYR rate concern', () => {
+      renderPanel({ price, line: line({ unit_cost: 10, currency: 'MYR' }) });
+      expect(screen.queryByText(/No MYR rate/)).not.toBeInTheDocument();
+    });
+  });
 });
 
 describe('PlanRowPanel - AutoCount level + qty zone (D5)', () => {

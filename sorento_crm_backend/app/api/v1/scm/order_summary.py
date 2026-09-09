@@ -26,11 +26,13 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query, Response
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
+from app.services.error_handler import AppException
+from app.services.pdf_render import PDFRenderingUnavailable
 from app.schemas.scm_order_summary import (
     KeyedStatusIn,
     KeyedStatusOut,
@@ -81,6 +83,45 @@ def get_order_summary(
     not describe. To read another week, name its run.
     """
     return svc.report(db, run_id=run_id)
+
+
+@router.get("/order-summary/export")
+def export_order_summary(
+    run_id: Optional[str] = Query(
+        None,
+        description=(
+            "Which plan's report to export. Omitted means the newest completed plan. "
+            "Opaque, and never rendered."
+        ),
+    ),
+    format: str = Query(
+        ..., description="pdf or xlsx - the sheet's own nine columns, one row per product."
+    ),
+    db: Session = Depends(get_db),
+    _user: dict = Depends(_VIEW),
+):
+    """The Order summary sheet as a document (S9, AC-S9.3): landscape PDF or an Excel
+    workbook, the same rows and figures the grid shows - nothing on the export is typed
+    twice. Same permission as the grid it prints (``scm.dashboard.view``)."""
+    fmt = (format or "").strip().lower()
+    if fmt not in ("pdf", "xlsx"):
+        raise AppException(status_code=422, message="format must be pdf or xlsx.")
+    try:
+        payload, content_type, filename = svc.export_report(db, run_id=run_id, fmt=fmt)
+    except PDFRenderingUnavailable as unavailable:
+        raise AppException(
+            status_code=503,
+            message=(
+                "PDF rendering is not available on this server. Ask an administrator to "
+                f"install the rendering libraries. ({unavailable})"
+            ),
+            code="pdf_rendering_unavailable",
+        )
+    return Response(
+        content=payload,
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get(

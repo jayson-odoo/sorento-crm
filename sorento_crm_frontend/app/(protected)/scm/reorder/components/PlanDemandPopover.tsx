@@ -101,6 +101,9 @@ const SOURCE_CHIP: Record<string, { chip: string; title: string }> = {
     title: 'Order created by the Order Inquiry import',
   },
   order_inquiry_confirmed: { chip: 'OI confirmed', title: 'Confirmed for buy by CS' },
+  // S3 (9 Sep 2026): the form leg - raised on an Order Inquiry Form but never assigned a
+  // supply decision, so no sales order exists behind it at all.
+  order_inquiry_form: { chip: 'OI form', title: 'Order Inquiry Form - not yet linked to a supply decision' },
 };
 
 /**

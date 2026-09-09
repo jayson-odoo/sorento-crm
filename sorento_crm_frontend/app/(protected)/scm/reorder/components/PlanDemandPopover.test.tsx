@@ -224,6 +224,16 @@ describe('PlanDemandPopover', () => {
       expect(chip).toHaveAttribute('title', 'Confirmed for buy by CS');
     });
 
+    it('renders "OI form" with "Order Inquiry Form - not yet linked to a supply decision" for the form leg (S3, 9 Sep)', async () => {
+      stub(demand({ lines: [{ ...demand().lines[0], source: 'order_inquiry_form' }] }));
+      render(<PlanDemandPopover runId="run-1" recId="rec-1" />);
+      await open();
+
+      const chip = screen.getByText('OI form');
+      expect(chip).toBeInTheDocument();
+      expect(chip).toHaveAttribute('title', 'Order Inquiry Form - not yet linked to a supply decision');
+    });
+
     it('renders no chip at all when the line carries no source', async () => {
       stub(demand({ lines: [{ ...demand().lines[0], source: null }] }));
       render(<PlanDemandPopover runId="run-1" recId="rec-1" />);

@@ -1213,3 +1213,80 @@ def test_a_confirmed_leg_line_always_has_an_inquiry_row(scm_app):
     confirmed = [l for l in out["lines"] if l["source"] == "order_inquiry_confirmed"]
     assert len(confirmed) == 1
     assert confirmed[0]["has_inquiry_row"] is True
+
+
+# =============================================================================
+# S3 (reorder-feedback-9sep) - the FORM leg's own project demand (AC-S3.2/S3.3)
+# =============================================================================
+#
+# The module docstring above still says the third leg is "Not yet shown here... 0 such
+# rows exist on the dev copy today". `demand.py`'s `horizon_committed_select_sql` has
+# counted it in `project_committed` since P3 - this is the popover catching up so the
+# lightbox total agrees with the row it hangs on, the same parity S3's other half
+# (`PlanRowDialogs.tsx`'s `scope=product`) restores on the FE side.
+
+def _form_leg_row(db, *, item_code, stock_location, qty, delivery_date, so_line_id=None):
+    """A bare CS Order Inquiry Form row with NO supply decision - `demand.py`'s FORM leg,
+    read straight off the row's own item code and stock location rather than through any
+    sales order. Raw SQL, like `test_committed_v_migration_chain`'s own form-leg fixture,
+    so `company_id` is explicit and matches the DB-defaulted `SORENTO_COMPANY_ID` every
+    `_mk_product`/`_mk_warehouse` row in this file already carries (migration 306).
+    """
+    from tests.scm.conftest import SORENTO_COMPANY_ID
+
+    pso_id = str(uuid.uuid4())
+    inquiry_id = str(uuid.uuid4())
+    row_id = str(uuid.uuid4())
+    db.execute(text(
+        "INSERT INTO projects.sales_orders (id, company_id, provisional_ref, status, "
+        "created_at, updated_at) VALUES (:i, :c, :ref, 'draft', now(), now())"
+    ), {"i": pso_id, "c": SORENTO_COMPANY_ID, "ref": f"ZZTPSO-{pso_id[:8]}"})
+    db.execute(text(
+        "INSERT INTO projects.order_inquiries (id, company_id, inquiry_no, "
+        "project_sales_order_id, state, raised_at) "
+        "VALUES (:i, :c, :n, :p, 'raised', now())"
+    ), {"i": inquiry_id, "c": SORENTO_COMPANY_ID, "n": f"OI-ZZT{inquiry_id[:6]}", "p": pso_id})
+    db.execute(text(
+        "INSERT INTO projects.order_inquiry_rows (id, company_id, order_inquiry_id, "
+        "so_line_id, item_code, qty, verb, stock_location, state, ack_state, "
+        "delivery_date, redirected_to_pool, created_at) "
+        "VALUES (:i, :c, :inq, :sl, :item, :qty, 'ORDER', :loc, 'raised', 'acknowledged', "
+        ":dd, false, now())"
+    ), {"i": row_id, "c": SORENTO_COMPANY_ID, "inq": inquiry_id, "sl": so_line_id,
+        "item": item_code, "qty": qty, "loc": stock_location, "dd": delivery_date})
+    return row_id
+
+
+def test_a_form_leg_row_is_the_rows_only_project_demand_and_the_run_agrees_with_it(
+    scm_app,
+):
+    """AC-S3.3: a product whose ONLY project demand is one form-leg row (no supply
+    decision) already lifts the run's own `project_committed` - `horizon_committed_select_
+    sql` has counted this leg since P3. The popover does not, yet: before the fix this
+    lists NOTHING and totals 0.0 while the row beside it says 25, the exact "Project 3, 0
+    open" the plan section 4 measured fact describes."""
+    _, db, _, _ = scm_app
+    wid = _mk_warehouse(db, "ZZTW-FORM1")
+    code = f"ZZTP-FORM1-{uuid.uuid4().hex[:6]}"
+    pid = _mk_product(db, code)
+    _mk_stock(db, pid, wid, 0)
+    _mk_demand(db, pid, wid, 0.0)
+    _link(db, pid, _mk_supplier(db, "ZZT Form1 Supplier"), moq=None, mult=None)
+    _form_leg_row(db, item_code=code, stock_location="ZZTW-FORM1", qty=25,
+                  delivery_date=date(2026, 10, 1))
+    db.flush()
+
+    rec = _rec_row(db, _run(db, ["ZZTW-FORM1"]), pid)
+    assert float((rec["inputs"] or {}).get("project_committed")) == 25.0, (
+        "the run's own frozen figure already includes the form leg"
+    )
+
+    out = dbs.demand_for_recommendation(db, str(rec["id"]), channel="project")
+
+    form_lines = [l for l in out["lines"] if l["source"] == "order_inquiry_form"]
+    assert len(form_lines) == 1, "the popover must list the form-leg row, not just the SO book"
+    assert form_lines[0]["qty"] == 25.0
+    assert form_lines[0]["required_date"] == "2026-10-01", "needed == the row's delivery_date"
+    assert out["committed_total"] == 25.0 == out["project_total"], (
+        "the lightbox total must equal the row's own Project figure"
+    )

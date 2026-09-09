@@ -31,10 +31,19 @@ FEED wrote a retail order rather than which leg counted it. The two queries are 
 construction (one reads the sales-order book with project class excluded, the other reads
 inquiry rows), so summing them is additive and never double-counted.
 
-Not yet shown here: a row the CS Order Inquiry Form raised with NO supply decision (the
-view's form leg). It is real demand and it is on the plan row; the popover has no sales
-order to name for it, so it is absent rather than misattributed. 0 such rows exist on the
-dev copy today.
+S3 (9 Sep 2026): the view's THIRD leg - a row the CS Order Inquiry Form raised with NO
+supply decision - is now shown too, as `confirmed_lines` carrying `source =
+'order_inquiry_form'`. It has no reconciled book line to hang a sales-order number off
+(the form leg's own `NOT EXISTS` guard is what keeps it disjoint from the book leg in the
+first place), so it is named by its own Order Inquiry document (`inquiry_no`) instead, and
+its customer/agent are read off the inquiry's OWN sales order header
+(`order_inquiries.project_sales_order_id`) rather than through a mirror line that may not
+exist. Same predicates `horizon_committed_select_sql`'s form leg applies: `supply_decision_id
+IS NULL`, the retail-shadow `NOT EXISTS`, `verb IN ('ORDER', 'ORDER_BACK')`, `state IN
+('raised', 'partly_linked')`, `ack_state IN PLANNED_ACK_STATES` (an unacknowledged row is not
+something to buy against yet, same reasoning as the confirmed leg above), the unlinked
+remainder `qty > linked`, and the same `:horizon` bind - so the lightbox total agrees with
+the row's own Project figure, which is sized by the exact same leg.
 
 WHO SOLD IT (21 Aug live ask): `sales_orders.sales_agent_id` -> `sales_agents`, the same
 salesperson master `sales_order_service._agent_fields` already reads for the SO detail
@@ -69,6 +78,7 @@ from app.services.scm.demand import (
     ORDER_INQUIRY_ORIGIN,
     PLAN_DEMAND_LINE_SQL,
     PLAN_DEMAND_ORDER_SQL,
+    PLANNED_ACK_STATES,
     PROJECT_CLASS,
     UNLINKED_INQUIRY_STATES,
 )
@@ -543,6 +553,120 @@ def demand_for_recommendation(db: Session, rec_id: str,
         confirmed_n = int(confirmed_totals["n"] or 0)
         confirmed_total = float(confirmed_totals["qty"] or 0)
 
+    # S3 (9 Sep 2026): the FORM leg - `horizon_committed_select_sql`'s third leg, verbatim
+    # in predicate (see the module docstring's S3 paragraph). Company-scoped through the
+    # equi-joins on `oir.company_id` alone, the same guarantee `demand.py`'s own form leg
+    # relies on - not a bolted-on `co` predicate, which would wrongly drop a row whose
+    # `pso.so_id` is still null (an authored-but-unpublished order, LEFT JOINed below so a
+    # form row survives even without one).
+    form_rows: list[Any] = []
+    form_n = 0
+    form_total = 0.0
+    if channel in (None, "project"):
+        where_form_loc = "fw.id::text = ANY(:members)"
+        if include_unlocated:
+            where_form_loc = f"({where_form_loc} OR fw.id IS NULL)"
+        form_base_sql = f"""
+            SELECT so.id::text AS so_id, oi.inquiry_no AS so_number,
+                   fw.warehouse_code AS warehouse_code,
+                   oir.delivery_date AS required_date,
+                   psl.unit_price AS unit_price,
+                   {CUSTOMER_LABEL_SQL} AS customer_label,
+                   {AGENT_LABEL_SQL} AS agent_label,
+                   {_PROJECT_TITLE_SQL} AS project_title,
+                   GREATEST(oir.qty - COALESCE(flk.linked, 0), 0) AS qty,
+                   COALESCE(flk.linked, 0) AS linked_qty
+            FROM projects.order_inquiry_rows oir
+            JOIN products fp
+              ON fp.product_code = oir.item_code
+             AND fp.company_id = oir.company_id
+            LEFT JOIN warehouses fw
+              ON fw.warehouse_code = oir.stock_location
+             AND fw.company_id = oir.company_id
+            -- The inquiry's OWN sales order header, never a reconciled book line - a row
+            -- naming no book line at all still has a customer, off the document it was
+            -- raised for.
+            JOIN projects.order_inquiries oi ON oi.id = oir.order_inquiry_id
+            JOIN projects.sales_orders pso ON pso.id = oi.project_sales_order_id
+            LEFT JOIN sales_orders so ON so.id = pso.so_id
+            LEFT JOIN customers c ON {CUSTOMER_JOIN_ON}
+            LEFT JOIN sales_agents sa ON sa.id = so.sales_agent_id
+            -- The reconciled book line, when one exists - only used to reach
+            -- `_PROJECT_TITLE_SQL`'s own correlation and the line's price; a row naming
+            -- none simply resolves both to NULL through the LEFT JOINs.
+            LEFT JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id
+            LEFT JOIN sales_order_lines sol ON sol.id = psl.core_sales_order_line_id
+            LEFT JOIN LATERAL (
+                SELECT COALESCE(SUM(l.qty), 0) AS linked
+                FROM projects.order_inquiry_links l
+                WHERE l.row_id = oir.id
+            ) flk ON TRUE
+            WHERE fp.id::text = :pid
+              AND {where_form_loc}
+              AND oir.supply_decision_id IS NULL
+              -- The retail-shadow guard: disjoint from the BOOK leg, which already counts
+              -- this row's line if it names one that is still open, undecided retail
+              -- demand (`demand.py`'s own form leg, verbatim).
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM projects.sales_order_lines fpsl
+                  JOIN sales_order_lines fsol ON fsol.id = fpsl.core_sales_order_line_id
+                  JOIN sales_orders fso ON fso.id = fsol.sales_order_id
+                  WHERE fpsl.id = oir.so_line_id
+                    AND fso.demand_class IS DISTINCT FROM 'project'
+                    AND fso.status = 'open'
+                    AND fsol.line_status = 'open'
+                    AND fsol.purchasing_status <> 'covered'
+                    AND GREATEST(COALESCE(fsol.qty_required, fsol.qty_ordered)
+                               - COALESCE(fsol.qty_delivered, 0), 0) > 0)
+              AND oir.verb = ANY(:form_verbs)
+              AND oir.state = ANY(:unplaced_states)
+              AND oir.ack_state = ANY(:planned_ack_states)
+              AND oir.qty > 0
+              AND oir.qty > COALESCE(flk.linked, 0)
+              AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
+                   OR oir.delivery_date <= CAST(:horizon AS date))
+        """
+        form_params = {
+            "pid": rec["product_id"], "members": members, "horizon": horizon,
+            "form_verbs": ["ORDER", "ORDER_BACK"],
+            "unplaced_states": list(UNLINKED_INQUIRY_STATES),
+            "planned_ack_states": list(PLANNED_ACK_STATES),
+        }
+        form_rows = db.execute(text(
+            form_base_sql
+            + " ORDER BY oir.delivery_date NULLS LAST, oi.inquiry_no LIMIT :limit"
+        ), {**form_params, "limit": limit_n}).mappings().all()
+        form_totals = db.execute(text(
+            f"SELECT count(*) AS n, COALESCE(sum(qty), 0) AS qty FROM ({form_base_sql}) t"
+        ), form_params).mappings().first()
+        form_n = int(form_totals["n"] or 0)
+        form_total = float(form_totals["qty"] or 0)
+
+    form_lines = [
+        {
+            "so_id": r["so_id"],
+            "so_number": r["so_number"],
+            "warehouse_code": r["warehouse_code"],
+            "is_unlocated": r["warehouse_code"] is None,
+            "order_type": None,
+            "demand_class": PROJECT_CLASS,
+            "order_date": None,
+            "required_date": r["required_date"].isoformat() if r["required_date"] else None,
+            "qty": float(r["qty"] or 0),
+            "customer_label": r["customer_label"],
+            "agent_label": r["agent_label"],
+            "project_title": r["project_title"],
+            "unit_price": float(r["unit_price"]) if r["unit_price"] is not None else None,
+            "linked_qty": float(r["linked_qty"] or 0),
+            "source": "order_inquiry_form",
+            # Built from `projects.order_inquiry_rows` the same way the confirmed leg is -
+            # there is always a row, by construction.
+            "has_inquiry_row": True,
+        }
+        for r in form_rows
+    ]
+
     confirmed_lines = [
         {
             "so_id": r["so_id"],
@@ -568,7 +692,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
     ]
 
     all_lines = sorted(
-        lines + confirmed_lines,
+        lines + confirmed_lines + form_lines,
         key=lambda ln: (ln["required_date"] is None, ln["required_date"] or "",
                         ln["so_number"] or ""),
     )
@@ -650,14 +774,15 @@ def demand_for_recommendation(db: Session, rec_id: str,
 
     return {
         "lines": all_lines,
-        "total": int(totals["n"] or 0) + confirmed_n,
+        "total": int(totals["n"] or 0) + confirmed_n + form_n,
         "shown": len(all_lines),
-        # The confirmed leg IS inside `project_committed` (`scm.committed_v`), so it
-        # belongs in the same total the book query's committed figure already reports -
-        # additive, never a double count (see the module docstring's PROVENANCE note).
-        # `confirmed_total` is the UNCAPPED sum (SF-1/SF-2), never `sum(l["qty"] for l in
-        # confirmed_lines)`, which would undercount past the display cap.
-        "committed_total": float(totals["committed"] or 0) + confirmed_total,
+        # The confirmed AND form legs are both inside `project_committed`
+        # (`horizon_committed_select_sql`), so they belong in the same total the book
+        # query's committed figure already reports - additive, never a double count (see
+        # the module docstring's PROVENANCE and S3 notes). Both totals are the UNCAPPED
+        # sums (SF-1/SF-2), never `sum(l["qty"] for l in ...)`, which would undercount past
+        # the display cap.
+        "committed_total": float(totals["committed"] or 0) + confirmed_total + form_total,
         "unlocated_total": float(totals["unlocated"] or 0),
         # Where the demand actually sits, so "why BRW when I ordered for BRW-IB" is answered
         # by the row itself rather than by opening every order.
@@ -668,11 +793,12 @@ def demand_for_recommendation(db: Session, rec_id: str,
         # the reading the whole popover exists to correct.
         "scope": rec_scope,
         "pool_code": pool_code,
-        # SF-2: read off the UNCAPPED `totals`/`confirmed_total` figures, never off
-        # `all_lines` (the capped display set) - past the cap the two diverged. The
-        # confirmed leg is entirely project-class by construction (S13b), so its whole
-        # uncapped sum lands on `project_total`.
-        "project_total": float(totals["project_qty"] or 0) + confirmed_total,
+        # SF-2: read off the UNCAPPED `totals`/`confirmed_total`/`form_total` figures,
+        # never off `all_lines` (the capped display set) - past the cap they diverged. Both
+        # the confirmed and the form legs are entirely project-class by construction
+        # (S13b, S3), so their whole uncapped sums land on `project_total` - this is what
+        # makes the lightbox total equal the row's own Project figure (AC-S3.2).
+        "project_total": float(totals["project_qty"] or 0) + confirmed_total + form_total,
         "retail_total": float(totals["retail_qty"] or 0),
         "unclassified_total": float(totals["unclassified_qty"] or 0),
         "project_12m_qty": context["project_qty"],

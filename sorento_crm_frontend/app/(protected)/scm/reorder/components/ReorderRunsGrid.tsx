@@ -98,6 +98,7 @@ export function ReorderRunsGrid({ autoOpenRun = false }: { autoOpenRun?: boolean
         warehouse_codes: inputs.warehouse_codes,
         product_codes: inputs.product_codes,
         budget_id: null,
+        plan_horizon_start: inputs.plan_horizon_start || null,
         plan_horizon_date: inputs.plan_horizon_date || null,
       });
       setModalOpen(false);

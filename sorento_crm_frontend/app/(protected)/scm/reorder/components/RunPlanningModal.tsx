@@ -41,10 +41,17 @@ export interface ManualPlanInputs {
    */
   product_codes: string[];
   /**
-   * "Sales order cut-off" (captain, 20 Aug; renamed in the revamp). **Empty means no horizon** - every open SO line is
-   * planned regardless of when it is needed, today's behaviour. `YYYY-MM-DD` when set;
-   * demand needed after it is excluded from this run's netting, and demand carrying no
-   * date is always still counted.
+   * S4 (`reorder-feedback-9sep.md`, 9 Sep 2026): the window's START. Empty means no
+   * lower bound - a line dated before it still counts, the same reading an undated line
+   * already gets. `YYYY-MM-DD` when set.
+   */
+  plan_horizon_start: string;
+  /**
+   * "Sales orders needed", To (captain, 20 Aug; renamed in the revamp, S4 gave it a
+   * From beside it). **Empty means no horizon** - every open SO line is planned
+   * regardless of when it is needed, today's behaviour. `YYYY-MM-DD` when set; demand
+   * needed after it is excluded from this run's netting, and demand carrying no date is
+   * always still counted.
    */
   plan_horizon_date: string;
 }
@@ -85,6 +92,7 @@ export function RunPlanningModal({
 }) {
   const [warehouses, setWarehouses] = useState<string[]>([]);
   const [products, setProducts] = useState<string[]>([]);
+  const [horizonStart, setHorizonStart] = useState('');
   const [horizon, setHorizon] = useState('');
   const [error, setError] = useState<string | null>(null);
   /** Labels of every product this modal has seen come back from the server, so a chip for a
@@ -121,6 +129,7 @@ export function RunPlanningModal({
     if (!open) return;
     setWarehouses([]);
     setProducts([]);
+    setHorizonStart('');
     setHorizon('');
     setError(null);
     setProductLabels({});
@@ -130,6 +139,13 @@ export function RunPlanningModal({
 
   const submit = () => {
     setError(null);
+    // S4: To before From nets nothing either - the same class of silent-empty-run
+    // mistake the past-cutoff guard below catches, and checked first: a To date that
+    // is both in the past AND before From is this mistake, not that one.
+    if (horizonStart && horizon && horizon < horizonStart) {
+      setError('The To date cannot be before the From date.');
+      return;
+    }
     // A past cutoff nets every open line against demand that "must" have been needed
     // before today, which is every line - the run then silently returns zero demand
     // rather than saying why (nit, code review 20 Aug 2026).
@@ -146,6 +162,8 @@ export function RunPlanningModal({
       // one is the exception, and forcing a pick would make every run harder than
       // the daily one it stands in for.
       product_codes: products,
+      // Empty = no lower bound: a line dated before it still counts (G2 ruling).
+      plan_horizon_start: horizonStart,
       // Empty = no horizon (today's behaviour): every open SO line is planned
       // regardless of when it is needed.
       plan_horizon_date: horizon,
@@ -167,16 +185,32 @@ export function RunPlanningModal({
           ) : null}
 
           <div>
-            <Label htmlFor="plan-cutoff" className="mb-1 block">
-              Sales order cut-off
-            </Label>
-            <Input
-              id="plan-cutoff"
-              type="date"
-              min={today}
-              value={horizon}
-              onChange={(e) => setHorizon(e.target.value)}
-            />
+            <Label className="mb-1 block">Sales orders needed</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label htmlFor="plan-window-start" className="mb-1 block text-2xs text-muted-foreground">
+                  From
+                </Label>
+                <Input
+                  id="plan-window-start"
+                  type="date"
+                  value={horizonStart}
+                  onChange={(e) => setHorizonStart(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label htmlFor="plan-cutoff" className="mb-1 block text-2xs text-muted-foreground">
+                  To
+                </Label>
+                <Input
+                  id="plan-cutoff"
+                  type="date"
+                  min={today}
+                  value={horizon}
+                  onChange={(e) => setHorizon(e.target.value)}
+                />
+              </div>
+            </div>
             <p className="mt-1 text-2xs text-muted-foreground">
               Empty = every open order counts.
             </p>

@@ -433,3 +433,58 @@ describe('SummaryOrderReportView - onBack (this report has no row in the buy gri
     expect(onBack).toHaveBeenCalled();
   });
 });
+
+// ===========================================================================
+// S9 (reorder-feedback-9sep.md, G6 ruling 9 Sep 2026) - the sheet's own columns
+// (AC-S9.2) and the PDF/Excel export (AC-S9.4).
+// ===========================================================================
+
+describe('SummaryOrderReportView - the sheet columns (AC-S9.2)', () => {
+  function reportWithSheetFields() {
+    const rows = REPORT.rows.map((r) => ({ ...r }));
+    rows[0] = {
+      ...rows[0],
+      delivery_by_month: [
+        { month: '2026-09', qty: 30 },
+        { month: '2026-10', qty: 30 },
+      ],
+      project_customers: [{ label: 'OIB Construction', qty: 364 }],
+      supplier_name: 'Guangdong Sanitary Ware',
+      po_open_qty: 400,
+      incoming_spo_qty: 89,
+      last_receipt: { date: '2026-07-21', qty: 300 },
+      moq: 1000,
+    };
+    return { ...REPORT, rows };
+  }
+
+  it('adds Delivery, Project / customer, Supplier and Remarks columns', () => {
+    renderView(state({ data: reportWithSheetFields() }));
+    expect(screen.getByText('Delivery')).toBeInTheDocument();
+    expect(screen.getByText('Project / customer')).toBeInTheDocument();
+    expect(screen.getByText('Supplier')).toBeInTheDocument();
+    expect(screen.getByText('Remarks')).toBeInTheDocument();
+  });
+
+  it('renders the month groups, the project customer and the remarks composition on the row', () => {
+    renderView(state({ data: reportWithSheetFields() }));
+    const row = rowFor('B2155-NL-BLUE');
+    expect(row).toHaveTextContent('Sep 30');
+    expect(row).toHaveTextContent('Oct 30');
+    expect(row).toHaveTextContent('OIB Construction');
+    expect(row).toHaveTextContent('364');
+    expect(row).toHaveTextContent('Guangdong Sanitary Ware');
+    expect(row).toHaveTextContent('PO 400');
+    expect(row).toHaveTextContent('incoming 89');
+    expect(row).toHaveTextContent('MOQ 1000');
+  });
+});
+
+describe('SummaryOrderReportView - Export PDF/Excel (AC-S9.4)', () => {
+  it('offers an Export control with PDF and Excel', () => {
+    renderView(state({ data: REPORT }));
+    fireEvent.click(screen.getByRole('button', { name: /Export/i }));
+    expect(screen.getByText(/PDF/i)).toBeInTheDocument();
+    expect(screen.getByText(/Excel/i)).toBeInTheDocument();
+  });
+});

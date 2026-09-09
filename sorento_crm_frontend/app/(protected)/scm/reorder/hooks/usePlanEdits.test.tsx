@@ -15,6 +15,7 @@ import type { ReorderRecommendation } from '../types/reorder.types';
 import { recToPlanLine, type PlanLine } from '../lib/planLine';
 import { groupPlanLinesByChannel } from '../lib/planLineGrouping';
 import type { PlanDecisionMap } from '../lib/planDecisions';
+import type { ProductEconomics } from '../lib/productHealth';
 
 const savePlanEdits = vi.fn();
 vi.mock('../services/planEditsService', () => ({
@@ -59,6 +60,16 @@ function rec(over: Partial<ReorderRecommendation> = {}): ReorderRecommendation {
 }
 
 const line = (over: Partial<ReorderRecommendation> = {}): PlanLine => recToPlanLine(rec(over));
+
+function economics(over: Partial<ProductEconomics> = {}): ProductEconomics {
+  return {
+    product_id: 'p1', avg_sell_price: null, sell_source: null, sold_qty: 0, on_hand: 0,
+    avg_monthly_out: 0, turnover_months: null, no_movement: true, lifecycle_decision: null,
+    lifecycle_decided_at: null, sold_recent_qty: 0, bought_recent_qty: 0,
+    movement_class: 'dead',
+    ...over,
+  };
+}
 
 beforeEach(() => {
   savePlanEdits.mockReset().mockResolvedValue({ saved_rows: 1, saved_products: 1 });
@@ -255,6 +266,78 @@ describe('usePlanEdits - Confirm saves first, then confirms (order asserted, E3)
   });
 });
 
+describe('usePlanEdits - Confirm writes the health suggestion for every confirmed product (S8, G4)', () => {
+  it('injects the suggested lifecycle for a decided row the buyer never touched the radio on', async () => {
+    const l = line({ id: 'r1', product_id: 'p1' });
+    const economicsFor = () => economics({ movement_class: 'dead' });
+    const { result } = renderHook(
+      () => usePlanEdits('run-1', [l], {}, undefined, undefined, economicsFor),
+      { wrapper },
+    );
+    act(() => result.current.setRowEdit(l, { decision: { buy: 10 } }));
+
+    await act(async () => {
+      await result.current.confirm();
+    });
+
+    const [, rows] = savePlanEdits.mock.calls[0];
+    expect(rows[0]).toMatchObject({ rec_id: 'r1', lifecycle: 'discontinue' });
+  });
+
+  it('leaves the buyer\'s own lifecycle answer alone rather than overwriting it', async () => {
+    const l = line({ id: 'r1', product_id: 'p1' });
+    const economicsFor = () => economics({ movement_class: 'dead' });
+    const { result } = renderHook(
+      () => usePlanEdits('run-1', [l], {}, undefined, undefined, economicsFor),
+      { wrapper },
+    );
+    act(() => result.current.setRowEdit(l, { decision: { buy: 10 }, lifecycle: 'keep' }));
+
+    await act(async () => {
+      await result.current.confirm();
+    });
+
+    const [, rows] = savePlanEdits.mock.calls[0];
+    expect(rows[0]).toMatchObject({ lifecycle: 'keep' });
+  });
+
+  it('a stored lifecycle_decision on the product wins over the class-based suggestion', async () => {
+    const l = line({ id: 'r1', product_id: 'p1' });
+    const economicsFor = () => economics({ movement_class: 'dead', lifecycle_decision: 'keep' });
+    const { result } = renderHook(
+      () => usePlanEdits('run-1', [l], {}, undefined, undefined, economicsFor),
+      { wrapper },
+    );
+    act(() => result.current.setRowEdit(l, { decision: { buy: 10 } }));
+
+    await act(async () => {
+      await result.current.confirm();
+    });
+
+    const [, rows] = savePlanEdits.mock.calls[0];
+    expect(rows[0]).toMatchObject({ lifecycle: 'keep' });
+  });
+
+  it('writes nothing for a row Confirm is not drafting - an untouched sibling stays untouched', async () => {
+    const decided = line({ id: 'r1', product_id: 'p1', sku: 'A' });
+    const untouched = line({ id: 'r2', product_id: 'p2', sku: 'B' });
+    const economicsFor = () => economics({ movement_class: 'dead' });
+    const { result } = renderHook(
+      () => usePlanEdits('run-1', [decided, untouched], {}, undefined, undefined, economicsFor),
+      { wrapper },
+    );
+    act(() => result.current.setRowEdit(decided, { decision: { buy: 10 } }));
+
+    await act(async () => {
+      await result.current.confirm();
+    });
+
+    const [, rows] = savePlanEdits.mock.calls[0];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].rec_id).toBe('r1');
+  });
+});
+
 describe('usePlanEdits - beforeunload is armed only while drafts exist (D7)', () => {
   it('registers no listener while the draft map is empty', () => {
     const addSpy = vi.spyOn(window, 'addEventListener');
@@ -302,10 +385,11 @@ describe('usePlanEdits - confirmable summary reflects the draft map live', () =>
     const decisions: PlanDecisionMap = {};
     const { result } = renderHook(() => usePlanEdits('run-1', [l], decisions), { wrapper });
 
-    expect(result.current.confirmable.products).toBe(1);
+    // G5 (S6, 9 Sep 2026): Confirm never sweeps - untouched counts 0.
+    expect(result.current.confirmable.products).toBe(0);
 
-    act(() => result.current.setRowEdit(l, { decision: { skip: true } }));
+    act(() => result.current.setRowEdit(l, { decision: { buy: 10 } }));
 
-    await waitFor(() => expect(result.current.confirmable.products).toBe(0));
+    await waitFor(() => expect(result.current.confirmable.products).toBe(1));
   });
 });

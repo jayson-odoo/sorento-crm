@@ -27,18 +27,12 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar, type ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { cn } from '@/lib/utils';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { EM_DASH, fmtDecimal, fmtInt, fmtMoney, fmtSigned } from '../../lib/format';
-import {
-  PLAN_LINE_STATUS_LABEL,
-  PLAN_LINE_STATUS_ORDER,
-  type PlanLine,
-  type PlanLineStatus,
-} from '../lib/planLine';
+import { type PlanLine, type PlanLineStatus } from '../lib/planLine';
 import {
   decidedCost,
   decidedQty,
@@ -52,13 +46,9 @@ import {
   type PlanRowEditMap,
 } from '../lib/planEdits';
 import { NO_COVER, type CoverProposal } from '../lib/coverPlan';
-import {
-  PRICE_ADVICE_LABEL,
-  type CheaperAlternative,
-  type PriceAdvice,
-} from '../lib/priceAdvice';
-import { levelActionLabel, type LevelSuggestion } from '../lib/levelSuggestion';
-import { poOffset, type PoReceipt } from '../lib/poCover';
+import type { CheaperAlternative, PriceAdvice } from '../lib/priceAdvice';
+import type { LevelSuggestion } from '../lib/levelSuggestion';
+import type { PoReceipt } from '../lib/poCover';
 import type { TrajectoryEntry } from '../lib/trajectory';
 import type { ProductPurchaseTrend } from '../lib/purchaseTrend';
 import { PlanTrendPopover } from './PlanTrendPopover';
@@ -388,11 +378,6 @@ export function PlanLinesGrid({
     (next: string) => (onDecidedFilterChange ?? setOwnDecidedFilter)(next as 'all' | 'undecided' | 'decided'),
     [onDecidedFilterChange],
   );
-  // S14: one filter per suggestion column, so the buyer can work one question at a time
-  // ("show me every stale price", "every level change", "project side only").
-  const [priceFilter, setPriceFilter] = useState<string>('all');
-  const [actionFilter, setActionFilter] = useState<string>('all');
-  const [levelFilter, setLevelFilter] = useState<string>('all');
   // Which number a buyer pressed, and on which row (plan 4.6). ONE dialog per grid: only
   // one can be open at a time, and six mounted bodies per row is what the popovers cost.
   const [dialogRequest, setDialogRequest] = useState<PlanDialogRequest | null>(null);
@@ -405,38 +390,19 @@ export function PlanLinesGrid({
   const [segmentId, setSegmentId] = useState<string | null>(null);
   const filterFields = useMemo(() => planLineFilterFields(decisions), [decisions]);
 
-  // Search/status/price/action/level - every filter that does NOT read a decision.
-  // Deliberately kept decision-independent (S3 perf, AC-3.5): `groupPlanLinesByChannel`
-  // below is fed by THIS memo rather than one that also depends on `decisions`, so
-  // deciding one row anywhere on the plan no longer forces the whole grid's grouping to
-  // recompute - only the (much cheaper) decided-filter/sort step after it does.
+  // Search/status/builder - every filter that does NOT read a decision. Deliberately kept
+  // decision-independent (S3 perf, AC-3.5): `groupPlanLinesByChannel` below is fed by THIS
+  // memo rather than one that also depends on `decisions`, so deciding one row anywhere on
+  // the plan no longer forces the whole grid's grouping to recompute - only the (much
+  // cheaper) decided-filter/sort step after it does.
+  //
+  // AC-S2.1: the price-answer/suggested-action/level-answer preset selects are gone - the
+  // Filters popover carries the dynamic builder alone now, and rec type/decision state are
+  // reachable there as ordinary fields (`planLineFilterFields`).
   const filtered = useMemo(() => {
     const needle = searchQuery.trim().toLowerCase();
     return lines.filter((l) => {
       if (statusFilter !== 'all' && l.status !== statusFilter) return false;
-      if (priceFilter !== 'all') {
-        const advice = l.purchasable ? priceFor?.(l)?.advice : undefined;
-        if ((advice ?? 'none') !== priceFilter) return false;
-      }
-      if (actionFilter !== 'all') {
-        // "Includes X": the same derivation the Suggested-action cell renders. A row can
-        // suggest several parts (use stock + use PO + buy), so the filter matches any row
-        // whose suggestion CONTAINS the picked one rather than demanding an exact shape.
-        const cover = l.purchasable ? (coverFor?.(l) ?? NO_COVER) : NO_COVER;
-        const afterStock = cover.coverQty > 0 ? cover.buyQty : Math.ceil(l.order_qty);
-        const poQty = (poFor?.(l) ?? []).reduce((t, r) => t + r.remaining, 0);
-        const { usePo, buy } = poOffset(afterStock, poQty);
-        const parts = new Set<string>();
-        if (l.purchasable && cover.coverQty > 0) parts.add('use_stock');
-        if (l.purchasable && usePo > 0) parts.add('use_po');
-        if (l.purchasable && buy > 0) parts.add('buy');
-        if (!parts.has(actionFilter)) return false;
-      }
-      if (levelFilter !== 'all') {
-        const s = levelFor?.(l);
-        const state = !s ? 'none' : levelActionLabel(s).changed ? 'change' : 'keep';
-        if (state !== levelFilter) return false;
-      }
       // S4: the dynamic filter builder / applied segment, evaluated client-side over
       // the same already-fetched rows (AC-4.1) - no server round trip.
       if (!evaluateFilterGroup(filterGroup, l, filterFields)) return false;
@@ -448,18 +414,7 @@ export function PlanLinesGrid({
         l.supplier.name.toLowerCase().includes(needle)
       );
     });
-  }, [lines, searchQuery, statusFilter, decidedFilter, priceFilter,
-      actionFilter, levelFilter, decisions, priceFor, coverFor, levelFor, poFor,
-      filterGroup, filterFields]);
-
-  // Undecided first, decided sunk to the bottom (user markup, 2026-08-12: "so they can decide
-  // until all outstanding decisions are cleared"). `filtered` is already rank-ordered (`lines`
-  // comes out of `toPlanLines` sorted by rank), and `Array.prototype.sort` is stable, so this
-  // grouping never disturbs the rank order WITHIN either group - only the two groups move.
-  const ordered = useMemo(
-    () => [...filtered].sort((a, b) => (decisions[a.id] ? 1 : 0) - (decisions[b.id] ? 1 : 0)),
-    [filtered, decisions],
-  );
+  }, [lines, searchQuery, statusFilter, decidedFilter, decisions, filterGroup, filterFields]);
 
   // 5.3: one row per PRODUCT on a Product-grain run, each expandable to the per-warehouse
   // rows it summed. Grouping runs AFTER the decision-independent filters above, so search/
@@ -1156,7 +1111,8 @@ export function PlanLinesGrid({
   // four exactly when a segment is applied (or clears them for "No segment").
   //
   // S4 shortfall (PR #489 review round): the FULL Filters popover per G9 also means
-  // the five FIXED dropdowns (status/decided/price/action/level) - they are ANDed
+  // the FIXED status/decided filters, driven from outside this grid (S2, 9 Sep: the
+  // price/action/level presets were removed - see `filtered` above) - they are ANDed
   // into `filtered` above and counted in the toolbar's `activeCount` beside the
   // recursive `filterGroup`, so a segment that left them out would not be "the full
   // view" the AC promises. Carried in `quick_filters`, opaque like `filters` itself.
@@ -1173,13 +1129,9 @@ export function PlanLinesGrid({
       quick_filters: {
         status: statusFilter,
         decided: decidedFilter,
-        price: priceFilter,
-        action: actionFilter,
-        level: levelFilter,
       },
     }),
-    [filterGroup, sorting, visibleColumnIds, columnOrder,
-     statusFilter, decidedFilter, priceFilter, actionFilter, levelFilter],
+    [filterGroup, sorting, visibleColumnIds, columnOrder, statusFilter, decidedFilter],
   );
   // B1 (PR #489 review round): the column layout the reader had BEFORE the first
   // segment ever applied this session - taken once, restored verbatim by "No
@@ -1204,9 +1156,6 @@ export function PlanLinesGrid({
         // ever applied this session.
         setStatusFilter('all');
         setDecidedFilter('all');
-        setPriceFilter('all');
-        setActionFilter('all');
-        setLevelFilter('all');
         const snapshot = preSegmentColumnsRef.current;
         preSegmentColumnsRef.current = null;
         if (snapshot) {
@@ -1224,15 +1173,14 @@ export function PlanLinesGrid({
       setSegmentId(view.id);
       setFilterGroup(view.view.filters ?? null);
       setSorting(view.view.sort.map((s) => ({ id: s.id, desc: s.desc })));
-      // S4 shortfall: restore the five fixed dropdowns the segment captured -
-      // missing from an older segment (saved before this fix) falls back to "all",
-      // the same default the dropdowns themselves start from.
+      // S4 shortfall: restore the fixed status/decided filters the segment captured -
+      // missing from an older segment (saved before this fix) falls back to "all", the
+      // same default the filters themselves start from. An older segment may still
+      // carry `price`/`action`/`level` keys (S2 removed those presets) - ignored here,
+      // harmless since nothing reads them any more.
       const quick = view.view.quick_filters ?? {};
       setStatusFilter(quick.status ?? 'all');
       setDecidedFilter(quick.decided ?? 'all');
-      setPriceFilter(quick.price ?? 'all');
-      setActionFilter(quick.action ?? 'all');
-      setLevelFilter(quick.level ?? 'all');
       // Nit (PR #489 review round): restored unconditionally - a saved segment's own
       // `column_order` is always this grid's full leaf-column list (`savedViewConfig`
       // never saves an empty one), so the length guard only hid a real segment doing
@@ -1257,14 +1205,6 @@ export function PlanLinesGrid({
   const pageRows = table.getRowModel().rows;
   const anyCollapsed = pageRows.some((r) => !r.getIsExpanded());
   const anyExpanded = pageRows.some((r) => r.getIsExpanded());
-
-  const statusOptions = useMemo(
-    () => [
-      { value: 'all', label: 'All statuses' },
-      ...PLAN_LINE_STATUS_ORDER.map((s) => ({ value: s, label: PLAN_LINE_STATUS_LABEL[s] })),
-    ],
-    [],
-  );
 
   // A plain element, NOT a component defined in the render body: that would be a new
   // component type on every render, so React would unmount the toolbar and the search
@@ -1320,74 +1260,20 @@ export function PlanLinesGrid({
         }
         filters={{
           kind: 'custom',
-          active: [statusFilter, decidedFilter, priceFilter, actionFilter,
-                   levelFilter].some((f) => f !== 'all') || countFilterConditions(filterGroup) > 0,
-          activeCount: [statusFilter, decidedFilter, priceFilter, actionFilter,
-                        levelFilter].filter((f) => f !== 'all').length
+          // AC-S2.1: the five preset selects (statuses, decided, price answer, suggested
+          // action, level answer) are gone from this popover - the builder alone slices
+          // the grid, rec type and decision state reachable there as ordinary fields
+          // (`planLineFilterFields`). `statusFilter`/`decidedFilter` still count toward
+          // the badge below: a summary tile above the grid (`PlanLinesSection`) can still
+          // drive them from outside this popover.
+          active: statusFilter !== 'all' || decidedFilter !== 'all'
+                   || countFilterConditions(filterGroup) > 0,
+          activeCount: [statusFilter, decidedFilter].filter((f) => f !== 'all').length
                         + countFilterConditions(filterGroup),
           content: (
-            <div className="space-y-3">
+            <div className="space-y-2">
               <p className="text-sm font-medium">Filters</p>
-              <SearchableSelect
-                value={statusFilter}
-                onChange={setStatusFilter}
-                options={statusOptions}
-                placeholder="Status"
-              />
-              <SearchableSelect
-                value={decidedFilter}
-                onChange={setDecidedFilter}
-                options={[
-                  { value: 'all', label: 'Decided and undecided' },
-                  { value: 'undecided', label: 'Still to decide' },
-                  { value: 'decided', label: 'Already decided' },
-                ]}
-                placeholder="Decision"
-              />
-              <SearchableSelect
-                value={priceFilter}
-                onChange={setPriceFilter}
-                options={[
-                  { value: 'all', label: 'Every price answer' },
-                  { value: 'zero_cost', label: PRICE_ADVICE_LABEL.zero_cost },
-                  { value: 'no_history', label: PRICE_ADVICE_LABEL.no_history },
-                  { value: 'unknown_age', label: PRICE_ADVICE_LABEL.unknown_age },
-                  { value: 'stale', label: PRICE_ADVICE_LABEL.stale },
-                  { value: 'moving', label: PRICE_ADVICE_LABEL.moving },
-                  { value: 'recent', label: PRICE_ADVICE_LABEL.recent },
-                  { value: 'none', label: 'No price information' },
-                ]}
-                placeholder="Suggested price"
-              />
-              <SearchableSelect
-                value={actionFilter}
-                onChange={setActionFilter}
-                options={[
-                  { value: 'all', label: 'Every suggested action' },
-                  { value: 'buy', label: 'Includes a buy' },
-                  { value: 'use_stock', label: 'Includes use stock' },
-                  { value: 'use_po', label: 'Includes use PO (already ordered)' },
-                ]}
-                placeholder="Suggested action"
-              />
-              <SearchableSelect
-                value={levelFilter}
-                onChange={setLevelFilter}
-                options={[
-                  { value: 'all', label: 'Every level answer' },
-                  { value: 'change', label: 'Level change suggested' },
-                  { value: 'keep', label: 'Level already fits' },
-                  { value: 'none', label: 'No level suggestion' },
-                ]}
-                placeholder="AutoCount level"
-              />
-              {/* S4 (PLAN-scm-reorder-oi-feedback-1sep.md): the dynamic filter builder,
-                  reusable and fully recursive (AC-4.1) - additional to the five quick
-                  filters above, for a question none of them name. */}
-              <div className="space-y-2 border-t border-border pt-3">
-                <p className="text-sm font-medium">Advanced filters</p>
-                <DynamicFilterBuilder fields={filterFields} value={filterGroup} onChange={setFilterGroup} />
-              </div>
+              <DynamicFilterBuilder fields={filterFields} value={filterGroup} onChange={setFilterGroup} />
             </div>
           ),
         }}

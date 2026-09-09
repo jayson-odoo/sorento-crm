@@ -178,6 +178,7 @@ export function PlanLinesSection({
     planLines.decisions,
     planLines.coverFor,
     planLines.poFor,
+    planLines.economicsFor,
   );
 
   useEffect(() => {
@@ -243,7 +244,13 @@ export function PlanLinesSection({
       <Button
         onClick={() => setConfirmOpen(true)}
         disabled={confirmProducts === 0 || planEdits.isConfirming}
-        title="Save, then turn this plan into draft purchase orders"
+        // AC-S6.3: Confirm (0) explains itself - a buyer who has decided nothing sees why
+        // the button is dead rather than assuming the plan is broken.
+        title={
+          confirmProducts === 0
+            ? 'Decide at least one row first'
+            : 'Save, then turn this plan into draft purchase orders'
+        }
       >
         <CheckCircle2 className="size-4" />
         {`Confirm (${fmtInt(confirmProducts)})`}

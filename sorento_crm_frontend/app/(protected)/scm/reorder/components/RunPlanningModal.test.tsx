@@ -142,7 +142,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
     await renderModal();
     // The title and the submit button both read "Start Plan" - that is the point.
     expect(screen.getAllByText('Start Plan').length).toBeGreaterThan(0);
-    expect(screen.getByText('Sales order cut-off')).toBeInTheDocument();
+    expect(screen.getByText('Sales orders needed')).toBeInTheDocument();
     expect(screen.getByText('Warehouses')).toBeInTheDocument();
     expect(screen.getByLabelText('All warehouses')).toBeInTheDocument();
     expect(screen.getByText('Products')).toBeInTheDocument();
@@ -154,15 +154,15 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
     expect(screen.queryByText(/buy scope/i)).not.toBeInTheDocument();
   });
 
-  it('B1: fields read top to bottom Sales order cut-off, Warehouses, Products', async () => {
+  it('B1: fields read top to bottom Sales orders needed, Warehouses, Products', async () => {
     await renderModal();
     // The dialog renders through a portal, so the labels are on `document.body`.
     const labels = Array.from(document.body.querySelectorAll('label, [data-slot="label"]'))
       .map((el) => el.textContent?.trim())
       .filter((t): t is string =>
-        t === 'Sales order cut-off' || t === 'Warehouses' || t === 'Products',
+        t === 'Sales orders needed' || t === 'Warehouses' || t === 'Products',
       );
-    expect(labels).toEqual(['Sales order cut-off', 'Warehouses', 'Products']);
+    expect(labels).toEqual(['Sales orders needed', 'Warehouses', 'Products']);
   });
 
   it('B1: has no Select all - empty already means every warehouse', async () => {
@@ -183,6 +183,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
     expect(onSubmit).toHaveBeenCalledWith({
       warehouse_codes: [],
       product_codes: [],
+      plan_horizon_start: '',
       plan_horizon_date: '',
     });
     expect(screen.queryByText(/Select at least one warehouse/i)).not.toBeInTheDocument();
@@ -196,6 +197,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
     expect(onSubmit).toHaveBeenCalledWith({
       warehouse_codes: ['WH-JB'],
       product_codes: [],
+      plan_horizon_start: '',
       plan_horizon_date: '',
     });
   });
@@ -208,6 +210,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
     expect(onSubmit).toHaveBeenCalledWith({
       warehouse_codes: [],
       product_codes: [],
+      plan_horizon_start: '',
       plan_horizon_date: '',
     });
   });
@@ -220,6 +223,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
     expect(onSubmit).toHaveBeenCalledWith({
       warehouse_codes: ['WH-KL'],
       product_codes: ['SRTWT7408'],
+      plan_horizon_start: '',
       plan_horizon_date: '',
     });
   });
@@ -262,6 +266,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
       expect(onSubmit).toHaveBeenCalledWith({
         warehouse_codes: [],
         product_codes: ['CB2907'],
+        plan_horizon_start: '',
         plan_horizon_date: '',
       });
     });
@@ -285,10 +290,10 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
     });
   });
 
-  describe('Sales order cut-off (B2: a past date silently plans zero demand)', () => {
+  describe('Sales orders needed - To (B2: a past date silently plans zero demand)', () => {
     it('sets the date input\'s own min to today, so the picker cannot offer the past', async () => {
       await renderModal();
-      const input = screen.getByLabelText('Sales order cut-off') as HTMLInputElement;
+      const input = screen.getByLabelText('To') as HTMLInputElement;
       // Local calendar date, matching the component's own `todayDateInputValue()` - never
       // `toISOString()`'s UTC one, which can read a day off near midnight.
       const now = new Date();
@@ -303,7 +308,7 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
     it('blocks submit with a past cutoff and explains why, even if typed past the min', async () => {
       const { onSubmit } = await renderModal();
       fireEvent.click(screen.getByLabelText('Kuala Lumpur DC'));
-      fireEvent.change(screen.getByLabelText('Sales order cut-off'), { target: { value: '2000-01-01' } });
+      fireEvent.change(screen.getByLabelText('To'), { target: { value: '2000-01-01' } });
       fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
 
       expect(onSubmit).not.toHaveBeenCalled();
@@ -313,14 +318,66 @@ describe('RunPlanningModal - Start Plan (plan 4.2)', () => {
     it('accepts today and a future date', async () => {
       const { onSubmit } = await renderModal();
       fireEvent.click(screen.getByLabelText('Kuala Lumpur DC'));
-      fireEvent.change(screen.getByLabelText('Sales order cut-off'), { target: { value: '2099-12-31' } });
+      fireEvent.change(screen.getByLabelText('To'), { target: { value: '2099-12-31' } });
       fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
 
       expect(onSubmit).toHaveBeenCalledWith({
         warehouse_codes: ['WH-KL'],
         product_codes: [],
+        plan_horizon_start: '',
         plan_horizon_date: '2099-12-31',
       });
+    });
+  });
+
+  // ===========================================================================
+  // S4 (reorder-feedback-9sep.md, AC-S4.4) - the window gains a START date, under a
+  // renamed "Sales orders needed" section with From/To inputs, both optional.
+  // ===========================================================================
+
+  describe('Sales orders needed - From/To window (AC-S4.4)', () => {
+    it('shows the section under "Sales orders needed" with separate From and To date inputs', async () => {
+      await renderModal();
+      expect(screen.getByText('Sales orders needed')).toBeInTheDocument();
+      expect(screen.getByLabelText('From')).toBeInTheDocument();
+      expect(screen.getByLabelText('To')).toBeInTheDocument();
+    });
+
+    it('the helper text reads "Empty = every open order counts."', async () => {
+      await renderModal();
+      expect(screen.getByText('Empty = every open order counts.')).toBeInTheDocument();
+    });
+
+    it('both are optional: submitting with neither set still works', async () => {
+      const { onSubmit } = await renderModal();
+      fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({ plan_horizon_start: '', plan_horizon_date: '' }),
+      );
+    });
+
+    it('To before From is refused inline and blocks submit', async () => {
+      const { onSubmit } = await renderModal();
+      fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-06-01' } });
+      fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-01-01' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
+
+      expect(onSubmit).not.toHaveBeenCalled();
+      expect(screen.getByText(/to.*before.*from|from.*after.*to/i)).toBeInTheDocument();
+    });
+
+    it('submits both dates in ManualPlanInputs when both are set', async () => {
+      const { onSubmit } = await renderModal();
+      fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-01-01' } });
+      fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-12-31' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Start Plan' }));
+
+      expect(onSubmit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          plan_horizon_start: '2026-01-01',
+          plan_horizon_date: '2026-12-31',
+        }),
+      );
     });
   });
 });

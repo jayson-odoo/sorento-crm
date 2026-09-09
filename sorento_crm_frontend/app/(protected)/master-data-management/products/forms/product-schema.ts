@@ -25,6 +25,9 @@ export const ProductSchema = z.object({
   item_type: z.enum(['product', 'bundle', 'service', 'other']).optional().nullable(),
   is_active: z.boolean(),
   is_searchable: z.boolean(),
+  // S5 (reorder-feedback-9sep.md, 9 Sep 2026): the buyer's own opt-out of reorder
+  // planning, alongside the other two status switches.
+  exclude_from_planning: z.boolean(),
 
   // Tab 2: Pricing (coerce strings from API/inputs to numbers)
   list_price: z.coerce.number()

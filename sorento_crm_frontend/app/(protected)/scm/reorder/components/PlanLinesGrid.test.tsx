@@ -165,6 +165,11 @@ function renderGrid(
     toolbarPrimary?: React.ReactNode;
     live?: boolean;
     groupByChannel?: boolean;
+    /** S2 (9 Sep 2026): the "Decided"/"Status" presets left the Filters popover - the
+     *  grid still reads them, but only as controlled props from a caller (the summary
+     *  tiles, in production). Tests that used to drive the popover's own select now set
+     *  this directly, the same way `PlanLinesSection` does. */
+    decidedFilter?: 'all' | 'undecided' | 'decided';
   } = {},
 ) {
   const onRowEdit = vi.fn();
@@ -202,6 +207,9 @@ function renderGrid(
         decisionsReadOnly={opts.decisionsReadOnly}
         readOnlyReason={opts.readOnlyReason ?? null}
         groupByChannel={opts.groupByChannel}
+        {...(opts.decidedFilter !== undefined
+          ? { decidedFilter: opts.decidedFilter, onDecidedFilterChange: () => {} }
+          : {})}
       />
     );
   }
@@ -482,13 +490,39 @@ describe('PlanLinesGrid - the toolbar (C2)', () => {
     expect(screen.getByRole('button', { name: 'Confirm (20)' })).toBeInTheDocument();
   });
 
-  it('keeps the price and level filters so the hidden fields stay findable (R8)', async () => {
-    renderGrid([line()]);
+  // R8's "price and level filters" preset selects are gone (S2, AC-S2.1, 9 Sep 2026) -
+  // the Filters popover carries the dynamic builder alone; see
+  // 'the Filters popover carries the builder alone (AC-S2.1)' below.
+});
+
+describe('PlanLinesGrid - the Filters popover carries the builder alone (AC-S2.1)', () => {
+  const openFilters = () => {
     const trigger = screen.getByRole('button', { name: /Filters/i });
-    // Radix opens its menu on pointerdown, not on click.
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: 'mouse' });
-    expect(await screen.findByLabelText('Suggested price')).toBeInTheDocument();
-    expect(screen.getByLabelText('AutoCount level')).toBeInTheDocument();
+  };
+
+  it('shows the dynamic filter builder and none of the five retired preset selects', async () => {
+    renderGrid([line()]);
+    openFilters();
+
+    expect(await screen.findByTestId('dynamic-filter-group')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Status')).toBeNull();
+    expect(screen.queryByLabelText('Decision')).toBeNull();
+    expect(screen.queryByLabelText('Suggested price')).toBeNull();
+    expect(screen.queryByLabelText('Suggested action')).toBeNull();
+    expect(screen.queryByLabelText('AutoCount level')).toBeNull();
+  });
+
+  it('rec type and decision state are reachable as builder fields', async () => {
+    renderGrid([line()]);
+    openFilters();
+    await screen.findByTestId('dynamic-filter-group');
+
+    // Adding a condition exposes the field picker's own options (same pattern as
+    // `dynamicFilterAndSavedViews.reusability.test.tsx`).
+    fireEvent.click(screen.getByRole('button', { name: /^Condition$/i }));
+    expect(screen.getByText('Rec type')).toBeInTheDocument();
+    expect(screen.getByText('Decision state')).toBeInTheDocument();
   });
 });
 
@@ -506,11 +540,6 @@ describe('PlanLinesGrid - the Decided filter reads GROUPED rows (S3 perf, AC-3.5
     warehouse_name: 'Petaling Jaya', sku: 'SKU-GROUP',
   });
 
-  const openFilters = () => {
-    const trigger = screen.getByRole('button', { name: /Filters/i });
-    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false, pointerType: 'mouse' });
-  };
-
   it('renders ONE row for the group when only one member is decided, not two', () => {
     renderGrid([memberA, memberB], {
       groupByChannel: true,
@@ -520,35 +549,35 @@ describe('PlanLinesGrid - the Decided filter reads GROUPED rows (S3 perf, AC-3.5
     expect(screen.getAllByText('SKU-GROUP')).toHaveLength(1);
   });
 
-  it('a partially-decided group counts as DECIDED under "Already decided" (any member rule)', async () => {
+  // S2 (9 Sep 2026): the "Decision" preset select left the Filters popover - the
+  // grid's OWN decided-filter is now driven only by a controlled prop (the summary
+  // tiles do this in production; `PlanLinesGrid.test.tsx`'s harness forwards
+  // `decidedFilter` the same way). `evaluateFilterGroup`'s own "Decision state"
+  // builder field is the popover's replacement and has no bearing on this rule.
+
+  it('a partially-decided group counts as DECIDED under "Already decided" (any member rule)', () => {
     renderGrid([memberA, memberB], {
       groupByChannel: true,
       decisions: { a: { buy: 10 } }, // only member 'a' decided, 'b' is not
-    });
-    openFilters();
-    fireEvent.change(await screen.findByLabelText('Decision'), {
-      target: { value: 'decided' },
+      decidedFilter: 'decided',
     });
     expect(screen.getByText('SKU-GROUP')).toBeInTheDocument();
   });
 
-  it('the SAME partially-decided group disappears under "Still to decide"', async () => {
+  it('the SAME partially-decided group disappears under "Still to decide"', () => {
     renderGrid([memberA, memberB], {
       groupByChannel: true,
       decisions: { a: { buy: 10 } },
-    });
-    openFilters();
-    fireEvent.change(await screen.findByLabelText('Decision'), {
-      target: { value: 'undecided' },
+      decidedFilter: 'undecided',
     });
     expect(screen.queryByText('SKU-GROUP')).not.toBeInTheDocument();
   });
 
-  it('a group with NO member decided is undecided, and vanishes from "Already decided"', async () => {
-    renderGrid([memberA, memberB], { groupByChannel: true, decisions: {} });
-    openFilters();
-    fireEvent.change(await screen.findByLabelText('Decision'), {
-      target: { value: 'decided' },
+  it('a group with NO member decided is undecided, and vanishes from "Already decided"', () => {
+    renderGrid([memberA, memberB], {
+      groupByChannel: true,
+      decisions: {},
+      decidedFilter: 'decided',
     });
     expect(screen.queryByText('SKU-GROUP')).not.toBeInTheDocument();
   });

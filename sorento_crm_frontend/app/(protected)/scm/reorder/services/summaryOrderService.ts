@@ -145,6 +145,26 @@
  *    the accepted quantity back to the frozen location inputs, in the UOM's integer
  *    minor units, summing exactly to `chosen_qty` (AC-F12). No rescaling formula.
  *
+ * 5) The sheet, as a file (S9, G6 ruling, 9 Sep 2026)
+ *
+ *      GET /api/v1/scm/order-summary/export
+ *          ?run_id=<opaque>          optional; same rule as (1) - omitted reads the
+ *                                    newest completed run
+ *          &format=pdf|xlsx          required
+ *
+ *      -> 200  the file, `Content-Disposition: attachment; filename="..."`
+ *              `application/pdf` or the xlsx content type
+ *      -> 422  an unrecognised `format`
+ *      Auth: `scm.dashboard.view`, the same read-only permission as the report itself -
+ *      exporting states nothing new, it only prints what (1) already answers.
+ *
+ *    Same NINE columns the report grid renders (AC-S9.2): Item, On hand, Project qty,
+ *    Dealer o/s, Order qty, Delivery, Project / customer, Supplier, Remarks. `Order qty`
+ *    is the chosen quantity, blank when nobody has decided one yet - the pen column,
+ *    exactly as the printed sheet leaves it. PDF is landscape A4 through
+ *    `app.services.pdf_render`; xlsx through `app.services.reports.xlsx_renderer`. The
+ *    filename comes off the response's `Content-Disposition`, never rebuilt on this side.
+ *
  * -- ERROR SHAPE -------------------------------------------------------------
  * Every failure is the standard `AppException` envelope the global handler in
  * `app/main.py` serialises (`{ detail | message | error }`, correct HTTP status).
@@ -154,6 +174,10 @@
  */
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
+import {
+  filenameFromContentDisposition,
+  saveBlobAs,
+} from '@/app/(protected)/project-sales/_shared/services/fileDownload';
 import {
   USE_SUMMARY_ORDER_MOCKS,
   mockOrderSummary,
@@ -252,4 +276,21 @@ export async function recordOrderDecision(
   );
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to record the decision'));
   return (await res.json()) as OrderSummaryDecisionResult;
+}
+
+/**
+ * The sheet as a file (AC-S9.3/AC-S9.4). No mock branch: the export always makes the
+ * real call, PDF/xlsx generation being nothing a fixture can usefully stand in for.
+ */
+export async function downloadOrderSummaryExport(
+  runId: string,
+  format: 'pdf' | 'xlsx',
+): Promise<void> {
+  const params = new URLSearchParams({ run_id: runId, format });
+  const res = await apiFetch(`/api/v1/scm/order-summary/export?${params}`);
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to export the order summary'));
+  const filename =
+    filenameFromContentDisposition(res.headers.get('Content-Disposition')) ??
+    `order-summary.${format === 'pdf' ? 'pdf' : 'xlsx'}`;
+  saveBlobAs(await res.blob(), filename);
 }

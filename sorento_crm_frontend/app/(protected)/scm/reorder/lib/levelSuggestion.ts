@@ -42,6 +42,11 @@ export interface LevelBasis {
   /** Monthly bars behind the average. Evidence only - the arithmetic reads the window. */
   months: { month: string; qty: number }[];
   no_movement: boolean;
+  /** S7 (9 Sep 2026, G1 ruling): ADU (and the monthly bars behind it) were computed off
+   *  retail (`dealer`-segment) deliveries only, so a project job shipped once does not
+   *  lift the dealer reorder level. Optional - absent on a cached response predating the
+   *  field, and `levelTerms` reads that as false (the unfiltered figure). */
+  retail_only?: boolean;
 }
 
 export interface LevelSuggestion {
@@ -157,7 +162,10 @@ export function describeLevelSuggestion(s: LevelSuggestion | undefined): string 
 export function levelTerms(s: LevelSuggestion): { label: string; value: string }[] {
   const b = s.basis;
   return [
-    { label: 'ADU', value: `${rate(b.adu)} / day` },
+    // AC-S7.2: "(retail)" says the ADU behind this level counted only retail
+    // deliveries - the same word the level suggestion badge and health class use for
+    // the same channel, so a reader never has to learn a second spelling of it.
+    { label: 'ADU', value: `${rate(b.adu)} / day${b.retail_only ? ' (retail)' : ''}` },
     { label: 'Lead time', value: `${n(b.lead_time_days)} d` },
     { label: 'Safety', value: `${n(b.safety_stock)} (${n(b.safety_days)} d)` },
   ];

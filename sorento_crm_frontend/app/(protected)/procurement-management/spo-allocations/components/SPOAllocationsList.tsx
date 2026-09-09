@@ -165,20 +165,26 @@ export default function SPOAllocationsList() {
         accessorKey: 'spo_number',
         header: ({ column }) => <DataGridColumnHeader title="SPO No" column={column} />,
         cell: ({ row }) => (
-          <div className="flex flex-col">
-            <Link
-              href={detailHref(row.original)}
-              onClick={(e) => e.stopPropagation()}
-              className="font-medium text-primary hover:underline"
-              title={`Open ${row.original.spo_number}`}
-            >
-              {row.original.spo_number}
-            </Link>
-            <span className="text-xs text-muted-foreground">{fmtEta(row.original.doc_date)}</span>
-          </div>
+          <Link
+            href={detailHref(row.original)}
+            onClick={(e) => e.stopPropagation()}
+            className="font-medium text-primary hover:underline"
+            title={`Open ${row.original.spo_number}`}
+          >
+            {row.original.spo_number}
+          </Link>
         ),
         size: 190,
         meta: { headerTitle: 'SPO No', skeleton: <Skeleton className="h-8 w-28" /> },
+      },
+      {
+        accessorKey: 'doc_date',
+        header: ({ column }) => <DataGridColumnHeader title="Date" column={column} />,
+        cell: ({ row }) => (
+          <span className="text-muted-foreground">{fmtEta(row.original.doc_date)}</span>
+        ),
+        size: 110,
+        meta: { headerTitle: 'Date' },
       },
       {
         accessorKey: 'supplier_name',

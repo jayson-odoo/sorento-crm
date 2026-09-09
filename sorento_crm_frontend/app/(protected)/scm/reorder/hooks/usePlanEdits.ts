@@ -11,6 +11,7 @@ import {
   editedProductCount,
   hasRowEdit,
   recIdsForLine,
+  withConfirmLifecycle,
   type ConfirmSummary,
   type PlanRowEdit,
   type PlanRowEditMap,
@@ -18,6 +19,7 @@ import {
 import type { CoverProposal } from '../lib/coverPlan';
 import type { PoReceipt } from '../lib/poCover';
 import type { PlanLine } from '../lib/planLine';
+import type { ProductEconomics } from '../lib/productHealth';
 import { planRowDecisionsKey } from './usePlanLines';
 
 /**
@@ -40,6 +42,10 @@ export function usePlanEdits(
   decisions: PlanDecisionMap,
   coverFor?: (line: PlanLine) => CoverProposal,
   poFor?: (line: PlanLine) => PoReceipt[],
+  /** S8 (G4, 9 Sep 2026): what the health class suggests for a line, read on Confirm so
+   *  every confirmed product's lifecycle answer is written even where the buyer never
+   *  touched the radio. */
+  economicsFor?: (line: PlanLine) => ProductEconomics | undefined,
 ) {
   const qc = useQueryClient();
   const [edits, setEdits] = useState<PlanRowEditMap>({});
@@ -64,9 +70,12 @@ export function usePlanEdits(
   const clearAll = useCallback(() => setEdits({}), []);
 
   const saveCount = useMemo(() => editedProductCount(edits, lines), [edits, lines]);
+  // G5 (S6, 9 Sep 2026): `confirmSummary` no longer sizes an undecided row off the
+  // engine's own suggestion, so it has no more use for `coverFor`/`poFor` - kept as this
+  // hook's own params below since `PlanLinesSection` still wires them in.
   const confirmable = useMemo<ConfirmSummary>(
-    () => confirmSummary(edits, decisions, lines, coverFor, poFor),
-    [edits, decisions, lines, coverFor, poFor],
+    () => confirmSummary(edits, decisions, lines),
+    [edits, decisions, lines],
   );
 
   /**
@@ -89,44 +98,53 @@ export function usePlanEdits(
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [saveCount]);
 
-  /** The draft map, flattened to one row per RECOMMENDATION - the wire shape. */
-  const payloadRows = useCallback((): PlanEditRow[] => {
-    const rows: PlanEditRow[] = [];
-    for (const line of lines) {
-      const edit = edits[line.id];
-      if (!hasRowEdit(edit)) continue;
-      const decision = editedDecisionFor(edit as PlanRowEdit, decisionForLine(line, decisions));
-      for (const recId of recIdsForLine(line)) {
-        rows.push({
-          rec_id: recId,
-          ...(decision ? { decision } : {}),
-          ...(edit?.moq !== undefined ? { moq: edit.moq } : {}),
-          ...(edit?.level !== undefined ? { level: edit.level } : {}),
-          ...(edit?.reorderQty !== undefined ? { reorder_qty: edit.reorderQty } : {}),
-          ...(edit?.lifecycle !== undefined ? { lifecycle: edit.lifecycle } : {}),
-        });
+  /** The draft map, flattened to one row per RECOMMENDATION - the wire shape. Takes an
+   *  explicit edits map (defaulting to the live draft) so `confirm` can save an AUGMENTED
+   *  copy - one that also carries the health suggestion for every row it is about to
+   *  confirm (S8, G4) - without writing that suggestion into the draft state itself. */
+  const payloadRows = useCallback(
+    (sourceEdits: PlanRowEditMap = edits): PlanEditRow[] => {
+      const rows: PlanEditRow[] = [];
+      for (const line of lines) {
+        const edit = sourceEdits[line.id];
+        if (!hasRowEdit(edit)) continue;
+        const decision = editedDecisionFor(edit as PlanRowEdit, decisionForLine(line, decisions));
+        for (const recId of recIdsForLine(line)) {
+          rows.push({
+            rec_id: recId,
+            ...(decision ? { decision } : {}),
+            ...(edit?.moq !== undefined ? { moq: edit.moq } : {}),
+            ...(edit?.level !== undefined ? { level: edit.level } : {}),
+            ...(edit?.reorderQty !== undefined ? { reorder_qty: edit.reorderQty } : {}),
+            ...(edit?.lifecycle !== undefined ? { lifecycle: edit.lifecycle } : {}),
+          });
+        }
       }
-    }
-    return rows;
-  }, [edits, lines, decisions]);
+      return rows;
+    },
+    [lines, decisions],
+  );
 
-  const save = useCallback(async () => {
-    if (!runId) return null;
-    const rows = payloadRows();
-    if (!rows.length) return null;
-    setIsSaving(true);
-    try {
-      const result = await savePlanEdits(runId, rows);
-      clearAll();
-      await qc.invalidateQueries({ queryKey: planRowDecisionsKey(runId) });
-      await qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'level-suggestions'] });
-      await qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'product-economics'] });
-      await qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'buy'] });
-      return result;
-    } finally {
-      setIsSaving(false);
-    }
-  }, [runId, payloadRows, clearAll, qc]);
+  const save = useCallback(
+    async (sourceEdits: PlanRowEditMap = edits) => {
+      if (!runId) return null;
+      const rows = payloadRows(sourceEdits);
+      if (!rows.length) return null;
+      setIsSaving(true);
+      try {
+        const result = await savePlanEdits(runId, rows);
+        clearAll();
+        await qc.invalidateQueries({ queryKey: planRowDecisionsKey(runId) });
+        await qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'level-suggestions'] });
+        await qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'product-economics'] });
+        await qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'buy'] });
+        return result;
+      } finally {
+        setIsSaving(false);
+      }
+    },
+    [runId, edits, payloadRows, clearAll, qc],
+  );
 
   /**
    * Confirm = save, then confirm. One button (plan 4.5): a buyer who edited three rows and
@@ -137,7 +155,10 @@ export function usePlanEdits(
     if (!runId) return null;
     setIsConfirming(true);
     try {
-      await save();
+      // S8 (G4, 9 Sep 2026): the health suggestion persists on Confirm for every product
+      // being bought, even where the buyer never touched the radio - `withConfirmLifecycle`
+      // fills it in for exactly the rows `confirmable` already counts, nothing more.
+      await save(withConfirmLifecycle(edits, decisions, lines, economicsFor));
       const result = await confirmDecisions(runId, []);
       await qc.invalidateQueries({ queryKey: planRowDecisionsKey(runId) });
       await qc.invalidateQueries({ queryKey: ['scm', 'purchase-orders'] });
@@ -145,7 +166,7 @@ export function usePlanEdits(
     } finally {
       setIsConfirming(false);
     }
-  }, [runId, save, qc]);
+  }, [runId, save, qc, edits, decisions, lines, economicsFor]);
 
   return {
     edits,

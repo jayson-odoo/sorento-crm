@@ -18,7 +18,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { EM_DASH, fmtDecimal, fmtInt, fmtMoney, fmtSupplierCost } from '../../lib/format';
+import Link from 'next/link';
+import { EM_DASH, fmtDecimal, fmtInt, fmtMoney, fmtSupplierCost, isBaseCurrency } from '../../lib/format';
 import { applySourceEdits, sourceEditsForTotal, type CoverProposal } from '../lib/coverPlan';
 import { roundBuyQty } from '../lib/orderQtyLedger';
 import { m8CashImpact } from '../lib/planRow';
@@ -38,7 +39,7 @@ import {
   levelTerms,
   type LevelSuggestion,
 } from '../lib/levelSuggestion';
-import { healthVerdict, type ProductEconomics } from '../lib/productHealth';
+import { healthVerdict, suggestedLifecycle, type ProductEconomics } from '../lib/productHealth';
 import type { PoReceipt } from '../lib/poCover';
 import type { PlanRowPriceMode } from '../types/decisions.types';
 
@@ -145,6 +146,15 @@ export function PlanRowPanel({
       ? null
       : m8CashImpact({ order_qty: buyQty, unit_cost: line.unit_cost, unit_cost_base: unitCostBase });
 
+  /** AC-S2.4: the currency to name in the "no MYR rate" hint, or null when there is
+   *  nothing to flag - either the purchase is already base currency, or the line's own
+   *  `unit_cost_base` is on file (the missing-rate case is `line.unit_cost_base == null`
+   *  specifically, not `ask_new` mode's deliberate null). */
+  const noMyrRateFor =
+    price?.last?.currency && !isBaseCurrency(price.last.currency) && line.unit_cost_base == null
+      ? price.last.currency
+      : null;
+
   /** Write a whole mixture back to the draft, keeping the buyer's price call with it. */
   const setDecision = (next: PlanDecision) => onEdit({ decision: { ...next } });
 
@@ -211,8 +221,11 @@ export function PlanRowPanel({
          null);
 
   const health = healthVerdict(economics, healthWindows);
+  // AC-S8.1 (G4 ruling, 9 Sep 2026): a stored decision always wins; short of one, the
+  // radio preselects from the health class rather than sitting with neither option
+  // checked - Dead suggests Discontinue, everything else suggests Keep selling.
   const lifecycle =
-    edit?.lifecycle !== undefined ? edit.lifecycle : (economics?.lifecycle_decision ?? null);
+    edit?.lifecycle ?? economics?.lifecycle_decision ?? suggestedLifecycle(economics?.movement_class);
 
   const months = level?.basis.months ?? [];
 
@@ -355,7 +368,13 @@ export function PlanRowPanel({
             <span className="min-w-0 text-end">
               {hasPriceOnFile ? (
                 <span className="tabular-nums font-medium">
-                  {fmtSupplierCost(price?.last?.unit_cost ?? line.unit_cost ?? 0, line.currency)}
+                  {/* AC-S2.3: labelled in the PURCHASE's own currency - `price.last.currency`
+                      when there is one on file, the line's own currency only as a fallback
+                      when nothing was ever purchased. */}
+                  {fmtSupplierCost(
+                    price?.last?.unit_cost ?? line.unit_cost ?? 0,
+                    price?.last?.currency ?? line.currency,
+                  )}
                 </span>
               ) : (
                 <span className="text-muted-foreground">No price on file</span>
@@ -425,6 +444,18 @@ export function PlanRowPanel({
               <span className="text-2xs text-muted-foreground"> at last price</span>
             ) : null}
           </p>
+          {/* AC-S2.4: a bare "-" on a foreign-currency purchase with no MYR rate on file
+              reads as "nobody knows", when the honest answer is "somebody has to key the
+              rate" (`scm.currency_rate` has 0 rows on the prod copy). */}
+          {noMyrRateFor ? (
+            <p className="text-2xs text-amber-600">
+              {`No MYR rate for ${noMyrRateFor}, set it under `}
+              <Link href="/scm/policies" className="underline">
+                SCM policies
+              </Link>
+              .
+            </p>
+          ) : null}
         </section>
 
         {/* ---- 3. AutoCount level + qty ------------------------------------- */}

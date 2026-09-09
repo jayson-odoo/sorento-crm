@@ -282,6 +282,13 @@ class ReorderRun(Base, CompanyScopedMixin):
     # decision_grain - a per-RUN choice, not a live policy, so it cannot move under a run
     # already planned.
     plan_horizon_date = Column(Date, nullable=True)
+    # "Sales orders needed FROM" (S4, PLAN-reorder-feedback-9sep.md): demand needed BEFORE
+    # this date is excluded from the run's netting, the start-side twin of
+    # `plan_horizon_date`. NULL (the default) plans every open SO line regardless of when
+    # it was needed, unchanged from before this column existed. Demand carrying no date at
+    # all is always counted (G2, 9 Sep ruling), the same reading the end date already gives
+    # it.
+    plan_horizon_start = Column(Date, nullable=True)
     policy_snapshot_ref = Column(String, nullable=True)
     started_at = Column(DateTime(timezone=False), nullable=True)
     finished_at = Column(DateTime(timezone=False), nullable=True)
@@ -916,6 +923,28 @@ class OrderSummaryRow(Base, CompanyScopedMixin):
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    # --- S9 (PLAN-reorder-feedback-9sep.md, G6 ruling): the sheet's own columns, frozen
+    # with the row at run time exactly like everything above. ---
+    #: `[{month: "2026-09" | null, qty}]` - open retail SO lines by `required_date` plus
+    #: confirmed project Order Inquiry rows by `delivery_date`, undated under a null month.
+    delivery_by_month = Column(JSONB, nullable=True)
+    #: `[{label, qty}]` - the open project-class order book (the same book
+    #: `project_demand` sums) split by customer, so the two always add up.
+    project_customers = Column(JSONB, nullable=True)
+    #: The buyer's chosen supplier wins at READ time (`_serialise_row`); this is the
+    #: FROZEN suggestion - the primary product-supplier link, same precedence
+    #: `_supplier_constraints` already uses for MOQ.
+    supplier_name = Column(String, nullable=True)
+    #: Open PO qty (BRW pool), same book `po_book_service` reads.
+    po_open_qty = Column(Numeric, nullable=True)
+    #: Open SPO qty still to arrive, same book `spo_supply` reads.
+    incoming_spo_qty = Column(Numeric, nullable=True)
+    #: The latest `goods_received` picking line for the product, network-wide.
+    last_receipt_date = Column(Date, nullable=True)
+    last_receipt_qty = Column(Numeric, nullable=True)
+    #: The suggested supplier's own MOQ (`ProductSupplier.moq`), alongside its name above.
+    moq = Column(Numeric, nullable=True)
 
     __table_args__ = (
         # One row per product per run, or the report reads whichever duplicate comes back

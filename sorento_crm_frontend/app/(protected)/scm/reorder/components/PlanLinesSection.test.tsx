@@ -17,8 +17,15 @@ vi.mock('../hooks/usePlanLines', () => ({ usePlanLines: (...a: unknown[]) => use
 
 // The draft map has its own suite (`usePlanEdits` is exercised through `PlanLinesGrid`);
 // here it would only drag a QueryClient into every case that is about orchestration.
+// A `vi.fn()`, not a fixed object, so AC-S6.3's Confirm-tooltip test below can vary
+// `confirmable.products` per case - the same shape `usePlanLines` already uses.
+const usePlanEditsMock = vi.fn();
 vi.mock('../hooks/usePlanEdits', () => ({
-  usePlanEdits: () => ({
+  usePlanEdits: (...a: unknown[]) => usePlanEditsMock(...a),
+}));
+
+function stubPlanEdits(over: Record<string, unknown> = {}) {
+  usePlanEditsMock.mockReturnValue({
     edits: {},
     setRowEdit: vi.fn(),
     resetRow: vi.fn(),
@@ -29,8 +36,9 @@ vi.mock('../hooks/usePlanEdits', () => ({
     confirm: vi.fn(),
     isSaving: false,
     isConfirming: false,
-  }),
-}));
+    ...over,
+  });
+}
 
 vi.mock('./PlanLinesGrid', () => ({
   PlanLinesGrid: ({
@@ -39,18 +47,24 @@ vi.mock('./PlanLinesGrid', () => ({
     decidedFilter,
     lines,
     secondaryActions,
+    toolbarPrimary,
   }: {
     runId: string | null;
     statusFilter: string | null;
     decidedFilter?: string;
     lines: PlanLine[];
     secondaryActions?: ToolbarAction[];
+    toolbarPrimary?: React.ReactNode;
   }) => (
     <div>
       plan-lines-grid runId={runId} statusFilter={String(statusFilter)}
       decidedFilter={String(decidedFilter)}
       lines={lines.map((l) => l.sku).join(',')}
       secondaryActions={(secondaryActions ?? []).map((a) => a.key).join(',')}
+      {/* AC-S6.3: the real grid renders Save/Confirm at the toolbar's right end
+          (`toolbarPrimary`) - rendered here too so a test can reach the actual buttons
+          `PlanLinesSection` builds, not a restated copy of them. */}
+      {toolbarPrimary}
     </div>
   ),
 }));
@@ -116,6 +130,8 @@ function stubPlanLines(over: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   usePlanLines.mockReset();
+  usePlanEditsMock.mockReset();
+  stubPlanEdits();
 });
 
 describe('PlanLinesSection - loading / error / data', () => {
@@ -426,5 +442,30 @@ describe('PlanLinesSection - manual mode hides not-breached covered rows by defa
     render(<PlanLinesSection runId="run-1" />);
 
     expect(screen.getByText(/plan-lines-grid/).textContent).toContain('MANUAL-BUY');
+  });
+});
+
+describe('PlanLinesSection - Confirm button tooltip (AC-S6.3)', () => {
+  it('reads "Decide at least one row first" and is disabled at Confirm (0)', () => {
+    stubPlanLines();
+    stubPlanEdits({ confirmable: { products: 0, cash: 0, unpriced: 0 } });
+    render(<PlanLinesSection runId="run-1" />);
+
+    const confirmButton = screen.getByRole('button', { name: /Confirm \(0\)/ });
+    expect(confirmButton).toBeDisabled();
+    expect(confirmButton).toHaveAttribute('title', 'Decide at least one row first');
+  });
+
+  it('drops the "decide a row" hint once a product is confirmable', () => {
+    stubPlanLines();
+    stubPlanEdits({ confirmable: { products: 2, cash: 500, unpriced: 0 } });
+    render(<PlanLinesSection runId="run-1" />);
+
+    const confirmButton = screen.getByRole('button', { name: /Confirm \(2\)/ });
+    expect(confirmButton).not.toBeDisabled();
+    expect(confirmButton).toHaveAttribute(
+      'title',
+      'Save, then turn this plan into draft purchase orders',
+    );
   });
 });

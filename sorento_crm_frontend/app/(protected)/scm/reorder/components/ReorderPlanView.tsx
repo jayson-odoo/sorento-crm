@@ -20,9 +20,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 import { ConfirmActionDialog } from '../../components/ConfirmActionDialog';
-import { fmtDate, fmtInt } from '../../lib/format';
+import { fmtInt } from '../../lib/format';
 import { legacyLockReason, shouldGroupByChannel } from '../lib/planGrain';
-import { runStartedLabel } from '../lib/runListing';
+import { describeWindow, runStartedLabel } from '../lib/runListing';
 import { decisionsKey } from '../hooks/useDecisions';
 import { planRowDecisionsKey } from '../hooks/usePlanLines';
 import {
@@ -193,9 +193,9 @@ export function ReorderPlanView({ runId }: { runId: string }) {
           {startedLabel ? `Plan ${startedLabel}` : 'Plan'}
         </h2>
         <p className="text-sm text-muted-foreground">
-          {item.plan_horizon_date
-            ? `Sales order cut-off ${fmtDate(item.plan_horizon_date)}`
-            : 'No cut-off'}
+          {/* AC-S4.5: one wording helper, so the header, this subtitle and the plans
+              list never say the window three different ways. */}
+          Sales orders needed: {describeWindow(item.plan_horizon_start, item.plan_horizon_date)}
         </p>
       </div>
     </div>

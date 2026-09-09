@@ -13,9 +13,11 @@ import { formatDateTimeInMalaysia } from '@/lib/helpers';
 export const EM_DASH = '-';
 
 const intFmt = new Intl.NumberFormat('en-MY', { maximumFractionDigits: 0 });
+// Two decimals, always (AC-S2.2, "standardized") - a zero reads "RM 0.00", never a bare
+// "RM 0" beside a supplier price that already carried cents (`fmtSupplierCost`).
 const moneyFmt = new Intl.NumberFormat('en-MY', {
-  minimumFractionDigits: 0,
-  maximumFractionDigits: 0,
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
 });
 
 /** Integer with thousands separators. Deferred (null) → em dash. */

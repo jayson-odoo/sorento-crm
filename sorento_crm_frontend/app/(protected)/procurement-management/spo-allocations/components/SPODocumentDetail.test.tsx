@@ -14,7 +14,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, cleanup, within, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, within, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 class ResizeObserverStub {
@@ -589,6 +589,136 @@ describe('SPODocumentDetail - Edit in planner (R24, AC-K5)', () => {
     renderDetail();
 
     expect(screen.queryByRole('link', { name: /edit in planner/i })).toBeNull();
+  });
+});
+
+describe('SPODocumentDetail - Product cell sub-line only when it differs from the code (AC-S1.6)', () => {
+  it('renders one line when the product name equals the code', () => {
+    useSPODocument.mockReturnValue({
+      data: doc({
+        lines: [
+          line({
+            product: { id: 'prod-1', product_code: 'C-FHSS14', product_name: 'C-FHSS14' },
+          }),
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const cell = screen.getByText('C-FHSS14').closest('td') as HTMLElement;
+    // Only ONE element carries the text - the code line, not a duplicate sub-line.
+    expect(within(cell).getAllByText('C-FHSS14')).toHaveLength(1);
+  });
+
+  it('renders two lines when the product name differs from the code', () => {
+    useSPODocument.mockReturnValue({
+      data: doc({
+        lines: [
+          line({
+            product: { id: 'prod-1', product_code: 'CW-BASIN-450', product_name: 'Ceramic Wash Basin 450mm' },
+          }),
+        ],
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    expect(screen.getByText('CW-BASIN-450')).toBeInTheDocument();
+    expect(screen.getByText('Ceramic Wash Basin 450mm')).toBeInTheDocument();
+  });
+});
+
+describe('SPODocumentDetail - Lines sort and search (AC-S1.2, AC-S1.3)', () => {
+  function twoLines() {
+    return [
+      line({
+        id: 'l-b',
+        product: { id: 'prod-b', product_code: 'CW-BASIN-450', product_name: 'Basin' },
+        warehouse: { id: 'wh-b', warehouse_code: 'BRW-BB', warehouse_name: 'Brickworks Batu' },
+      }),
+      line({
+        id: 'l-a',
+        product: { id: 'prod-a', product_code: 'CW-TAP-200', product_name: 'Tap' },
+        warehouse: { id: 'wh-a', warehouse_code: 'BRW-IB', warehouse_name: 'Brickworks Ipoh' },
+      }),
+    ];
+  }
+
+  it('sorts rows by clicking the Warehouse header', () => {
+    useSPODocument.mockReturnValue({
+      data: doc({ line_count: 2, lines: twoLines() }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    const bodyRows = () => document.querySelectorAll('tbody tr');
+    // BRW-BB (l-b) < BRW-IB (l-a) - ascending keeps l-b first, same as the unsorted order.
+    fireEvent.click(screen.getByRole('button', { name: 'Warehouse' }));
+    expect(within(bodyRows()[0] as HTMLElement).getByText('CW-BASIN-450')).toBeInTheDocument();
+
+    // Second click is descending - l-a (BRW-IB) now leads.
+    fireEvent.click(screen.getByRole('button', { name: 'Warehouse' }));
+    expect(within(bodyRows()[0] as HTMLElement).getByText('CW-TAP-200')).toBeInTheDocument();
+  });
+
+  it('search narrows lines by warehouse code, case-insensitive', async () => {
+    useSPODocument.mockReturnValue({
+      data: doc({ line_count: 2, lines: twoLines() }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    expect(screen.getByText('CW-BASIN-450')).toBeInTheDocument();
+    expect(screen.getByText('CW-TAP-200')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText('Search product or warehouse'), {
+      target: { value: 'brw-ib' },
+    });
+
+    await waitFor(() => expect(screen.queryByText('CW-BASIN-450')).toBeNull());
+    expect(screen.getByText('CW-TAP-200')).toBeInTheDocument();
+  });
+
+  it('shows "No lines match" when the search matches nothing', async () => {
+    useSPODocument.mockReturnValue({
+      data: doc({ line_count: 2, lines: twoLines() }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    fireEvent.change(screen.getByPlaceholderText('Search product or warehouse'), {
+      target: { value: 'no-such-product' },
+    });
+
+    await waitFor(() => expect(screen.getByText('No lines match')).toBeInTheDocument());
+  });
+
+  it('search matches by product name too', async () => {
+    useSPODocument.mockReturnValue({
+      data: doc({ line_count: 2, lines: twoLines() }),
+      isLoading: false,
+      isError: false,
+    });
+    renderDetail();
+    openTab('Lines');
+
+    fireEvent.change(screen.getByPlaceholderText('Search product or warehouse'), {
+      target: { value: 'tap' },
+    });
+
+    await waitFor(() => expect(screen.queryByText('CW-BASIN-450')).toBeNull());
+    expect(screen.getByText('CW-TAP-200')).toBeInTheDocument();
   });
 });
 

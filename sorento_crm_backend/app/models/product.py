@@ -213,6 +213,12 @@ class Product(Base, CompanyScopedMixin):
     # Read through `chat_searchable_products()` below, never inline.
     is_searchable = Column(Boolean, default=True, server_default=text("true"), nullable=False)
     is_discontinued = Column(Boolean, default=False, nullable=False, server_default="false")
+    # S5 (PLAN-reorder-feedback-9sep.md, G3 ruling): the buyer's own switch to keep a
+    # placeholder code (`**NEW`, `**SPARE PART`, ...) out of the reorder engine. Defaults
+    # false for EVERY product with no backfill - the buyer flips it by hand, one at a time.
+    exclude_from_planning = Column(
+        Boolean, default=False, nullable=False, server_default=text("false")
+    )
     # Discontinued-notification watermark. NULL = not yet reported by the batch cron
     # (cron-eligible while is_discontinued is True). Stamped with the run time when a
     # batch goes out; cleared back to NULL whenever is_discontinued flips True->False

@@ -75,6 +75,7 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
                enqueue: bool = True, include_market: bool = False,
                product_codes: Optional[list[str]] = None,
                plan_horizon_date: Optional[date] = None,
+               plan_horizon_start: Optional[date] = None,
                supersedes_run_id: Optional[str] = None) -> dict:
     """Insert a ``running`` ``scm.reorder_run`` (scope snapshot + started_at) and
     enqueue the RQ ``run_reorder`` task. Returns ``{run_id, status, buy_scope, stage}``.
@@ -110,9 +111,17 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
     OLD run is written only when this run actually reaches ``completed`` (see
     `_execute_run_scoped`), so a still-running or failed re-plan never makes a still-valid
     old run look superseded.
+
+    ``plan_horizon_start`` (S4, PLAN-reorder-feedback-9sep.md) is the start-side twin: demand
+    needed BEFORE it is excluded from the run's netting, undated demand always stays in (G2).
+    Enforced ``start <= end`` when both are set lives on the HTTP schema, so a direct service
+    call (tests, scripts) is trusted to pass a sane pair.
     """
     buy_scope = buy_scope if buy_scope in ("network", "warehouse") else "warehouse"
     warehouse_ids = _resolve_warehouse_ids(db, warehouse_codes)
+    # S5, AC-S5.2: G10's named-product bypass does not extend to an excluded product - a
+    # buyer who types one into Start Plan is refused outright, before anything is created.
+    _reject_excluded_named_products(db, product_codes)
     product_ids = _resolve_product_ids(db, product_codes)
     run_id = str(uuid.uuid4())
     now = datetime.utcnow()
@@ -126,6 +135,7 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
         budget_id=budget_id or None,
         include_market=bool(include_market),
         plan_horizon_date=plan_horizon_date,
+        plan_horizon_start=plan_horizon_start,
         policy_snapshot_ref=f"policies@{now.isoformat()}",
         started_at=now,
         run_log={"stage": _STAGES[0]},
@@ -173,6 +183,32 @@ def _resolve_product_ids(
         .all()
     )
     return [str(r[0]) for r in rows]
+
+
+def _reject_excluded_named_products(db: Session, product_codes: Optional[list[str]]) -> None:
+    """S5, AC-S5.2: a NAMED product still has to earn its way into a run - G10's "buyer
+    intent bypasses the committed-demand gate" does not extend to a product the buyer has
+    switched off entirely. Refuses the whole request, naming every excluded code, rather
+    than silently dropping them from the scope (a buyer who typed a code expects it planned
+    or told why not).
+    """
+    if not product_codes:
+        return
+    rows = (
+        db.query(Product.product_code)
+        .filter(Product.product_code.in_([str(c) for c in product_codes]))
+        .filter(Product.exclude_from_planning.is_(True))
+        .all()
+    )
+    excluded = sorted({r[0] for r in rows})
+    if excluded:
+        raise AppException(
+            status_code=422,
+            message=(
+                "Excluded from reorder planning, cannot be named in a run: "
+                + ", ".join(excluded)
+            ),
+        )
 
 
 def _resolve_warehouse_ids(db: Session, warehouse_codes: Optional[list[str]]) -> list[str]:
@@ -268,6 +304,7 @@ def resolve_run_scope(db: Session, warehouse_ids, product_ids, started_at) -> di
 
 def replan_run(db: Session, old_run_id: str, *, warehouse_codes: list[str],
                product_codes: list[str], plan_horizon_date: Optional[date],
+               plan_horizon_start: Optional[date] = None,
                actor: Optional[str]) -> dict:
     """Launch a NEW run that supersedes ``old_run_id`` (G8). Runs stay immutable - this
     never mutates the old row's own scope/recommendations, it only starts a fresh run and
@@ -328,6 +365,7 @@ def replan_run(db: Session, old_run_id: str, *, warehouse_codes: list[str],
         product_codes=product_codes or None,
         actor=actor,
         plan_horizon_date=plan_horizon_date,
+        plan_horizon_start=plan_horizon_start,
         supersedes_run_id=old_run_id,
     )
 
@@ -375,7 +413,8 @@ def today_or_latest_run(db: Session, today: Optional[date] = None) -> Optional[d
     if today is None:
         today = datetime.now(_KL_TZ).date()
     cols = ("id, status, buy_scope, warehouse_ids, started_at, finished_at, run_log, "
-            "decision_grain, front_planning_contract_version, plan_horizon_date")
+            "decision_grain, front_planning_contract_version, plan_horizon_date, "
+            "plan_horizon_start")
     # Company-scoped by hand: raw SQL, so the ORM isolation filter never sees it. Without the
     # predicate the reorder page opens on whichever company ran most recently, which is
     # another company's plan wearing this company's chrome.
@@ -536,13 +575,17 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
         today = date.today()
 
         rows = _planning_rows(db, run.warehouse_ids, run.product_ids,
-                             horizon=run.plan_horizon_date)
+                             horizon=run.plan_horizon_date,
+                             horizon_start=run.plan_horizon_start)
         # Confirmed Reserve / Borrow leaves the Retail free-supply pool before anything is
         # netted against it (AC-F07); stamped on the row so every planning path sees it.
         # Horizoned on the SAME rule as the demand it offsets (AC-F-horizon): a reserve
         # claimed against a project line beyond "Plan until" must leave the pool together
-        # with that line's own demand, or it keeps subtracting cover nobody asked for.
-        _apply_project_supply_reduction(db, rows, horizon=run.plan_horizon_date)
+        # with that line's own demand, or it keeps subtracting cover nobody asked for. Same
+        # rule on the START side (S4): a reserve claimed against a line the window no longer
+        # covers must leave together with that demand too.
+        _apply_project_supply_reduction(db, rows, horizon=run.plan_horizon_date,
+                                        horizon_start=run.plan_horizon_start)
         last_move = _last_movement_map(db, [r["product_id"] for r in rows], run.warehouse_ids)
         # L5 - how long the stock sitting there has been sitting. Only ever consulted for a
         # SKU that has never moved, where until now there was no evidence at all.
@@ -568,7 +611,8 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
             recs = _plan_per_warehouse(db, run_id, rows, policies, today, last_move,
                                        wh_meta, last_buy=last_buy, rates=rates,
                                        levels=levels, last_cost=last_cost,
-                                       horizon=run.plan_horizon_date)
+                                       horizon=run.plan_horizon_date,
+                                       horizon_start=run.plan_horizon_start)
 
         # M4 cash stage - compute + FREEZE each buy's rank_score / rank / rank_factors
         # (funded/deferred is computed live at view-time against a budget, not here).
@@ -680,7 +724,8 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
 
 def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
                    product_ids: Optional[list[str]] = None,
-                   horizon: Optional[date] = None) -> list[dict]:
+                   horizon: Optional[date] = None,
+                   horizon_start: Optional[date] = None) -> list[dict]:
     """Active + ongoing SKU×warehouse rows with a net position / demand in the selected
     warehouses (reuses the dashboard focus predicate).
 
@@ -737,7 +782,11 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     a purchase, and the product because 11,390 codes exist in both companies, so the same code
     resolves to two rows.
     """
-    where = ["p.is_active = true", "p.is_discontinued = false"]
+    # S5, AC-S5.2: an excluded product earns no row, even one it would otherwise be
+    # committed-demand-admitted into (G10's named-product bypass does not reach here - that
+    # case is refused outright at `create_run`, see `_reject_excluded_named_products`).
+    where = ["p.is_active = true", "p.is_discontinued = false",
+             "p.exclude_from_planning = false"]
     params: dict[str, Any] = {}
     wh_scope, wh_params = company_sql_predicate(db, "w.company_id", param_prefix="cw")
     if wh_scope:
@@ -774,6 +823,9 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     committed_col = "COALESCE(cv.committed, 0) AS committed"
     committed_expr = "COALESCE(cv.committed, 0)"
     params["horizon"] = horizon
+    # S4: the start-side twin, bound beside `:horizon` on every leg
+    # `demand.horizon_committed_select_sql` applies the end to.
+    params["horizon_start"] = horizon_start
 
     # G1 (`PLAN-scm-reorder-oi-feedback-1sep.md`, captain-intent ruling 2 Sep - PENDING
     # CAPTAIN CONFIRM): the run universe is committed demand only, admitted at PRODUCT
@@ -955,7 +1007,8 @@ def awaiting_acknowledgement_rows(db: Session) -> int:
 
 
 def _project_supply_reduction_map(db: Session, rows: list[dict],
-                                  horizon: Optional[date] = None) -> dict[tuple, float]:
+                                  horizon: Optional[date] = None,
+                                  horizon_start: Optional[date] = None) -> dict[tuple, float]:
     """``{(product_id, warehouse_id): qty}`` of stock an ACTIVE Project decision has
     already claimed, at the location it was claimed FROM.
 
@@ -997,20 +1050,24 @@ def _project_supply_reduction_map(db: Session, rows: list[dict],
           AND sol.product_id::text = ANY(:pids)
           AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
                OR sol.required_date <= CAST(:horizon AS date))
+          AND (CAST(:horizon_start AS date) IS NULL OR sol.required_date IS NULL
+               OR sol.required_date >= CAST(:horizon_start AS date))
         GROUP BY 1, 2
-    """), {"pids": pids, "horizon": horizon}).fetchall()
+    """), {"pids": pids, "horizon": horizon, "horizon_start": horizon_start}).fetchall()
     return {(str(r[0]), str(r[1])): float(r[2] or 0.0)
             for r in found if r[1] is not None and float(r[2] or 0.0) > 0}
 
 
 def _apply_project_supply_reduction(db: Session, rows: list[dict],
-                                    horizon: Optional[date] = None) -> None:
+                                    horizon: Optional[date] = None,
+                                    horizon_start: Optional[date] = None) -> None:
     """Stamp each planning row with the confirmed Project claim on its own stock.
 
     Mutated onto the row rather than passed down, exactly like `_apply_unlocated_demand`,
     so every path that computes a cell sees it without a new parameter on four signatures.
     """
-    claims = _project_supply_reduction_map(db, rows, horizon=horizon)
+    claims = _project_supply_reduction_map(db, rows, horizon=horizon,
+                                           horizon_start=horizon_start)
     if not claims:
         return
     for r in rows:
@@ -1283,7 +1340,8 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
                         rates: Optional[dict] = None,
                         levels: Optional[dict] = None,
                         last_cost: Optional[dict] = None,
-                        horizon: Optional[date] = None) -> list[ReorderRecommendation]:
+                        horizon: Optional[date] = None,
+                        horizon_start: Optional[date] = None) -> list[ReorderRecommendation]:
     """Plan each SKU against each fulfilment POOL, not each warehouse.
 
     A shortage in one bin is covered from the shared pool its site draws on before it is
@@ -1308,7 +1366,7 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
     for r in rows:
         by_product.setdefault(str(r["product_id"]), []).append(r)
 
-    _apply_unlocated_demand(db, by_product, horizon=horizon)
+    _apply_unlocated_demand(db, by_product, horizon=horizon, horizon_start=horizon_start)
 
     for pid, prows in by_product.items():
         # Each location is its own pool unless the policy says siblings may cover for one
@@ -1349,6 +1407,7 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
 
 def _unlocated_demand_map(
     db: Session, product_ids: list[str], horizon: Optional[date] = None,
+    horizon_start: Optional[date] = None,
 ) -> dict[str, float]:
     """``{product_id: qty}`` of open RETAIL demand whose sales-order line names no
     warehouse.
@@ -1393,8 +1452,11 @@ def _unlocated_demand_map(
           {("AND " + co) if co else ""}
           AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
                OR sol.required_date <= CAST(:horizon AS date))
+          AND (CAST(:horizon_start AS date) IS NULL OR sol.required_date IS NULL
+               OR sol.required_date >= CAST(:horizon_start AS date))
         GROUP BY sol.product_id
-    """), {"pids": [str(p) for p in product_ids], "horizon": horizon, **co_params}).fetchall()
+    """), {"pids": [str(p) for p in product_ids], "horizon": horizon,
+           "horizon_start": horizon_start, **co_params}).fetchall()
     out: dict[str, float] = {}
     for pid, qty in rows:
         qty = float(qty or 0.0)
@@ -1404,7 +1466,8 @@ def _unlocated_demand_map(
 
 
 def _apply_unlocated_demand(db: Session, by_product: dict[str, list[dict]],
-                            horizon: Optional[date] = None) -> None:
+                            horizon: Optional[date] = None,
+                            horizon_start: Optional[date] = None) -> None:
     """Land each product's unlocated demand on the location that would actually ship it.
 
     > "all SO line should have warehouse one, no warehouse we can just put it under net"
@@ -1433,7 +1496,8 @@ def _apply_unlocated_demand(db: Session, by_product: dict[str, list[dict]],
     ``_unlocated_demand_map`` - this path alone carries ~97% of the book, so leaving it
     unhorizoned defeated the horizon for nearly the whole plan.
     """
-    unlocated = _unlocated_demand_map(db, list(by_product.keys()), horizon=horizon)
+    unlocated = _unlocated_demand_map(db, list(by_product.keys()), horizon=horizon,
+                                      horizon_start=horizon_start)
     if not unlocated:
         return
     for pid, qty in unlocated.items():

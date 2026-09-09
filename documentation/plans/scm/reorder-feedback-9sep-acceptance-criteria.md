@@ -62,7 +62,11 @@ Tags: [BE] backend, [FE] frontend, [E2E] browser walk, [T] test pinned.
 - AC-S1.4 [E2E] Sidebar walk: SPO Allocations -> sort by Date desc -> open an SPO -> sort
   Lines by Warehouse -> search a warehouse code -> only matching lines remain.
 - AC-S1.5 [T] vitest: list renders Date column and no sub-line; detail sort by warehouse
-  reorders; search narrows.
+  reorders; search narrows; product cell is one line when name equals code.
+- AC-S1.6 [FE] SPO Document Lines Product cell follows the PO form view rule
+  (`PurchaseOrderDetail.tsx:495-510`): the product name sub-line renders only when it is
+  non-empty and differs from the code (case-insensitive); otherwise the cell is one line.
+  Captain, 9 Sep 14:30 (screenshot 16).
 
 ### S2 Plan grid: filters, money, price label, Edit CTA
 

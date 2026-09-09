@@ -426,7 +426,10 @@ export interface ReorderRun {
   decision_grain?: 'product' | 'location' | null;
   /** `1` on a front-planning run, NULL on a legacy one - what makes a run read-only. */
   front_planning_contract_version?: number | null;
-  /** The "Sales order cut-off" this run was launched with (`YYYY-MM-DD`), or null. */
+  /** S4 (9 Sep 2026): the window's START this run was launched with (`YYYY-MM-DD`), or
+   *  null - no lower bound. */
+  plan_horizon_start?: string | null;
+  /** The "Sales orders needed" To-date this run was launched with (`YYYY-MM-DD`), or null. */
   plan_horizon_date?: string | null;
   /** When the engine started - the plan header's "Plan dd/mm/yyyy HH:mm" (C1). */
   started_at?: string | null;
@@ -465,4 +468,10 @@ export interface CreateReorderRunRequest {
    * is always still counted.
    */
   plan_horizon_date?: string | null;
+  /**
+   * S4 (9 Sep 2026): the window's START. Omitted/undefined means no lower bound - a
+   * line dated before it still counts (G2 ruling), the same reading an undated line
+   * already gets.
+   */
+  plan_horizon_start?: string | null;
 }

@@ -461,19 +461,70 @@ def test_clear_plan_row_decision_then_confirm_line_gone(db):
     # than surviving until somebody confirms again.
     assert _line_for_product(db, product.id) is None
 
-    # R3 (`PLAN-scm-reorder-revamp.md`, captain 27 Aug 2026): the NEXT confirm buys this
-    # product at the ENGINE's suggestion, because withdrawing a decision returns the row
-    # to undecided and Confirm covers an undecided row as the plan proposed it. Saying
-    # "do not buy this" is what Skip is for - and a skipped row still drafts nothing (see
-    # `tests/scm/test_plan_product_counts_and_confirm.py`). Before that ruling this
-    # confirmed nothing, which is why the assertion moved rather than the behaviour being
-    # a regression.
+    # G5 (S6, `reorder-feedback-9sep.md`, 9 Sep 2026 - "Confirm never sweeps") REVERSES
+    # the R3 ruling this test used to pin: withdrawing a decision returns the row to
+    # undecided, and the NEXT confirm now leaves it exactly that way rather than buying
+    # it at the engine's own suggestion. Saying "do not buy this" is what Skip is for -
+    # and an undecided row is treated no differently now (see
+    # `tests/scm/test_plan_product_counts_and_confirm.py`).
     out = dsvc.confirm_decisions(db, run.id, ids=None, actor="tester")
-    assert out["confirmed_count"] == 1
-    assert out["po_count"] == 1
-    line = _line_for_product(db, product.id)
-    assert line is not None
-    assert float(line["qty_ordered"]) == 50, "the engine's own rounded quantity, not the 40"
+    assert out["confirmed_count"] == 0
+    assert out["po_count"] == 0
+    assert _line_for_product(db, product.id) is None, "an undecided row is never swept in"
+
+
+# =========================================================================== #
+# S6 (reorder-feedback-9sep.md, G5 ruling 9 Sep 2026) - Confirm never sweeps
+# =========================================================================== #
+
+
+def test_confirm_drafts_only_the_grid_decided_product_of_three(db):
+    """AC-S6.4(a), product grain via the grid decision surface: three buy recs (three
+    separate products, one member rec each), one decided through
+    `record_plan_row_decision`. `ids=[]` drafts exactly that product's line - the other
+    two get no PO line and no decision row of their own."""
+    cat, uom = _category_and_uom(db)
+    wh = _warehouse(db)
+    supplier = _supplier(db, f"{MARKER} S6 Supplier")
+    run = _run(db)
+    decided = _product(db, cat, uom)
+    left1 = _product(db, cat, uom)
+    left2 = _product(db, cat, uom)
+    rec_decided = _recommendation(db, run, decided, wh, qty=40, supplier=supplier)
+    _recommendation(db, run, left1, wh, qty=70, supplier=supplier)
+    _recommendation(db, run, left2, wh, qty=30, supplier=supplier)
+
+    dsvc.record_plan_row_decision(
+        db, rec_decided.id, kind="buy", buy_qty=40, stock_takes=None,
+        po_qty=None, po_refs=None, reason_text=None, actor="tester",
+    )
+
+    out = dsvc.confirm_decisions(db, run.id, ids=[], actor="tester")
+
+    assert out["confirmed_count"] == 1, "only the grid-decided product is confirmed"
+    assert _line_for_product(db, decided.id) is not None
+    assert _lines_for_product(db, left1.id) == [], "an undecided row gets no PO line"
+    assert _lines_for_product(db, left2.id) == [], "an undecided row gets no PO line"
+
+
+def test_confirm_with_no_grid_decisions_confirms_nothing(db):
+    """AC-S6.4(b): no `PlanRowDecision` anywhere on the run - confirm answers 200 with
+    confirmed=0 and drafts no PO line for either product."""
+    cat, uom = _category_and_uom(db)
+    wh = _warehouse(db)
+    supplier = _supplier(db, f"{MARKER} S6 None Supplier")
+    run = _run(db)
+    a = _product(db, cat, uom)
+    b = _product(db, cat, uom)
+    _recommendation(db, run, a, wh, qty=70, supplier=supplier)
+    _recommendation(db, run, b, wh, qty=30, supplier=supplier)
+
+    out = dsvc.confirm_decisions(db, run.id, ids=[], actor="tester")
+
+    assert out["confirmed_count"] == 0
+    assert out["po_count"] == 0
+    assert _lines_for_product(db, a.id) == []
+    assert _lines_for_product(db, b.id) == []
 
 
 # =========================================================================== #

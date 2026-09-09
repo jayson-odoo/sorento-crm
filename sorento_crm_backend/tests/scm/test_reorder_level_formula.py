@@ -4,13 +4,22 @@
     ADU   = delivery-order line quantity over the last 90 days / 90
 
 The delivery-order book is the CRM's own `orders` / `order_lines` (what
-`scm.consumption_v` reads): every warehouse, cancelled orders excluded. Sales-order
-lines play no part - they are demand, not what left the building.
+`scm.consumption_v` reads), cancelled orders excluded. Sales-order lines play no part -
+they are demand, not what left the building.
+
+S7 (reorder-feedback-9sep.md, G1 ruling 9 Sep 2026): the LEVEL reads RETAIL deliveries
+only - a line shipped from a `dealer`-segment warehouse. A line shipped from a
+`project` bin is a project delivery and does not lift the level; `average_daily_usage`
+is called with `retail_only=True` by `refresh_for_run`. Health (`movement_class`) is
+unchanged and still reads every delivery - this file is the level's own suite. The
+fixture below therefore seeds its warehouses as `dealer`-segment, and
+`test_a_project_bin_delivery_does_not_change_the_level` pins the exclusion the other
+way: a project-bin delivery inside the window changes nothing.
 
 What is pinned here: the arithmetic itself, the 90-day window (an older order outside
-it contributes nothing), the cancelled exclusion, the 30-day lead-time fallback, and
-that a run writes the whole basis (ADU, lead, safety) onto `scm.reorder_level` so the
-popover can name the three terms.
+it contributes nothing), the cancelled exclusion, the 30-day lead-time fallback, the
+retail-only scope, and that a run writes the whole basis (ADU, lead, safety) onto
+`scm.reorder_level` so the popover can name the three terms.
 """
 from __future__ import annotations
 
