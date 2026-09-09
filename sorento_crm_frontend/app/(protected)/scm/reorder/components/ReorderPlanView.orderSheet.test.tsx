@@ -33,8 +33,8 @@ vi.mock('../services/reorderRunService', () => ({
 const RUN: ReorderRun = {
   run_id: 'run-1',
   status: 'completed',
-  stage: 'done',
-  buy_scope: 'all',
+  stage: 'writing_recommendations',
+  buy_scope: 'warehouse',
   summary: null,
   error: null,
   started_at: '2026-09-09T08:00:00Z',
