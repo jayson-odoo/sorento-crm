@@ -1043,7 +1043,13 @@ class ProjectOrderInquiryService:
                     "id": str(row.id),
                     "item_code": row.item_code,
                     "so_number": so_number,
-                    "qty": str(row.qty),
+                    # `_qty_str`, not a bare `str()`: `refresh_link_state` above may
+                    # have just re-read this row from the database (`derive_bundles`'s
+                    # own `populate_existing()`), which widens a Decimal to the
+                    # column's stored NUMERIC(15,4) scale ("25" prints back "25.0000")
+                    # - a database implementation detail this outbound context must
+                    # not leak (review round 2, CI).
+                    "qty": _qty_str(_dec(row.qty)),
                     "previous_qty": (
                         str(row.previous_qty) if row.previous_qty is not None else None
                     ),
@@ -2949,13 +2955,28 @@ class ProjectOrderInquiryService:
           R.bundled_with_row_id = the first host row of the first host key (3.2's
                                    "display anchor"), or None
         """
+        # FLUSH first: `populate_existing()` below reads columns straight off the
+        # database, and without this, a caller's own PENDING change on one of these
+        # rows made earlier in the SAME session (a settle, a cancel, a qty rewrite -
+        # exactly what `refresh_link_state`'s own callers do before handing it rows to
+        # refresh) would still be unflushed, so `populate_existing()` would read the
+        # OLD row back over it and silently discard the caller's write. This was a real
+        # regression (CI round 2): a board merge that raised a survivor's qty to 25 and
+        # cancelled its siblings read back qty 10 and "not cancelled" once this ran.
+        #
+        # `populate_existing()` itself still has to stay: B10 cancels a HOST row via
+        # raw SQL on this same session (`world.cancel`, the fixture's own stand-in for
+        # "the owner relinks by hand" in production) and derive_bundles has to see that
+        # NOW, not the stale `state` this session's identity map already cached the
+        # host object as - the one real, tested case its own docstring was written for.
+        # It DOES widen a re-read row's printed decimal precision to the column's
+        # stored NUMERIC(15,4) scale ("25" back as "25.0000") - real, but the caller's
+        # own job to format, not this function's: `_dispatch_changed_with_links` fixes
+        # its own read of `row.qty` with `_qty_str()` for exactly that reason.
+        self.db.flush()
         rows = (
             self.db.query(OrderInquiryRow)
             .filter(OrderInquiryRow.order_inquiry_id == inquiry_id)
-            # `populate_existing()`: a caller may have just changed a SIBLING row's
-            # state or links by raw SQL or in another transaction (E1's own production
-            # shape - the owner relinks by hand) - this has to see that row as it is
-            # NOW, not whatever this session's identity map already held it as.
             .populate_existing()
             .all()
         )
@@ -3037,6 +3058,24 @@ class ProjectOrderInquiryService:
 
             product_id = product_by_code.get(row.item_code)
             candidate_rules = rules_by_companion.get(product_id) if product_id else None
+
+            # Never a companion candidate, and nothing on it to reset: leave the row
+            # untouched ENTIRELY, `state` included (review round 2, CI: this used to
+            # recompute `state` from links alone for every row of the whole inquiry,
+            # not only the ones this function is actually about - a "placed with no
+            # link row" special case, or a row `refresh_link_state`'s own caller had
+            # just settled/cancelled a moment ago and not yet re-read, would get
+            # demoted back to `raised` here even though nothing about its bundle
+            # ever changed). A row that HAS a candidate rule, or still carries a
+            # bundle from an earlier pass (the reset case, B3/B16/B17), still runs
+            # the full derivation below.
+            if (
+                not candidate_rules
+                and _dec(row.bundled_qty) <= _ZERO
+                and not row.bundled_with_row_id
+            ):
+                continue
+
             linked = linked_by_row.get(row.id, _ZERO)
 
             bundled = _ZERO
