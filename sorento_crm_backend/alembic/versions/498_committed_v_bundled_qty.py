@@ -1,7 +1,7 @@
 """`scm.committed_v` subtracts a bundled row's `bundled_qty`
 
-Revision ID: 496_committed_v_bundled_qty
-Revises: 495_product_companion_rules
+Revision ID: 498_committed_v_bundled_qty
+Revises: 497_product_companion_rules
 Create Date: 2026-09-09 00:00:00.000000
 
 PLAN-scm-supplied-with-companions.md ruling 6: a bundled quantity never reaches reorder
@@ -18,13 +18,13 @@ only the two project legs' arithmetic changes.
 """
 from alembic import op
 
-revision = "496_committed_v_bundled_qty"
-down_revision = "495_product_companion_rules"
+revision = "498_committed_v_bundled_qty"
+down_revision = "497_product_companion_rules"
 branch_labels = None
-depends_on = "495_product_companion_rules"
+depends_on = "497_product_companion_rules"
 
 
-_AS_OF_496 = """
+_AS_OF_498 = """
 CREATE OR REPLACE VIEW scm.committed_v AS
 WITH legs AS (
     -- The BOOK leg, and it is the RETAIL channel entire (P3). A project-class line is
@@ -228,7 +228,7 @@ GROUP BY product_id, warehouse_id;
 
 
 def upgrade() -> None:
-    op.execute(_AS_OF_496)
+    op.execute(_AS_OF_498)
 
 
 def downgrade() -> None:

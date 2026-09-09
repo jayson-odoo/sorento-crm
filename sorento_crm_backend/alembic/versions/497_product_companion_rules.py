@@ -1,7 +1,7 @@
 """"Supplied with" companion rules: two new tables, two new columns.
 
-Revision ID: 495_product_companion_rules
-Revises: 494_from_so_external_link
+Revision ID: 497_product_companion_rules
+Revises: 496_sales_orders_source_ref_idx
 
 PLAN-scm-supplied-with-companions.md section 3.1/3.2. `product_companion_rules` names a
 COMPANION product (CKSW015), a supplier scope (nullable - NULL means "any supplier",
@@ -21,8 +21,8 @@ a product named on an active rule cannot be deleted out from under it (UAC A6).
 import sqlalchemy as sa
 from alembic import op
 
-revision = "495_product_companion_rules"
-down_revision = "494_from_so_external_link"
+revision = "497_product_companion_rules"
+down_revision = "496_sales_orders_source_ref_idx"
 branch_labels = None
 depends_on = None
 

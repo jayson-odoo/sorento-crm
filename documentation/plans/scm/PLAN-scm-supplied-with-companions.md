@@ -1,6 +1,6 @@
 # PLAN: "supplied with" companions on the Order Inquiry (CKSW015 rides with CKS1050)
 
-Status: Phase 1 done (a1d8fcfab, aa3a62c88). Phase 2 in progress: red tests written, coder making them green.
+Status: Phase 3 done, PR open. Lane feat/supplied-with-companions.
 UAC: `scm-supplied-with-companions-acceptance-criteria.md` alongside.
 
 ## 0. The case, as the owner showed it
