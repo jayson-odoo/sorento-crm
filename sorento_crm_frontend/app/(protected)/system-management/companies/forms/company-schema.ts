@@ -13,6 +13,7 @@ export const CompanySchema = z.object({
       message: 'Company code can only contain alphanumeric characters, dashes, and underscores.',
     }),
   is_active: z.boolean(),
+  so_feed_live: z.boolean(),
   // AutoCount company reference - links this CRM company to its AutoCount master.
   autocount_ref: z
     .string()
