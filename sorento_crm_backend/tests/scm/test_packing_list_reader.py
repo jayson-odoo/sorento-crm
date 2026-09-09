@@ -246,6 +246,24 @@ def test_a_bill_of_lading_with_slashes_reads_verbatim(resolver):
     assert out.blocks[0].bl_no == "SZX/2026/001"
 
 
+def test_a_blank_bill_of_lading_label_does_not_swallow_the_next_label(resolver):
+    # AC-P2.4, ported from `test_packing_list_import.py` (S3): the shared `_labelled`
+    # helper's fix lives once (`test_proforma_invoice_reader.py::test_a_blank_bill_of_
+    # lading_does_not_read_the_next_label` pins it for the PI reader) and must not read a
+    # candidate that itself resolves to a KNOWN field (here "货柜号：..." after a blank
+    # "提单号：") as if it were a value - pinned here too since the two readers each call it.
+    rows = [
+        ["提单号：", None, "货柜号：ABCU1000009"],
+        HEADER,
+        ["SRT-1", "座厕", 5, 1, 0.2],
+    ]
+
+    out = read_workbook(workbook(rows), resolver)
+
+    assert out.blocks[0].bl_no is None
+    assert out.blocks[0].container_no == "ABCU1000009"
+
+
 def test_a_date_with_slashes_is_not_split_by_the_multi_sep(resolver):
     # Same bug, a different field: `31/07/2026` (day-first, AC-P2.4) must survive whole.
     from app.services.scm.packing_list_reader import _MULTI_SEP
