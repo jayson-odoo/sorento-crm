@@ -387,27 +387,6 @@ class SalesAgentOption(BaseModel):
 
 # --- purchase orders --------------------------------------------------------
 
-class PurchaseOrderLineSoLink(BaseModel):
-    """One sales order the AutoCount book links to a purchase-order LINE.
-
-    `PLAN-scm-book-linkage-on-document-lines.md` Slice A: what `scm.order_link_claim`
-    resolves onto this `po_line_id`, distinct from `PurchaseOrderDedication` below - that
-    panel answers who RESERVED the line through our own order-inquiry flow, this answers
-    what the book records the line as having been raised FOR. A line can carry one, the
-    other, both or neither.
-    """
-
-    #: The sales order number exactly as the book spells it. Never an id.
-    so_number: str
-    #: The `sales_order_lines` row the claim resolved, when the book's linkage carried an
-    #: item (Order Inquiry claims do; the PO-note `**SO:174830**` case does not). `None`
-    #: reads as "linked at document level" rather than a missing fact.
-    so_line_id: Optional[str] = None
-    #: Where the pairing came from - `order_inquiry`, PO history, the SO/PO book upload -
-    #: so the cell's title can say why, not just what.
-    source: str
-
-
 class PurchaseOrderLine(BaseModel):
     id: str
     sku: str
@@ -444,10 +423,23 @@ class PurchaseOrderLine(BaseModel):
     line_status: str = "open"
     #: When this line's goods are due. Per line, for the same reason as the location.
     expected_date: Optional[str] = None
-    #: The AutoCount book's own SO linkage for this line (Slice A). Empty on most lines -
-    #: the book only links what a buyer raised through Transfer from S/O - never a
-    #: fallback, never invented from the document number.
-    so_links: list[PurchaseOrderLineSoLink] = []
+    #: The AutoCount book's own SO linkage for this line (Slice A), read off the line's own
+    #: `from_so_line_ref` column and resolved to a number through
+    #: `order_link_service.book_so_numbers_by_ref`. ONE sales order, because the column is
+    #: one value: the book records a purchase line as having been raised for a single
+    #: sales-order line. Distinct from the allocations panel, which answers who RESERVED
+    #: the line through our own order-inquiry flow.
+    #:
+    #: `None` when the book named a sales order this CRM does not hold, in which case
+    #: `book_so_unresolved` is True - see below. The raw ref is NEVER serialized: it is a
+    #: machine key (`AED_SORENTO:<DocKey>:<DtlKey>`), and no machine identifier reaches the
+    #: UI, the same reason `from_po_line_ref` is not printed either.
+    book_so_number: Optional[str] = None
+    #: True when the line carries a `from_so_line_ref` that resolved to nothing here. The
+    #: screen needs three states, not two: no linkage at all is a dash, a resolved linkage
+    #: is the number, and a linkage naming a sales order this CRM does not hold is neither
+    #: of those and must not read as "nothing linked".
+    book_so_unresolved: bool = False
 
 
 class PurchaseOrderSpoLanding(BaseModel):

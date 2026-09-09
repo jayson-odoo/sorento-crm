@@ -71,7 +71,7 @@ from app.services.project_order_inquiry_service import (
     ProjectOrderInquiryService,
     project_customer_label,
 )
-from app.services.scm import priority
+from app.services.scm import order_link_service, priority
 
 logger = logging.getLogger(__name__)
 
@@ -948,6 +948,7 @@ class OrderInquiryWorklistService:
                 PurchaseOrderLine.qty_ordered,
                 PurchaseOrderLine.qty_received,
                 Warehouse.warehouse_code,
+                PurchaseOrderLine.from_so_line_ref,
             )
             .select_from(PurchaseOrderLine)
             .outerjoin(Product, Product.id == PurchaseOrderLine.product_id)
@@ -955,6 +956,13 @@ class OrderInquiryWorklistService:
             .filter(PurchaseOrderLine.purchase_order_id == po.id)
             .order_by(Product.product_code.asc().nulls_last())
             .all()
+        )
+        line_ids = [str(line[0]) for line in lines]
+        # ONE query for the whole document (AC-A5's rule, on this THIRD surface), never one
+        # per line - the same reader the SCM purchase-order detail's Lines tab already
+        # calls, so the book's linkage reads identically wherever a line is shown.
+        book_so_by_ref = order_link_service.book_so_numbers_by_ref(
+            self.db, [line[-1] for line in lines if line[-1]]
         )
         return {
             "id": po.id,
@@ -971,22 +979,32 @@ class OrderInquiryWorklistService:
                     "qty_received": _qty_str(_dec(qty_received)),
                     "remaining": _qty_str(_dec(qty_ordered) - _dec(qty_received)),
                     "location": warehouse_code,
+                    # The book's own SO linkage, read off the line's OWN
+                    # `from_so_line_ref` - three states, and the ref itself never leaves
+                    # the server (it is a machine key). Identical to what the SCM
+                    # purchase-order detail's Lines tab serves, so one fact reads one way
+                    # on both screens.
+                    "book_so_number": (
+                        book_so_by_ref.get(from_so_line_ref) if from_so_line_ref else None
+                    ),
+                    "book_so_unresolved": bool(from_so_line_ref) and (
+                        from_so_line_ref not in book_so_by_ref
+                    ),
                 }
                 for (
-                    _line_id,
+                    line_id,
                     sku,
                     product_name,
                     qty_ordered,
                     qty_received,
                     warehouse_code,
+                    from_so_line_ref,
                 ) in lines
             ],
             # WHO is holding this document's quantity (AC-D18). Drafts included and marked
             # as such: they occupy the quantity, so a panel that hid them would tell the
             # buyer a line is free when the next Confirm is going to take it.
-            "allocations": self._allocations_on(
-                po_line_ids=[str(line[0]) for line in lines]
-            ),
+            "allocations": self._allocations_on(po_line_ids=line_ids),
         }
 
     # -------------------------------------------------------------- spo detail

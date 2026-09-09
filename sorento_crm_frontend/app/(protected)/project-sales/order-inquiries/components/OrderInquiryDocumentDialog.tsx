@@ -27,6 +27,7 @@ import type {
   OrderInquiryPoDetailLine,
   OrderInquirySpoDetailLine,
 } from '../../_shared/types/orderInquiry.types';
+import { BookSoCell, bookSoSortValue } from '@/app/(protected)/scm/components/BookSoCell';
 
 /**
  * ONE document, read-only, in a real dialog (R9; the captain, 27 Aug: "the popup on the
@@ -295,6 +296,18 @@ const PO_LINE_COLUMNS: ColumnDef<OrderInquiryPoDetailLine>[] = [
     cell: ({ row }) => <LocationCellContent location={row.original.location} />,
     size: 140,
     meta: { headerTitle: 'Location' },
+  },
+  {
+    id: 'book_so',
+    // The AutoCount book's own linkage (`PLAN-scm-book-linkage-on-document-lines.md`),
+    // read off the line's own `from_so_line_ref`. The SAME fact and the SAME component
+    // `PurchaseOrderDetail.tsx`'s own S/O column uses, so one fact has one presentation
+    // on both screens.
+    accessorFn: bookSoSortValue,
+    header: ({ column }) => <DataGridColumnHeader title="S/O" column={column} />,
+    cell: ({ row }) => <BookSoCell line={row.original} />,
+    size: 150,
+    meta: { headerTitle: 'S/O' },
   },
 ];
 

@@ -61,6 +61,7 @@ import DetailActions from '@/components/common/DetailActions';
 import { purchaseOrdersPagerQuery } from '../../../hooks/usePurchaseOrders';
 import { PlanRowDialog } from '../../../components/PlanRowDialog';
 import { PlanNumberButton } from '../../../components/PlanNumberButton';
+import { BookSoCell, bookSoSortValue } from '../../../components/BookSoCell';
 import { PoLinePlacementsBody, placedQtyOf } from './PoLinePlacementsBody';
 import { PoPlanCard } from './PoPlanCard';
 import { BASE_CURRENCY, fmtDate, fmtInt } from '../../../lib/format';
@@ -779,28 +780,16 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         meta: { headerTitle: 'Location' },
       },
       {
-        id: 'so_links',
-        // The AutoCount book's own linkage, not the allocations panel below (that answers
-        // who RESERVED the line through our own order-inquiry flow; this answers what the
-        // book records the line as raised FOR). NOT a link: sales orders live on two
-        // different screens - project or adopted book - and picking the wrong one is worse
-        // than plain text.
-        accessorFn: (line) => line.so_links?.[0]?.so_number ?? '',
+        id: 'book_so',
+        // The AutoCount book's own linkage, read off the line's own `from_so_line_ref` -
+        // not the allocations panel below (that answers who RESERVED the line through our
+        // own order-inquiry flow; this answers what the book records the line as raised
+        // FOR). ONE sales order, because the column holds one value. Rendered by the same
+        // component the order-inquiry PO lightbox uses, so one fact reads one way on both
+        // screens.
+        accessorFn: bookSoSortValue,
         header: ({ column }) => <DataGridColumnHeader title="S/O" column={column} />,
-        cell: ({ row }) => {
-          const links = row.original.so_links ?? [];
-          if (links.length === 0) return <span className="text-muted-foreground">-</span>;
-          const label =
-            links.length === 1
-              ? links[0].so_number
-              : `${links[0].so_number} +${links.length - 1} more`;
-          const title = links.map((l) => l.so_number).join(', ');
-          return (
-            <span className="block truncate" title={title}>
-              {label}
-            </span>
-          );
-        },
+        cell: ({ row }) => <BookSoCell line={row.original} />,
         size: 150,
         meta: { headerTitle: 'S/O' },
       },

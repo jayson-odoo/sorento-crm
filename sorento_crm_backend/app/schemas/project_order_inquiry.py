@@ -690,6 +690,16 @@ class OrderInquiryPoDetailLine(BaseModel):
     qty_received: str
     remaining: str
     location: Optional[str] = None
+    #: The book's own linkage for this line - the SAME fact and the SAME shape the SCM
+    #: purchase-order detail's Lines tab prints (`PurchaseOrderLine.book_so_number` /
+    #: `book_so_unresolved`), read here off the line's own `from_so_line_ref` and resolved
+    #: through the same reader, `order_link_service.book_so_numbers_by_ref`, so a line's
+    #: linkage does not depend on which screen it is read from. `response_model` silently
+    #: drops an undeclared field, which is exactly why both of these are declared.
+    book_so_number: Optional[str] = None
+    #: True when the book named a sales order this CRM does not hold. Three states, not
+    #: two - see `PurchaseOrderLine` in `app/schemas/scm_orders.py` for the full note.
+    book_so_unresolved: bool = False
 
 
 class OrderInquiryDocumentAllocation(BaseModel):

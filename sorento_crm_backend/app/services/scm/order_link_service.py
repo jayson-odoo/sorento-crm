@@ -673,70 +673,85 @@ def placed_by_claim(db: Session, claim_ids: Sequence[str]) -> dict[str, Decimal]
     return out
 
 
-def so_links_by_po_line(
-    db: Session, po_line_ids: Sequence[str]
-) -> dict[str, list[dict]]:
-    """The DISTINCT sales orders the book links to each purchase-order LINE.
+def book_so_numbers_by_ref(db: Session, refs: Sequence[str]) -> dict[str, str]:
+    """`from_so_line_ref` -> the sales order NUMBER it names, for the refs that resolve.
 
-    Keyed by `po_line_id`, ONE query for however many lines the caller asks about - the PO
-    Lines tab needs every line of a document in one call, not one per line
-    (`PLAN-scm-book-linkage-on-document-lines.md` AC-A5). `po_line_id` is matched
-    EXACTLY, never falling back to `po_number`: a document-level claim (the `**SO:174830**`
-    PO-note case, no line pinned) is not this line's business, and a fallback on the
-    document number would put one customer's stock under another customer's sales order
-    (AC-A4). `OrderLinkClaim` is `CompanyScopedMixin`, so the plain ORM filter below is
-    already company-scoped by the `do_orm_execute` event (AC-A6) - no explicit
-    `company_id` filter is needed or wanted here.
+    The book's own SO linkage on a purchase line is `purchase_order_lines.from_so_line_ref`
+    - AutoCount's own `"{database}:{DocKey}:{DtlKey}"`, one value, one sales order. This
+    reader turns that machine key into the number a buyer can read, and nothing else.
 
-    Distinct on `(po_line_id, so_number)`: several claims - different `source`s, or a
-    still-open one alongside a resolved one - can name the same sales order for the same
-    line, and the screen asks "which sales orders", not "how many claims".
+    RESOLVED AT DOCUMENT LEVEL, against `sales_orders.source_ref`, which carries
+    `"{database}:{DocKey}"` - the ref's first TWO segments. The `DtlKey` is deliberately
+    unused here. The cell displays a sales order NUMBER, which is a property of the
+    document, so document -> number is the whole question and no `sales_order_lines` row
+    needs to exist to answer it. Resolving through the LINE table instead (an earlier cut
+    of this function did) makes a line we happen not to hold suppress a number we could
+    legitimately name: an order header ingested without its lines, or a line since
+    removed, would read as "not held" while `sales_orders` names it perfectly well.
 
-    The row kept per `(po_line_id, so_number)` is the FIRST under this ORDER BY, so a
-    resolved `so_line_id` is placed ahead of a null one before `claimed_at` is even
-    consulted: `claimed_at` is `server_default=func.now()`, which is IDENTICAL for every
-    claim written in the same transaction (the standing `now()`-ties-in-a-transaction
-    gotcha), so on its own it cannot say which of two same-transaction claims - say a
-    `po_history` one with `so_line_id` NULL and a resolved `order_inquiry` one - is kept.
-    `so_line_id: None` is documented as "linked at document level" on the schema, so
-    picking the null row over the resolved one by accident would state something untrue.
-    `id` breaks whatever tie is still left, so the choice is total rather than merely
-    probable.
+    Measured on `sorento_ai_automation_0907` (7 Sep book copy), stated precisely because
+    the first version of this note was not: of the 33,225 purchase lines carrying a ref,
+    the document-key join resolves 11,592 and leaves 21,633 unresolved. The line-level
+    join it replaced happens to resolve the SAME 11,592 today - the two agree on every
+    row, with no case where one finds an order and the other does not. So this change is
+    not a bug fix against current data; it is the correct altitude for the question, and
+    it removes the latent failure mode above before it can bite.
+
+    The document key is rebuilt from the ref's OWN first two segments rather than a
+    hardcoded `"AED_SORENTO:"`. The database name is data, not a constant - it is the
+    first field of the format - and every ref on this book happens to be `AED_SORENTO`
+    only because there is one book today. Hardcoding it would fail silently the day a
+    second one is ingested, and splitting costs nothing.
+
+    A ref that does not resolve is simply ABSENT from the result, and that absence is a
+    third state rather than an error: the sales order lives in the book but has not been
+    pushed to this CRM. The caller distinguishes it from "the book named no sales order at
+    all" by looking at the ref column itself.
+
+    ONE query for however many refs the caller asks about, so a whole document costs one
+    round trip whatever its line count (`202405-S0046` alone has 584 lines). The signature
+    is keyed by the FULL ref the caller passes in: neither service should have to know
+    that a DocKey exists, so the split lives in here.
+
+    `SalesOrder` is `CompanyScopedMixin`, so the plain ORM query below is already
+    company-scoped by the `do_orm_execute` event: another company's sales order cannot be
+    named on this company's line. No explicit `company_id` filter is needed or wanted.
+
+    No tie-break ordering, because the join cannot fan out: `sales_orders.source_ref` is
+    UNIQUE across the `AED_SORENTO:` namespace (75,600 rows, 0 duplicate keys). That is
+    the other reason this altitude is right - `sales_order_lines.source_ref` is NOT unique
+    (187 values repeat, legacy bare line numbers from an old import) and the line-level
+    version needed a deterministic ORDER BY to be total at all.
     """
-    out: dict[str, list[dict]] = {}
-    wanted = [str(x) for x in po_line_ids]
-    if not wanted:
+    out: dict[str, str] = {}
+    # full ref -> its document key, and the reverse, so one query answers for every ref.
+    doc_key_of: dict[str, str] = {}
+    for raw in refs:
+        if not raw:
+            continue
+        ref = str(raw)
+        parts = ref.split(":")
+        if len(parts) < 2 or not parts[0] or not parts[1]:
+            # Not the documented `{database}:{DocKey}:{DtlKey}` shape, so there is no
+            # document key to look up. Absent from the result = unresolved, which is the
+            # honest answer for a value we cannot read.
+            continue
+        doc_key_of[ref] = f"{parts[0]}:{parts[1]}"
+    if not doc_key_of:
         return out
+
     rows = (
-        db.query(
-            OrderLinkClaim.po_line_id,
-            OrderLinkClaim.so_number,
-            OrderLinkClaim.so_line_id,
-            OrderLinkClaim.source,
-        )
-        .filter(OrderLinkClaim.po_line_id.in_(wanted))
-        .order_by(
-            OrderLinkClaim.so_number,
-            # A resolved so_line_id wins over a null one, ahead of the now()-tied
-            # claimed_at column below - `is_(None)` is False (sorts first) for a resolved
-            # row and True for a null one.
-            OrderLinkClaim.so_line_id.is_(None),
-            OrderLinkClaim.claimed_at,
-            OrderLinkClaim.id,
-        )
+        db.query(SalesOrder.source_ref, SalesOrder.so_number)
+        .filter(SalesOrder.source_ref.in_(sorted(set(doc_key_of.values()))))
         .all()
     )
-    seen: set[tuple[str, str]] = set()
-    for po_line_id, so_number, so_line_id, source in rows:
-        key = (str(po_line_id), so_number)
-        if key in seen:
-            continue
-        seen.add(key)
-        out.setdefault(str(po_line_id), []).append({
-            "so_number": so_number,
-            "so_line_id": str(so_line_id) if so_line_id else None,
-            "source": source,
-        })
+    number_of_doc = {
+        str(source_ref): so_number for source_ref, so_number in rows if so_number
+    }
+    for ref, doc_key in doc_key_of.items():
+        found = number_of_doc.get(doc_key)
+        if found:
+            out[ref] = found
     return out
 
 

@@ -721,6 +721,14 @@ export interface OrderInquiryPoDetailLine {
   qty_received: string;
   remaining: string;
   location?: string | null;
+  /**
+   * The AutoCount book's own sales-order linkage for this line - the SAME fact and the
+   * SAME fields the SCM purchase-order detail's Lines tab prints, rendered by the SAME
+   * component, so a line's linkage reads identically on both screens. Never a guess.
+   */
+  book_so_number?: string | null;
+  /** True when the book named a sales order this CRM does not hold. */
+  book_so_unresolved?: boolean | null;
 }
 
 /**

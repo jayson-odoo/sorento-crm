@@ -130,14 +130,26 @@ class PurchaseOrderService:
             for ln in po.lines
         )
 
+    def _book_so_for(self, lines) -> dict[str, str]:
+        """`from_so_line_ref` -> sales order number, for every line handed in.
+
+        ONE query for the whole set however many lines it holds, never one per line - a
+        real document reaches 89 of them (`202405-S0045`). Lines with no ref cost nothing:
+        the reader drops empties before it queries, and an all-empty set never queries at
+        all.
+        """
+        return order_link_service.book_so_numbers_by_ref(
+            self.db, [ln.from_so_line_ref for ln in lines if ln.from_so_line_ref]
+        )
+
     def serialize(self, po: PurchaseOrder, gr_reference: Optional[str] = None, *,
                   allocated_qty: float = 0.0,
                   allocations: Optional[list[dict]] = None,
                   spo_plan: Optional[dict] = None,
-                  so_links: Optional[dict[str, list[dict]]] = None) -> dict:
+                  book_so_by_ref: Optional[dict[str, str]] = None) -> dict:
         # Warehouse is carried at the line level; surface the first line's warehouse
         # as the PO's warehouse (M1 POs are effectively single-destination).
-        so_links = so_links or {}
+        book_so_by_ref = book_so_by_ref or {}
         wh_code = None
         wh_name = None
         total_qty = 0.0
@@ -206,12 +218,22 @@ class PurchaseOrderService:
                 "expected_date": (
                     ln.expected_date.isoformat() if ln.expected_date else None
                 ),
-                # The AutoCount book's own SO linkage for this LINE, distinct from the
-                # allocations panel below (`_allocations_for`, which answers "who reserved
-                # this line through our own order-inquiry flow"). Empty on most lines - the
-                # book only links what a buyer raised through Transfer from S/O
+                # The AutoCount book's own SO linkage for this LINE, read off the line's
+                # OWN `from_so_line_ref` column, distinct from the allocations panel below
+                # (`_allocations_for`, which answers "who reserved this line through our
+                # own order-inquiry flow").
+                #
+                # THREE states, and the screen must tell them apart: no ref at all (the
+                # book named no sales order), a ref that resolves (the number), and a ref
+                # that names a sales order this CRM does not hold. The ref itself never
+                # leaves the server - it is a machine key
                 # (`PLAN-scm-book-linkage-on-document-lines.md`).
-                "so_links": so_links.get(str(ln.id), []),
+                "book_so_number": (
+                    book_so_by_ref.get(ln.from_so_line_ref) if ln.from_so_line_ref else None
+                ),
+                "book_so_unresolved": bool(ln.from_so_line_ref) and (
+                    ln.from_so_line_ref not in book_so_by_ref
+                ),
             })
         return {
             "id": po.id,
@@ -759,12 +781,18 @@ class PurchaseOrderService:
         # One query for the page, not one per row: the column is a sum over a child table
         # and an N+1 here is 50 statements per keystroke of the search box.
         occupied = self._allocated_by_po([str(po.id) for po in rows])
+        # One query for the whole PAGE, not one per order: the list serializes every row's
+        # lines, so resolving per order would be 50 round trips per keystroke.
+        book_so_by_ref = self._book_so_for(
+            [ln for po in rows for ln in po.lines]
+        )
         return {
             "data": [
                 self.serialize(
                     po,
                     gr_refs.get(po.id),
                     allocated_qty=occupied.get(str(po.id), 0.0),
+                    book_so_by_ref=book_so_by_ref,
                 )
                 for po in rows
             ],
@@ -826,16 +854,14 @@ class PurchaseOrderService:
             spo_plan = plan_of(self.db, str(po.id))
         # ONE query for the whole document (AC-A5), never one per line - `202405-S0045`
         # alone has 89 of them.
-        so_links = order_link_service.so_links_by_po_line(
-            self.db, [str(ln.id) for ln in po.lines]
-        )
+        book_so_by_ref = self._book_so_for(po.lines)
         return self.serialize(
             po,
             gr_refs.get(po.id),
             allocated_qty=self._allocated_by_po([str(po.id)]).get(str(po.id), 0.0),
             allocations=self._allocations_for(po),
             spo_plan=spo_plan,
-            so_links=so_links,
+            book_so_by_ref=book_so_by_ref,
         )
 
     def list_supplier_options(
@@ -943,7 +969,11 @@ class PurchaseOrderService:
         # unpack.
         po = self._get_or_404(po_id)
         gr_refs = self._gr_refs_for([po.id])
-        return self.serialize(po, gr_refs.get(po.id))
+        # Resolved here too, or the S/O column blanks out the moment the buyer saves an
+        # unrelated edit and the screen renders this response.
+        return self.serialize(
+            po, gr_refs.get(po.id), book_so_by_ref=self._book_so_for(po.lines)
+        )
 
     def _upsert_lines(self, po: PurchaseOrder, incoming: list) -> None:
         """Reconcile ``po.lines`` against the payload IN PLACE, never delete + recreate.
