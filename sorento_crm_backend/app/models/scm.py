@@ -946,6 +946,16 @@ class OrderSummaryRow(Base, CompanyScopedMixin):
     #: The suggested supplier's own MOQ (`ProductSupplier.moq`), alongside its name above.
     moq = Column(Numeric, nullable=True)
 
+    # --- S14 (PLAN-reorder-feedback-9sep.md Round 3, AC-S14.1): the sheet's "BRW" reading,
+    # frozen beside the network-wide facts above rather than replacing them. ---
+    #: Site-pool stock only (`pool_predicate.ACTIVE_SITE_POOL_SQL`) - the sheet's "BRW on
+    #: hand". `on_hand` above stays network-wide and is what the grid's own column reads.
+    pool_on_hand = Column(Numeric, nullable=True)
+    #: The run's OWN frozen `inputs.reorder_level` for the product - the first
+    #: recommendation that carries the key. NULL when none does (the engine plans against
+    #: one product-wide level, never a per-warehouse one).
+    reorder_level = Column(Numeric, nullable=True)
+
     __table_args__ = (
         # One row per product per run, or the report reads whichever duplicate comes back
         # first (the `system_settings` singleton lesson).
