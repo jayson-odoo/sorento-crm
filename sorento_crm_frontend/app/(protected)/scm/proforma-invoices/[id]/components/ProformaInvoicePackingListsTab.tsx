@@ -5,6 +5,7 @@ import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table
 import Link from 'next/link';
 import { Boxes } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { formatStatusLabel } from '@/lib/status-badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader, CardHeading, CardTable, CardTitle } from '@/components/ui/card';
 import { DataGrid } from '@/components/ui/data-grid';
@@ -66,10 +67,13 @@ export function ProformaInvoicePackingListsTab({
       {
         accessorKey: 'shipment_status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
+        // The shared status pill, so a draft reads the same here as it does on the packing
+        // lists page itself - `Badge status={...}` picks the colour and `formatStatusLabel`
+        // the wording, rather than this grid inventing both.
         cell: ({ row }) =>
           row.original.shipment_status ? (
-            <Badge variant="secondary" appearance="light">
-              {row.original.shipment_status}
+            <Badge status={row.original.shipment_status}>
+              {formatStatusLabel(row.original.shipment_status)}
             </Badge>
           ) : (
             EM_DASH

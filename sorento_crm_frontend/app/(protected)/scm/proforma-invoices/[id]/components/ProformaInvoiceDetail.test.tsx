@@ -776,7 +776,8 @@ describe('ProformaInvoiceDetail - the tabs', () => {
     // The tab is the containers this invoice went into and nothing else (ruling 26): the
     // state it is in, and how much of the invoice it carries. What is LEFT is the convert
     // dialog's own table now, so it is no longer restated here.
-    expect(screen.getByText('draft')).toBeInTheDocument();
+    // Title case, through the shared status pill the packing lists page uses (ruling 33).
+    expect(screen.getByText('Draft')).toBeInTheDocument();
     expect(screen.getByText('4 of 10')).toBeInTheDocument();
   });
 
