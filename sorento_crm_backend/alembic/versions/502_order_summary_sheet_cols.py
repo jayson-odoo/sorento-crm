@@ -7,14 +7,14 @@ Project quantity, the suggested supplier, and the PO/SPO/last-receipt/MOQ remark
 additive, all nullable, no backfill - written going forward by `summary_order_service
 .write_rows` and left NULL on every run frozen before this migration.
 
-Revision ID: 500_order_summary_sheet_cols
-Revises: 499_consumption_v_wh_segment
+Revision ID: 502_order_summary_sheet_cols
+Revises: 501_consumption_v_wh_segment
 """
 import sqlalchemy as sa
 from alembic import op
 
-revision = "500_order_summary_sheet_cols"
-down_revision = "499_consumption_v_wh_segment"
+revision = "502_order_summary_sheet_cols"
+down_revision = "501_consumption_v_wh_segment"
 branch_labels = None
 depends_on = None
 

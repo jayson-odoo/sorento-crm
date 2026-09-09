@@ -12,14 +12,14 @@ replacement to ADD a trailing column but not to reorder, retype or remove an exi
 so every other column here is byte-for-byte the original definition
 (`274_scm_m0_views_reg.py`). Additive: no existing reader of this view is affected.
 
-Revision ID: 499_consumption_v_wh_segment
-Revises: 498_product_exclude_planning
+Revision ID: 501_consumption_v_wh_segment
+Revises: 500_product_exclude_planning
 """
 import sqlalchemy as sa
 from alembic import op
 
-revision = "499_consumption_v_wh_segment"
-down_revision = "498_product_exclude_planning"
+revision = "501_consumption_v_wh_segment"
+down_revision = "500_product_exclude_planning"
 branch_labels = None
 depends_on = None
 

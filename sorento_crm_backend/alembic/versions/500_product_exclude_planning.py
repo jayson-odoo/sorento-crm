@@ -5,14 +5,14 @@ The buyer's own switch to keep a placeholder code (`**NEW`, `**SPARE PART`, `**R
 backfill (G3, 9 Sep ruling): the captain chose the buyer flipping the four placeholder
 codes by hand over marking them here, so this migration adds the column and nothing else.
 
-Revision ID: 498_product_exclude_planning
-Revises: 497_reorder_run_horizon_start
+Revision ID: 500_product_exclude_planning
+Revises: 499_reorder_run_horizon_start
 """
 import sqlalchemy as sa
 from alembic import op
 
-revision = "498_product_exclude_planning"
-down_revision = "497_reorder_run_horizon_start"
+revision = "500_product_exclude_planning"
+down_revision = "499_reorder_run_horizon_start"
 branch_labels = None
 depends_on = None
 

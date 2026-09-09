@@ -5,14 +5,14 @@ twin: demand needed BEFORE it is excluded from the run's netting, undated demand
 stays in (G2, 9 Sep ruling). Nullable, no backfill, no default - every existing run simply
 carried no start, exactly as it carries none today.
 
-Revision ID: 497_reorder_run_horizon_start
-Revises: 496_sales_orders_source_ref_idx
+Revision ID: 499_reorder_run_horizon_start
+Revises: 498_committed_v_bundled_qty
 """
 import sqlalchemy as sa
 from alembic import op
 
-revision = "497_reorder_run_horizon_start"
-down_revision = "496_sales_orders_source_ref_idx"
+revision = "499_reorder_run_horizon_start"
+down_revision = "498_committed_v_bundled_qty"
 branch_labels = None
 depends_on = None
 
