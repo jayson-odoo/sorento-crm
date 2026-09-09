@@ -65,6 +65,12 @@ def _delete_order(db: Session, payload: dict):
     return OrderService(db).delete_order(_entity_id(payload))
 
 
+def _delete_product_companion_rule(db: Session, payload: dict):
+    from app.services.product_companion_service import ProductCompanionService
+
+    return ProductCompanionService(db).delete(_entity_id(payload))
+
+
 def _set_order_status(db: Session, payload: dict):
     from app.schemas.order import OrderUpdate
     from app.services.order_service import OrderService
@@ -118,6 +124,17 @@ register(
         window=WINDOW_REVERSIBLE,
         permission="order_management.orders.edit",
         label="Change status",
+    )
+)
+
+register(
+    FormAction(
+        key="product_companion_rule.delete",
+        entity_types=("product_companion_rule",),
+        execute=_delete_product_companion_rule,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.products.edit",
+        label="Delete rule",
     )
 )
 

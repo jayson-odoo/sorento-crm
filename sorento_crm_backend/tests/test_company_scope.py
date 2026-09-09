@@ -502,7 +502,16 @@ def test_every_company_id_table_is_registered():
     # sales order), so it is owned outright rather than inheriting the partition through
     # `sales_orders` - a standalone read of a child-only row would otherwise be the one
     # place the parent's filter does not apply.
-    expected_owned = 129
+    #
+    # PLAN-scm-supplied-with-companions.md adds 1: `product_companion_rules` names a
+    # COMPANION product (CKSW015) and its supplier scope, and every product code in the
+    # catalogue exists once under Sorento and once under Mocha - a rule naming those
+    # products belongs to exactly one of them, the same fact `product_sets` is owned
+    # for, and the create path resolves both the companion and every host id through a
+    # company-scoped query. `product_companion_rule_hosts` is deliberately NOT owned: it
+    # reaches its scope through its parent rule, the way `product_set_members` reaches
+    # it through `product_sets`, so scoping it too would filter it twice.
+    expected_owned = 130
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

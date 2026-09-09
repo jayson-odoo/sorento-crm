@@ -414,6 +414,12 @@ export async function unplaceAllOrderInquiryRows(
  *        The TOTALS honour `kind` like every other filter, because they describe what is
  *        on screen; the `kinds` facet itself drops it, so pressing one card leaves the
  *        other two readable.
+ *        PLAN-scm-supplied-with-companions.md (owner, plan review): a `bundled_qty` is
+ *        in NONE of the three cards - it rides inside another line's own supply, so it
+ *        is not owed anywhere. Every card subtracts `bundled_qty` from what it would
+ *        otherwise count; `kind=buy` follows the same rule, so a fully-bundled row (its
+ *        whole qty rides along) never appears under `kind=buy` and a partly-bundled row
+ *        does, for its ala carte remainder only.
  *        `raised_by` lists only the people who have actually raised one of the rows in
  *        view, id + name, which is what the "Raised by" filter offers.
  *        The totals honour every filter. The AXES each ignore their own filter on
@@ -422,6 +428,23 @@ export async function unplaceAllOrderInquiryRows(
  *
  *   GET  {BASE}/order-inquiries/export
  *        the same filters, no paging -> xlsx, one sheet per delivery month.
+ *
+ * PLAN-scm-supplied-with-companions.md, S5: every row carries two fields, derived
+ * server-side by `derive_bundles`, never typed -
+ *   bundled_qty  : string, same convention as every other quantity here
+ *   bundled_with : { row_id, item_code, item_codes, anchor_headline } | null
+ *                  `item_codes` names every item the rule requires (length 1 or, for a
+ *                  pair rule, 2+); `row_id` addresses the ANCHOR row (the rule's first
+ *                  matching item) so the info icon can open ITS lightbox for a row that
+ *                  has none of its own. `anchor_headline` (review round 1 item 8) is the
+ *                  anchor's OWN coverage - "1 of 1" - resolved server-side, once per
+ *                  page, in `OrderInquiryWorklistService._anchor_headline_by_id`: the
+ *                  cell renders this directly rather than scanning its own loaded rows
+ *                  for a match, which is only ever right when the anchor happens to be
+ *                  on the SAME page as its companion. Null when the anchor has no links
+ *                  of its own yet - the cell falls back to "Not found (new order)".
+ * `response_model` drops a field nobody declares, so both are asserted directly against
+ * a fixture row in `test_order_inquiry_bundles.py` (`test_d7`, `test_d7c`).
  *
  * Rows come from EVERY project and from every adopted AutoCount order, which belongs to
  * no project at all. Permission is `projects.projects.view`, the same read the module
