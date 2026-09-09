@@ -162,8 +162,9 @@
  *    Dealer o/s, Order qty, Delivery, Project / customer, Supplier, Remarks. `Order qty`
  *    is the chosen quantity, blank when nobody has decided one yet - the pen column,
  *    exactly as the printed sheet leaves it. PDF is landscape A4 through
- *    `app.services.pdf_render`; xlsx through `app.services.reports.xlsx_renderer`. The
- *    filename comes off the response's `Content-Disposition`, never rebuilt on this side.
+ *    `app.services.pdf_render`; xlsx is an openpyxl workbook built in
+ *    `summary_order_service` (`xlsx_renderer`'s fixed table shape did not fit the sheet).
+ *    The filename comes off the response's `Content-Disposition`, never rebuilt on this side.
  *
  * -- ERROR SHAPE -------------------------------------------------------------
  * Every failure is the standard `AppException` envelope the global handler in

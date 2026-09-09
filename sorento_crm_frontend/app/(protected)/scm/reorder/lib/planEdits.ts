@@ -257,8 +257,9 @@ export function confirmSummary(
  * suggestion is a suggestion right up until the moment a product is actually bought - the
  * buyer never had to click the radio to mean it, and a row nobody is confirming gets
  * nothing written (only `confirmableLines` qualifies). A row where the buyer DID answer
- * (`edit.lifecycle` set, including an explicit withdrawal to `null`) is left exactly as
- * they left it.
+ * (`edit.lifecycle` set to `'keep'` or `'discontinue'`) is left exactly as they left it -
+ * the radio never writes `null` (there is no "withdraw" control), so that branch of the
+ * check is a defensive `!== undefined` test, not a real, reachable withdrawal path today.
  */
 export function withConfirmLifecycle(
   edits: PlanRowEditMap,

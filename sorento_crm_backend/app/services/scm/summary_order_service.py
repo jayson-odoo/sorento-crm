@@ -56,15 +56,17 @@ from app.models.scm import (
     ReorderRun,
     SupplierPerformance,
 )
+from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.scm import plan_grain
 from app.services.scm.coverage_service import CoverageService
 from app.services.scm.demand import (
     ACTIVE_DECISION_STATE,
     BUY_VERB,
-    PLANNED_ACK_STATES,
     UNPLACED_INQUIRY_STATE,
 )
+from app.services.scm.demand_breakdown_service import _PROJECT_TITLE_SQL
+from app.services.scm.pool_predicate import ACTIVE_SITE_POOL_SQL
 from app.services.scm.spo_supply import open_incoming_clauses
 from app.services.scm.reorder_engine import allocate as eng_allocate
 from app.services.scm.reorder_engine import round_order_qty as eng_round_order_qty
@@ -227,8 +229,12 @@ def write_rows(db: Session, run_id: str, *, as_of: Optional[date] = None) -> int
     # batch and frozen with everything else above - not gated on `is_legacy`, since the
     # buyer's own book (deliveries, project customers, supply, receipts, MOQ) exists on
     # every run whatever the plan's own front-planning contract version is.
-    delivery_retail = _retail_delivery_by_month_map(db, product_ids)
-    delivery_project = _project_delivery_by_month_map(db, product_ids)
+    delivery_retail = _retail_delivery_by_month_map(
+        db, product_ids, horizon=run.plan_horizon_date, horizon_start=run.plan_horizon_start
+    )
+    delivery_project = _project_delivery_by_month_map(
+        db, product_ids, horizon=run.plan_horizon_date, horizon_start=run.plan_horizon_start
+    )
     project_customers = _project_customer_map(db, product_ids)
     suggested_supplier = _suggested_supplier_map(db, product_ids)
     po_open = _po_open_qty_map(db, product_ids)
@@ -607,7 +613,8 @@ def _months_list(bucket: dict[Optional[str], float]) -> list[dict[str, Any]]:
 
 
 def _retail_delivery_by_month_map(
-    db: Session, product_ids: list[str]
+    db: Session, product_ids: list[str], *,
+    horizon: Optional[date] = None, horizon_start: Optional[date] = None,
 ) -> dict[str, dict[Optional[str], float]]:
     """``{product_id: {month_or_None: qty}}`` of open retail SO lines by `required_date`.
 
@@ -615,9 +622,31 @@ def _retail_delivery_by_month_map(
     IS DISTINCT FROM 'project'): a class nobody stamped is still a retail delivery for the
     sheet's own purposes, the same reading `_channel_of`'s NULL case would otherwise give
     it were it read through that helper instead.
+
+    S1 (Phase 3 ruling): windowed by the RUN'S OWN `plan_horizon_start`/`plan_horizon_date`,
+    the same rule `demand.horizon_committed_select_sql`'s book leg applies - a line dated
+    outside the run's own window must not lift a Delivery cell the run itself never counted
+    (`None` on either side is a no-op, matching the reorder rule exactly).
     """
     if not product_ids:
         return {}
+    filters = [
+        SalesOrderLine.product_id.in_(product_ids),
+        SalesOrder.status == "open",
+        SalesOrderLine.line_status == "open",
+        SalesOrderLine.qty_ordered > SalesOrderLine.qty_delivered,
+        or_(SalesOrder.demand_class != PROJECT_KIND, SalesOrder.demand_class.is_(None)),
+    ]
+    if horizon is not None:
+        filters.append(
+            or_(SalesOrderLine.required_date.is_(None),
+                SalesOrderLine.required_date <= horizon)
+        )
+    if horizon_start is not None:
+        filters.append(
+            or_(SalesOrderLine.required_date.is_(None),
+                SalesOrderLine.required_date >= horizon_start)
+        )
     rows = (
         db.query(
             SalesOrderLine.product_id,
@@ -626,13 +655,7 @@ def _retail_delivery_by_month_map(
             SalesOrderLine.qty_delivered,
         )
         .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
-        .filter(
-            SalesOrderLine.product_id.in_(product_ids),
-            SalesOrder.status == "open",
-            SalesOrderLine.line_status == "open",
-            SalesOrderLine.qty_ordered > SalesOrderLine.qty_delivered,
-            or_(SalesOrder.demand_class != PROJECT_KIND, SalesOrder.demand_class.is_(None)),
-        )
+        .filter(*filters)
         .all()
     )
     out: dict[str, dict[Optional[str], float]] = {}
@@ -646,74 +669,93 @@ def _retail_delivery_by_month_map(
 
 
 def _project_delivery_by_month_map(
-    db: Session, product_ids: list[str]
+    db: Session, product_ids: list[str], *,
+    horizon: Optional[date] = None, horizon_start: Optional[date] = None,
 ) -> dict[str, dict[Optional[str], float]]:
-    """``{product_id: {month_or_None: qty}}`` of confirmed, unplaced project demand by the
-    inquiry row's own `delivery_date`.
+    """``{product_id: {month_or_None: qty}}`` of the open project-class order book by
+    `required_date` - the SAME source `_project_customer_map` reads (S1, Phase 3 ruling: the
+    Delivery cell must tie to the same book `project_demand`/`project_customers` sum from,
+    not a narrower Order-Inquiry-confirmed reading that can disagree with them).
 
-    The SAME confirmed leg `demand.horizon_committed_select_sql` reads for `committed`,
-    restated here because that function returns a bare SELECT keyed to a (product,
-    warehouse) net position rather than a month bucket, and it takes no ``:pids`` scope.
+    Windowed the same way the retail half is - the run's own start/end, `None` a no-op.
     """
     if not product_ids:
         return {}
-    rows = db.execute(text("""
-        SELECT sol.product_id::text AS pid, oir.delivery_date AS d,
-               GREATEST(oir.qty - COALESCE(lk.linked, 0), 0) AS qty
-        FROM projects.order_inquiry_rows oir
-        JOIN projects.so_supply_decisions dec
-          ON dec.id = oir.supply_decision_id AND dec.state = :active
-        JOIN projects.sales_order_lines psl ON psl.id = oir.so_line_id
-        JOIN sales_order_lines sol ON sol.id = psl.core_sales_order_line_id
-        LEFT JOIN LATERAL (
-            SELECT COALESCE(SUM(l.qty), 0) AS linked
-            FROM projects.order_inquiry_links l
-            WHERE l.row_id = oir.id
-        ) lk ON TRUE
-        WHERE oir.verb IN ('ORDER', 'ORDER_BACK')
-          AND oir.state IN ('raised', 'partly_linked')
-          AND oir.ack_state = ANY(:acks)
-          AND oir.qty > 0
-          AND oir.qty > COALESCE(lk.linked, 0)
-          AND sol.product_id::text = ANY(:pids)
-    """), {"pids": [str(p) for p in product_ids], "active": ACTIVE_DECISION_STATE,
-           "acks": list(PLANNED_ACK_STATES)}).fetchall()
+    filters = [
+        SalesOrderLine.product_id.in_(product_ids),
+        SalesOrder.status == "open",
+        SalesOrderLine.line_status == "open",
+        SalesOrderLine.qty_ordered > SalesOrderLine.qty_delivered,
+        SalesOrder.demand_class == PROJECT_KIND,
+    ]
+    if horizon is not None:
+        filters.append(
+            or_(SalesOrderLine.required_date.is_(None),
+                SalesOrderLine.required_date <= horizon)
+        )
+    if horizon_start is not None:
+        filters.append(
+            or_(SalesOrderLine.required_date.is_(None),
+                SalesOrderLine.required_date >= horizon_start)
+        )
+    rows = (
+        db.query(
+            SalesOrderLine.product_id,
+            SalesOrderLine.required_date,
+            SalesOrderLine.qty_ordered,
+            SalesOrderLine.qty_delivered,
+        )
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .filter(*filters)
+        .all()
+    )
     out: dict[str, dict[Optional[str], float]] = {}
-    for pid, d, qty in rows:
+    for pid, required_date, qty_ordered, qty_delivered in rows:
         key = str(pid)
-        month = d.isoformat()[:7] if d else None
+        month = required_date.isoformat()[:7] if required_date else None
+        qty = float(qty_ordered or 0) - float(qty_delivered or 0)
         bucket = out.setdefault(key, {})
-        bucket[month] = bucket.get(month, 0.0) + float(qty or 0.0)
+        bucket[month] = bucket.get(month, 0.0) + qty
     return out
 
 
 def _project_customer_map(db: Session, product_ids: list[str]) -> dict[str, list[dict]]:
     """``{product_id: [{label, qty}]}`` - the open project-class order book, the SAME book
     `_demand_aggregates`' `project_qty` sums, split by customer so the two totals always
-    agree with each other."""
+    agree with each other.
+
+    S4 (Phase 3 ruling): the label is "<customer> / <project title>" when the line's core
+    order is mirrored into a project sales order (the SAME `_PROJECT_TITLE_SQL` correlation
+    `demand_breakdown_service` already uses), else the customer alone - raw SQL rather than
+    the ORM so that correlated subquery (written against a bare `sol` alias) can be reused
+    verbatim instead of restated as a second join shape.
+    """
     if not product_ids:
         return {}
-    rows = (
-        db.query(
-            SalesOrderLine.product_id,
-            SalesOrderLine.qty_ordered,
-            SalesOrderLine.qty_delivered,
-            Customer.customer_name,
-        )
-        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
-        .outerjoin(Customer, Customer.id == SalesOrder.customer_id)
-        .filter(
-            SalesOrderLine.product_id.in_(product_ids),
-            SalesOrder.status == "open",
-            SalesOrderLine.line_status == "open",
-            SalesOrderLine.qty_ordered > SalesOrderLine.qty_delivered,
-            SalesOrder.demand_class == PROJECT_KIND,
-        )
-        .all()
-    )
+    # M2 (Phase 3 security review): raw SQL over a company-scoped table, so the ORM's own
+    # isolation filter never sees it - pinned by hand, same as `demand_breakdown_service`'s
+    # own form leg.
+    co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="pcm")
+    rows = db.execute(text(f"""
+        SELECT sol.product_id::text AS pid, sol.qty_ordered, sol.qty_delivered,
+               c.customer_name, {_PROJECT_TITLE_SQL} AS project_title
+        FROM sales_order_lines sol
+        JOIN sales_orders so ON so.id = sol.sales_order_id
+        LEFT JOIN customers c ON c.id = so.customer_id
+        WHERE sol.product_id::text = ANY(:pids)
+          AND so.status = 'open'
+          AND sol.line_status = 'open'
+          AND sol.qty_ordered > sol.qty_delivered
+          AND so.demand_class = :project_class
+          {("AND " + co) if co else ""}
+    """), {"pids": [str(p) for p in product_ids], "project_class": PROJECT_KIND,
+           **co_params}).fetchall()
     buckets: dict[str, dict[str, float]] = {}
-    for pid, qty_ordered, qty_delivered, name in rows:
+    for pid, qty_ordered, qty_delivered, customer_name, project_title in rows:
         key = str(pid)
+        name = f"{customer_name} / {project_title}" if (customer_name and project_title) else (
+            project_title or customer_name
+        )
         label = name or "Unnamed customer"
         qty = float(qty_ordered or 0) - float(qty_delivered or 0)
         bucket = buckets.setdefault(key, {})
@@ -761,26 +803,27 @@ def _suggested_supplier_map(db: Session, product_ids: list[str]) -> dict[str, di
 
 
 def _po_open_qty_map(db: Session, product_ids: list[str]) -> dict[str, float]:
-    """``{product_id: qty}`` of open PO lines still owed - the same book `po_book_service`
-    serves per run, summed network-wide for the sheet."""
+    """``{product_id: qty}`` of open PO lines still owed at a SITE POOL location - the
+    sheet's own "BRW PO Qty" (Phase 3 nit): the same `pool_predicate` module
+    `po_book_service`/`reorder_run_service` already read, rather than a second, wider
+    reading that also counted project-bin PO lines a buyer would never call "BRW PO Qty".
+    A PO line naming no warehouse is not known to be pool supply and is not counted either.
+    """
     if not product_ids:
         return {}
-    rows = (
-        db.query(
-            PurchaseOrderLine.product_id,
-            func.sum(
-                PurchaseOrderLine.qty_ordered
-                - func.coalesce(PurchaseOrderLine.qty_received, 0)
-            ),
-        )
-        .filter(
-            PurchaseOrderLine.product_id.in_(product_ids),
-            PurchaseOrderLine.line_status == "open",
-        )
-        .group_by(PurchaseOrderLine.product_id)
-        .all()
-    )
-    return {str(pid): float(total or 0.0) for pid, total in rows}
+    co, co_params = company_sql_predicate(db, "pol.company_id", param_prefix="poo")
+    rows = db.execute(text(f"""
+        SELECT pol.product_id::text AS pid,
+               SUM(pol.qty_ordered - COALESCE(pol.qty_received, 0)) AS qty
+        FROM purchase_order_lines pol
+        JOIN warehouses w ON w.id = pol.warehouse_id
+        WHERE pol.product_id::text = ANY(:pids)
+          AND pol.line_status = 'open'
+          AND {ACTIVE_SITE_POOL_SQL}
+          {("AND " + co) if co else ""}
+        GROUP BY pol.product_id
+    """), {"pids": [str(p) for p in product_ids], **co_params}).fetchall()
+    return {pid: float(qty or 0.0) for pid, qty in rows}
 
 
 def _incoming_spo_qty_map(db: Session, product_ids: list[str]) -> dict[str, float]:
@@ -806,26 +849,25 @@ def _incoming_spo_qty_map(db: Session, product_ids: list[str]) -> dict[str, floa
 
 def _last_receipt_map(db: Session, product_ids: list[str]) -> dict[str, dict]:
     """``{product_id: {date, qty}}`` of the latest `goods_received` picking line, network-
-    wide - the sheet's "Last in" remark."""
+    wide - the sheet's "Last in" remark.
+
+    `DISTINCT ON (product_id)` picks the one row per product Postgres would otherwise hand
+    back for the whole batch to dedupe in Python - a batch of thousands of products each
+    with a receipt history is thousands of rows fetched to keep exactly one.
+    """
     if not product_ids:
         return {}
-    rows = (
-        db.query(PickingLine.product_id, PickingHeader.picking_date, PickingLine.qty_accepted)
-        .join(PickingHeader, PickingHeader.id == PickingLine.picking_header_id)
-        .filter(
-            PickingLine.product_id.in_(product_ids),
-            PickingHeader.picking_type == "goods_received",
-        )
-        .order_by(PickingLine.product_id, PickingHeader.picking_date.desc())
-        .all()
-    )
-    out: dict[str, dict] = {}
-    for pid, picking_date, qty in rows:
-        key = str(pid)
-        if key in out:
-            continue
-        out[key] = {"date": picking_date, "qty": _f(qty)}
-    return out
+    co, co_params = company_sql_predicate(db, "pl.company_id", param_prefix="lrm")
+    rows = db.execute(text(f"""
+        SELECT DISTINCT ON (pl.product_id) pl.product_id::text AS pid,
+               ph.picking_date, pl.qty_accepted
+        FROM picking_lines pl
+        JOIN picking_headers ph ON ph.id = pl.picking_header_id
+        WHERE pl.product_id::text = ANY(:pids) AND ph.picking_type = 'goods_received'
+          {("AND " + co) if co else ""}
+        ORDER BY pl.product_id, ph.picking_date DESC
+    """), {"pids": [str(p) for p in product_ids], **co_params}).fetchall()
+    return {pid: {"date": picking_date, "qty": _f(qty)} for pid, picking_date, qty in rows}
 
 
 def _demand_aggregates(db: Session, product_ids: list[str]) -> dict[str, dict]:
@@ -1089,12 +1131,57 @@ def _remarks_text(row: dict) -> str:
     return " - ".join(parts)
 
 
-def _export_rows(rep: dict) -> list[tuple]:
-    """One tuple per product, in `_EXPORT_COLUMNS` order. Order qty is the chosen figure
-    or blank (the pen column) - never the suggestion, which would print a decision nobody
-    made."""
+#: M1 (Phase 3 security review): the sheet only lists products to order - a run with
+#: thousands of covered/no-action rows must not turn "export the sheet" into a
+#: several-thousand-row document nobody asked to print.
+_MAX_EXPORT_ROWS = 2000
+
+#: H1 (Phase 3 security review, L4): a text cell longer than this is truncated before it
+#: reaches the workbook - Excel's own per-cell character limit is 32,767; capped well short
+#: of it so a truncated value is still obviously a summary, not an accident at the wire.
+_MAX_XLSX_TEXT = 32000
+
+#: H1: a leading character Excel/Sheets/LibreOffice will read as "this cell is a formula"
+#: on open - `=`, `+`, `-`, `@`, a literal tab or carriage return (CSV-injection's own
+#: character set, restated for xlsx). Prefixed with an apostrophe, which every one of those
+#: applications renders as "force text" and never shows in the cell itself.
+_XLSX_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _rows_to_order(rows: list[dict]) -> list[dict]:
+    """The sheet's own scope (M1): a product with something to act on - a chosen quantity,
+    an engine suggestion, or a dated shortfall. A row that is none of those is fully
+    covered or has nothing to say, and printing it would turn the order sheet into a
+    listing of the whole plan."""
+    return [
+        r for r in rows
+        if (r.get("chosen_qty") or 0) > 0
+        or (r.get("suggested_qty") or 0) > 0
+        or (r.get("shortfall") or 0) > 0
+    ]
+
+
+def _xlsx_safe_text(value: str) -> str:
+    """H1: neutralise formula injection and cap length before a string reaches openpyxl.
+
+    A leading apostrophe is what every spreadsheet application itself uses to force a
+    cell to text - typing it back in is the same defence a human would apply by hand, and
+    it survives `cell.value = ...` untouched (openpyxl does not strip it).
+    """
+    text_value = str(value)
+    if text_value.startswith(_XLSX_FORMULA_PREFIXES):
+        text_value = "'" + text_value
+    if len(text_value) > _MAX_XLSX_TEXT:
+        text_value = text_value[:_MAX_XLSX_TEXT]
+    return text_value
+
+
+def _export_rows(rows: list[dict]) -> list[tuple]:
+    """One tuple per product, in `_EXPORT_COLUMNS` order, every cell pre-formatted TEXT -
+    the PDF's own shape. Order qty is the chosen figure or blank (the pen column) - never
+    the suggestion, which would print a decision nobody made."""
     out: list[tuple] = []
-    for row in rep["rows"]:
+    for row in rows:
         chosen = row.get("chosen_qty")
         out.append((
             row["product_code"],
@@ -1106,6 +1193,27 @@ def _export_rows(rep: dict) -> list[tuple]:
             _customers_text(row.get("project_customers") or []),
             row.get("supplier_name") or "",
             _remarks_text(row),
+        ))
+    return out
+
+
+def _export_xlsx_rows(rows: list[dict]) -> list[tuple]:
+    """One tuple per product, in `_EXPORT_COLUMNS` order, quantities as NUMBERS (H1) - a
+    workbook is opened to be recalculated/summed, and a text "1,234" cell defeats that the
+    moment somebody selects the column."""
+    out: list[tuple] = []
+    for row in rows:
+        chosen = row.get("chosen_qty")
+        out.append((
+            _xlsx_safe_text(row["product_code"]),
+            float(row.get("on_hand") or 0),
+            float(row.get("project_demand") or 0),
+            float(row.get("retail_outstanding") or 0),
+            float(chosen) if chosen is not None else "",
+            _xlsx_safe_text(_month_text(row.get("delivery_by_month") or [])),
+            _xlsx_safe_text(_customers_text(row.get("project_customers") or [])),
+            _xlsx_safe_text(row.get("supplier_name") or ""),
+            _xlsx_safe_text(_remarks_text(row)),
         ))
     return out
 
@@ -1138,7 +1246,9 @@ def _render_export_xlsx(rows: list[tuple]) -> bytes:
     """One sheet, the sheet's own columns - no month tabs or pivot, unlike the shared
     accounting-register renderer (`app.services.reports.xlsx_renderer`), which is built for
     a different journey (a multi-sheet monthly register) this nine-column export does not
-    have."""
+    have. Every cell in `rows` has already been through `_export_xlsx_rows` (numbers for
+    quantities, `_xlsx_safe_text` for strings) - this function only writes what it is given.
+    """
     from io import BytesIO
 
     from openpyxl import Workbook
@@ -1156,18 +1266,26 @@ def _render_export_xlsx(rows: list[tuple]) -> bytes:
 
 def export_report(db: Session, *, run_id: Optional[str], fmt: str) -> tuple[bytes, str, str]:
     """The Order summary sheet as a document (AC-S9.3): landscape PDF or an Excel workbook,
-    the same nine columns and figures the grid shows, so nothing on the export is typed
-    twice. Returns ``(bytes, content_type, filename)``.
+    the same rows and figures the grid shows, so nothing on the export is typed twice.
+    Returns ``(bytes, content_type, filename)``.
+
+    M1 (Phase 3 security review): scoped to rows with something to act on
+    (`_rows_to_order`), and refused above `_MAX_EXPORT_ROWS` - a document that size is not
+    a sheet the buyer can print, it is a database dump wearing a PDF's clothes.
     """
     rep = report(db, run_id=run_id)
-    rows = _export_rows(rep)
+    rows = _rows_to_order(rep["rows"])
+    if len(rows) > _MAX_EXPORT_ROWS:
+        raise AppException(422, "Narrow the plan first")
     stamp = rep.get("as_of") or _today().isoformat()
     if fmt == "pdf":
         return (
-            _render_export_pdf(rows), "application/pdf", f"order-summary-{stamp}.pdf"
+            _render_export_pdf(_export_rows(rows)),
+            "application/pdf",
+            f"order-summary-{stamp}.pdf",
         )
     return (
-        _render_export_xlsx(rows),
+        _render_export_xlsx(_export_xlsx_rows(rows)),
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         f"order-summary-{stamp}.xlsx",
     )

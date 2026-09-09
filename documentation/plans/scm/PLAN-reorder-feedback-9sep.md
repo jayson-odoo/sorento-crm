@@ -172,9 +172,13 @@ Settled by the captain in the lavish review, 9 Sep 2026:
 - Schema `OrderSummaryRowOut` + FE types; `SummaryOrderReportView` columns re-ordered to the
   sheet with the four new cells; `lib/orderSheetText.ts` builds the month / customer /
   remarks strings (tested).
-- `GET /order-summary/export?run_id&format=pdf|xlsx`: HTML template (Jinja, landscape, the
-  sheet's nine columns, Order qty = chosen or blank) through `pdf_render`; workbook through
-  `xlsx_renderer`. FE Export split button (PDF / Excel) using the existing download helper.
+- `GET /order-summary/export?run_id&format=pdf|xlsx`: HTML template (landscape, the sheet's
+  nine columns, Order qty = chosen or blank) through `pdf_render`; workbook built directly
+  with openpyxl in `summary_order_service` (Phase 3 ruling S2: `xlsx_renderer`'s fixed
+  multi-sheet register shape - title block, two-row header, one tab per month - did not fit
+  a single flat nine-column sheet, and forcing it would have meant bending that renderer's
+  contract for one caller). FE Export split button (PDF / Excel) using the existing download
+  helper.
 
 ## 5. Build order
 

@@ -196,3 +196,24 @@ def test_naming_an_excluded_product_at_start_plan_answers_422_with_its_code(scm_
 
     assert resp.status_code == 422, resp.text
     assert "ZZTXP-422" in resp.text
+
+
+# --- S6 (Phase 3 fix round): the products list filters through the DB-seeded catalog ---
+
+def test_the_products_field_catalog_lists_exclude_from_planning(scm_app):
+    """The products list filters through `ListQueryFilterDialog`, driven entirely by the
+    `list_query_fields` catalog - the column existing is not enough, a buyer cannot narrow
+    the list by it until a catalog row names it too (`503_product_exclude_planning_flt`).
+
+    Uses `scm_app` (the real, migrated database), not this file's own `db` fixture: that
+    one is a from-scratch `Base.metadata.create_all` schema, which never carries the
+    migration-SEEDED `list_query_fields` catalog row this test is pinning.
+    """
+    from app.services.list_query_metadata_service import ListQueryMetadataService
+
+    _, real_db, _, _ = scm_app
+    fields = ListQueryMetadataService(real_db).fields_by_key("products")
+    field = fields.get("exclude_from_planning")
+    assert field is not None, "exclude_from_planning must be in the products field catalog"
+    assert field.data_type == "boolean"
+    assert field.filterable is True

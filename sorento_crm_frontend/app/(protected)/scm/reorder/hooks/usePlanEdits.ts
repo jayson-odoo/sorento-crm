@@ -122,7 +122,9 @@ export function usePlanEdits(
       }
       return rows;
     },
-    [lines, decisions],
+    // `edits` is the default for `sourceEdits`, so a stale closure over it would call with
+    // last render's draft whenever a caller omits the argument (`save()`'s own default).
+    [lines, decisions, edits],
   );
 
   const save = useCallback(

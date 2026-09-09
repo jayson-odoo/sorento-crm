@@ -168,9 +168,11 @@ Tags: [BE] backend, [FE] frontend, [E2E] browser walk, [T] test pinned.
   decision always wins.
 - AC-S8.2 [FE] The preselected value is a suggestion: it is sent on Save only for rows the
   buyer decided (any edit on that row), and on Confirm for every confirmed product (G4).
-- AC-S8.3 [BE] Confirm writes `product_lifecycle_decision` for each confirmed product from
-  the request's per-row lifecycle when present.
-- AC-S8.4 [T] vitest: default mapping; pytest: confirm persists lifecycle.
+- AC-S8.3 [FE] Confirm's preceding plan-edits save carries the suggested lifecycle for every
+  confirmable product (`withConfirmLifecycle`); no new backend path (S5, Phase 3 ruling -
+  confirm already saves plan-edits before it confirms, and that save is where the
+  suggestion is persisted, so a second write path for the same fact was never needed).
+- AC-S8.4 [T] vitest: default mapping; `withConfirmLifecycle` carries the suggestion.
 
 ### S9 Order summary = the paper sheet
 
@@ -186,8 +188,10 @@ Tags: [BE] backend, [FE] frontend, [E2E] browser walk, [T] test pinned.
   Column order mirrors the sheet: Item, On hand, Project qty, Dealer o/s, Order qty,
   Delivery, Project/customer, Supplier, Remarks.
 - AC-S9.3 [BE] `GET /order-summary/export?run_id=&format=pdf|xlsx` renders the same rows:
-  PDF landscape A4 via `pdf_render`, Excel via `xlsx_renderer`. Order qty column carries the
-  chosen qty, blank when undecided (the pen column).
+  PDF landscape A4 via `pdf_render`, Excel via an openpyxl workbook built directly in
+  `summary_order_service` (Phase 3 ruling S2 - `xlsx_renderer`'s fixed multi-sheet register
+  shape did not fit this flat nine-column sheet). Order qty column carries the chosen qty,
+  blank when undecided (the pen column).
 - AC-S9.4 [FE] Export button on the Order summary toolbar offers PDF and Excel, downloads
   through the existing file download helper, toast on failure.
 - AC-S9.5 [T] pytest: report row for a fixture product shows two delivery months, one

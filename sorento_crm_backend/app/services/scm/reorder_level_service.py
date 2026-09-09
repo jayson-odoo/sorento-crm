@@ -492,8 +492,13 @@ def refresh_suggestions(db: Session, product_ids: list[str],
     if not product_ids:
         return 0
     constraints = supplier_constraints(db, product_ids)
-    usage = average_daily_usage(db, product_ids, as_of=as_of)
-    movement = monthly_movement(db, product_ids, None, months=study_months, as_of=as_of)
+    # S7 (G1 ruling, Phase 3 fix round): ONE level rule everywhere - this is the same
+    # suggestion `level_suggestion_service.refresh_for_run` computes per run, so a caller
+    # of this function must not size against a different (unfiltered) reading of the same
+    # product's usage.
+    usage = average_daily_usage(db, product_ids, as_of=as_of, retail_only=True)
+    movement = monthly_movement(db, product_ids, None, months=study_months, as_of=as_of,
+                                retail_only=True)
     written = 0
     # A suggestion is per location when locations are named, and product-wide otherwise, so
     # a tenant who plans one warehouse is not forced to set up a level per bin.
@@ -505,7 +510,8 @@ def refresh_suggestions(db: Session, product_ids: list[str],
             out = suggest_level_from_usage(
                 adu=u.get("adu", 0.0), lead_time_days=c.get("lead_time_days"),
                 window_days=u.get("window_days", LEVEL_WINDOW_DAYS),
-                window_qty=u.get("window_qty"), months=movement.get(pid, []))
+                window_qty=u.get("window_qty"), months=movement.get(pid, []),
+                retail_only=True)
             store_suggestion(db, product_id=pid, warehouse_id=wid,
                              suggested_level=out["level"], basis=out["basis"],
                              company_id=company_id)

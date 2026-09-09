@@ -163,6 +163,34 @@ def test_refresh_for_run_stamps_retail_only_and_sizes_off_the_dealer_bin_alone()
         assert float(row["suggested_level"]) != unfiltered_level
 
 
+# --- Phase 3 fix round, S7: ONE level rule everywhere -------------------------------
+
+def test_refresh_suggestions_also_reads_retail_only():
+    """`reorder_level_service.refresh_suggestions` (the admin "recompute levels" path) is
+    a SECOND caller of the same ADU formula `level_suggestion_service.refresh_for_run`
+    uses per run - both must size off the dealer bin alone, or the two screens disagree
+    about the very number this slice exists to fix."""
+    with pg_session() as db:
+        w = _world(db)
+
+        written = rl.refresh_suggestions(db, [w["product_id"]], [w["dealer_wid"]],
+                                         as_of=AS_OF)
+        assert written == 1
+
+        row = db.execute(text(
+            "SELECT suggested_level, suggestion_basis FROM scm.reorder_level "
+            "WHERE product_id = :p AND warehouse_id = :w"
+        ), {"p": w["product_id"], "w": w["dealer_wid"]}).mappings().first()
+        assert row is not None
+        assert (row["suggestion_basis"] or {}).get("retail_only") is True
+
+        unfiltered_usage = rl.average_daily_usage(db, [w["product_id"]], as_of=AS_OF)
+        unfiltered_level = rl.suggest_level_from_usage(
+            adu=unfiltered_usage[w["product_id"]]["adu"], lead_time_days=None,
+        )["level"]
+        assert float(row["suggested_level"]) != unfiltered_level
+
+
 # --- AC-S7.3: the view migration is additive (append-only column) ------------------
 
 def test_consumption_v_carries_a_warehouse_segment_column():

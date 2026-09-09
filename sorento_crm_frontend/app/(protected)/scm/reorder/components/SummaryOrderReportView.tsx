@@ -197,6 +197,9 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
   const columns = useMemo<ColumnDef<OrderSummaryRow>[]>(
     () => [
       {
+        // S3 (Phase 3 ruling): column order mirrors the printed sheet - Item, On hand,
+        // Project qty, Dealer o/s, Order qty, Delivery, Project / customer, Supplier,
+        // Remarks, then the screen's own remaining columns after.
         accessorKey: 'product_code',
         header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
         cell: ({ row }) => (
@@ -226,7 +229,10 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
       {
         // ONE column, three readings (AC-E03). Channel is analysis INSIDE the row,
         // never row identity, so a product that sells to both sides is still one
-        // row and each side is still separately traceable to its own SO lines.
+        // row and each side is still separately traceable to its own SO lines. This
+        // is the sheet's Project qty + Dealer o/s pair, kept as one column (not split
+        // in two) because the drill popovers and the unclassified/ageing readings
+        // beside them are part of one established reading, not a layout detail.
         id: 'so_demand',
         accessorFn: (row) => row.project_demand + row.retail_outstanding,
         header: ({ column }) => <DataGridColumnHeader title="SO demand" column={column} />,
@@ -297,6 +303,176 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
         },
         size: 210,
         meta: { headerTitle: 'SO demand', ...numMeta },
+      },
+      {
+        accessorKey: 'chosen_qty',
+        header: ({ column }) => <DataGridColumnHeader title="Order qty" column={column} />,
+        cell: ({ row }) => {
+          const r = row.original;
+          const dp = decimalPlacesOf(r.uom_decimal_places);
+          // The run is decided at the other grain, or predates the contract. The
+          // control is disabled and names the screen that owns the decision, rather
+          // than accepting a quantity the server will refuse (AC-F09 / AC-F10).
+          if (lockReason) {
+            return (
+              <span
+                className="tabular-nums text-muted-foreground"
+                data-testid={`chosen-qty-locked-${r.product_code}`}
+                title={lockReason}
+              >
+                {r.chosen_qty === null ? EM_DASH : fmtQty(r.chosen_qty, dp)}
+              </span>
+            );
+          }
+          if (r.chosen_qty === null) {
+            return (
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid={`set-qty-${r.product_code}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setDeciding(r);
+                }}
+              >
+                Set
+              </Button>
+            );
+          }
+          return (
+            <button
+              type="button"
+              data-testid={`chosen-qty-${r.product_code}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setDeciding(r);
+              }}
+              className="w-full rounded-sm text-end font-semibold tabular-nums underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              title={
+                r.decided_by
+                  ? `Set by ${r.decided_by}${r.decided_at ? ` on ${dayLabel(r.decided_at.slice(0, 10))}` : ''}`
+                  : undefined
+              }
+            >
+              {fmtQty(r.chosen_qty, dp)}
+            </button>
+          );
+        },
+        size: 130,
+        enableSorting: false,
+        meta: { headerTitle: 'Order qty', ...numMeta },
+      },
+      {
+        // S9 (AC-S9.2): the sheet's own Delivery column - open retail SO lines by
+        // required_date plus project OI rows by delivery_date, grouped by month.
+        id: 'delivery_by_month',
+        accessorFn: (row) => row.delivery_by_month ?? [],
+        header: ({ column }) => <DataGridColumnHeader title="Delivery" column={column} />,
+        cell: ({ row }) => {
+          const text = monthText(row.original.delivery_by_month ?? []);
+          return text ? (
+            <span className="truncate" title={text}>
+              {text}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">{EM_DASH}</span>
+          );
+        },
+        size: 200,
+        enableSorting: false,
+        meta: { headerTitle: 'Delivery' },
+      },
+      {
+        id: 'project_customers',
+        accessorFn: (row) => row.project_customers ?? [],
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Project / customer" column={column} />
+        ),
+        cell: ({ row }) => {
+          const text = customersText(row.original.project_customers ?? []);
+          return text ? (
+            <span className="truncate" title={text}>
+              {text}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">{EM_DASH}</span>
+          );
+        },
+        size: 220,
+        enableSorting: false,
+        meta: { headerTitle: 'Project / customer' },
+      },
+      {
+        accessorKey: 'chosen_supplier_name',
+        header: ({ column }) => <DataGridColumnHeader title="Supplier" column={column} />,
+        cell: ({ row }) => {
+          const r = row.original;
+          if (lockReason) {
+            return r.chosen_supplier_name ? (
+              <span className="truncate text-muted-foreground" title={lockReason}>
+                {r.chosen_supplier_name}
+              </span>
+            ) : (
+              <span className="text-muted-foreground" title={lockReason}>
+                {EM_DASH}
+              </span>
+            );
+          }
+          return (
+            <button
+              type="button"
+              data-testid={`supplier-cell-${r.product_code}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setDeciding(r);
+              }}
+              className="flex w-full min-w-0 items-center rounded-sm text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {r.chosen_supplier_name ? (
+                <span className="truncate" title={r.chosen_supplier_name}>
+                  {r.chosen_supplier_name}
+                </span>
+              ) : (
+                <Badge variant="secondary" appearance="light" size="md">
+                  Choose
+                </Badge>
+              )}
+            </button>
+          );
+        },
+        size: 200,
+        meta: { headerTitle: 'Supplier' },
+      },
+      {
+        // BRW PO qty, incoming SPO qty, last receipt, MOQ - the pen sheet's own
+        // Remarks column, composed rather than typed twice (`lib/orderSheetText.ts`).
+        id: 'remarks',
+        accessorFn: (row) =>
+          remarksText({
+            po_open_qty: row.po_open_qty ?? 0,
+            incoming_spo_qty: row.incoming_spo_qty ?? 0,
+            last_receipt: row.last_receipt ?? null,
+            moq: row.moq ?? null,
+          }),
+        header: ({ column }) => <DataGridColumnHeader title="Remarks" column={column} />,
+        cell: ({ row }) => {
+          const text = remarksText({
+            po_open_qty: row.original.po_open_qty ?? 0,
+            incoming_spo_qty: row.original.incoming_spo_qty ?? 0,
+            last_receipt: row.original.last_receipt ?? null,
+            moq: row.original.moq ?? null,
+          });
+          return text ? (
+            <span className="truncate" title={text}>
+              {text}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">{EM_DASH}</span>
+          );
+        },
+        size: 260,
+        enableSorting: false,
+        meta: { headerTitle: 'Remarks' },
       },
       {
         // Where the product-wide row's figures actually sit. Under Product policy
@@ -417,176 +593,6 @@ export function SummaryOrderReportView({ runId = null, onBack }: SummaryOrderRep
         },
         size: 190,
         meta: { headerTitle: 'Suggested (policy)', ...numMeta },
-      },
-      {
-        accessorKey: 'chosen_qty',
-        header: ({ column }) => <DataGridColumnHeader title="Order qty" column={column} />,
-        cell: ({ row }) => {
-          const r = row.original;
-          const dp = decimalPlacesOf(r.uom_decimal_places);
-          // The run is decided at the other grain, or predates the contract. The
-          // control is disabled and names the screen that owns the decision, rather
-          // than accepting a quantity the server will refuse (AC-F09 / AC-F10).
-          if (lockReason) {
-            return (
-              <span
-                className="tabular-nums text-muted-foreground"
-                data-testid={`chosen-qty-locked-${r.product_code}`}
-                title={lockReason}
-              >
-                {r.chosen_qty === null ? EM_DASH : fmtQty(r.chosen_qty, dp)}
-              </span>
-            );
-          }
-          if (r.chosen_qty === null) {
-            return (
-              <Button
-                variant="outline"
-                size="sm"
-                data-testid={`set-qty-${r.product_code}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setDeciding(r);
-                }}
-              >
-                Set
-              </Button>
-            );
-          }
-          return (
-            <button
-              type="button"
-              data-testid={`chosen-qty-${r.product_code}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                setDeciding(r);
-              }}
-              className="w-full rounded-sm text-end font-semibold tabular-nums underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              title={
-                r.decided_by
-                  ? `Set by ${r.decided_by}${r.decided_at ? ` on ${dayLabel(r.decided_at.slice(0, 10))}` : ''}`
-                  : undefined
-              }
-            >
-              {fmtQty(r.chosen_qty, dp)}
-            </button>
-          );
-        },
-        size: 130,
-        enableSorting: false,
-        meta: { headerTitle: 'Order qty', ...numMeta },
-      },
-      {
-        accessorKey: 'chosen_supplier_name',
-        header: ({ column }) => <DataGridColumnHeader title="Supplier" column={column} />,
-        cell: ({ row }) => {
-          const r = row.original;
-          if (lockReason) {
-            return r.chosen_supplier_name ? (
-              <span className="truncate text-muted-foreground" title={lockReason}>
-                {r.chosen_supplier_name}
-              </span>
-            ) : (
-              <span className="text-muted-foreground" title={lockReason}>
-                {EM_DASH}
-              </span>
-            );
-          }
-          return (
-            <button
-              type="button"
-              data-testid={`supplier-cell-${r.product_code}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                setDeciding(r);
-              }}
-              className="flex w-full min-w-0 items-center rounded-sm text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {r.chosen_supplier_name ? (
-                <span className="truncate" title={r.chosen_supplier_name}>
-                  {r.chosen_supplier_name}
-                </span>
-              ) : (
-                <Badge variant="secondary" appearance="light" size="md">
-                  Choose
-                </Badge>
-              )}
-            </button>
-          );
-        },
-        size: 200,
-        meta: { headerTitle: 'Supplier' },
-      },
-      {
-        // S9 (AC-S9.2): the sheet's own Delivery column - open retail SO lines by
-        // required_date plus project OI rows by delivery_date, grouped by month.
-        id: 'delivery_by_month',
-        accessorFn: (row) => row.delivery_by_month ?? [],
-        header: ({ column }) => <DataGridColumnHeader title="Delivery" column={column} />,
-        cell: ({ row }) => {
-          const text = monthText(row.original.delivery_by_month ?? []);
-          return text ? (
-            <span className="truncate" title={text}>
-              {text}
-            </span>
-          ) : (
-            <span className="text-muted-foreground">{EM_DASH}</span>
-          );
-        },
-        size: 200,
-        enableSorting: false,
-        meta: { headerTitle: 'Delivery' },
-      },
-      {
-        id: 'project_customers',
-        accessorFn: (row) => row.project_customers ?? [],
-        header: ({ column }) => (
-          <DataGridColumnHeader title="Project / customer" column={column} />
-        ),
-        cell: ({ row }) => {
-          const text = customersText(row.original.project_customers ?? []);
-          return text ? (
-            <span className="truncate" title={text}>
-              {text}
-            </span>
-          ) : (
-            <span className="text-muted-foreground">{EM_DASH}</span>
-          );
-        },
-        size: 220,
-        enableSorting: false,
-        meta: { headerTitle: 'Project / customer' },
-      },
-      {
-        // BRW PO qty, incoming SPO qty, last receipt, MOQ - the pen sheet's own
-        // Remarks column, composed rather than typed twice (`lib/orderSheetText.ts`).
-        id: 'remarks',
-        accessorFn: (row) =>
-          remarksText({
-            po_open_qty: row.po_open_qty ?? 0,
-            incoming_spo_qty: row.incoming_spo_qty ?? 0,
-            last_receipt: row.last_receipt ?? null,
-            moq: row.moq ?? null,
-          }),
-        header: ({ column }) => <DataGridColumnHeader title="Remarks" column={column} />,
-        cell: ({ row }) => {
-          const text = remarksText({
-            po_open_qty: row.original.po_open_qty ?? 0,
-            incoming_spo_qty: row.original.incoming_spo_qty ?? 0,
-            last_receipt: row.original.last_receipt ?? null,
-            moq: row.original.moq ?? null,
-          });
-          return text ? (
-            <span className="truncate" title={text}>
-              {text}
-            </span>
-          ) : (
-            <span className="text-muted-foreground">{EM_DASH}</span>
-          );
-        },
-        size: 260,
-        enableSorting: false,
-        meta: { headerTitle: 'Remarks' },
       },
     ],
     [reportRunId, lockReason],
