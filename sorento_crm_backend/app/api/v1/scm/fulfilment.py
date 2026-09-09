@@ -1085,16 +1085,6 @@ def list_inbound_shipments(
     }
 
 
-@router.get("/inbound-shipments/{shipment_id}/allocation-suggestion")
-def allocation_suggestion(
-    shipment_id: str,
-    _user: dict = Depends(_READ),
-    db: Session = Depends(get_db),
-):
-    """Per shipment line, the proposed Supply PO line and location, with its alternatives."""
-    return allocation_suggestion_service.suggest(db, shipment_id)
-
-
 @router.get("/inbound-shipments/{shipment_id}/packing-list")
 def consolidated_packing_list_for_shipment(
     shipment_id: str,

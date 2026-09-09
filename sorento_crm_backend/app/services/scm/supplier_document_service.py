@@ -1,34 +1,23 @@
 """One dialog, several supplier documents: proforma invoice, packing list, or both (R12-R14,
-purchasing consolidation batch, lane C).
+purchasing consolidation batch, lane C; S3/S2, supplier documents / PI-first lane, 9 Sep 2026).
 
-The reading and the writing are NOT done here twice. `proforma_invoice_service` and
-`packing_list_service` already parse their own doc type, resolve the catalogue, resolve the
-currency, and write the invoice / the shipment (one per container block, already, for the
-packing list). This module's own job is the THREE things neither of them does alone:
+The reading is not done here twice. `proforma_invoice_service` already parses the PI doc
+type, resolves the catalogue, resolves the currency, and writes the invoice. This module's
+own job is what neither reader does alone:
 
   * **Classify** which reader a file is for, by its title cell (`发票` / `PROFORMA INVOICE` /
     `INVOICE` vs `装箱单` / `PACKING LIST`), so ONE dialog can take either, or both together.
   * **One preview shape** across files of either kind, so the dialog renders one table
     regardless of what each file turned out to be.
-  * **Price matching (R14).** A packing list's lines carry no price of their own; where a
-    proforma invoice for the same supplier and the same container (or the same `pi_number`)
-    exists, its lines' prices are copied onto the matching shipment lines by PRODUCT (not by
-    the supplier's own item-code text, which the two documents do not always spell the same
-    way) and a `proforma_invoice_shipment_link` row is written - same table, same columns as
-    the "Convert to packing list" dialog writes, because that is what a linked line means
-    everywhere else in this system. Never `convert_to_draft_shipment` itself: that function's
-    whole job is minting a NEW shipment, and the shipment already exists here (the packing
-    list's own apply already created it) - only the price and the link are new.
-
-Runs for EVERY supplier + container pair this supplier currently holds, on every apply,
-rather than only the files just uploaded: the upload order is not fixed (together, PL after
-PI, PI after PL) and a small per-supplier scan is cheap next to getting one of the three
-orders wrong.
+  * **Write the packing rows onto the PI they price** - never a new `inbound_shipments` row
+    (AC-C1, S3): a packing list is born by convert or by hand only (S3, AC-C2). A packing-list
+    (or combined) file resolves which proforma invoice it attaches to and writes its rows
+    there (S2's `replace_packing_rows`); the old R14 price-matching write onto a shipment
+    line (`_match_prices`) is retired along with the shipment birth it depended on.
 """
 from __future__ import annotations
 
 import logging
-import uuid
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
@@ -471,121 +460,6 @@ def preview(
     return {"files": out_files, "price_matches": price_matches}
 
 
-def _match_prices(db: Session, *, supplier_id: str) -> int:
-    """Copy proforma-invoice prices onto the packing-list lines they match, by PRODUCT, for
-    every container this supplier holds on both sides (R14). Mirrors
-    `convert_to_draft_shipment`'s own semantics rather than a shape of its own (review
-    round 1, captain's ruling): `qty` on the link is how much is on THIS shipment line,
-    never the PI line's own quantity (which may span more than one container); a PI line
-    with no shipment line to bind to still gets a row, `unmatched_reason` set, so the PI
-    detail page can say where it went; a container carrying TWO shipment lines for the same
-    product (rare - two blocks of one container each writing it) consumes them in order,
-    so a second PI line naming that product takes the SECOND line rather than the same one
-    every time. Idempotent: ANY existing row for a PI line - matched or unmatched - is a
-    recorded outcome and is never written again, same rule `convert_to_draft_shipment` uses
-    (and the reason a PI placed through this path is correctly refused by that function and
-    dropped from its own revision candidates - the outcome here is exactly as permanent).
-    """
-    from app.models.procurement import InboundShipment, InboundShipmentLine
-    from app.models.scm import ProformaInvoice, ProformaInvoiceLine, ProformaInvoiceShipmentLink
-    from app.services.procurement_service import _container_match_key
-
-    invoices = (
-        db.query(ProformaInvoice).filter(ProformaInvoice.supplier_id == supplier_id).all()
-    )
-    if not invoices:
-        return 0
-    shipments = (
-        db.query(InboundShipment).filter(InboundShipment.supplier_id == supplier_id).all()
-    )
-    if not shipments:
-        return 0
-
-    by_container: dict[str, list[InboundShipment]] = {}
-    for s in shipments:
-        key = _container_match_key(s.shipping_container_number)
-        if key:
-            by_container.setdefault(key, []).append(s)
-
-    # ANY existing row - matched (a real link) or skipped (`unmatched_reason` set) - is a
-    # recorded outcome, not only a matched one; re-checking every apply would otherwise
-    # write a second `unmatched_reason` row for the same line on every subsequent upload.
-    already_linked = {
-        str(r[0]) for r in db.query(ProformaInvoiceShipmentLink.proforma_invoice_line_id).all()
-    }
-
-    links_written = 0
-    for inv in invoices:
-        key = _container_match_key(inv.container_ref)
-        if not key:
-            continue
-        candidates = by_container.get(key)
-        if not candidates:
-            continue
-        pi_lines = (
-            db.query(ProformaInvoiceLine)
-            .filter(ProformaInvoiceLine.invoice_id == inv.id, ProformaInvoiceLine.product_id.isnot(None))
-            .order_by(ProformaInvoiceLine.line_no)
-            .all()
-        )
-        if not pi_lines:
-            continue
-        for shipment in candidates:
-            # Consumed in order (`list.pop(0)`, below) - a second shipment line for the
-            # same product takes the NEXT PI line naming it, not the first one twice.
-            lines_by_product: dict[str, list[InboundShipmentLine]] = {}
-            for ln in (
-                db.query(InboundShipmentLine)
-                .filter(InboundShipmentLine.shipment_id == shipment.id)
-                .order_by(InboundShipmentLine.created_at, InboundShipmentLine.id)
-                .all()
-            ):
-                if ln.product_id:
-                    lines_by_product.setdefault(str(ln.product_id), []).append(ln)
-
-            for pi_line in pi_lines:
-                if str(pi_line.id) in already_linked:
-                    continue
-                targets = lines_by_product.get(str(pi_line.product_id))
-                if not targets:
-                    db.add(
-                        ProformaInvoiceShipmentLink(
-                            id=str(uuid.uuid4()),
-                            proforma_invoice_id=inv.id,
-                            proforma_invoice_line_id=pi_line.id,
-                            inbound_shipment_id=shipment.id,
-                            inbound_shipment_line_id=None,
-                            unmatched_reason=(
-                                "No shipment line for this product on this container."
-                            ),
-                        )
-                    )
-                    already_linked.add(str(pi_line.id))
-                    continue
-                target = targets.pop(0)
-                if pi_line.unit_price is not None:
-                    target.unit_cost = pi_line.unit_price
-                    target.currency = inv.currency
-                db.add(
-                    ProformaInvoiceShipmentLink(
-                        id=str(uuid.uuid4()),
-                        proforma_invoice_id=inv.id,
-                        proforma_invoice_line_id=pi_line.id,
-                        inbound_shipment_id=shipment.id,
-                        inbound_shipment_line_id=target.id,
-                        # How much is on THIS shipment - the target line's OWN quantity,
-                        # not the PI line's (which is not split here, but may still name
-                        # more than what a single container actually carries).
-                        qty=target.quantity_shipped,
-                    )
-                )
-                already_linked.add(str(pi_line.id))
-                links_written += 1
-    if links_written:
-        db.flush()
-    return links_written
-
-
 def apply(
     db: Session,
     files: list[tuple[str, bytes, Optional[str]]],
@@ -647,34 +521,15 @@ def apply(
             attachment_ids.append(attachment_id)
             filed_attachment_by_name[name] = attachment_id
 
-    for name, data, ctype, kind in kinds:
-        if kind not in ("packing_list", "combined"):
-            continue
-        already_filed = filed_attachment_by_name.get(name)
-        result = packing_list_service.apply(
-            db, data, supplier_id=supplier_id, currency=currency, source_ref=name,
-            content_type=ctype, attachment_id=already_filed,
-            file_in_drive=already_filed is None, actor_id=actor_id,
-        )
-        for r in result.get("results", []):
-            if r.get("shipment_id"):
-                shipment_ids.append(r["shipment_id"])
-
-    if shipment_ids:
-        from app.models.procurement import InboundShipment
-
-        for row in (
-            db.query(InboundShipment.attachment_id)
-            .filter(InboundShipment.id.in_(shipment_ids), InboundShipment.attachment_id.isnot(None))
-            .all()
-        ):
-            attachment_ids.append(str(row[0]))
-
-    links_written = _match_prices(db, supplier_id=supplier_id)
+    # AC-C1 (S3): a packing-list (or combined) file never creates an `inbound_shipments`
+    # row any more - `packing_list_service.apply` and the R14 price-link write
+    # (`_match_prices`, deleted) are gone from this path entirely. S2 replaces this loop
+    # with `replace_packing_rows`, writing the file's rows onto the PI it resolves to
+    # instead of a shipment; a packing list is born by convert or by hand (S3, AC-C2).
 
     return {
         "proforma_invoice_ids": sorted(set(proforma_invoice_ids)),
         "shipment_ids": sorted(set(shipment_ids)),
-        "links_written": links_written,
+        "links_written": 0,
         "attachment_ids": sorted(set(attachment_ids)),
     }

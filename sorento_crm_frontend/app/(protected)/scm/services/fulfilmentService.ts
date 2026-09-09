@@ -1108,43 +1108,6 @@ export async function getSupplierNotices(
   return body.data;
 }
 
-/**
- * S9 - the packing list, and what each container draws down.
- *
- * `quantity_to_allocate` is what is LEFT on a line, never the shipped figure again: re-opening
- * the screen after a partial allocation must not propose the same units twice.
- */
-export interface AllocationOption {
-  po_line_id: string;
-  po_number: string | null;
-  warehouse_id: string | null;
-  warehouse_code: string | null;
-  outstanding: number;
-  expected_date: string | null;
-  score: number;
-  factors: { key: string; weight: number; value: number | null; present: boolean }[];
-  qty?: number;
-}
-
-export interface AllocationLine {
-  shipment_line_id: string;
-  product_id: string;
-  quantity_shipped: number;
-  quantity_allocated: number;
-  quantity_to_allocate: number;
-  reason: 'only_open_order' | 'highest_priority' | 'no_open_order';
-  suggestion: AllocationOption | null;
-  alternatives: AllocationOption[];
-}
-
-export interface AllocationSuggestion {
-  shipment_id: string;
-  shipment_number: string | null;
-  container_no: string | null;
-  supplier_id: string | null;
-  lines: AllocationLine[];
-}
-
 export interface PackingListBlock {
   index: number;
   shipment_number: string;
@@ -1488,11 +1451,6 @@ export async function applySupplierDocuments(
     body: supplierDocumentsForm(files, opts),
   });
   return readJson<SupplierDocumentsApplyResult>(res, 'Failed to import the supplier documents');
-}
-
-export async function getAllocationSuggestion(shipmentId: string): Promise<AllocationSuggestion> {
-  const res = await apiFetch(`/api/v1/scm/inbound-shipments/${shipmentId}/allocation-suggestion`);
-  return readJson<AllocationSuggestion>(res, 'Failed to work out what this container draws down');
 }
 
 export interface AllocationDecision {
