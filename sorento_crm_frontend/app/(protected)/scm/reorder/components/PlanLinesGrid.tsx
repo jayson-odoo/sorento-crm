@@ -228,7 +228,7 @@ export function PlanLinesGrid({
   decisions,
   edits = {},
   onRowEdit,
-  onResetRow,
+  onSaveRow,
   toolbarPrimary,
   coverFor,
   priceFor,
@@ -265,8 +265,9 @@ export function PlanLinesGrid({
   /** Write one field of a row's draft. Nothing on this grid writes to the backend any more:
    *  the panel edits a draft and Save persists the lot in one request. */
   onRowEdit?: (line: PlanLine, patch: PlanRowEdit) => void;
-  /** Drop a row's draft ("Use suggestion"). */
-  onResetRow?: (line: PlanLine) => void;
+  /** Persist THIS row's own draft now (S12, round 2, 9 Sep - the panel's "Save" button,
+   *  was "Use suggestion" which reset the draft instead of persisting it). */
+  onSaveRow?: (line: PlanLine) => void;
   /** Save (N) and Confirm (N), rendered at the right end of the grid's own toolbar, after
    *  Actions (R11). The SECTION owns them - it owns the draft map they act on. */
   toolbarPrimary?: React.ReactNode;
@@ -626,7 +627,7 @@ export function PlanLinesGrid({
               disabled={decisionsReadOnly}
               lockReason={decisionsReadOnly ? readOnlyReason : null}
               onEdit={(patch) => onRowEdit?.(line, patch)}
-              onUseSuggestion={() => onResetRow?.(line)}
+              onSave={() => onSaveRow?.(line)}
             />
           ),
         },
@@ -1048,7 +1049,7 @@ export function PlanLinesGrid({
      trendFor, trendSeriesMonths, groupByChannel, dynamicChannels,
      poFor,
      hasPhotoFor, photoStatus, onOpenPhoto,
-     onRowEdit, onResetRow, openDialog, readingFor, channelTotals],
+     onRowEdit, onSaveRow, openDialog, readingFor, channelTotals],
   );
 
   // The story order (see the header comment): each chapter leads with its result and is

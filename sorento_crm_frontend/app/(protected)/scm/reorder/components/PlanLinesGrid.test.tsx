@@ -173,7 +173,7 @@ function renderGrid(
   } = {},
 ) {
   const onRowEdit = vi.fn();
-  const onResetRow = vi.fn();
+  const onSaveRow = vi.fn();
   const coverFor = (l: PlanLine) =>
     l.purchasable ? coverForLine(l, opts.free ?? []) : NO_COVER;
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -191,8 +191,8 @@ function renderGrid(
           onRowEdit(l, patch);
           setEdits((prev) => ({ ...prev, [l.id]: { ...prev[l.id], ...patch } }));
         }}
-        onResetRow={(l: PlanLine) => {
-          onResetRow(l);
+        onSaveRow={(l: PlanLine) => {
+          onSaveRow(l);
           setEdits((prev) => {
             const next = { ...prev };
             delete next[l.id];
@@ -219,7 +219,7 @@ function renderGrid(
       <Harness />
     </QueryClientProvider>,
   );
-  return { onRowEdit, onResetRow };
+  return { onRowEdit, onSaveRow };
 }
 
 const headerNames = () =>
@@ -439,11 +439,11 @@ describe('PlanLinesGrid - the panel edits a draft, never the backend (D2-D9)', (
     expect(screen.queryByText(/over suggested|short of suggested/)).not.toBeInTheDocument();
   });
 
-  it('Use suggestion drops the row draft', () => {
-    const { onResetRow } = renderGrid([line()], { edits: { r1: { decision: { buy: 9 } } } });
+  it('Save persists the row draft (S12, round 2, 9 Sep - was "Use suggestion")', () => {
+    const { onSaveRow } = renderGrid([line()], { edits: { r1: { decision: { buy: 9 } } } });
     fireEvent.click(screen.getByText('SKU-1'));
-    fireEvent.click(screen.getByRole('button', { name: 'Use suggestion' }));
-    expect(onResetRow).toHaveBeenCalledWith(expect.objectContaining({ id: 'r1' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSaveRow).toHaveBeenCalledWith(expect.objectContaining({ id: 'r1' }));
   });
 
   it('Skip records a skip on the draft', () => {

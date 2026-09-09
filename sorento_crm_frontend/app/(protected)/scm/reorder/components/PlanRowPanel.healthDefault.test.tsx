@@ -87,7 +87,7 @@ const line = (over: Partial<ReorderRecommendation> = {}): PlanLine => recToPlanL
 
 function renderPanel(over: Partial<React.ComponentProps<typeof PlanRowPanel>> = {}) {
   const onEdit = vi.fn();
-  const onUseSuggestion = vi.fn();
+  const onSave = vi.fn();
   const props: React.ComponentProps<typeof PlanRowPanel> = {
     line: line(),
     edit: undefined,
@@ -98,11 +98,11 @@ function renderPanel(over: Partial<React.ComponentProps<typeof PlanRowPanel>> = 
     levelSuggestion: undefined,
     economics: undefined,
     onEdit,
-    onUseSuggestion,
+    onSave,
     ...over,
   };
   render(<PlanRowPanel {...props} />);
-  return { onEdit, onUseSuggestion };
+  return { onEdit, onSave };
 }
 
 const economics = (over: Partial<ProductEconomics> = {}): ProductEconomics => ({

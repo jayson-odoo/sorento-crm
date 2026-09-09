@@ -212,6 +212,67 @@ Tags: [BE] backend, [FE] frontend, [E2E] browser walk, [T] test pinned.
 - AC-S9.6 [E2E] Open Order summary from a plan, see Delivery and Remarks populated, export
   PDF, file lands.
 
+### Round 2 (captain, 9 Sep evening, screenshots 17-20)
+
+Measured: for SRTSS8710 the engine's suggested supplier is the `DEFAULT` product_suppliers link
+at MYR 121.80 while the last purchase is CNY 48.00 from KAIPING HANSHUN (202603-S0048); the row
+printed "Line cost RM 56,271.60 at last price" = 462 x 121.80, a stale default, under a wrong
+label. MOQ edits land only as `set_moq_override` on the recommendation (per run).
+
+### S10 Order sheet from the plan, Order summary page retired
+
+- AC-S10.1 [FE] The plan grid Actions menu offers "Order sheet PDF" and "Order sheet Excel";
+  each downloads `GET /order-summary/export?run_id=<run>&format=` for the open run through
+  the shared file-download helper, toast on failure (including the 422 "Narrow the plan first").
+- AC-S10.2 [FE] The "Order summary" action and the Order summary view are removed from the plan
+  page; the component, its hooks and tests are deleted when nothing else consumes them
+  (`useConfirmOrderDecisions` reuse is checked first). Backend order-summary routes stay.
+- AC-S10.3 [T] vitest: Actions menu lists both sheet entries, neither lists Order summary;
+  clicking PDF calls the download helper with the run id and `pdf`.
+- AC-S10.4 [E2E] Actions > Order sheet PDF on a completed plan: 200, file lands.
+
+### S11 Price in the buying currency
+
+- AC-S11.1 [FE] The Last supplier select prefills with the LAST PURCHASE supplier when one is
+  on file (KAIPING HANSHUN for SRTSS8710), not the engine's default link; the buyer can still
+  change it.
+- AC-S11.2 [FE] Line cost = Buy qty x last price, labelled in the purchase's currency:
+  "Line cost CNY 22,176.00 at last price". With "Get new price" selected, or no last price on
+  file, it is Buy qty x the chosen supplier's own cost in that supplier's currency, labelled
+  "at supplier price"; with neither, "-".
+- AC-S11.3 [FE] The "No MYR rate for CNY, set it under SCM policies" hint is removed
+  (AC-S2.4 retired). Cash tiles unchanged (they sum what has a base cost).
+- AC-S11.4 [T] vitest: CNY last price 48 with Buy 462 renders "CNY 22,176.00 at last price";
+  no last price + supplier cost renders the supplier's currency; hint text absent.
+
+### S12 Row Save
+
+- AC-S12.1 [FE] The expanded row's "Use suggestion" button becomes "Save": it persists this
+  row's current inputs (decision cover/buy, MOQ, level, reorder qty, lifecycle, price mode,
+  supplier) immediately through the plan-edits save for that row's recommendations, removes
+  the row from the unsaved set, and toasts. "Skip" stays. Toolbar Save (N) still saves every
+  drafted row.
+- AC-S12.2 [FE] After a row Save the Decisions tile and Confirm (N) update without a reload.
+- AC-S12.3 [T] vitest: clicking Save calls savePlanEdits with only that row's recs; Save (N)
+  drops by one; Confirm (N) rises when the row carries a buy.
+- AC-S12.4 [E2E] Type Buy 30, Save: toast, Confirm (1), reload shows 30.
+
+### S13 MOQ remembered on the product supplier
+
+- AC-S13.1 [BE] Saving an MOQ on a row (plan-edits `moq`, and `PUT /recommendations/{id}/moq`)
+  also writes `product_suppliers.moq` for (product, supplier) where supplier = the row's chosen
+  supplier, else the last-purchase supplier, else the primary link; the link is created when
+  it does not exist and a supplier is known. The per-run rec override is still written.
+- AC-S13.2 [FE] The MOQ input prefills from that product-supplier link's MOQ (the rec's
+  `supplier.moq` when present) so a remembered MOQ shows on the next plan.
+- AC-S13.3 [BE] The next run applies it: `_supplier_constraints` already reads
+  `ProductSupplier.moq`; a test creates a run after saving MOQ 100 and asserts the row's
+  `supplier_moq` is 100 and the rounded qty respects it.
+- AC-S13.4 [T] pytest: plan-edits moq 100 on a rec whose last-purchase supplier has no link
+  creates `product_suppliers` (product, supplier, moq 100); a second save updates in place.
+- AC-S13.5 [E2E] Set MOQ 100, Save, start a new plan, the same product shows MOQ 100 and a
+  suggested qty rounded to it.
+
 ### Cross-cutting
 
 - AC-X.1 Usable at 375px and 1280px on every touched screen.

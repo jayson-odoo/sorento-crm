@@ -1291,6 +1291,12 @@ def _row(r, funding_by_id: Optional[dict[str, str]] = None, *,
         "last_purchase_date": (inp.get("last_purchase") or {}).get("at"),
         "last_purchase_ref": (inp.get("last_purchase") or {}).get("ref"),
         "last_purchase_basis": inp.get("last_purchase_basis"),
+        # S11 (round 2, 9 Sep): who this purchase actually named, so the panel can prefill
+        # its supplier select to the LAST PURCHASE supplier rather than the engine's own
+        # default link (measured: SRTSS8710's default link is a stale MYR 121.80 while the
+        # last purchase was CNY 48.00 from KAIPING HANSHUN). A code, never the raw id.
+        "last_purchase_supplier_code": (inp.get("last_purchase") or {}).get("supplier_code"),
+        "last_purchase_supplier_name": (inp.get("last_purchase") or {}).get("supplier_name"),
         "policy_type": inp.get("policy_type"),
         "supplier_selection": inp.get("selection"),
         # --- M4 cash co-pilot (buy rows only; non-buy leave these null) ---

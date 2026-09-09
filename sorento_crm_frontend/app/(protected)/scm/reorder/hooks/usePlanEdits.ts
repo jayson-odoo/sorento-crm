@@ -98,6 +98,24 @@ export function usePlanEdits(
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [saveCount]);
 
+  /** One row's draft, in the wire shape - the fan-out `payloadRows` and `saveRow` both
+   *  build on. Empty when the row carries nothing drafted. */
+  const rowsForLine = useCallback(
+    (line: PlanLine, edit: PlanRowEdit | undefined): PlanEditRow[] => {
+      if (!hasRowEdit(edit)) return [];
+      const decision = editedDecisionFor(edit as PlanRowEdit, decisionForLine(line, decisions));
+      return recIdsForLine(line).map((recId) => ({
+        rec_id: recId,
+        ...(decision ? { decision } : {}),
+        ...(edit?.moq !== undefined ? { moq: edit.moq } : {}),
+        ...(edit?.level !== undefined ? { level: edit.level } : {}),
+        ...(edit?.reorderQty !== undefined ? { reorder_qty: edit.reorderQty } : {}),
+        ...(edit?.lifecycle !== undefined ? { lifecycle: edit.lifecycle } : {}),
+      }));
+    },
+    [decisions],
+  );
+
   /** The draft map, flattened to one row per RECOMMENDATION - the wire shape. Takes an
    *  explicit edits map (defaulting to the live draft) so `confirm` can save an AUGMENTED
    *  copy - one that also carries the health suggestion for every row it is about to
@@ -105,27 +123,21 @@ export function usePlanEdits(
   const payloadRows = useCallback(
     (sourceEdits: PlanRowEditMap = edits): PlanEditRow[] => {
       const rows: PlanEditRow[] = [];
-      for (const line of lines) {
-        const edit = sourceEdits[line.id];
-        if (!hasRowEdit(edit)) continue;
-        const decision = editedDecisionFor(edit as PlanRowEdit, decisionForLine(line, decisions));
-        for (const recId of recIdsForLine(line)) {
-          rows.push({
-            rec_id: recId,
-            ...(decision ? { decision } : {}),
-            ...(edit?.moq !== undefined ? { moq: edit.moq } : {}),
-            ...(edit?.level !== undefined ? { level: edit.level } : {}),
-            ...(edit?.reorderQty !== undefined ? { reorder_qty: edit.reorderQty } : {}),
-            ...(edit?.lifecycle !== undefined ? { lifecycle: edit.lifecycle } : {}),
-          });
-        }
-      }
+      for (const line of lines) rows.push(...rowsForLine(line, sourceEdits[line.id]));
       return rows;
     },
     // `edits` is the default for `sourceEdits`, so a stale closure over it would call with
     // last render's draft whenever a caller omits the argument (`save()`'s own default).
-    [lines, decisions, edits],
+    [lines, edits, rowsForLine],
   );
+
+  const invalidatePlanQueries = useCallback(async () => {
+    if (!runId) return;
+    await qc.invalidateQueries({ queryKey: planRowDecisionsKey(runId) });
+    await qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'level-suggestions'] });
+    await qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'product-economics'] });
+    await qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'buy'] });
+  }, [runId, qc]);
 
   const save = useCallback(
     async (sourceEdits: PlanRowEditMap = edits) => {
@@ -136,16 +148,42 @@ export function usePlanEdits(
       try {
         const result = await savePlanEdits(runId, rows);
         clearAll();
-        await qc.invalidateQueries({ queryKey: planRowDecisionsKey(runId) });
-        await qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'level-suggestions'] });
-        await qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'product-economics'] });
-        await qc.invalidateQueries({ queryKey: ['plan-lines', runId, 'buy'] });
+        await invalidatePlanQueries();
         return result;
       } finally {
         setIsSaving(false);
       }
     },
-    [runId, edits, payloadRows, clearAll, qc],
+    [runId, edits, payloadRows, clearAll, invalidatePlanQueries],
+  );
+
+  /**
+   * S12 (round 2, 9 Sep): the panel's own "Save" - persists just THIS row's draft,
+   * immediately, rather than waiting on the toolbar's Save (N) to sweep up every row on
+   * the plan. Was "Use suggestion" (`resetRow`, still here for a caller that wants to
+   * drop a draft without persisting it); this button persists instead.
+   */
+  const saveRow = useCallback(
+    async (line: PlanLine) => {
+      if (!runId) return null;
+      const rows = rowsForLine(line, edits[line.id]);
+      if (!rows.length) return null;
+      setIsSaving(true);
+      try {
+        const result = await savePlanEdits(runId, rows);
+        setEdits((prev) => {
+          if (!prev[line.id]) return prev;
+          const next = { ...prev };
+          delete next[line.id];
+          return next;
+        });
+        await invalidatePlanQueries();
+        return result;
+      } finally {
+        setIsSaving(false);
+      }
+    },
+    [runId, edits, rowsForLine, invalidatePlanQueries],
   );
 
   /**
@@ -174,6 +212,7 @@ export function usePlanEdits(
     edits,
     setRowEdit,
     resetRow,
+    saveRow,
     clearAll,
     saveCount,
     confirmable,

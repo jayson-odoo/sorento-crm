@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQueryClient } from '@tanstack/react-query';
@@ -11,6 +11,7 @@ import {
   ArrowLeft,
   ClipboardList,
   FileSpreadsheet,
+  FileText,
   Loader2,
   RotateCcw,
 } from 'lucide-react';
@@ -32,13 +33,13 @@ import {
   useUnlocatedDemand,
 } from '../hooks/useReorderRun';
 import { resetRunDecisions } from '../services/reorderRunService';
+import { downloadOrderSummaryExport } from '../services/summaryOrderService';
 import type { PlanTotals } from '../lib/planDecisions';
 import { PlanExceptionsView } from './PlanExceptionsView';
 import { PlanHeaderTab } from './PlanHeaderTab';
 import { PlanLinesSection } from './PlanLinesSection';
 import { PoWorklistView } from './PoWorklistView';
 import { ReorderStatTiles, type ReorderPlanView as PlanViewKey } from './ReorderStatTiles';
-import { SummaryOrderReportView } from './SummaryOrderReportView';
 
 /**
  * ONE plan, at its own address (`/scm/reorder/{id}`, R1).
@@ -80,17 +81,40 @@ export function ReorderPlanView({ runId }: { runId: string }) {
   const groupByChannel = shouldGroupByChannel(item);
 
   /**
-   * R4 + R10: the three run reports and the demo reset live in the grid's own Actions menu.
-   * They are views OF this run, so they belong on this page; none of them needs a permanent
+   * R4 + R10: the run reports and the demo reset live in the grid's own Actions menu. They
+   * are views OF this run, so they belong on this page; none of them needs a permanent
    * button, and Reset planning least of all.
+   *
+   * S10 (round 2, 9 Sep): the Order summary PAGE is retired - the same sheet is printed
+   * straight off this run through the existing export endpoint, so there is no view left
+   * to switch to. `downloadOrderSummaryExport` throws on failure (422 "Narrow the plan
+   * first" included), which the toast below surfaces the same way every other action here
+   * does.
    */
+  const orderSheet = useCallback(
+    async (format: 'pdf' | 'xlsx') => {
+      try {
+        await downloadOrderSummaryExport(runId, format);
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Failed to export the order sheet');
+      }
+    },
+    [runId],
+  );
+
   const actions = useMemo<ToolbarAction[]>(
     () => [
       {
-        key: 'order_summary',
-        label: 'Order summary',
+        key: 'order_sheet_pdf',
+        label: 'Order sheet PDF',
+        icon: FileText,
+        onClick: () => void orderSheet('pdf'),
+      },
+      {
+        key: 'order_sheet_xlsx',
+        label: 'Order sheet Excel',
         icon: FileSpreadsheet,
-        onClick: () => setView('order_summary'),
+        onClick: () => void orderSheet('xlsx'),
       },
       {
         key: 'plan_exceptions',
@@ -112,7 +136,7 @@ export function ReorderPlanView({ runId }: { runId: string }) {
         onClick: () => setResetOpen(true),
       },
     ],
-    [],
+    [orderSheet],
   );
 
   const doReset = async () => {
@@ -292,8 +316,6 @@ export function ReorderPlanView({ runId }: { runId: string }) {
             <PlanExceptionsView runId={runId} onBack={() => setView('buy')} />
           ) : view === 'po_worklist' ? (
             <PoWorklistView runId={runId} onBack={() => setView('buy')} />
-          ) : view === 'order_summary' ? (
-            <SummaryOrderReportView runId={runId} onBack={() => setView('buy')} />
           ) : (
             <PlanLinesSection
               runId={runId}

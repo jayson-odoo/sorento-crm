@@ -294,7 +294,7 @@ export function PlanLinesSection({
         decisions={planLines.decisions}
         edits={planEdits.edits}
         onRowEdit={planEdits.setRowEdit}
-        onResetRow={planEdits.resetRow}
+        onSaveRow={planEdits.saveRow}
         toolbarPrimary={toolbarPrimary}
         coverFor={planLines.coverFor}
         priceFor={planLines.priceFor}

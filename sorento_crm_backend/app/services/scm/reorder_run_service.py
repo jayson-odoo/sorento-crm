@@ -52,6 +52,7 @@ from app.services.scm.money import (
     to_base,
 )
 from app.services.scm import plan_grain
+from app.services.scm import product_supplier_service
 from app.services.scm.pool_predicate import SITE_POOL_SQL
 from app.services.scm.reorder_policy import (
     DEFAULT_DEAD_STOCK_DAYS,
@@ -1166,7 +1167,7 @@ def _last_purchase_cost_map(db: Session, product_ids: list[str]) -> dict[str, di
                COALESCE(w.segment, 'unattributed') AS segment,
                pol.unit_cost, COALESCE(pol.currency, po.currency) AS currency,
                po.po_number, po.issue_date, pol.created_at AS line_created_at,
-               po.supplier_id::text AS supplier_id, su.supplier_name
+               po.supplier_id::text AS supplier_id, su.supplier_code, su.supplier_name
           FROM purchase_order_lines pol
           JOIN purchase_orders po ON po.id = pol.purchase_order_id
           LEFT JOIN warehouses w ON w.id = pol.warehouse_id
@@ -1190,8 +1191,12 @@ def _last_purchase_cost_map(db: Session, product_ids: list[str]) -> dict[str, di
             "ref": r["po_number"],
             "at": r["issue_date"].isoformat() if r["issue_date"] else None,
             # Who we paid. The panel says "last price from X" (revamp plan 4.4 zone 2) and
-            # before this the row carried the price with no name against it.
+            # before this the row carried the price with no name against it. `supplier_code`
+            # (S11, round 2, 9 Sep) is what lets the panel PREFILL its supplier select to
+            # the supplier this purchase actually named, rather than the engine's own
+            # default link - the select's options are keyed by code, never by id.
             "supplier_id": r["supplier_id"],
+            "supplier_code": r["supplier_code"],
             "supplier_name": r["supplier_name"],
         }
         # `issue_date` is a DATE, so two purchases made on the same day tie on it - and
@@ -3269,7 +3274,8 @@ def set_moq_override(db: Session, rec_id: str, moq: Optional[float],
     co, co_params = company_sql_predicate(db, "company_id", param_prefix="mvo")
     rec = db.execute(text(
         "SELECT id, run_id, rec_type, status, recommended_qty, unit_cost, currency, "
-        "       rate_to_base, rate_as_of, inputs FROM scm.reorder_recommendation "
+        "       rate_to_base, rate_as_of, inputs, product_id, supplier_id "
+        "FROM scm.reorder_recommendation "
         f"WHERE id = :id AND {co or 'true'}"
     ), {"id": rec_id, **co_params}).mappings().first()
     if not rec:
@@ -3303,6 +3309,21 @@ def set_moq_override(db: Session, rec_id: str, moq: Optional[float],
         "UPDATE scm.reorder_recommendation "
         "SET moq_override = :m, rounded_qty = :rq, cash_impact = :ci WHERE id = :id"
     ), {"m": moq_value, "rq": rounded, "ci": cash_impact, "id": rec_id})
+
+    # S13 (round 2, 9 Sep): the per-run override above is thrown away on the next run -
+    # this also remembers it on the (product, supplier) link `load_supplier_candidates`
+    # reads on every future one, so a correction made once stays corrected. Clearing an
+    # override (moq=None) remembers nothing: there is no figure to write, and a cleared
+    # row is not a statement that the supplier's own MoQ is wrong.
+    if moq_value is not None:
+        resolved_supplier = product_supplier_service.resolve_supplier_for_moq(
+            db, rec_id, _str_or_none(rec["supplier_id"]),
+            (inp.get("last_purchase") or {}).get("supplier_id"),
+        )
+        if resolved_supplier:
+            product_supplier_service.remember_moq(
+                db, str(rec["product_id"]), resolved_supplier, moq_value)
+
     # `commit=False` is the plan's bulk save (`plan_edits_service`), which owns the
     # transaction across every edited row.
     if commit:

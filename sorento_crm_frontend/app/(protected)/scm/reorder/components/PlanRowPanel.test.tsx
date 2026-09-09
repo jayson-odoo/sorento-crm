@@ -116,7 +116,7 @@ const poReceipts: PoReceipt[] = [
 
 function renderPanel(over: Partial<React.ComponentProps<typeof PlanRowPanel>> = {}) {
   const onEdit = vi.fn();
-  const onUseSuggestion = vi.fn();
+  const onSave = vi.fn();
   const props: React.ComponentProps<typeof PlanRowPanel> = {
     line: line(),
     edit: undefined,
@@ -127,11 +127,11 @@ function renderPanel(over: Partial<React.ComponentProps<typeof PlanRowPanel>> = 
     levelSuggestion: undefined,
     economics: undefined,
     onEdit,
-    onUseSuggestion,
+    onSave,
     ...over,
   };
   render(<PlanRowPanel {...props} />);
-  return { onEdit, onUseSuggestion };
+  return { onEdit, onSave };
 }
 
 describe('PlanRowPanel - four zones render (D1)', () => {
@@ -176,10 +176,10 @@ describe('PlanRowPanel - Cover zone (D2)', () => {
     expect(screen.queryByText(/short of suggested/)).not.toBeInTheDocument();
   });
 
-  it('Use suggestion and Skip write through onEdit/onUseSuggestion, never a direct save', () => {
-    const { onEdit, onUseSuggestion } = renderPanel();
-    fireEvent.click(screen.getByRole('button', { name: 'Use suggestion' }));
-    expect(onUseSuggestion).toHaveBeenCalledTimes(1);
+  it('Save and Skip write through onSave/onEdit (S12, round 2, 9 Sep)', () => {
+    const { onEdit, onSave } = renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSave).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
     expect(onEdit).toHaveBeenCalledWith({ decision: { skip: true } });
@@ -352,10 +352,11 @@ describe('PlanRowPanel - Price and supplier zone (D4)', () => {
     expect(screen.getByRole('combobox')).toHaveValue('S1');
   });
 
-  // S2 (AC-S2.3, AC-S2.4, 9 Sep 2026): the last price is labelled in the PURCHASE's own
-  // currency, never a mismatched "RM 110.00" beside a "CNY 110.00" sub-line, and a
-  // foreign-currency purchase with no MYR rate on file says so instead of a bare "-".
-  describe('money says which money it is (AC-S2.3, AC-S2.4)', () => {
+  // S2 (AC-S2.3, 9 Sep 2026): the last price is labelled in the PURCHASE's own currency,
+  // never a mismatched "RM 110.00" beside a "CNY 110.00" sub-line. AC-S2.4 (the "No MYR
+  // rate" hint) is retired by S11 (round 2, 9 Sep): most buying is CNY, and the line cost
+  // now reads in that currency instead of asking for a rate to convert it with.
+  describe('money says which money it is (AC-S2.3)', () => {
     const cnyPrice: PriceAdvice = {
       ...price,
       last: { po_number: 'PO-CNY', issue_date: '2026-05-01', unit_cost: 110, currency: 'CNY', qty: 50 },
@@ -374,20 +375,13 @@ describe('PlanRowPanel - Price and supplier zone (D4)', () => {
       expect(screen.getByText('USD 15.00')).toBeInTheDocument();
     });
 
-    it('shows "No MYR rate for CNY, set it under SCM policies" when the purchase currency has no rate on file', () => {
+    it('never shows the retired "No MYR rate" hint (AC-S11.3)', () => {
       renderPanel({
         price: cnyPrice,
         line: line({ unit_cost: 110, currency: 'CNY', cash_impact: null }),
       });
-
-      expect(screen.getByText(/No MYR rate for CNY, set it under/)).toBeInTheDocument();
-      const link = screen.getByRole('link', { name: 'SCM policies' });
-      expect(link).toHaveAttribute('href', '/scm/policies');
-    });
-
-    it('says nothing when the base currency line has no MYR rate concern', () => {
-      renderPanel({ price, line: line({ unit_cost: 10, currency: 'MYR' }) });
       expect(screen.queryByText(/No MYR rate/)).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'SCM policies' })).not.toBeInTheDocument();
     });
   });
 });
@@ -506,7 +500,7 @@ describe('PlanRowPanel - legacy run locks every input (D8)', () => {
     expect(screen.getByLabelText('MOQ')).toBeDisabled();
     expect(screen.getByLabelText('AutoCount level')).toBeDisabled();
     expect(screen.getByLabelText('AutoCount reorder qty')).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Use suggestion' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Skip' })).toBeDisabled();
   });
 });

@@ -337,6 +337,11 @@ export interface ReorderRecommendation {
   last_purchase_date?: string | null;
   last_purchase_ref?: string | null;
   last_purchase_basis?: 'own_segment' | 'unattributed' | 'never_purchased' | null;
+  /** Who this purchase actually named (S11, round 2, 9 Sep) - lets the panel prefill its
+   *  supplier select to the LAST PURCHASE supplier rather than the engine's own default
+   *  link. Absent on a run frozen before this field existed (no backfill). */
+  last_purchase_supplier_code?: string | null;
+  last_purchase_supplier_name?: string | null;
   /** `ADU x lead time + 14 days of safety`. Never applied on the buyer's behalf. */
   suggested_level?: number | null;
   suggestion_basis?: {

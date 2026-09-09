@@ -180,6 +180,29 @@ Settled by the captain in the lavish review, 9 Sep 2026:
   contract for one caller). FE Export split button (PDF / Excel) using the existing download
   helper.
 
+### Round 2 (captain, 9 Sep evening): S10-S13
+
+Rulings (captain, screenshots 17-20): the Order summary page goes, the sheet is printed from
+the plan's Actions menu; prices read in the buying currency and the "No MYR rate" hint goes
+(most buying is CNY); the row's "Use suggestion" becomes "Save"; an MOQ typed on a row is
+remembered on the product-supplier link and applied by the next run.
+
+- S10: `ReorderPlanView` Actions menu: two entries calling `downloadOrderSummaryExport(runId,
+  'pdf' | 'xlsx')`; drop the `order_summary` view branch, `SummaryOrderReportView`,
+  `useSummaryOrder` hooks and tests if nothing else consumes them (`useConfirmOrderDecisions`
+  checked). Backend routes untouched.
+- S11: `PlanRowPanel` supplier prefill = `price.last.supplier_id` (price-history payload
+  carries `last.supplier_id`; expose supplier code/name if missing) before `line.rec.supplier`;
+  line cost via a new `lib/lineCost.ts`: `{amount, currency, basis}` from (buy qty, price mode,
+  last purchase, chosen supplier cost); `fmtSupplierCost` labels it; hint removed.
+- S12: row "Save" = `usePlanEdits.saveRow(productId)` -> `savePlanEdits(runId, rows for that
+  product)` then drop the product from `edits` and invalidate decisions/lines; "Skip" unchanged.
+- S13: `reorder_run_service.set_moq_override` gains a `remember=True` path calling a new
+  `product_supplier_service.remember_moq(db, product_id, supplier_id, moq)` (upsert on the
+  unique (product, supplier) link); supplier resolution order chosen -> last purchase ->
+  primary; plan-edits passes the row's chosen supplier. FE MOQ input value = `edit.moq ??
+  rec.moq_override ?? rec.supplier?.moq ?? ''`.
+
 ## 5. Build order
 
 S1, S2 (FE only, no backend) -> S3 -> S6 -> S5 -> S4 -> S7 -> S8 -> S9. S1 and S2 are
