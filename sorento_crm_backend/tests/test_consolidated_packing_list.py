@@ -727,58 +727,41 @@ def test_the_grand_total_sums_the_subtotals_and_never_the_lines_twice(db):
     assert len(subtotals) == 4
 
 
-def test_the_footer_splits_the_container_between_the_two_companies(db):
-    """R17 / AC-H2 (purchasing consolidation batch, 6 Sep 2026): costs are not needed on
-    screen or in the export any more - CLEARANCE / INSURANCE / CHINA FREIGHT are gone
-    from the footer, even for a container whose costs ARE typed (`.costed()`). CBM and
-    TOTAL AMOUNT stay - they are what the container holds and is worth, not a cost."""
+def test_the_footer_is_the_grand_total_and_names_no_company(db):
+    """Ruling 30 (captain on :3084, 10 Sep): the per-company CBM / TOTAL AMOUNT block below
+    the grand total is gone - the sheet is the container's lines and what they add up to,
+    and who owes what is answered where the invoices are. The costs went before it (R17 /
+    AC-H2, 6 Sep). What stays under the rule is the grand total and the three identifiers a
+    forwarder quotes back at us."""
     w = World(db)
     w.costed()
     payload = svc.build(db, str(w.shipment.id))
 
     ws = _sheet(payload)
-    sorento = _row_of(ws, "L", "SORENTO")
-    mocha = _row_of(ws, "L", "MOCHA")
     total = _row_of(ws, "A", "-") + 1
 
-    assert ws[f"M{sorento}"].value.startswith("=SUM(M")
-    for column in "NOP":
-        assert ws[f"{column}{sorento}"].value is None
-    assert ws[f"U{mocha}"].value.startswith("=SUM(U")
+    assert ws[f"F{total}"].value.startswith("=SUM(F")
+    assert ws[f"M{total}"].value.startswith("=SUM(M")
 
-    grand = mocha + 1
-    assert ws[f"M{grand}"].value == f"=M{sorento}+M{mocha}"
-    assert ws[f"U{grand}"].value == f"=U{sorento}+U{mocha}"
-    for column in "NOP":
-        assert ws[f"{column}{grand}"].value is None
+    below = [
+        str(cell.value)
+        for row in ws.iter_rows(min_row=total + 1)
+        for cell in row
+        if isinstance(cell.value, str)
+    ]
+    assert "SORENTO" not in below
+    assert "MOCHA" not in below
+    assert "CBM" not in below
+    assert "TOTAL AMOUNT" not in below
 
-    labels = grand + 1
-    assert [ws[f"{c}{labels}"].value for c in "NOP"] == [None, None, None]
-    assert ws[f"M{labels}"].value == "CBM"
-    assert ws[f"U{labels}"].value == "TOTAL AMOUNT"
-    assert ws[f"C{labels}"].value == "订单号:CNH1098313"
-    assert ws[f"C{labels + 1}"].value == f"柜号:{w.shipment.shipping_container_number}"
-    assert ws[f"C{labels + 2}"].value == "封号:J0713349"
-    assert total > 0  # the ratio denominator still exists, just unused for costs now
-
-
-def test_a_container_with_no_costs_typed_prints_the_split_and_no_apportionment(db):
-    # The split is what the sheet is for; costs are never apportioned any more (R17).
-    w = World(db)
-    payload = svc.build(db, str(w.shipment.id))
-
-    ws = _sheet(payload)
-    sorento = _row_of(ws, "L", "SORENTO")
-
-    assert ws[f"M{sorento}"].value.startswith("=SUM(M")
-    assert ws[f"N{sorento}"].value is None
-    assert ws[f"O{sorento}"].value is None
-    assert ws[f"P{sorento}"].value is None
-    # And the total row does not add two blanks up into a 0 underneath them.
-    grand = _row_of(ws, "L", "MOCHA") + 1
-    assert ws[f"M{grand}"].value is not None
-    assert ws[f"N{grand}"].value is None
-    assert ws[f"P{grand}"].value is None
+    forwarder = next(
+        r
+        for r in range(total + 1, ws.max_row + 1)
+        if str(ws[f"C{r}"].value or "").startswith("订单号")
+    )
+    assert ws[f"C{forwarder}"].value == "订单号:CNH1098313"
+    assert ws[f"C{forwarder + 1}"].value == f"柜号:{w.shipment.shipping_container_number}"
+    assert ws[f"C{forwarder + 2}"].value == "封号:J0713349"
 
 
 def test_a_costed_export_has_no_clearance_freight_or_insurance_cell_anywhere(db):
@@ -876,7 +859,9 @@ def test_a_container_with_no_lines_still_produces_a_readable_sheet(db):
     total = _row_of(ws, "A", "-") + 1
 
     assert ws[f"F{total}"].value == 0
-    assert ws[f"M{_row_of(ws, 'L', 'MOCHA')}"].value == 0
+    # No per-company row underneath it to read a 0 off any more (ruling 30) - the grand
+    # total IS the answer for an empty container.
+    assert ws[f"M{total}"].value == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -968,11 +953,10 @@ def test_the_export_route_returns_a_workbook_named_after_the_container(db, clien
     )
     ws = openpyxl.load_workbook(BytesIO(r.content))["RMB"]
     factory_column = [ws[f"A{i}"].value for i in range(1, ws.max_row + 1)]
-    company_column = [ws[f"L{i}"].value for i in range(1, ws.max_row + 1)]
     assert w.kailu.supplier_name in factory_column
+    # MOCHA is still its own BLOCK, headed by the factory it came from - what ruling 30
+    # removed is the per-company footer, not the way the lines are grouped.
     assert f"{w.kailu.supplier_name} (MOCHA)" in factory_column
-    assert "SORENTO" in company_column
-    assert "MOCHA" in company_column
 
 
 def test_an_unknown_container_is_a_404_over_the_wire(db, client):
