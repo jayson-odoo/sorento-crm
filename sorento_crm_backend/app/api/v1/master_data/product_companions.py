@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -56,17 +56,9 @@ def create_product_companion_rule(
     current_user: dict = Depends(require_permission_with_api_key(EDIT)),
     db: Session = Depends(get_db),
 ):
-    try:
-        created = ProductCompanionService(db).create(
-            payload.model_dump(), created_by=current_user.get("id")
-        )
-    except AppException as exc:
-        # Re-raised as a plain HTTPException so the 409 body nests under `detail`
-        # (`{"detail": {"message": ..., "code": ...}}`) - FastAPI's own default
-        # shape - rather than the flat body the app-wide `AppException` handler in
-        # `app/main.py` returns. UAC A4 asks for the nested shape specifically; every
-        # other AppException in this codebase keeps the flat one unchanged.
-        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    created = ProductCompanionService(db).create(
+        payload.model_dump(), created_by=current_user.get("id")
+    )
     return created
 
 

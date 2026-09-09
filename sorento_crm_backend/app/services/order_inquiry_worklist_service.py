@@ -288,26 +288,12 @@ def _linked_qty(*where) -> Any:
 #: column applies it.
 _SPO_LINKED_QTY = _linked_qty(OrderInquiryLink.spo_allocation_id.isnot(None))
 _PO_LINKED_QTY = _linked_qty(OrderInquiryLink.po_line_id.isnot(None))
-#: `_AnchorOf` is a second alias of THIS row's own table: PLAN-scm-supplied-with-
-#: companions.md ruling 6/7 (owner, plan review) says a bundled quantity is not owed
-#: anywhere, and section 3.4 "Tiles" reads this as: the ANCHOR row's own Buy need
-#: shrinks by exactly what its companions are riding on it for (UAC D5) - CKS1050's own
-#: unlinked need is not double-counted once as "CKS1050 itself" and again as "what
-#: CKSW015 is riding on". `bundled_qty` on the row itself is untouched by this - it is
-#: a presentation-only subtraction for the cards/kind filter, never written back.
-_AnchorOf = aliased(OrderInquiryRow)
-_ANCHORED_BUNDLED_QTY = (
-    select(func.coalesce(func.sum(_AnchorOf.bundled_qty), 0))
-    .where(_AnchorOf.bundled_with_row_id == OrderInquiryRow.id)
-    .correlate(OrderInquiryRow)
-    .scalar_subquery()
-)
+#: PLAN-scm-supplied-with-companions.md ruling 7 excludes only a row's OWN `bundled_qty`
+#: from the cards - the item it rides ON (the host) still needs buying independently of
+#: whether a companion happens to ride inside its line: CKS1050 unlinked qty 1 is Buy 1
+#: whether or not CKSW015 rides on it. No cross-row subtraction here (UAC D5, corrected).
 _UNLINKED_QTY = func.greatest(
-    OrderInquiryRow.qty
-    - _linked_qty()
-    - OrderInquiryRow.bundled_qty
-    - _ANCHORED_BUNDLED_QTY,
-    0,
+    OrderInquiryRow.qty - _linked_qty() - OrderInquiryRow.bundled_qty, 0
 )
 #: The ANCHOR row's own item code, for a bundled row with no document of its own
 #: (export D8: "the bundled row's document column names its host, not a blank").
