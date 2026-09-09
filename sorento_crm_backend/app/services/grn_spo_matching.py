@@ -122,11 +122,21 @@ def build_allocation_pool(
     convention note above) over the picking lines linked to it, REGARDLESS of
     approval status - except lines on a REJECTED GRN, which must not consume
     capacity (the same rule the forward-match candidate filter states) - plus
-    whatever
-    receipt the stored column claims that no picking line explains (an
-    integration's write - real stock, and it must still consume capacity).
-    Subtracting the linked total before taking that excess is what stops a
-    re-import of an APPROVED GRN seeing an empty pool and unlinking its own lines.
+    whatever part of the stored receipt neither a picking line nor the statement
+    (`stated_received`) explains.
+
+    `stated_received` is a statement recorded on the allocation (AutoCount mirror
+    push, supersede carry, retire freeze - see `app/models/procurement.py` around
+    line 521), not a second receipt: it names the SAME GRN the pool is trying to
+    place, minutes or days before or after the actual GRN import lands, and once
+    that GRN's picking lines link it is explained twice over
+    (PLAN-grn-link-ignores-mirror-received). So it is subtracted alongside the
+    linked total, never added to what still consumes capacity - only a stored
+    `quantity_received` that is neither stated nor linked is an unexplained write
+    (an integration with no line behind it, real stock, AC-FM-28) and still
+    consumes. Subtracting the linked total before taking that excess is what stops
+    a re-import of an APPROVED GRN seeing an empty pool and unlinking its own
+    lines.
 
     ``exclude_header_ids`` is what makes a re-import idempotent: a GRN never
     competes with itself. Across DIFFERENT GRNs the exclusion does not apply, so a
@@ -185,7 +195,8 @@ def build_allocation_pool(
     for allocation in matched:
         linked_all, linked_excluded = linked.get(str(allocation.id), (0, 0))
         linked_other = linked_all - linked_excluded
-        external_received = max(0, int(allocation.quantity_received or 0) - linked_all)
+        stated = int(allocation.stated_received or 0)
+        external_received = max(0, int(allocation.quantity_received or 0) - stated - linked_all)
         consumed = linked_other + external_received
         available = max(0, int(allocation.allocated_quantity or 0) - consumed)
         if available > 0:

@@ -3936,6 +3936,31 @@ class PickingHeaderService:
         match filter, because the row identity is still
         (header, product, source_warehouse, spo_allocation_id).
 
+        A draw that NOW carries an allocation id (PLAN-grn-link-ignores-mirror-received,
+        B1) has no exact match when the row already on the header is the ORPHAN a
+        previous import left - unlinked, ``spo_allocation_id IS NULL`` - because the
+        pool could not place it at the time. Matching by the exact tuple would insert
+        a SIBLING row instead of linking the orphan in place: the GRN reads two lines
+        for one sheet row, picked quantity doubles, and the container reports twice
+        the receipt. So when the draw carries an allocation id and no exact match
+        exists, an unlinked row for the same (header, product, warehouse) is ADOPTED -
+        given this draw's allocation id and quantity - the same "link in place, don't
+        duplicate" outcome forward matching produces. A later draw of the same sheet
+        row (a genuine split) then finds no more unlinked rows to adopt and correctly
+        creates a new one.
+
+        The adoption candidate is ALSO confined to what THIS draw's SPO number
+        claims (review round 2, B3): a multi-SPO GRN groups its rows by
+        ``(doc_no, product, effective_spo)`` (``import_tasks.py``), so the same
+        header/product/warehouse can carry an unlinked row stating one SPO and a
+        linked draw for a DIFFERENT one. Without the guard the different-SPO draw
+        adopted the other SPO's orphan and overwrote its quantity - a 40-unit
+        remainder stating SPO-A destroyed by a 60-unit draw against SPO-B, the
+        GRN reading one 60-unit line for a 100-unit sheet. An orphan's own
+        ``spo_number_raw`` is NULL (nothing has ever stated one for it) or must
+        match this draw's ``spo_number_raw`` under the same key
+        ``grn_spo_matching._spo_match_key`` uses everywhere else.
+
         ``company_id`` is the GRN header's own company, stated rather than left to
         the insert hook - the same rule ``_add_picking_line`` follows. An import job
         with no company snapshot runs system-scoped ("all companies"), where the
@@ -3957,8 +3982,34 @@ class PickingHeaderService:
             filters.append(PickingLine.spo_allocation_id == spo_allocation_id)
         else:
             filters.append(PickingLine.spo_allocation_id.is_(None))
-        
+
         line = self.db.query(PickingLine).filter(*filters).first()
+        if line is None and spo_allocation_id is not None:
+            # No exact match - adopt an orphan of this header/product/warehouse
+            # rather than insert a sibling. See the docstring above (B1). The
+            # orphan must state NO SPO or the SAME one this draw does (B3) - an
+            # orphan stating a different SPO belongs to a different group and
+            # must be left for that group's own draw to place.
+            from app.services.grn_spo_matching import _spo_match_key_sql
+
+            line = (
+                self.db.query(PickingLine)
+                .filter(
+                    PickingLine.picking_header_id == picking_header_id,
+                    PickingLine.product_id == product_id,
+                    PickingLine.source_warehouse_id == source_warehouse_id,
+                    PickingLine.spo_allocation_id.is_(None),
+                    or_(
+                        PickingLine.spo_number_raw.is_(None),
+                        _spo_match_key_sql(PickingLine.spo_number_raw)
+                        == _spo_match_key(spo_number_raw),
+                    ),
+                )
+                .order_by(PickingLine.created_at.asc(), PickingLine.id.asc())
+                .first()
+            )
+            if line is not None:
+                line.spo_allocation_id = spo_allocation_id
         if line:
             line.quantity_expected = quantity
             line.quantity_picked = quantity
@@ -4555,6 +4606,7 @@ class PickingHeaderService:
         spo_number: Optional[str],
         *,
         released_allocation_ids: Optional[set] = None,
+        company_id: Optional[str] = None,
     ) -> None:
         """Re-sync DB quantity_received for all allocations under this SPO (optional background use).
 
@@ -4567,6 +4619,18 @@ class PickingHeaderService:
         value (an ESB-stated receipt, or one carried onto an AutoCount line by
         the first-push supersede), which nothing here computed and nothing
         here may zero.
+
+        `company_id` (S1, review round 2), same shape as `build_allocation_pool`'s:
+        when given, it NARROWS the query with an explicit equality filter IN
+        ADDITION to the ambient `CompanyScopedMixin` predicate (`do_orm_execute`
+        auto-filters every scoped model by the session's company scope) - it does
+        not replace that auto-filter, only the extra `build_company_predicate`
+        call below, which is redundant with it when the session scope is already
+        resolved. A caller that already knows the document's own company (a job
+        with no company snapshot runs system-scoped - "all companies" - where the
+        ambient auto-filter constrains nothing) states it explicitly rather than
+        let this sweep rewrite another company's allocations under the same SPO
+        number.
         """
         if not spo_number or not spo_number.strip():
             return
@@ -4574,14 +4638,17 @@ class PickingHeaderService:
         if not target_key:
             return
         query = self.db.query(SPOAllocation).filter(SPOAllocation.spo_number.isnot(None))
-        # S9 (security review): the company filter stated HERE rather than
-        # left entirely to the ambient session scope. An SPO number is not
-        # unique across companies, and this sweep writes every row it reads -
-        # a caller whose session scope was never resolved must not be one
-        # accident away from recomputing another company's document.
-        predicate = build_company_predicate(SPOAllocation, get_company_scope(self.db))
-        if predicate is not None:
-            query = query.filter(predicate)
+        if company_id:
+            query = query.filter(SPOAllocation.company_id == str(company_id))
+        else:
+            # S9 (security review): the company filter stated HERE rather than
+            # left entirely to the ambient session scope. An SPO number is not
+            # unique across companies, and this sweep writes every row it reads -
+            # a caller whose session scope was never resolved must not be one
+            # accident away from recomputing another company's document.
+            predicate = build_company_predicate(SPOAllocation, get_company_scope(self.db))
+            if predicate is not None:
+                query = query.filter(predicate)
         allocations = [
             alloc
             for alloc in query.all()
