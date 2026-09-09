@@ -174,9 +174,14 @@ function invoiceRow(over: Partial<ProformaInvoiceListRow> = {}): ProformaInvoice
     supplier_code: 'KAILU',
     supplier_name: 'Kailu Hardware Factory',
     pi_number: 'PI-2026-001',
+    // Ours and theirs: `pi_number` is the number we minted, `supplier_ref` the one the
+    // factory printed on the document (S1, AC-A2/A5).
+    supplier_ref: 'KL20260801',
     invoice_date: '2026-08-01',
     currency: 'CNY',
     container_no: 'TEMU1234567',
+    seal_no: 'WHA4528193',
+    consignee: 'SORENTO SDN BHD',
     bl_no: 'BL-991',
     total_amount: 1000,
     line_count: 5,
