@@ -1,6 +1,6 @@
 # PLAN: "supplied with" companions on the Order Inquiry (CKSW015 rides with CKS1050)
 
-Status: RULINGS IN (9 Sep 2026), ready for Phase 1. Not started.
+Status: Phase 1 done (a1d8fcfab, aa3a62c88). Phase 2 in progress: red tests written, coder making them green.
 UAC: `scm-supplied-with-companions-acceptance-criteria.md` alongside.
 
 ## 0. The case, as the owner showed it
