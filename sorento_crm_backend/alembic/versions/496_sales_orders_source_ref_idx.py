@@ -9,14 +9,14 @@ Partial, matching `SalesOrder.__table_args__`: `source_ref` is null on every sal
 that did not arrive through the book, which is most rows on an older order book, and a
 full index over mostly-null values buys nothing a partial one does not already give.
 
-Revision ID: 495_sales_orders_source_ref_idx
-Revises: 494_from_so_external_link
+Revision ID: 496_sales_orders_source_ref_idx
+Revises: 495_company_so_feed_live
 """
 import sqlalchemy as sa
 from alembic import op
 
-revision = "495_sales_orders_source_ref_idx"
-down_revision = "494_from_so_external_link"
+revision = "496_sales_orders_source_ref_idx"
+down_revision = "495_company_so_feed_live"
 branch_labels = None
 depends_on = None
 
