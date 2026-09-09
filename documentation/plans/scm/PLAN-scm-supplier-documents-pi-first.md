@@ -367,3 +367,27 @@ the two packing test files seed migration 501's `Date` alias. Item 11 was alread
     and its test.
 30. **Remove the per-company split block** (CBM + amount by company) from the consolidated packing
     list export; the line rows and their totals stay. Update the export test and the fixture note.
+
+## Phase 3 round 4 (final re-check, 10 Sep)
+
+31. **Placement is recorded per packing row.** `proforma_invoice_shipment_link` gains nullable
+    `proforma_invoice_packing_line_id` (migration 507, chained on 506, index on it); the row branch of
+    convert writes one link per placed row; "unplaced rows" = rows with no link, never a quantity walk.
+    Red test first (the reviewer's repro on the Kailu fixture: convert with only the 35-row, then
+    convert with the default; the second places the 50-row, not the 35 again), then the fix. The
+    Packing lists tab's Placed qty and the list's "Split, N still to place" read from the links.
+32. List-page convert raises the same `toast.warning` on `header_conflicts` as the detail page.
+33. Packing lists tab status pill: `<Badge status={s}>{formatStatusLabel(s)}</Badge>`.
+34. Two backend tests over `supplier_document_service.preview`: the Kailu pair together yields
+    `how == 'same_batch'` and no refusal; the Jinbaichuan sheet reports
+    `unmapped_header_doc_types` for both readers on `尺寸（mm）`.
+35. Nits: unused `_FMT_MONEY_RED`; stale mock-flag docstrings in the two service tests; stale
+    `/scm/incoming` at `proforma_invoice_service.py:2286`; `packedQtyForLine` docstring; the
+    same-batch block drops its `htmlFor`; `enableColumnResizing` on the mappings grid; a comment on
+    the `(file name, block index)` key.
+36. Round-3 browser evidence (tester): convert dialog table at 1280 and 375, Packing lists tab,
+    Uploaded at / by, Jinbaichuan draft Details with container / seal / SO / consignee, Shipment
+    lines without the Split card, export without the company block.
+
+Deviation: the coder writes the red test for 31 and the two tests for 34 on the captain's
+authorisation (single round, the tester is on the evidence run).
