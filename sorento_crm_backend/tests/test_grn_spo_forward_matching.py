@@ -125,6 +125,8 @@ class World:
         quantity: int,
         spo_number: str = SPO,
         received: int = 0,
+        stated: Optional[int] = None,
+        source_system: Optional[str] = None,
         company_id: Optional[str] = None,
     ) -> str:
         aid = str(uuid.uuid4())
@@ -133,6 +135,7 @@ class World:
                 id=aid, spo_number=spo_number, inbound_shipment_id=self.shipment,
                 warehouse_id=warehouse_id, product_id=product_id,
                 allocated_quantity=quantity, quantity_received=received,
+                stated_received=stated, source_system=source_system,
                 created_at=self._tick(), company_id=company_id,
             )
         )
@@ -423,6 +426,268 @@ def test_a_stored_receipt_its_own_lines_explain_is_not_counted_twice(world):
     )
 
     assert [(e.allocation_id, e.available) for e in pool] == [(allocation, 100)]
+
+
+# ---------------------------------------------------------------------------
+# The mirror statement (`stated_received`): PLAN-grn-link-ignores-mirror-received.
+# An AutoCount SPO mirror push can state a receipt BEFORE the GRN import that
+# reports the same goods arrives - the mirror's `stated_received` and the pool's
+# own `quantity_received` are the SAME GRN seen from AutoCount, so it must not be
+# subtracted twice: once as "stated" and again as "received with no line".
+# ---------------------------------------------------------------------------
+
+def test_a_mirror_stated_receipt_does_not_consume_capacity(world):
+    """AC-MR-1. A reconciliation figure the mirror already wrote is not a receipt
+    with no line behind it - the line that explains it just has not landed yet."""
+    product, warehouse = world.product(), world.warehouse()
+    allocation = world.allocation(
+        product_id=product, warehouse_id=warehouse, quantity=100, received=100, stated=100,
+    )
+
+    pool = build_allocation_pool(world.db, product_id=product, spo_number=SPO)
+
+    assert [(e.allocation_id, e.available) for e in pool] == [(allocation, 100)]
+
+
+def test_a_mirror_stated_receipt_is_explained_once_the_line_links(world):
+    """AC-MR-2. Once a GRN line links to the allocation the mirror already stated,
+    a DIFFERENT GRN sees no capacity on it (the line took it), while the SAME GRN,
+    excluded, sees all of it (re-import must not unlink itself)."""
+    product, warehouse = world.product(), world.warehouse()
+    allocation = world.allocation(
+        product_id=product, warehouse_id=warehouse, quantity=100, received=100, stated=100,
+    )
+    grn_a = world.grn(status="approved")
+    world.line(
+        header_id=grn_a, product_id=product, warehouse_id=warehouse,
+        quantity=100, allocation_id=allocation,
+    )
+
+    pool_for_b = build_allocation_pool(world.db, product_id=product, spo_number=SPO)
+    pool_for_a = build_allocation_pool(
+        world.db, product_id=product, spo_number=SPO, exclude_header_ids={grn_a}
+    )
+
+    assert pool_for_b == []
+    assert [(e.allocation_id, e.available) for e in pool_for_a] == [(allocation, 100)]
+
+
+def test_only_the_unexplained_part_of_a_stored_receipt_consumes(world):
+    """AC-MR-3. AC-FM-28 kept: a write that is neither STATED nor LINKED is still a
+    real receipt and still consumes capacity - only the mirror-explained part does
+    not."""
+    product, warehouse = world.product(), world.warehouse()
+    allocation = world.allocation(
+        product_id=product, warehouse_id=warehouse, quantity=100, received=130, stated=100,
+    )
+
+    pool = build_allocation_pool(world.db, product_id=product, spo_number=SPO)
+
+    assert [e.available for e in pool] == [70]
+
+
+def test_a_grn_imported_after_the_mirror_statement_links_end_to_end(world):
+    """AC-MR-4. The mirror stated the receipt first; the GRN import runs the same
+    draw a fresh import makes and must still place its line (one linked draw, no
+    trailing unlinked remainder). Syncing the received total afterwards must not
+    regress the figure the mirror already wrote (the D28c floor - `source_system`
+    has to be `autocount` for that floor to apply at all, or the sync takes the
+    non-AutoCount branch and the claim is untested)."""
+    product, warehouse = world.product(), world.warehouse()
+    allocation = world.allocation(
+        product_id=product, warehouse_id=warehouse, quantity=329, received=329, stated=329,
+        source_system="autocount",
+    )
+    world.db.get(SPOAllocation, allocation).spo_line_number = 1
+
+    pool = build_allocation_pool(world.db, product_id=product, spo_number=SPO)
+    draws = draw_fifo(pool, warehouse_id=warehouse, quantity=329)
+
+    assert draws == [Draw(allocation, 329)]
+
+    grn = world.grn(status="approved")
+    world.line(
+        header_id=grn, product_id=product, warehouse_id=warehouse,
+        quantity=329, allocation_id=allocation,
+    )
+
+    from app.services.procurement_service import PickingHeaderService
+
+    PickingHeaderService(world.db).sync_grn_received_to_spo(grn)
+
+    assert world.db.get(SPOAllocation, allocation).quantity_received == 329
+
+
+def test_re_importing_an_orphan_grn_links_in_place_instead_of_doubling(world):
+    """B1 (review round 2). An approved GRN imported before its SPO existed (or
+    before the pool could draw it, the exact prod shape: mirror-stated,
+    unlinked) leaves an ORPHAN line: stated but `spo_allocation_id IS NULL`. The
+    mirror states the same receipt, and the office re-uploads the SAME sheet - a
+    normal thing to do.
+
+    `upsert_grn_line_for_import` used to match a draw's row on
+    `(header, product, source_warehouse, spo_allocation_id)`. Once the pool (B1's
+    sibling fix above) hands the draw a REAL allocation id, that tuple can never
+    match the orphan row already sitting there with `spo_allocation_id IS NULL` -
+    it inserted a SIBLING instead: the GRN read two lines for one sheet row,
+    picked 200 for a 100-unit receipt, and the container reported 200 received.
+    """
+    from app.models.product import Product
+
+    product, warehouse = world.product(), world.warehouse()
+    product_code = world.db.get(Product, product).product_code
+    warehouse_code = world.db.get(Warehouse, warehouse).warehouse_code
+
+    allocation = world.allocation(
+        product_id=product, warehouse_id=warehouse, quantity=100, received=100, stated=100,
+        source_system="autocount",
+    )
+    world.db.get(SPOAllocation, allocation).spo_line_number = 1
+
+    grn_number = unique_code("GR")[:50]
+    header_id = str(uuid.uuid4())
+    world.db.add(
+        PickingHeader(
+            id=header_id, picking_number=grn_number, picking_type="goods_received",
+            picking_date=date(2026, 7, 1), picking_status="approved",
+            inspection_status="pending", spo_number=SPO,
+        )
+    )
+    world.db.add(
+        PickingLine(
+            id=str(uuid.uuid4()), picking_header_id=header_id, product_id=product,
+            source_warehouse_id=warehouse, quantity_expected=100, quantity_picked=100,
+            spo_allocation_id=None, spo_number_raw=SPO,
+        )
+    )
+    world.db.commit()
+
+    _import_grn_lines(
+        world.db,
+        _grn_lines_workbook(
+            [[grn_number, "2026-07-01", product_code, warehouse_code, 100, SPO]]
+        ),
+    )
+
+    lines = world.lines_of(header_id)
+    assert len(lines) == 1, "the orphan was linked in place, not duplicated"
+    assert lines[0].quantity_picked == 100
+    assert lines[0].spo_allocation_id == allocation
+
+    from app.services.procurement_service import InboundShipmentService
+
+    received = InboundShipmentService(world.db).get_received_quantities_by_product(world.shipment)
+    assert received == {product: 100}
+
+
+def test_adoption_never_steals_an_orphan_that_states_another_spo(world):
+    """B3 (review round 2). A multi-SPO GRN groups its rows by
+    `(doc_no, product, effective_spo)` (`import_tasks.py`), so ONE import can
+    produce an unlinked row stating one SPO alongside a linked draw for a
+    DIFFERENT one on the SAME header/product/warehouse. The adoption branch
+    (B1) must leave the first SPO's orphan for its OWN group's draw, or a
+    100-unit sheet (40 on `SPO` unlinked + 60 on `other_spo` linked) lands as
+    ONE line of 60 and the 40 is destroyed.
+    """
+    from app.models.product import Product
+
+    other_spo = "SPO-2026/08-9999"
+    product, warehouse = world.product(), world.warehouse()
+    product_code = world.db.get(Product, product).product_code
+    warehouse_code = world.db.get(Warehouse, warehouse).warehouse_code
+
+    # SPO (the default) has NO allocation - its row stays unlinked.
+    # other_spo has one - its draw carries a real allocation id.
+    allocation = world.allocation(
+        product_id=product, warehouse_id=warehouse, quantity=100, spo_number=other_spo,
+    )
+
+    grn_number = unique_code("GR")[:50]
+    header_id = str(uuid.uuid4())
+    world.db.add(
+        PickingHeader(
+            id=header_id, picking_number=grn_number, picking_type="goods_received",
+            picking_date=date(2026, 7, 1), picking_status="approved",
+            inspection_status="pending", spo_number=SPO,
+        )
+    )
+    world.db.commit()
+
+    _import_grn_lines(
+        world.db,
+        _grn_lines_workbook(
+            [
+                [grn_number, "2026-07-01", product_code, warehouse_code, 40, SPO],
+                [grn_number, "2026-07-01", product_code, warehouse_code, 60, other_spo],
+            ]
+        ),
+    )
+
+    lines = world.lines_of(header_id)
+    assert len(lines) == 2
+    assert sum(l.quantity_picked for l in lines) == 100
+    unlinked = [l for l in lines if l.spo_allocation_id is None]
+    assert [l.quantity_picked for l in unlinked] == [40]
+    assert unlinked[0].spo_number_raw == SPO
+    linked = [l for l in lines if l.spo_allocation_id == allocation]
+    assert [l.quantity_picked for l in linked] == [60]
+
+
+def test_the_import_refreshes_the_container_by_spo_number_when_nothing_links(world):
+    """AC-MR-5. Drives the REAL import task (`process_grn_lines_import`), not a
+    model of its two calls, so this test fails if the `sync_received_for_spo_number`
+    sweep (A1) is ever removed from it.
+
+    The allocation's whole 50 units are already spoken for by an unexplained
+    external receipt BEFORE the import runs (AC-FM-28: `received` with no picking
+    line and no mirror statement behind it) - so the pool has zero capacity left
+    when this GRN's own line draws, and that line comes out unlinked. That is the
+    "could not link at all" case A1 exists for: `sync_grn_received_to_spo` walks
+    the header's OWN linked lines only, which is none, so without the sweep the
+    container the office is looking at never updates.
+    """
+    from app.models.procurement import InboundShipmentLine
+    from app.models.product import Product
+
+    product, warehouse = world.product(), world.warehouse()
+    product_code = world.db.get(Product, product).product_code
+    warehouse_code = world.db.get(Warehouse, warehouse).warehouse_code
+    world.db.add(
+        InboundShipmentLine(
+            id=str(uuid.uuid4()), shipment_id=world.shipment, product_id=product,
+            quantity_shipped=50, uom_id=world.uom,
+        )
+    )
+    world.allocation(product_id=product, warehouse_id=warehouse, quantity=50, received=50)
+    grn_number = unique_code("GR")[:50]
+    header_id = str(uuid.uuid4())
+    world.db.add(
+        PickingHeader(
+            id=header_id, picking_number=grn_number, picking_type="goods_received",
+            picking_date=date(2026, 7, 1), picking_status="approved",
+            inspection_status="pending", spo_number=SPO,
+        )
+    )
+    world.db.commit()
+
+    _import_grn_lines(
+        world.db,
+        _grn_lines_workbook(
+            [[grn_number, "2026-07-01", product_code, warehouse_code, 50, SPO]]
+        ),
+    )
+
+    lines = world.lines_of(header_id)
+    assert len(lines) == 1
+    assert lines[0].spo_allocation_id is None, "the allocation's capacity was already spoken for"
+
+    line = (
+        world.db.query(InboundShipmentLine)
+        .filter(InboundShipmentLine.shipment_id == world.shipment)
+        .one()
+    )
+    assert line.line_status == "received"
+    assert world.db.get(InboundShipment, world.shipment).shipment_status == "fully_received"
 
 
 def test_the_pool_tolerates_separator_style_and_only_that(world):

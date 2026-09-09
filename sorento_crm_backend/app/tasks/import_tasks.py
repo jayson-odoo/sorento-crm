@@ -26,6 +26,7 @@ from app.services.procurement_service import (
     SPOAllocationService,
     PickingHeaderService,
     AllocationReceivedGuardError,
+    _spo_match_key,
 )
 from app.services.rules import shipping_order_rules
 from app.services.grn_spo_matching import (
@@ -2562,11 +2563,42 @@ def process_grn_lines_import(db_job_id: str, file_data: bytes, filename: str, us
                     )
 
         # After GRN lines import: reflect received quantities to SPO allocations (confirmed GRN)
+        spo_keys_to_sync: Dict[str, tuple] = {}
         for header in headers_by_number.values():
+            # Read BEFORE the sync call below, not after (S6, review round 2): a
+            # failed sync_grn_received_to_spo rolls the session back, which
+            # EXPIRES this instance, so reading header.spo_number / company_id
+            # afterwards forces a refresh on the just-rolled-back session and
+            # escalates a per-header warning into a whole-job failure.
+            key = _spo_match_key(header.spo_number)
+            if key and key not in spo_keys_to_sync:
+                spo_keys_to_sync[key] = (
+                    header.spo_number,
+                    str(header.company_id) if header.company_id is not None else None,
+                )
             try:
                 proc.sync_grn_received_to_spo(header.id)
             except Exception as e:
                 logger.warning("Sync GRN received to SPO failed for header %s: %s", header.id, e)
+                db.rollback()
+
+        # sync_grn_received_to_spo above walks this header's OWN linked lines
+        # only, so a GRN whose line could not link at all (no allocation for
+        # that product) refreshes nothing through it. sync_received_for_spo_number
+        # finds the allocations by SPO NUMBER instead, the way forward matching
+        # does when linked_lines or created_lines is nonzero (grn_spo_matching.py)
+        # - unconditional here, because this loop has no such count to gate on -
+        # so the containers under this GRN's SPO still update. spo_allocations
+        # is ~80k rows and this call materialises every allocation under one SPO
+        # number, so it runs ONCE PER DISTINCT SPO after the header loop rather
+        # than once per header - a GRN sheet commonly states the same SPO on
+        # every row.
+        for spo_number, company_id in spo_keys_to_sync.values():
+            try:
+                proc.sync_received_for_spo_number(spo_number, company_id=company_id)
+            except Exception as e:
+                logger.warning("Sync received for SPO %s failed: %s", spo_number, e)
+                db.rollback()
 
         job_service.complete_job(
             job_id=job_id_str,
