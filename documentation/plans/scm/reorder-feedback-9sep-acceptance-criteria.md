@@ -133,6 +133,10 @@ Tags: [BE] backend, [FE] frontend, [E2E] browser walk, [T] test pinned.
 - AC-S5.5 [T] pytest: excluded product absent from a run that would otherwise carry it;
   named excluded product -> 422. vitest: switch round-trips.
 - AC-S5.6 [E2E] Toggle on `**NEW` from the product page, start a plan, `**NEW` absent.
+- AC-S5.7 [FE][BE] The product form saves a product whose code contains `*` (AutoCount
+  placeholder codes `**NEW`, `**SPARE PART`, `**REPLACE`, `**REPAIR`): the product code
+  validation accepts `*` in both the frontend schema and any backend validator. Found by the
+  browser walk, 9 Sep: without it the buyer cannot flip the exclusion on `**NEW` at all.
 
 ### S6 Confirm buys decided rows only
 

@@ -49,6 +49,16 @@ received. Retired rows are deleted when the integration is permitted to delete s
 and otherwise stay in the list, closed, with a note saying which AutoCount document replaced
 them.
 
+## Reading the list and a document
+
+On the **SPO Allocations** list, a **Date** column (the document date) sits right of **SPO No**
+and sorts like any other column; the SPO No cell itself is one line, no date stacked under it.
+
+Open a document to see its **Lines** tab. Every column - Product, Warehouse, Plan, Packing
+List, Status, PO, SO - sorts when you click its header, and a search box ("Search product or
+warehouse") narrows the lines to those matching a product code/name or warehouse code/name.
+Clear the search to see every line again.
+
 ## How you'll see progress
 
 Once a job is queued, the **SPO Allocations** page shows a **Latest SPO import** panel above the table. It updates with the job status (queued, running, completed, failed) and row counts in real time. Refresh the page if you don't see it.

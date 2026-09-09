@@ -99,5 +99,7 @@ and load by hand.
 
 ## See also
 
+* [Run a reorder plan](run-a-reorder-plan.md)
+* [Print the order summary](print-the-order-summary.md)
 * [Upload SPO allocations](../purchasing/upload-spo.md)
 * [Upload the product master](../purchasing/upload-product-master.md)
