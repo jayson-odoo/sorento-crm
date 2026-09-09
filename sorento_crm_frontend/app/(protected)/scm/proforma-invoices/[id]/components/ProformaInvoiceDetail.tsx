@@ -1111,6 +1111,10 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
                 {placementBadge}
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
+                {/* Ours is the title; the supplier's own reference (S1, AC-A5) is the
+                    first fact under it - what she matches against the paper on her desk. */}
+                {invoice.supplier_ref ?? 'no supplier reference'}
+                {' · '}
                 {invoice.source_ref ?? 'No source file'}
                 {' · '}
                 Uploaded by {invoice.uploaded_by ?? 'unknown'} on {fmtDate(invoice.created_at)}

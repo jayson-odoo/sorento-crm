@@ -159,6 +159,12 @@ export interface ProformaInvoiceListRow {
   supplier_code: string | null;
   supplier_name: string | null;
   pi_number: string;
+  /** The supplier's own reference for this document (S1, AC-A2/A5) - `null` when the
+   *  file states none, distinct from `pi_number`, which is now OURS, minted at apply
+   *  (`PI-{yy}{month:02d}-{seq}`). MOCKED optional here: the real list/detail routes do
+   *  not send this field until S1's backend adds the `scm.proforma_invoice.supplier_ref`
+   *  column - every existing caller already tolerates it being absent. */
+  supplier_ref?: string | null;
   invoice_date: string | null;
   currency: string | null;
   container_no: string | null;

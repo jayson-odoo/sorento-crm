@@ -270,6 +270,24 @@ export function ProformaInvoicesView() {
         meta: { headerTitle: 'PI number' },
       },
       {
+        accessorKey: 'supplier_ref',
+        header: ({ column }) => <DataGridColumnHeader title="Supplier ref" column={column} />,
+        // The supplier's own reference (S1, AC-A5) - null when the file states none, or
+        // (Phase 1) until the backend sends it at all.
+        cell: ({ row }) => {
+          const ref = row.original.supplier_ref;
+          if (!ref) return <span className="text-muted-foreground">{EM_DASH}</span>;
+          return (
+            <span className="block truncate" title={ref}>
+              {ref}
+            </span>
+          );
+        },
+        size: 140,
+        enableSorting: false,
+        meta: { headerTitle: 'Supplier ref' },
+      },
+      {
         id: 'supplier',
         header: ({ column }) => <DataGridColumnHeader title="Supplier" column={column} />,
         // The NAME, once. The normalised code under it said the same fact in a spelling
@@ -576,7 +594,7 @@ export function ProformaInvoicesView() {
                   onChange={setSearchInput}
                   isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
                   aria-label="Search proforma invoices"
-                  placeholder="Search PI, supplier, container or BL..."
+                  placeholder="Search PI number, supplier ref, supplier, container or BL..."
                   className="w-72"
                 />
               }
