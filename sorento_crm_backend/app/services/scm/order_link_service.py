@@ -691,6 +691,17 @@ def so_links_by_po_line(
     Distinct on `(po_line_id, so_number)`: several claims - different `source`s, or a
     still-open one alongside a resolved one - can name the same sales order for the same
     line, and the screen asks "which sales orders", not "how many claims".
+
+    The row kept per `(po_line_id, so_number)` is the FIRST under this ORDER BY, so a
+    resolved `so_line_id` is placed ahead of a null one before `claimed_at` is even
+    consulted: `claimed_at` is `server_default=func.now()`, which is IDENTICAL for every
+    claim written in the same transaction (the standing `now()`-ties-in-a-transaction
+    gotcha), so on its own it cannot say which of two same-transaction claims - say a
+    `po_history` one with `so_line_id` NULL and a resolved `order_inquiry` one - is kept.
+    `so_line_id: None` is documented as "linked at document level" on the schema, so
+    picking the null row over the resolved one by accident would state something untrue.
+    `id` breaks whatever tie is still left, so the choice is total rather than merely
+    probable.
     """
     out: dict[str, list[dict]] = {}
     wanted = [str(x) for x in po_line_ids]
@@ -704,7 +715,15 @@ def so_links_by_po_line(
             OrderLinkClaim.source,
         )
         .filter(OrderLinkClaim.po_line_id.in_(wanted))
-        .order_by(OrderLinkClaim.so_number, OrderLinkClaim.claimed_at)
+        .order_by(
+            OrderLinkClaim.so_number,
+            # A resolved so_line_id wins over a null one, ahead of the now()-tied
+            # claimed_at column below - `is_(None)` is False (sorts first) for a resolved
+            # row and True for a null one.
+            OrderLinkClaim.so_line_id.is_(None),
+            OrderLinkClaim.claimed_at,
+            OrderLinkClaim.id,
+        )
         .all()
     )
     seen: set[tuple[str, str]] = set()

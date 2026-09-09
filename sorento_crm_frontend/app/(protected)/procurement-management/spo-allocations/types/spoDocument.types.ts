@@ -100,8 +100,9 @@ export interface SPODocumentLine {
   /**
    * The AutoCount book's own source purchase-order NUMBER, straight off
    * `spo_allocations.from_po_number` - text, never resolved into a CRM row, and never the
-   * same fact as `po` above (`PLAN-scm-book-linkage-on-document-lines.md` Slice B). `null`
-   * on most lines today: no import path writes it yet, only the reconcile waves that will.
+   * same fact as `po` above (`PLAN-scm-book-linkage-on-document-lines.md` Slice B). Written
+   * by the live ingest (contract 2.2) whenever the book names one; `null` means the book
+   * itself named no source document for that line, never that nothing has written it yet.
    */
   from_po_number?: string | null;
   /**

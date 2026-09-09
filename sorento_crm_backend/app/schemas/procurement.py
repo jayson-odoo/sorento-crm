@@ -665,8 +665,10 @@ class SPODocumentLine(BaseModel):
     po: Optional[SPODocumentLinePO] = None
     #: The AutoCount book's own source purchase-order NUMBER, straight off
     #: `spo_allocations.from_po_number` - text, never resolved into `po` above
-    #: (`PLAN-scm-book-linkage-on-document-lines.md` Slice B). `None` on most lines today:
-    #: no import path writes it yet, only the reconcile waves that will.
+    #: (`PLAN-scm-book-linkage-on-document-lines.md` Slice B). Written by the live ingest
+    #: (`ShippingOrderIngestService`/`DocumentIngestService`, contract 2.2) whenever the
+    #: book names one; `None` means the book itself named no source document for that
+    #: line, never that nothing has written it yet.
     from_po_number: Optional[str] = None
     #: R23, AC-J2 - every sales order this allocation covers, empty when none.
     so_covered: List[SPODocumentLineSOCovered] = []
