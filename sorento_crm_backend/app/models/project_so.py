@@ -1019,6 +1019,21 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
     previous_qty = Column(Numeric(15, 4), nullable=True)
     previous_delivery_date = Column(Date, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    #: PLAN-scm-supplied-with-companions.md section 3.2. DERIVED, never typed - the one
+    #: writer is `ProjectOrderInquiryService.derive_bundles`. How much of THIS row's
+    #: quantity rides inside another item's own line rather than needing its own PO line.
+    #: Never exceeds `qty - linked` (a link a person already made stays a link).
+    bundled_qty = Column(
+        Numeric(15, 4), nullable=False, default=0, server_default=text("0")
+    )
+    #: The ANCHOR row - the first host row the rule matched, display-only ("Included
+    #: with CKS1050"). SET NULL: the anchor row being cancelled or superseded must not
+    #: take this row down with it, only un-bundle it on the next `derive_bundles` pass.
+    bundled_with_row_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.order_inquiry_rows.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     __table_args__ = (
         Index("ix_project_order_inquiry_rows_inquiry", "order_inquiry_id"),
@@ -1029,6 +1044,7 @@ class OrderInquiryRow(Base, CompanyScopedMixin):
         # creates this index; Stage 2 proposed `..._supply_decision` for the same column
         # and its duplicate DDL is dropped with the duplicate model above.
         Index("ix_project_order_inquiry_rows_decision", "supply_decision_id"),
+        Index("ix_project_order_inquiry_rows_bundled_with", "bundled_with_row_id"),
         {"schema": "projects"},
     )
 
