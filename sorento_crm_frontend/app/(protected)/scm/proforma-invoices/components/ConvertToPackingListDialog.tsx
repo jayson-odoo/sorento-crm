@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { LoaderCircle } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -13,6 +14,9 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Checkbox } from '@/components/ui/checkbox';
+import { DataGrid } from '@/components/ui/data-grid';
+import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
+import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
@@ -20,6 +24,7 @@ import { useContainerSizes } from '../../hooks/useFulfilment';
 import { useProformaInvoice } from '../../hooks/useProformaInvoices';
 import { useProformaInvoicePacking } from '../../hooks/useProformaInvoicePacking';
 import { EM_DASH, fmtQty, fmtTrimmedDecimal } from '../../lib/format';
+import type { ProformaInvoiceLine } from '../../services/proformaInvoiceService';
 import type { ProformaInvoicePackingLine } from '../types/packingLine.types';
 
 /**
@@ -33,6 +38,23 @@ import type { ProformaInvoicePackingLine } from '../types/packingLine.types';
  * (`convert_to_draft_shipment`) and the box being loaded is a property of the shipment
  * either way.
  */
+/** One thing that can go on the container (ruling 25): a supplier packing row, or - for a
+ *  line the packing list never mentioned - the invoice line itself. */
+interface PlacementRow {
+  key: string;
+  line: ProformaInvoiceLine;
+  /** Null on a bare line: nothing packed it, so the operator types a quantity instead of
+   *  ticking a carton. */
+  row: ProformaInvoicePackingLine | null;
+  qty: number;
+  cartons: number | null;
+  cbm: number | null;
+}
+
+/** One frozen empty array for "nothing to place", so the grid's `data` identity is stable
+ *  while the invoice is still loading. */
+const NO_ROWS: PlacementRow[] = [];
+
 export function ConvertToPackingListDialog({
   open,
   onOpenChange,
@@ -81,12 +103,6 @@ export function ConvertToPackingListDialog({
     setPlacedRowIds(new Set(packingRows.filter((r) => r.match_state === 'matched').map((r) => r.id)));
   }, [open, packingRows]);
 
-  /** Every MATCHED packing row for one invoice line - the rows a whole-row checkbox set
-   *  offers for it, in place of a quantity input (AC-D2b: a line WITH rows places them
-   *  whole, never part of one). */
-  const rowsForLine = (lineId: string): ProformaInvoicePackingLine[] =>
-    packingRows.filter((r) => r.proforma_invoice_line_id === lineId && r.match_state === 'matched');
-
   /** Container / seal / BL carried onto the draft (AC-D2c), read off the INVOICE's own
    *  header - the packing document already filled those three there at apply, and the
    *  convert reads the same fields. Nothing is derived here: a second rule on this screen
@@ -124,20 +140,188 @@ export function ConvertToPackingListDialog({
     [invoice],
   );
   /**
-   * Nothing placed and nothing placeable - a line no container can carry YET, because its
-   * item code matches no product we hold.
-   *
-   * Reported apart from the finished ones, and with its reason: calling it "already placed"
-   * sent the reader looking for a container that never held it, and the dialog then
-   * announced that every line of the invoice was in a packing list when none of them was.
+   * ONE row per placement unit (ruling 25): a matched packing row where the invoice line
+   * has any, else the line itself. That is the grain the convert writes shipment lines on
+   * and the grain the operator ticks, so it is the grain the table shows - the stacked
+   * cards this replaced made the reader hold the two together in their head.
    */
-  const unplaceable = useMemo(
-    () =>
-      (invoice?.lines ?? []).filter(
-        (line) => (line.remaining_qty ?? 0) <= 0 && (line.placed_qty ?? 0) <= 0,
-      ),
-    [invoice],
+  const placementRows = useMemo<PlacementRow[]>(() => {
+    const out: PlacementRow[] = [];
+    for (const line of placeable) {
+      const rows = packingRows.filter(
+        (r) => r.proforma_invoice_line_id === line.id && r.match_state === 'matched',
+      );
+      if (rows.length === 0) {
+        out.push({
+          key: `line-${line.id}`,
+          line,
+          row: null,
+          qty: line.remaining_qty ?? 0,
+          cartons: line.cartons ?? null,
+          cbm: line.cbm_total ?? null,
+        });
+        continue;
+      }
+      for (const row of rows) {
+        out.push({
+          key: `row-${row.id}`,
+          line,
+          row,
+          qty: row.qty ?? 0,
+          cartons: row.cartons ?? null,
+          cbm: row.cbm_total ?? null,
+        });
+      }
+    }
+    return out;
+  }, [placeable, packingRows]);
+
+  /** Footer totals over what is on screen. Read through a ref by the footer cells, the
+   *  same way the Packing tab's own footers do: listing the rows as a `columns` dependency
+   *  rebuilds every cell renderer whenever the packing query resolves. */
+  const totals = useMemo(
+    () => ({
+      qty: placementRows.reduce((sum, r) => sum + (r.qty ?? 0), 0),
+      cartons: placementRows.reduce((sum, r) => sum + (r.cartons ?? 0), 0),
+      cbm: placementRows.reduce((sum, r) => sum + (r.cbm ?? 0), 0),
+    }),
+    [placementRows],
   );
+  const totalsRef = useRef(totals);
+  totalsRef.current = totals;
+
+  const columns = useMemo<ColumnDef<PlacementRow>[]>(
+    () => [
+      {
+        id: 'code',
+        header: ({ column }) => <DataGridColumnHeader title="Code" column={column} />,
+        cell: ({ row }) => (
+          <span className="block truncate" title={row.original.line.item_code}>
+            {row.original.line.item_code}
+          </span>
+        ),
+        size: 140,
+        enableSorting: false,
+        meta: { headerTitle: 'Code' },
+      },
+      {
+        id: 'product',
+        header: ({ column }) => <DataGridColumnHeader title="Product" column={column} />,
+        cell: ({ row }) => (
+          <span
+            className="block truncate"
+            title={row.original.line.product_code ?? row.original.line.description ?? undefined}
+          >
+            {row.original.line.product_code || row.original.line.description || EM_DASH}
+          </span>
+        ),
+        size: 160,
+        enableSorting: false,
+        meta: { headerTitle: 'Product' },
+      },
+      {
+        id: 'invoiced',
+        header: ({ column }) => <DataGridColumnHeader title="On invoice" column={column} />,
+        cell: ({ row }) => fmtQty(row.original.line.qty),
+        size: 90,
+        enableSorting: false,
+        meta: {
+          headerTitle: 'On invoice',
+          headerClassName: 'text-end',
+          cellClassName: 'text-end tabular-nums',
+        },
+      },
+      {
+        id: 'row_no',
+        header: ({ column }) => <DataGridColumnHeader title="Row" column={column} />,
+        cell: ({ row }) => (row.original.row ? row.original.row.row_no : EM_DASH),
+        size: 60,
+        enableSorting: false,
+        meta: { headerTitle: 'Row', headerClassName: 'text-end', cellClassName: 'text-end tabular-nums' },
+      },
+      {
+        id: 'qty',
+        header: ({ column }) => <DataGridColumnHeader title="Qty" column={column} />,
+        cell: ({ row }) => fmtQty(row.original.qty),
+        size: 80,
+        enableSorting: false,
+        meta: { headerTitle: 'Qty', headerClassName: 'text-end', cellClassName: 'text-end tabular-nums' },
+        footer: () => fmtQty(totalsRef.current.qty),
+      },
+      {
+        id: 'cartons',
+        header: ({ column }) => <DataGridColumnHeader title="Ctns" column={column} />,
+        cell: ({ row }) => (row.original.cartons == null ? EM_DASH : fmtQty(row.original.cartons)),
+        size: 70,
+        enableSorting: false,
+        meta: { headerTitle: 'Ctns', headerClassName: 'text-end', cellClassName: 'text-end tabular-nums' },
+        footer: () => fmtQty(totalsRef.current.cartons),
+      },
+      {
+        id: 'cbm',
+        header: ({ column }) => <DataGridColumnHeader title="CBM" column={column} />,
+        cell: ({ row }) =>
+          row.original.cbm == null ? EM_DASH : fmtTrimmedDecimal(row.original.cbm, 3),
+        size: 80,
+        enableSorting: false,
+        meta: { headerTitle: 'CBM', headerClassName: 'text-end', cellClassName: 'text-end tabular-nums' },
+        footer: () => fmtTrimmedDecimal(totalsRef.current.cbm, 3),
+      },
+      {
+        id: 'place',
+        header: ({ column }) => <DataGridColumnHeader title="Place" column={column} />,
+        // A packing row goes whole or not at all (AC-D2b): the supplier packed that many
+        // cartons of it and there is no part of a carton. A line the packing list never
+        // mentioned has no such grain, so it keeps the quantity it always had.
+        cell: ({ row }) =>
+          row.original.row ? (
+            <Checkbox
+              id={`packing-row-${row.original.row.id}`}
+              aria-label={`Place row ${row.original.row.row_no} of ${row.original.line.item_code}`}
+              checked={placedRowIds.has(row.original.row.id)}
+              onCheckedChange={(checked) =>
+                setPlacedRowIds((prev) => {
+                  const next = new Set(prev);
+                  if (checked) next.add(row.original.row!.id);
+                  else next.delete(row.original.row!.id);
+                  return next;
+                })
+              }
+            />
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <Input
+                type="number"
+                min={0}
+                max={row.original.line.remaining_qty}
+                value={quantities[row.original.line.id] ?? String(row.original.line.remaining_qty)}
+                onChange={(e) =>
+                  setQuantities((prev) => ({ ...prev, [row.original.line.id]: e.target.value }))
+                }
+                className="h-7 w-20 text-right tabular-nums"
+                aria-label={`Quantity to place for ${row.original.line.item_code}`}
+              />
+              <span className="whitespace-nowrap text-2xs text-muted-foreground">
+                of {fmtQty(row.original.line.remaining_qty)} left
+              </span>
+            </div>
+          ),
+        size: 170,
+        enableSorting: false,
+        meta: { headerTitle: 'Place' },
+      },
+    ],
+    [placedRowIds, quantities],
+  );
+
+  const table = useReactTable({
+    columns,
+    data: placementRows.length ? placementRows : NO_ROWS,
+    getRowId: (row) => row.key,
+    getCoreRowModel: getCoreRowModel(),
+    columnResizeMode: 'onChange',
+    enableColumnResizing: true,
+  });
 
   const submit = () => {
     const lineQuantities: Record<string, number> = {};
@@ -205,121 +389,30 @@ export function ConvertToPackingListDialog({
 
           {single && invoice ? (
             <div className="space-y-2">
-              {/* Header carry-over (S4, AC-D2c) - shown whether or not there is anything
-                  to place, since it is a fact about the packing rows, not the selection. */}
+              {/* Carried onto the draft (AC-D2c), one compact line - a fact about the
+                  invoice's own header, so it is stated whether or not anything is left to
+                  place. */}
               {headerCarryOver.container || headerCarryOver.seal || headerCarryOver.bl ? (
-                <div className="rounded-lg border border-dashed p-2.5 text-2xs">
-                  <p className="font-medium text-foreground">Carried onto the draft</p>
-                  <p className="text-muted-foreground">
-                    Container {headerCarryOver.container ?? EM_DASH}
-                    {headerCarryOver.seal ? ` · Seal ${headerCarryOver.seal}` : ''}
-                    {headerCarryOver.bl ? ` · BL ${headerCarryOver.bl}` : ''}
-                  </p>
-                </div>
-              ) : null}
-              {placeable.length === 0 ? (
-                <Alert>
-                  <AlertDescription>
-                    {alreadyPlaced.length > 0
-                      ? `Every line of ${invoice.pi_number} is already in a packing list.`
-                      : `No line of ${invoice.pi_number} can go on a container yet.`}
-                  </AlertDescription>
-                </Alert>
-              ) : (
-                <div className="divide-y divide-border rounded-lg border">
-                  {placeable.map((line) => {
-                    const rows = rowsForLine(line.id);
-                    return (
-                    <div key={line.id} className="flex flex-col gap-2 p-2.5">
-                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="min-w-0">
-                          <p className="truncate text-xs font-medium" title={line.item_code}>
-                            {line.item_code}
-                          </p>
-                          <p className="text-2xs text-muted-foreground">
-                            {fmtQty(line.qty)} on the invoice
-                            {line.placed_qty > 0
-                              ? `, ${fmtQty(line.placed_qty)} already placed`
-                              : ''}
-                          </p>
-                        </div>
-                        {rows.length === 0 ? (
-                          <div className="flex shrink-0 items-center gap-2">
-                            <Input
-                              type="number"
-                              min={0}
-                              max={line.remaining_qty}
-                              value={quantities[line.id] ?? String(line.remaining_qty)}
-                              onChange={(e) =>
-                                setQuantities((prev) => ({ ...prev, [line.id]: e.target.value }))
-                              }
-                              className="h-8 w-24 text-right tabular-nums"
-                              aria-label={`Quantity to place for ${line.item_code}`}
-                            />
-                            <span className="text-2xs text-muted-foreground">
-                              of {fmtQty(line.remaining_qty)} left
-                            </span>
-                          </div>
-                        ) : null}
-                      </div>
-                      {/* Placed whole or not at all (AC-D2b) - a packing row is a
-                          checkbox, never a quantity: the supplier packed this many
-                          cartons of it and there is no "part of a carton". */}
-                      {rows.length > 0 ? (
-                        <ul className="space-y-1 ps-1">
-                          {rows.map((row) => (
-                            <li key={row.id} className="flex items-center gap-2 text-2xs">
-                              <Checkbox
-                                id={`packing-row-${row.id}`}
-                                checked={placedRowIds.has(row.id)}
-                                onCheckedChange={(checked) =>
-                                  setPlacedRowIds((prev) => {
-                                    const next = new Set(prev);
-                                    if (checked) next.add(row.id);
-                                    else next.delete(row.id);
-                                    return next;
-                                  })
-                                }
-                              />
-                              <Label htmlFor={`packing-row-${row.id}`} className="cursor-pointer font-normal">
-                                Row {row.row_no} - {fmtQty(row.qty)}
-                                {row.cartons != null ? ` · ${fmtQty(row.cartons)} ctn` : ''}
-                                {row.cbm_total != null ? ` · ${fmtTrimmedDecimal(row.cbm_total, 3)} cbm` : ''}
-                              </Label>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : null}
-                    </div>
-                    );
-                  })}
-                </div>
-              )}
-              {alreadyPlaced.length > 0 ? (
                 <p className="text-2xs text-muted-foreground">
-                  {alreadyPlaced.length}{' '}
-                  {alreadyPlaced.length === 1 ? 'line is' : 'lines are'} already fully placed
-                  and are not offered again:{' '}
-                  {alreadyPlaced
-                    .slice(0, 5)
-                    .map((l) => l.item_code)
-                    .join(', ') || EM_DASH}
-                  {alreadyPlaced.length > 5 ? ` and ${alreadyPlaced.length - 5} more` : ''}.
+                  <span className="font-medium text-foreground">Carried onto the draft: </span>
+                  Container {headerCarryOver.container ?? EM_DASH}
+                  {headerCarryOver.seal ? ` · Seal ${headerCarryOver.seal}` : ''}
+                  {headerCarryOver.bl ? ` · BL ${headerCarryOver.bl}` : ''}
                 </p>
               ) : null}
-              {unplaceable.length > 0 ? (
-                <div className="space-y-1 rounded-lg border border-dashed p-2.5">
-                  <p className="text-2xs font-medium">Cannot go on a container yet</p>
-                  {unplaceable.map((line) => (
-                    <p key={line.id} className="text-2xs text-muted-foreground">
-                      <span className="font-medium">{line.item_code}</span>
-                      {' - '}
-                      {line.unmatched_reason ??
-                        'no catalogue product for this code, so there is nowhere to ship it.'}
-                    </p>
-                  ))}
-                </div>
-              ) : null}
+              <DataGrid
+                table={table}
+                recordCount={placementRows.length}
+                isLoading={false}
+                tableLayout={{ width: 'fixed', columnsResizable: true }}
+                emptyMessage={
+                  alreadyPlaced.length > 0
+                    ? `Every line of ${invoice.pi_number} is already in a packing list.`
+                    : `No line of ${invoice.pi_number} can go on a container yet.`
+                }
+              >
+                <DataGridTable />
+              </DataGrid>
             </div>
           ) : null}
 

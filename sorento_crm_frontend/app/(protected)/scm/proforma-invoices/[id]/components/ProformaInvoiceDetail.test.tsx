@@ -451,7 +451,7 @@ describe('ProformaInvoiceDetail - the record header', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /convert to packing list/i }));
     // Both rows start ticked - "everything goes" is the default. Untick the second.
-    const second = await screen.findByLabelText(/Row 2/);
+    const second = await screen.findByLabelText(/place row 2 of ITEM-1/i);
     fireEvent.click(second);
     fireEvent.click(screen.getByRole('button', { name: /^Convert$/ }));
 
