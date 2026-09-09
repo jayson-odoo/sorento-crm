@@ -37,6 +37,14 @@ WHERE o.is_cancelled = false
 GROUP BY ol.product_id, ol.warehouse_id, o.order_date::date, ms.demand_nature, w.segment;
 """
 
+# `scripts/bootstrap_env.py`'s `create_views()` replays every view redefinition that ships
+# as a module-level constant (274's base body, then each later revision in order) onto a
+# freshly bootstrapped database, since that path never runs migration bodies at all. Without
+# this tuple a CI database built by bootstrap kept 274's `consumption_v` with no
+# `warehouse_segment`, while every migrated database already had this one - the column
+# `reorder_level_service` reads outright missing there and nowhere else.
+_REDEFINED_VIEWS = (_NEW_VIEW,)
+
 _OLD_VIEW = """
 CREATE OR REPLACE VIEW scm.consumption_v AS
 SELECT ol.product_id, ol.warehouse_id, o.order_date::date AS day,

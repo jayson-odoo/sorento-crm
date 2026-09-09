@@ -27,13 +27,19 @@ _FIELD_KEY = "exclude_from_planning"
 _BOOL_OPS = ["eq", "is_null"]
 
 
-def upgrade() -> None:
-    conn = op.get_bind()
+def seed(conn) -> bool:
+    """Insert the `exclude_from_planning` field row; True if it was inserted.
+
+    Split out of `upgrade()` so `scripts/bootstrap_env.py` can call the SAME body a
+    from-zero database needs (`seed_customer_import_aliases`'s 353 already does this) -
+    bootstrap only STAMPS this migration rather than running it, so its data seed would
+    otherwise never land on a bootstrapped database.
+    """
     row = conn.execute(
         sa.text("SELECT id FROM list_query_resources WHERE resource_key = 'products' LIMIT 1")
     ).fetchone()
     if not row:
-        return
+        return False
     rid = str(row[0])
     exists = conn.execute(
         sa.text(
@@ -43,7 +49,7 @@ def upgrade() -> None:
         {"rid": rid, "fk": _FIELD_KEY},
     ).fetchone()
     if exists:
-        return
+        return False
     conn.execute(
         sa.text(
             """
@@ -65,6 +71,11 @@ def upgrade() -> None:
             "exp": "Excluded from planning", "so": 97,
         },
     )
+    return True
+
+
+def upgrade() -> None:
+    seed(op.get_bind())
 
 
 def downgrade() -> None:
