@@ -407,25 +407,32 @@ export function ProformaInvoicesView() {
           cellClassName: 'text-right tabular-nums',
         },
       },
+      // WHEN and WHO, one line each (ruling 27): stacked in one cell they read as a single
+      // wrapped value, and neither could be sized, hidden or moved on its own.
       {
-        id: 'uploaded',
-        header: ({ column }) => <DataGridColumnHeader title="Uploaded" column={column} />,
+        id: 'uploaded_at',
+        header: ({ column }) => <DataGridColumnHeader title="Uploaded at" column={column} />,
         cell: ({ row }) => (
-          <div className="flex flex-col">
-            <span className="text-muted-foreground">{fmtDate(row.original.created_at)}</span>
-            {row.original.uploaded_by ? (
-              <span
-                className="truncate text-xs text-muted-foreground"
-                title={row.original.uploaded_by}
-              >
-                {row.original.uploaded_by}
-              </span>
-            ) : null}
-          </div>
+          <span className="text-muted-foreground">{fmtDate(row.original.created_at)}</span>
         ),
-        size: 150,
+        size: 120,
         enableSorting: false,
-        meta: { headerTitle: 'Uploaded' },
+        meta: { headerTitle: 'Uploaded at' },
+      },
+      {
+        id: 'uploaded_by',
+        header: ({ column }) => <DataGridColumnHeader title="Uploaded by" column={column} />,
+        cell: ({ row }) => (
+          <span
+            className="block truncate text-muted-foreground"
+            title={row.original.uploaded_by ?? undefined}
+          >
+            {row.original.uploaded_by || EM_DASH}
+          </span>
+        ),
+        size: 160,
+        enableSorting: false,
+        meta: { headerTitle: 'Uploaded by' },
       },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
