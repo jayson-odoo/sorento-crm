@@ -30,6 +30,10 @@ import {
   type SupplierDocumentTextItem,
   type SupplierDocumentTranslation,
 } from '@/app/(protected)/scm/services/fulfilmentService';
+import {
+  createImportFieldAlias,
+  type ImportFieldAliasDocType,
+} from '@/app/(protected)/system-management/import-field-aliases/services/importFieldAliasService';
 
 /**
  * Upload supplier documents: a proforma invoice, a packing list, or both at once (R12-R14,
@@ -190,6 +194,12 @@ function confirmCounts(preview: SupplierDocumentsPreview | null): { invoices: nu
   return { invoices, packingLists };
 }
 
+/** Which reader's field list an unmapped header maps into (S5, AC-E4). Every file this
+ *  dialog reads is either a proforma invoice or a packing list (or a mix); the chip picks
+ *  the packing-list field set since that is the shape the plan measured the unmapped
+ *  headers on (Jinbaichuan's `尺寸（mm）`, `孔距`, `认证编码`). */
+const IMPORT_DOC_TYPE: ImportFieldAliasDocType = 'packing_list';
+
 export function SupplierDocumentsUploadDialog({
   open,
   onOpenChange,
@@ -235,6 +245,10 @@ export function SupplierDocumentsUploadDialog({
   // `translate_service`'s memory reads off the database. Only touched cells are sent on
   // Confirm; an untouched one keeps whatever the memory/AI already said.
   const [translationEdits, setTranslationEdits] = useState<Record<string, string>>({});
+  // A header this session has already mapped (S5, AC-E4) - keyed `file name::header` so
+  // the chip disappears everywhere that exact pair would otherwise still show it, without
+  // waiting on a re-preview the mock cannot genuinely deliver (see `mapHeader` below).
+  const [mappedHeaders, setMappedHeaders] = useState<Record<string, true>>({});
 
   // Cleared on every open, like every other upload dialog here: a file, a verdict or a
   // currency left over from the last upload must never silently apply to the next one.
@@ -248,6 +262,7 @@ export function SupplierDocumentsUploadDialog({
     setPreviewing(false);
     setApplying(false);
     setTranslationEdits({});
+    setMappedHeaders({});
     if (selfServe) setInternalSupplierId(null);
   }, [open, selfServe]);
 
@@ -289,6 +304,23 @@ export function SupplierDocumentsUploadDialog({
       setError(e instanceof Error ? e.message : 'Failed to import the supplier documents.');
     } finally {
       setApplying(false);
+    }
+  };
+
+  /**
+   * "Map to..." on an unmapped header chip (S5, AC-E4): write the alias, then mark the
+   * chip mapped so it disappears at once. The AC calls for a re-preview of just this file
+   * afterwards; the Phase 1 mock never produced the header names from real file bytes in
+   * the first place (`unmapped_headers` is mocked empty, see `fulfilmentService.ts`), so
+   * there is nothing for a re-preview to change yet - Phase 2 swaps this optimistic hide
+   * for the real re-preview once the backend reports headers for real.
+   */
+  const mapHeader = async (fileName: string, header: string, field: string) => {
+    try {
+      await createImportFieldAlias({ doc_type: IMPORT_DOC_TYPE, field, alias: header });
+      setMappedHeaders((prev) => ({ ...prev, [`${fileName}::${header}`]: true }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to map that header.');
     }
   };
 
@@ -383,6 +415,9 @@ export function SupplierDocumentsUploadDialog({
             <div className="divide-y divide-border rounded-lg border">
               {preview.files.map((f) => {
                 const isPackingListLike = f.kind === 'packing_list' || f.kind === 'combined';
+                const unmappedHeaders = (f.unmapped_headers ?? []).filter(
+                  (h) => !mappedHeaders[`${f.name}::${h}`],
+                );
                 return (
                 <div key={f.name} className="space-y-1 p-2.5">
                   <div className="flex items-center justify-between gap-2">
@@ -461,6 +496,20 @@ export function SupplierDocumentsUploadDialog({
                           disabled={!!attachTo}
                         />
                       )}
+                    </div>
+                  ) : null}
+                  {unmappedHeaders.length ? (
+                    <div className="space-y-1 pt-1">
+                      <p className="text-2xs font-medium text-foreground">Unmapped headers</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {unmappedHeaders.map((header) => (
+                          <UnmappedHeaderChip
+                            key={header}
+                            header={header}
+                            onMap={(fieldValue) => void mapHeader(f.name, header, fieldValue)}
+                          />
+                        ))}
+                      </div>
                     </div>
                   ) : null}
                   {f.kind !== 'unreadable' && translationItems(f).length > 0 ? (
@@ -555,6 +604,64 @@ export function SupplierDocumentsUploadDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** One unmapped header (S5, AC-E4): the header text, and "Map to..." over the doc type's
+ *  own field list (E1). Picking a field maps it at once - no explanation text on screen. */
+function UnmappedHeaderChip({
+  header,
+  onMap,
+}: {
+  header: string;
+  onMap: (field: string) => void;
+}) {
+  const [mapping, setMapping] = useState(false);
+  const [fields, setFields] = useState<{ value: string; label: string }[]>([]);
+  const [loadingFields, setLoadingFields] = useState(false);
+
+  const startMapping = async () => {
+    setMapping(true);
+    setLoadingFields(true);
+    try {
+      const { listImportFieldAliasFields } = await import(
+        '@/app/(protected)/system-management/import-field-aliases/services/importFieldAliasService'
+      );
+      const list = await listImportFieldAliasFields(IMPORT_DOC_TYPE);
+      setFields(list.map((f) => ({ value: f.field, label: f.label })));
+    } finally {
+      setLoadingFields(false);
+    }
+  };
+
+  if (!mapping) {
+    return (
+      <Badge variant="secondary" appearance="light" size="sm" className="gap-1">
+        {header}
+        <button
+          type="button"
+          className="ms-1 text-primary underline-offset-2 hover:underline"
+          onClick={() => void startMapping()}
+        >
+          Map to...
+        </button>
+      </Badge>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <span className="text-2xs text-muted-foreground">{header}</span>
+      <SearchableSelect
+        size="sm"
+        className="w-40"
+        value=""
+        onChange={(v: string) => v && onMap(v)}
+        options={fields}
+        placeholder={loadingFields ? 'Loading...' : 'Choose a field'}
+        disabled={loadingFields}
+      />
+    </div>
   );
 }
 

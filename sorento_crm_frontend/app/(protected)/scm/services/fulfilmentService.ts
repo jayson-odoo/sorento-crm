@@ -1333,6 +1333,11 @@ export interface SupplierDocumentFilePreview {
   attach_to?: SupplierDocumentAttachTarget | null;
   /** Present only when no PI could be resolved for a packing-list file. */
   refusal?: SupplierDocumentRefusal | null;
+  /** Header cells this file's table row carried that resolved to no system field (S5,
+   *  AC-E2) - e.g. Jinbaichuan's `尺寸（mm）`. MOCKED empty in Phase 1: the real backend
+   *  reader does not report this yet (see `import-field-aliases/services/
+   *  importFieldAliasService.ts`'s own Phase 2 contract). */
+  unmapped_headers?: string[];
 }
 
 export interface SupplierDocumentPriceMatch {
