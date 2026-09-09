@@ -197,11 +197,19 @@ function confirmCounts(preview: SupplierDocumentsPreview | null): { invoices: nu
   return { invoices, packingLists };
 }
 
-/** Which reader's field list an unmapped header maps into (S5, AC-E4). Every file this
- *  dialog reads is either a proforma invoice or a packing list (or a mix); the chip picks
- *  the packing-list field set since that is the shape the plan measured the unmapped
- *  headers on (Jinbaichuan's `尺寸（mm）`, `孔距`, `认证编码`). */
+/** The reader assumed when a preview does not say which one missed a header - the shape
+ *  the plan measured the unmapped headers on (Jinbaichuan's `尺寸（mm）`, `孔距`,
+ *  `认证编码`). A current backend says (`unmapped_header_doc_types`, ruling 24). */
 const IMPORT_DOC_TYPE: ImportFieldAliasDocType = 'packing_list';
+
+/** Which readers could not place this header on this file (ruling 24). */
+function docTypesFor(
+  file: SupplierDocumentFilePreview,
+  header: string,
+): ImportFieldAliasDocType[] {
+  const stated = file.unmapped_header_doc_types?.[header];
+  return stated?.length ? (stated as ImportFieldAliasDocType[]) : [IMPORT_DOC_TYPE];
+}
 
 /** Ours and theirs, in that order - the operator recognises the supplier's own reference,
  *  and our number is what the invoice is filed under. */
@@ -397,13 +405,34 @@ export function SupplierDocumentsUploadDialog({
    * file again with it. The chip goes because the reader placed the column this time -
    * and the figures under it appear in the same pass, which is the point.
    */
-  const mapHeader = async (fileName: string, header: string, field: string) => {
-    try {
-      await createImportFieldAlias({ doc_type: IMPORT_DOC_TYPE, field, alias: header });
-      await repreviewFile(fileName, blockAttachments(fileName));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to map that header.');
+  const mapHeader = async (
+    fileName: string,
+    header: string,
+    field: string,
+    docTypes: ImportFieldAliasDocType[],
+  ) => {
+    // One create per reader that missed the header (ruling 24). A combined sheet is read
+    // as an invoice AND as a packing list, so mapping it once left half the file still
+    // ignoring the column. A 409 means one of them already had it, which is the outcome
+    // asked for, not a failure; only "not one of them landed" is worth saying.
+    const outcomes = await Promise.all(
+      docTypes.map(async (docType) => {
+        try {
+          await createImportFieldAlias({ doc_type: docType, field, alias: header });
+          return null;
+        } catch (e) {
+          const status = (e as { status?: number })?.status;
+          if (status === 409) return null;
+          return e instanceof Error ? e.message : 'Failed to map that header.';
+        }
+      }),
+    );
+    const failures = outcomes.filter((m): m is string => m !== null);
+    if (failures.length === docTypes.length && failures.length > 0) {
+      setError(failures[0]);
+      return;
     }
+    await repreviewFile(fileName, blockAttachments(fileName));
   };
 
   const unreadable = preview?.files.filter((f) => f.kind === 'unreadable') ?? [];
@@ -617,7 +646,10 @@ export function SupplierDocumentsUploadDialog({
                           <UnmappedHeaderChip
                             key={header}
                             header={header}
-                            onMap={(fieldValue) => void mapHeader(f.name, header, fieldValue)}
+                            docTypes={docTypesFor(f, header)}
+                            onMap={(fieldValue, forDocTypes) =>
+                              void mapHeader(f.name, header, fieldValue, forDocTypes)
+                            }
                           />
                         ))}
                       </div>
@@ -724,13 +756,21 @@ export function SupplierDocumentsUploadDialog({
  *  own field list (E1). Picking a field maps it at once - no explanation text on screen. */
 function UnmappedHeaderChip({
   header,
+  docTypes,
   onMap,
 }: {
   header: string;
-  onMap: (field: string) => void;
+  /** The readers that could not place this header (ruling 24) - a combined sheet is read
+   *  twice, and mapping it for one of them leaves the other still ignoring the column. */
+  docTypes: ImportFieldAliasDocType[];
+  onMap: (field: string, forDocTypes: ImportFieldAliasDocType[]) => void;
 }) {
   const [mapping, setMapping] = useState(false);
   const [fields, setFields] = useState<{ value: string; label: string }[]>([]);
+  // Which readers actually ASK for each field. A field only one of them declares is
+  // written for that one alone - the other would refuse it, and rightly: an alias naming
+  // a field its reader never reads can resolve nothing.
+  const [fieldOwners, setFieldOwners] = useState<Record<string, ImportFieldAliasDocType[]>>({});
   const [loadingFields, setLoadingFields] = useState(false);
 
   const startMapping = async () => {
@@ -740,8 +780,20 @@ function UnmappedHeaderChip({
       const { listImportFieldAliasFields } = await import(
         '@/app/(protected)/system-management/import-field-aliases/services/importFieldAliasService'
       );
-      const list = await listImportFieldAliasFields(IMPORT_DOC_TYPE);
-      setFields(list.map((f) => ({ value: f.field, label: f.label })));
+      const owners: Record<string, ImportFieldAliasDocType[]> = {};
+      const options: { value: string; label: string }[] = [];
+      for (const docType of docTypes) {
+        const list = await listImportFieldAliasFields(docType);
+        for (const f of list) {
+          if (!owners[f.field]) {
+            owners[f.field] = [];
+            options.push({ value: f.field, label: f.label });
+          }
+          owners[f.field].push(docType);
+        }
+      }
+      setFieldOwners(owners);
+      setFields(options);
     } finally {
       setLoadingFields(false);
     }
@@ -769,7 +821,7 @@ function UnmappedHeaderChip({
         size="sm"
         className="w-40"
         value=""
-        onChange={(v: string) => v && onMap(v)}
+        onChange={(v: string) => v && onMap(v, fieldOwners[v] ?? docTypes)}
         options={fields}
         placeholder={loadingFields ? 'Loading...' : 'Choose a field'}
         disabled={loadingFields}

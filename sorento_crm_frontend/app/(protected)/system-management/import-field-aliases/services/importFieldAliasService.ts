@@ -67,7 +67,16 @@ export async function createImportFieldAlias(data: {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   });
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to add that mapping'));
+  if (!res.ok) {
+    // The STATUS travels with the message: a caller writing the same alias for two
+    // document types at once (the combined-file chip) has to tell "one of them already
+    // had it" (409) apart from a real refusal.
+    const error = new Error(await extractApiError(res, 'Failed to add that mapping')) as Error & {
+      status?: number;
+    };
+    error.status = res.status;
+    throw error;
+  }
   return res.json();
 }
 

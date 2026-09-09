@@ -1247,6 +1247,12 @@ export interface SupplierDocumentFilePreview {
   /** Header cells this file's table row carried that resolved to no system field (S5,
    *  AC-E2) - e.g. Jinbaichuan's `尺寸（mm）`. */
   unmapped_headers?: string[];
+  /** Per header, WHICH readers could not place it (ruling 24). A combined sheet is read
+   *  twice, so a header can be unmapped for `proforma_invoice`, for `packing_list`, or
+   *  for both - and mapping it once would leave the other half of the file ignoring the
+   *  column. Absent on an older payload; the dialog then assumes the packing-list reader,
+   *  which is what it always did. */
+  unmapped_header_doc_types?: Record<string, string[]>;
 }
 
 export interface SupplierDocumentPriceMatch {

@@ -509,12 +509,17 @@ def _file_preview(
     # AC-E2: header cells the resolver could not place, from whichever reader(s) ran -
     # a combined file's two readers each report their OWN missed headers, never each
     # other's genuinely-different column set.
-    unmapped_headers = list(
-        dict.fromkeys(
-            (pi_result.unmapped_headers if pi_result else [])
-            + (pl_result.unmapped_headers if pl_result else [])
-        )
-    )
+    #
+    # WHICH reader missed it is reported alongside (ruling 24): a combined sheet is read
+    # twice, and a header the invoice reader could not place has to be mapped for
+    # `proforma_invoice` as well as `packing_list` or half the file goes on ignoring it -
+    # the dialog cannot know that from the file's `kind` alone.
+    by_doc_type: dict[str, list[str]] = {}
+    for header in pi_result.unmapped_headers if pi_result else []:
+        by_doc_type.setdefault(header, []).append(PI_DOC_TYPE)
+    for header in pl_result.unmapped_headers if pl_result else []:
+        by_doc_type.setdefault(header, []).append(PL_DOC_TYPE)
+    unmapped_headers = list(by_doc_type)
 
     return {
         "name": name,
@@ -523,6 +528,7 @@ def _file_preview(
         "header": _header_of(pi_result, pl_result),
         "unmatched": sorted(set(unmatched))[:200],
         "unmapped_headers": unmapped_headers,
+        "unmapped_header_doc_types": by_doc_type,
         # AC-B13, per BLOCK. A COMBINED file states its own invoice on the same sheet and
         # attaches its blocks to the PIs that apply creates from it, so it asks nothing:
         # only a packing-list-ALONE file has a question to answer here.

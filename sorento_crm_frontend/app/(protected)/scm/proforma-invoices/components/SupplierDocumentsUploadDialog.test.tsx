@@ -617,4 +617,61 @@ describe('SupplierDocumentsUploadDialog - "Map to..." re-runs Test for that file
     await waitFor(() => expect(previewSupplierDocuments).toHaveBeenCalledTimes(2));
     expect(previewSupplierDocuments.mock.calls[1][0][0].name).toBe('jinbaichuan.xlsx');
   });
+
+  it('writes the alias for EVERY reader that missed the header on a combined file (ruling 24)', async () => {
+    // A combined sheet is read twice, so `尺寸（mm）` is unmapped for both readers and the
+    // preview says so. Mapping it once used to leave the invoice half of the file still
+    // ignoring the column.
+    const combined = {
+      files: [
+        {
+          ...PI_FILE_PREVIEW,
+          name: 'jinbaichuan.xlsx',
+          kind: 'combined',
+          unmapped_headers: ['尺寸（mm）'],
+          unmapped_header_doc_types: { '尺寸（mm）': ['proforma_invoice', 'packing_list'] },
+        },
+      ],
+      price_matches: [],
+    };
+    previewSupplierDocuments.mockReset();
+    previewSupplierDocuments
+      .mockResolvedValueOnce(combined)
+      .mockResolvedValueOnce({
+        files: [{ ...combined.files[0], unmapped_headers: [], unmapped_header_doc_types: {} }],
+        price_matches: [],
+      });
+    listImportFieldAliasFields.mockResolvedValue([
+      { field: 'carton_dims', label: 'Carton dims' },
+    ]);
+    // The packing-list write lands; the invoice reader already had that spelling on file,
+    // which is a 409 and NOT an error for the chip.
+    createImportFieldAlias.mockImplementation(async ({ doc_type }: { doc_type: string }) => {
+      if (doc_type === 'proforma_invoice') {
+        const conflict = new Error('already mapped') as Error & { status?: number };
+        conflict.status = 409;
+        throw conflict;
+      }
+      return {};
+    });
+
+    openDialog();
+    pickFiles([xlsx('jinbaichuan.xlsx')]);
+    fireEvent.click(testButton());
+
+    expect(await screen.findByText('尺寸（mm）')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Map to...' }));
+    expect(await screen.findByText('Choose a field')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('combobox'));
+    fireEvent.click(await screen.findByRole('option', { name: 'Carton dims' }));
+
+    await waitFor(() => expect(createImportFieldAlias).toHaveBeenCalledTimes(2));
+    expect(createImportFieldAlias.mock.calls.map((c) => c[0].doc_type).sort()).toEqual([
+      'packing_list',
+      'proforma_invoice',
+    ]);
+    // The 409 half is not an error, and the file is read again with the mapping.
+    await waitFor(() => expect(previewSupplierDocuments).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText('already mapped')).not.toBeInTheDocument();
+  });
 });
