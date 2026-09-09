@@ -49,14 +49,15 @@ import {
  *
  * Each file is read on Test and classified server-side by its own title cell; the operator
  * never says which kind a file is. Confirm applies every proforma invoice first, then every
- * packing list, matching invoice prices onto the lines they price.
+ * packing list, whose rows land on the invoice that prices them.
  *
- * Attach a packing list to a proforma invoice (S2, AC-B5/B10/B13): a packing-list (or
- * combined) file shows an **Attaches to** picker prefilled by the resolution order in
- * `decorateWithMockAttachTo` (invoice number, then date) - disabled and locked when
- * `attachTo` is passed (opened from a PI's own "Attach packing list" button). A file with
- * no PI to attach to is refused inline (AC-B16) and Confirm stays disabled while any file
- * is refused.
+ * Attach a packing list to a proforma invoice (S2, AC-B5/B10/B13): one **Attaches to** line
+ * per packing-list BLOCK, answered by the server (`resolve_attach`) and named by its
+ * container when the file carries more than one. Changing it posts the pick back and
+ * re-runs Test for that file, so the answer on screen is always the server's. Locked when
+ * `attachTo` is passed (opened from a PI's own "Attach packing list" button). A block with
+ * no invoice to attach to shows its refusal inline (AC-B16) and Confirm stays disabled
+ * while any block is refused.
  *
  * Self-serve supplier picker (Deviations lane A, purchasing consolidation batch; carried
  * over unchanged by this lane): this page carries no persistent supplier filter to source
