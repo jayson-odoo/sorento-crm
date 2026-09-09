@@ -46,7 +46,8 @@ the dates named.
   with `gr_quantity = None` and `gr_date = None` renders the five others in the same
   order. A row whose `spo_date_source` is `"recorded"` labels that field
   `SPO Date (recorded)` instead of `SPO Date`, so a bookkeeping timestamp is never read as
-  a promised delivery.
+  a promised delivery. Amended 9 Sep 2026 (`PLAN-chatbot-last-in-container-number.md`):
+  `Container Number (if any)` sits directly after `SPO Number`.
 - AC-9b GR date. `gr_date` is `picking_headers.picking_date` reached through
   `picking_lines.spo_allocation_id`, with `picking_status = 'approved'` and
   `max(picking_date)` per allocation (measured on the 0907 copy: 987 of 987 approved

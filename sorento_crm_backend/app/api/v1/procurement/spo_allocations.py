@@ -54,9 +54,11 @@ async def get_spo_last_receipt(
     GR never decides WHICH line answers (no `receipt_status` filter, no inbound-shipment
     arrival column), but it IS reported on the line that did.
 
-    Each row: `spo_number`, `product_id`, `product_code`, `product_name`, `spo_quantity`
-    (ordered), `gr_quantity` (received; None when nothing has been), `spo_date`,
-    `spo_date_source`, `gr_date` (None when no approved GRN line), `warehouse`.
+    Each row: `spo_number`, `container_number` (None unless the line was ingested from a
+    shipping order that named its container, D6 / migration 477), `product_id`,
+    `product_code`, `product_name`, `spo_quantity` (ordered), `gr_quantity` (received; None
+    when nothing has been), `spo_date`, `spo_date_source`, `gr_date` (None when no approved
+    GRN line), `warehouse`.
 
     `spo_date` fallback order: `spo_allocations.expected_date` (the line's promised
     delivery), else `.issue_date`, else `.created_at` - `spo_date_source` says which one

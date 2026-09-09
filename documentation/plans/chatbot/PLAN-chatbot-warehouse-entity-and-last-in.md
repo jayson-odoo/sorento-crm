@@ -96,6 +96,9 @@ row reads, in this order and no other:
     SPO Number, Product Code, SPO Quantity, GR Quantity (if any), SPO Date,
     GR Date (if any), Warehouse
 
+Amended 9 Sep 2026 (`PLAN-chatbot-last-in-container-number.md`): `Container Number (if
+any)` sits directly after `SPO Number`.
+
 - SPO Number stays first: it is the identity line, the same string the item title carries.
   The owner's list starts after it.
 - `spo_quantity` = `allocated_quantity`. `gr_quantity` = `quantity_received`, **None when
