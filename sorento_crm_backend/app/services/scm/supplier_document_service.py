@@ -58,6 +58,30 @@ _PROFORMA_TYPE_CODE = "proforma_invoice"
 _PROFORMA_TYPE_NAME = "Proforma Invoice"
 
 
+def _link_source_file(
+    db: Session, invoice_ids: list[str], attachment_id: str, *, actor_id: Optional[str] = None
+) -> None:
+    """AC-B14: the generic attachment linkage this repo already uses for `inbound_shipment`
+    (`EntityAttachmentLink`), applied to `proforma_invoice` - the General tab's own Source
+    files block reads it back (`serialize`'s `source_files`/`packing_file`). Never fails the
+    apply that already succeeded: a filing failure is already tolerated the same way by
+    `file_supplier_document` itself, and a link is strictly less important than the row it
+    is attached to.
+    """
+    from app.services.entity_attachment_service import EntityAttachmentService
+
+    service = EntityAttachmentService(db)
+    for invoice_id in invoice_ids:
+        try:
+            service.link_existing_attachment(
+                "proforma_invoice", invoice_id, attachment_id, created_by=actor_id
+            )
+        except AppException:
+            # Already linked (a combined file's own attachment covers >1 block/invoice
+            # and this invoice already got it, or a rare re-run) - not an error here.
+            continue
+
+
 def classify(data: bytes, db: Optional[Session] = None) -> Optional[str]:
     """`'proforma_invoice' | 'packing_list' | 'combined' | None` (unreadable/unclassifiable),
     by the file's own title cell. `None` never blocks the OTHER files in a batch - only
@@ -90,13 +114,22 @@ def classify(data: bytes, db: Optional[Session] = None) -> Optional[str]:
     return _classify_by_header_shape(db, data)
 
 
+#: Columns a plain proforma invoice never carries (Kailu's own PI header: 序号/品名/编号/
+#: 产品数量/单价/总价/其他 - no cartons, no weight, no volume). A PI-shaped header that ALSO
+#: carries one of these is a COMBINED file - both a priced document AND a packing list on
+#: the SAME sheet (Jinbaichuan, S2/AC-B3) - not merely a PI whose header happens to satisfy
+#: the packing list's own looser item-code-and-quantity test too, which every PI's does.
+_PACKING_SPECIFIC_FIELDS = ("cartons", "net_weight", "gross_weight", "cbm_total", "cbm_per_unit")
+
+
 def _classify_by_header_shape(db: Session, data: bytes) -> Optional[str]:
     """No title cell named either document - decide from the header row(s) instead. A PI's
     OWN required columns (item code, quantity, unit price - `proforma_invoice_reader`'s
     `_REQUIRED_COLUMNS`) are the stricter test, checked first: a header that satisfies them
     is proforma-invoice-shaped even though it would ALSO satisfy the packing list's own
-    looser item-code-and-quantity test. Only a header that fails the stricter test but
-    passes the looser one is packing-list-shaped."""
+    looser item-code-and-quantity test - UNLESS it also names a packing-specific column
+    (`_PACKING_SPECIFIC_FIELDS`), which makes it combined instead (S2, AC-B3). Only a
+    header that fails the stricter test but passes the looser one is packing-list-shaped."""
     try:
         sheets = every_sheet_rows(data)
     except Exception:  # noqa: BLE001
@@ -110,6 +143,11 @@ def _classify_by_header_shape(db: Session, data: bytes) -> Optional[str]:
                 continue
             if _is_header(_header_map(raw, pi_resolver), required=("item_code", "qty", "unit_price")):
                 saw_pi = True
+                pl_mapped = _header_map(raw, pl_resolver)
+                if _is_header(pl_mapped) and any(
+                    f in pl_mapped.values() for f in _PACKING_SPECIFIC_FIELDS
+                ):
+                    saw_pl = True
                 continue
             if _is_header(_header_map(raw, pl_resolver)):
                 saw_pl = True
@@ -480,9 +518,9 @@ def apply(
     to notice one file never showed up.
 
     `translations` (R16) is `[{source_text, target_text}]` off the preview's edited
-    cells - written as MANUAL rows FIRST, before `packing_list_service.apply` runs its
-    own translate-and-compose pass, so an edit made in the preview is what a remark or
-    a note is stored with, never the AI's unedited guess.
+    cells - written as MANUAL rows FIRST (`translation_service.remember`, below), so an
+    edit made in the preview outranks any `ai` guess the memory already held for the
+    same text.
 
     `attach_to` (AC-B5/B13) is the dialog's own explicit pick - ONE invoice id for the
     whole upload, not per file: the two contexts that state one are "Attach packing list"
@@ -536,6 +574,7 @@ def apply(
         if attachment_id:
             attachment_ids.append(attachment_id)
             filed_attachment_by_name[name] = attachment_id
+            _link_source_file(db, invoice_ids, attachment_id, actor_id=actor_id)
 
     # S2: a packing-list (or combined) file never creates an `inbound_shipments` row any
     # more (AC-C1, S3) - its rows are written onto the PI they price instead
@@ -549,6 +588,7 @@ def apply(
         if not pl_result.ok:
             continue
         combined_invoice_ids = invoice_ids_by_name.get(name, [])
+        attached_invoice_ids: list[str] = []
         for i, block in enumerate(pl_result.blocks):
             if kind == "combined" and i < len(combined_invoice_ids):
                 invoice = proforma_invoice_service.get_or_404(db, combined_invoice_ids[i])
@@ -559,6 +599,26 @@ def apply(
             packing_rows_written += packing_service.replace_packing_rows(
                 db, invoice, block.lines, supplier_id=supplier_id, actor=actor_name,
             )
+            # Standing ruling (S2/S4/S5, captain 9 Sep): the packing document fills the PI
+            # header's container/seal/BL when the PI itself stated none - convert's header
+            # carry-over (AC-D2c) reads all three off the invoice.
+            if not invoice.container_ref and block.container_no:
+                invoice.container_ref = block.container_no
+            if not invoice.seal_ref and block.seal_no:
+                invoice.seal_ref = block.seal_no
+            if not invoice.bl_ref and block.bl_no:
+                invoice.bl_ref = block.bl_no
+            attached_invoice_ids.append(str(invoice.id))
+        # AC-B14: a packing-list-ALONE file is its own upload, filed and linked here - a
+        # COMBINED file's single filing already happened in the PI loop above (same
+        # attachment, same invoices), and re-linking it here would be a duplicate.
+        if kind == "packing_list":
+            attachment_id = packing_list_service.file_supplier_document(
+                db, data=data, filename=name, content_type=ctype, actor_id=actor_id,
+            )
+            if attachment_id:
+                attachment_ids.append(attachment_id)
+                _link_source_file(db, attached_invoice_ids, attachment_id, actor_id=actor_id)
 
     return {
         "proforma_invoice_ids": sorted(set(proforma_invoice_ids)),

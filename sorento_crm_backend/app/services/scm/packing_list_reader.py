@@ -115,7 +115,13 @@ def _parse_date(value: Any) -> Optional[date]:
 class PackingLine:
     row_number: int
     item_code: str
-    qty: float
+    #: `None` on a row that names something and states a packing figure (cartons, CBM, a
+    #: weight) but no quantity - the Jinbaichuan sheet's own container-summary row
+    #: (`家豪拼柜41个盆`, "jiahao's consolidated container, 41 basins") states only a total
+    #: CBM. Still a packing row (S2, AC-B3): the qty just is not one of the figures it
+    #: states. Never invented from the text - `qty` stays exactly what the file states,
+    #: same "never zeroed, never guessed" rule every other measure on this line follows.
+    qty: Optional[float]
     product_name: Optional[str] = None
     spec: Optional[str] = None
     cartons: Optional[float] = None
@@ -186,7 +192,9 @@ class PackingBlock:
 
     @property
     def total_qty(self) -> float:
-        return sum(ln.qty for ln in self.lines)
+        # A qty-less row (a container-summary line stating only a packing figure, captain
+        # ruling 9 Sep) contributes nothing here - never invented.
+        return sum(ln.qty for ln in self.lines if ln.qty is not None)
 
     @property
     def total_cartons(self) -> Optional[float]:
@@ -404,9 +412,25 @@ def _line_from(raw: list, col_field: dict[int, str], row_number: int) -> Optiona
             vals[f] = raw[pos]
 
     code = _text(vals.get("item_code"))
+    description = _text(vals.get("product_name"))
+    identifier = code or description
     qty = _number(vals.get("qty"))
-    if not code or qty is None:
+    if not identifier:
         return None
+    if qty is None:
+        # Captain ruling 9 Sep: a code/description with NO quantity but SOME packing
+        # figure is still a packing row (qty stays None) - only a row with NEITHER is
+        # the accessory-note shape `_note_from` keeps instead.
+        has_packing_figure = any(
+            _number(vals.get(f)) is not None
+            for f in (
+                "cartons", "cbm_total", "cbm_per_unit", "net_weight", "gross_weight",
+                "cbm_per_carton", "carton_net_weight", "carton_gross_weight",
+                "total_net_weight", "total_gross_weight",
+            )
+        )
+        if not has_packing_figure:
+            return None
 
     cbm_total = _number(vals.get("cbm_total"))
     per_unit = _number(vals.get("cbm_per_unit"))
@@ -418,7 +442,7 @@ def _line_from(raw: list, col_field: dict[int, str], row_number: int) -> Optiona
 
     return PackingLine(
         row_number=row_number,
-        item_code=code,
+        item_code=identifier,
         qty=qty,
         product_name=_text(vals.get("product_name")),
         spec=_text(vals.get("spec")),

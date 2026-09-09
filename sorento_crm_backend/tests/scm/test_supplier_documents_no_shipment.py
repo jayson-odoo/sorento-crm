@@ -22,7 +22,10 @@ service.py` (imported directly rather than re-typed, so a change to either drift
 """
 from __future__ import annotations
 
+import pytest
+
 from app.models.procurement import InboundShipment
+from app.services.error_handler import AppException
 from tests._pg_fixture import blank_session
 from tests.scm.test_supplier_document_service import (
     World,
@@ -64,6 +67,11 @@ def test_c1_uploading_a_pi_and_its_packing_list_together_creates_zero_shipments(
 
 
 def test_c1_a_packing_list_uploaded_alone_still_creates_no_shipment():
+    """AC-B5 (S2, captain ruling 9 Sep): a packing list alone with NO proforma invoice on
+    file has nowhere to attach its rows and is refused 409, same as
+    `test_b5_a_packing_list_with_no_pi_and_no_shared_date_is_refused_with_409` proves. What
+    C1 always meant to guard - no `inbound_shipments` row is ever created - still holds:
+    the refusal happens before anything is written."""
     with blank_session() as db:
         _seed_aliases(db)
         w = World(db)
@@ -72,13 +80,14 @@ def test_c1_a_packing_list_uploaded_alone_still_creates_no_shipment():
 
         before = db.query(InboundShipment).count()
 
-        out = svc.apply(
-            db, [("装箱单 SORENTO-2026.7.26.xls", _pl_bytes(), None)],
-            supplier_id=str(w.supplier.id), currency="RMB",
-        )
-        db.commit()
+        with pytest.raises(AppException) as exc:
+            svc.apply(
+                db, [("装箱单 SORENTO-2026.7.26.xls", _pl_bytes(), None)],
+                supplier_id=str(w.supplier.id), currency="RMB",
+            )
+        assert exc.value.status_code == 409
+        assert exc.value.detail["code"] == "proforma_invoice_required"
 
-        assert out["shipment_ids"] == []
         assert db.query(InboundShipment).count() == before
 
 

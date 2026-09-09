@@ -244,10 +244,9 @@ def test_b4_jiexia_lid_row_is_an_unmatched_packing_row_never_an_invoice_line():
     with blank_session() as db:
         _seed_aliases(db)
         w = _seed_jiexia_world(db)
-        # "8840" (盖板) is a real product in the catalogue (see `_seed_world`'s own
-        # comment: it sits on the packing list only, never on the PI) - so its packing
-        # row resolves a product but still finds no PI line to match.
-        w.product("8840")
+        # "8840" (盖板) is a real product in the catalogue - `_seed_world` already seeds
+        # it (its own comment: it sits on the packing list only, never on the PI) - so its
+        # packing row resolves a product but still finds no PI line to match.
 
         out = svc.apply(
             db,
@@ -514,7 +513,7 @@ def test_b8_rollup_agrees_when_every_row_shares_pcs_per_carton_and_dims_else_nul
             .one()
         )
         # Agree case (Kailu's real rows: both 1 ctn, both 38x37x14.5).
-        assert float(srtsc_line.pcs_per_carton) in (35.0, 50.0) or srtsc_line.pcs_per_carton is None
+        assert srtsc_line.pcs_per_carton is None or float(srtsc_line.pcs_per_carton) in (35.0, 50.0)
         assert float(srtsc_line.carton_length_cm) == pytest.approx(38.0)
         assert float(srtsc_line.carton_width_cm) == pytest.approx(37.0)
         assert float(srtsc_line.carton_height_cm) == pytest.approx(14.5)

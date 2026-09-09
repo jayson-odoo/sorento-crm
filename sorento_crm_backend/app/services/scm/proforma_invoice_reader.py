@@ -88,7 +88,9 @@ _DATE_FORMATS = (
 class ProformaLine:
     row_number: int
     item_code: str
-    qty: float
+    #: `None` on a line that names something and states a packing figure but no quantity
+    #: (captain ruling 9 Sep) - see `_pi_line_from`.
+    qty: Optional[float]
     description: Optional[str] = None
     uom: Optional[str] = None
     unit_price: Optional[float] = None
@@ -147,7 +149,10 @@ class ProformaDocument:
 
     @property
     def total_qty(self) -> float:
-        return sum(ln.qty for ln in self.lines)
+        # A qty-less line (a container-summary row stating only a packing figure, captain
+        # ruling 9 Sep) contributes nothing here - never invented, never treated as 0 of
+        # something it never claimed a quantity of.
+        return sum(ln.qty for ln in self.lines if ln.qty is not None)
 
     @property
     def line_total(self) -> float:
@@ -156,7 +161,7 @@ class ProformaDocument:
         for ln in self.lines:
             if ln.amount is not None:
                 total += ln.amount
-            elif ln.unit_price is not None:
+            elif ln.unit_price is not None and ln.qty is not None:
                 total += ln.unit_price * ln.qty
         return round(total, 2)
 
@@ -309,9 +314,21 @@ def _pi_line_from(raw: list, col_field: dict[int, str], row_number: int) -> Opti
             vals[f] = raw[pos]
 
     code = _text(vals.get("item_code"))
+    description = _text(vals.get("description"))
+    identifier = code or description
     qty = _number(vals.get("qty"))
-    if not code or qty is None:
+    if not identifier:
         return None
+    if qty is None:
+        # Captain ruling 9 Sep (S2 follow-up): a code/description with SOME packing
+        # figure but no quantity is still a line - the Jinbaichuan sheet's own
+        # container-summary row (`家豪拼柜41个盆`) states a total CBM and nothing else.
+        has_packing_figure = any(
+            _number(vals.get(f)) is not None
+            for f in ("cartons", "cbm_total", "cbm_per_unit", "net_weight", "gross_weight")
+        )
+        if not has_packing_figure:
+            return None
 
     unit_price = _number(vals.get("unit_price"))
     amount = _number(vals.get("amount"))
@@ -320,13 +337,15 @@ def _pi_line_from(raw: list, col_field: dict[int, str], row_number: int) -> Opti
     # packing-list reader does. The per-unit figure is what has to survive Sorento trimming
     # the quantity to fit the box (AC-E3), and the total is what the fill bar sums - so a
     # document stating only one of them still answers both questions. Neither is invented
-    # when the document states neither.
+    # when the document states neither. Both stay as stated (never derived) on a line with
+    # no quantity - there is nothing to divide or multiply by.
     cbm_total = _number(vals.get("cbm_total"))
     cbm_per_unit = _number(vals.get("cbm_per_unit"))
-    if cbm_per_unit is None and cbm_total is not None and qty:
-        cbm_per_unit = round(cbm_total / qty, 6)
-    elif cbm_total is None and cbm_per_unit is not None:
-        cbm_total = round(cbm_per_unit * qty, 4)
+    if qty:
+        if cbm_per_unit is None and cbm_total is not None:
+            cbm_per_unit = round(cbm_total / qty, 6)
+        elif cbm_total is None and cbm_per_unit is not None:
+            cbm_total = round(cbm_per_unit * qty, 4)
     # The carton either has three columns of its own (`L` / `W` / `H`) or one cell holding
     # all three (`外箱尺寸`). Separate columns win where both are present: they are what the
     # supplier typed as numbers, and the combined cell is a sentence about them.
@@ -340,7 +359,7 @@ def _pi_line_from(raw: list, col_field: dict[int, str], row_number: int) -> Opti
     # present. Deriving would make a wrong price look like a stated one.
     return ProformaLine(
         row_number=row_number,
-        item_code=code,
+        item_code=identifier,
         qty=qty,
         description=_text(vals.get("description")),
         uom=_text(vals.get("uom")),
