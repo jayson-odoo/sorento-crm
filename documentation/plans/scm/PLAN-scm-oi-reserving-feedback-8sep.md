@@ -1,8 +1,12 @@
 # PLAN: order inquiry PO/SPO reserving, feedback batch 8 September 2026
 
-Status: Slices A, B, D and H implemented (code + tests green; browser
-verification still to run). Slices C, E, F, G remain gated on the AutoCount
-shared service reply and are not started.
+Status: Slices A, B, D and H SHIPPED - PR #761, merged 2026-09-08 (browser
+verified, 9 UAC checks). Slice F shipped separately as AutoCount ingest
+contract 2.2 - PR #762, merged 2026-09-08, live on prod since deploy
+`e99dba2ba`. Slice C implemented 2026-09-09 on `fix/oi-spo-source-po-number`
+(FE tests green, 35/35; backend path not yet exercised locally - the dev DB
+still lacks migration 493's columns). Slices E and G remain gated and are not
+started.
 
 Owner feedback batch of 8 Sep 2026 against the Order Inquiries worklist
 (`/project-sales/order-inquiries`) and its PO/SPO reservation. Eleven items,
@@ -125,6 +129,24 @@ detail as From doc type / From doc no. We do not capture it.
 Once captured: `get_spo_detail` carries `source_po_number` per line, the
 lightbox prints it as a column, and the worklist's reservation lightbox
 (slice A) prints it under the SPO entry.
+
+**Ungated and built, 9 Sep.** Slice F landed as contract 2.2, so
+`SPOAllocation.from_po_number` is populated by the live feed and the gate is
+gone. Two decisions taken while building, both recorded in the UAC:
+
+- **Two surfaces, one backend field.** `source_po_number` is served by
+  `OrderInquiryWorklistService.get_spo_detail` (the document lightbox's SPO
+  body) and by `ProjectOrderInquiryService`'s links serializer (slice A's
+  backing-documents dialog), from the same column, under the same wire name.
+  Decided so the two surfaces cannot drift into answering the fact differently.
+- **Plain text, not a link** - reverses AC-C2 as originally written. Owner
+  ruling, 9 Sep. Where the number leads is a later slice's question.
+  `from_po_line_ref` is never sent to the frontend at all: it is the resolver
+  key, not something a buyer reads.
+
+The SPO Document screen (`/scm/...`) is deliberately OUT of scope here - that
+surface is PR #764's, which carries the book's own SO/PO linkage onto the
+document Lines tabs.
 
 ## Slice D. Cover is all or nothing (item 11)
 

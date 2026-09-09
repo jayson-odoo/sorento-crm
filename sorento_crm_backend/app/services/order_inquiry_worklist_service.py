@@ -1109,6 +1109,14 @@ class OrderInquiryWorklistService:
                     # The warehouse we hold, else the code the book printed, else nothing
                     # - and the screen says "no location" rather than inventing one.
                     "location": warehouse_code or allocation.location_code,
+                    # Owner's 9 Sep feedback: "if we link by SPO, where do we see the PO
+                    # number of this SPO?" - the raw AutoCount pass-through
+                    # (`from_po_number`, migration 493 / contract 2.2), never
+                    # `from_po_line_ref` (the resolver key, not a thing a buyer reads).
+                    # Same wire name as `links_for_rows`' own `source_po_number` (the
+                    # worklist's backing-documents dialog) - one fact, one field name,
+                    # wherever a buyer meets an SPO. Null when the book named no source.
+                    "source_po_number": allocation.from_po_number,
                 }
                 for allocation, product_code, product_name, warehouse_code in rows
             ],

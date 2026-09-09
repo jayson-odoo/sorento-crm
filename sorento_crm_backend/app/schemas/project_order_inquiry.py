@@ -59,6 +59,13 @@ class OrderInquiryLinkOut(BaseModel):
     #: WHO linked it, by name. Null on a cascade link, which nobody did by hand.
     linked_by_name: Optional[str] = None
     po_id: Optional[str] = None
+    #: The purchase order an SPO link's allocation was raised FROM, per AutoCount's own
+    #: statement (`SPOAllocation.from_po_number`, migration 493 / contract 2.2) - a
+    #: different question from `po_id` above, which addresses this link's OWN document.
+    #: Plain text, never a link. Null on a `po`-kind link and on an SPO the book named no
+    #: source for. Never `from_po_line_ref` - that is a resolver key, not a thing a buyer
+    #: reads, and it is deliberately never sent.
+    source_po_number: Optional[str] = None
 
 
 class OrderInquiryRowOut(BaseModel):
@@ -758,6 +765,12 @@ class OrderInquirySpoDetailLine(BaseModel):
     received: str
     remaining: str
     location: Optional[str] = None
+    #: The purchase order this SPO allocation was raised FROM, per AutoCount's own
+    #: statement (`SPOAllocation.from_po_number`, migration 493 / contract 2.2). Plain
+    #: text, never a link - null when the book named no source for this line. Never
+    #: `from_po_line_ref` - that is a resolver key, not a thing a buyer reads, and it is
+    #: deliberately never sent.
+    source_po_number: Optional[str] = None
 
 
 class OrderInquirySpoDetail(BaseModel):
