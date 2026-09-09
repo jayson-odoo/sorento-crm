@@ -27,6 +27,8 @@ import uuid
 import pytest
 from sqlalchemy import text
 
+from app.models.base import set_company_scope
+from app.models.company import Company
 from app.models.scm import PlanRowDecision
 from app.services.scm import plan_edits_service as pe_svc
 from app.services.scm import reorder_run_service as svc
@@ -250,3 +252,253 @@ def test_a_later_run_applies_the_remembered_moq(scm_app):
     assert float(second_rec["rounded_qty"]) >= 100.0, (
         "the rounded buy qty must respect the remembered MoQ, not the old MoQ 20"
     )
+
+
+# =============================================================================
+# Review fix round 2 (9 Sep): company scope, grouped fan-out, moq 0, supplier_code
+# =============================================================================
+
+def test_a_remembered_link_carries_the_products_own_company_id_never_the_db_default(db):
+    """Finding 2: `product_suppliers.company_id` carries a DB DEFAULT (the legacy
+    single-tenant company) - a link created for any OTHER company must not silently
+    inherit it. A second company proves the write reads `products.company_id` rather
+    than falling through to that default."""
+    set_company_scope(db, None)
+    company_b = Company(
+        id=str(uuid.uuid4()), code=f"ZZTMOQR-CB-{uuid.uuid4().hex[:8]}",
+        name="ZZTMOQR company B",
+    )
+    db.add(company_b)
+    db.flush()
+    set_company_scope(db, frozenset({str(company_b.id)}))
+
+    cat, uom = category_and_uom(db)
+    prod = product(db, cat, uom)
+    plan = run(db)
+    last_purchase_sup = supplier(db, "ZZTMOQR company-scoped supplier")
+    rec = recommendation(
+        db, plan, prod, None, sup=None,
+        inputs={"moq": None, "order_multiple": None,
+                "last_purchase": {"supplier_id": str(last_purchase_sup.id)}},
+    )
+
+    pe_svc.save_plan_edits(db, plan.id, [{"rec_id": rec.id, "moq": 100}], actor=ACTOR)
+
+    row = db.execute(text(
+        "SELECT company_id FROM product_suppliers WHERE product_id = :p AND supplier_id = :s"
+    ), {"p": prod.id, "s": last_purchase_sup.id}).mappings().first()
+    assert row is not None
+    assert str(row["company_id"]) == str(company_b.id)
+
+
+def test_a_grouped_products_two_members_resolve_one_link_on_the_most_recent_purchase(db):
+    """AC-S13.1, finding 3: a product-grain row's MoQ edit fans out to every member
+    recommendation - two locations of ONE product bought from two DIFFERENT suppliers
+    historically - and only ONE product_suppliers link must be written, on whichever
+    purchase is more recent, never one link per member overwriting the last."""
+    cat, uom = category_and_uom(db)
+    prod = product(db, cat, uom)
+    plan = run(db)
+    older_sup = supplier(db, "ZZTMOQR older last purchase")
+    newer_sup = supplier(db, "ZZTMOQR newer last purchase")
+    rec_a = recommendation(
+        db, plan, prod, None, sup=None,
+        inputs={"moq": None, "order_multiple": None,
+                "last_purchase": {"supplier_id": str(older_sup.id), "at": "2025-01-01"}},
+    )
+    rec_b = recommendation(
+        db, plan, prod, None, sup=None,
+        inputs={"moq": None, "order_multiple": None,
+                "last_purchase": {"supplier_id": str(newer_sup.id), "at": "2026-06-01"}},
+    )
+
+    out = pe_svc.save_plan_edits(
+        db, plan.id,
+        [{"rec_id": rec_a.id, "moq": 150}, {"rec_id": rec_b.id, "moq": 150}],
+        actor=ACTOR,
+    )
+    assert out["saved_rows"] == 2
+
+    _assert_link_moq(db, prod.id, newer_sup.id, 150.0)
+    _assert_no_link(db, prod.id, older_sup.id)
+    assert _product_supplier_link_count(db, prod.id, newer_sup.id) == 1
+
+
+def test_moq_zero_clears_the_override_and_the_remembered_link_bulk_path(db):
+    """Finding 5: 0 means "no MoQ", not a literal figure to remember - it clears the
+    row's own override AND blanks whatever the link remembered before. The link stays
+    (it is not deleted); only its `moq` goes back to NULL."""
+    cat, uom = category_and_uom(db)
+    prod = product(db, cat, uom)
+    plan = run(db)
+    sup = supplier(db, "ZZTMOQR clear via bulk")
+    rec = recommendation(
+        db, plan, prod, None, sup=None,
+        inputs={"moq": None, "order_multiple": None,
+                "last_purchase": {"supplier_id": str(sup.id)}},
+    )
+    pe_svc.save_plan_edits(db, plan.id, [{"rec_id": rec.id, "moq": 100}], actor=ACTOR)
+    _assert_link_moq(db, prod.id, sup.id, 100.0)
+
+    pe_svc.save_plan_edits(db, plan.id, [{"rec_id": rec.id, "moq": 0}], actor=ACTOR)
+
+    db.refresh(rec)
+    assert rec.moq_override is None, "0 clears the row's own override, not a literal 0"
+    row = db.execute(text(
+        "SELECT moq FROM product_suppliers WHERE product_id = :p AND supplier_id = :s"
+    ), {"p": prod.id, "s": sup.id}).mappings().first()
+    assert row is not None, "the link stays - a clear blanks it, it does not delete it"
+    assert row["moq"] is None
+
+
+def test_moq_zero_never_creates_a_link_where_none_existed_single_route(db):
+    """Finding 5, the single `PUT /recommendations/{id}/moq` route: a clear on a row
+    with nothing remembered yet leaves the (product, supplier) pair with NO link at
+    all, never a link freshly created just to hold a NULL."""
+    cat, uom = category_and_uom(db)
+    prod = product(db, cat, uom)
+    plan = run(db)
+    sup = supplier(db, "ZZTMOQR clear with nothing to clear")
+    rec = recommendation(
+        db, plan, prod, None, sup=sup,
+        inputs={"moq": None, "order_multiple": None},
+    )
+    _assert_no_link(db, prod.id, sup.id)
+
+    result = svc.set_moq_override(db, rec.id, 0)
+
+    assert result["moq"] is None
+    assert result["moq_is_override"] is False
+    _assert_no_link(db, prod.id, sup.id)
+
+
+def test_a_full_run_freezes_the_last_purchase_supplier_code(db):
+    """Finding 6: the panel's supplier prefill reads a human CODE
+    (`last_purchase_supplier_code`), never the raw id - a live run has to freeze that
+    code onto `inputs.last_purchase`, not only the id `test_purchase_history_to_pool.py`
+    already pins at the `_last_purchase_cost_map` level."""
+    from datetime import date, datetime
+
+    from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+
+    wid = m3_mk_warehouse(db, "LPC-W")
+    pid = m3_mk_product(db, "LPC-P")
+    sid = m3_mk_supplier(db, "LPC supplier")
+    m3_link(db, pid, sid, lead=30, moq=None, mult=None, cost=60, primary=True)
+    _mk_stock(db, pid, wid, 5)
+    _mk_demand(db, pid, wid, 2.0)
+    _mk_committed(db, pid, wid)
+
+    po = PurchaseOrder(
+        id=str(uuid.uuid4()), po_number=f"ZZTMOQR-LPC-{uuid.uuid4().hex[:8]}",
+        supplier_id=sid, status="active", issue_date=date(2026, 5, 20),
+        currency="MYR", created_at=datetime.utcnow(),
+    )
+    db.add(po)
+    db.flush()
+    db.add(PurchaseOrderLine(
+        # `line_status="closed"` (fully received) - a HISTORICAL purchase for the price
+        # freeze to read, not an open PO line, which `scm.po_ordered_v` would otherwise
+        # count as incoming stock and net the shortage away entirely (rec_type
+        # 'covered', not 'buy').
+        id=str(uuid.uuid4()), purchase_order_id=po.id, product_id=pid,
+        warehouse_id=wid, qty_ordered=10, qty_received=10, unit_cost=44.0,
+        currency="MYR", line_status="closed",
+    ))
+    db.flush()
+
+    result = svc.create_run(db, ["LPC-W"], "warehouse", enqueue=False)
+    svc.run_reorder(result["run_id"], db=db)
+    rec = db.execute(text(
+        "SELECT inputs FROM scm.reorder_recommendation "
+        "WHERE run_id = :r AND product_id = :p AND rec_type = 'buy'"
+    ), {"r": result["run_id"], "p": pid}).mappings().first()
+    assert rec is not None, "the product must plan a buy"
+    lp = (rec["inputs"] or {}).get("last_purchase") or {}
+    assert lp.get("supplier_code"), "the frozen last_purchase must carry a human code"
+
+
+# =============================================================================
+# G7 / AC-S13.6 (review fix round 2, 9 Sep) - the engine PLANS against the last
+# purchase supplier, not merely remembers its MOQ for next time
+# =============================================================================
+
+def test_ac_s13_6_last_purchase_supplier_wins_price_moq_and_rounding(db):
+    """Browser round 4 measured SRTSS8710 planning against its stale DEFAULT link (MYR
+    121.80) while the row's own last purchase, and the just-saved MOQ 100, both named a
+    DIFFERENT supplier - so the plan priced in the wrong currency and rounded to the
+    wrong MOQ. A product with a PRIMARY link (A, MYR 121.80, no MOQ) and a recent last
+    purchase from B (CNY 48, whose OWN link already remembers MOQ 100) must plan
+    against B outright: price, currency, MOQ and the rounded buy qty all follow it."""
+    from datetime import date, datetime
+
+    from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+
+    wid = m3_mk_warehouse(db, "S136-W")
+    pid = m3_mk_product(db, "S136-P")
+    sup_a = m3_mk_supplier(db, "S136 primary A")
+    sup_b = m3_mk_supplier(db, "S136 last purchase B")
+    m3_link(db, pid, sup_a, lead=30, moq=None, mult=None, cost=121.80, primary=True)
+    m3_link(db, pid, sup_b, lead=30, moq=100, mult=None, cost=None, primary=False)
+
+    po = PurchaseOrder(
+        id=str(uuid.uuid4()), po_number=f"ZZTS136-{uuid.uuid4().hex[:8]}",
+        supplier_id=sup_b, status="closed", issue_date=date(2026, 6, 1),
+        currency="CNY", created_at=datetime.utcnow(),
+    )
+    db.add(po)
+    db.flush()
+    db.add(PurchaseOrderLine(
+        id=str(uuid.uuid4()), purchase_order_id=po.id, product_id=pid,
+        warehouse_id=wid, qty_ordered=10, qty_received=10, unit_cost=48.0,
+        currency="CNY", line_status="closed",
+    ))
+    db.flush()
+
+    _mk_stock(db, pid, wid, 5)
+    _mk_demand(db, pid, wid, 20.0)
+    _mk_committed(db, pid, wid)
+
+    result = svc.create_run(db, ["S136-W"], "warehouse", enqueue=False)
+    svc.run_reorder(result["run_id"], db=db)
+    rec = db.execute(text(
+        "SELECT inputs, currency, unit_cost, rounded_qty, supplier_id "
+        "FROM scm.reorder_recommendation "
+        "WHERE run_id = :r AND product_id = :p AND rec_type = 'buy'"
+    ), {"r": result["run_id"], "p": pid}).mappings().first()
+    assert rec is not None, "the product must plan a buy"
+    assert str(rec["supplier_id"]) == str(sup_b), "the frozen row must name B, not A"
+    assert rec["currency"] == "CNY"
+    assert float(rec["unit_cost"]) == 48.0
+    assert float(rec["rounded_qty"]) % 100 == 0, "rounded to B's own MOQ, not A's (none)"
+    assert float(rec["rounded_qty"]) > 0
+
+    inputs = rec["inputs"] or {}
+    assert inputs.get("selection") == "last_purchase"
+    assert inputs["supplier"]["supplier_name"] == "S136 last purchase B"
+    assert inputs["moq"] == 100.0
+
+
+def test_ac_s13_6_no_last_purchase_falls_back_to_the_primary_link(db):
+    """The other half of AC-S13.6: a product with no purchase history at all plans
+    against the primary link exactly as before - the preference above only overrides
+    when there IS a last purchase on file to prefer."""
+    wid = m3_mk_warehouse(db, "S136B-W")
+    pid = m3_mk_product(db, "S136B-P")
+    sup_a = m3_mk_supplier(db, "S136B primary A")
+    m3_link(db, pid, sup_a, lead=30, moq=None, mult=None, cost=121.80, primary=True)
+
+    _mk_stock(db, pid, wid, 5)
+    _mk_demand(db, pid, wid, 20.0)
+    _mk_committed(db, pid, wid)
+
+    result = svc.create_run(db, ["S136B-W"], "warehouse", enqueue=False)
+    svc.run_reorder(result["run_id"], db=db)
+    rec = db.execute(text(
+        "SELECT inputs, supplier_id FROM scm.reorder_recommendation "
+        "WHERE run_id = :r AND product_id = :p AND rec_type = 'buy'"
+    ), {"r": result["run_id"], "p": pid}).mappings().first()
+    assert rec is not None
+    assert str(rec["supplier_id"]) == str(sup_a)
+    assert (rec["inputs"] or {}).get("selection") != "last_purchase"
+

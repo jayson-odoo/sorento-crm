@@ -1381,7 +1381,7 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
         computed: list[dict] = []
         for r in prows:
             c = _compute_cell(db, r, policies, cands, today, last_move, last_buy,
-                              levels=levels, last_cost=last_cost)
+                              levels=levels, last_cost=last_cost, rates=rates)
             computed.append(c)
 
         # The reorder-level basis is planned per PRODUCT, whatever the pooling
@@ -1391,7 +1391,7 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
         # the net.
         if _is_product_level_basis(db, pid, policies):
             recs.extend(_emit_product(db, run_id, prows, computed, policies, cands,
-                                      wh_meta, last_cost=last_cost))
+                                      wh_meta, last_cost=last_cost, rates=rates))
             continue
 
         by_pool: dict[str, list[tuple[dict, dict]]] = {}
@@ -1831,7 +1831,8 @@ def _is_product_level_basis(db: Session, product_id: str, policies: list[dict]) 
 
 def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict],
                   policies: list[dict], cands: list[dict], wh_meta: dict,
-                  *, last_cost: Optional[dict] = None) -> list[ReorderRecommendation]:
+                  *, last_cost: Optional[dict] = None,
+                  rates: Optional[dict] = None) -> list[ReorderRecommendation]:
     """ONE decision for the whole product: one level, one net, one buy.
 
     > "our reorder is per product, so it doesn't matter your location, just take the total
@@ -1850,11 +1851,21 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
     pid = str(prows[0]["product_id"])
     policy = eng.resolve_policy_for_sku(db, pid, None, policies) or {}
     tog = eng.policy_toggles(policy)
+    # G7 / AC-S13.6 (review fix round 2, 9 Sep): the SAME product-wide lookup
+    # `_network_agg_cell` (below) makes for its own `last_purchase` output - computed
+    # here too, ahead of the pick, so the recommendation's SUPPLIER agrees with what it
+    # prints as the last purchase rather than disagreeing with it.
+    lp, _lp_basis = _last_purchase_for(
+        last_cost or {}, pid, None,
+        pool_warehouse_id=_str_or_none(prows[0].get("pool_warehouse_id")))
     sel = eng.select_supplier(cands, selection=tog["supplier_selection"])
+    sel = eng.prefer_last_purchase_supplier(sel, cands, lp, rates=rates)
+    selection_used = "last_purchase" if lp and lp.get("supplier_id") else tog["supplier_selection"]
     chosen = sel["chosen"]
     by_id = {c["supplier_id"]: c for c in cands}
-    alt_choices = [_supplier_choice(by_id[a["supplier_id"]]) for a in sel["alternatives"]
-                   if a["supplier_id"] in by_id]
+    alt_choices = [_supplier_choice(by_id[a["supplier_id"]]) if a["supplier_id"] in by_id
+                   else _supplier_choice(a)
+                   for a in sel["alternatives"]]
     lead = float(chosen["lead_time_days"]) if chosen else float(tog["lead_time_default_days"])
     moq = _fnum(chosen.get("moq")) if chosen else None
     order_multiple = _fnum(chosen.get("order_multiple")) if chosen else None
@@ -1907,7 +1918,7 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
                              triggered=triggered, reason_label=reason_label,
                              recommended=recommended, rounded=rounded,
                              project_need=project_need, retail_need=retail_need,
-                             last_cost=last_cost)
+                             last_cost=last_cost, selection=selection_used)
     # A location has no level of its own any more, so its own "retail need" is what it is
     # SHORT by beyond its firm project demand - a statement about that place. The group's
     # netted figure is the one that sized the buy, and it is stated once, above.
@@ -1961,7 +1972,8 @@ def _product_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_mu
                       triggered: bool, reason_label: Optional[str],
                       recommended: float, rounded: float,
                       project_need: float, retail_need: float,
-                      last_cost: Optional[dict] = None) -> dict:
+                      last_cost: Optional[dict] = None,
+                      selection: Optional[str] = None) -> dict:
     """The frozen cell of a per-product buy: the network aggregate, plus the checklist.
 
     The aggregate cell states the DECISION (supplier, terms, net, target). What it has
@@ -1975,7 +1987,7 @@ def _product_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_mu
                              policy_type="reorder_level", min_override=None,
                              max_override=None, target_oup=level, triggered=triggered,
                              reason_label=reason_label, recommended=recommended,
-                             rounded=rounded, cells=cells)
+                             rounded=rounded, cells=cells, selection=selection)
     first = cells[0]
 
     def _total(key: str) -> float:
@@ -2016,18 +2028,28 @@ def _product_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_mu
 def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict],
                   today: date, last_move: dict, last_buy: Optional[dict] = None,
                   levels: Optional[dict] = None,
-                  last_cost: Optional[dict] = None) -> dict:
+                  last_cost: Optional[dict] = None,
+                  rates: Optional[dict] = None) -> dict:
     """Run the engine for one SKU×warehouse; returns the frozen decision values."""
     pid = str(row["product_id"])
     wid = str(row["warehouse_id"])
     policy = eng.resolve_policy_for_sku(db, pid, wid, policies) or {}
     tog = eng.policy_toggles(policy)
 
+    # Moved up from below (was computed only for display) - G7 / AC-S13.6 (review fix
+    # round 2, 9 Sep) needs it BEFORE the supplier is chosen, not after.
+    lp, lp_basis = _last_purchase_for(
+        last_cost or {}, pid, row.get("segment"),
+        pool_warehouse_id=_str_or_none(row.get("pool_warehouse_id")))
+
     sel = eng.select_supplier(cands, selection=tog["supplier_selection"])
+    sel = eng.prefer_last_purchase_supplier(sel, cands, lp, rates=rates)
+    selection_used = "last_purchase" if lp and lp.get("supplier_id") else tog["supplier_selection"]
     chosen = sel["chosen"]
     by_id = {c["supplier_id"]: c for c in cands}
-    alt_choices = [_supplier_choice(by_id[a["supplier_id"]]) for a in sel["alternatives"]
-                   if a["supplier_id"] in by_id]
+    alt_choices = [_supplier_choice(by_id[a["supplier_id"]]) if a["supplier_id"] in by_id
+                   else _supplier_choice(a)
+                   for a in sel["alternatives"]]
 
     demand_rate = float(row["avg_daily_demand"] or 0.0)
     # Captain, 20 Aug (live test): "for reorder plan need to deduct both SPO and PO to
@@ -2089,9 +2111,7 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
     # S10 - the buyer's own level, when the resolved policy selects that basis. The forecast
     # ROP/OUP above are still computed and still frozen onto the row, because the buyer wants
     # to SEE what the industry-standard basis would have said; they simply no longer decide.
-    lp, lp_basis = _last_purchase_for(
-        last_cost or {}, pid, row.get("segment"),
-        pool_warehouse_id=_str_or_none(row.get("pool_warehouse_id")))
+    # (`lp`/`lp_basis` computed further up now - G7 needed them before supplier selection.)
     if policy_type == "reorder_level":
         # One level per PRODUCT (captain, 27 Aug) - see `_product_level`. Every location of
         # the product resolves the SAME number, which is what lets the product be netted
@@ -2202,7 +2222,11 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
         # Carried so the reason can quote the actual age rather than assert one.
         "last_purchase_days": lb_days,
         "supplier_reason": sel.get("reason"),
-        "selection": tog["supplier_selection"],
+        # G7 / AC-S13.6: "last_purchase" when the preference above actually fired,
+        # never the policy's own strategy name in that case - a buyer reading the
+        # reason should see WHY this pick won, not the toggle that would have applied
+        # to a product with no purchase history.
+        "selection": selection_used,
         "overstock": bool(disp and disp["type"] == "overstock"),
         # "Short" means short of whatever the ACTIVE basis plans against, so the shortage
         # count on the page agrees with the buys beneath it.
@@ -2358,7 +2382,7 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
         cands = eng.load_supplier_candidates(db, pid, rates=rates)
         # per-warehouse cells (drive allocation demand)
         computed = [_compute_cell(db, r, policies, cands, today, last_move, last_buy,
-                                  levels=levels, last_cost=last_cost)
+                                  levels=levels, last_cost=last_cost, rates=rates)
                     for r in prows]
 
         # Same answer under either scope: the reorder-level basis is per product, and a
@@ -2366,7 +2390,7 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
         # levels for its target, which is the multiplication this basis had to stop doing.
         if _is_product_level_basis(db, pid, policies):
             recs.extend(_emit_product(db, run_id, prows, computed, policies, cands,
-                                      wh_meta, last_cost=last_cost))
+                                      wh_meta, last_cost=last_cost, rates=rates))
             continue
 
         # --- aggregate buy on the network ---
@@ -2482,7 +2506,8 @@ def _network_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_mu
                       policy_type: str, min_override: Optional[float],
                       max_override: Optional[float], target_oup: float, triggered: bool,
                       reason_label: Optional[str], recommended: float,
-                      rounded: float, cells: Optional[list[dict]] = None) -> dict:
+                      rounded: float, cells: Optional[list[dict]] = None,
+                      selection: Optional[str] = None) -> dict:
     """Assemble the frozen-cell dict for a network aggregate buy (fixed_days SS).
 
     The trigger / order-up-to target / qty are computed by the caller on the aggregate
@@ -2530,7 +2555,10 @@ def _network_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_mu
         "confidence": eng.confidence(prows[0]["xyz_class"], demand_adequate=agg_demand > 0,
                                      supplier_adequate=supplier_adequate),
         "sample_size": int(chosen.get("supplier_sample_size") or 0) if chosen else 0,
-        "selection": tog["supplier_selection"],
+        # G7 / AC-S13.6 (review fix round 2, 9 Sep): the caller's own resolved
+        # value when the last-purchase preference fired, never the policy's bare
+        # strategy name in that case.
+        "selection": selection or tog["supplier_selection"],
         # M4 cash-ranking factor inputs on the aggregate: list_price is per-product
         # (same across warehouses); committed is summed across the network's cells.
         "list_price": _fnum(prows[0].get("list_price")),
@@ -3243,7 +3271,7 @@ def recalc_rounded_qty(recommended_qty, moq: Optional[float],
 
 
 def set_moq_override(db: Session, rec_id: str, moq: Optional[float],
-                     *, commit: bool = True) -> dict:
+                     *, commit: bool = True, remember: bool = True) -> dict:
     """Persist (or clear, on ``None``) the buyer's own MoQ for one recommendation row,
     and recalculate + PERSIST ``rounded_qty`` / ``cash_impact`` off it so the plan grid
     updates the row WITHOUT a full re-run - captain's 20 Aug live-test ask ("MoQ is
@@ -3270,7 +3298,18 @@ def set_moq_override(db: Session, rec_id: str, moq: Optional[float],
     location-level rows are what a product-grain plan is built FROM. So this stays refused
     only on a legacy run (AC-F10 - the run predates the contract and is read only outright)
     and once the row has already been decided - an accepted/adjusted rec may already sit
-    in a draft PO line keyed off the qty this would silently move out from under it."""
+    in a draft PO line keyed off the qty this would silently move out from under it.
+
+    ``0`` and an empty ``moq`` are the SAME statement - "no MoQ" - not a real figure of
+    zero (review fix round 2, finding 5): both clear the row's own override AND blank
+    the remembered (product, supplier) link's `moq`, rather than remembering a literal 0
+    that would round every future buy up to nothing.
+
+    ``remember=False`` skips this call's own resolve-and-remember step - the plan-edits
+    bulk save (`plan_edits_service`) fans one product-grain row's MoQ out to every member
+    recommendation and does that resolution ONCE per PRODUCT afterwards instead (AC-S13.1,
+    review fix round 2), so a two-location product does not have its link overwritten by
+    whichever member happened to be applied last."""
     co, co_params = company_sql_predicate(db, "company_id", param_prefix="mvo")
     rec = db.execute(text(
         "SELECT id, run_id, rec_type, status, recommended_qty, unit_cost, currency, "
@@ -3299,7 +3338,9 @@ def set_moq_override(db: Session, rec_id: str, moq: Optional[float],
             code="recommendation_already_decided",
         )
 
-    moq_value = float(moq) if moq is not None else None
+    # 0 collapses to None here (finding 5): "no MoQ" either way, checked BEFORE the
+    # conversion so the negative check above still sees the buyer's own raw input.
+    moq_value = float(moq) if moq else None
     inp = rec["inputs"] or {}
     effective, is_override = effective_moq(inp, moq_value)
     rounded = recalc_rounded_qty(rec["recommended_qty"], effective, inp.get("order_multiple"))
@@ -3312,17 +3353,20 @@ def set_moq_override(db: Session, rec_id: str, moq: Optional[float],
 
     # S13 (round 2, 9 Sep): the per-run override above is thrown away on the next run -
     # this also remembers it on the (product, supplier) link `load_supplier_candidates`
-    # reads on every future one, so a correction made once stays corrected. Clearing an
-    # override (moq=None) remembers nothing: there is no figure to write, and a cleared
-    # row is not a statement that the supplier's own MoQ is wrong.
-    if moq_value is not None:
-        resolved_supplier = product_supplier_service.resolve_supplier_for_moq(
-            db, rec_id, _str_or_none(rec["supplier_id"]),
-            (inp.get("last_purchase") or {}).get("supplier_id"),
-        )
+    # reads on every future one, so a correction made once stays corrected. A clear
+    # (moq falsy) blanks the link's own moq instead (finding 5) - it never CREATES one,
+    # since a clear is a retraction, not a statement that the pair needs a link at all.
+    if remember:
+        resolved_supplier = product_supplier_service.resolve_supplier_for_moq(db, [rec_id])
         if resolved_supplier:
-            product_supplier_service.remember_moq(
-                db, str(rec["product_id"]), resolved_supplier, moq_value)
+            if moq_value is not None:
+                product_supplier_service.remember_moq(
+                    db, str(rec["product_id"]), resolved_supplier, moq_value,
+                    co=co, co_params=co_params)
+            else:
+                product_supplier_service.clear_moq(
+                    db, str(rec["product_id"]), resolved_supplier,
+                    co=co, co_params=co_params)
 
     # `commit=False` is the plan's bulk save (`plan_edits_service`), which owns the
     # transaction across every edited row.

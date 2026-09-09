@@ -224,6 +224,93 @@ def _selection_reason(chosen: dict, losers: list[dict], selection: str,
     }
 
 
+def prefer_last_purchase_supplier(
+    sel: dict, cands: list[dict], last_purchase: Optional[dict],
+    rates: Optional[dict[str, Rate]] = None,
+) -> dict:
+    """Override `select_supplier`'s own pick with the LAST PURCHASE supplier when one is
+    on file (G7 / AC-S13.6, review fix round 2, 9 Sep).
+
+    > Browser round 4, 9 Sep: SRTSS8710's recommendation named the DEFAULT link at MYR
+    > 121.80 - a stale scorecard-driven pick - while the row's own last purchase paid CNY
+    > 48.00 to KAIPING HANSHUN, so the supplier the row priced against and the supplier the
+    > row prefilled its MOQ save onto (`product_supplier_service.resolve_supplier_for_moq`,
+    > S13) DISAGREED, and neither the price nor the MOQ rounding the next run applied
+    > matched what was actually just bought.
+
+    `select_supplier`'s own strategies (primary / best_score / lowest_cost) answer "who
+    SHOULD we buy from" off scorecard data the buyer never sees questioned; a supplier we
+    have ACTUALLY, recently bought this exact item from is a fact on the ground none of
+    those strategies can see, and it now wins outright rather than merely informing the
+    ranking. `cands` already carries a candidate for anyone we have ever paid for this
+    item, priced at what we paid (`load_supplier_candidates`'s own `last_purchase_costs`
+    fallback) - so the usual case is a plain re-pick from the existing list. The rare
+    residual (the pool/segment-attributed last purchase this call is given disagrees with
+    that simpler per-product cost map, so its supplier is not among `cands` at all) is
+    synthesised from the purchase itself, at the engine's own default lead time, with no
+    MoQ - S13's own `remember_moq` fills that in the moment the buyer saves one.
+
+    A no-op when there is no last purchase to prefer, or it already IS the pick.
+    """
+    lp_supplier_id = (last_purchase or {}).get("supplier_id")
+    if not lp_supplier_id or sel.get("chosen") is None:
+        return sel
+    lp_supplier_id = str(lp_supplier_id)
+    chosen = sel["chosen"]
+    if str(chosen.get("supplier_id")) == lp_supplier_id:
+        return {**sel, "reason": {**(sel.get("reason") or {}), "basis": "last_purchase"}}
+
+    by_id = {str(c.get("supplier_id")): c for c in cands}
+    preferred = by_id.get(lp_supplier_id)
+    if preferred is not None and "unit_cost_base" not in preferred:
+        preferred = price_in_base(dict(preferred), rates or {})
+    if preferred is None:
+        preferred = price_in_base({
+            "supplier_id": lp_supplier_id,
+            "supplier_code": last_purchase.get("supplier_code"),
+            "supplier_name": last_purchase.get("supplier_name"),
+            "is_primary": False,
+            "unit_cost": last_purchase.get("cost"),
+            "unit_cost_source": "last_po",
+            "unit_cost_ref": last_purchase.get("ref"),
+            "unit_cost_at": last_purchase.get("at"),
+            "currency": last_purchase.get("currency"),
+            "moq": None,
+            "order_multiple": None,
+            "lead_time_days": DEFAULT_LEAD_TIME_DAYS,
+            "lead_time_source": "default",
+            "composite_score": None,
+        }, rates or {})
+
+    # Everyone else - the demoted original pick included - becomes an alternative, in the
+    # SAME shape `select_supplier` already returns them. Deduped by id: `chosen` is always
+    # already inside `cands` in every caller today, but a synthesised fallback never is.
+    seen = {lp_supplier_id}
+    rest: list[dict] = []
+    for s in [chosen, *cands]:
+        sid = str(s.get("supplier_id"))
+        if sid in seen:
+            continue
+        seen.add(sid)
+        rest.append(s)
+    alternatives = [{
+        "supplier_id": s.get("supplier_id"),
+        "supplier_name": s.get("supplier_name"),
+        "unit_cost": _num(s.get("unit_cost")),
+        "currency": s.get("currency"),
+        "unit_cost_base": _num(s.get("unit_cost_base")),
+        "base_currency": s.get("base_currency") or BASE_CURRENCY,
+        "missing_rate_currency": s.get("missing_rate_currency"),
+        "unit_cost_source": s.get("unit_cost_source"),
+        "lead_time_days": _num(s.get("lead_time_days")),
+        "composite_score": _num(s.get("composite_score")),
+    } for s in rest]
+    return {
+        "chosen": preferred, "alternatives": alternatives, "exception": None,
+        "reason": {"basis": "last_purchase"},
+    }
+
+
 def _supplier_sort_key(s: dict, selection: str):
     prim = 1 if s.get("is_primary") else 0
     sc = _num(s.get("composite_score"))
