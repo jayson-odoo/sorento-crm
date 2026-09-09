@@ -1,6 +1,6 @@
 # PLAN: "last in" answer carries the container number
 
-Status: VERIFIED, PR pending (9 Sep 2026)
+Status: PR #766 OPEN (9 Sep 2026), never merge without owner go
 Branch: `feat/chatbot-last-in-container` (worktree `.claude/worktrees/chatbot-last-in-container`, base `origin/main` 181db68b6)
 UAC: `chatbot-last-in-container-number-acceptance-criteria.md`
 Parent: `PLAN-chatbot-warehouse-entity-and-last-in.md` (PR #757, merged 8 Sep 2026)
