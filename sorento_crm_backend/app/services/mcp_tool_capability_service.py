@@ -1207,7 +1207,9 @@ TOOL_INTENTS: dict[str, ToolIntent] = {
         intent="The last SPO line per product, by the SPO's own date - 'last in', 'last received'.",
         description=(
             "The last SPO line per product, ordered by the SPO's own date: spo_number, "
-            "product_code, spo_quantity (ordered), gr_quantity (received, only when "
+            "container_number (present only when the line was ingested from a shipping "
+            "order that named its container), product_code, spo_quantity (ordered), "
+            "gr_quantity (received, only when "
             "something has been), spo_date with spo_date_source naming which column "
             "answered ('expected' / 'issued' / 'recorded'), gr_date (only when an approved "
             "GRN header points at the line), and warehouse. Use this for 'when is this due "
