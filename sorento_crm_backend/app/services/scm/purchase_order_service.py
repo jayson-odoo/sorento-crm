@@ -130,10 +130,35 @@ class PurchaseOrderService:
             for ln in po.lines
         )
 
+    def _book_so_for(self, lines) -> dict[str, str]:
+        """`from_so_line_ref` -> sales order number, for every line handed in.
+
+        ONE query for the whole set however many lines it holds, never one per line - a
+        real document reaches 89 of them (`202405-S0045`). Lines with no ref cost nothing:
+        the reader drops empties before it queries, and an all-empty set never queries at
+        all.
+        """
+        return order_link_service.book_so_numbers_by_ref(
+            self.db, [ln.from_so_line_ref for ln in lines if ln.from_so_line_ref]
+        )
+
     def serialize(self, po: PurchaseOrder, gr_reference: Optional[str] = None, *,
                   allocated_qty: float = 0.0,
                   allocations: Optional[list[dict]] = None,
-                  spo_plan: Optional[dict] = None) -> dict:
+                  spo_plan: Optional[dict] = None,
+                  book_so_by_ref: Optional[dict[str, str]]) -> dict:
+        """`book_so_by_ref` is REQUIRED, with no default (review of PR #764, F2/F4). A
+        caller that forgot it used to get `book_so_unresolved=True` on every linked line -
+        the CRM reading "linked, not held" for orders it actually holds - rather than a
+        loud failure at the call site; this already bit `update()` once inside this PR.
+        Now a forgotten kwarg is a `TypeError`, immediately, at the call that forgot it.
+
+        Pass a real dict from `_book_so_for(...)` when the caller resolved the linkage
+        (`get_one`, `update`), or `order_link_service.BOOK_SO_NOT_RESOLVED` when it
+        deliberately did not (`list`, which serializes a page of orders per keystroke and
+        has no consumer reading the result - resolving it there was a full `sales_orders`
+        scan thrown away every time).
+        """
         # Warehouse is carried at the line level; surface the first line's warehouse
         # as the PO's warehouse (M1 POs are effectively single-destination).
         wh_code = None
@@ -204,6 +229,20 @@ class PurchaseOrderService:
                 "expected_date": (
                     ln.expected_date.isoformat() if ln.expected_date else None
                 ),
+                # The AutoCount book's own SO linkage for this LINE, read off the line's
+                # OWN `from_so_line_ref` column, distinct from the allocations panel below
+                # (`_allocations_for`, which answers "who reserved this line through our
+                # own order-inquiry flow").
+                #
+                # THREE states, and the screen must tell them apart: no ref at all (the
+                # book named no sales order), a ref that resolves (the number), and a ref
+                # that names a sales order this CRM does not hold. The ref itself never
+                # leaves the server - it is a machine key
+                # (`PLAN-scm-book-linkage-on-document-lines.md`). Derived through the ONE
+                # shared function both surfaces use, `order_link_service.book_so_fields`
+                # (review of PR #764, F5) - it also carries the FOURTH, list-only state
+                # `book_so_by_ref is BOOK_SO_NOT_RESOLVED`.
+                **order_link_service.book_so_fields(ln.from_so_line_ref, book_so_by_ref),
             })
         return {
             "id": po.id,
@@ -757,6 +796,14 @@ class PurchaseOrderService:
                     po,
                     gr_refs.get(po.id),
                     allocated_qty=occupied.get(str(po.id), 0.0),
+                    # NOT resolved on this path (review of PR #764, F2/F4): no list
+                    # consumer reads `book_so_number` (`PurchaseOrdersList.tsx` has no
+                    # `book_so` column; `BookSoCell` is imported only by the two document
+                    # detail screens), so resolving it here was a full `sales_orders` scan
+                    # per search keystroke, discarded. Every line reads `book_so_number`
+                    # and `book_so_unresolved` both `None` - "not computed", not "nothing
+                    # linked".
+                    book_so_by_ref=order_link_service.BOOK_SO_NOT_RESOLVED,
                 )
                 for po in rows
             ],
@@ -816,12 +863,16 @@ class PurchaseOrderService:
             from app.services.scm.spo_conversion_service import plan_of
 
             spo_plan = plan_of(self.db, str(po.id))
+        # ONE query for the whole document (AC-A5), never one per line - `202405-S0045`
+        # alone has 89 of them.
+        book_so_by_ref = self._book_so_for(po.lines)
         return self.serialize(
             po,
             gr_refs.get(po.id),
             allocated_qty=self._allocated_by_po([str(po.id)]).get(str(po.id), 0.0),
             allocations=self._allocations_for(po),
             spo_plan=spo_plan,
+            book_so_by_ref=book_so_by_ref,
         )
 
     def list_supplier_options(
@@ -929,7 +980,11 @@ class PurchaseOrderService:
         # unpack.
         po = self._get_or_404(po_id)
         gr_refs = self._gr_refs_for([po.id])
-        return self.serialize(po, gr_refs.get(po.id))
+        # Resolved here too, or the S/O column blanks out the moment the buyer saves an
+        # unrelated edit and the screen renders this response.
+        return self.serialize(
+            po, gr_refs.get(po.id), book_so_by_ref=self._book_so_for(po.lines)
+        )
 
     def _upsert_lines(self, po: PurchaseOrder, incoming: list) -> None:
         """Reconcile ``po.lines`` against the payload IN PLACE, never delete + recreate.

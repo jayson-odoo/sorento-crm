@@ -77,6 +77,13 @@ class OrderInquiryLinkOut(BaseModel):
     #: WHO linked it, by name. Null on a cascade link, which nobody did by hand.
     linked_by_name: Optional[str] = None
     po_id: Optional[str] = None
+    #: The purchase order an SPO link's allocation was raised FROM, per AutoCount's own
+    #: statement (`SPOAllocation.from_po_number`, migration 493 / contract 2.2) - a
+    #: different question from `po_id` above, which addresses this link's OWN document.
+    #: Plain text, never a link. Null on a `po`-kind link and on an SPO the book named no
+    #: source for. Never `from_po_line_ref` - that is a resolver key, not a thing a buyer
+    #: reads, and it is deliberately never sent.
+    source_po_number: Optional[str] = None
 
 
 class OrderInquiryRowOut(BaseModel):
@@ -722,6 +729,22 @@ class OrderInquiryPoDetailLine(BaseModel):
     qty_received: str
     remaining: str
     location: Optional[str] = None
+    #: The book's own linkage for this line - the SAME fact and the SAME shape the SCM
+    #: purchase-order detail's Lines tab prints (`PurchaseOrderLine.book_so_number` /
+    #: `book_so_unresolved`), read here off the line's own `from_so_line_ref` and resolved
+    #: through the same reader, `order_link_service.book_so_numbers_by_ref`, so a line's
+    #: linkage does not depend on which screen it is read from. `response_model` silently
+    #: drops an undeclared field, which is exactly why both of these are declared.
+    book_so_number: Optional[str] = None
+    #: True when the book named a sales order this CRM does not hold. Three states, not
+    #: two - see `PurchaseOrderLine` in `app/schemas/scm_orders.py` for the full note.
+    #:
+    #: Stays `bool` here, unlike `PurchaseOrderLine.book_so_unresolved` (review of PR #764,
+    #: F2): `get_po_detail` is a single-document detail read with no list-mode variant, so
+    #: it always calls `book_so_numbers_by_ref` and never passes
+    #: `order_link_service.BOOK_SO_NOT_RESOLVED` - the fourth, "not computed" state that
+    #: `Optional[bool]` exists to carry on the PO route never arises on this one.
+    book_so_unresolved: bool = False
 
 
 class OrderInquiryDocumentAllocation(BaseModel):
@@ -774,6 +797,12 @@ class OrderInquirySpoDetailLine(BaseModel):
     received: str
     remaining: str
     location: Optional[str] = None
+    #: The purchase order this SPO allocation was raised FROM, per AutoCount's own
+    #: statement (`SPOAllocation.from_po_number`, migration 493 / contract 2.2). Plain
+    #: text, never a link - null when the book named no source for this line. Never
+    #: `from_po_line_ref` - that is a resolver key, not a thing a buyer reads, and it is
+    #: deliberately never sent.
+    source_po_number: Optional[str] = None
 
 
 class OrderInquirySpoDetail(BaseModel):

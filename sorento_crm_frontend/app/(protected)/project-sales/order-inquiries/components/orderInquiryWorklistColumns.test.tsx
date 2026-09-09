@@ -303,6 +303,54 @@ describe('AC-A5: the info icon opens the backing-documents lightbox', () => {
     // Closing returns the trigger to view without unmounting the row (AC-A5).
     expect(row).toBeInTheDocument();
   });
+
+  it('AC-A13/AC-A14: an SPO entry names its source PO; a PO entry and a sourceless SPO show nothing new', () => {
+    // Owner's 9 Sep feedback: "if we link by SPO, where do we see the PO number of this
+    // SPO?" - nowhere, before this.
+    renderRows([
+      worklistRow({
+        id: 'row-source-po',
+        qty: '493',
+        linked_qty: '166',
+        ack_state: 'acknowledged',
+        links: [
+          {
+            id: 'l1',
+            kind: 'spo',
+            document: 'SPO-2026/09-0036',
+            qty: '52',
+            location: 'BRW',
+            source_po_number: '202606-S0110',
+          },
+          {
+            // A PO-kind link never carries this field - shows nothing new.
+            id: 'l2',
+            kind: 'po',
+            document: '202607-S0105',
+            qty: '63',
+            location: 'BRW-IB',
+          },
+          {
+            // An SPO the book named no source PO for - shows nothing rather than an
+            // empty label (AC-A14).
+            id: 'l3',
+            kind: 'spo',
+            document: 'SPO-2026/09-0040',
+            qty: '51',
+            location: 'BRW',
+            source_po_number: null,
+          },
+        ],
+      }),
+    ]);
+
+    fireEvent.click(screen.getByTestId('backing-documents-trigger-row-source-po'));
+    const dialog = screen.getByTestId('backing-documents-row-source-po');
+
+    expect(within(dialog).getByText('from PO 202606-S0110')).toBeInTheDocument();
+    // Exactly one "from PO" line - the sourceless SPO and the PO-kind link add none.
+    expect(within(dialog).getAllByText(/^from PO /)).toHaveLength(1);
+  });
 });
 
 describe('AC-D1/D3: the draft vs confirmed mark reads off ack_state, not a link column', () => {

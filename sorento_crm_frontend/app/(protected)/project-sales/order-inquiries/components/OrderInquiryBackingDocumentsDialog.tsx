@@ -39,7 +39,9 @@ export interface OrderInquiryBundleNote {
  * fact that used to sit in the cell now lives here instead: kind, document number, location,
  * quantity, expected date, and the row's own standing. NOTHING ELSE - no tier, no rank, no
  * reasoning for why a document was chosen (the owner explicitly rejected that richer
- * version).
+ * version) - except one thing added 9 Sep: an SPO entry also names the purchase order it
+ * came from (`link.source_po_number`), because a buyer reading a shipping-order reservation
+ * had no way back to the document they actually work with.
  *
  * A separate file from `orderInquiryWorklistColumns.tsx` on purpose, so the column
  * definitions stay the shape a `ColumnDef[]` array is meant to be.
@@ -109,6 +111,16 @@ export function OrderInquiryBackingDocumentsDialog({
                         poId={link.po_id}
                       />
                     </div>
+                    {/* Owner's 9 Sep feedback: "if we link by SPO, where do we see the PO
+                        number of this SPO?" - named here, clearly subordinate to the SPO
+                        number above it (smaller, muted, no badge of its own). Never a
+                        link yet - a later slice decides where it goes. Absent rather than
+                        an empty label when the book named no source (AC-A14). */}
+                    {link.kind === 'spo' && link.source_po_number ? (
+                      <div className="truncate text-2xs text-muted-foreground">
+                        from PO {link.source_po_number}
+                      </div>
+                    ) : null}
                     <div className="text-xs text-muted-foreground">
                       {link.location || 'no location'} · {formatInquiryQty(link.qty)}
                     </div>

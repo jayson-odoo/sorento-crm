@@ -131,9 +131,10 @@ def last_receipt_rows(
     never received) is excluded from BOTH branches, before the window - so a retired line
     can never be picked as the newest and then displace the newest visible one.
 
-    Row keys: `spo_number`, `product_id`, `product_code`, `product_name`, `spo_quantity`,
-    `gr_quantity` (None when nothing received), `spo_date`, `spo_date_source`, `gr_date`
-    (None when no approved GRN line), `warehouse`.
+    Row keys: `spo_number`, `container_number` (None when the line was not ingested from a
+    shipping order naming its container), `product_id`, `product_code`, `product_name`,
+    `spo_quantity`, `gr_quantity` (None when nothing received), `spo_date`,
+    `spo_date_source`, `gr_date` (None when no approved GRN line), `warehouse`.
     """
     top_n = max(int(top_n or 1), 1)
     key_expr = func.coalesce(
@@ -159,6 +160,7 @@ def last_receipt_rows(
         numbered = db.query(
             SPOAllocation.id.label("allocation_id"),
             SPOAllocation.spo_number,
+            SPOAllocation.container_number,
             SPOAllocation.product_id,
             SPOAllocation.warehouse_id,
             SPOAllocation.allocated_quantity,
@@ -184,6 +186,7 @@ def last_receipt_rows(
         rows = (
             db.query(
                 sub.c.spo_number,
+                sub.c.container_number,
                 sub.c.allocated_quantity,
                 sub.c.quantity_received,
                 sub.c.spo_date,
@@ -206,6 +209,7 @@ def last_receipt_rows(
         q = (
             db.query(
                 SPOAllocation.spo_number,
+                SPOAllocation.container_number,
                 SPOAllocation.allocated_quantity,
                 SPOAllocation.quantity_received,
                 key_expr.label("spo_date"),
@@ -235,6 +239,7 @@ def last_receipt_rows(
         out.append(
             {
                 "spo_number": row.spo_number,
+                "container_number": row.container_number,
                 "product_id": str(row.product_id),
                 "product_code": row.product_code,
                 "product_name": row.product_name,

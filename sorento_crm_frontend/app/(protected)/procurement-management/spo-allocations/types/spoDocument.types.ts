@@ -98,6 +98,14 @@ export interface SPODocumentLine {
    */
   po?: { po_number: string; purchase_order_id: string; line_no: number | null } | null;
   /**
+   * The AutoCount book's own source purchase-order NUMBER, straight off
+   * `spo_allocations.from_po_number` - text, never resolved into a CRM row, and never the
+   * same fact as `po` above (`PLAN-scm-book-linkage-on-document-lines.md` Slice B). Written
+   * by the live ingest (contract 2.2) whenever the book names one; `null` means the book
+   * itself named no source document for that line, never that nothing has written it yet.
+   */
+  from_po_number?: string | null;
+  /**
    * Every sales order this line's allocation covers - `order_inquiry_links` (project) +
    * the SPO line's own `source_ref.so_coverage` (retail, the record of a retail take),
    * joined on this allocation (R23, AC-J2). Optional/absent in Phase 1 for the same reason

@@ -26,6 +26,9 @@ class Company(Base):
     name = Column(String(255), nullable=False)
     code = Column(String(50), unique=True, nullable=False)  # short, e.g. SRT / MCH
     is_active = Column(Boolean, default=True, nullable=False, server_default="true")
+    # The AutoCount sales-order feed is connected for this company; off = the stock
+    # answer carries no Outstanding (PLAN company-so-feed-flag).
+    so_feed_live = Column(Boolean, nullable=False, default=True, server_default="true")
     autocount_ref = Column(String(255), nullable=True)  # AutoCount company reference
     logo_url = Column(String(500), nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)

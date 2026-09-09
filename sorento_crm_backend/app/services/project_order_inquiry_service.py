@@ -2078,6 +2078,13 @@ class ProjectOrderInquiryService:
         SECOND alias of the same tables above: the first pair's join is keyed off
         `OrderInquiryLink.po_line_id`, which an SPO link never sets, so it cannot also
         answer for `SPOAllocation.po_line_id`).
+
+        `source_po_number` (owner's 9 Sep feedback): the purchase order an SPO link's
+        allocation was raised FROM, per the AutoCount feed's own statement
+        (`SPOAllocation.from_po_number`, migration 493 / contract 2.2) - a different
+        question from `purchase_order_id` above, which only ever answers for a
+        Sorento-raised SPO carrying its own resolved `po_line_id`. Plain text, null on a
+        PO-kind link and on an SPO the book named no source for.
         """
         wanted = [row_id for row_id in row_ids if row_id]
         if not wanted:
@@ -2100,6 +2107,7 @@ class ProjectOrderInquiryService:
                 SPOAllocation.issue_date,
                 SPOAllocation.expected_date,
                 SPOAllocation.location_code,
+                SPOAllocation.from_po_number,
                 SpoPO.id,
             )
             .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
@@ -2156,6 +2164,7 @@ class ProjectOrderInquiryService:
             spo_issue_date,
             spo_expected_date,
             spo_location_code,
+            spo_from_po_number,
             spo_purchase_order_id,
         ) in rows:
             is_spo = link.spo_allocation_id is not None
@@ -2200,6 +2209,18 @@ class ProjectOrderInquiryService:
                         if is_spo and spo_purchase_order_id
                         else (str(po_id) if po_id else None)
                     ),
+                    # Owner's 9 Sep feedback against the running lane: "if we link by
+                    # SPO, where do we see the PO number of this SPO?" - nowhere, before
+                    # this. `from_po_number` is the raw AutoCount pass-through
+                    # (`SPOAllocation.from_po_number`, migration 493 / contract 2.2), not
+                    # `purchase_order_id` above - that traces a Sorento-raised SPO's own
+                    # `po_line_id` FK, which is null for the ordinary case of a book-fed
+                    # allocation the ESB simply STATED a source document for. Plain text,
+                    # never a link yet (a later slice decides where it goes); None on a
+                    # PO-kind link and on an SPO the book named no source for - never a
+                    # guess. `from_po_line_ref` (the resolver key) is never sent - it is
+                    # not a thing a buyer reads.
+                    "source_po_number": spo_from_po_number if is_spo else None,
                 }
             )
         return out

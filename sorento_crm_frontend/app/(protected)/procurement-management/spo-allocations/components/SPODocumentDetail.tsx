@@ -742,6 +742,27 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
         meta: { headerTitle: 'PO' },
       },
       {
+        // The AutoCount book's OWN source purchase-order number, straight off the ingest -
+        // never resolved into a CRM row, so it is text, not a link. Distinct from `po`
+        // above (a real `purchase_order_lines` id this SPO pulled from, which stays a
+        // link): the two can disagree without either being wrong, because they answer
+        // different questions (`PLAN-scm-book-linkage-on-document-lines.md` Slice B).
+        id: 'from_po_number',
+        header: ({ column }) => <DataGridColumnHeader title="PO (book)" column={column} />,
+        accessorFn: (l) => l.from_po_number ?? '',
+        cell: ({ row }) => {
+          const value = row.original.from_po_number;
+          if (!value) return <span className="text-muted-foreground">-</span>;
+          return (
+            <span className="block truncate" title={value}>
+              {value}
+            </span>
+          );
+        },
+        size: 140,
+        meta: { headerTitle: 'PO (book)' },
+      },
+      {
         // R23, AC-J2: which sales orders this line's allocation already covers - opens the
         // SAME read-only lightbox the planner's own "SO covered" cell does.
         id: 'so_covered',

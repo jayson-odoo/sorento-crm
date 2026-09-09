@@ -76,6 +76,7 @@ def _serialize_company(db: Session, company: Company, *, with_counts: bool = Tru
         "name": company.name,
         "code": company.code,
         "is_active": bool(company.is_active),
+        "so_feed_live": bool(company.so_feed_live),
         "autocount_ref": company.autocount_ref,
         "logo_url": company.logo_url,
         "created_at": company.created_at.isoformat() if company.created_at else None,
@@ -112,6 +113,7 @@ class CompanyForm(BaseModel):
     name: str
     code: str
     is_active: bool = True
+    so_feed_live: bool = True
     autocount_ref: Optional[str] = None
     logo_url: Optional[str] = None
 
@@ -182,6 +184,7 @@ def create_company(
         name=name,
         code=code,
         is_active=body.is_active,
+        so_feed_live=body.so_feed_live,
         autocount_ref=(body.autocount_ref or None),
         logo_url=(body.logo_url or None),
     )
@@ -326,6 +329,7 @@ def update_company(
     company.name = name
     company.code = code
     company.is_active = body.is_active
+    company.so_feed_live = body.so_feed_live
     company.autocount_ref = body.autocount_ref or None
     company.logo_url = body.logo_url or None
     db.commit()

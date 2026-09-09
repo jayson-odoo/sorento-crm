@@ -64,6 +64,24 @@ export function buildCompanyColumns(handlers: {
       ),
     },
     {
+      id: 'so_feed_live',
+      accessorFn: (row) => row.so_feed_live,
+      header: ({ column }) => <DataGridColumnHeader title="SO feed" column={column} />,
+      size: 130,
+      enableSorting: false,
+      meta: { headerTitle: 'SO feed' },
+      cell: ({ row }) => (
+        <Badge
+          variant={row.original.so_feed_live ? 'success' : 'secondary'}
+          size="sm"
+          className="shrink-0"
+        >
+          <BadgeDot />
+          {row.original.so_feed_live ? 'Yes' : 'No'}
+        </Badge>
+      ),
+    },
+    {
       id: 'user_count',
       accessorFn: (row) => row.user_count ?? 0,
       header: ({ column }) => <DataGridColumnHeader title="Users" column={column} />,

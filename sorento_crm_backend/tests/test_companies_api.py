@@ -25,6 +25,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.api.v1.system.companies import CompanyForm, _serialize_company
 from app.database import Base
 from app.models.access import RespondContact
 from app.models.company import Company, RespondContactCompany, UserCompany
@@ -301,3 +302,59 @@ def test_remove_last_grant_nulls_last_active(client, seed, db):
     db.expire_all()
     refreshed = db.query(User).filter(User.id == user.id).first()
     assert refreshed.last_active_company_id is None  # no grants left -> null
+
+
+# --------------------------------------------------------------------------- #
+# so_feed_live (PLAN company-so-feed-flag, AC-6)                               #
+# --------------------------------------------------------------------------- #
+def test_company_form_defaults_so_feed_live_true_when_omitted():
+    form = CompanyForm(name="Fourth Co", code="FOUR")
+    assert form.so_feed_live is True
+
+
+def test_company_form_accepts_so_feed_live_false():
+    form = CompanyForm(name="Fifth Co", code="FIVE", so_feed_live=False)
+    assert form.so_feed_live is False
+
+
+def test_serialize_company_emits_the_flag(db):
+    company = Company(id=str(uuid.uuid4()), name="Feed Off Co", code="FOFF", so_feed_live=False)
+    db.add(company)
+    db.commit()
+    assert _serialize_company(db, company, with_counts=False)["so_feed_live"] is False
+
+
+def test_create_with_flag_false(client, seed):
+    _as(seed["superadmin"])
+    res = client.post(BASE, json={"name": "Sixth Co", "code": "SIX", "so_feed_live": False})
+    assert res.status_code == 201, res.text
+    assert res.json()["so_feed_live"] is False
+
+
+def test_create_omitting_the_flag_defaults_true(client, seed):
+    _as(seed["superadmin"])
+    res = client.post(BASE, json={"name": "Seventh Co", "code": "SVN"})
+    assert res.status_code == 201, res.text
+    assert res.json()["so_feed_live"] is True
+
+
+def test_update_flips_the_flag(client, seed):
+    _as(seed["superadmin"])
+    created = client.post(
+        BASE, json={"name": "Eighth Co", "code": "EGT", "so_feed_live": False}
+    ).json()
+    res = client.put(
+        f"{BASE}/{created['id']}",
+        json={"name": "Eighth Co", "code": "EGT", "so_feed_live": True},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["so_feed_live"] is True
+
+
+def test_list_serialises_the_flag(client, seed):
+    _as(seed["superadmin"])
+    client.post(BASE, json={"name": "Ninth Co", "code": "NIN", "so_feed_live": False})
+    res = client.get(BASE)
+    assert res.status_code == 200, res.text
+    row = next(c for c in res.json()["data"] if c["code"] == "NIN")
+    assert row["so_feed_live"] is False

@@ -75,7 +75,7 @@ from app.services.project_order_inquiry_service import (
     ProjectOrderInquiryService,
     project_customer_label,
 )
-from app.services.scm import priority
+from app.services.scm import order_link_service, priority
 
 logger = logging.getLogger(__name__)
 
@@ -1066,6 +1066,7 @@ class OrderInquiryWorklistService:
                 PurchaseOrderLine.qty_ordered,
                 PurchaseOrderLine.qty_received,
                 Warehouse.warehouse_code,
+                PurchaseOrderLine.from_so_line_ref,
             )
             .select_from(PurchaseOrderLine)
             .outerjoin(Product, Product.id == PurchaseOrderLine.product_id)
@@ -1073,6 +1074,13 @@ class OrderInquiryWorklistService:
             .filter(PurchaseOrderLine.purchase_order_id == po.id)
             .order_by(Product.product_code.asc().nulls_last())
             .all()
+        )
+        line_ids = [str(line[0]) for line in lines]
+        # ONE query for the whole document (AC-A5's rule, on this THIRD surface), never one
+        # per line - the same reader the SCM purchase-order detail's Lines tab already
+        # calls, so the book's linkage reads identically wherever a line is shown.
+        book_so_by_ref = order_link_service.book_so_numbers_by_ref(
+            self.db, [line[-1] for line in lines if line[-1]]
         )
         return {
             "id": po.id,
@@ -1089,22 +1097,29 @@ class OrderInquiryWorklistService:
                     "qty_received": _qty_str(_dec(qty_received)),
                     "remaining": _qty_str(_dec(qty_ordered) - _dec(qty_received)),
                     "location": warehouse_code,
+                    # The book's own SO linkage, read off the line's OWN
+                    # `from_so_line_ref` - three states, and the ref itself never leaves
+                    # the server (it is a machine key). Identical to what the SCM
+                    # purchase-order detail's Lines tab serves, so one fact reads one way
+                    # on both screens - through the SAME shared function
+                    # (`order_link_service.book_so_fields`, review of PR #764, F5) rather
+                    # than a second copy of the derivation.
+                    **order_link_service.book_so_fields(from_so_line_ref, book_so_by_ref),
                 }
                 for (
-                    _line_id,
+                    line_id,
                     sku,
                     product_name,
                     qty_ordered,
                     qty_received,
                     warehouse_code,
+                    from_so_line_ref,
                 ) in lines
             ],
             # WHO is holding this document's quantity (AC-D18). Drafts included and marked
             # as such: they occupy the quantity, so a panel that hid them would tell the
             # buyer a line is free when the next Confirm is going to take it.
-            "allocations": self._allocations_on(
-                po_line_ids=[str(line[0]) for line in lines]
-            ),
+            "allocations": self._allocations_on(po_line_ids=line_ids),
         }
 
     # -------------------------------------------------------------- spo detail
@@ -1212,6 +1227,14 @@ class OrderInquiryWorklistService:
                     # The warehouse we hold, else the code the book printed, else nothing
                     # - and the screen says "no location" rather than inventing one.
                     "location": warehouse_code or allocation.location_code,
+                    # Owner's 9 Sep feedback: "if we link by SPO, where do we see the PO
+                    # number of this SPO?" - the raw AutoCount pass-through
+                    # (`from_po_number`, migration 493 / contract 2.2), never
+                    # `from_po_line_ref` (the resolver key, not a thing a buyer reads).
+                    # Same wire name as `links_for_rows`' own `source_po_number` (the
+                    # worklist's backing-documents dialog) - one fact, one field name,
+                    # wherever a buyer meets an SPO. Null when the book named no source.
+                    "source_po_number": allocation.from_po_number,
                 }
                 for allocation, product_code, product_name, warehouse_code in rows
             ],

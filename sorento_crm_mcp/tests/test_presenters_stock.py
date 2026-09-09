@@ -161,6 +161,27 @@ def test_render_detailed_unchanged():
     assert out == _DETAILED_GOLDEN
 
 
+def test_render_detailed_no_sellable_key_renders_no_outstanding():
+    """AC-7 (PLAN company-so-feed-flag): a row with no `sellable` key - the shape
+    a no-feed company's row has after the backend withholds the attachment -
+    renders no `Outstanding` field. Regression pin on the existing gate
+    (`s.get("sellable") is not None`), not new presenter behaviour."""
+    out = env({"data": [_detailed_row()], "pagination": {"total": 1, "page": 1, "limit": 50}})
+
+    labels = [f["label"] for f in out["items"][0]["fields"]]
+    assert "Outstanding" not in labels
+
+
+def test_render_detailed_with_sellable_renders_outstanding():
+    """The other half: a row WITH `sellable` (feed-on company, `include_sellable`)
+    renders `Outstanding` from `open_so_qty`."""
+    row = {**_detailed_row(), "open_so_qty": 7, "sellable": 13}
+    out = env({"data": [row], "pagination": {"total": 1, "page": 1, "limit": 50}})
+
+    fields = {f["label"]: f["value"] for f in out["items"][0]["fields"]}
+    assert fields["Outstanding"] == 7
+
+
 def test_render_detailed_with_policy_block_unchanged():
     """D2. A `detailed` policy answers the same envelope plus the passthrough -
     a contact explicitly set to Detailed reads exactly what they read before."""
