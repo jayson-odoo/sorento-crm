@@ -708,6 +708,9 @@ _PAGE_SATURATION = 50
 _PRODUCT_CODE_RE = re.compile(r"product\s*code", re.IGNORECASE)
 _ATTACHMENT_TYPE_RE = re.compile(r"attachment\s*type", re.IGNORECASE)
 _QUANTITY_ON_HAND_RE = re.compile(r"^\s*quantity\s*on\s*hand\s*\Z", re.IGNORECASE)
+# #768: the `compact` stock-visibility mode (`sorento_crm_mcp/presenters.py::_stock_compact`)
+# renders "Total" + one field per location code, never "Quantity On Hand".
+_STOCK_TOTAL_RE = re.compile(r"^\s*total\s*\Z", re.IGNORECASE)
 _COMPANY_RE = re.compile(r"^\s*company\s*\Z", re.IGNORECASE)
 # `String(raw ?? '').replace(/[^0-9.\-]/g, '')` - ASCII digits only, like JS's own grammar.
 _NON_NUMERIC_RE = re.compile(r"[^0-9.\-]")
@@ -806,21 +809,81 @@ def _annotate(
         meta["reason"] = "page_saturated"
     elif meta["predicate"] == "qty_gt_zero":
         meta["answer_count"] = len(answers)
-        # One row per product x per ACTIVE WAREHOUSE, and a genuine 0 is still returned, so
-        # presence is not has-stock. Sum "Quantity On Hand"; absent / unparseable counts 0.
-        sums: dict[str, Any] = {}
-        for answer in answers:
-            code = _code_of(answer)
-            if not code:
-                continue
-            raw = _field_val(answer, _QUANTITY_ON_HAND_RE)
-            number = jsc.js_number(_NON_NUMERIC_RE.sub("", jsc.nullish_str(raw)))
-            addend = number if jsc.is_integer(number) or isinstance(number, float) else 0
-            if jsc.is_nan(number) or number in (float("inf"), float("-inf")):
-                addend = 0
-            sums[code] = sums.get(code, 0) + addend
-        available = [code for code, total in sums.items() if total > 0]
-        meta["ok"] = True
+        # #768: the probe's row SHAPE depends on the stock tool's visibility mode - a
+        # `detailed` row (`item()`) carries "Quantity On Hand", a `compact` row
+        # (`_stock_compact`) carries "Total" plus one field per location, and an
+        # `availability` row (`_stock_availability`) carries NO fields at all, only
+        # item-level flags. Summing "Quantity On Hand" unconditionally read every
+        # non-detailed probe as all-zero. `stock_visibility.mode` names the mode directly;
+        # `result_type` is the fallback for a probe envelope that never carried that block.
+        # Every fixture captured before #768 carries NEITHER key, so `meta["mode"]` is only
+        # stamped when the probe actually signalled one - an unsignalled probe still resolves
+        # to "detailed" below, but stays byte-identical to those captures.
+        sv_mode = jsc.get(jsc.get(probe_json, "stock_visibility"), "mode")
+        result_type = jsc.get(probe_json, "result_type")
+        if isinstance(sv_mode, str) and sv_mode:
+            mode = sv_mode
+        elif isinstance(result_type, str):
+            # Guarded: `.get()` on a dict raises for an unhashable key, and this whole
+            # function runs OUTSIDE the probe's own try - a hostile, non-string
+            # `result_type` must fall to "detailed" rather than fail the turn.
+            mode = {"stock_compact": "compact", "stock_availability": "availability"}.get(
+                result_type, "detailed"
+            )
+        else:
+            mode = "detailed"
+        if (isinstance(sv_mode, str) and sv_mode) or jsc.truthy(result_type):
+            meta["mode"] = mode
+
+        if mode == "detailed":
+            # One row per product x per ACTIVE WAREHOUSE, and a genuine 0 is still returned, so
+            # presence is not has-stock. Sum "Quantity On Hand"; absent / unparseable counts 0.
+            sums: dict[str, Any] = {}
+            for answer in answers:
+                code = _code_of(answer)
+                if not code:
+                    continue
+                raw = _field_val(answer, _QUANTITY_ON_HAND_RE)
+                number = jsc.js_number(_NON_NUMERIC_RE.sub("", jsc.nullish_str(raw)))
+                addend = number if jsc.is_integer(number) or isinstance(number, float) else 0
+                if jsc.is_nan(number) or number in (float("inf"), float("-inf")):
+                    addend = 0
+                sums[code] = sums.get(code, 0) + addend
+            available = [code for code, total in sums.items() if total > 0]
+            meta["ok"] = True
+        elif mode == "compact":
+            # `_stock_compact` rows carry one "Total" field plus one per location code
+            # (which `hide_zero_locations` can drop to none) - the per-location fields are
+            # never summed, only "Total" drives availability. Rows are per (product,
+            # company): a Sorento twin and a Mocha twin of the same code carry NO company
+            # field to tell them apart, so their totals ACCUMULATE the same way the
+            # detailed arm's `sums` do - overwriting let a zero-stock twin erase a
+            # stocked one.
+            totals: dict[str, Any] = {}
+            for answer in answers:
+                code = _code_of(answer)
+                if not code:
+                    continue
+                raw = _field_val(answer, _STOCK_TOTAL_RE)
+                number = jsc.js_number(_NON_NUMERIC_RE.sub("", jsc.nullish_str(raw)))
+                total = number if jsc.is_integer(number) or isinstance(number, float) else 0
+                if jsc.is_nan(number) or number in (float("inf"), float("-inf")):
+                    total = 0
+                totals[code] = totals.get(code, 0) + total
+            available = [code for code, total in totals.items() if total > 0]
+            meta["ok"] = True
+        elif mode == "availability":
+            # #768 ruling: this arm always fails open, and is written to say why rather
+            # than to read the row. The DYM probe seam never sends `requested_qty`
+            # (`entity_ids_transformer` in fetch.py emits no such key), so the backend
+            # answers `needs_quantity: True, available: None` on every row today. And even
+            # if `requested_qty` ever arrived, `available` is a QUANTITY VERDICT
+            # (`on_hand >= requested_qty`), not "has stock details" - trusting a False
+            # would render a confident "no" on a code that has SOME stock, just less than
+            # the (irrelevant, did-you-mean-context) requested amount.
+            meta["reason"] = "availability_unknown"
+        else:
+            meta["reason"] = "unknown_stock_mode"
     elif full and meta["predicate"] == "row_present":
         # D18: the PER-CANDIDATE lane (promotion). Promotion rows carry no product, so
         # attribution is POSITIONAL - input item i is candidate i. That is an ordering
