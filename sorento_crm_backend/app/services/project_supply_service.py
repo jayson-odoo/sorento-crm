@@ -757,6 +757,9 @@ class _UnitCheck:
     ONE instance per unit, shared by its members and drawn down as each is checked: `fact`
     is the unit fact (`_unit_fact`) the ladder was asked about, and `timely_left` is what is
     left of the water question 1 offered it, so two members cannot each post the whole of it.
+
+    `timely_left` is seeded by `_timely_cover_for`, whose docstring carries the full rule
+    (8 September 2026, AC-L5b).
     """
 
     fact: _LineFacts
@@ -1758,10 +1761,51 @@ class ProjectSupplyService:
         out: Dict[str, "_UnitCheck"] = {}
         for members in units.values():
             unit_fact = self._unit_fact(members)
-            check = _UnitCheck(fact=unit_fact, timely_left=unit_fact.timely_qty)
+            check = _UnitCheck(
+                fact=unit_fact, timely_left=self._timely_cover_for(unit_fact)
+            )
             for key, _fact in members:
                 out[str(key)] = check
         return out
+
+    def _timely_cover_for(self, fact: _LineFacts) -> Decimal:
+        """What a confirmation may post as Timely SPO for this unit, READ TWICE.
+
+        THE FLOOR HALF'S OWN RULE, applied to the water (8 September 2026, AC-L5b). The
+        Reserve half of the same recheck already reads both books and takes whichever pile
+        is larger, since SO381895 on 30 August 2026 (`_check_line`, ladder v7.1 R24); the
+        water was left on the undated reading then, and it is the same defect one component
+        along.
+
+        * `fact.timely_qty` is the UNDATED group-netted share (`_apply_group_nets`): the
+          water inside `_group_take_candidates`, capped at
+          `group_offer = max(group net + the unit's own quantity, 0)`. It is what a line the
+          dated walk cannot place is still judged against, so it stays.
+        * `use_candidates_for`'s own-half water is the DATE-AWARE one: what the ONE assignment
+          gave this unit BY ITS OWN DATE (`_drawn_at_own_date`), which is the number the
+          proposal was composed from - the board reads that same walk through
+          `compose_lines`.
+
+        THE LARGER OF THE TWO, never their sum. On an OVERSOLD group the undated reading is 0
+        however early the asking line is, while the dated one is what the walk itself
+        offered: SO419851's lines 3 and 4 were proposed `Incoming 3 (BRW-IB)` and refused
+        "Timely SPO cover is now 0, not 3" for the composition the board had just written.
+        A quantity above BOTH readings is still refused, which is the whole point of keeping
+        a bound at all.
+
+        The OTHER groups' water is deliberately not here. Step 1's offer half is bounded by
+        R-M's lending-group budget (`_group_budget_key`), which this scalar has no ledger
+        for, so widening it would trade one defect for a double-promise across two units.
+        """
+        undated = _dec(fact.timely_qty)
+        if not fact.group_code:
+            return undated
+        own_use, _other_use, _own_offer, _short = self.use_candidates_for(fact)
+        dated = sum(
+            (_dec(candidate.get("qty")) for candidate in own_use if candidate.get("water")),
+            _ZERO,
+        )
+        return max(undated, dated)
 
     def _unit_fact(self, members: Sequence[Tuple[Any, _LineFacts]]) -> _LineFacts:
         """The one line the engine is asked about for a unit of several.
@@ -4180,7 +4224,7 @@ class ProjectSupplyService:
                 # no reconciled AutoCount line: `_check_line` refuses it on its next
                 # statement, and reaching that refusal matters more than the seed does.
                 units.get(str(line.id))
-                or _UnitCheck(fact=fact, timely_left=fact.timely_qty),
+                or _UnitCheck(fact=fact, timely_left=self._timely_cover_for(fact)),
                 capacity_left,
                 borrow_left,
                 stale,
@@ -4417,6 +4461,9 @@ class ProjectSupplyService:
         # the unit one water share and the split can hand the whole of it to one line, whose
         # own line-level share is smaller. Identical to the old per-line test on a line
         # planned alone, which is most of them.
+        #
+        # `unit.timely_left` is seeded by `_timely_cover_for`, whose docstring carries the
+        # full rule for what a posted quantity is judged against (8 September 2026).
         if timely > unit.timely_left:
             refuse(
                 stale,
@@ -4430,7 +4477,7 @@ class ProjectSupplyService:
         # line's ownership GROUP - its own included - or any active site pool. The same
         # candidates `compose_line` walked to propose this composition, and drawn from the
         # same builders, so the recheck cannot refuse what the proposal itself offered
-        # (the own location's cap in particular is `use_candidates_for`' own).
+        # (the own location's cap in particular is `use_candidates_for`'s own).
         #
         # S7: every location here is drawn through `capacity_left`, the running ledger
         # shared across every line of this confirmation - not read live per line - so a
@@ -4458,9 +4505,10 @@ class ProjectSupplyService:
         # STEP 1's OWN half, read TWICE and reconciled into one pile.
         #
         # Ladder v4's `_group_take_candidates` is the UNDATED whole-pile reading: what the
-        # group's own net leaves, per bin. It is what a line the dated walk cannot place -
-        # a TBA order, an undated one, a line outside the reserve window - is still judged
-        # against, so it stays.
+        # group's own net leaves, per bin. It is the floor of the max for a TBA order, an
+        # undated one, or a line outside the reserve window - no code guard turns that floor
+        # into a ceiling, so a dated placement still wins for one of those lines too, on the
+        # water exactly as it already did on the floor (S4 ruling, 8 September 2026).
         #
         # Ladder v7.1's `use_candidates_for` is the DATE-AWARE one (R24, AC-S3-1b): what the
         # assignment gave this unit BY ITS OWN DATE, which is the number the proposal was
@@ -4476,9 +4524,9 @@ class ProjectSupplyService:
         # and the dated slices of two units are summed against it because the assignment
         # gives each unit a different part of one bin.
         #
-        # The FLOOR half only, in both readings. A `water` candidate is incoming supply,
-        # judged against `fact.timely_qty` above; seeding Reserve capacity with it would let
-        # a hold be written against goods that are not on a floor for anybody to pick.
+        # The FLOOR half only: a `water` candidate is judged against `unit.timely_left`
+        # instead (`_timely_cover_for`'s bound), never seeded into Reserve capacity - a hold
+        # cannot be written against goods that are not on a floor for anybody to pick.
         own_use, other_use, _own_offer, _short = self.use_candidates_for(unit.fact)
         undated: Dict[str, Decimal] = {}
         for candidate in self._group_take_candidates(unit.fact):
@@ -6430,6 +6478,13 @@ class ProjectSupplyService:
         # goods were actually coming to, and carried no rung at all, so the board filed a
         # confirmed v5 line under "Incoming supply" while its own suggestion filed it under
         # "Use own location".
+        #
+        # ON AN OVERSOLD GROUP the undated `_group_take_candidates` is empty (`group_offer`
+        # is 0), so `left` falls through untouched. Before the unnamed fallback row, split
+        # what is left across `use_candidates_for`'s own-half water instead - the SAME dated
+        # reading `_timely_cover_for` bounds the posted quantity against - so a unit whose
+        # water lands at a sibling bin is named there, not at its own (S2 review, 8 September
+        # 2026). Only if THAT list is empty too does the fallback row still fire.
         timely = _dec(entry.timely_spo_qty)
         if timely > _ZERO:
             left = timely
@@ -6460,6 +6515,37 @@ class ProjectSupplyService:
                     }
                 )
                 left -= take
+            if left > _ZERO:
+                own_use, _other_use, _own_offer, _short = self.use_candidates_for(fact)
+                for candidate in own_use:
+                    if left <= _ZERO:
+                        break
+                    if not candidate.get("water"):
+                        continue
+                    take = min(left, max(_dec(candidate.get("qty")), _ZERO))
+                    if take <= _ZERO:
+                        continue
+                    location = str(candidate["location"])
+                    source = self._warehouse_by_code(location)
+                    components.append(
+                        {
+                            "kind": TIMELY_SPO,
+                            "qty": qty_text(take),
+                            "source_location": location,
+                            "source_warehouse_id": str(source.id) if source else None,
+                            "reason": group_water_reason(
+                                location,
+                                take,
+                                fact.group_code,
+                                fact.group_offer if fact.group_code else None,
+                                candidate.get("arrival_date"),
+                                candidate.get("supply_document"),
+                                late_days=int(candidate.get("late_days") or 0),
+                            ),
+                            "rung": RUNG_GROUP_TAKE,
+                        }
+                    )
+                    left -= take
             if left > _ZERO:
                 # No water on offer for it: an ungrouped line, or a quantity a person
                 # recorded by hand. The retired rung 1's shape, and it reads as one.
