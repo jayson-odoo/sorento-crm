@@ -926,11 +926,14 @@ class OrderSummaryRow(Base, CompanyScopedMixin):
 
     # --- S9 (PLAN-reorder-feedback-9sep.md, G6 ruling): the sheet's own columns, frozen
     # with the row at run time exactly like everything above. ---
-    #: `[{month: "2026-09" | null, qty}]` - open retail SO lines by `required_date` plus
-    #: confirmed project Order Inquiry rows by `delivery_date`, undated under a null month.
+    #: `[{month: "2026-09" | null, qty}]` (S14, AC-S14.3, superseding the original S9
+    #: SO-book reading) - project Order Inquiry ORDER rows only (`verb = 'ORDER'`,
+    #: `qty > 0`, state not cancelled, on an ACTIVE supply decision), by `delivery_date`,
+    #: undated under a null month. A retail SO line carries no Order Inquiry row and so
+    #: never reaches this cell.
     delivery_by_month = Column(JSONB, nullable=True)
-    #: `[{label, qty}]` - the open project-class order book (the same book
-    #: `project_demand` sums) split by customer, so the two always add up.
+    #: `[{label, qty}]` (S14, AC-S14.3) - the SAME Order Inquiry book `delivery_by_month`
+    #: reads, split by customer, so the two totals always tie by construction.
     project_customers = Column(JSONB, nullable=True)
     #: The buyer's chosen supplier wins at READ time (`_serialise_row`); this is the
     #: FROZEN suggestion - the primary product-supplier link, same precedence
@@ -938,7 +941,9 @@ class OrderSummaryRow(Base, CompanyScopedMixin):
     supplier_name = Column(String, nullable=True)
     #: Open PO qty (BRW pool), same book `po_book_service` reads.
     po_open_qty = Column(Numeric, nullable=True)
-    #: Open SPO qty still to arrive, same book `spo_supply` reads.
+    #: Open SPO qty still to arrive, at a SITE POOL warehouse only (S14, AC-S14.2, same
+    #: `pool_predicate.ACTIVE_SITE_POOL_SQL` rule the PO column above applies) - an
+    #: allocation at a project bin or naming no warehouse is not counted.
     incoming_spo_qty = Column(Numeric, nullable=True)
     #: The latest `goods_received` picking line for the product, network-wide.
     last_receipt_date = Column(Date, nullable=True)
