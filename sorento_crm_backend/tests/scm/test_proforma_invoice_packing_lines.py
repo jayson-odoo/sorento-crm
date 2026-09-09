@@ -549,3 +549,147 @@ def test_b8_rollup_agrees_when_every_row_shares_pcs_per_carton_and_dims_else_nul
         assert srtsc_line.carton_width_cm is None
         # cartons/cbm/net/gross are still simple sums, unaffected by the disagreement.
         assert srtsc_line.cartons == 2
+
+
+# --------------------------------------------------------------------------------- AC-B5
+# resolve_attach_pi's four resolution orders (Phase 3 round 1, ruling 4/18; "Round 1
+# outcome" paragraph, PLAN-scm-supplier-documents-pi-first.md): explicit `attach_to` ->
+# stated invoice number (container-suffixed) -> block container == exactly one CURRENT
+# PI's `container_ref` -> same date -> refuse. Exercised directly against
+# `resolve_attach_pi` with hand-built `PackingBlock`s, seeded ProformaInvoice rows, and no
+# reader/apply involved - the resolution order is a pure function of (block, candidates).
+
+
+def _seed_pi(db, supplier_id: str, **over) -> "ProformaInvoice":
+    from app.models.scm import ProformaInvoice
+
+    tag = uuid.uuid4().hex[:8].upper()
+    row = ProformaInvoice(
+        id=str(uuid.uuid4()),
+        supplier_id=supplier_id,
+        pi_number=over.pop("pi_number", f"{MARKER}-PI-{tag}"),
+        **over,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def test_resolve_attach_pi_explicit_attach_to_wins_over_a_stated_invoice_number():
+    """Order 1: the dialog's own pick beats everything the file itself states - even a
+    stated invoice number that would otherwise resolve to a DIFFERENT invoice."""
+    from datetime import date
+
+    from app.services.scm.packing_list_reader import PackingBlock
+    from app.services.scm.proforma_invoice_packing_service import resolve_attach_pi
+
+    with blank_session() as db:
+        w = World(db)
+        supplier = w.supplier("ExplicitCo")
+        by_number = _seed_pi(db, str(supplier.id), supplier_ref=f"{MARKER}-REF-A")
+        by_pick = _seed_pi(db, str(supplier.id), supplier_ref=f"{MARKER}-REF-B")
+
+        block = PackingBlock(index=0, pi_number=f"{MARKER}-REF-A", invoice_date=date(2026, 7, 30))
+
+        resolved = resolve_attach_pi(
+            db, block, supplier_id=str(supplier.id), attach_to=str(by_pick.id)
+        )
+        assert str(resolved.id) == str(by_pick.id)
+        assert str(resolved.id) != str(by_number.id)
+
+
+def test_resolve_attach_pi_matches_the_stated_invoice_number_container_suffixed():
+    """Order 2: the block's own stated invoice number, bare or suffixed with its own
+    container (the shape `supplier_ref_for` gives a reference more than one document in a
+    parse shares)."""
+    from datetime import date
+
+    from app.services.scm.packing_list_reader import PackingBlock
+    from app.services.scm.proforma_invoice_packing_service import resolve_attach_pi
+
+    with blank_session() as db:
+        w = World(db)
+        supplier = w.supplier("NumberCo")
+        ref = f"{MARKER}-REF-C"
+        container = f"{MARKER}CNT1"
+        suffixed = _seed_pi(db, str(supplier.id), supplier_ref=f"{ref}-{container}")
+        # A decoy on the bare ref only, so a bug that ignored the suffix would still pass -
+        # this row's presence is what makes the suffix behaviour actually exercised.
+        _seed_pi(db, str(supplier.id), supplier_ref=f"{MARKER}-REF-DECOY")
+
+        block = PackingBlock(
+            index=0, pi_number=ref, container_no=container, invoice_date=date(2026, 7, 30)
+        )
+
+        resolved = resolve_attach_pi(db, block, supplier_id=str(supplier.id))
+        assert str(resolved.id) == str(suffixed.id)
+
+
+def test_resolve_attach_pi_matches_the_blocks_container_against_container_ref():
+    """Order 3 (Jiexia shape, ruling 18): the invoice number is stated once above the
+    first block and never repeated, but every container has its own PI and its own
+    block - so the block's OWN container number resolves it when exactly one current PI
+    of the supplier states that container."""
+    from datetime import date
+
+    from app.services.scm.packing_list_reader import PackingBlock
+    from app.services.scm.proforma_invoice_packing_service import resolve_attach_pi
+
+    with blank_session() as db:
+        w = World(db)
+        supplier = w.supplier("ContainerCo")
+        container = f"{MARKER}WHSU0001"
+        by_container = _seed_pi(db, str(supplier.id), container_ref=container)
+        # A second, unrelated PI of the same supplier with a DIFFERENT container - proves
+        # the match is scoped to the container, not "the only other PI on file".
+        _seed_pi(db, str(supplier.id), container_ref=f"{MARKER}WHSU9999")
+
+        block = PackingBlock(index=0, container_no=container, invoice_date=date(2026, 7, 26))
+
+        resolved = resolve_attach_pi(db, block, supplier_id=str(supplier.id))
+        assert str(resolved.id) == str(by_container.id)
+
+
+def test_resolve_attach_pi_falls_back_to_the_blocks_own_date():
+    """Order 4: no number, no container match - exactly one current PI of the supplier
+    shares the block's own date."""
+    from datetime import date
+
+    from app.services.scm.packing_list_reader import PackingBlock
+    from app.services.scm.proforma_invoice_packing_service import resolve_attach_pi
+
+    with blank_session() as db:
+        w = World(db)
+        supplier = w.supplier("DateCo")
+        same_date = date(2026, 7, 30)
+        by_date = _seed_pi(db, str(supplier.id), invoice_date=same_date)
+        _seed_pi(db, str(supplier.id), invoice_date=date(2026, 6, 1))
+
+        block = PackingBlock(index=0, invoice_date=same_date)
+
+        resolved = resolve_attach_pi(db, block, supplier_id=str(supplier.id))
+        assert str(resolved.id) == str(by_date.id)
+
+
+def test_resolve_attach_pi_refuses_when_two_pis_share_no_number_container_or_date():
+    """None of the four orders resolve - a refusal naming the supplier and the packing
+    list's OWN stated date (AC-B16), not a guess off "the only PI on file"."""
+    from datetime import date
+
+    from app.services.scm.packing_list_reader import PackingBlock
+    from app.services.scm.proforma_invoice_packing_service import resolve_attach_pi
+
+    with blank_session() as db:
+        w = World(db)
+        supplier = w.supplier("RefuseCo")
+        _seed_pi(db, str(supplier.id), invoice_date=date(2026, 5, 1))
+        _seed_pi(db, str(supplier.id), invoice_date=date(2026, 6, 1))
+
+        block = PackingBlock(index=0, invoice_date=date(2026, 7, 30))
+
+        with pytest.raises(AppException) as e:
+            resolve_attach_pi(db, block, supplier_id=str(supplier.id))
+        assert e.value.status_code == 409
+        assert e.value.detail["code"] == "proforma_invoice_required"
+        assert supplier.supplier_name in (e.value.detail.get("message") or "")
+        assert "2026-07-30" in (e.value.detail.get("message") or "")
