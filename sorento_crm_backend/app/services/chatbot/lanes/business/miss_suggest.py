@@ -708,6 +708,9 @@ _PAGE_SATURATION = 50
 _PRODUCT_CODE_RE = re.compile(r"product\s*code", re.IGNORECASE)
 _ATTACHMENT_TYPE_RE = re.compile(r"attachment\s*type", re.IGNORECASE)
 _QUANTITY_ON_HAND_RE = re.compile(r"^\s*quantity\s*on\s*hand\s*\Z", re.IGNORECASE)
+# #768: the `compact` stock-visibility mode (`sorento_crm_mcp/presenters.py::_stock_compact`)
+# renders "Total" + one field per location code, never "Quantity On Hand".
+_STOCK_TOTAL_RE = re.compile(r"^\s*total\s*\Z", re.IGNORECASE)
 _COMPANY_RE = re.compile(r"^\s*company\s*\Z", re.IGNORECASE)
 # `String(raw ?? '').replace(/[^0-9.\-]/g, '')` - ASCII digits only, like JS's own grammar.
 _NON_NUMERIC_RE = re.compile(r"[^0-9.\-]")
@@ -741,6 +744,19 @@ def _field_val(answer: Any, pattern: re.Pattern[str]) -> Any:
         lambda x: jsc.truthy(x) and bool(pattern.search(jsc.nullish_str(jsc.get(x, "label")))),
     )
     return jsc.get(field, "value") if jsc.truthy(field) else None
+
+
+def _flag_val(answer: Any, key: str) -> Any:
+    """#768: an item-level flag off a `raw_item` row.
+
+    `_stock_availability` (`sorento_crm_mcp/presenters.py` ~1305) nests `needs_quantity` /
+    `available` under a `flags` dict via `_Builder.raw_item`; read that first and fall back
+    to the flag sitting flat on the item itself.
+    """
+    flags = jsc.get(answer, "flags")
+    if isinstance(flags, dict) and key in flags:
+        return flags.get(key)
+    return jsc.get(answer, key)
 
 
 def _annotate(
@@ -806,21 +822,83 @@ def _annotate(
         meta["reason"] = "page_saturated"
     elif meta["predicate"] == "qty_gt_zero":
         meta["answer_count"] = len(answers)
-        # One row per product x per ACTIVE WAREHOUSE, and a genuine 0 is still returned, so
-        # presence is not has-stock. Sum "Quantity On Hand"; absent / unparseable counts 0.
-        sums: dict[str, Any] = {}
-        for answer in answers:
-            code = _code_of(answer)
-            if not code:
-                continue
-            raw = _field_val(answer, _QUANTITY_ON_HAND_RE)
-            number = jsc.js_number(_NON_NUMERIC_RE.sub("", jsc.nullish_str(raw)))
-            addend = number if jsc.is_integer(number) or isinstance(number, float) else 0
-            if jsc.is_nan(number) or number in (float("inf"), float("-inf")):
-                addend = 0
-            sums[code] = sums.get(code, 0) + addend
-        available = [code for code, total in sums.items() if total > 0]
-        meta["ok"] = True
+        # #768: the probe's row SHAPE depends on the stock tool's visibility mode - a
+        # `detailed` row (`item()`) carries "Quantity On Hand", a `compact` row
+        # (`_stock_compact`) carries "Total" plus one field per location, and an
+        # `availability` row (`_stock_availability`) carries NO fields at all, only
+        # item-level flags. Summing "Quantity On Hand" unconditionally read every
+        # non-detailed probe as all-zero. `stock_visibility.mode` names the mode directly;
+        # `result_type` is the fallback for a probe envelope that never carried that block.
+        # Every fixture captured before #768 carries NEITHER key, so `meta["mode"]` is only
+        # stamped when the probe actually signalled one - an unsignalled probe still resolves
+        # to "detailed" below, but stays byte-identical to those captures.
+        sv_mode = jsc.get(jsc.get(probe_json, "stock_visibility"), "mode")
+        result_type = jsc.get(probe_json, "result_type")
+        if isinstance(sv_mode, str) and sv_mode:
+            mode = sv_mode
+        else:
+            mode = {"stock_compact": "compact", "stock_availability": "availability"}.get(
+                result_type, "detailed"
+            )
+        if (isinstance(sv_mode, str) and sv_mode) or jsc.truthy(result_type):
+            meta["mode"] = mode
+
+        if mode == "detailed":
+            # One row per product x per ACTIVE WAREHOUSE, and a genuine 0 is still returned, so
+            # presence is not has-stock. Sum "Quantity On Hand"; absent / unparseable counts 0.
+            sums: dict[str, Any] = {}
+            for answer in answers:
+                code = _code_of(answer)
+                if not code:
+                    continue
+                raw = _field_val(answer, _QUANTITY_ON_HAND_RE)
+                number = jsc.js_number(_NON_NUMERIC_RE.sub("", jsc.nullish_str(raw)))
+                addend = number if jsc.is_integer(number) or isinstance(number, float) else 0
+                if jsc.is_nan(number) or number in (float("inf"), float("-inf")):
+                    addend = 0
+                sums[code] = sums.get(code, 0) + addend
+            available = [code for code, total in sums.items() if total > 0]
+            meta["ok"] = True
+        elif mode == "compact":
+            # `_stock_compact` rows carry one "Total" field plus one per location code
+            # (which `hide_zero_locations` can drop to none) - the per-location fields are
+            # never summed, only "Total" drives availability.
+            totals: dict[str, Any] = {}
+            for answer in answers:
+                code = _code_of(answer)
+                if not code:
+                    continue
+                raw = _field_val(answer, _STOCK_TOTAL_RE)
+                number = jsc.js_number(_NON_NUMERIC_RE.sub("", jsc.nullish_str(raw)))
+                total = number if jsc.is_integer(number) or isinstance(number, float) else 0
+                if jsc.is_nan(number) or number in (float("inf"), float("-inf")):
+                    total = 0
+                totals[code] = total
+            available = [code for code, total in totals.items() if total > 0]
+            meta["ok"] = True
+        elif mode == "availability":
+            # `_stock_availability` rows carry no fields at all, only the item-level
+            # `needs_quantity` / `available` flags. Any item still needing a quantity, or
+            # with an unresolved verdict, means the WHOLE probe cannot say - fail open
+            # rather than guess per item (the F1 ambiguity ruling, applied here to flags).
+            unknown = False
+            codes_available: list = []
+            for answer in answers:
+                needs_quantity = _flag_val(answer, "needs_quantity")
+                is_available = _flag_val(answer, "available")
+                if jsc.truthy(needs_quantity) or is_available is None:
+                    unknown = True
+                    break
+                code = _code_of(answer)
+                if code and is_available is True:
+                    codes_available.append(code)
+            if unknown:
+                meta["reason"] = "availability_unknown"
+            else:
+                available = codes_available
+                meta["ok"] = True
+        else:
+            meta["reason"] = "unknown_stock_mode"
     elif full and meta["predicate"] == "row_present":
         # D18: the PER-CANDIDATE lane (promotion). Promotion rows carry no product, so
         # attribution is POSITIONAL - input item i is candidate i. That is an ordering
