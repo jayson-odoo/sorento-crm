@@ -557,7 +557,11 @@ export default function ProductDetail({ productId }: ProductDetailProps) {
 
             {/* Tab: Suppliers */}
             <TabsContent value="suppliers">
-              <ProductSuppliersTab productId={productId} />
+              <ProductSuppliersTab
+                productId={productId}
+                productCode={product.product_code}
+                productName={product.product_name}
+              />
             </TabsContent>
 
             {/* Tab: Promotions */}

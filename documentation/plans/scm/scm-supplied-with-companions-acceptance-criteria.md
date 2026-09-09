@@ -13,7 +13,7 @@ supplier S1.
 | --- | --- | --- | --- |
 | A1 | companion product page, Suppliers tab | open | "Supplied with" section lists its rules: hosts, supplier or "Any", ratio |
 | A2 | Add | hosts picked via shared product search (multi), supplier clearable, ratio default 1, fractional accepted (0.5) | rule saved; list shows it without reload |
-| A3 | rule exists | Delete | `ConfirmDeleteDialog`, then hard delete |
+| A3 | rule exists | Delete | deferred-action grace window (10s countdown + Cancel, D7 - `ConfirmDeleteDialog` is retired codebase-wide), then hard delete on commit |
 | A4 | same companion, same supplier | Add again | 409, message names the existing rule |
 | A5 | host product page | open | read-only "Ships with" list naming each companion and ratio |
 | A6 | product named as host or companion | delete product | refused (RESTRICT), message names the rule |
@@ -59,9 +59,10 @@ Each case: one SO, fulfilment board confirms Buy for the quantities named,
 | D1 | B1, host on a PO | cell `Included with CKS1050 · 1 of 1`; info icon opens the host lightbox |
 | D2 | B1, host not found | cell `Included with CKS1050 · Not found (new order)` |
 | D3 | B3 | cell `1 with CKS1050 · 0 of 2`; lightbox lists the anchor and the row's own documents |
-| D4 | B1, host on PO | tiles: Use PO includes CKSW015's 1; Buy excludes it |
-| D5 | B1, host not found | Buy includes CKSW015's 1 once, under Buy |
-| D6 | `kind=buy` filter | B1 row hidden when host is on PO, shown when host is not found |
+| D10 | B5 (two hosts) | cell `Included with 2 items · 2 of 2`; lightbox names both codes; the word "host" appears nowhere in the UI |
+| D4 | B1, host on PO | cards: CKSW015's 1 is in none of Use SPO / Use PO / Buy |
+| D5 | B3 (1 bundled, 2 ala carte, nothing linked) | Buy counts 2, not 3 |
+| D6 | `kind=buy` filter | B1 row hidden; B3 row shown (its 2 ala carte units are a buy) |
 | D7 | row payload | carries `bundled_qty` and `bundled_with.item_code` (response_model assertion) |
 | D8 | export xlsx | bundled row's document column reads the host's code |
 | D9 | 375px and 1280px | headline truncates with title, no clipping |

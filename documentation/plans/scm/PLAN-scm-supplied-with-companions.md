@@ -95,9 +95,12 @@ Read on the product page: a "Supplied with" section on the companion's
 Suppliers tab (the rule is about how the supplier ships it, and the tab already
 holds per-supplier facts). Lists rules, Add opens a modal: hosts
 (`SearchableMultiSelect` of products, the shared product search), supplier
-(`SearchableSelect`, clearable), ratio. Delete = hard delete behind
-`ConfirmDeleteDialog`. The host's page shows a read-only "Ships with" list
-pointing back, so the fact is findable from either side.
+(`SearchableSelect`, clearable), ratio. Delete = hard delete via the
+deferred-action grace window (D7: `ConfirmDeleteDialog` is retired
+codebase-wide, PRINCIPLES.md hard-fail rule - a 10s countdown with Cancel
+takes its place, `useDeferredRowAction`/`product_companion_rule.delete` once
+Phase 2 registers the action). The host's page shows a read-only "Ships
+with" list pointing back, so the fact is findable from either side.
 
 ### 3.2 Where the rule bites: the OI row
 
@@ -156,15 +159,19 @@ supplier skips the check. This is the whole of the "just in case".
 * **State** (`_refresh_link_state`): `linked + bundled_qty >= qty` reads
   `placed`; between, `partly_linked`. The stored word does not change, so
   filters, `scm.committed_v` and saved column layouts are untouched.
-* **Tiles** (`_kinds`): a bundled quantity counts in the HOST row's kind, so
-  "follows the sibling" is literal on the strip: CKSW015's 1 unit sits under
-  Use PO when CKS1050 is on a PO, under Buy when CKS1050 is not found.
+* **Tiles** (`_kinds`): a bundled quantity counts in NONE of the three cards
+  (owner, 9 Sep, plan review). The cards total quantity that has its own
+  PO / SPO / buy; a unit that rides inside another line's supply is not
+  owed anywhere, so it joins `_NOT_OWED_STATES` in effect: subtract
+  `bundled_qty` from every card. The `kind` filter follows the same rule.
 * **Cell** (`po_number` column): headline `Included with CKS1050`, then the
   host's own coverage headline in the muted style, e.g.
-  `Included with CKS1050 · 1 of 1`. The info icon opens the HOST row's
-  lightbox. A row that is part bundled, part ala carte reads
-  `1 with CKS1050 · 2 of 2` and the lightbox lists both the host anchor and
-  the row's own documents. No explanatory sentence in the UI.
+  `Included with CKS1050 · 1 of 1`. A rule with two or more hosts reads
+  `Included with 2 items` and the lightbox names them (owner, 9 Sep: never
+  the word "host" in the UI, and no list of codes in the cell). The info
+  icon opens the HOST row's lightbox. A row that is part bundled, part ala
+  carte reads `1 with CKS1050 · 2 of 2` and the lightbox lists both the
+  anchor and the row's own documents. No explanatory sentence in the UI.
 * **Serializer** (`serialize_rows`, `_serialize` in the worklist service):
   `bundled_qty`, `bundled_with` (host item code and row id). Both asserted in
   a test, because `response_model` drops what it is not told about.
@@ -218,3 +225,9 @@ Tests to add or extend:
 2. Pair host cap = `min` over hosts. Matches the supplier's behaviour.
 3. Unlinked host supplier = the host product's primary supplier.
 4. Configuration lives on the companion product's Suppliers tab.
+5. The UI never says "host". One: `Included with CKS1050`. Several:
+   `Included with 2 items`, codes in the lightbox.
+6. A bundled quantity never reaches reorder planning, whatever the item it
+   rides with is covered by. Only the ala carte remainder does.
+7. The three cards above the worklist (Use SPO / Use PO / Buy) count only
+   quantity with its own supply. A bundled quantity is in none of them.
