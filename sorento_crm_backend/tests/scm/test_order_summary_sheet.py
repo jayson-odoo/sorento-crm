@@ -22,8 +22,11 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
+from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
-from app.models.procurement import PickingHeader, PickingLine
+from app.models.procurement import PickingHeader, PickingLine, SPOAllocation
+from app.models.project_so import INQUIRY_CANCELLED, INQUIRY_PLACED
+from app.models.scm import ReorderRecommendation
 from app.services.scm import summary_order_service as svc
 from tests.scm.conftest import requires_pg
 from tests.scm.test_channel_read_model import _confirmed_leg
@@ -340,3 +343,344 @@ def test_a_supplier_named_as_a_formula_exports_as_a_string_cell(db, chain):
     cell = ws.cell(row=2, column=supplier_col)
     assert cell.data_type == "s", "a formula-shaped supplier name must load back as text"
     assert cell.value.startswith("'"), "the apostrophe prefix must survive into the cell"
+
+
+# =====================================================================================
+# S14 (PLAN-reorder-feedback-9sep.md Round 3, reorder-feedback-9sep-acceptance-criteria.md
+# AC-S14.1 - S14.7) - "the sheet reads like the paper one".
+#
+# RED as of this commit: `OrderSummaryRow.pool_on_hand` / `.reorder_level` do not exist,
+# `_incoming_spo_qty_map` is still network-wide, `delivery_by_month` / `project_customers`
+# still read the SO book rather than the Order Inquiry, `_EXPORT_COLUMNS` is still the old
+# nine, `_month_text` / `_customers_text` still render the old sentence shape, and
+# `_export_pdf_html` does not exist yet (the coder splits it out of `_render_export_pdf`).
+# =====================================================================================
+
+
+def _project_bin(db, *, code_stem="PBIN"):
+    """A SITE-EXCLUDED warehouse: active, counts as available, `segment='project'` -
+    stock and PO/SPO lines here must never reach a "BRW" (site pool) column."""
+    wh = Warehouse(
+        id=_u(), warehouse_code=f"{MARKER}-{code_stem}-{_u()[:8]}"[:30],
+        warehouse_name="project bin", is_active=True, counts_as_available=True,
+        segment="project",
+    )
+    db.add(wh)
+    db.flush()
+    return wh
+
+
+def _spo(db, product, wh, *, allocated, received=0):
+    db.add(SPOAllocation(
+        id=_u(), spo_number=f"{MARKER}-SPO-{_u()[:8]}"[:50],
+        product_id=product.id, warehouse_id=(wh.id if wh else None),
+        allocated_quantity=allocated, quantity_received=received,
+    ))
+    db.flush()
+
+
+def _row_columns(db, run_id, product_id, *columns):
+    cols = ", ".join(columns)
+    return db.execute(text(
+        f"SELECT {cols} FROM scm.order_summary_row WHERE run_id = :r AND product_id = :p"
+    ), {"r": run_id, "p": product_id}).fetchone()
+
+
+# --- AC-S14.1: pool_on_hand + reorder_level frozen on write_rows --------------------
+
+def test_s14_pool_on_hand_freezes_site_pool_stock_only(db, chain):
+    """A product with 100 at the site-pool bin and 40 at a project bin freezes
+    `pool_on_hand` = 100, while `on_hand` (network, unchanged) stays 140."""
+    f = chain
+    _stock(db, f["product"], f["bin"], 100)
+    pbin = _project_bin(db)
+    _stock(db, f["product"], pbin, 40)
+
+    assert svc.write_rows(db, f["run"].id) == 1
+    row = _row_columns(db, f["run"].id, f["product"].id, "pool_on_hand", "on_hand")
+    assert float(row.pool_on_hand) == 100.0
+    assert float(row.on_hand) == 140.0
+
+
+def test_s14_reorder_level_freezes_the_first_rec_carrying_the_key(db, chain):
+    """`reorder_level` is the run's own `inputs.reorder_level` for the product - the
+    first recommendation that carries the key, even when an earlier one carries none."""
+    f = chain
+    _stock(db, f["product"], f["bin"], 0)
+    # The chain's own buy rec carries no `inputs` at all.
+    db.add(ReorderRecommendation(
+        id=_u(), run_id=f["run"].id, rec_type="buy", product_id=f["product"].id,
+        warehouse_id=f["bin"].id, rounded_qty=0, status="proposed",
+        inputs={"reorder_level": 300},
+    ))
+    db.flush()
+
+    assert svc.write_rows(db, f["run"].id) == 1
+    row = _row_columns(db, f["run"].id, f["product"].id, "reorder_level")
+    assert float(row.reorder_level) == 300.0
+
+
+def test_s14_reorder_level_is_null_when_no_rec_carries_one(db, chain):
+    f = chain
+    _stock(db, f["product"], f["bin"], 0)
+
+    assert svc.write_rows(db, f["run"].id) == 1
+    row = _row_columns(db, f["run"].id, f["product"].id, "reorder_level")
+    assert row.reorder_level is None
+
+
+# --- AC-S14.2: incoming_spo_qty re-scoped to site pool warehouses -------------------
+
+def test_s14_incoming_spo_qty_counts_site_pool_allocations_only(db, chain):
+    f = chain
+    _stock(db, f["product"], f["bin"], 0)
+    pbin = _project_bin(db)
+    _spo(db, f["product"], f["bin"], allocated=50)      # site pool - counts
+    _spo(db, f["product"], pbin, allocated=30)          # project bin - excluded
+    _spo(db, f["product"], None, allocated=20)          # no warehouse - excluded
+
+    assert svc.write_rows(db, f["run"].id) == 1
+    row = svc.report(db, run_id=f["run"].id)["rows"][0]
+    assert row["incoming_spo_qty"] == 50.0
+
+
+# --- AC-S14.3: delivery_by_month / project_customers from Order Inquiry ORDER rows --
+
+def test_s14_delivery_and_customers_source_from_order_inquiry_order_rows(db, chain):
+    f = chain
+    _stock(db, f["product"], f["bin"], 0)
+
+    def _named_leg(qty, *, delivery, inquiry_state=None, decision_state="active",
+                   customer_name):
+        leg = _confirmed_leg(
+            db, product_id=f["product"].id, warehouse_id=f["bin"].id, buy_qty=qty,
+            decision_state=decision_state, inquiry_state=inquiry_state,
+        )
+        leg["inquiry_row"].delivery_date = delivery
+        core_so_id = db.execute(text(
+            "SELECT sales_order_id FROM sales_order_lines WHERE id = :l"
+        ), {"l": leg["core_line"].id}).scalar()
+        cust = Customer(id=_u(), customer_code=f"{MARKER}-{_u()[:8]}",
+                        customer_name=customer_name)
+        db.add(cust)
+        db.flush()
+        db.execute(text("UPDATE sales_orders SET customer_id = :c WHERE id = :so"),
+                   {"c": cust.id, "so": core_so_id})
+        db.flush()
+        return leg
+
+    _named_leg(7, delivery=date(2026, 7, 10), customer_name="Acme Co")
+    _named_leg(3, delivery=date(2026, 8, 5), inquiry_state=INQUIRY_PLACED,
+              customer_name="Beta Co")
+    # Cancelled: contributes NOTHING, even landing in the same month as the first leg.
+    _named_leg(100, delivery=date(2026, 7, 10), inquiry_state=INQUIRY_CANCELLED,
+              customer_name="Ghost Co")
+    # A retail SO line with a required_date must not appear at all (S14.3).
+    _dated_retail_so(db, f["product"], f["bin"], 500, required_date=date(2030, 1, 1))
+
+    assert svc.write_rows(db, f["run"].id) == 1
+    row = svc.report(db, run_id=f["run"].id)["rows"][0]
+
+    months = {m["month"]: m["qty"] for m in row["delivery_by_month"]}
+    assert months == {"2026-07": 7, "2026-08": 3}
+    assert "2030-01" not in months
+
+    customers = row["project_customers"]
+    assert sum(c["qty"] for c in customers) == 10
+    assert sum(m["qty"] for m in row["delivery_by_month"]) == sum(
+        c["qty"] for c in customers
+    )
+    labels = {c["label"] for c in customers}
+    assert any(label.startswith("Acme Co / ") for label in labels)
+    assert any(label.startswith("Beta Co / ") for label in labels)
+    assert not any(label.startswith("Ghost Co") for label in labels)
+
+
+def test_s14_undated_order_inquiry_row_lands_under_the_null_month_last(db, chain):
+    f = chain
+    _stock(db, f["product"], f["bin"], 0)
+    leg_dated = _confirmed_leg(db, product_id=f["product"].id, warehouse_id=f["bin"].id,
+                               buy_qty=4)
+    leg_dated["inquiry_row"].delivery_date = date(2026, 6, 1)
+    leg_undated = _confirmed_leg(db, product_id=f["product"].id, warehouse_id=f["bin"].id,
+                                 buy_qty=6)
+    # `delivery_date` left NULL (the default `_confirmed_leg` builds).
+    db.flush()
+
+    assert svc.write_rows(db, f["run"].id) == 1
+    row = svc.report(db, run_id=f["run"].id)["rows"][0]
+    months = row["delivery_by_month"]
+    assert months[-1]["month"] is None
+    assert months[-1]["qty"] == 6
+    assert months[0]["month"] == "2026-06"
+
+
+def test_s14_a_superseded_decision_contributes_nothing_to_the_sheet(db, chain):
+    f = chain
+    _stock(db, f["product"], f["bin"], 0)
+    leg = _confirmed_leg(db, product_id=f["product"].id, warehouse_id=f["bin"].id,
+                         buy_qty=9, decision_state="superseded")
+    leg["inquiry_row"].delivery_date = date(2026, 9, 1)
+    db.flush()
+
+    assert svc.write_rows(db, f["run"].id) == 1
+    row = svc.report(db, run_id=f["run"].id)["rows"][0]
+    assert row["delivery_by_month"] == []
+    assert row["project_customers"] == []
+
+
+# --- AC-S14.4: export columns, in the paper sheet's order ---------------------------
+
+def test_s14_export_columns_match_the_paper_sheet_order():
+    assert svc._EXPORT_COLUMNS == (
+        "Item code", "BRW on hand", "Reorder level", "Project qty", "Dealer o/s",
+        "Order qty", "Delivery", "Project / customer", "Supplier", "BRW PO qty",
+        "BRW incoming qty", "Last in qty", "Last in date", "Remarks",
+    )
+
+
+_FULL_ROW = {
+    "product_code": "ZZTS14-SKU",
+    "pool_on_hand": 100,
+    "reorder_level": 250,
+    # Deliberately DIFFERENT from the sum of project_customers, so a test that reads
+    # `project_demand` here instead of the customers sum is caught red-handed.
+    "project_demand": 999,
+    "project_customers": [
+        {"label": "Acme Co / Tower A", "qty": 5},
+        {"label": "Beta Co", "qty": 3},
+    ],
+    "dealer_outstanding": 12,
+    "chosen_qty": 20,
+    "delivery_by_month": [{"month": "2026-07", "qty": 5}, {"month": "2026-08", "qty": 3}],
+    "supplier_name": "Acme Supplier",
+    "po_open_qty": 40,
+    "incoming_spo_qty": 15,
+    "last_receipt": {"date": "2026-07-21", "qty": 300},
+    "moq": 1000,
+}
+
+_BLANK_ROW = {
+    "product_code": "ZZTS14-BLANK",
+    "pool_on_hand": 0,
+    "reorder_level": None,
+    "project_demand": 0,
+    "project_customers": [],
+    "dealer_outstanding": 0,
+    "chosen_qty": None,
+    "delivery_by_month": [],
+    "supplier_name": None,
+    "po_open_qty": 0,
+    "incoming_spo_qty": 0,
+    "last_receipt": None,
+    "moq": None,
+}
+
+
+def test_s14_export_rows_project_qty_is_the_customers_sum_not_project_demand():
+    (row,) = svc._export_rows([_FULL_ROW])
+    assert row == (
+        "ZZTS14-SKU", "100", "250", "8", "12", "20",
+        "Jul - 5\nAug - 3", "Acme Co / Tower A - 5\nBeta Co - 3",
+        "Acme Supplier", "40", "15", "300", "21/07/2026", "MOQ 1000",
+    )
+
+
+def test_s14_export_rows_blank_cells_when_the_row_has_nothing_to_show():
+    (row,) = svc._export_rows([_BLANK_ROW])
+    assert row == (
+        "ZZTS14-BLANK", "0", "", "0", "0", "",
+        "", "", "", "0", "0", "", "", "",
+    )
+
+
+def test_s14_export_xlsx_rows_keep_quantities_as_numbers_and_blanks_as_empty_string():
+    (full, blank) = svc._export_xlsx_rows([_FULL_ROW, _BLANK_ROW])
+    # Item code / Delivery / Project-customer / Supplier / Remarks are text; every other
+    # column is a NUMBER (H1) so summing a column in Excel keeps working.
+    for idx in (1, 2, 3, 4, 5, 9, 10, 11):
+        assert isinstance(full[idx], float), f"column {idx} must be numeric, got {full[idx]!r}"
+    assert blank[2] == "", "a NULL reorder level must be a blank cell, not 0"
+    assert blank[5] == "", "no chosen qty must be a blank cell, not 0"
+    assert blank[12] == "", "no last-in date must be a blank cell"
+
+
+# --- AC-S14.5: one "Mon - qty" / "Name - qty" per line ------------------------------
+
+def test_s14_month_text_renders_one_entry_per_line_undated_last():
+    groups = [{"month": "2026-08", "qty": 1}, {"month": "2026-07", "qty": 1},
+              {"month": None, "qty": 5}]
+    assert svc._month_text(groups) == "Jul - 1\nAug - 1\nUndated - 5"
+
+
+def test_s14_month_text_blank_when_no_entries():
+    assert svc._month_text([]) == ""
+
+
+def test_s14_customers_text_renders_one_entry_per_line():
+    groups = [{"label": "Acme Co / Tower A", "qty": 5}, {"label": "Beta Co", "qty": 3}]
+    assert svc._customers_text(groups) == "Acme Co / Tower A - 5\nBeta Co - 3"
+
+
+def test_s14_customers_text_blank_when_no_entries():
+    assert svc._customers_text([]) == ""
+
+
+# --- AC-S14.6: xlsx header styling, borders, wrap, freeze panes, column widths ------
+
+def test_s14_render_export_xlsx_styles_header_borders_wrap_and_freeze():
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    rows = svc._export_xlsx_rows([_FULL_ROW, _BLANK_ROW])
+    payload = svc._render_export_xlsx(rows)
+    wb = load_workbook(BytesIO(payload))
+    ws = wb.active
+
+    for cell in ws[1]:
+        assert cell.font.bold is True
+        assert cell.font.color is not None and cell.font.color.rgb.endswith("FFFFFF")
+        assert cell.fill.fill_type == "solid"
+
+    for row in ws.iter_rows(min_row=1, max_row=3):
+        for cell in row:
+            assert cell.border.left.style == "thin"
+            assert cell.border.top.style == "thin"
+            assert cell.border.right.style == "thin"
+            assert cell.border.bottom.style == "thin"
+            assert cell.alignment.wrap_text is True
+
+    assert ws.freeze_panes == "A2"
+    # Column H is "Project / customer" (1=Item code .. 8=Project/customer).
+    assert ws.column_dimensions["H"].width > 30
+
+    # A multi-month Delivery cell (column G) carries a newline.
+    delivery_cell = ws.cell(row=2, column=7)
+    assert "\n" in delivery_cell.value
+
+    # A quantity cell stays numeric.
+    assert isinstance(ws.cell(row=2, column=2).value, (int, float))
+
+
+# --- AC-S14.7: PDF html - styled header, borders, pre-line, repeating thead ---------
+
+def test_s14_export_pdf_html_has_styled_header_borders_and_prewrap():
+    rows = svc._export_rows([_FULL_ROW])
+    html = svc._export_pdf_html(rows, "2026-09-10")
+
+    for header in svc._EXPORT_COLUMNS:
+        assert header in html
+    assert "A4 landscape" in html
+    assert "white-space: pre-line" in html
+    assert "border: 1px solid" in html
+    assert "display: table-header-group" in html
+    assert "#fff" in html.lower() or "color: white" in html.lower() or (
+        "color:#ffffff" in html.lower().replace(" ", "")
+    )
+
+
+def test_s14_export_pdf_html_renders_a_two_month_delivery_cell_with_a_line_break():
+    rows = svc._export_rows([_FULL_ROW])
+    html = svc._export_pdf_html(rows, "2026-09-10")
+    assert "Jul - 5\nAug - 3" in html or "Jul - 5<br>Aug - 3" in html
