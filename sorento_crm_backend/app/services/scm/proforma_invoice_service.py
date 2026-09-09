@@ -1728,6 +1728,19 @@ def convert_to_draft_shipment(
         elif row.match_state in ("dismissed", "unmatched"):
             unplaced_row_descriptions.append(row.item_code or row.description or "")
     selected_row_ids = {str(i) for i in (packing_row_ids or [])} or None
+    # Every packing row of these invoices that is ALREADY in a box (ruling 31). One query
+    # for the whole convert: the link table records the row it placed, so "what is left" is
+    # a set difference rather than arithmetic over an order nobody promised.
+    placed_row_ids = {
+        str(row[0])
+        for row in db.query(ProformaInvoiceShipmentLink.proforma_invoice_packing_line_id)
+        .filter(
+            ProformaInvoiceShipmentLink.proforma_invoice_id.in_(ids),
+            ProformaInvoiceShipmentLink.proforma_invoice_packing_line_id.isnot(None),
+            ProformaInvoiceShipmentLink.inbound_shipment_line_id.isnot(None),
+        )
+        .all()
+    }
 
     for ln in lines:
         invoice = found_by_id[str(ln.invoice_id)]
@@ -1739,22 +1752,15 @@ def convert_to_draft_shipment(
                     f"{ln.item_code} places whole packing rows, not a partial quantity.",
                     code="packing_rows_place_whole",
                 )
-            # What a PREVIOUS convert already took off this line, walked over its rows in
-            # order (AC-D2b): placement is whole rows, so the quantity on the link rows
-            # covers the line's first N rows and those are the ones already in a box. Without
-            # this a second convert of a partly-placed invoice put the same carton on two
-            # containers - the row branch read nothing of what was placed.
-            already_placed = _dec(placed_per_line.get(str(ln.id), 0))
-            covered = Decimal("0")
-            unplaced_rows = []
-            for row in rows_for_line:
-                if covered < already_placed:
-                    covered += _dec(row.qty) if row.qty is not None else Decimal("0")
-                    continue
-                unplaced_rows.append(row)
+            # What a PREVIOUS convert already took (AC-D2b, ruling 31): the ROWS that have a
+            # link, not a quantity walked over the line's rows in order. That walk read "50
+            # placed" as "the FIRST row is placed", which is only true when the selection
+            # was a prefix of the list - untick the first carton and the next convert
+            # shipped it twice while the other never shipped at all.
             selected_rows = [
-                r for r in unplaced_rows
-                if selected_row_ids is None or str(r.id) in selected_row_ids
+                r for r in rows_for_line
+                if str(r.id) not in placed_row_ids
+                and (selected_row_ids is None or str(r.id) in selected_row_ids)
             ]
             for row in selected_rows:
                 qty = _dec(row.qty) if row.qty is not None else Decimal("0")
@@ -1784,6 +1790,8 @@ def convert_to_draft_shipment(
                     "description": ln.description,
                     "source_lines": [ln],
                     "placed": {str(ln.id): float(qty)},
+                    # WHICH row this line is, so the link records it (ruling 31).
+                    "packing_row_id": str(row.id),
                 }
                 groups[key] = group
                 product_ids.add(group["product_id"])
@@ -2073,6 +2081,10 @@ def convert_to_draft_shipment(
                     # HOW MUCH of the line came here. The line's own quantity is no longer
                     # the answer: since Q9 it may be split across two containers.
                     qty=group["placed"].get(str(source_line.id)),
+                    # And WHICH packing row, where one was placed (ruling 31) - what the
+                    # next convert reads to know this carton is already in a box. NULL for
+                    # a line-grain placement, which names no row.
+                    proforma_invoice_packing_line_id=group.get("packing_row_id"),
                 )
             )
     # A skip is recorded ONCE per line. A repeat convert of the same invoice would otherwise

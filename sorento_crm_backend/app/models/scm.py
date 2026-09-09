@@ -1949,6 +1949,17 @@ class ProformaInvoiceShipmentLink(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("inbound_shipment_lines.id", ondelete="SET NULL"),
         nullable=True,
     )
+    #: WHICH packing row went there (ruling 31). Placement is a fact about a row - the
+    #: supplier packed 50 in one carton and 35 in another, and either can go in a box on
+    #: its own - so the row that went is recorded rather than inferred from a quantity
+    #: walked over the line's rows in order, which is only right when the selection was a
+    #: prefix of that list. NULL on a line-grain placement (a PI line no packing list
+    #: mentions) and on a skip row, neither of which names a row.
+    proforma_invoice_packing_line_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("scm.proforma_invoice_packing_line.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     #: Why this line has no `inbound_shipment_line_id` - e.g. "no catalogue product match".
     #: Null on a real link.
     unmatched_reason = Column(String(255), nullable=True)
@@ -1966,6 +1977,7 @@ class ProformaInvoiceShipmentLink(Base, CompanyScopedMixin):
         # (Q9). What stops a silent double convert is now the service, which compares what
         # is already placed against what the line holds - arithmetic an index cannot do.
         Index("ix_scm_pi_shipment_link_line", "proforma_invoice_line_id"),
+        Index("ix_scm_pi_shipment_link_packing_line", "proforma_invoice_packing_line_id"),
         {"schema": "scm"},
     )
 

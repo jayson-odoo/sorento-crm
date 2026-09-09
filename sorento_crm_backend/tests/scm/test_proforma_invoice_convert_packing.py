@@ -197,3 +197,106 @@ def test_d3_dismissed_and_unmatched_rows_never_become_shipment_lines_but_are_not
         ).one()
         assert "Supplier packing list also lists:" in (shipment.notes or "")
         assert "ACC-KT2001" in (shipment.notes or "")
+
+
+# --------------------------------------------------------------- AC-D2b (ruling 31)
+
+
+def test_a_second_convert_places_the_row_the_first_one_left_not_the_one_it_took():
+    """The reviewer's repro, 10 Sep: placement is a fact about a ROW, not a quantity.
+
+    Convert SRTSC14-GM's 35-row on its own, then convert again with the default (every row
+    not already placed). The second convert must place the 50-row - the one nobody has put
+    in a box - and never the 35 a second time.
+
+    Inferring it from a quantity walked over the rows in `row_no` order says "50 placed
+    means the FIRST row is placed", which is only true when the selection was a prefix of
+    the list. Untick the first row and the arithmetic points at the wrong carton: the 35
+    ships twice and the 50 never ships at all.
+    """
+    from app.models.scm import ProformaInvoicePackingLine, ProformaInvoiceShipmentLink
+    from app.services.error_handler import AppException
+    from app.services.scm import proforma_invoice_service
+
+    with blank_session() as db:
+        kailu = _seed_kailu(db)
+
+        out = svc.apply(
+            db,
+            [
+                ("KAILU-260730.xlsx", _kailu_pi_bytes(), None),
+                ("Sorento装箱单（凯路）260730.xls", _kailu_pl_bytes(), None),
+            ],
+            supplier_id=str(kailu.id), currency="RMB",
+        )
+        db.commit()
+        invoice_id = out["proforma_invoice_ids"][0]
+
+        srtsc_rows = (
+            db.query(ProformaInvoicePackingLine)
+            .filter(
+                ProformaInvoicePackingLine.proforma_invoice_id == invoice_id,
+                ProformaInvoicePackingLine.item_code == "SRTSC14-GM",
+            )
+            .order_by(ProformaInvoicePackingLine.row_no)
+            .all()
+        )
+        assert [float(r.qty) for r in srtsc_rows] == [50.0, 35.0]
+        row_35 = next(r for r in srtsc_rows if float(r.qty) == 35.0)
+        row_50 = next(r for r in srtsc_rows if float(r.qty) == 50.0)
+
+        srtsc_product_id = (
+            db.query(Product.id).filter(Product.product_code == "SRTSC14-GM").scalar()
+        )
+
+        def _srtsc_quantities(shipment_id: str) -> list[float]:
+            return sorted(
+                float(l.quantity_shipped)
+                for l in db.query(InboundShipmentLine)
+                .filter(
+                    InboundShipmentLine.shipment_id == shipment_id,
+                    InboundShipmentLine.product_id == str(srtsc_product_id),
+                )
+                .all()
+            )
+
+        # First container: the SECOND row only, chosen by id.
+        first = proforma_invoice_service.convert_to_draft_shipment(
+            db, [invoice_id], created_by=str(uuid.uuid4()),
+            packing_row_ids=[str(row_35.id)],
+        )
+        db.commit()
+        assert _srtsc_quantities(first["shipment_id"]) == [35.0]
+
+        # Second container: whatever is left, which is the 50-row and nothing else.
+        second = proforma_invoice_service.convert_to_draft_shipment(
+            db, [invoice_id], created_by=str(uuid.uuid4()),
+        )
+        db.commit()
+        assert _srtsc_quantities(second["shipment_id"]) == [50.0], (
+            "the second convert must place the row the first one left, not repeat it"
+        )
+
+        # And a third is refused: every row of this invoice is in a box now, which is what
+        # "already converted" means once placement is counted per row.
+        with pytest.raises(AppException) as refused:
+            proforma_invoice_service.convert_to_draft_shipment(
+                db, [invoice_id], created_by=str(uuid.uuid4()),
+            )
+        assert refused.value.status_code == 409
+        assert "Already converted" in str(refused.value)
+
+        # Each row was placed exactly once, and the link says which container took it.
+        links = (
+            db.query(ProformaInvoiceShipmentLink)
+            .filter(
+                ProformaInvoiceShipmentLink.proforma_invoice_packing_line_id.in_(
+                    [str(row_35.id), str(row_50.id)]
+                )
+            )
+            .all()
+        )
+        assert len(links) == 2
+        by_row = {str(l.proforma_invoice_packing_line_id): l for l in links}
+        assert str(by_row[str(row_35.id)].inbound_shipment_id) == first["shipment_id"]
+        assert str(by_row[str(row_50.id)].inbound_shipment_id) == second["shipment_id"]
