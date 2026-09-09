@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { PackageSearch, Settings } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -23,7 +23,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useMockDeferredWindow } from '@/hooks/useMockDeferredWindow';
-import { DeferredCountdown } from '@/components/common/DeferredActionButton';
 import { useProformaInvoicePacking, useProformaInvoicePackingMutations } from '../../../hooks/useProformaInvoicePacking';
 import { EM_DASH, fmtDate, fmtQty, fmtTrimmedDecimal } from '../../../lib/format';
 import type { ProformaInvoiceDetail } from '../../../services/proformaInvoiceService';
@@ -90,18 +89,6 @@ function MatchedCell({
   }
 
   // unmatched
-  if (deferred.pending) {
-    return (
-      <DeferredCountdown
-        pending={deferred.pending}
-        verb="Dismissing"
-        subject={row.item_code}
-        onCancel={deferred.cancel}
-        className="w-56"
-      />
-    );
-  }
-
   return (
     <div className="flex flex-col items-start gap-1">
       <Badge variant="secondary" appearance="light" title={row.unmatched_reason ?? undefined}>
@@ -127,6 +114,11 @@ function MatchedCell({
                 entityType: 'proforma_invoice_packing_line',
                 apply: () => mutations.dismiss(row.id),
                 undo: () => mutations.undoDismiss(row.id),
+                // A grid row has nowhere of its own to put a countdown (S6-07) - the
+                // affordance travels to a toast, same as every other list row's
+                // deferred delete, rather than living inside this cell (which a
+                // packing-query invalidation elsewhere on the page can re-render).
+                toast: { verb: 'Dismissing', subject: row.item_code },
               })
             }
           >
@@ -170,6 +162,15 @@ export function ProformaInvoicePackingTab({
   const { data, isLoading } = useProformaInvoicePacking(invoice);
   const rows = data?.rows ?? [];
   const file = data?.file ?? null;
+  // Read by the footer + Packed-lookup cells INSTEAD of `rows` directly (same pattern
+  // `packingRowsRef`/`footerTotalsRef` use next door, PackingListLinesTab.tsx): `rows`
+  // is a fresh reference every time a dismiss/undo/match invalidates the packing query,
+  // and listing it as a `columns` dependency rebuilt the whole memo - with brand-new cell
+  // renderers - on every one of those, which remounted `MatchedCell` (losing its own
+  // deferred-dismiss countdown mid-window) before the row's new `match_state` had even
+  // arrived to render instead.
+  const rowsRef = useRef(rows);
+  rowsRef.current = rows;
 
   const columns = useMemo<ColumnDef<ProformaInvoicePackingLine>[]>(
     () => [
@@ -224,7 +225,7 @@ export function ProformaInvoicePackingTab({
         cell: ({ row }) => fmtQty(row.original.qty),
         size: 90,
         meta: { headerTitle: 'Qty', headerClassName: 'text-end', cellClassName: 'text-end tabular-nums' },
-        footer: () => fmtQty(rows.reduce((s, r) => s + (r.qty ?? 0), 0)),
+        footer: () => fmtQty(rowsRef.current.reduce((s, r) => s + (r.qty ?? 0), 0)),
       },
       {
         accessorKey: 'cartons',
@@ -232,7 +233,7 @@ export function ProformaInvoicePackingTab({
         cell: ({ row }) => (row.original.cartons == null ? EM_DASH : fmtQty(row.original.cartons)),
         size: 80,
         meta: { headerTitle: 'Ctns', headerClassName: 'text-end', cellClassName: 'text-end tabular-nums' },
-        footer: () => fmtQty(rows.reduce((s, r) => s + (r.cartons ?? 0), 0)),
+        footer: () => fmtQty(rowsRef.current.reduce((s, r) => s + (r.cartons ?? 0), 0)),
       },
       {
         accessorKey: 'pcs_per_carton',
@@ -265,7 +266,7 @@ export function ProformaInvoicePackingTab({
         meta: { headerTitle: 'CBM', headerClassName: 'text-end', cellClassName: 'text-end tabular-nums' },
         footer: () =>
           fmtTrimmedDecimal(
-            rows.reduce((s, r) => s + (r.cbm_total ?? 0), 0),
+            rowsRef.current.reduce((s, r) => s + (r.cbm_total ?? 0), 0),
             3,
           ),
       },
@@ -293,7 +294,7 @@ export function ProformaInvoicePackingTab({
         meta: { headerTitle: 'Total NW', headerClassName: 'text-end', cellClassName: 'text-end tabular-nums' },
         footer: () =>
           fmtTrimmedDecimal(
-            rows.reduce((s, r) => s + (r.total_net_weight ?? 0), 0),
+            rowsRef.current.reduce((s, r) => s + (r.total_net_weight ?? 0), 0),
             2,
           ),
       },
@@ -306,7 +307,7 @@ export function ProformaInvoicePackingTab({
         meta: { headerTitle: 'Total GW', headerClassName: 'text-end', cellClassName: 'text-end tabular-nums' },
         footer: () =>
           fmtTrimmedDecimal(
-            rows.reduce((s, r) => s + (r.total_gross_weight ?? 0), 0),
+            rowsRef.current.reduce((s, r) => s + (r.total_gross_weight ?? 0), 0),
             2,
           ),
       },
@@ -333,7 +334,7 @@ export function ProformaInvoicePackingTab({
         meta: { headerTitle: 'Matched' },
       },
     ],
-    [invoice, rows, canAdjust],
+    [invoice, canAdjust],
   );
 
   const table = useReactTable({
