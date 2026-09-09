@@ -224,6 +224,10 @@ export interface PackingListPlacement {
   shipment_status?: string | null;
   /** How many of the invoice's lines landed in this one. Absent on a per-line placement. */
   lines?: number;
+  /** The container it went in, and when the draft was made (ruling 26) - facts about the
+   *  SHIPMENT, so they travel with it. Absent on a per-line placement. */
+  container_number?: string | null;
+  created_at?: string | null;
 }
 
 export interface ProformaInvoiceListResponse {

@@ -768,9 +768,16 @@ describe('ProformaInvoiceDetail - the tabs', () => {
       'href',
       '/procurement-management/packing-lists/sh-1',
     );
-    expect(screen.getByText('6 left')).toBeInTheDocument();
+    // The tab is the containers this invoice went into and nothing else (ruling 26): the
+    // state it is in, and how much of the invoice it carries. What is LEFT is the convert
+    // dialog's own table now, so it is no longer restated here.
+    expect(screen.getByText('draft')).toBeInTheDocument();
+    expect(screen.getByText('4 of 10')).toBeInTheDocument();
   });
 
+  // Ruling 26 moved this off the Packing lists tab, which is now the containers alone: an
+  // unmatched line says so in the LINES tab's own Matched column, which is also where the
+  // reader fixes it.
   it('names a line nothing could carry, instead of calling it placed', () => {
     state.data = detail({
       lines: [
@@ -784,7 +791,7 @@ describe('ProformaInvoiceDetail - the tabs', () => {
       ],
     });
     renderDetail();
-    openTab('Packing lists');
+    openTab('Lines');
 
     expect(
       screen.getByText(/No catalogue product matches this line's item code/),

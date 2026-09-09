@@ -1159,6 +1159,11 @@ def _placements(db: Session, invoice_ids: list[str]) -> dict[str, dict]:
             ProformaInvoiceShipmentLink.inbound_shipment_id,
             InboundShipment.shipment_number,
             InboundShipment.shipment_status,
+            # The container it went in, and when the draft was made - the PI detail's own
+            # Packing lists tab states both (ruling 26), and both are facts about the
+            # SHIPMENT, so they travel with it rather than being fetched a second time.
+            InboundShipment.shipping_container_number,
+            InboundShipment.created_at,
             func.sum(func.coalesce(ProformaInvoiceShipmentLink.qty, 0)),
             func.count(func.distinct(ProformaInvoiceShipmentLink.proforma_invoice_line_id)),
         )
@@ -1175,11 +1180,13 @@ def _placements(db: Session, invoice_ids: list[str]) -> dict[str, dict]:
             ProformaInvoiceShipmentLink.inbound_shipment_id,
             InboundShipment.shipment_number,
             InboundShipment.shipment_status,
+            InboundShipment.shipping_container_number,
+            InboundShipment.created_at,
         )
         .all()
     )
     out: dict[str, dict] = {}
-    for invoice_id, shipment_id, number, status, qty, lines in rows:
+    for invoice_id, shipment_id, number, status, container, created_at, qty, lines in rows:
         entry = out.setdefault(str(invoice_id), {"placed_qty": 0.0, "packing_lists": []})
         entry["placed_qty"] += float(qty or 0)
         entry["packing_lists"].append(
@@ -1187,6 +1194,8 @@ def _placements(db: Session, invoice_ids: list[str]) -> dict[str, dict]:
                 "shipment_id": str(shipment_id),
                 "shipment_number": number,
                 "shipment_status": status,
+                "container_number": container,
+                "created_at": created_at.isoformat() if created_at else None,
                 "qty": float(qty or 0),
                 "lines": int(lines or 0),
             }

@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ColumnDef, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { toast } from '@/lib/toast';
@@ -69,6 +68,7 @@ import {
 import ConvertToPackingListDialog from '../../components/ConvertToPackingListDialog';
 import MatchToProductDialog from '../../../components/MatchToProductDialog';
 import OverCapacityDialog from '../../components/OverCapacityDialog';
+import { ProformaInvoicePackingListsTab } from './ProformaInvoicePackingListsTab';
 import { ProformaInvoicePackingTab } from './ProformaInvoicePackingTab';
 import { SupplierDocumentsUploadDialog } from '../../components/SupplierDocumentsUploadDialog';
 import DetailActions from '@/components/common/DetailActions';
@@ -1147,14 +1147,6 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
       </Badge>
     );
 
-  /** Every line, per shipment, that actually went there - built once for the tab below. */
-  const placedLines = (shipmentId: string) =>
-    invoice.lines.filter((ln) => ln.packing_lists.some((p) => p.shipment_id === shipmentId));
-
-  const stillToPlace = invoice.lines.filter(
-    (ln) => ln.remaining_qty > 0 || ln.unmatched_reason,
-  );
-
   return (
     <div className="space-y-4">
       {/* The record header - what the invoice IS, and what can be done to it. Above the
@@ -1490,92 +1482,14 @@ export function ProformaInvoiceDetail({ id }: { id: string }) {
         </TabsContent>
 
         <TabsContent value="packing-lists" className="mt-0 focus-visible:outline-none">
-          {/* Where the goods went, and what is left. "Split" is a real state: one invoice
-              legitimately sits in two containers (Q9, AC-F8). */}
-          <Card>
-            <CardHeader>
-              <CardHeading>
-                <CardTitle>Packing lists</CardTitle>
-              </CardHeading>
-            </CardHeader>
-            <div className="space-y-4 p-4">
-              {invoice.packing_lists.length === 0 ? (
-                <div className="flex flex-col items-start gap-3">
-                  <p className="text-sm text-muted-foreground">
-                    Nothing from this invoice is in a packing list yet.
-                  </p>
-                  {showConvert ? (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="gap-1.5"
-                      onClick={() => setConvertOpen(true)}
-                    >
-                      <Boxes className="size-4" />
-                      {convertLabel}
-                    </Button>
-                  ) : null}
-                </div>
-              ) : (
-                <ul className="divide-y divide-border rounded-lg border">
-                  {invoice.packing_lists.map((pl) => (
-                    <li key={pl.shipment_id} className="space-y-1 p-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <Link
-                          href={`/procurement-management/packing-lists/${pl.shipment_id}`}
-                          className="font-medium text-primary hover:underline"
-                        >
-                          {pl.shipment_number ?? 'Draft'}
-                        </Link>
-                        <span className="flex items-center gap-2 text-xs text-muted-foreground">
-                          {fmtQty(pl.qty)} of {fmtQty(invoice.total_qty)}
-                          {pl.shipment_status ? (
-                            <Badge variant="secondary" appearance="light">
-                              {pl.shipment_status}
-                            </Badge>
-                          ) : null}
-                        </span>
-                      </div>
-                      <p className="text-2xs text-muted-foreground">
-                        {placedLines(pl.shipment_id)
-                          .map((ln) => ln.item_code)
-                          .join(', ') || 'No line recorded against this container.'}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {/* Named, never silently absent: a line that cannot go is the reason a convert
-                  reports fewer lines than the invoice carries. */}
-              <div className="space-y-1">
-                <p className="text-xs font-medium">Still to place</p>
-                {stillToPlace.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    Every line on this invoice has been placed.
-                  </p>
-                ) : (
-                  <ul className="divide-y divide-border rounded-lg border text-xs">
-                    {stillToPlace.map((ln) => (
-                      <li
-                        key={ln.id}
-                        className="flex flex-wrap items-center justify-between gap-2 p-2.5"
-                      >
-                        <span className="truncate font-medium" title={ln.item_code}>
-                          {ln.item_code}
-                        </span>
-                        <span className="text-muted-foreground">
-                          {ln.unmatched_reason
-                            ? ln.unmatched_reason
-                            : `${fmtQty(ln.remaining_qty)} left`}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </div>
-          </Card>
+          {/* Which containers this invoice's goods went into (ruling 26). One row per
+              packing list and nothing else: what is still to place is the convert dialog's
+              own table, and why a line cannot go is the Lines tab's Matched column. */}
+          <ProformaInvoicePackingListsTab
+            invoice={invoice}
+            onConvert={showConvert ? () => setConvertOpen(true) : undefined}
+            convertLabel={convertLabel}
+          />
         </TabsContent>
       </Tabs>
 
