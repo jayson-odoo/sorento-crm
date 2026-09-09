@@ -179,7 +179,8 @@ def test_d2c_header_carries_over_when_one_container_agrees_and_is_blank_on_confl
         def _invoice_with_row(container_no, row_container_no):
             inv = ProformaInvoice(
                 id=str(uuid.uuid4()), supplier_id=supplier.id, pi_number=f"PI-{uuid.uuid4().hex[:8]}",
-                container_ref=container_no, bl_ref="BL-XYZ",
+                container_ref=container_no, bl_ref="BL-XYZ", seal_ref="WHA4529810",
+                consignee_ref="SORENTO SDN BHD",
             )
             db.add(inv)
             db.flush()
@@ -209,7 +210,12 @@ def test_d2c_header_carries_over_when_one_container_agrees_and_is_blank_on_confl
 
         shipment = db.query(_Shp).filter(_Shp.id == result["shipment_id"]).one()
         assert shipment.shipping_container_number == "WHSU6243088"
-        assert shipment.bill_of_lading_number == "BL-XYZ"
+        assert shipment.seal_number == "WHA4529810"
+        # `bl_ref` holds `提单号`, which is the forwarder's SO (Q1 ruling, 6 Sep) - it lands
+        # in `forwarder_order_ref`, never in the bill of lading field (ruling 28).
+        assert shipment.forwarder_order_ref == "BL-XYZ"
+        assert shipment.bill_of_lading_number is None
+        assert shipment.consignee == "SORENTO SDN BHD"
         assert not result.get("header_conflicts")
 
         # Conflict: two PIs whose rows name DIFFERENT containers.
@@ -220,6 +226,12 @@ def test_d2c_header_carries_over_when_one_container_agrees_and_is_blank_on_confl
         )
         shipment2 = db.query(_Shp).filter(_Shp.id == result2["shipment_id"]).one()
         assert shipment2.shipping_container_number is None
+        # Every carried field is blank on a conflict, not just the container: they describe
+        # ONE container between them, and half of one document's header on another's box is
+        # worse than a blank the operator fills in.
+        assert shipment2.seal_number is None
+        assert shipment2.forwarder_order_ref is None
+        assert shipment2.consignee is None
         assert "container_number" in (result2.get("header_conflicts") or [])
 
 

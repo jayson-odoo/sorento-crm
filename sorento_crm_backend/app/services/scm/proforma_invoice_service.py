@@ -990,7 +990,16 @@ def apply(
         # unpriced one has nothing to denominate and stays NULL. Never a house default (AC-P3.3).
         invoice.currency = code or invoice.currency
         invoice.container_ref = doc.container_no
+        # `bl_ref` holds `提单号`, which the 6 Sep ruling put in the SO field on the draft,
+        # not in a bill of lading - the column name is historical.
         invoice.bl_ref = doc.bl_no
+        # The other two header facts the document states (ruling 28). Written only when the
+        # document HAS them, so a re-upload of an invoice that states neither does not wipe
+        # what the packing list filled in beside it.
+        if doc.seal_no:
+            invoice.seal_ref = doc.seal_no
+        if doc.consignee:
+            invoice.consignee_ref = doc.consignee
         # The document's own total when it states one - it is the number on the paper the
         # supplier sent, and the line sum is what we make of it. Where it states none, the
         # sum is the honest stand-in.
@@ -1966,10 +1975,14 @@ def convert_to_draft_shipment(
     distinct_containers = {v for v in per_invoice_containers.values() if v}
     header_conflicts: list[str] = []
     carry_container = carry_seal = carry_bl = None
+    carry_consignee = None
     if len(distinct_containers) == 1:
         carry_container = next(iter(distinct_containers))
         carry_seal = next((inv.seal_ref for inv in invoices if inv.seal_ref), None)
         carry_bl = next((inv.bl_ref for inv in invoices if inv.bl_ref), None)
+        carry_consignee = next(
+            (inv.consignee_ref for inv in invoices if inv.consignee_ref), None
+        )
     elif len(distinct_containers) > 1:
         header_conflicts.append("container_number")
 
@@ -1982,7 +1995,10 @@ def convert_to_draft_shipment(
         shipment_date=min(invoice_dates) if invoice_dates else _date.today(),
         shipping_container_number=carry_container,
         seal_number=carry_seal,
-        bill_of_lading_number=carry_bl,
+        # `提单号` is the forwarder's SO, not a bill of lading (Q1 ruling, 6 Sep) - the
+        # same field `_header_of` already fills from it on the upload preview.
+        forwarder_order_ref=carry_bl,
+        consignee=carry_consignee,
         shipment_status=_DRAFT_SHIPMENT_STATUS,
         created_by=created_by,
         container_size_id=str(container_size_id) if container_size_id else None,
@@ -3028,6 +3044,8 @@ def serialize(
         # The seal the packing list stated, carried onto the draft at convert (AC-D2c) and
         # shown beside the container it belongs to.
         "seal_no": invoice.seal_ref,
+        # Who the document bills (ruling 28), carried onto the draft with the other three.
+        "consignee": invoice.consignee_ref,
         "bl_no": invoice.bl_ref,
         "total_amount": _f(invoice.total_amount),
         "line_count": invoice.line_count,

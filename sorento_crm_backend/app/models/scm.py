@@ -1623,6 +1623,11 @@ class ProformaInvoice(Base, CompanyScopedMixin):
     #: packing document when the PI itself stated none, same convention `container_ref`/
     #: `bl_ref` already follow. Read by convert's header carry-over (AC-D2c) alongside them.
     seal_ref = Column(String(100), nullable=True)
+    #: Who the document bills (`客户名` / `Customer Name` / `客户`, ruling 28) - the fourth
+    #: header fact the supplier states and the packing list needs, carried onto the draft
+    #: with the other three. `bl_ref` holds `提单号`, which is the forwarder's SO, not a
+    #: bill of lading (6 Sep ruling) - the name is historical.
+    consignee_ref = Column(String(150), nullable=True)
 
     #: What the document totals ITSELF to when it states a total, else the sum of its lines.
     #: Stored rather than summed on read so the verification screen compares like with like.

@@ -169,6 +169,9 @@ export interface ProformaInvoiceListRow {
   /** The seal the packing document stated for that container - carried onto the draft
    *  packing list at convert (AC-D2c), beside the container it belongs to. */
   seal_no: string | null;
+  /** Who the document bills (ruling 28) - carried onto the draft with the container, the
+   *  seal and the SO. */
+  consignee: string | null;
   bl_no: string | null;
   total_amount: number | null;
   line_count: number;

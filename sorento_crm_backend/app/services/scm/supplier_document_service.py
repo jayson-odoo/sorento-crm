@@ -824,6 +824,8 @@ def apply(
                 invoice.seal_ref = block.seal_no
             if not invoice.bl_ref and block.bl_no:
                 invoice.bl_ref = block.bl_no
+            if not getattr(invoice, "consignee_ref", None) and block.consignee:
+                invoice.consignee_ref = block.consignee
             attached_invoice_ids.append(str(invoice.id))
         # AC-B14: a packing-list-ALONE file is its own upload, filed and linked here - a
         # COMBINED file's single filing already happened in the PI loop above (same
