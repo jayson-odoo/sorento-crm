@@ -114,18 +114,24 @@ function seed(invoice: ProformaInvoiceDetail): MockInvoiceState {
     uploaded_at: invoice.created_at ?? new Date().toISOString(),
   };
   const rows: ProformaInvoicePackingLine[] = [];
+  // Every row names the invoice's own header container (S4, AC-D2c) - a real packing
+  // list's rows agree with each other far more often than not, which is what lets the
+  // convert dialog carry the container/seal/BL over rather than leaving them blank.
+  const containerNo = invoice.container_no ?? null;
   invoice.lines.forEach((line, i) => {
     if (scenario === 1) {
       // Every line packed exactly as invoiced.
-      rows.push(packingRowFromLine(line, i + 1));
+      rows.push(packingRowFromLine(line, i + 1, { container_no: containerNo }));
       return;
     }
     // scenario 2: mixed - the first line ships short (Packed < Qty, D8 mismatch badge),
     // the rest agree, one extra dismissed row and one extra unmatched row round it out.
     if (i === 0 && line.qty) {
-      rows.push(packingRowFromLine(line, i + 1, { qty: Math.max(0, line.qty - 5) }));
+      rows.push(
+        packingRowFromLine(line, i + 1, { qty: Math.max(0, line.qty - 5), container_no: containerNo }),
+      );
     } else {
-      rows.push(packingRowFromLine(line, i + 1));
+      rows.push(packingRowFromLine(line, i + 1, { container_no: containerNo }));
     }
   });
   if (scenario === 2) {
@@ -181,6 +187,8 @@ export function mockAttachPackingList(invoice: ProformaInvoiceDetail): void {
     name: `${invoice.supplier_code ?? invoice.supplier_name ?? 'supplier'}-packing-list.xlsx`,
     uploaded_at: new Date().toISOString(),
   };
-  const rows = invoice.lines.map((line, i) => packingRowFromLine(line, i + 1));
+  const rows = invoice.lines.map((line, i) =>
+    packingRowFromLine(line, i + 1, { container_no: invoice.container_no ?? null }),
+  );
   stateByInvoice.set(invoice.id, { rows, file });
 }

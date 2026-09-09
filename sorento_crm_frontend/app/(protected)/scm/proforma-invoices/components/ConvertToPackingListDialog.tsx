@@ -13,12 +13,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useContainerSizes } from '../../hooks/useFulfilment';
 import { useProformaInvoice } from '../../hooks/useProformaInvoices';
+import { useProformaInvoicePacking } from '../../hooks/useProformaInvoicePacking';
 import { EM_DASH, fmtQty, fmtTrimmedDecimal } from '../../lib/format';
+import type { ProformaInvoicePackingLine } from '../types/packingLine.types';
 
 /**
  * How much of THIS invoice goes onto a container (AC-F10, Q9), and which container (S5,
@@ -49,9 +52,15 @@ export function ConvertToPackingListDialog({
 }) {
   const single = invoiceIds.length === 1 ? invoiceIds[0] : null;
   const { data: invoice, isLoading } = useProformaInvoice(open ? single : null);
+  const packing = useProformaInvoicePacking(open ? invoice : undefined);
+  const packingRows = useMemo(() => packing.data?.rows ?? [], [packing.data]);
   const [quantities, setQuantities] = useState<Record<string, string>>({});
   const containerSizes = useContainerSizes();
   const [containerSizeId, setContainerSizeId] = useState<string | null>(null);
+  // A packing row placed whole or not at all (S4, AC-D2b) - every MATCHED row starts
+  // checked (placed), the same default the plan rules for "default all unplaced" rows on
+  // a PI nothing has convertED yet.
+  const [placedRowIds, setPlacedRowIds] = useState<Set<string>>(new Set());
 
   // Re-read on every open: a remainder typed last time describes an invoice that has since
   // moved, and a stale figure here places the wrong quantity silently. The size resets to
@@ -62,6 +71,35 @@ export function ConvertToPackingListDialog({
     setQuantities({});
     setContainerSizeId(null);
   }, [open]);
+
+  // Rows default to placed the moment they arrive - a checkbox nobody has touched yet
+  // reads as "everything goes", which is the plan's own default.
+  useEffect(() => {
+    if (!open) return;
+    setPlacedRowIds(new Set(packingRows.filter((r) => r.match_state === 'matched').map((r) => r.id)));
+  }, [open, packingRows]);
+
+  /** Every MATCHED packing row for one invoice line - the rows a whole-row checkbox set
+   *  offers for it, in place of a quantity input (AC-D2b: a line WITH rows places them
+   *  whole, never part of one). */
+  const rowsForLine = (lineId: string): ProformaInvoicePackingLine[] =>
+    packingRows.filter((r) => r.proforma_invoice_line_id === lineId && r.match_state === 'matched');
+
+  /** Container / seal / BL carried onto the draft (AC-D2c) - agreeing rows prefill it,
+   *  disagreeing ones leave it blank and name the conflict. Phase 1 mock: packing rows
+   *  carry a container number only (no seal on the row shape, AC-B1); BL comes off the
+   *  invoice's own header field, which every row of one PI necessarily shares. */
+  const headerCarryOver = useMemo(() => {
+    const containers = new Set(
+      packingRows.filter((r) => r.match_state === 'matched' && r.container_no).map((r) => r.container_no),
+    );
+    const container = containers.size === 1 ? [...containers][0] : null;
+    return {
+      container,
+      conflict: containers.size > 1,
+      bl: invoice?.bl_no ?? null,
+    };
+  }, [packingRows, invoice?.bl_no]);
 
   const defaultSize = useMemo(
     () => (containerSizes.data ?? []).find((s) => s.is_default) ?? null,
@@ -163,6 +201,23 @@ export function ConvertToPackingListDialog({
 
           {single && invoice ? (
             <div className="space-y-2">
+              {/* Header carry-over (S4, AC-D2c) - shown whether or not there is anything
+                  to place, since it is a fact about the packing rows, not the selection. */}
+              {packingRows.length > 0 ? (
+                <div className="rounded-lg border border-dashed p-2.5 text-2xs">
+                  <p className="font-medium text-foreground">Carried onto the draft</p>
+                  {headerCarryOver.conflict ? (
+                    <p className="text-muted-foreground">
+                      Container - the packing rows name more than one; left blank.
+                    </p>
+                  ) : (
+                    <p className="text-muted-foreground">
+                      Container {headerCarryOver.container ?? EM_DASH}
+                      {headerCarryOver.bl ? ` · BL ${headerCarryOver.bl}` : ''}
+                    </p>
+                  )}
+                </div>
+              ) : null}
               {placeable.length === 0 ? (
                 <Alert>
                   <AlertDescription>
@@ -173,40 +228,72 @@ export function ConvertToPackingListDialog({
                 </Alert>
               ) : (
                 <div className="divide-y divide-border rounded-lg border">
-                  {placeable.map((line) => (
-                    <div
-                      key={line.id}
-                      className="flex flex-col gap-2 p-2.5 sm:flex-row sm:items-center sm:justify-between"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-xs font-medium" title={line.item_code}>
-                          {line.item_code}
-                        </p>
-                        <p className="text-2xs text-muted-foreground">
-                          {fmtQty(line.qty)} on the invoice
-                          {line.placed_qty > 0
-                            ? `, ${fmtQty(line.placed_qty)} already placed`
-                            : ''}
-                        </p>
+                  {placeable.map((line) => {
+                    const rows = rowsForLine(line.id);
+                    return (
+                    <div key={line.id} className="flex flex-col gap-2 p-2.5">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-medium" title={line.item_code}>
+                            {line.item_code}
+                          </p>
+                          <p className="text-2xs text-muted-foreground">
+                            {fmtQty(line.qty)} on the invoice
+                            {line.placed_qty > 0
+                              ? `, ${fmtQty(line.placed_qty)} already placed`
+                              : ''}
+                          </p>
+                        </div>
+                        {rows.length === 0 ? (
+                          <div className="flex shrink-0 items-center gap-2">
+                            <Input
+                              type="number"
+                              min={0}
+                              max={line.remaining_qty}
+                              value={quantities[line.id] ?? String(line.remaining_qty)}
+                              onChange={(e) =>
+                                setQuantities((prev) => ({ ...prev, [line.id]: e.target.value }))
+                              }
+                              className="h-8 w-24 text-right tabular-nums"
+                              aria-label={`Quantity to place for ${line.item_code}`}
+                            />
+                            <span className="text-2xs text-muted-foreground">
+                              of {fmtQty(line.remaining_qty)} left
+                            </span>
+                          </div>
+                        ) : null}
                       </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <Input
-                          type="number"
-                          min={0}
-                          max={line.remaining_qty}
-                          value={quantities[line.id] ?? String(line.remaining_qty)}
-                          onChange={(e) =>
-                            setQuantities((prev) => ({ ...prev, [line.id]: e.target.value }))
-                          }
-                          className="h-8 w-24 text-right tabular-nums"
-                          aria-label={`Quantity to place for ${line.item_code}`}
-                        />
-                        <span className="text-2xs text-muted-foreground">
-                          of {fmtQty(line.remaining_qty)} left
-                        </span>
-                      </div>
+                      {/* Placed whole or not at all (AC-D2b) - a packing row is a
+                          checkbox, never a quantity: the supplier packed this many
+                          cartons of it and there is no "part of a carton". */}
+                      {rows.length > 0 ? (
+                        <ul className="space-y-1 ps-1">
+                          {rows.map((row) => (
+                            <li key={row.id} className="flex items-center gap-2 text-2xs">
+                              <Checkbox
+                                id={`packing-row-${row.id}`}
+                                checked={placedRowIds.has(row.id)}
+                                onCheckedChange={(checked) =>
+                                  setPlacedRowIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (checked) next.add(row.id);
+                                    else next.delete(row.id);
+                                    return next;
+                                  })
+                                }
+                              />
+                              <Label htmlFor={`packing-row-${row.id}`} className="cursor-pointer font-normal">
+                                Row {row.row_no} - {fmtQty(row.qty)}
+                                {row.cartons != null ? ` · ${fmtQty(row.cartons)} ctn` : ''}
+                                {row.cbm_total != null ? ` · ${fmtTrimmedDecimal(row.cbm_total, 3)} cbm` : ''}
+                              </Label>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
               {alreadyPlaced.length > 0 ? (
