@@ -26,6 +26,8 @@ from app.services import translation_service
 from app.services.error_handler import AppException
 from app.services.import_alias_service import AliasResolver
 from app.services.scm import packing_list_service, proforma_invoice_service
+from app.services.scm import proforma_invoice_packing_service as packing_service
+from app.services.scm.proforma_invoice_packing_service import resolve_attach_pi
 from app.services.scm.outstanding_reader import every_sheet_rows, sheet_rows
 from app.services.scm.packing_list_reader import DOC_TYPE as PL_DOC_TYPE
 from app.services.scm.packing_list_reader import PackingReadResult
@@ -469,8 +471,9 @@ def apply(
     actor_id: Optional[str] = None,
     actor_name: Optional[str] = None,
     translations: Optional[list[dict[str, Any]]] = None,
+    attach_to: Optional[str] = None,
 ) -> dict[str, Any]:
-    """Proforma invoices first, then packing lists, then price links (R12).
+    """Proforma invoices first, then packing lists (S2), then price links (R12).
 
     `files` is `[(filename, data, content_type)]`. Refuses the WHOLE upload when any file is
     unclassifiable, named, rather than silently applying the others and leaving the operator
@@ -480,6 +483,11 @@ def apply(
     cells - written as MANUAL rows FIRST, before `packing_list_service.apply` runs its
     own translate-and-compose pass, so an edit made in the preview is what a remark or
     a note is stored with, never the AI's unedited guess.
+
+    `attach_to` (AC-B5/B13) is the dialog's own explicit pick - ONE invoice id for the
+    whole upload, not per file: the two contexts that state one are "Attach packing list"
+    from a PI's own empty Packing tab (AC-B10, locked to that PI) and an operator resolving
+    a `proforma_invoice_required` refusal by hand, and neither ever names two.
     """
     assert_supplier(db, supplier_id)
     if translations:
@@ -500,10 +508,16 @@ def apply(
     proforma_invoice_ids: list[str] = []
     shipment_ids: list[str] = []
     attachment_ids: list[str] = []
+    packing_rows_written = 0
     # A COMBINED file is one upload, so it is filed in Drive ONCE - by name, so the packing
     # list loop below can bind the shipment it creates to the SAME attachment rather than
     # filing the same bytes a second time under a second type (S7, review round 1).
     filed_attachment_by_name: dict[str, str] = {}
+    # A combined file's PI documents and PL blocks come from the SAME sheet, in the same
+    # order (S2) - the invoice ids THIS call just minted for a given file name, so the
+    # packing loop below attaches that file's blocks to them directly rather than running
+    # AC-B5's resolution against a file that already says which invoice it is.
+    invoice_ids_by_name: dict[str, list[str]] = {}
 
     for name, data, ctype, kind in kinds:
         if kind not in ("proforma_invoice", "combined"):
@@ -512,7 +526,9 @@ def apply(
             db, data, supplier_id=supplier_id, currency=currency, source_ref=name,
             actor=actor_name,
         )
-        proforma_invoice_ids += [r["invoice_id"] for r in result.get("results", [])]
+        invoice_ids = [r["invoice_id"] for r in result.get("results", [])]
+        proforma_invoice_ids += invoice_ids
+        invoice_ids_by_name[name] = invoice_ids
         attachment_id = packing_list_service.file_supplier_document(
             db, data=data, filename=name, content_type=ctype, actor_id=actor_id,
             type_code=_PROFORMA_TYPE_CODE, type_name=_PROFORMA_TYPE_NAME,
@@ -521,15 +537,33 @@ def apply(
             attachment_ids.append(attachment_id)
             filed_attachment_by_name[name] = attachment_id
 
-    # AC-C1 (S3): a packing-list (or combined) file never creates an `inbound_shipments`
-    # row any more - `packing_list_service.apply` and the R14 price-link write
-    # (`_match_prices`, deleted) are gone from this path entirely. S2 replaces this loop
-    # with `replace_packing_rows`, writing the file's rows onto the PI it resolves to
-    # instead of a shipment; a packing list is born by convert or by hand (S3, AC-C2).
+    # S2: a packing-list (or combined) file never creates an `inbound_shipments` row any
+    # more (AC-C1, S3) - its rows are written onto the PI they price instead
+    # (`replace_packing_rows`); a packing list (the receivable object) is born by convert
+    # or by hand (S3, AC-C2).
+    pl_resolver = AliasResolver.for_doc_type(db, PL_DOC_TYPE)
+    for name, data, ctype, kind in kinds:
+        if kind not in ("packing_list", "combined"):
+            continue
+        pl_result = read_packing_list(data, pl_resolver)
+        if not pl_result.ok:
+            continue
+        combined_invoice_ids = invoice_ids_by_name.get(name, [])
+        for i, block in enumerate(pl_result.blocks):
+            if kind == "combined" and i < len(combined_invoice_ids):
+                invoice = proforma_invoice_service.get_or_404(db, combined_invoice_ids[i])
+            else:
+                invoice = resolve_attach_pi(
+                    db, block, supplier_id=supplier_id, attach_to=attach_to,
+                )
+            packing_rows_written += packing_service.replace_packing_rows(
+                db, invoice, block.lines, supplier_id=supplier_id, actor=actor_name,
+            )
 
     return {
         "proforma_invoice_ids": sorted(set(proforma_invoice_ids)),
         "shipment_ids": sorted(set(shipment_ids)),
         "links_written": 0,
+        "packing_rows_written": packing_rows_written,
         "attachment_ids": sorted(set(attachment_ids)),
     }

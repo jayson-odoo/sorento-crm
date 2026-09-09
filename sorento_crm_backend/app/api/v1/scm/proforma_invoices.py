@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission
 from app.services.error_handler import AppException
-from app.services.scm import proforma_invoice_service
+from app.services.scm import proforma_invoice_packing_service, proforma_invoice_service
 from app.services.scm.upload_intake import read_upload
 from app.utils.http import content_disposition
 
@@ -454,6 +454,41 @@ def get_proforma_invoice(
     db: Session = Depends(get_db),
 ):
     """The header with every line it carries, priced as the supplier stated them."""
+    return proforma_invoice_service.serialize(
+        db, proforma_invoice_service.get_or_404(db, invoice_id)
+    )
+
+
+@router.post("/proforma-invoices/{invoice_id}/packing-lines/{row_id}/dismiss")
+def dismiss_packing_line(
+    invoice_id: str,
+    row_id: str,
+    current_user: dict = Depends(_UPLOAD),
+    db: Session = Depends(get_db),
+):
+    """"That is not one of ours" (AC-B6/B7) - the same ruling a Dismiss anywhere in this
+    channel makes, so a later upload lands this code dismissed without asking again."""
+    proforma_invoice_packing_service.dismiss_packing_line(
+        db, invoice_id, row_id, actor=_actor(current_user)
+    )
+    db.commit()
+    return proforma_invoice_service.serialize(
+        db, proforma_invoice_service.get_or_404(db, invoice_id)
+    )
+
+
+@router.delete("/proforma-invoices/{invoice_id}/packing-lines/{row_id}/dismiss")
+def undo_dismiss_packing_line(
+    invoice_id: str,
+    row_id: str,
+    current_user: dict = Depends(_UPLOAD),
+    db: Session = Depends(get_db),
+):
+    """The pending window's Undo (AC-B7)."""
+    proforma_invoice_packing_service.undo_dismiss_packing_line(
+        db, invoice_id, row_id, actor=_actor(current_user)
+    )
+    db.commit()
     return proforma_invoice_service.serialize(
         db, proforma_invoice_service.get_or_404(db, invoice_id)
     )

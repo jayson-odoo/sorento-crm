@@ -82,9 +82,15 @@ export function useProformaInvoices(
   });
 }
 
+/** Exported so a mutation elsewhere (the packing tab's dismiss/undo, S2) can invalidate
+ *  THIS exact detail without importing the whole hook. */
+export function proformaInvoiceDetailQueryKey(id: string | null) {
+  return [...KEY, 'detail', id] as const;
+}
+
 export function useProformaInvoice(id: string | null) {
   return useQuery({
-    queryKey: [...KEY, 'detail', id],
+    queryKey: proformaInvoiceDetailQueryKey(id),
     queryFn: () => getProformaInvoice(id as string),
     enabled: !!id,
   });

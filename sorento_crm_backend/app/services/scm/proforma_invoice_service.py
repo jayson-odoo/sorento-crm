@@ -35,6 +35,7 @@ from app.models.scm import (
     ContainerSize,
     ProformaInvoice,
     ProformaInvoiceLine,
+    ProformaInvoicePackingLine,
     ProformaInvoiceShipmentLink,
     SupplierProductCodeAlias,
 )
@@ -3089,6 +3090,55 @@ def serialize(
         }
         for ln in lines
     ]
+
+    # S2 (AC-B9/B11): the supplier's own packing rows, read off the SAME detail payload -
+    # the FE derives the Packed column and the tab's own roll-up from this array itself
+    # (`packedQtyForLine`/`rollupForLine`), never a second GET.
+    packing_rows = (
+        db.query(ProformaInvoicePackingLine)
+        .filter(ProformaInvoicePackingLine.proforma_invoice_id == invoice.id)
+        .order_by(ProformaInvoicePackingLine.row_no)
+        .all()
+    )
+    out["packing_lines"] = [
+        {
+            "id": str(r.id),
+            "proforma_invoice_line_id": (
+                str(r.proforma_invoice_line_id) if r.proforma_invoice_line_id else None
+            ),
+            "row_no": r.row_no,
+            "item_code": r.item_code,
+            "supplier_code": r.supplier_code,
+            "description": r.description,
+            "product_id": str(r.product_id) if r.product_id else None,
+            "product_set_id": str(r.product_set_id) if r.product_set_id else None,
+            "qty": _f(r.qty),
+            "cartons": _f(r.cartons),
+            "pcs_per_carton": _f(r.pcs_per_carton),
+            "carton_length_cm": _f(r.carton_length_cm),
+            "carton_width_cm": _f(r.carton_width_cm),
+            "carton_height_cm": _f(r.carton_height_cm),
+            "cbm_per_carton": _f(r.cbm_per_carton),
+            "cbm_total": _f(r.cbm_total),
+            "net_weight": _f(r.net_weight),
+            "gross_weight": _f(r.gross_weight),
+            "total_net_weight": _f(r.total_net_weight),
+            "total_gross_weight": _f(r.total_gross_weight),
+            "material": r.material,
+            "container_no": r.container_no,
+            "remark": r.remark,
+            "match_state": r.match_state,
+            # AC-B6's own name for "resolved a product no line of this PI holds, or none at
+            # all" - never stored, since `match_state` already says all a re-upload needs to
+            # know; computed here only because the FE's own row reads it.
+            "unmatched_reason": "not_on_invoice" if r.match_state == "unmatched" else None,
+        }
+        for r in packing_rows
+    ]
+    # AC-B14 ("Source files"): not yet wired to the generic attachment linkage - always
+    # `None` until a later slice files the packing-list upload against this PI's own id
+    # rather than only into Drive.
+    out["packing_file"] = None
     return out
 
 

@@ -1667,6 +1667,14 @@ class ProformaInvoice(Base, CompanyScopedMixin):
         "ProformaInvoiceLine", back_populates="invoice", cascade="all, delete-orphan",
         order_by="ProformaInvoiceLine.line_no",
     )
+    #: The supplier's own packing rows (S2, AC-B1) - the same file, or a later one attached
+    #: to this PI (AC-B5), read verbatim rather than folded into `lines`: the grains differ
+    #: (Kailu writes 12 packing rows against 11 priced lines) and a packing-list-alone file
+    #: has no PI lines of its own to become at all.
+    packing_lines = relationship(
+        "ProformaInvoicePackingLine", back_populates="invoice", cascade="all, delete-orphan",
+        order_by="ProformaInvoicePackingLine.row_no",
+    )
 
     __table_args__ = (
         Index("ix_scm_proforma_invoice_supplier", "supplier_id"),
@@ -1788,6 +1796,101 @@ class ProformaInvoiceLine(Base, CompanyScopedMixin):
         Index("ix_scm_proforma_invoice_line_invoice", "invoice_id"),
         Index("ix_scm_proforma_invoice_line_po_ref", "po_ref"),
         Index("ix_scm_proforma_invoice_line_set", "product_set_id"),
+        {"schema": "scm"},
+    )
+
+
+class ProformaInvoicePackingLine(Base, CompanyScopedMixin):
+    """One row of the supplier's OWN packing list, verbatim (S2, AC-B1).
+
+    A packing list and its proforma invoice count differently - Kailu's 11 priced lines
+    become 12 packing rows because SRTSC14-GM ships in two cartons of different sizes, and
+    Jiexia's lid row is a packing row with no invoice line at all (it prices nothing). So
+    this is its OWN table, never folded into `ProformaInvoiceLine`, and matched onto a line
+    (`proforma_invoice_line_id`, nullable) by resolved PRODUCT rather than merged with it
+    (AC-B6): a row whose product is on no line of this PI stays unmatched, and a row whose
+    code the operator has dismissed (spares, a customs sample) lands `dismissed` without a
+    line to point at either.
+
+    `net_weight`/`gross_weight` are PER CARTON, as Kailu's own `NW`/`GW` columns state them
+    - `total_net_weight`/`total_gross_weight` are the row's own totals (`TOTAL KGS` /
+    `总毛重`), read from the file rather than re-derived, so a rounding difference on the
+    paper is what the roll-up onto the invoice line reads too (AC-B8).
+    """
+    __tablename__ = "proforma_invoice_packing_line"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    proforma_invoice_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.proforma_invoice.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    #: The matched invoice line, when this row resolved a product ALSO on the invoice
+    #: (AC-B6). NULL on an unmatched or dismissed row - there is no line to point at.
+    proforma_invoice_line_id = Column(
+        UUID(as_uuid=False), ForeignKey("scm.proforma_invoice_line.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    #: Assigned by this row's own position in the file, never read off a printed `No.`
+    #: column - that number numbers the paper, not the goods (S1's own convention for
+    #: `pi_number`, applied here to the same trap).
+    row_no = Column(Integer, nullable=False)
+
+    item_code = Column(String(100), nullable=False)
+    #: The factory's OWN model number (`洁厦型号` / `JIEXIA MODEL`), distinct from
+    #: `item_code` (`客户型号` - OUR catalogue code), same distinction `ProformaInvoiceLine`
+    #: does not carry because no PI fixture states both on one line the way a packing list
+    #: does.
+    supplier_code = Column(String(100), nullable=True)
+    description = Column(Text, nullable=True)
+
+    product_id = Column(
+        UUID(as_uuid=False), ForeignKey("products.id", ondelete="SET NULL"), nullable=True
+    )
+    product_set_id = Column(
+        UUID(as_uuid=False), ForeignKey("product_sets.id", ondelete="SET NULL"), nullable=True
+    )
+
+    qty = Column(Numeric, nullable=False)
+    cartons = Column(Numeric, nullable=True)
+    pcs_per_carton = Column(Numeric(15, 4), nullable=True)
+    carton_length_cm = Column(Numeric(10, 2), nullable=True)
+    carton_width_cm = Column(Numeric(10, 2), nullable=True)
+    carton_height_cm = Column(Numeric(10, 2), nullable=True)
+    cbm_per_carton = Column(Numeric(12, 6), nullable=True)
+    cbm_total = Column(Numeric(12, 6), nullable=True)
+    #: PER CARTON - see the class docstring.
+    net_weight = Column(Numeric(15, 4), nullable=True)
+    gross_weight = Column(Numeric(15, 4), nullable=True)
+    total_net_weight = Column(Numeric(15, 4), nullable=True)
+    total_gross_weight = Column(Numeric(15, 4), nullable=True)
+
+    material = Column(String(255), nullable=True)
+    #: The container this row's block named, when the file states one - a packing list
+    #: alone can cover more than one container (Jiexia's pair), and a row needs to say
+    #: which one it is on the same terms `PackingBlock.container_no` already does.
+    container_no = Column(String(100), nullable=True)
+    remark = Column(Text, nullable=True)
+
+    #: `matched` (resolved a product also on an invoice line), `unmatched` (resolved a
+    #: product, or none, that no line of this PI holds - AC-B6's `not_on_invoice`), or
+    #: `dismissed` (the code is a dismissed alias - AC-B6/B7). Never asked about twice: a
+    #: dismissed code lands here on every later apply without prompting again.
+    match_state = Column(String(20), nullable=False, server_default=text("'unmatched'"))
+
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    invoice = relationship("ProformaInvoice", back_populates="packing_lines")
+
+    __table_args__ = (
+        Index("ix_scm_pi_packing_line_invoice", "proforma_invoice_id"),
+        Index("ix_scm_pi_packing_line_line", "proforma_invoice_line_id"),
+        CheckConstraint(
+            "match_state IN ('matched', 'unmatched', 'dismissed')",
+            name="ck_scm_pi_packing_line_match_state",
+        ),
         {"schema": "scm"},
     )
 

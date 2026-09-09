@@ -34,6 +34,8 @@
  * `refusal` (AC-B5/B13) are documented in `fulfilmentService.ts`, not here.
  * ============================================================================
  */
+import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 import {
   getMockPackingState,
   mockAttachPackingList,
@@ -49,8 +51,10 @@ import type {
 
 export type { ProformaInvoicePackingFile, ProformaInvoicePackingLine };
 
-/** Phase-1 flag - true = deterministic mock store, false = live backend. */
-export const USE_PACKING_LINE_MOCKS = true;
+/** Phase-1 flag - true = deterministic mock store, false = live backend. Flipped for S2:
+ *  the backend now writes `packing_lines`/`packing_file` onto the SAME invoice detail
+ *  payload `useProformaInvoice` already fetches, and dismiss/undo are real writes. */
+export const USE_PACKING_LINE_MOCKS = false;
 
 export interface ProformaInvoicePackingState {
   rows: ProformaInvoicePackingLine[];
@@ -68,20 +72,36 @@ export function getProformaInvoicePacking(invoice: ProformaInvoiceDetail): Profo
   return { rows: withPacking.packing_lines ?? [], file: withPacking.packing_file ?? null };
 }
 
-export function dismissPackingLine(invoiceId: string, rowId: string): void {
+export async function dismissPackingLine(
+  invoiceId: string,
+  rowId: string,
+): Promise<ProformaInvoiceDetail | void> {
   if (USE_PACKING_LINE_MOCKS) {
     mockSetMatchState(invoiceId, rowId, 'dismissed');
     return;
   }
-  // Phase 2: POST .../packing-lines/{row_id}/dismiss
+  const res = await apiFetch(
+    `/api/v1/scm/proforma-invoices/${invoiceId}/packing-lines/${rowId}/dismiss`,
+    { method: 'POST' },
+  );
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to dismiss this row'));
+  return (await res.json()) as ProformaInvoiceDetail;
 }
 
-export function undoDismissPackingLine(invoiceId: string, rowId: string): void {
+export async function undoDismissPackingLine(
+  invoiceId: string,
+  rowId: string,
+): Promise<ProformaInvoiceDetail | void> {
   if (USE_PACKING_LINE_MOCKS) {
     mockSetMatchState(invoiceId, rowId, 'unmatched');
     return;
   }
-  // Phase 2: DELETE .../packing-lines/{row_id}/dismiss
+  const res = await apiFetch(
+    `/api/v1/scm/proforma-invoices/${invoiceId}/packing-lines/${rowId}/dismiss`,
+    { method: 'DELETE' },
+  );
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to undo the dismissal'));
+  return (await res.json()) as ProformaInvoiceDetail;
 }
 
 /** `MatchToProductDialog`'s `onMatched` (AC-B12) - the real write is
