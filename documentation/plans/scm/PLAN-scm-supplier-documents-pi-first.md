@@ -342,3 +342,28 @@ the two packing test files seed migration 501's `Date` alias. Item 11 was alread
     (`proforma_invoice` and `packing_list`); the preview reports, per unmapped header, the doc
     types it is unmapped in, and the dialog posts one create per doc type (409 on one of them is
     not an error for the chip). After that the re-run Test shows the header mapped.
+
+## Phase 3 round 3 (captain feedback on :3084, 10 Sep)
+
+25. **Convert dialog is a table.** Replace the stacked cards with one DataGrid: one row per
+    placement unit (a packing row where the PI has rows, else the PI line), columns Code, Product,
+    On invoice (qty), Row, Qty, Ctns, CBM, Place (checkbox for a packing row; qty input "of N left"
+    for a bare line). Container size select above, "Carried onto the draft" as one compact line,
+    footer totals (qty, ctns, CBM). Nothing else on the dialog. Same DataGrid rules as every list.
+26. **PI detail "Packing lists" tab is a plain DataGrid** of the packing lists this PI feeds:
+    Number (link), Status pill, Container, Placed qty, Created at. No product code lists, no "Still
+    to place" block.
+27. **PI list: "Uploaded" splits into "Uploaded at" and "Uploaded by"** columns (one line per row).
+28. **Header capture carried to the packing list, both readers.** Jinbaichuan (combined):
+    `客户名` / `Customer Name` → consignee, `提单号` → SO (`forwarder_order_ref`, the 6 Sep ruling),
+    `货柜号` / `Container No` → container, `封条号` → seal. Jiexia: `客户` → consignee, per block
+    `箱号` → container, `封签号` → seal. Kailu states none. Stored on the PI header:
+    `container_ref`, `seal_ref`, `bl_ref` (holds 提单号), new `consignee_ref` (migration 506), and
+    convert carries container, seal, SO, consignee onto the draft when the selected PIs agree
+    (existing conflict rule). Aliases seeded for the Jinbaichuan labels. The packing list Details
+    tab for a Jinbaichuan convert shows Container WHSU7390118, Seal WHA4529810, SO 026G554548,
+    Consignee SORENTO SDN BHD.
+29. **Remove the Split card** from the packing list Shipment lines tab (`PackingListSplitCard`),
+    and its test.
+30. **Remove the per-company split block** (CBM + amount by company) from the consolidated packing
+    list export; the line rows and their totals stay. Update the export test and the fixture note.
