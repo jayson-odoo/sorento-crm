@@ -755,6 +755,43 @@ def book_so_numbers_by_ref(db: Session, refs: Sequence[str]) -> dict[str, str]:
     return out
 
 
+#: Passed as `book_so_by_ref` to a serializer's line-fields helper when the caller has
+#: deliberately NOT resolved the book linkage on this path - the PO list route (review of
+#: PR #764, F2/F4): a page of orders re-resolves `sales_orders` on every keystroke and no
+#: list consumer reads the result. Distinct from an EMPTY dict, which means "resolved, and
+#: none of these refs named an order held here" - the sentinel means "not computed", and
+#: every line reads `book_so_number=None`, `book_so_unresolved=None` rather than the
+#: `False` a resolved-but-empty dict would produce. `None` is a safe sentinel here because
+#: `book_so_numbers_by_ref` never returns `None` itself, only a `dict`.
+BOOK_SO_NOT_RESOLVED = None
+
+
+def book_so_fields(ref: Optional[str], by_ref: Optional[dict[str, str]]) -> dict:
+    """The three-state `book_so_number` / `book_so_unresolved` pair for ONE line's
+    `from_so_line_ref`, against a `book_so_numbers_by_ref(...)` result (or
+    `BOOK_SO_NOT_RESOLVED`).
+
+    ONE function for both surfaces that print this fact - `PurchaseOrderService.serialize`
+    and `OrderInquiryWorklistService.get_po_detail` - which had each grown their own copy
+    of this derivation (review of PR #764, F5). A drift between the two copies is exactly
+    the failure the shared `BookSoCell` component on the frontend was built to prevent, and
+    a copy-pasted backend derivation is the same risk one layer down.
+
+    Three wire values, not two:
+      * `ref` is falsy -> `(None, False)`. The book named no sales order for this line.
+      * `ref` is set and `by_ref` names it -> `(number, False)`.
+      * `ref` is set and `by_ref` does not name it -> `(None, True)` - "linked, not held".
+      * `by_ref is BOOK_SO_NOT_RESOLVED` -> `(None, None)` on every line, whatever `ref`
+        says: this path never asked the question.
+    """
+    if by_ref is BOOK_SO_NOT_RESOLVED:
+        return {"book_so_number": None, "book_so_unresolved": None}
+    if not ref:
+        return {"book_so_number": None, "book_so_unresolved": False}
+    number = by_ref.get(ref)
+    return {"book_so_number": number, "book_so_unresolved": number is None}
+
+
 def _claim_rows(db: Session, *, target_ids=None, so_line_ids=None) -> list[dict]:
     """Every RESOLVED claim naming a purchase line, as raw rows.
 

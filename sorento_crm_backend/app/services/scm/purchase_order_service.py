@@ -146,10 +146,21 @@ class PurchaseOrderService:
                   allocated_qty: float = 0.0,
                   allocations: Optional[list[dict]] = None,
                   spo_plan: Optional[dict] = None,
-                  book_so_by_ref: Optional[dict[str, str]] = None) -> dict:
+                  book_so_by_ref: Optional[dict[str, str]]) -> dict:
+        """`book_so_by_ref` is REQUIRED, with no default (review of PR #764, F2/F4). A
+        caller that forgot it used to get `book_so_unresolved=True` on every linked line -
+        the CRM reading "linked, not held" for orders it actually holds - rather than a
+        loud failure at the call site; this already bit `update()` once inside this PR.
+        Now a forgotten kwarg is a `TypeError`, immediately, at the call that forgot it.
+
+        Pass a real dict from `_book_so_for(...)` when the caller resolved the linkage
+        (`get_one`, `update`), or `order_link_service.BOOK_SO_NOT_RESOLVED` when it
+        deliberately did not (`list`, which serializes a page of orders per keystroke and
+        has no consumer reading the result - resolving it there was a full `sales_orders`
+        scan thrown away every time).
+        """
         # Warehouse is carried at the line level; surface the first line's warehouse
         # as the PO's warehouse (M1 POs are effectively single-destination).
-        book_so_by_ref = book_so_by_ref or {}
         wh_code = None
         wh_name = None
         total_qty = 0.0
@@ -227,13 +238,11 @@ class PurchaseOrderService:
                 # book named no sales order), a ref that resolves (the number), and a ref
                 # that names a sales order this CRM does not hold. The ref itself never
                 # leaves the server - it is a machine key
-                # (`PLAN-scm-book-linkage-on-document-lines.md`).
-                "book_so_number": (
-                    book_so_by_ref.get(ln.from_so_line_ref) if ln.from_so_line_ref else None
-                ),
-                "book_so_unresolved": bool(ln.from_so_line_ref) and (
-                    ln.from_so_line_ref not in book_so_by_ref
-                ),
+                # (`PLAN-scm-book-linkage-on-document-lines.md`). Derived through the ONE
+                # shared function both surfaces use, `order_link_service.book_so_fields`
+                # (review of PR #764, F5) - it also carries the FOURTH, list-only state
+                # `book_so_by_ref is BOOK_SO_NOT_RESOLVED`.
+                **order_link_service.book_so_fields(ln.from_so_line_ref, book_so_by_ref),
             })
         return {
             "id": po.id,
@@ -781,18 +790,20 @@ class PurchaseOrderService:
         # One query for the page, not one per row: the column is a sum over a child table
         # and an N+1 here is 50 statements per keystroke of the search box.
         occupied = self._allocated_by_po([str(po.id) for po in rows])
-        # One query for the whole PAGE, not one per order: the list serializes every row's
-        # lines, so resolving per order would be 50 round trips per keystroke.
-        book_so_by_ref = self._book_so_for(
-            [ln for po in rows for ln in po.lines]
-        )
         return {
             "data": [
                 self.serialize(
                     po,
                     gr_refs.get(po.id),
                     allocated_qty=occupied.get(str(po.id), 0.0),
-                    book_so_by_ref=book_so_by_ref,
+                    # NOT resolved on this path (review of PR #764, F2/F4): no list
+                    # consumer reads `book_so_number` (`PurchaseOrdersList.tsx` has no
+                    # `book_so` column; `BookSoCell` is imported only by the two document
+                    # detail screens), so resolving it here was a full `sales_orders` scan
+                    # per search keystroke, discarded. Every line reads `book_so_number`
+                    # and `book_so_unresolved` both `None` - "not computed", not "nothing
+                    # linked".
+                    book_so_by_ref=order_link_service.BOOK_SO_NOT_RESOLVED,
                 )
                 for po in rows
             ],

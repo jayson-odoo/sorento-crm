@@ -1,8 +1,14 @@
 # PLAN: the AutoCount book's linkage, visible on the document lines
 
-Status: DRAFT. Slice A REVERSED and rebuilt 9 September 2026 (owner ruling: the S/O
-columns read `purchase_order_lines.from_so_line_ref`, not `scm.order_link_claim` -
-see section 2). Slice B unchanged. Contract 2.2 merged as #762, e99dba2ba.
+Status: IN REVIEW. PR #764 open, CI green, browser verified 9 September 2026. Slice A
+REVERSED and rebuilt 9 September 2026 (owner ruling: the S/O columns read
+`purchase_order_lines.from_so_line_ref`, not `scm.order_link_claim` - see section 2).
+Slice B unchanged. Contract 2.2 merged as #762, e99dba2ba. Review round 9 September
+2026: `book_so_by_ref` made a required kwarg on `serialize()` (a forgotten default used
+to read "linked, not held" for orders the CRM holds), the PO list route no longer
+resolves the linkage at all (no list consumer read it), the three-state derivation
+moved into one shared `order_link_service.book_so_fields`, and `sales_orders.source_ref`
+gained an index the resolver was missing.
 
 Owner ask, 9 September 2026, against the running lane: "our ingest takes in
 linked SO for each PO line, and also linked PO for each SPO right, are they by

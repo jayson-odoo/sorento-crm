@@ -27,6 +27,13 @@ from sqlalchemy import event
 from app.models.base import set_company_scope
 from app.models.company import Company
 from app.services.scm import order_link_service
+from tests.scm._book_linkage_fixtures import (
+    book_ref,
+    doc_key_ref,
+    response_lines as _lines,
+    seed_po,
+    seed_sales_order,
+)
 from tests.scm.conftest import (
     SORENTO_COMPANY_ID,
     _REF_PRODUCT_CODE,
@@ -48,16 +55,19 @@ BASE = "/api/v1/project-sales"
 #: it cannot collide with the real book's own `AED_SORENTO` rows on the prod copy.
 BOOK = f"AED_{MARKER}"
 
+#: Thin, file-local wrappers over `tests.scm._book_linkage_fixtures` (review of PR #764,
+#: F8) - see that module and `test_book_linkage_po_lines.py`'s identical wrapper block.
+
 
 def _book_ref(doc_key: str, dtl_key: str) -> str:
     """AutoCount's own `"{database}:{DocKey}:{DtlKey}"`. A machine key, and the thing that
     must NEVER reach the wire on this surface either."""
-    return f"{BOOK}:{doc_key}:{dtl_key}"
+    return book_ref(BOOK, doc_key, dtl_key)
 
 
 def _doc_key(doc_key: str) -> str:
     """The `"{database}:{DocKey}"` half a `sales_orders.source_ref` carries."""
-    return f"{BOOK}:{doc_key}"
+    return doc_key_ref(BOOK, doc_key)
 
 
 def _as(scm_app, role_slug="purchasing"):
@@ -68,55 +78,18 @@ def _as(scm_app, role_slug="purchasing"):
     return app, db
 
 
-def _ref_fks(db) -> tuple[str, str]:
-    """``(product_id, warehouse_id)`` of the suite's own reference rows, under the CURRENT
-    company scope. Split out for the scoping test, which reads them as Sorento and inserts
-    as somebody else - the reference product is itself company-stamped."""
-    from app.models.inventory import Warehouse
-    from app.models.product import Product
-
-    product = db.query(Product).filter(Product.product_code == _REF_PRODUCT_CODE).one()
-    warehouse = (
-        db.query(Warehouse).filter(Warehouse.warehouse_code == _REF_WAREHOUSE_CODE).one()
-    )
-    return str(product.id), str(warehouse.id)
-
-
 def _seed_po(db, *, n_lines: int = 1, marker: str | None = None,
              refs: list[str | None] | None = None) -> tuple[str, list[str]]:
     """A purchase order this test owns, with ``n_lines`` open lines and each line's
     ``from_so_line_ref`` set positionally from ``refs``.
 
-    Identical seeding to `test_book_linkage_po_lines.py`'s own `_seed_po`, so the two
-    surfaces are asked the same question about the same shape of document.
+    Identical seeding to `test_book_linkage_po_lines.py`'s own `_seed_po` - both delegate to
+    `tests.scm._book_linkage_fixtures.seed_po` - so the two surfaces are asked the same
+    question about the same shape of document.
     """
-    from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
-
-    marker = marker or f"{MARKER}-{uuid.uuid4().hex[:8]}"
-    product_id, warehouse_id = _ref_fks(db)
-    supplier = Supplier(
-        id=str(uuid.uuid4()), supplier_code=marker[:30], supplier_name=f"{marker} supplier",
+    return seed_po(
+        db, marker=marker or f"{MARKER}-{uuid.uuid4().hex[:8]}", n_lines=n_lines, refs=refs,
     )
-    db.add(supplier)
-    db.flush()
-    po = PurchaseOrder(
-        id=str(uuid.uuid4()), po_number=marker, supplier_id=str(supplier.id),
-        status="active", issue_date=date(2026, 7, 16), expected_date=date(2026, 8, 4),
-    )
-    db.add(po)
-    db.flush()
-    line_ids = []
-    for i in range(n_lines):
-        line = PurchaseOrderLine(
-            id=str(uuid.uuid4()), purchase_order_id=str(po.id), product_id=product_id,
-            warehouse_id=warehouse_id, qty_ordered=100, qty_received=0,
-            line_status="open", expected_date=date(2026, 8, 4), source_ref=str(i + 1),
-            from_so_line_ref=(refs[i] if refs else None),
-        )
-        db.add(line)
-        db.flush()
-        line_ids.append(str(line.id))
-    return str(po.id), line_ids
 
 
 def _seed_po_distinct_lines(
@@ -173,15 +146,7 @@ def _seed_sales_order(db, *, doc_key: str, so_number: str) -> str:
     """A sales order HEADER whose ``source_ref`` is the book's ``{database}:{DocKey}``, and
     deliberately NO lines - the number belongs to the ORDER, so a held header is enough to
     name it."""
-    from app.models.order import SalesOrder
-
-    so = SalesOrder(
-        id=str(uuid.uuid4()), so_number=so_number, order_date=date(2026, 7, 1),
-        demand_class="project", source_ref=_doc_key(doc_key),
-    )
-    db.add(so)
-    db.flush()
-    return str(so.id)
+    return seed_sales_order(db, book=BOOK, doc_key=doc_key, so_number=so_number)
 
 
 def _seed_placed_row(db, marker: str, po_line_id: str, *, qty=10) -> str:
@@ -218,11 +183,6 @@ def _seed_placed_row(db, marker: str, po_line_id: str, *, qty=10) -> str:
     )
     db.flush()
     return str(row.id)
-
-
-def _lines(res) -> list[dict]:
-    assert res.status_code == 200, res.text
-    return res.json()["lines"]
 
 
 def test_line_whose_book_ref_resolves_names_the_sales_order(scm_app):

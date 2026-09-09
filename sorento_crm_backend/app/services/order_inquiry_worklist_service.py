@@ -983,13 +983,10 @@ class OrderInquiryWorklistService:
                     # `from_so_line_ref` - three states, and the ref itself never leaves
                     # the server (it is a machine key). Identical to what the SCM
                     # purchase-order detail's Lines tab serves, so one fact reads one way
-                    # on both screens.
-                    "book_so_number": (
-                        book_so_by_ref.get(from_so_line_ref) if from_so_line_ref else None
-                    ),
-                    "book_so_unresolved": bool(from_so_line_ref) and (
-                        from_so_line_ref not in book_so_by_ref
-                    ),
+                    # on both screens - through the SAME shared function
+                    # (`order_link_service.book_so_fields`, review of PR #764, F5) rather
+                    # than a second copy of the derivation.
+                    **order_link_service.book_so_fields(from_so_line_ref, book_so_by_ref),
                 }
                 for (
                     line_id,

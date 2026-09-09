@@ -699,6 +699,12 @@ class OrderInquiryPoDetailLine(BaseModel):
     book_so_number: Optional[str] = None
     #: True when the book named a sales order this CRM does not hold. Three states, not
     #: two - see `PurchaseOrderLine` in `app/schemas/scm_orders.py` for the full note.
+    #:
+    #: Stays `bool` here, unlike `PurchaseOrderLine.book_so_unresolved` (review of PR #764,
+    #: F2): `get_po_detail` is a single-document detail read with no list-mode variant, so
+    #: it always calls `book_so_numbers_by_ref` and never passes
+    #: `order_link_service.BOOK_SO_NOT_RESOLVED` - the fourth, "not computed" state that
+    #: `Optional[bool]` exists to carry on the PO route never arises on this one.
     book_so_unresolved: bool = False
 
 

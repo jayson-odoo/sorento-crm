@@ -451,6 +451,15 @@ class SalesOrder(Base, CompanyScopedMixin):
         Index("ix_sales_orders_so_number", "so_number"),
         Index("ix_sales_orders_status", "status"),
         Index("ix_sales_orders_sales_agent_id", "sales_agent_id"),
+        # `order_link_service.book_so_numbers_by_ref` filters `source_ref IN (...)` to
+        # resolve the book's own SO linkage on a purchase-order line (review of PR #764,
+        # F3) - unindexed, this was a sequential scan over the whole table on every PO
+        # detail read. Partial: `source_ref` is null on every sales order that did not
+        # arrive through the book, which is most rows on an older order book.
+        Index(
+            "ix_sales_orders_source_ref", "source_ref",
+            postgresql_where=text("source_ref IS NOT NULL"),
+        ),
     )
 
 

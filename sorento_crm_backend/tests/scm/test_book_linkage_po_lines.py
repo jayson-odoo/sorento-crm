@@ -25,7 +25,6 @@ Every Slice A acceptance criterion is named in the test that covers it. `scm_app
 from __future__ import annotations
 
 import uuid
-from datetime import date
 
 from fastapi.testclient import TestClient
 from sqlalchemy import event
@@ -33,10 +32,16 @@ from sqlalchemy import event
 from app.models.base import set_company_scope
 from app.models.company import Company
 from app.services.scm import order_link_service
+from tests.scm._book_linkage_fixtures import (
+    book_ref,
+    doc_key_ref,
+    ref_fks,
+    response_lines as _lines,
+    seed_po,
+    seed_sales_order,
+)
 from tests.scm.conftest import (
     SORENTO_COMPANY_ID,
-    _REF_PRODUCT_CODE,
-    _REF_WAREHOUSE_CODE,
     as_user,
     requires_pg,
     seed_user,
@@ -50,16 +55,21 @@ MARKER = "ZZTBOOKPO"
 #: it can never collide with the real book's own `AED_SORENTO` rows on the prod copy.
 BOOK = f"AED_{MARKER}"
 
+#: Thin, file-local wrappers over `tests.scm._book_linkage_fixtures` (review of PR #764,
+#: F8): the shared functions take `book`/`marker` explicitly rather than closing over a
+#: module constant, so this suite's rows and `test_book_linkage_oi_po_lightbox.py`'s
+#: cannot collide on the shared prod-copy database.
+
 
 def _book_ref(doc_key: str, dtl_key: str) -> str:
     """A ref exactly as the book sends it: `"{database}:{DocKey}:{DtlKey}"`. A machine key,
     and the thing that must NEVER reach the wire."""
-    return f"{BOOK}:{doc_key}:{dtl_key}"
+    return book_ref(BOOK, doc_key, dtl_key)
 
 
 def _doc_key(doc_key: str) -> str:
     """The `"{database}:{DocKey}"` half a `sales_orders.source_ref` carries."""
-    return f"{BOOK}:{doc_key}"
+    return doc_key_ref(BOOK, doc_key)
 
 
 def _as(scm_app, role_slug="purchasing"):
@@ -76,51 +86,9 @@ def _seed_po(db, *, n_lines: int = 1, marker: str | None = None,
     ``refs`` sets each line's ``from_so_line_ref`` positionally (``None`` leaves the line
     with no book linkage at all). Returns ``(po_id, [line_ids])`` in line order.
     """
-    from app.models.inventory import Warehouse
-    from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
-    from app.models.product import Product
-
-    marker = marker or f"{MARKER}-{uuid.uuid4().hex[:8]}"
-    product = db.query(Product).filter(Product.product_code == _REF_PRODUCT_CODE).one()
-    warehouse = (
-        db.query(Warehouse).filter(Warehouse.warehouse_code == _REF_WAREHOUSE_CODE).one()
+    return seed_po(
+        db, marker=marker or f"{MARKER}-{uuid.uuid4().hex[:8]}", n_lines=n_lines, refs=refs,
     )
-    supplier = Supplier(
-        id=str(uuid.uuid4()), supplier_code=marker[:30], supplier_name=f"{marker} supplier",
-    )
-    db.add(supplier)
-    db.flush()
-    po = PurchaseOrder(
-        id=str(uuid.uuid4()), po_number=marker, supplier_id=str(supplier.id),
-        status="active", issue_date=date(2026, 7, 16), expected_date=date(2026, 8, 4),
-    )
-    db.add(po)
-    db.flush()
-    line_ids = []
-    for i in range(n_lines):
-        line = PurchaseOrderLine(
-            id=str(uuid.uuid4()), purchase_order_id=str(po.id), product_id=str(product.id),
-            warehouse_id=str(warehouse.id), qty_ordered=100, qty_received=0,
-            line_status="open", expected_date=date(2026, 8, 4), source_ref=str(i + 1),
-            from_so_line_ref=(refs[i] if refs else None),
-        )
-        db.add(line)
-        db.flush()
-        line_ids.append(str(line.id))
-    return str(po.id), line_ids
-
-
-def _ref_fks(db) -> tuple[str, str]:
-    """``(product_id, warehouse_id)`` of the suite's own reference rows, for the PURCHASE
-    lines. The sales-order side needs neither, which is the point of the new join."""
-    from app.models.inventory import Warehouse
-    from app.models.product import Product
-
-    product = db.query(Product).filter(Product.product_code == _REF_PRODUCT_CODE).one()
-    warehouse = (
-        db.query(Warehouse).filter(Warehouse.warehouse_code == _REF_WAREHOUSE_CODE).one()
-    )
-    return str(product.id), str(warehouse.id)
 
 
 def _seed_sales_order(db, *, doc_key: str, so_number: str) -> str:
@@ -132,15 +100,7 @@ def _seed_sales_order(db, *, doc_key: str, so_number: str) -> str:
     it. Seeded in full rather than borrowed off an existing row - CI's database has no
     data, and a `LIMIT 1` off `sales_orders` would pick up whatever the last suite left.
     """
-    from app.models.order import SalesOrder
-
-    so = SalesOrder(
-        id=str(uuid.uuid4()), so_number=so_number, order_date=date(2026, 7, 1),
-        demand_class="project", source_ref=_doc_key(doc_key),
-    )
-    db.add(so)
-    db.flush()
-    return str(so.id)
+    return seed_sales_order(db, book=BOOK, doc_key=doc_key, so_number=so_number)
 
 
 def _seed_sales_order_line(db, *, sales_order_id: str) -> str:
@@ -148,7 +108,7 @@ def _seed_sales_order_line(db, *, sales_order_id: str) -> str:
     no difference either way."""
     from app.models.order import SalesOrderLine
 
-    product_id, warehouse_id = _ref_fks(db)
+    product_id, warehouse_id = ref_fks(db)
     line = SalesOrderLine(
         id=str(uuid.uuid4()), sales_order_id=sales_order_id, product_id=product_id,
         warehouse_id=warehouse_id, qty_ordered=10, qty_delivered=0, line_status="open",
@@ -156,11 +116,6 @@ def _seed_sales_order_line(db, *, sales_order_id: str) -> str:
     db.add(line)
     db.flush()
     return str(line.id)
-
-
-def _lines(res) -> list[dict]:
-    assert res.status_code == 200, res.text
-    return res.json()["lines"]
 
 
 def test_line_whose_book_ref_resolves_prints_that_sales_order(scm_app):
@@ -508,3 +463,66 @@ def test_the_answer_is_one_sales_order_never_a_list(scm_app):
     line = _lines(res)[0]
     assert isinstance(line["book_so_number"], str)
     assert "so_links" not in line, "the claim-based list is gone, not merely unused"
+
+
+def test_serialize_without_book_so_by_ref_raises_instead_of_lying(scm_app):
+    """Review of PR #764, F2/F4. `book_so_by_ref` used to default to `{}`, so a caller
+    that forgot the kwarg got `book_so_unresolved=True` on every linked line - "linked, not
+    held" for orders the CRM actually holds - rather than a loud failure at the call site.
+    It is now a REQUIRED keyword argument with no default, so a forgotten kwarg is a
+    `TypeError`, immediately, at the call that forgot it."""
+    import pytest
+
+    from app.models.procurement import PurchaseOrder
+    from app.services.scm.purchase_order_service import PurchaseOrderService
+
+    app, db = _as(scm_app)
+    _seed_sales_order(db, doc_key="45510331", so_number=f"{MARKER}SOF2")
+    po_id, _ids = _seed_po(db, refs=[_book_ref("45510331", "45510333")])
+
+    svc = PurchaseOrderService(db)
+    po = svc._base_query().filter(PurchaseOrder.id == po_id).first()
+
+    with pytest.raises(TypeError):
+        svc.serialize(po)  # book_so_by_ref omitted
+
+
+def test_list_route_never_resolves_and_says_so_on_every_line(scm_app):
+    """Review of PR #764, F2/F4. The list route must not run the resolver at all - no list
+    consumer reads `book_so_number` - so every line reads `book_so_unresolved: null`
+    (Python `None`), the FOURTH state meaning "not computed on this path", never `false`
+    (which would claim the linkage was checked and found nothing)."""
+    app, db = _as(scm_app)
+    _seed_sales_order(db, doc_key="45510335", so_number=f"{MARKER}SOF2LIST")
+    marker = f"{MARKER}-F2LIST-{uuid.uuid4().hex[:6]}"
+    po_id, _ids = _seed_po(
+        db, marker=marker, n_lines=2, refs=[_book_ref("45510335", "45510337"), None],
+    )
+
+    with TestClient(app) as c:
+        res = c.get(
+            "/api/v1/scm/purchase-orders", params={"documents": marker, "limit": 50}
+        )
+    assert res.status_code == 200, res.text
+    rows = [row for row in res.json()["data"] if row["id"] == po_id]
+    assert rows, "the seeded order must be on the page"
+    for line in rows[0]["lines"]:
+        assert line["book_so_number"] is None
+        assert line["book_so_unresolved"] is None, (
+            "the list path must read as NOT COMPUTED, not as 'nothing linked'"
+        )
+
+
+def test_get_one_still_resolves_for_real_alongside_the_unresolving_list(scm_app):
+    """The other half of F2/F4: the list route not resolving must not regress the detail
+    route, which still must answer for real - `book_so_unresolved` is a `bool`, never the
+    list's `None`, and a real linkage still prints its number."""
+    app, db = _as(scm_app)
+    _seed_sales_order(db, doc_key="45510339", so_number=f"{MARKER}SOF2DETAIL")
+    po_id, _ids = _seed_po(db, refs=[_book_ref("45510339", "45510341")])
+
+    with TestClient(app) as c:
+        res = c.get(f"/api/v1/scm/purchase-orders/{po_id}")
+    line = _lines(res)[0]
+    assert line["book_so_number"] == f"{MARKER}SOF2DETAIL"
+    assert line["book_so_unresolved"] is False, "the detail route must resolve for real"

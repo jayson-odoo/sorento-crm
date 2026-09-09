@@ -435,11 +435,14 @@ class PurchaseOrderLine(BaseModel):
     #: machine key (`AED_SORENTO:<DocKey>:<DtlKey>`), and no machine identifier reaches the
     #: UI, the same reason `from_po_line_ref` is not printed either.
     book_so_number: Optional[str] = None
-    #: True when the line carries a `from_so_line_ref` that resolved to nothing here. The
-    #: screen needs three states, not two: no linkage at all is a dash, a resolved linkage
-    #: is the number, and a linkage naming a sales order this CRM does not hold is neither
-    #: of those and must not read as "nothing linked".
-    book_so_unresolved: bool = False
+    #: THREE wire values, not two (review of PR #764, F2). `False` - a ref is present and
+    #: resolved, or there is no ref at all. `True` - a ref is present and the CRM does not
+    #: hold the sales order it names ("linked, not held"). `None` - this response did NOT
+    #: resolve the linkage at all: the PO list route passes
+    #: `order_link_service.BOOK_SO_NOT_RESOLVED` because no list consumer reads the field
+    #: and resolving it per page would be a full `sales_orders` scan per search keystroke.
+    #: The detail/update routes (`get_one`, `update`) always resolve and never emit `None`.
+    book_so_unresolved: Optional[bool] = None
 
 
 class PurchaseOrderSpoLanding(BaseModel):
