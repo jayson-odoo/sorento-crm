@@ -96,19 +96,22 @@ def save_plan_edits(
             moq_rec_ids_by_product.setdefault(pid, []).append(str(rec.id))
             moq_value_by_product[pid] = row["moq"]
 
+    # A CLEAR (moq falsy) touches only each row's own override above and NOTHING on the
+    # link (review fix round 3 ruling, finding 3) - only a REAL figure is ever resolved
+    # and remembered.
+    moq_rec_ids_by_product = {
+        pid: rec_ids for pid, rec_ids in moq_rec_ids_by_product.items()
+        if moq_value_by_product[pid]
+    }
     if moq_rec_ids_by_product:
         co, co_params = company_sql_predicate(db, "company_id", param_prefix="pemq")
         for pid, rec_ids in moq_rec_ids_by_product.items():
-            resolved_supplier = product_supplier_service.resolve_supplier_for_moq(db, rec_ids)
+            resolved_supplier = product_supplier_service.resolve_supplier_for_moq(
+                db, rec_ids, co=co, co_params=co_params)
             if not resolved_supplier:
                 continue
-            moq = moq_value_by_product[pid]
-            if moq:
-                product_supplier_service.remember_moq(
-                    db, pid, resolved_supplier, float(moq), co=co, co_params=co_params)
-            else:
-                product_supplier_service.clear_moq(
-                    db, pid, resolved_supplier, co=co, co_params=co_params)
+            product_supplier_service.remember_moq(
+                db, pid, resolved_supplier, float(moq_value_by_product[pid]))
 
     return {"saved_rows": len(rows), "saved_products": len(products)}
 

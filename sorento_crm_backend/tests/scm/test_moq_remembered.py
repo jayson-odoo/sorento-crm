@@ -31,6 +31,7 @@ from app.models.base import set_company_scope
 from app.models.company import Company
 from app.models.scm import PlanRowDecision
 from app.services.scm import plan_edits_service as pe_svc
+from app.services.scm import reorder_engine as eng
 from app.services.scm import reorder_run_service as svc
 from tests._pg_fixture import pg_session
 from tests.scm.conftest import requires_pg
@@ -60,6 +61,28 @@ ACTOR = str(uuid.uuid4())
 def db():
     with pg_session() as s:
         yield s
+
+
+def _force_pool_netting_policy(db) -> None:
+    """A global `reorder_point` + `pool_netting=true` policy, regardless of what a REAL
+    row already says (the shared dev DB carries one from 2026-07-17 stamped
+    `policy_type='reorder_level'`) or an empty CI table says (no row at all) - a row is
+    guaranteed first (idempotent), then forced to the shape these pooled/network tests
+    need, inside the test's own rolled-back transaction only."""
+    eng.ensure_reorder_policy_defaults(db)
+    db.execute(text(
+        "UPDATE scm.reorder_policy SET policy_type = 'reorder_point', pool_netting = true "
+        "WHERE scope_type = 'global'"
+    ))
+
+
+def _seed_category_uom_bait(db) -> None:
+    """`test_m3_run.py`'s `m3_mk_product` borrows an existing product's category/uom via
+    a bare `SELECT ... LIMIT 1` - never None on the shared dev DB (never empty), but None
+    on CI's clean bootstrap DB (CLAUDE.md: never LIMIT 1 off an existing table; seed your
+    own chain). Seeds one directly so the borrow always finds something, on either DB."""
+    cat, uom = category_and_uom(db)
+    product(db, cat, uom)
 
 
 _NO_LINK = object()
@@ -291,6 +314,56 @@ def test_a_remembered_link_carries_the_products_own_company_id_never_the_db_defa
     assert str(row["company_id"]) == str(company_b.id)
 
 
+def test_remember_moq_upserts_even_when_the_existing_link_is_stamped_to_another_company(db):
+    """Finding 2: the upsert keys purely on the (product, supplier) pair - a pre-existing
+    link stamped to a DIFFERENT company must not 500 the save, and must end with ITS OWN
+    moq updated (never a duplicate row for the same pair, and never silently re-stamped
+    to whichever company happened to save last)."""
+    set_company_scope(db, None)
+    other_company = Company(
+        id=str(uuid.uuid4()), code=f"ZZTMOQR-OC-{uuid.uuid4().hex[:8]}",
+        name="ZZTMOQR other company",
+    )
+    db.add(other_company)
+    db.flush()
+
+    cat, uom = category_and_uom(db)
+    prod = product(db, cat, uom)
+    plan = run(db)
+    sup = supplier(db, "ZZTMOQR cross-company link")
+    # A pre-existing link, stamped by hand to the OTHER company - `product_suppliers`
+    # carries no FK-level enforcement against the session's own scope, so this is a
+    # legitimate (if stale) row a real tenant migration could easily leave behind.
+    link_id = str(uuid.uuid4())
+    db.execute(text(
+        "INSERT INTO product_suppliers "
+        "(id, product_id, supplier_id, standard_lead_time_days, moq, "
+        " is_primary_supplier, company_id, created_at) "
+        "VALUES (:id, :p, :s, 30, 5, false, :co, now())"
+    ), {"id": link_id, "p": prod.id, "s": sup.id, "co": str(other_company.id)})
+
+    rec = recommendation(
+        db, plan, prod, None, sup=None,
+        inputs={"moq": None, "order_multiple": None,
+                "last_purchase": {"supplier_id": str(sup.id)}},
+    )
+
+    out = pe_svc.save_plan_edits(db, plan.id, [{"rec_id": rec.id, "moq": 120}], actor=ACTOR)
+    assert out["saved_rows"] == 1, "the save must not 500 on a cross-company existing link"
+    _assert_link_moq(db, prod.id, sup.id, 120.0)
+    assert _product_supplier_link_count(db, prod.id, sup.id) == 1
+    row = db.execute(text(
+        "SELECT id, company_id FROM product_suppliers WHERE product_id = :p AND supplier_id = :s"
+    ), {"p": prod.id, "s": sup.id}).mappings().first()
+    assert str(row["id"]) == link_id, "the SAME row was updated, not a new one inserted"
+    assert str(row["company_id"]) == str(other_company.id), "company_id is untouched on UPDATE"
+
+    # Two saves in a row still hold ONE row.
+    pe_svc.save_plan_edits(db, plan.id, [{"rec_id": rec.id, "moq": 130}], actor=ACTOR)
+    _assert_link_moq(db, prod.id, sup.id, 130.0)
+    assert _product_supplier_link_count(db, prod.id, sup.id) == 1
+
+
 def test_a_grouped_products_two_members_resolve_one_link_on_the_most_recent_purchase(db):
     """AC-S13.1, finding 3: a product-grain row's MoQ edit fans out to every member
     recommendation - two locations of ONE product bought from two DIFFERENT suppliers
@@ -324,10 +397,11 @@ def test_a_grouped_products_two_members_resolve_one_link_on_the_most_recent_purc
     assert _product_supplier_link_count(db, prod.id, newer_sup.id) == 1
 
 
-def test_moq_zero_clears_the_override_and_the_remembered_link_bulk_path(db):
-    """Finding 5: 0 means "no MoQ", not a literal figure to remember - it clears the
-    row's own override AND blanks whatever the link remembered before. The link stays
-    (it is not deleted); only its `moq` goes back to NULL."""
+def test_moq_zero_clears_only_the_rows_own_override_the_link_survives_bulk_path(db):
+    """Finding 5 + review fix round 3 ruling (finding 3): 0 means "no MoQ" for the ROW,
+    not a literal figure to remember - but it never touches the remembered link. A buyer
+    who clears a row and later types a fresh number must not find the link already
+    disagrees with it."""
     cat, uom = category_and_uom(db)
     prod = product(db, cat, uom)
     plan = run(db)
@@ -344,11 +418,7 @@ def test_moq_zero_clears_the_override_and_the_remembered_link_bulk_path(db):
 
     db.refresh(rec)
     assert rec.moq_override is None, "0 clears the row's own override, not a literal 0"
-    row = db.execute(text(
-        "SELECT moq FROM product_suppliers WHERE product_id = :p AND supplier_id = :s"
-    ), {"p": prod.id, "s": sup.id}).mappings().first()
-    assert row is not None, "the link stays - a clear blanks it, it does not delete it"
-    assert row["moq"] is None
+    _assert_link_moq(db, prod.id, sup.id, 100.0)
 
 
 def test_moq_zero_never_creates_a_link_where_none_existed_single_route(db):
@@ -381,6 +451,7 @@ def test_a_full_run_freezes_the_last_purchase_supplier_code(db):
 
     from app.models.procurement import PurchaseOrder, PurchaseOrderLine
 
+    _seed_category_uom_bait(db)
     wid = m3_mk_warehouse(db, "LPC-W")
     pid = m3_mk_product(db, "LPC-P")
     sid = m3_mk_supplier(db, "LPC supplier")
@@ -434,6 +505,7 @@ def test_ac_s13_6_last_purchase_supplier_wins_price_moq_and_rounding(db):
 
     from app.models.procurement import PurchaseOrder, PurchaseOrderLine
 
+    _seed_category_uom_bait(db)
     wid = m3_mk_warehouse(db, "S136-W")
     pid = m3_mk_product(db, "S136-P")
     sup_a = m3_mk_supplier(db, "S136 primary A")
@@ -456,7 +528,7 @@ def test_ac_s13_6_last_purchase_supplier_wins_price_moq_and_rounding(db):
     db.flush()
 
     _mk_stock(db, pid, wid, 5)
-    _mk_demand(db, pid, wid, 20.0)
+    _mk_demand(db, pid, wid, 0.2)
     _mk_committed(db, pid, wid)
 
     result = svc.create_run(db, ["S136-W"], "warehouse", enqueue=False)
@@ -470,8 +542,11 @@ def test_ac_s13_6_last_purchase_supplier_wins_price_moq_and_rounding(db):
     assert str(rec["supplier_id"]) == str(sup_b), "the frozen row must name B, not A"
     assert rec["currency"] == "CNY"
     assert float(rec["unit_cost"]) == 48.0
-    assert float(rec["rounded_qty"]) % 100 == 0, "rounded to B's own MOQ, not A's (none)"
-    assert float(rec["rounded_qty"]) > 0
+    # MOQ is a FLOOR, not a multiple to round up to (`reorder_engine.round_order_qty`,
+    # review fix round 3, finding 1) - a need already above 100 would trivially satisfy
+    # "respects the MOQ" without the floor doing anything; this fixture's true need is
+    # BELOW 100, so landing on exactly 100 proves the floor actually fired.
+    assert float(rec["rounded_qty"]) == 100.0, "the floor lifted the small raw need up to the MOQ"
 
     inputs = rec["inputs"] or {}
     assert inputs.get("selection") == "last_purchase"
@@ -483,6 +558,7 @@ def test_ac_s13_6_no_last_purchase_falls_back_to_the_primary_link(db):
     """The other half of AC-S13.6: a product with no purchase history at all plans
     against the primary link exactly as before - the preference above only overrides
     when there IS a last purchase on file to prefer."""
+    _seed_category_uom_bait(db)
     wid = m3_mk_warehouse(db, "S136B-W")
     pid = m3_mk_product(db, "S136B-P")
     sup_a = m3_mk_supplier(db, "S136B primary A")
@@ -501,4 +577,129 @@ def test_ac_s13_6_no_last_purchase_falls_back_to_the_primary_link(db):
     assert rec is not None
     assert str(rec["supplier_id"]) == str(sup_a)
     assert (rec["inputs"] or {}).get("selection") != "last_purchase"
+
+
+
+def test_ac_s13_6_wins_on_a_two_warehouse_pooled_run(db):
+    """G7 / AC-S13.6, review fix round 3 finding 1: the SAME preference, on a pooled
+    run - two warehouses in one site pool, per-warehouse grain, `_emit_pool`'s own
+    supplier pick. Primary A at MYR 121.80 loses to the last-purchase supplier B (CNY
+    48, whose OWN link already remembers MOQ 100)."""
+    from datetime import date, datetime
+
+    from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+
+    _seed_category_uom_bait(db)
+    _force_pool_netting_policy(db)
+    anchor = m3_mk_warehouse(db, "S136PW-A")
+    member = m3_mk_warehouse(db, "S136PW-B", pool_warehouse_id=anchor)
+    pid = m3_mk_product(db, "S136PW-P")
+    sup_a = m3_mk_supplier(db, "S136PW primary A")
+    sup_b = m3_mk_supplier(db, "S136PW last purchase B")
+    m3_link(db, pid, sup_a, lead=30, moq=None, mult=None, cost=121.80, primary=True)
+    m3_link(db, pid, sup_b, lead=30, moq=100, mult=None, cost=None, primary=False)
+
+    po = PurchaseOrder(
+        id=str(uuid.uuid4()), po_number=f"ZZTS136PW-{uuid.uuid4().hex[:8]}",
+        supplier_id=sup_b, status="closed", issue_date=date(2026, 6, 1),
+        currency="CNY", created_at=datetime.utcnow(),
+    )
+    db.add(po)
+    db.flush()
+    db.add(PurchaseOrderLine(
+        id=str(uuid.uuid4()), purchase_order_id=po.id, product_id=pid,
+        warehouse_id=anchor, qty_ordered=10, qty_received=10, unit_cost=48.0,
+        currency="CNY", line_status="closed",
+    ))
+    db.flush()
+
+    _mk_stock(db, pid, anchor, 5)
+    _mk_demand(db, pid, anchor, 0.2)
+    _mk_committed(db, pid, anchor)
+    # B contributes NO demand/stock of its own - a genuine second pool member with
+    # nothing to add, so the pool's total need matches the single-location case this
+    # scenario otherwise mirrors (AC-S13.6's own primary test), and `round_order_qty`'s
+    # floor-at-MOQ actually has something to floor: MOQ is a MINIMUM, not a multiple to
+    # round up to (`reorder_engine.round_order_qty`), so a demand already well above 100
+    # would trivially satisfy "respects the MOQ" without proving anything.
+
+    result = svc.create_run(db, ["S136PW-A", "S136PW-B"], "warehouse", enqueue=False)
+    svc.run_reorder(result["run_id"], db=db)
+    recs = db.execute(text(
+        "SELECT inputs, currency, unit_cost, rounded_qty, supplier_id, warehouse_id "
+        "FROM scm.reorder_recommendation "
+        "WHERE run_id = :r AND product_id = :p AND rec_type = 'buy'"
+    ), {"r": result["run_id"], "p": pid}).mappings().all()
+    # ONE buy for the pool, emitted against the pool's own anchor location (`_emit_pool`
+    # never emits a second row for a member the split gave nothing to - AC-R8).
+    assert len(recs) == 1, "the pool must plan exactly one buy, not one per member"
+    rec = recs[0]
+    assert str(rec["warehouse_id"]) == anchor
+    assert str(rec["supplier_id"]) == str(sup_b)
+    assert rec["currency"] == "CNY"
+    assert float(rec["unit_cost"]) == 48.0
+    # MOQ is a FLOOR, not a multiple to round up to (`reorder_engine.round_order_qty`,
+    # review fix round 3, finding 1) - a need already above 100 would trivially satisfy
+    # "respects the MOQ" without the floor doing anything; this fixture's true need is
+    # BELOW 100, so landing on exactly 100 proves the floor actually fired.
+    assert float(rec["rounded_qty"]) == 100.0
+    inputs = rec["inputs"] or {}
+    assert inputs.get("selection") == "last_purchase"
+    assert inputs["moq"] == 100.0
+
+
+def test_ac_s13_6_wins_on_a_network_scope_run(db):
+    """G7 / AC-S13.6, review fix round 3 finding 1: the SAME preference, on a
+    NETWORK-scope run - the aggregate buy names no single location, `_plan_network`'s
+    own supplier pick. Primary A at MYR 121.80 loses to the last-purchase supplier B
+    (CNY 48, whose OWN link already remembers MOQ 100)."""
+    from datetime import date, datetime
+
+    from app.models.procurement import PurchaseOrder, PurchaseOrderLine
+
+    _seed_category_uom_bait(db)
+    wid = m3_mk_warehouse(db, "S136NW-W")
+    pid = m3_mk_product(db, "S136NW-P")
+    sup_a = m3_mk_supplier(db, "S136NW primary A")
+    sup_b = m3_mk_supplier(db, "S136NW last purchase B")
+    m3_link(db, pid, sup_a, lead=30, moq=None, mult=None, cost=121.80, primary=True)
+    m3_link(db, pid, sup_b, lead=30, moq=100, mult=None, cost=None, primary=False)
+
+    po = PurchaseOrder(
+        id=str(uuid.uuid4()), po_number=f"ZZTS136NW-{uuid.uuid4().hex[:8]}",
+        supplier_id=sup_b, status="closed", issue_date=date(2026, 6, 1),
+        currency="CNY", created_at=datetime.utcnow(),
+    )
+    db.add(po)
+    db.flush()
+    db.add(PurchaseOrderLine(
+        id=str(uuid.uuid4()), purchase_order_id=po.id, product_id=pid,
+        warehouse_id=wid, qty_ordered=10, qty_received=10, unit_cost=48.0,
+        currency="CNY", line_status="closed",
+    ))
+    db.flush()
+
+    _mk_stock(db, pid, wid, 5)
+    _mk_demand(db, pid, wid, 0.2)
+    _mk_committed(db, pid, wid)
+
+    result = svc.create_run(db, ["S136NW-W"], "network", enqueue=False)
+    svc.run_reorder(result["run_id"], db=db)
+    rec = db.execute(text(
+        "SELECT inputs, currency, unit_cost, rounded_qty, supplier_id "
+        "FROM scm.reorder_recommendation "
+        "WHERE run_id = :r AND product_id = :p AND rec_type = 'buy'"
+    ), {"r": result["run_id"], "p": pid}).mappings().first()
+    assert rec is not None, "the network row must plan a buy"
+    assert str(rec["supplier_id"]) == str(sup_b)
+    assert rec["currency"] == "CNY"
+    assert float(rec["unit_cost"]) == 48.0
+    # MOQ is a FLOOR, not a multiple to round up to (`reorder_engine.round_order_qty`,
+    # review fix round 3, finding 1) - a need already above 100 would trivially satisfy
+    # "respects the MOQ" without the floor doing anything; this fixture's true need is
+    # BELOW 100, so landing on exactly 100 proves the floor actually fired.
+    assert float(rec["rounded_qty"]) == 100.0
+    inputs = rec["inputs"] or {}
+    assert inputs.get("selection") == "last_purchase"
+    assert inputs["moq"] == 100.0
 

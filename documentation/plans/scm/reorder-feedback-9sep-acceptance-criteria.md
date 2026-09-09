@@ -253,6 +253,9 @@ label. MOQ edits land only as `set_moq_override` on the recommendation (per run)
   the row from the unsaved set, and toasts. "Skip" stays. Toolbar Save (N) still saves every
   drafted row.
 - AC-S12.2 [FE] After a row Save the Decisions tile and Confirm (N) update without a reload.
+- AC-S12.5 [FE] Row Save first commits the row's pending inputs (a value typed but not yet
+  blurred counts), then saves; with nothing drafted on the row it toasts "Nothing to save on
+  this row" and fires no request.
 - AC-S12.3 [T] vitest: clicking Save calls savePlanEdits with only that row's recs; Save (N)
   drops by one; Confirm (N) rises when the row carries a buy.
 - AC-S12.4 [E2E] Type Buy 30, Save: toast, Confirm (1), reload shows 30.
@@ -271,14 +274,22 @@ label. MOQ edits land only as `set_moq_override` on the recommendation (per run)
 - AC-S13.4 [T] pytest: plan-edits moq 100 on a rec whose last-purchase supplier has no link
   creates `product_suppliers` (product, supplier, moq 100); a second save updates in place.
 - AC-S13.5 [E2E] Set MOQ 100, Save, start a new plan, the same product shows MOQ 100 and a
-  suggested qty rounded to it.
+  Buy qty of at least 100 (MOQ is a floor, not an order multiple; `order_multiple` is the
+  multiple and stays as it is).
 - AC-S13.6 [BE] (ruling G7) The engine's chosen supplier is the last-purchase supplier when
-  one is on file (its product_suppliers link; price from the link's cost when set, else the
-  last purchase cost and currency), else the primary link, else today's cheapest candidate.
-  `inputs.supplier`, `supplier_selection`, MOQ, lead time and unit cost all come from that
-  supplier. pytest: product with primary A (MYR 121.80) and last purchase from B (CNY 48, link
-  B moq 100): the run's rec names B, currency CNY, cost 48, moq 100, rounded qty a multiple of
-  100; a product with no last purchase still picks A.
+  one is on file (its product_suppliers link; price by the existing candidate cascade, last
+  purchase first, contract cost second), else the primary link, else today's cheapest
+  candidate. `inputs.supplier`, `supplier_selection`, MOQ, lead time and unit cost all come
+  from that supplier, on EVERY pick: cell, product, pooled and network aggregate rows. pytest:
+  product with primary A (MYR 121.80) and last purchase from B (CNY 48, link B moq 100): the
+  run's rec names B, currency CNY, cost 48, moq 100, rounded qty at least 100 (a need of 30
+  rounds up to 100; a need of 622 stays 622), on a single-warehouse run, on a two-warehouse
+  pooled run and on a network-scope run; a product
+  with no last purchase still picks A.
+- AC-S13.7 [BE] A blank or 0 MOQ on a row clears the per-run `moq_override` only; the
+  product-supplier link's MOQ is master data and is never nulled or created by a clear.
+  remember_moq is one `INSERT ... ON CONFLICT (product_id, supplier_id) DO UPDATE` so a
+  legacy link stamped to another company, or two concurrent saves, cannot 500 the bulk save.
 
 ### Cross-cutting
 

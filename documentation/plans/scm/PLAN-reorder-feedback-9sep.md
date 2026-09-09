@@ -210,9 +210,11 @@ Browser round 4 measured: SRTSS8710's recommendation carries `supplier_selection
 purchase CNY 48.00) and the MOQ 100 saved by S13 sits on the KAIPING link, so the next run
 neither prefills nor rounds to it, and the cash tiles still price the line in RM off DEFAULT.
 Ruling: the engine's chosen supplier for a product = the last-purchase supplier when one is on
-file (its product_suppliers link, created by S13 when missing; price = the link's cost when set,
-else the last purchase cost and currency), else the primary link, else the cheapest candidate as
-today. MOQ, lead time and price then come from that one supplier, and the row's Supplier, Line
+file (its product_suppliers link, created by S13 when missing; price by the candidate cascade
+that already exists: the last purchase first, the link's contract cost second), else the primary
+link, else the cheapest candidate as today. Applies on every supplier pick: cell, product,
+pool and network aggregate. A blank or 0 MOQ clears the per-run override only; the link's
+MOQ is master data and is never nulled by a plan row. MOQ, lead time and price then come from that one supplier, and the row's Supplier, Line
 cost and MOQ agree with each other and with the next run. Lines whose currency has no MYR rate
 contribute nothing to the cash tiles (honest until the rate is keyed). Goldens re-pinned.
 Recorded as AC-S13.6.

@@ -227,9 +227,10 @@ def _selection_reason(chosen: dict, losers: list[dict], selection: str,
 def prefer_last_purchase_supplier(
     sel: dict, cands: list[dict], last_purchase: Optional[dict],
     rates: Optional[dict[str, Rate]] = None,
+    selection: str = DEFAULT_SUPPLIER_SELECTION,
 ) -> dict:
     """Override `select_supplier`'s own pick with the LAST PURCHASE supplier when one is
-    on file (G7 / AC-S13.6, review fix round 2, 9 Sep).
+    on file (G7 / AC-S13.6, round 2 review fix round 3, 9 Sep).
 
     > Browser round 4, 9 Sep: SRTSS8710's recommendation named the DEFAULT link at MYR
     > 121.80 - a stale scorecard-driven pick - while the row's own last purchase paid CNY
@@ -244,13 +245,14 @@ def prefer_last_purchase_supplier(
     those strategies can see, and it now wins outright rather than merely informing the
     ranking. `cands` already carries a candidate for anyone we have ever paid for this
     item, priced at what we paid (`load_supplier_candidates`'s own `last_purchase_costs`
-    fallback) - so the usual case is a plain re-pick from the existing list. The rare
-    residual (the pool/segment-attributed last purchase this call is given disagrees with
-    that simpler per-product cost map, so its supplier is not among `cands` at all) is
-    synthesised from the purchase itself, at the engine's own default lead time, with no
-    MoQ - S13's own `remember_moq` fills that in the moment the buyer saves one.
+    fallback), so the last-purchase supplier is ALWAYS among `cands` when there is a last
+    purchase at all - a no-op when it is not found is dead code that would never run
+    (review fix round 3, finding 5), so this does not invent a candidate; the engine's own
+    pick simply stands.
 
-    A no-op when there is no last purchase to prefer, or it already IS the pick.
+    A no-op when there is no last purchase to prefer, or it already IS the pick. The
+    caller reads `basis` off the RETURNED `reason`, never off `last_purchase` itself, so
+    it can tell whether this actually fired without re-deriving the same condition.
     """
     lp_supplier_id = (last_purchase or {}).get("supplier_id")
     if not lp_supplier_id or sel.get("chosen") is None:
@@ -262,29 +264,17 @@ def prefer_last_purchase_supplier(
 
     by_id = {str(c.get("supplier_id")): c for c in cands}
     preferred = by_id.get(lp_supplier_id)
-    if preferred is not None and "unit_cost_base" not in preferred:
-        preferred = price_in_base(dict(preferred), rates or {})
     if preferred is None:
-        preferred = price_in_base({
-            "supplier_id": lp_supplier_id,
-            "supplier_code": last_purchase.get("supplier_code"),
-            "supplier_name": last_purchase.get("supplier_name"),
-            "is_primary": False,
-            "unit_cost": last_purchase.get("cost"),
-            "unit_cost_source": "last_po",
-            "unit_cost_ref": last_purchase.get("ref"),
-            "unit_cost_at": last_purchase.get("at"),
-            "currency": last_purchase.get("currency"),
-            "moq": None,
-            "order_multiple": None,
-            "lead_time_days": DEFAULT_LEAD_TIME_DAYS,
-            "lead_time_source": "default",
-            "composite_score": None,
-        }, rates or {})
+        return sel
+    if "unit_cost_base" not in preferred:
+        preferred = price_in_base(dict(preferred), rates or {})
 
     # Everyone else - the demoted original pick included - becomes an alternative, in the
-    # SAME shape `select_supplier` already returns them. Deduped by id: `chosen` is always
-    # already inside `cands` in every caller today, but a synthesised fallback never is.
+    # SAME shape AND ORDER `select_supplier` already returns them (ranked by the run's own
+    # strategy, so a buyer who opens "why this one" sees the runner-up their policy would
+    # have picked, not an arbitrary list order). Deduped by id: `chosen` is always already
+    # inside `cands`, so the only thing this dedup actually guards is `chosen` appearing
+    # twice.
     seen = {lp_supplier_id}
     rest: list[dict] = []
     for s in [chosen, *cands]:
@@ -293,6 +283,7 @@ def prefer_last_purchase_supplier(
             continue
         seen.add(sid)
         rest.append(s)
+    rest.sort(key=lambda s: _supplier_sort_key(s, selection))
     alternatives = [{
         "supplier_id": s.get("supplier_id"),
         "supplier_name": s.get("supplier_name"),
@@ -305,9 +296,14 @@ def prefer_last_purchase_supplier(
         "lead_time_days": _num(s.get("lead_time_days")),
         "composite_score": _num(s.get("composite_score")),
     } for s in rest]
+    # Same shape `_selection_reason` returns (missing_rates named, not silently dropped) -
+    # a buyer comparing the popup across two rows must not see one report a gap the other
+    # is simply missing the field for.
+    missing = sorted({s.get("missing_rate_currency") for s in [preferred, *rest]
+                      if s.get("missing_rate_currency")})
     return {
         "chosen": preferred, "alternatives": alternatives, "exception": None,
-        "reason": {"basis": "last_purchase"},
+        "reason": {"basis": "last_purchase", "missing_rates": missing},
     }
 
 

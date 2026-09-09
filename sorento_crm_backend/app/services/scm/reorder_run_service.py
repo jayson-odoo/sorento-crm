@@ -1406,7 +1406,7 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
                 recs.extend(_emit_cell(run_id, r, c))
             else:
                 recs.extend(_emit_pool(db, run_id, pool_id, members, policies, cands,
-                                       wh_meta))
+                                       wh_meta, last_cost=last_cost, rates=rates))
     return recs
 
 
@@ -1583,7 +1583,8 @@ def _qty_label(value: float) -> str:
 
 def _emit_pool(db: Session, run_id: str, pool_id: str,
                members: list[tuple[dict, dict]], policies: list[dict], cands: list[dict],
-               wh_meta: dict) -> list[ReorderRecommendation]:
+               wh_meta: dict, *, last_cost: Optional[dict] = None,
+               rates: Optional[dict] = None) -> list[ReorderRecommendation]:
     """One buy decision for a multi-location pool, apportioned back to its locations.
 
     Reuses ``aggregate_network`` and ``allocate`` rather than growing a second netting
@@ -1602,11 +1603,23 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
     policy = eng.resolve_policy_for_sku(db, str(prows[0]["product_id"]), pool_id,
                                         policies) or {}
     tog = eng.policy_toggles(policy)
+    # G7 / AC-S13.6 (review fix round 3, 9 Sep): the pool's own product-wide last
+    # purchase, attributed to the POOL ITSELF (`pool_id` is a real warehouse id here,
+    # unlike the network scope below which plans no single location).
+    lp, _lp_basis = _last_purchase_for(
+        last_cost or {}, str(prows[0]["product_id"]), None, pool_warehouse_id=pool_id)
     sel = eng.select_supplier(cands, selection=tog["supplier_selection"])
+    sel = eng.prefer_last_purchase_supplier(
+        sel, cands, lp, rates=rates, selection=tog["supplier_selection"])
+    selection_used = (
+        "last_purchase" if (sel.get("reason") or {}).get("basis") == "last_purchase"
+        else tog["supplier_selection"]
+    )
     chosen = sel["chosen"]
     by_id = {c["supplier_id"]: c for c in cands}
-    alt_choices = [_supplier_choice(by_id[a["supplier_id"]]) for a in sel["alternatives"]
-                   if a["supplier_id"] in by_id]
+    alt_choices = [_supplier_choice(by_id[a["supplier_id"]]) if a["supplier_id"] in by_id
+                   else _supplier_choice(a)
+                   for a in sel["alternatives"]]
 
     lead = float(chosen["lead_time_days"]) if chosen else float(tog["lead_time_default_days"])
     moq = _fnum(chosen.get("moq")) if chosen else None
@@ -1698,7 +1711,7 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
                                  min_override=min_override, max_override=max_override,
                                  target_oup=target_oup, triggered=triggered,
                                  reason_label=reason_label, recommended=recommended,
-                                 rounded=rounded, cells=cells)
+                                 rounded=rounded, cells=cells, selection=selection_used)
     # ONE basis for the whole pool, carried identically by every row the pool emits -
     # including the rows that buy nothing. A member the split gave nothing to emits no row
     # at all, and a group that was covered or could not be sourced emits no buy at all, so
@@ -1859,8 +1872,16 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
         last_cost or {}, pid, None,
         pool_warehouse_id=_str_or_none(prows[0].get("pool_warehouse_id")))
     sel = eng.select_supplier(cands, selection=tog["supplier_selection"])
-    sel = eng.prefer_last_purchase_supplier(sel, cands, lp, rates=rates)
-    selection_used = "last_purchase" if lp and lp.get("supplier_id") else tog["supplier_selection"]
+    sel = eng.prefer_last_purchase_supplier(
+        sel, cands, lp, rates=rates, selection=tog["supplier_selection"])
+    # The RETURNED choice's own reason, never re-derived from `lp` (review fix round 3,
+    # nit): the override can decline to fire (the last-purchase supplier already IS the
+    # pick, or - dead in practice, but never assumed - is absent from `cands`), and the
+    # reason is the one place that already knows which of those actually happened.
+    selection_used = (
+        "last_purchase" if (sel.get("reason") or {}).get("basis") == "last_purchase"
+        else tog["supplier_selection"]
+    )
     chosen = sel["chosen"]
     by_id = {c["supplier_id"]: c for c in cands}
     alt_choices = [_supplier_choice(by_id[a["supplier_id"]]) if a["supplier_id"] in by_id
@@ -2043,8 +2064,16 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
         pool_warehouse_id=_str_or_none(row.get("pool_warehouse_id")))
 
     sel = eng.select_supplier(cands, selection=tog["supplier_selection"])
-    sel = eng.prefer_last_purchase_supplier(sel, cands, lp, rates=rates)
-    selection_used = "last_purchase" if lp and lp.get("supplier_id") else tog["supplier_selection"]
+    sel = eng.prefer_last_purchase_supplier(
+        sel, cands, lp, rates=rates, selection=tog["supplier_selection"])
+    # The RETURNED choice's own reason, never re-derived from `lp` (review fix round 3,
+    # nit): the override can decline to fire (the last-purchase supplier already IS the
+    # pick, or - dead in practice, but never assumed - is absent from `cands`), and the
+    # reason is the one place that already knows which of those actually happened.
+    selection_used = (
+        "last_purchase" if (sel.get("reason") or {}).get("basis") == "last_purchase"
+        else tog["supplier_selection"]
+    )
     chosen = sel["chosen"]
     by_id = {c["supplier_id"]: c for c in cands}
     alt_choices = [_supplier_choice(by_id[a["supplier_id"]]) if a["supplier_id"] in by_id
@@ -2396,11 +2425,22 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
         # --- aggregate buy on the network ---
         policy = eng.resolve_policy_for_sku(db, pid, None, policies) or {}
         tog = eng.policy_toggles(policy)
+        # G7 / AC-S13.6 (review fix round 3, 9 Sep): a network row plans no single
+        # location, so this reads the same product-wide, unattributed-first fact
+        # `_emit_product` does (segment=None, no pool to prefer).
+        lp, _lp_basis = _last_purchase_for(last_cost or {}, pid, None)
         sel = eng.select_supplier(cands, selection=tog["supplier_selection"])
+        sel = eng.prefer_last_purchase_supplier(
+            sel, cands, lp, rates=rates, selection=tog["supplier_selection"])
+        selection_used = (
+            "last_purchase" if (sel.get("reason") or {}).get("basis") == "last_purchase"
+            else tog["supplier_selection"]
+        )
         chosen = sel["chosen"]
         by_id = {c["supplier_id"]: c for c in cands}
-        alt_choices = [_supplier_choice(by_id[a["supplier_id"]]) for a in sel["alternatives"]
-                       if a["supplier_id"] in by_id]
+        alt_choices = [_supplier_choice(by_id[a["supplier_id"]]) if a["supplier_id"] in by_id
+                       else _supplier_choice(a)
+                       for a in sel["alternatives"]]
         lead = float(chosen["lead_time_days"]) if chosen else float(tog["lead_time_default_days"])
         moq = _fnum(chosen.get("moq")) if chosen else None
         order_multiple = _fnum(chosen.get("order_multiple")) if chosen else None
@@ -2467,7 +2507,7 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
                                      min_override=min_override, max_override=max_override,
                                      target_oup=target_oup, triggered=triggered,
                                      reason_label=reason_label, recommended=recommended,
-                                     rounded=rounded, cells=computed)
+                                     rounded=rounded, cells=computed, selection=selection_used)
         # The network buy names NO warehouse, so without this the product row's only
         # location evidence is one nameless entry with every shared fact null, and its
         # netted replenishment reads as the sum of member cells that individually never
@@ -3301,9 +3341,12 @@ def set_moq_override(db: Session, rec_id: str, moq: Optional[float],
     in a draft PO line keyed off the qty this would silently move out from under it.
 
     ``0`` and an empty ``moq`` are the SAME statement - "no MoQ" - not a real figure of
-    zero (review fix round 2, finding 5): both clear the row's own override AND blank
-    the remembered (product, supplier) link's `moq`, rather than remembering a literal 0
-    that would round every future buy up to nothing.
+    zero (review fix round 2, finding 5): both clear the row's own override, never
+    remembering a literal 0 that would round every future buy up to nothing. The
+    remembered (product, supplier) link is left untouched either way (review fix round 3
+    ruling, finding 3) - a clear is a statement about THIS row, not a retraction of what
+    was remembered before, so a buyer who clears a row and later types a fresh number
+    must not find the link already disagrees with it.
 
     ``remember=False`` skips this call's own resolve-and-remember step - the plan-edits
     bulk save (`plan_edits_service`) fans one product-grain row's MoQ out to every member
@@ -3353,20 +3396,16 @@ def set_moq_override(db: Session, rec_id: str, moq: Optional[float],
 
     # S13 (round 2, 9 Sep): the per-run override above is thrown away on the next run -
     # this also remembers it on the (product, supplier) link `load_supplier_candidates`
-    # reads on every future one, so a correction made once stays corrected. A clear
-    # (moq falsy) blanks the link's own moq instead (finding 5) - it never CREATES one,
-    # since a clear is a retraction, not a statement that the pair needs a link at all.
-    if remember:
-        resolved_supplier = product_supplier_service.resolve_supplier_for_moq(db, [rec_id])
+    # reads on every future one, so a correction made once stays corrected. A CLEAR
+    # (moq falsy) touches only the row's own override above and NOTHING on the link
+    # (review fix round 3 ruling, finding 3) - a buyer who clears a row and later types a
+    # fresh number must not find the link already remembers a different one from before.
+    if remember and moq_value is not None:
+        resolved_supplier = product_supplier_service.resolve_supplier_for_moq(
+            db, [rec_id], co=co, co_params=co_params)
         if resolved_supplier:
-            if moq_value is not None:
-                product_supplier_service.remember_moq(
-                    db, str(rec["product_id"]), resolved_supplier, moq_value,
-                    co=co, co_params=co_params)
-            else:
-                product_supplier_service.clear_moq(
-                    db, str(rec["product_id"]), resolved_supplier,
-                    co=co, co_params=co_params)
+            product_supplier_service.remember_moq(
+                db, str(rec["product_id"]), resolved_supplier, moq_value)
 
     # `commit=False` is the plan's bulk save (`plan_edits_service`), which owns the
     # transaction across every edited row.
