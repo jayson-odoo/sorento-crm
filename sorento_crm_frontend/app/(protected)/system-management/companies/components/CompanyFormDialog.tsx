@@ -47,6 +47,7 @@ export default function CompanyFormDialog({
       name: '',
       code: '',
       is_active: true,
+      so_feed_live: true,
       autocount_ref: '',
       logo_url: '',
     },
@@ -59,6 +60,7 @@ export default function CompanyFormDialog({
           name: company.name,
           code: company.code,
           is_active: company.is_active,
+          so_feed_live: company.so_feed_live,
           autocount_ref: company.autocount_ref ?? '',
           logo_url: company.logo_url ?? '',
         });
@@ -67,6 +69,7 @@ export default function CompanyFormDialog({
           name: '',
           code: '',
           is_active: true,
+          so_feed_live: true,
           autocount_ref: '',
           logo_url: '',
         });
@@ -80,6 +83,7 @@ export default function CompanyFormDialog({
         name: data.name,
         code: data.code,
         is_active: data.is_active,
+        so_feed_live: data.so_feed_live,
         autocount_ref: data.autocount_ref ? data.autocount_ref : null,
         logo_url: data.logo_url ? data.logo_url : null,
       };
@@ -164,6 +168,21 @@ export default function CompanyFormDialog({
                     />
                   </FormControl>
                   <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="so_feed_live"
+              render={({ field }) => (
+                <FormItem className="flex flex-row items-center justify-between rounded-lg border p-4">
+                  <div className="space-y-0.5">
+                    <FormLabel className="text-base">AutoCount sales orders connected</FormLabel>
+                  </div>
+                  <FormControl>
+                    <Switch checked={field.value} onCheckedChange={field.onChange} />
+                  </FormControl>
                 </FormItem>
               )}
             />

@@ -10,6 +10,8 @@ export interface Company {
   name: string;
   code: string;
   is_active: boolean;
+  /** AutoCount sales-order feed connected for this company. */
+  so_feed_live: boolean;
   /** AutoCount company reference (optional). */
   autocount_ref?: string | null;
   logo_url?: string | null;
@@ -23,6 +25,8 @@ export interface CompanyFormData {
   name: string;
   code: string;
   is_active: boolean;
+  /** AutoCount sales-order feed connected for this company. */
+  so_feed_live: boolean;
   autocount_ref?: string | null;
   logo_url?: string | null;
 }
