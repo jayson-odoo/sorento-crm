@@ -393,3 +393,45 @@ describe('usePlanEdits - confirmable summary reflects the draft map live', () =>
     await waitFor(() => expect(result.current.confirmable.products).toBe(1));
   });
 });
+
+/**
+ * AC-S12.1/AC-S12.3 (round 2, reorder-feedback-9sep): the row's "Use suggestion" button
+ * becomes "Save" - it persists THAT ROW alone through the plan-edits save, immediately,
+ * rather than waiting on the toolbar's Save (N). `saveRow(line)` is the hook-level half
+ * of that - the same `PlanLine` argument `setRowEdit`/`resetRow` already take, rather than
+ * a bare id; `PlanRowPanel.save.test.tsx` covers the button itself.
+ */
+describe('usePlanEdits - saveRow saves one product only (AC-S12.3)', () => {
+  it('PUTs only that product\'s rec ids, drops it from the draft map, and leaves the other product\'s draft (with its own buy) intact', async () => {
+    const lineA = line({ id: 'rA', product_id: 'pA', warehouse_id: 'w1', warehouse_code: 'BRW' });
+    const lineB = line({ id: 'rB', product_id: 'pB', warehouse_id: 'w2', warehouse_code: 'BRW-BB' });
+    const decisions: PlanDecisionMap = {};
+    const { result } = renderHook(() => usePlanEdits('run-1', [lineA, lineB], decisions), {
+      wrapper,
+    });
+
+    act(() => result.current.setRowEdit(lineA, { moq: 100 }));
+    act(() => result.current.setRowEdit(lineB, { decision: { buy: 20 } }));
+
+    await waitFor(() => expect(result.current.saveCount).toBe(2));
+    // B's own drafted buy already counts towards Confirm, live off the draft map.
+    expect(result.current.confirmable.products).toBe(1);
+
+    await act(async () => {
+      await result.current.saveRow(lineA);
+    });
+
+    expect(savePlanEdits).toHaveBeenCalledTimes(1);
+    const [runId, rows] = savePlanEdits.mock.calls[0];
+    expect(runId).toBe('run-1');
+    expect(rows.map((r: { rec_id: string }) => r.rec_id)).toEqual(['rA']);
+    expect(rows[0].moq).toBe(100);
+
+    // A is gone from the draft map - Save (N) drops by one.
+    expect(result.current.edits.rA).toBeUndefined();
+    expect(result.current.saveCount).toBe(1);
+    // B, never touched by this save, keeps its own draft and its own confirmable count.
+    expect(result.current.edits.rB).toEqual({ decision: { buy: 20 } });
+    expect(result.current.confirmable.products).toBe(1);
+  });
+});
