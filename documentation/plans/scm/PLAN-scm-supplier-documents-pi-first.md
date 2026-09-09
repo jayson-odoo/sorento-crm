@@ -327,3 +327,18 @@ stated invoice number (container-suffixed) → block container = exactly one cur
 (reversible window, same family as `supplier_code_alias.forget`); the dialog's supplier picker uses
 `fetchOptions` + paginated search while `useFulfilmentSuppliers` stays whole-list for the list filter;
 the two packing test files seed migration 501's `Date` alias. Item 11 was already true.
+
+## Phase 3 fix round 2 (captain rulings, 10 Sep, from tester round 2)
+
+22. Preview resolves a packing-list block against the invoices IN THE SAME BATCH as well as the
+    database: a sibling file (or block) classified proforma invoice for the same supplier whose
+    stated number, container or date matches yields `attach_to {how: 'same_batch', pi_number: null,
+    supplier_ref, file}` and no refusal; Confirm is enabled; apply keeps its existing order (PI files
+    first, so the same resolution lands on the flushed row). The Kailu pair uploaded together must
+    show Attaches to, not a refusal.
+23. The convert dialog sends `packing_row_ids` from its checkbox state (`placedRowIds`); an untucked
+    row is absent from the draft. Vitest asserts the payload.
+24. Map to… on a combined file writes the alias for EVERY doc type the file was read as
+    (`proforma_invoice` and `packing_list`); the preview reports, per unmapped header, the doc
+    types it is unmapped in, and the dialog posts one create per doc type (409 on one of them is
+    not an error for the chip). After that the re-run Test shows the header mapped.
