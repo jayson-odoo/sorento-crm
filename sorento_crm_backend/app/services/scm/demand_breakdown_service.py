@@ -261,9 +261,13 @@ def demand_for_recommendation(db: Session, rec_id: str,
     # live, unhorizoned total to a horizoned frozen figure - the two can never tie, so a
     # row is mislabelled "pool" and lists a sibling warehouse's lines, and even a correctly
     # scoped row's lines fail to sum to it (a live sum over dates the run itself excluded).
-    horizon = db.execute(text(
-        "SELECT plan_horizon_date FROM scm.reorder_run WHERE id = :rid"
-    ), {"rid": rec["run_id"]}).scalar()
+    horizon_row = db.execute(text(
+        "SELECT plan_horizon_date, plan_horizon_start FROM scm.reorder_run WHERE id = :rid"
+    ), {"rid": rec["run_id"]}).mappings().first() or {}
+    horizon = horizon_row.get("plan_horizon_date")
+    # S4 (PLAN-reorder-feedback-9sep.md): the start-side twin, read beside the end so this
+    # drill speaks the SAME window `inputs.committed` was frozen against on either side.
+    horizon_start = horizon_row.get("plan_horizon_start")
 
     # Unlocated demand was attributed to exactly one location per product, so it belongs to
     # this row only when THIS row is the one carrying it.
@@ -279,8 +283,12 @@ def demand_for_recommendation(db: Session, rec_id: str,
     # Same horizon rule as `demand.horizon_committed_select_sql` / `reorder_run_service`'s
     # own horizon predicates: a stated `required_date` past the cutoff is excluded, no
     # date at all is always in. A NULL `:horizon` reproduces the unhorizoned query.
-    horizon_pred = ("(CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL "
-                    "OR sol.required_date <= CAST(:horizon AS date))")
+    horizon_pred = (
+        "(CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL "
+        "OR sol.required_date <= CAST(:horizon AS date)) "
+        "AND (CAST(:horizon_start AS date) IS NULL OR sol.required_date IS NULL "
+        "OR sol.required_date >= CAST(:horizon_start AS date))"
+    )
 
     def _committed_total(candidate: list[str], include_unloc: bool) -> float:
         """What this candidate location set commits for this product, by the same filter
@@ -310,7 +318,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
                   AND {horizon_pred}
                   {("AND " + co) if co else ""}
             """),
-            {"pid": rec["product_id"], "members": candidate, "horizon": horizon, **co_params},
+            {"pid": rec["product_id"], "members": candidate, "horizon": horizon, "horizon_start": horizon_start, **co_params},
         ).scalar() or 0)
 
     members, rec_scope, pool_code = _scope_for(
@@ -403,7 +411,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
 
     limit_n = max(1, int(limit or DEFAULT_LIMIT))
     params: dict[str, Any] = {"pid": rec["product_id"], "members": members,
-                              "horizon": horizon, "channel_project_class": PROJECT_CLASS,
+                              "horizon": horizon, "horizon_start": horizon_start, "channel_project_class": PROJECT_CLASS,
                               **co_params}
     rows = db.execute(text(
         display_sql + " ORDER BY sol.required_date NULLS LAST, so.so_number LIMIT :limit"
@@ -536,10 +544,14 @@ def demand_for_recommendation(db: Session, rec_id: str,
               -- leg: off the inquiry row's own delivery date, not the book query's.
               AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
                    OR oir.delivery_date <= CAST(:horizon AS date))
+              -- S4: the start-side twin, same rule.
+              AND (CAST(:horizon_start AS date) IS NULL OR oir.delivery_date IS NULL
+                   OR oir.delivery_date >= CAST(:horizon_start AS date))
               {("AND " + co) if co else ""}
         """
         confirmed_params = {
             "pid": rec["product_id"], "members": members, "horizon": horizon,
+            "horizon_start": horizon_start,
             "active_state": ACTIVE_DECISION_STATE, "buy_verb": BUY_VERB,
             "unplaced_states": list(UNLINKED_INQUIRY_STATES), **co_params,
         }
@@ -574,7 +586,7 @@ def demand_for_recommendation(db: Session, rec_id: str,
                    {CUSTOMER_LABEL_SQL} AS customer_label,
                    {AGENT_LABEL_SQL} AS agent_label,
                    {_PROJECT_TITLE_SQL} AS project_title,
-                   GREATEST(oir.qty - COALESCE(flk.linked, 0), 0) AS qty,
+                   GREATEST(oir.qty - COALESCE(flk.linked, 0) - oir.bundled_qty, 0) AS qty,
                    COALESCE(flk.linked, 0) AS linked_qty
             FROM projects.order_inquiry_rows oir
             JOIN products fp
@@ -623,12 +635,18 @@ def demand_for_recommendation(db: Session, rec_id: str,
               AND oir.state = ANY(:unplaced_states)
               AND oir.ack_state = ANY(:planned_ack_states)
               AND oir.qty > 0
-              AND oir.qty > COALESCE(flk.linked, 0)
+              -- Ruling 6 (`PLAN-scm-supplied-with-companions.md`): a bundled unit never
+              -- reaches reorder planning, the same gate `demand.py`'s form leg applies.
+              AND oir.qty > COALESCE(flk.linked, 0) + oir.bundled_qty
               AND (CAST(:horizon AS date) IS NULL OR oir.delivery_date IS NULL
                    OR oir.delivery_date <= CAST(:horizon AS date))
+              -- S4: the start-side twin, same rule.
+              AND (CAST(:horizon_start AS date) IS NULL OR oir.delivery_date IS NULL
+                   OR oir.delivery_date >= CAST(:horizon_start AS date))
         """
         form_params = {
             "pid": rec["product_id"], "members": members, "horizon": horizon,
+            "horizon_start": horizon_start,
             "form_verbs": ["ORDER", "ORDER_BACK"],
             "unplaced_states": list(UNLINKED_INQUIRY_STATES),
             "planned_ack_states": list(PLANNED_ACK_STATES),

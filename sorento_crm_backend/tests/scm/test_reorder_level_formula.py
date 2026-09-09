@@ -61,10 +61,14 @@ def _do(db, pid, wid, *, day: date, qty: float, cancelled: bool = False) -> None
 
 
 def _world(db, *, lead_days: int | None = 30):
-    """One product, TWO warehouses, 900 units delivered inside the 90-day window.
+    """One product, TWO dealer-segment (retail) warehouses, 900 units delivered inside
+    the 90-day window.
 
     900 / 90 = an ADU of exactly 10, which makes every downstream number checkable by
-    hand: safety 10 x 14 = 140, level 10 x 30 + 140 = 440.
+    hand: safety 10 x 14 = 140, level 10 x 30 + 140 = 440. Both warehouses are
+    `dealer`-segment (S7/G1: the level reads retail deliveries only) - within that
+    segment, WHICH dealer bin it left from must not matter, which is what splitting the
+    900 across two of them still proves.
     """
     from app.models.product import Product, ProductCategory, UnitOfMeasure
     from tests._pg_fixture import unique_code
@@ -88,12 +92,13 @@ def _world(db, *, lead_days: int | None = 30):
         wid = _u()
         db.execute(text(
             "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
-            "counts_as_available, segment) VALUES (:id, :c, :c, true, true, 'project')"),
+            "counts_as_available, segment) VALUES (:id, :c, :c, true, true, 'dealer')"),
             {"id": wid, "c": unique_code("W")[:20]})
         wids.append(wid)
 
-    # 900 delivered inside the window, split across BOTH warehouses - the level is a
-    # product fact, so where it left from must not matter.
+    # 900 delivered inside the window, split across BOTH (dealer-segment) warehouses -
+    # the level is a product fact within the retail scope, so which dealer bin it left
+    # from must not matter.
     _do(db, pid, wids[0], day=date(2026, 6, 1), qty=400)
     _do(db, pid, wids[1], day=date(2026, 7, 1), qty=300)
     _do(db, pid, wids[0], day=date(2026, 8, 1), qty=200)
@@ -187,6 +192,36 @@ def test_nothing_delivered_suggests_zero_and_says_so():
     out = rl.suggest_level_from_usage(adu=0.0, lead_time_days=30)
     assert out["level"] == 0.0
     assert out["basis"]["no_movement"] is True
+
+
+# --- S7/G1: retail-only scope, the level's own suite -------------------------------
+
+def test_a_project_bin_delivery_does_not_change_the_level():
+    """S7 (G1 ruling, 9 Sep 2026): a delivery shipped from a `project`-segment
+    warehouse is a project delivery and must not lift the retail level - the same
+    product, same window, plus 100 pcs off a project bin, still suggests 440."""
+    from tests._pg_fixture import pg_session, unique_code
+    with pg_session() as db:
+        w = _world(db)
+        project_wid = _u()
+        db.execute(text(
+            "INSERT INTO warehouses (id, warehouse_code, warehouse_name, is_active, "
+            "counts_as_available, segment) VALUES (:id, :c, :c, true, true, 'project')"),
+            {"id": project_wid, "c": unique_code("W")[:20]})
+        _do(db, w["product_id"], project_wid, day=date(2026, 7, 10), qty=100)
+
+        written = lsvc.refresh_for_run(db, w["run_id"], as_of=AS_OF)
+        row = db.execute(text(
+            "SELECT suggested_level, suggestion_basis FROM scm.reorder_level "
+            "WHERE product_id::text = :p"), {"p": w["product_id"]}).mappings().first()
+
+        assert written == 1
+        assert float(row["suggested_level"]) == 440.0, (
+            "the 100 pcs shipped from the project bin must not lift the retail level"
+        )
+        basis = row["suggestion_basis"]
+        assert basis["adu"] == 10.0
+        assert basis["retail_only"] is True
 
 
 # --- the run writes it -------------------------------------------------------------
