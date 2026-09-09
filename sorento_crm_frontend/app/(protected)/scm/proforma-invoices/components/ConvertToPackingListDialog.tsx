@@ -8,7 +8,6 @@ import {
   Dialog,
   DialogBody,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -166,11 +165,6 @@ export function ConvertToPackingListDialog({
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Convert to a packing list</DialogTitle>
-          <DialogDescription>
-            {invoiceIds.length === 1
-              ? 'Each line places what it has left; type a smaller figure to split it across two containers.'
-              : `${invoiceIds.length} invoices. Every line places what it has left.`}
-          </DialogDescription>
         </DialogHeader>
 
         <DialogBody className="space-y-4">

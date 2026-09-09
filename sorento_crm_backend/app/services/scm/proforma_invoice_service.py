@@ -88,7 +88,7 @@ _NO_CURRENCY = (
 #: all of which describe a container the AGENT has actually loaded or shipped - this one
 #: exists only because CRM lines were pre-filled from proforma invoices (AC per
 #: PLAN-scm-proforma-to-spo.md's Amendment). The real packing list, when it arrives, is
-#: uploaded through the existing `packing_list_service.apply` path same as any other.
+#: uploaded through `supplier_document_service.apply` (S2/S3) same as any other.
 _DRAFT_SHIPMENT_STATUS = "draft"
 
 #: `NumberingService` doc_type for a draft packing list's own series - kept distinct from a
@@ -1535,6 +1535,7 @@ def convert_to_draft_shipment(
     override_reason: Optional[str] = None,
     line_quantities: Optional[dict] = None,
     container_size_id: Optional[str] = None,
+    packing_row_ids: Optional[list[str]] = None,
 ) -> dict:
     """One or more proforma invoices become ONE NEW draft inbound shipment (the packing-list
     amendment, `PLAN-scm-proforma-to-spo.md`): "pick one or more PIs -> the system creates a
@@ -1549,7 +1550,8 @@ def convert_to_draft_shipment(
     to which size is the default still applies to a shipment nobody explicitly sized.
 
     Not built here: the real packing list replacing/reconciling this draft (that is the
-    EXISTING upload path, `packing_list_service.apply`, unchanged by this function - a draft's
+    EXISTING upload path, `supplier_document_service.apply` (S2/S3), unchanged by this
+    function - a draft's
     `shipment_number` is its own series so it never collides with what a real upload derives,
     and nothing here teaches that upload to find this row; reconciling onto the exact draft
     is follow-up work) and the "Create SPO" action off the shipment (the next slice).
@@ -1677,8 +1679,88 @@ def convert_to_draft_shipment(
     # settled and repeatable.
     members_by_set = _set_members(db, {ln.product_set_id for ln in lines if ln.product_set_id})
 
+    # S4 (AC-D2): convert writes one shipment line per MATCHED packing row when the PI
+    # line has any; a line with none converts as before (unchanged, below). Grouped by
+    # the PI LINE the row matched, since that is the grain a single `line_quantities`/
+    # `packing_row_ids` request names.
+    packing_rows_by_line: dict[str, list[ProformaInvoicePackingLine]] = {}
+    #: Every row of the invoice, matched or not - AC-D2c's own header carry-over reads a
+    #: PI's container off whichever of its rows states one, regardless of match_state
+    #: (a dismissed spare still shipped in the same box).
+    rows_by_invoice: dict[str, list[ProformaInvoicePackingLine]] = {}
+    #: AC-D3 - a dismissed or unmatched row never becomes a shipment line, but its
+    #: description is named on the shipment's own notes so customs filler is not lost.
+    unplaced_row_descriptions: list[str] = []
+    #: Every PI line that has a packing row AT ALL (any match_state) - such a line never
+    #: falls back to the (product, supplier) grouping below, even when none of its own
+    #: rows are matched (ACC-KT2001 dismissed BEFORE apply, AC-D3): a line whose only row
+    #: is dismissed has nothing left to place, not "no packing list at all".
+    lines_with_rows: set[str] = set()
+    for row in (
+        db.query(ProformaInvoicePackingLine)
+        .filter(ProformaInvoicePackingLine.proforma_invoice_id.in_(ids))
+        .order_by(ProformaInvoicePackingLine.row_no)
+        .all()
+    ):
+        rows_by_invoice.setdefault(str(row.proforma_invoice_id), []).append(row)
+        if row.proforma_invoice_line_id:
+            lines_with_rows.add(str(row.proforma_invoice_line_id))
+        if row.match_state == "matched" and row.proforma_invoice_line_id:
+            packing_rows_by_line.setdefault(str(row.proforma_invoice_line_id), []).append(row)
+        elif row.match_state in ("dismissed", "unmatched"):
+            unplaced_row_descriptions.append(row.item_code or row.description or "")
+    selected_row_ids = {str(i) for i in (packing_row_ids or [])} or None
+
     for ln in lines:
         invoice = found_by_id[str(ln.invoice_id)]
+        if str(ln.id) in lines_with_rows:
+            rows_for_line = packing_rows_by_line.get(str(ln.id), [])
+            if str(ln.id) in requested:
+                raise AppException(
+                    422,
+                    f"{ln.item_code} places whole packing rows, not a partial quantity.",
+                    code="packing_rows_place_whole",
+                )
+            selected_rows = [
+                r for r in rows_for_line
+                if selected_row_ids is None or str(r.id) in selected_row_ids
+            ]
+            for row in selected_rows:
+                qty = _dec(row.qty) if row.qty is not None else Decimal("0")
+                key = ("row", str(row.id))
+                group = {
+                    "product_id": str(row.product_id or ln.product_id),
+                    "supplier_id": str(invoice.supplier_id) if invoice.supplier_id else None,
+                    "quantity_shipped": qty,
+                    "unit_cost": ln.unit_price,
+                    "currency": invoice.currency,
+                    "cbm": row.cbm_total,
+                    "cartons": row.cartons,
+                    "measurements": {
+                        k: v
+                        for k, v in (
+                            ("material", row.material),
+                            ("pcs_per_carton", row.pcs_per_carton),
+                            ("carton_length_cm", row.carton_length_cm),
+                            ("carton_width_cm", row.carton_width_cm),
+                            ("carton_height_cm", row.carton_height_cm),
+                            ("net_weight_per_carton", row.net_weight),
+                            ("gross_weight_per_carton", row.gross_weight),
+                        )
+                        if v is not None
+                    },
+                    "remarks": [row.remark] if row.remark else [],
+                    "description": ln.description,
+                    "source_lines": [ln],
+                    "placed": {str(ln.id): float(qty)},
+                }
+                groups[key] = group
+                product_ids.add(group["product_id"])
+                placing_cbm = _f(row.cbm_total)
+                if placing_cbm is not None:
+                    placing[str(ln.invoice_id)] = placing.get(str(ln.invoice_id), 0.0) + placing_cbm
+            continue
+
         if ln.product_id is None and ln.product_set_id is None:
             skipped.append((ln, "No catalogue product matches this line's item code."))
             continue
@@ -1848,6 +1930,27 @@ def convert_to_draft_shipment(
 
     invoice_dates = [inv.invoice_date for inv in invoices if inv.invoice_date]
 
+    # AC-D2c: the header carries over when every selected PI names ONE container -
+    # its own packing rows first (a container can differ from the header when a PI was
+    # applied before the real container was assigned), else its header `container_ref`.
+    # Seal/BL live on the header alone (rows carry no seal/BL of their own).
+    def _pi_container(inv: ProformaInvoice) -> Optional[str]:
+        containers = {
+            r.container_no for r in rows_by_invoice.get(str(inv.id), []) if r.container_no
+        }
+        return next(iter(containers)) if len(containers) == 1 else inv.container_ref
+
+    per_invoice_containers = {str(inv.id): _pi_container(inv) for inv in invoices}
+    distinct_containers = {v for v in per_invoice_containers.values() if v}
+    header_conflicts: list[str] = []
+    carry_container = carry_seal = carry_bl = None
+    if len(distinct_containers) == 1:
+        carry_container = next(iter(distinct_containers))
+        carry_seal = next((inv.seal_ref for inv in invoices if inv.seal_ref), None)
+        carry_bl = next((inv.bl_ref for inv in invoices if inv.bl_ref), None)
+    elif len(distinct_containers) > 1:
+        header_conflicts.append("container_number")
+
     # A NEW packing list, every time (Q6). "Add to an existing draft" is gone: a convert
     # that could land in somebody else's box needed the box picking, and the pick was the
     # dialog this screen no longer has.
@@ -1855,14 +1958,27 @@ def convert_to_draft_shipment(
         id=_uuid(),
         shipment_number=_draft_shipment_number(db),
         shipment_date=min(invoice_dates) if invoice_dates else _date.today(),
+        shipping_container_number=carry_container,
+        seal_number=carry_seal,
+        bill_of_lading_number=carry_bl,
         shipment_status=_DRAFT_SHIPMENT_STATUS,
         created_by=created_by,
         container_size_id=str(container_size_id) if container_size_id else None,
     )
     db.add(shipment)
     db.flush()
-    # `notes` is left alone either way (R17): which invoices a container was drafted from is
+    # `notes` is otherwise left alone (R17): which invoices a container was drafted from is
     # the Proforma invoices tab's answer, and it is a table's worth rather than a sentence.
+    # AC-D3's own line is the one exception - a dismissed or unmatched packing row never
+    # becomes a shipment line, and its description would otherwise vanish entirely rather
+    # than just not being billed.
+    if unplaced_row_descriptions:
+        named = ", ".join(sorted(set(d for d in unplaced_row_descriptions if d)))
+        if named:
+            shipment.notes = (
+                (shipment.notes + "\n" if shipment.notes else "")
+                + f"Supplier packing list also lists: {named}"
+            )
     _record_over_capacity(db, shipment.id, over, override_reason, created_by)
 
     # The box is new, so nothing is on it yet: two invoices naming the same model were
@@ -1967,6 +2083,10 @@ def convert_to_draft_shipment(
         "supplier_id": str(shipment.supplier_id) if shipment.supplier_id else None,
         "lines_created": len(groups),
         "lines_skipped": len(skipped),
+        # AC-D2c: which header fields were left blank because the selected PIs disagree,
+        # named so the dialog can show the one line rather than a blank field with no
+        # explanation.
+        "header_conflicts": header_conflicts,
         # Invoices in the selection that had nothing left to place. Named rather than
         # silently dropped, so the caller can say which ones did not move (AC-F7).
         "skipped_invoices": skipped_invoices,
@@ -3135,10 +3255,43 @@ def serialize(
         }
         for r in packing_rows
     ]
-    # AC-B14 ("Source files"): not yet wired to the generic attachment linkage - always
-    # `None` until a later slice files the packing-list upload against this PI's own id
-    # rather than only into Drive.
-    out["packing_file"] = None
+    # AC-B14: every file filed against this PI (`EntityAttachmentLink`, the same generic
+    # linkage `inbound_shipment` already uses) - the General tab's Source files block.
+    # `packing_file` is the MOST RECENT one filed under the Packing List type specifically
+    # (AC-B10's own header/empty-state), never a second GET.
+    from app.services.entity_attachment_service import EntityAttachmentService
+    from app.services.scm.packing_list_service import _PACKING_LIST_TYPE_NAME
+
+    links = EntityAttachmentService(db).list_links("proforma_invoice", str(invoice.id))
+    out["source_files"] = [
+        {
+            "id": str(link.id),
+            "name": getattr(link.attachment, "original_filename", None),
+            "type": (
+                link.attachment.attachment_type.type_name
+                if link.attachment and link.attachment.attachment_type
+                else None
+            ),
+            "uploaded_at": (
+                link.attachment.uploaded_at.isoformat()
+                if link.attachment and link.attachment.uploaded_at
+                else link.created_at.isoformat()
+            ),
+            "download_url": f"/api/v1/resource-management/attachments/{link.attachment_id}/download",
+        }
+        for link in links
+        if link.attachment is not None
+    ]
+    packing_files = [
+        f
+        for f, link in zip(out["source_files"], links)
+        if f["type"] == _PACKING_LIST_TYPE_NAME
+    ]
+    out["packing_file"] = (
+        {"name": packing_files[-1]["name"], "uploaded_at": packing_files[-1]["uploaded_at"]}
+        if packing_files
+        else None
+    )
     return out
 
 

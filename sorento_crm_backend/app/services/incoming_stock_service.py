@@ -27,7 +27,7 @@ surfaced through a separate, explicit method only when the user asks.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Optional
 
 from sqlalchemy import and_, case, func, or_
@@ -55,7 +55,7 @@ from app.services.company_scope import stamp_lookup_companies
 from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
 # Header OR any line: a container filled by two factories has no header supplier,
 # so the header alone would hide it from both of them.
-from app.services.procurement_service import shipment_supplier_predicate
+from app.services.procurement_service import _apportion, shipment_supplier_predicate
 # Imported rather than redefined, so the value cannot drift between the two modules.
 from app.services.scm.proforma_invoice_service import _DRAFT_SHIPMENT_STATUS
 
@@ -797,8 +797,10 @@ class IncomingStockService:
         remaining = _remaining_expr().label("remaining_incoming")
         line_rows = (
             self.db.query(
+                InboundShipmentLine.id,
                 InboundShipmentLine.product_id,
                 InboundShipmentLine.quantity_shipped,
+                InboundShipmentLine.created_at,
                 remaining,
                 Product.product_code,
                 Product.product_name,
@@ -835,17 +837,32 @@ class IncomingStockService:
         pairs = [(str(shipment_uuid), str(r.product_id)) for r in line_rows]
         warehouse_map = self._warehouse_allocations_for(pairs)
 
+        # S4/AC-D6: a product's own allocation is APPORTIONED across its own lines (the
+        # same `(created_at, id)` order and the same `_apportion` `refresh_shipment_line_
+        # statuses` uses), never the product's whole total read against one line's own
+        # `quantity_shipped` - that read a container's second line of a split product as
+        # under-allocated by everything the FIRST line already claimed.
+        rows_by_product: dict[str, list] = {}
+        for r in line_rows:
+            rows_by_product.setdefault(str(r.product_id), []).append(r)
+        allocated_share_by_line: dict[str, int] = {}
+        for product_id, product_rows in rows_by_product.items():
+            product_rows.sort(key=lambda r: (r.created_at or datetime.min, str(r.id)))
+            allocations = warehouse_map.get((str(shipment_uuid), product_id), [])
+            total_allocated = sum(int(a.get("allocated_quantity") or 0) for a in allocations)
+            allocated_share_by_line.update(_apportion(total_allocated, product_rows))
+
         products = []
         for r in line_rows:
             allocations = warehouse_map.get((str(shipment_uuid), str(r.product_id)), [])
+            share = allocated_share_by_line.get(str(r.id), 0)
+            gap = int(r.quantity_shipped or 0) - share
             products.append(
                 {
                     "product_code": r.product_code,
                     "product_name": r.product_name,
                     "remaining_incoming_quantity": int(r.remaining_incoming or 0),
-                    "unallocated_quantity": _unallocated_quantity(
-                        r.quantity_shipped, allocations
-                    ),
+                    "unallocated_quantity": gap if allocations and gap > 0 else None,
                     "warehouse_allocations": allocations,
                 }
             )

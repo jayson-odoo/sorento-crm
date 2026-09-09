@@ -406,13 +406,18 @@ class InboundShipmentLine(Base, CompanyScopedMixin):
         # constraint that made a second factory's packing list overwrite the first's.
         # `NULLS NOT DISTINCT` (PG 15+) keeps a supplier-less line unique on the product
         # alone, so the n8n PDF path behaves exactly as it did.
+        #
+        # NON-unique since S4 (AC-D1, `scm-supplier-documents-pi-first`): a supplier's own
+        # carton split (Kailu's SRTSC14-GM shipping 50@50/ctn and 35@35/ctn) is two lines of
+        # the same (shipment, product, supplier), not one - convert writes one shipment
+        # line per matched packing row now. Still indexed, for the lookups that filter on
+        # the same three columns; renamed off the `uk_` prefix so its own name does not
+        # keep claiming a uniqueness the table no longer has.
         Index(
-            "uk_inbound_shipment_lines_ship_prod_sup",
+            "ix_inbound_shipment_lines_ship_prod_sup",
             "shipment_id",
             "product_id",
             "supplier_id",
-            unique=True,
-            postgresql_nulls_not_distinct=True,
         ),
     )
 

@@ -204,7 +204,11 @@ class InboundShipmentLineBase(BaseModel):
 
 
 class InboundShipmentLineCreate(InboundShipmentLineBase):
-    pass
+    # An EDIT names which existing line it means (S4, AC-D4) - two lines can now share
+    # every other field (Kailu's own carton split), and only the id tells them apart.
+    # Absent on a genuinely new line; `_upsert_shipment_lines` falls back to its
+    # (product, supplier) matching when it is not given or does not resolve.
+    id: Optional[str] = None
 
 
 class InboundShipmentLineResponse(InboundShipmentLineBase):

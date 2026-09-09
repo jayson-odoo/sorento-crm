@@ -119,25 +119,32 @@ def replace_packing_rows(
             container_no=ln.container_no,
             remark=ln.remark,
         )
+        # Product/line resolution happens REGARDLESS of dismissal (S4, AC-D3): a
+        # dismissed row still names a real line when its code resolves to one - convert
+        # needs `proforma_invoice_line_id` set so it can tell "this line's only row is
+        # dismissed" apart from "this line has no packing list at all" - the dismissal
+        # itself is applied on top, as the row's own `match_state`, never fed into the
+        # line's roll-up (`touched_lines`), which is genuinely-matched rows only.
+        if product:
+            row.product_id = product.get("id")
+            row.product_set_id = product.get("product_set_id")
+        matched_line = None
+        if product and product.get("id"):
+            matched_line = line_by_product.get(str(product["id"]))
+        elif product and product.get("product_set_id"):
+            matched_line = line_by_set.get(str(product["product_set_id"]))
         if code_upper in dismissed:
             row.match_state = "dismissed"
-        else:
-            if product:
-                row.product_id = product.get("id")
-                row.product_set_id = product.get("product_set_id")
-            matched_line = None
-            if product and product.get("id"):
-                matched_line = line_by_product.get(str(product["id"]))
-            elif product and product.get("product_set_id"):
-                matched_line = line_by_set.get(str(product["product_set_id"]))
             if matched_line is not None:
-                row.match_state = "matched"
                 row.proforma_invoice_line_id = matched_line.id
-                touched_lines[str(matched_line.id)] = matched_line
-            else:
-                # A resolved product no line of this PI holds, or no product at all - both
-                # read the same to the operator: this row is not on the invoice (AC-B6).
-                row.match_state = "unmatched"
+        elif matched_line is not None:
+            row.match_state = "matched"
+            row.proforma_invoice_line_id = matched_line.id
+            touched_lines[str(matched_line.id)] = matched_line
+        else:
+            # A resolved product no line of this PI holds, or no product at all - both
+            # read the same to the operator: this row is not on the invoice (AC-B6).
+            row.match_state = "unmatched"
         db.add(row)
     db.flush()
 

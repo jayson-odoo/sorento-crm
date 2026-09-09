@@ -1619,6 +1619,10 @@ class ProformaInvoice(Base, CompanyScopedMixin):
 
     container_ref = Column(String(100), nullable=True)
     bl_ref = Column(String(100), nullable=True)
+    #: The container's seal number (S2/S4 standing ruling, captain 9 Sep) - filled from the
+    #: packing document when the PI itself stated none, same convention `container_ref`/
+    #: `bl_ref` already follow. Read by convert's header carry-over (AC-D2c) alongside them.
+    seal_ref = Column(String(100), nullable=True)
 
     #: What the document totals ITSELF to when it states a total, else the sum of its lines.
     #: Stored rather than summed on read so the verification screen compares like with like.
@@ -1740,7 +1744,10 @@ class ProformaInvoiceLine(Base, CompanyScopedMixin):
 
     item_code = Column(String(100), nullable=False)
     description = Column(Text, nullable=True)
-    qty = Column(Numeric, nullable=False)
+    #: NULL on a line that names something and states a packing figure but no quantity
+    #: (captain ruling 9 Sep, S2 follow-up) - the Jinbaichuan sheet's own
+    #: container-summary row states a total CBM and nothing else.
+    qty = Column(Numeric, nullable=True)
     uom = Column(String(20), nullable=True)
     unit_price = Column(Numeric, nullable=True)
     amount = Column(Numeric, nullable=True)
@@ -1850,7 +1857,10 @@ class ProformaInvoicePackingLine(Base, CompanyScopedMixin):
         UUID(as_uuid=False), ForeignKey("product_sets.id", ondelete="SET NULL"), nullable=True
     )
 
-    qty = Column(Numeric, nullable=False)
+    #: NULL on a row that names something and states a packing figure but no quantity
+    #: (captain ruling 9 Sep) - the Jinbaichuan container-summary row states only a total
+    #: CBM. Never invented from the row's own text.
+    qty = Column(Numeric, nullable=True)
     cartons = Column(Numeric, nullable=True)
     pcs_per_carton = Column(Numeric(15, 4), nullable=True)
     carton_length_cm = Column(Numeric(10, 2), nullable=True)
