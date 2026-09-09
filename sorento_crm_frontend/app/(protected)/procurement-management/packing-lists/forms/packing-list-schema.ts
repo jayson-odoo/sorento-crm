@@ -1,6 +1,13 @@
 import { z } from 'zod';
 
 export const shipmentLineSchema = z.object({
+  /**
+   * Which existing line this is. `_upsert_shipment_lines` claims by id first, and one
+   * supplier may now hold two lines of the same product (the carton split), so a save
+   * without it is refused 409 `line_id_required` rather than guessed at. Absent on a
+   * line the operator just added.
+   */
+  id: z.string().optional(),
   product_id: z.string().min(1, 'Product is required'),
   quantity_shipped: z.coerce.number().int().min(1, 'Quantity must be at least 1'),
   /**

@@ -131,8 +131,8 @@ describe('PackingListForm - a save keeps the lines with their factory', () => {
     await waitFor(() => expect(state.update).toHaveBeenCalled());
     const payload = state.update.mock.calls[0][0].data;
     expect(payload.shipment_lines).toEqual([
-      { product_id: 'p-1', quantity_shipped: 490, supplier_id: 'sup-a' },
-      { product_id: 'p-2', quantity_shipped: 900, supplier_id: 'sup-b' },
+      { id: 'l-1', product_id: 'p-1', quantity_shipped: 490, supplier_id: 'sup-a' },
+      { id: 'l-2', product_id: 'p-2', quantity_shipped: 900, supplier_id: 'sup-b' },
     ]);
   });
 
@@ -148,6 +148,10 @@ describe('PackingListForm - a save keeps the lines with their factory', () => {
 
     await waitFor(() => expect(state.update).toHaveBeenCalled());
     const payload = state.update.mock.calls[0][0].data;
-    expect(payload.shipment_lines[1]).toEqual({ product_id: 'p-2', quantity_shipped: 900 });
+    expect(payload.shipment_lines[1]).toEqual({
+      id: 'l-2',
+      product_id: 'p-2',
+      quantity_shipped: 900,
+    });
   });
 });

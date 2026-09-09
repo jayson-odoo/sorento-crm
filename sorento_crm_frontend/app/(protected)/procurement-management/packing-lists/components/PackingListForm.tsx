@@ -176,6 +176,7 @@ export default function PackingListForm({
       shipment_lines:
         packingList.shipment_lines?.length && packingList.shipment_lines.length > 0
           ? packingList.shipment_lines.map((l) => ({
+              id: l.id,
               product_id: l.product_id,
               quantity_shipped: l.quantity_shipped,
               supplier_id: l.supplier_id ?? undefined,
@@ -204,6 +205,10 @@ export default function PackingListForm({
         shipment_lines: data.shipment_lines
           ?.filter((l) => l.product_id && l.quantity_shipped > 0)
           .map((l) => ({
+            // Which line this is. Two lines of one product from one supplier are legal
+            // now (the supplier's carton split), so the backend claims by id first and
+            // refuses an id-less line it cannot tell apart.
+            id: l.id,
             product_id: l.product_id,
             quantity_shipped: l.quantity_shipped,
             // Whose line it already was. There is no per-line picker here on purpose -
