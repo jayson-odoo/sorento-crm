@@ -203,6 +203,20 @@ remembered on the product-supplier link and applied by the next run.
   primary; plan-edits passes the row's chosen supplier. FE MOQ input value = `edit.moq ??
   rec.moq_override ?? rec.supplier?.moq ?? ''`.
 
+### G7 (captain, 9 Sep late): the engine buys from the last-purchase supplier
+
+Browser round 4 measured: SRTSS8710's recommendation carries `supplier_selection: primary`
+(DEFAULT link, MYR 121.80, moq null) while the buyer's row prefills KAIPING HANSHUN (last
+purchase CNY 48.00) and the MOQ 100 saved by S13 sits on the KAIPING link, so the next run
+neither prefills nor rounds to it, and the cash tiles still price the line in RM off DEFAULT.
+Ruling: the engine's chosen supplier for a product = the last-purchase supplier when one is on
+file (its product_suppliers link, created by S13 when missing; price = the link's cost when set,
+else the last purchase cost and currency), else the primary link, else the cheapest candidate as
+today. MOQ, lead time and price then come from that one supplier, and the row's Supplier, Line
+cost and MOQ agree with each other and with the next run. Lines whose currency has no MYR rate
+contribute nothing to the cash tiles (honest until the rate is keyed). Goldens re-pinned.
+Recorded as AC-S13.6.
+
 ## 5. Build order
 
 S1, S2 (FE only, no backend) -> S3 -> S6 -> S5 -> S4 -> S7 -> S8 -> S9. S1 and S2 are

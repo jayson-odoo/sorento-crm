@@ -272,6 +272,13 @@ label. MOQ edits land only as `set_moq_override` on the recommendation (per run)
   creates `product_suppliers` (product, supplier, moq 100); a second save updates in place.
 - AC-S13.5 [E2E] Set MOQ 100, Save, start a new plan, the same product shows MOQ 100 and a
   suggested qty rounded to it.
+- AC-S13.6 [BE] (ruling G7) The engine's chosen supplier is the last-purchase supplier when
+  one is on file (its product_suppliers link; price from the link's cost when set, else the
+  last purchase cost and currency), else the primary link, else today's cheapest candidate.
+  `inputs.supplier`, `supplier_selection`, MOQ, lead time and unit cost all come from that
+  supplier. pytest: product with primary A (MYR 121.80) and last purchase from B (CNY 48, link
+  B moq 100): the run's rec names B, currency CNY, cost 48, moq 100, rounded qty a multiple of
+  100; a product with no last purchase still picks A.
 
 ### Cross-cutting
 

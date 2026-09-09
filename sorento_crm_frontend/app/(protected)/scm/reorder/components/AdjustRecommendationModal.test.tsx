@@ -76,7 +76,7 @@ function rec(over: Partial<ReorderRecommendation> = {}): ReorderRecommendation {
     alternatives: [primary, beta],
     cash_impact: 13440,
     lead_time_days: 14,
-    ...(over as ReorderRecommendation),
+    ...over,
   } as ReorderRecommendation;
 }
 

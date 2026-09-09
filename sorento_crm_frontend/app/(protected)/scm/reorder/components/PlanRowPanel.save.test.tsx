@@ -86,11 +86,10 @@ function rec(over: Partial<ReorderRecommendation> = {}): ReorderRecommendation {
 
 const line = (over: Partial<ReorderRecommendation> = {}): PlanLine => recToPlanLine(rec(over));
 
-function renderPanel(over: Record<string, unknown> = {}) {
+function renderPanel(over: Partial<React.ComponentProps<typeof PlanRowPanel>> = {}) {
   const onEdit = vi.fn();
-  const onUseSuggestion = vi.fn();
   const onSave = vi.fn();
-  const props = {
+  const props: React.ComponentProps<typeof PlanRowPanel> = {
     line: line(),
     edit: undefined,
     decision: undefined,
@@ -100,12 +99,11 @@ function renderPanel(over: Record<string, unknown> = {}) {
     levelSuggestion: undefined,
     economics: undefined,
     onEdit,
-    onUseSuggestion,
     onSave,
     ...over,
   };
-  render(<PlanRowPanel {...(props as unknown as React.ComponentProps<typeof PlanRowPanel>)} />);
-  return { onEdit, onUseSuggestion, onSave };
+  render(<PlanRowPanel {...props} />);
+  return { onEdit, onSave };
 }
 
 describe('PlanRowPanel row Save (AC-S12.1)', () => {
