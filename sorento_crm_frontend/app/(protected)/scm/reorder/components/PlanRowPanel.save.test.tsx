@@ -121,6 +121,46 @@ describe('PlanRowPanel row Save (AC-S12.1)', () => {
   });
 });
 
+/**
+ * AC-S12.5 (round 2, reorder-feedback-9sep, review fix round 3): a Buy value typed but not
+ * yet blurred lives only in the panel's own `buyDraft` state - `onEdit` never ran, so the
+ * shared draft the toolbar's Save (N) reads has nothing in it. Row Save must not depend on
+ * blur having already happened: it computes the same patch `commitBuy`'s blur would have
+ * applied and passes it straight to `onSave` as a second argument, so the very save about
+ * to fire carries it. The merge itself (`usePlanEdits.saveRow`) has its own suite in
+ * `hooks/usePlanEdits.test.tsx`; this only proves the panel COMPUTES and SENDS the patch.
+ */
+describe('PlanRowPanel row Save flushes an un-blurred Buy value (AC-S12.5)', () => {
+  it('typing into Buy and clicking Save WITHOUT blurring calls onSave with a patch carrying buy 25', () => {
+    // order_qty 40 with no MOQ + order_multiple 25 suggests a default Buy of 50 (ceil to
+    // the multiple) - a DIFFERENT figure from what is typed below, so this proves the
+    // typed 25 actually landed rather than coincidentally matching what was already
+    // showing (React's own change-tracking treats a same-value fireEvent.change as a
+    // no-op, which the default fixture's own suggested Buy of 25 would have masked).
+    const { onSave } = renderPanel({ line: line({ order_qty: 40 }) });
+    const buyInput = screen.getByLabelText('Units to buy') as HTMLInputElement;
+    expect(buyInput.value).toBe('50');
+
+    fireEvent.change(buyInput, { target: { value: '25' } });
+    // No fireEvent.blur(buyInput) here - Save must not depend on it.
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ decision: expect.objectContaining({ buy: 25 }) }),
+    );
+  });
+
+  it('clicking Save with no draft and no pending input calls onSave with undefined', () => {
+    const { onSave } = renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave).toHaveBeenCalledWith(undefined);
+  });
+});
+
 describe('PlanRowPanel MOQ prefill from the remembered supplier link (AC-S13.2)', () => {
   it('with no edit and no moq_override, the MOQ input value is rec.supplier.moq', () => {
     renderPanel();

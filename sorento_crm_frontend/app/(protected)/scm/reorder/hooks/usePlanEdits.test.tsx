@@ -464,3 +464,67 @@ describe('usePlanEdits - saveRow refuses a second call while the first is still 
     expect(result.current.savingRowIds.has(l.id)).toBe(false);
   });
 });
+
+/**
+ * AC-S12.5 (round 2, reorder-feedback-9sep): a Buy value typed but not yet blurred lives
+ * only in `PlanRowPanel`'s own `buyDraft` state - `edits[line.id]` has nothing until blur.
+ * The row's Save button flushes that value straight into THIS save by passing it as
+ * `saveRow`'s second argument (`pendingPatch`), merged synchronously with whatever is
+ * already drafted, so the PUT that fires carries it even though the click beat the blur.
+ * `PlanRowPanel.save.test.tsx` covers the panel computing that patch; this is the
+ * hook-level half - the merge and the PUT it produces.
+ */
+describe('usePlanEdits - saveRow flushes a pending (un-blurred) patch (AC-S12.5)', () => {
+  it('a pendingPatch with nothing else drafted on the row still PUTs, carrying buy_qty from the patch', async () => {
+    const l = line();
+    const { result } = renderHook(() => usePlanEdits('run-1', [l], {}), { wrapper });
+
+    // Nothing drafted yet - the buyer typed into Buy but never blurred it.
+    expect(result.current.edits[l.id]).toBeUndefined();
+
+    let saveResult: unknown;
+    await act(async () => {
+      saveResult = await result.current.saveRow(l, { decision: { buy: 25 } });
+    });
+
+    expect(savePlanEdits).toHaveBeenCalledTimes(1);
+    const [runId, rows] = savePlanEdits.mock.calls[0];
+    expect(runId).toBe('run-1');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].decision).toEqual(expect.objectContaining({ buy_qty: 25 }));
+    expect(saveResult).toEqual({ saved_rows: 1, saved_products: 1 });
+
+    // The flushed value is gone from the draft too - this row's save just cleared it.
+    expect(result.current.edits[l.id]).toBeUndefined();
+  });
+
+  it('a pendingPatch merges with an ALREADY-drafted field on the same row (MOQ typed earlier, Buy typed then Saved unblurred)', async () => {
+    const l = line();
+    const { result } = renderHook(() => usePlanEdits('run-1', [l], {}), { wrapper });
+
+    act(() => result.current.setRowEdit(l, { moq: 100 }));
+    await waitFor(() => expect(result.current.edits[l.id]).toEqual({ moq: 100 }));
+
+    await act(async () => {
+      await result.current.saveRow(l, { decision: { buy: 25 } });
+    });
+
+    expect(savePlanEdits).toHaveBeenCalledTimes(1);
+    const [, rows] = savePlanEdits.mock.calls[0];
+    expect(rows[0].moq).toBe(100);
+    expect(rows[0].decision).toEqual(expect.objectContaining({ buy_qty: 25 }));
+  });
+
+  it('no draft and no pendingPatch: saveRow resolves null and fires no request', async () => {
+    const l = line();
+    const { result } = renderHook(() => usePlanEdits('run-1', [l], {}), { wrapper });
+
+    let saveResult: unknown = 'not set';
+    await act(async () => {
+      saveResult = await result.current.saveRow(l);
+    });
+
+    expect(saveResult).toBeNull();
+    expect(savePlanEdits).not.toHaveBeenCalled();
+  });
+});

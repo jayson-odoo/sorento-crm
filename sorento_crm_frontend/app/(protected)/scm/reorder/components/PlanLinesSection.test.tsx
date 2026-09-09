@@ -14,8 +14,10 @@ import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
+const toastInfo = vi.fn();
 vi.mock('@/lib/toast', () => ({ toast: { success: (...a: unknown[]) => toastSuccess(...a),
-                                          error: (...a: unknown[]) => toastError(...a) } }));
+                                          error: (...a: unknown[]) => toastError(...a),
+                                          info: (...a: unknown[]) => toastInfo(...a) } }));
 
 const usePlanLines = vi.fn();
 vi.mock('../hooks/usePlanLines', () => ({ usePlanLines: (...a: unknown[]) => usePlanLines(...a) }));
@@ -154,6 +156,7 @@ beforeEach(() => {
   usePlanEditsMock.mockReset();
   toastSuccess.mockReset();
   toastError.mockReset();
+  toastInfo.mockReset();
   stubPlanEdits();
 });
 
@@ -526,6 +529,23 @@ describe('PlanLinesSection - row Save feedback (AC-S12.1, review fix round 2)', 
     render(<PlanLinesSection runId="run-1" />);
 
     expect(screen.getByRole('button', { name: 'row-saving' })).toBeDisabled();
+  });
+
+  // AC-S12.5: a row with nothing drafted and no un-blurred value to flush - `saveRow`
+  // resolves null rather than PUTting an empty save - says so instead of staying silent
+  // as if the click never happened, and fires no request either way.
+  it('a row with nothing to save toasts "Nothing to save on this row." and fires no request', async () => {
+    const saveRow = vi.fn().mockResolvedValue(null);
+    stubPlanLines({ lines: [line()] });
+    stubPlanEdits({ saveRow });
+    render(<PlanLinesSection runId="run-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'row-save' }));
+
+    await vi.waitFor(() => expect(toastInfo).toHaveBeenCalledWith('Nothing to save on this row.'));
+    expect(saveRow).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastError).not.toHaveBeenCalled();
   });
 });
 
