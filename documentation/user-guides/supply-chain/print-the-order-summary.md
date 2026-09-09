@@ -10,17 +10,18 @@ on the Lines tab toolbar and choose **Order summary**.
 
 ## What the sheet shows
 
-One row per product, with the plan's columns in the sheet's own order:
+One row per product, with the plan's columns in the sheet's own order: **Item code**, **BRW on
+hand**, **Reorder level**, **Project qty**, **Dealer o/s**, **Order qty**, **Delivery**,
+**Project / customer**, **Supplier**, **BRW PO qty**, **BRW incoming qty**, **Last in qty**,
+**Last in date**, **Remarks**.
 
-* **Product**, **On hand**, **SO demand** (Project and Retail quantities, each with a drill-down
-  for the sources behind it), **Order qty**.
-* **Delivery** - the quantities due, grouped by month.
-* **Project / customer** - the customer or project names behind the Project quantity, with the
-  quantity for each in brackets.
-* **Supplier** - the chosen supplier, or the suggested one if none has been chosen yet.
-* **Remarks** - open purchase order quantity plus incoming SPO quantity (for example "PO 400 +
-  incoming 89 = 489"), the last goods-received date and quantity (for example "Last in
-  21/07/2026, 300"), and the MOQ, each only when there is something to show.
+* **BRW on hand / BRW PO qty / BRW incoming qty** count the site pool only (active,
+  non-project warehouses) - stock or supply sitting in a project bin is not on the sheet.
+* **Delivery** and **Project / customer** come from the project's own Order Inquiry: one
+  "Month - qty" line and one "Name - qty" line per entry. A product with no inquiry row shows
+  a blank Delivery cell even when it has Project demand elsewhere on the grid.
+* **Supplier** is the chosen supplier, or the suggested one if none has been chosen yet.
+* **Remarks** shows the MOQ (for example "MOQ 1000") only when there is one.
 
 Every figure on the sheet is the plan's own - nothing is typed twice.
 
@@ -28,7 +29,7 @@ Every figure on the sheet is the plan's own - nothing is typed twice.
 
 Click **Export** on the toolbar and choose **PDF** or **Excel**:
 
-* **PDF** downloads a landscape sheet with one row per product, the same nine columns.
+* **PDF** downloads a landscape sheet with one row per product, the same 14 columns.
 * **Excel** downloads a workbook of the same rows.
 
 Only products with something to order are included. If more than 2,000 such products would be

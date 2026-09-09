@@ -94,12 +94,15 @@ def test_report_row_carries_the_sheet_fields(db, chain):
     f = chain
     _stock(db, f["product"], f["bin"], 40)
 
-    # Two delivery months (AC-S9.1/S9.5: "two delivery months").
+    # S14 (AC-S14.3): delivery_by_month/project_customers now read the Order Inquiry book
+    # only - these two retail SO lines have no inquiry row behind them and must not reach
+    # either cell.
     _dated_retail_so(db, f["product"], f["bin"], 30, required_date=date(2026, 9, 15))
     _dated_retail_so(db, f["product"], f["bin"], 20, required_date=date(2026, 10, 20))
 
-    # One project customer (confirmed leg, named on its core line).
+    # One project customer (confirmed leg, named on its core line, an ACTIVE decision).
     leg = _confirmed_leg(db, product_id=f["product"].id, warehouse_id=f["bin"].id, buy_qty=5)
+    leg["inquiry_row"].delivery_date = date(2026, 11, 1)
     core_so_id = db.execute(text(
         "SELECT sales_order_id FROM sales_order_lines WHERE id = :l"
     ), {"l": leg["core_line"].id}).scalar()
@@ -119,22 +122,10 @@ def test_report_row_carries_the_sheet_fields(db, chain):
     assert svc.write_rows(db, f["run"].id) == 1
     row = svc.report(db, run_id=f["run"].id)["rows"][0]
 
+    # S14: the retail SO legs above must not appear - the confirmed leg's own Order
+    # Inquiry row is the row's ENTIRE Delivery cell.
     months = {m["month"]: m["qty"] for m in row["delivery_by_month"]}
-    # S1 (Phase 3 ruling): the project half now reads the SAME core-SO-line source
-    # `project_demand` sums, so the confirmed leg's own core line (required_date =
-    # today + 14 days, `_confirmed_leg`'s own default) lands in the Delivery cell too -
-    # in whichever month that happens to be, computed rather than assumed.
-    db.refresh(leg["core_line"])
-    project_month = leg["core_line"].required_date.isoformat()[:7]
-    expected_sept = 30 + (5 if project_month == "2026-09" else 0)
-    expected_oct = 20 + (5 if project_month == "2026-10" else 0)
-    assert months.get("2026-09") == expected_sept
-    assert months.get("2026-10") == expected_oct
-    # The Delivery cell must tie to the row - nothing on it that the row's own Project
-    # qty / Dealer o/s columns do not already account for.
-    assert sum(m["qty"] for m in row["delivery_by_month"]) == (
-        row["project_demand"] + row["dealer_outstanding"]
-    )
+    assert months == {"2026-11": 5}
 
     customers = row["project_customers"]
     assert len(customers) == 1
@@ -153,6 +144,11 @@ def test_report_row_carries_the_sheet_fields(db, chain):
 
 
 def test_undated_delivery_lands_under_a_null_month(db, chain):
+    """S14 (AC-S14.3) retired this test's premise: `delivery_by_month` reads the Order
+    Inquiry book, not the SO book, so a retail SO line - dated or undated - contributes
+    NOTHING to it. `test_s14_undated_order_inquiry_row_lands_under_the_null_month_last`
+    pins the undated-INQUIRY-row case this test used to stand in for.
+    """
     f = chain
     _stock(db, f["product"], f["bin"], 0)
     _dated_retail_so(db, f["product"], f["bin"], 12, required_date=None)
@@ -160,9 +156,7 @@ def test_undated_delivery_lands_under_a_null_month(db, chain):
 
     assert svc.write_rows(db, f["run"].id) == 1
     row = svc.report(db, run_id=f["run"].id)["rows"][0]
-
-    months = {m["month"]: m["qty"] for m in row["delivery_by_month"]}
-    assert months.get(None) == 12
+    assert row["delivery_by_month"] == []
 
 
 # --- AC-S9.3: export ----------------------------------------------------------------
