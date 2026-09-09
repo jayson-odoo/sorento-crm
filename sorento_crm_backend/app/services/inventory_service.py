@@ -1040,21 +1040,17 @@ class StockService:
             q = q.filter(pred)
         return {str(pid): int(qty or 0) for pid, qty in q.group_by(Stock.product_id).all()}
 
-    def companies_without_so_feed(self, company_ids: list[str]) -> set[str]:
-        """Companies among ``company_ids`` whose AutoCount SO feed is not connected
+    def no_feed_company_ids(self) -> set[str]:
+        """Every company whose AutoCount SO feed is not connected
         (``companies.so_feed_live = false``) - the gate ``_with_sellable`` uses to
         withhold ``open_so_qty`` / ``sellable`` for their rows (PLAN
-        company-so-feed-flag)."""
+        company-so-feed-flag). No ``company_ids`` filter: the table holds a
+        handful of rows, so this is cheaper called once than filtered by
+        candidate ids on every stock page - and an empty result lets the caller
+        skip `company_id_by_product` entirely on the common (all-feed-on) path."""
         from app.models.company import Company
 
-        ids = [str(cid) for cid in company_ids if cid]
-        if not ids:
-            return set()
-        rows = (
-            self.db.query(Company.id)
-            .filter(Company.id.in_(ids), Company.so_feed_live.is_(False))
-            .all()
-        )
+        rows = self.db.query(Company.id).filter(Company.so_feed_live.is_(False)).all()
         return {str(r[0]) for r in rows}
 
     def company_id_by_product(self, product_ids: list[str]) -> dict[str, str]:

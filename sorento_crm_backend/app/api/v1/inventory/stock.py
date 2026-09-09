@@ -111,15 +111,19 @@ def _with_sellable(service: StockService, result: dict) -> JSONResponse:
         list(product_ids)
     )
 
-    # Company feed gate: a detailed row carries its own `company_id` directly; a
-    # compact/synthesised entry does not, so it resolves through the product.
-    company_by_product = service.company_id_by_product(list(product_ids))
-    candidate_company_ids = {
-        str(getattr(r, "company_id", None)) for r in rows if getattr(r, "company_id", None)
-    } | set(company_by_product.values())
-    no_feed_companies = service.companies_without_so_feed(list(candidate_company_ids))
+    # Company feed gate: look up the (small, handful-of-rows) no-feed set FIRST.
+    # Empty on the common all-feed-on path, which skips `company_id_by_product`
+    # entirely - one query fewer per stock page when every company is connected.
+    # A detailed row carries its own `company_id` directly; a compact/synthesised
+    # entry does not, so it resolves through the product only when needed.
+    no_feed_companies = service.no_feed_company_ids()
+    company_by_product = (
+        service.company_id_by_product(list(product_ids)) if no_feed_companies else {}
+    )
 
     def _feed_on(pid: str, row_company_id: Optional[str] = None) -> bool:
+        if not no_feed_companies:
+            return True
         cid = row_company_id or company_by_product.get(pid)
         return not (cid and str(cid) in no_feed_companies)
 

@@ -1,6 +1,6 @@
 # PLAN: per-company "AutoCount sales orders connected" flag gates the chatbot's Outstanding
 
-Status: Phase 2 (backend + frontend, test-first) - 9 Sep 2026
+Status: Phase 3 (review MERGEABLE 9 Sep; browser verification in progress)
 Lane: `.claude/worktrees/company-so-feed`, branch `feat/company-so-feed-flag`, base `origin/main`
 UAC: `company-so-feed-flag-acceptance-criteria.md` (alongside)
 

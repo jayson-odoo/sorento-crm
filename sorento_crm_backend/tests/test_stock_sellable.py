@@ -502,13 +502,13 @@ def test_no_feed_company_synthesised_summary_is_bare(db):
 
 
 def test_stock_service_company_helpers(db):
-    """`companies_without_so_feed` / `company_id_by_product`: empty input is a
-    no-op, mixed input resolves each product/company correctly."""
+    """`no_feed_company_ids` / `company_id_by_product`: empty when there are no
+    no-feed companies yet, mixed input resolves each product's company."""
     from app.models.base import set_company_scope
     from app.services.company_scope import DEFAULT_COMPANY_ID
 
     service = StockService(db)
-    assert service.companies_without_so_feed([]) == set()
+    assert service.no_feed_company_ids() == set()
     assert service.company_id_by_product([]) == {}
 
     off_id = _company(db, so_feed_live=False)
@@ -519,7 +519,7 @@ def test_stock_service_company_helpers(db):
     on_prod = _product(db, "HLPR-ON", company_id=on_id)
     db.commit()
 
-    assert service.companies_without_so_feed([off_id, on_id]) == {off_id}
+    assert service.no_feed_company_ids() == {off_id}
     assert service.company_id_by_product([off_prod, on_prod]) == {
         off_prod: off_id,
         on_prod: on_id,
