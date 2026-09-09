@@ -207,7 +207,21 @@ primitive with its CTA.
 
 ## Deviations
 
-None yet.
+- **Phase 2, S3 (captain ruling 9 Sep):** `POST /scm/packing-lists/preview|apply` and
+  `packing_list_service.apply` are deleted outright, with the FE `previewPackingList` /
+  `applyPackingList` service functions (no caller since Phase 1 removed the incoming page). The two
+  route tests in `test_fulfilment_routes.py` and the six `test_supplier_document_service.py` tests
+  that assert shipment creation / price matching are retired with them: they guard the behaviour
+  AC-C1 removes.
+- **Phase 2, S1 (captain ruling 9 Sep):** AC-A3's `supplier_ref_missing` refusal is retired. A
+  document stating no reference is always created fresh (there is nothing to match against), never
+  updates in place, and `file_as_new` is irrelevant to it. The tester's `test_a3` is amended by the
+  coder, on the captain's explicit authorisation, to assert that a second apply of the same
+  ref-less file creates a second PI and never touches the first.
+- **Phase 2, S1 (captain ruling 9 Sep):** the 24 pre-existing tests that asserted `pi_number` equals
+  the supplier's stated text, or rebuilt the retired `-R2` / `-2` suffix shapes, are updated by the
+  coder to the new semantics only (supplier text → `supplier_ref`; `pi_number` matches
+  `PI-\d{4}-\d{3}`; a revision row mints its own number). Every other assertion in those tests stays.
 
 ## Markup round 1 (lavish, 9 Sep)
 
