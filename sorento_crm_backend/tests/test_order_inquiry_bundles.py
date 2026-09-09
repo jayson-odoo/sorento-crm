@@ -343,20 +343,16 @@ def _pair_rule(world, **kwargs):
 
 def test_b1_a_single_host_bundles_the_companion_fully(world):
     _single_host_rule(world)
-    world.row("CKS1050", 1)
+    host = world.row("CKS1050", 1)
     companion = world.row("CKSW015", 1)
 
     world.svc.derive_bundles(world.inquiry)
     world.db.refresh(companion)
 
     assert companion.bundled_qty == Decimal("1")
-    host_row_id = world.db.execute(
-        text(
-            "SELECT id FROM " + P + ".order_inquiry_rows WHERE item_code = :c"
-        ),
-        {"c": f"{MARKER}-CKS1050"},
-    ).scalar()
-    assert companion.bundled_with_row_id == host_row_id
+    # `host.id` off the ORM object (like B4/B5), not a raw `db.execute` scalar - the
+    # latter comes back as a psycopg2 `uuid.UUID`, which never equals the ORM's str id.
+    assert companion.bundled_with_row_id == host.id
     assert companion.state == "placed"
     assert world.demand_of(companion) == Decimal("0")
 
@@ -688,21 +684,40 @@ def test_d4_a_fully_bundled_rows_quantity_is_in_none_of_the_three_cards(world):
     assert Decimal(kinds["po"]) == Decimal("1"), "only the HOST's own PO quantity counts"
 
 
-def test_d5_a_partly_bundled_rows_buy_card_counts_only_the_ala_carte_remainder(world):
+def test_d5_the_buy_card_still_counts_the_anchors_own_unlinked_buy(world):
+    """UAC D5 "Buy counts 2, not 3" is about the CKSW015 ROW's own contribution - 1 of
+    its 3 rides on CKS1050, so 2 are ala carte. The CARD totals EVERY row in view, and
+    CKS1050's own unlinked buy (its own qty 1) still counts there too: ruling 7 excludes
+    only the bundled QUANTITY, never the whole row a companion happens to ride on - the
+    item CKS1050 itself still needs buying. Buy = 1 (host, unlinked) + 2 (companion's
+    ala carte remainder) = 3, never 2."""
     _single_host_rule(world)
-    world.row("CKS1050", 1)
+    host = world.row("CKS1050", 1)
     world.row("CKSW015", 3)
     world.svc.derive_bundles(world.inquiry)
     world.db.flush()
 
     kinds = _worklist(world)._kinds({})
+    assert Decimal(kinds["buy"]) == Decimal("3"), (
+        "the anchor's own unlinked buy (1) plus the companion's ala carte remainder (2)"
+    )
 
-    assert Decimal(kinds["buy"]) == Decimal("2"), "1 bundled, 2 still owed - Buy counts 2, not 3"
+    line = world.purchase_order("CKS1050", f"{MARKER}-PO-HOST", "S1", 1)
+    world.svc.place_on_po_allocations(
+        host.id, [{"po_line_id": line, "qty": Decimal("1")}], actor_user_id=None
+    )
+    world.db.flush()
+
+    kinds = _worklist(world)._kinds({})
+    assert Decimal(kinds["po"]) == Decimal("1"), "the host's own quantity is now on a PO"
+    assert Decimal(kinds["buy"]) == Decimal("2"), (
+        "once the host is covered, only the companion's ala carte remainder is left to buy"
+    )
 
 
-def test_d6_the_buy_filter_hides_a_fully_bundled_row_and_keeps_a_partly_bundled_one(world):
+def test_d6_the_buy_filter_hides_a_fully_bundled_row_and_keeps_an_unlinked_host(world):
     _single_host_rule(world)
-    world.row("CKS1050", 1)
+    host = world.row("CKS1050", 1)
     fully_bundled = world.row("CKSW015", 1)
     world.row("CKS1050", 1)
     partly_bundled = world.row("CKSW015", 3)
@@ -713,6 +728,7 @@ def test_d6_the_buy_filter_hides_a_fully_bundled_row_and_keeps_a_partly_bundled_
 
     assert fully_bundled.id not in ids
     assert partly_bundled.id in ids
+    assert host.id in ids, "an unlinked host row still owes its own buy"
 
 
 def test_d7_the_row_payload_carries_bundled_qty_and_bundled_with(world):

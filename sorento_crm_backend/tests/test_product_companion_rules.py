@@ -298,7 +298,11 @@ def test_a4_the_same_companion_and_supplier_twice_is_409_naming_the_existing_rul
         },
     )
     assert response.status_code == 409, response.text
-    message = response.json()["detail"]["message"]
+    # The global `AppException` handler (`app/main.py`) responds with
+    # `JSONResponse(content=exc.detail)` - `exc.detail` IS the body, a flat
+    # `{"message", "detail", "code"}` (`app/services/error_handler.py`), never FastAPI's
+    # default nested `{"detail": {...}}`.
+    message = response.json()["message"]
     assert world["host"].product_code in message or existing.id in message, (
         "the 409 must NAME the existing rule, not just refuse silently"
     )
