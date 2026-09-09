@@ -181,41 +181,20 @@ import {
 } from '@/app/(protected)/project-sales/_shared/services/fileDownload';
 import {
   USE_SUMMARY_ORDER_MOCKS,
-  mockOrderSummary,
   mockOrderSummaryDemand,
-  mockOrderSummaryLocations,
-  mockOrderSummarySuppliers,
-  mockRecordOrderDecision,
 } from '../lib/summaryOrderMockStore';
 import type {
-  OrderSummaryDecisionInput,
-  OrderSummaryDecisionResult,
   OrderSummaryDemandDrill,
   OrderSummaryDemandKind,
-  OrderSummaryLocations,
-  OrderSummaryReport,
-  OrderSummarySuppliers,
 } from '../types/summaryOrder.types';
 
-/** Which report to read. Both are optional; omitted means the current run today. */
-export interface OrderSummaryQuery {
-  /** Opaque run key. Never rendered. Null reads the newest completed plan. */
-  run_id?: string | null;
-}
-
-/** The report, one row per product network wide (AC-C2.1). */
-export async function getOrderSummary(q: OrderSummaryQuery = {}): Promise<OrderSummaryReport> {
-  if (USE_SUMMARY_ORDER_MOCKS) return mockOrderSummary();
-  const params = new URLSearchParams();
-  if (q.run_id) params.set('run_id', q.run_id);
-  // No `as_of`: the report STATES the date it was frozen for, and passing a different one
-  // would label a frozen position with a date it does not describe. To read another week,
-  // name its run.
-  const qs = params.toString();
-  const res = await apiFetch(`/api/v1/scm/order-summary${qs ? `?${qs}` : ''}`);
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the order summary'));
-  return (await res.json()) as OrderSummaryReport;
-}
+// Review fix round 3, finding 6: getOrderSummary / getOrderSummarySuppliers /
+// recordOrderDecision / getOrderSummaryLocations (and `OrderSummaryQuery`, which only
+// they used) are deleted - the Order summary report page they served is retired (S10,
+// round 2). `getOrderSummaryDemand` and `downloadOrderSummaryExport` survive:
+// `DemandDrillPopover` still opens the first, and the plan's Actions menu still calls
+// the second. `ReorderResultsGrid`/`ReorderExplanationDialog`'s own orphaned imports of
+// the removed shapes are a separate follow-up, filed by the reviewer - not touched here.
 
 /** The contributing lines behind one aggregate (AC-C2.3 / AC-C2.4). */
 export async function getOrderSummaryDemand(
@@ -231,52 +210,6 @@ export async function getOrderSummaryDemand(
   );
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the contributing lines'));
   return (await res.json()) as OrderSummaryDemandDrill;
-}
-
-/** The member locations behind one product row (AC-F08). */
-export async function getOrderSummaryLocations(
-  productCode: string,
-  runId?: string | null,
-): Promise<OrderSummaryLocations> {
-  if (USE_SUMMARY_ORDER_MOCKS) return mockOrderSummaryLocations(productCode);
-  const params = new URLSearchParams();
-  if (runId) params.set('run_id', runId);
-  const qs = params.toString();
-  const res = await apiFetch(
-    `/api/v1/scm/order-summary/${encodeURIComponent(productCode)}/locations${qs ? `?${qs}` : ''}`,
-  );
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the member locations'));
-  return (await res.json()) as OrderSummaryLocations;
-}
-
-/** The supplier candidates for one product (AC-C2.5 / AC-C2.6). */
-export async function getOrderSummarySuppliers(
-  productCode: string,
-): Promise<OrderSummarySuppliers> {
-  if (USE_SUMMARY_ORDER_MOCKS) return mockOrderSummarySuppliers(productCode);
-  const res = await apiFetch(
-    `/api/v1/scm/order-summary/${encodeURIComponent(productCode)}/suppliers`,
-  );
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to load the supplier candidates'));
-  return (await res.json()) as OrderSummarySuppliers;
-}
-
-/** Record the chosen quantity and supplier (AC-C2.7 / AC-C2.8). */
-export async function recordOrderDecision(
-  productCode: string,
-  input: OrderSummaryDecisionInput,
-): Promise<OrderSummaryDecisionResult> {
-  if (USE_SUMMARY_ORDER_MOCKS) return mockRecordOrderDecision(productCode, input);
-  const res = await apiFetch(
-    `/api/v1/scm/order-summary/${encodeURIComponent(productCode)}/decision`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(input),
-    },
-  );
-  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to record the decision'));
-  return (await res.json()) as OrderSummaryDecisionResult;
 }
 
 /**
