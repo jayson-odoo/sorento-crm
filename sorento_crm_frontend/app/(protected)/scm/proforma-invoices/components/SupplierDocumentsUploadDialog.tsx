@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { LoaderCircle, TestTube, TriangleAlert } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -33,26 +33,22 @@ import {
 
 /**
  * Upload supplier documents: a proforma invoice, a packing list, or both at once (R12-R14,
- * purchasing consolidation batch, lane C).
+ * purchasing consolidation batch, lane C; relocated here S3, AC-C2/C3).
  *
  * ONE dialog for both documents rather than two, because the same container shows up in
  * both: the invoice prices what the packing list ships, and reading them together is what
- * lets the packing list's draft shipment arrive with its container, seal, consignee, shipper
- * and a price on every line that matches - the whole reason this dialog replaced a plain
- * "upload packing list" (this file's own former name and role, kept here so every existing
- * import - `procurement-management/packing-lists`, `scm/incoming` - needs no path change).
+ * lets the packing rows land matched to the invoice line they price (S2, later). Proforma
+ * Invoices is the dialog's only remaining home - the Packing Lists page has no
+ * supplier-document upload of its own (S3): a packing list is born by convert or by hand.
  *
  * Each file is read on Test and classified server-side by its own title cell; the operator
  * never says which kind a file is. Confirm applies every proforma invoice first, then every
- * packing list (one draft shipment per container block, same as the reader always did), then
- * matches invoice prices onto the shipment lines they price, in whichever order the files
- * came in.
+ * packing list, matching invoice prices onto the lines they price.
  *
  * Self-serve supplier picker (Deviations lane A, purchasing consolidation batch; carried
- * over unchanged by this lane): R3 moved this dialog onto the Packing Lists page, which -
- * unlike `/scm/incoming` - carries no persistent supplier filter to source `supplierId`
- * from. The dialog manages its own `internalSupplierId` when `supplierId` is left
- * `undefined`; every caller that passes an explicit `supplierId` (even `null`) keeps
+ * over unchanged by this lane): this page carries no persistent supplier filter to source
+ * `supplierId` from. The dialog manages its own `internalSupplierId` when `supplierId` is
+ * left `undefined`; every caller that passes an explicit `supplierId` (even `null`) keeps
  * deciding it, unchanged.
  */
 
@@ -187,7 +183,7 @@ function confirmCounts(preview: SupplierDocumentsPreview | null): { invoices: nu
   return { invoices, packingLists };
 }
 
-export function PackingListUploadDialog({
+export function SupplierDocumentsUploadDialog({
   open,
   onOpenChange,
   supplierId: supplierIdProp,
@@ -198,8 +194,8 @@ export function PackingListUploadDialog({
   onOpenChange: (next: boolean) => void;
   /**
    * Omit both `supplierId` and `supplierName` to let the dialog ask for the supplier itself
-   * (the Packing Lists and Proforma Invoices pages have no persistent supplier context to
-   * hand it one). Passing `supplierId` (even `null`) keeps that caller in control, unchanged.
+   * (the Proforma Invoices page carries no persistent supplier context to hand it one).
+   * Passing `supplierId` (even `null`) keeps that caller in control, unchanged.
    */
   supplierId?: string | null;
   /** Shown in the header so the factory the lines will be filed under is never a guess. */
@@ -504,3 +500,5 @@ export function PackingListUploadDialog({
     </Dialog>
   );
 }
+
+export default SupplierDocumentsUploadDialog;

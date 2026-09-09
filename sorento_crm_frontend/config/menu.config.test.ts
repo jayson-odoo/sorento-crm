@@ -49,13 +49,12 @@ function findLeaf(items: MenuConfig, title: string): MenuItem | undefined {
  * converted from a leaf into a sub-group container (Outgoing Mails) with
  * Email Outbox and Respond Outbox as children.
  *
- * `/scm/incoming` (Incoming Containers) is ALSO intentionally removed here (R2 /
- * AC-A6, purchasing consolidation batch 6 Sep 2026): the menu entry is retired, but
- * the page itself keeps rendering at that URL - `collectPaths` only walks the menu
- * tree, so it cannot tell "route still works" from "menu still links to it" and this
- * test only asserts the latter.
+ * `/scm/incoming` (Incoming Containers) is no longer tracked here at all (S3,
+ * AC-C3, supplier documents / proforma invoice first lane, 9 Sep 2026): the page
+ * itself is deleted, not just retired from the menu, so it is dropped from
+ * `OLD_PATHS` below rather than added to this set.
  */
-const INTENTIONALLY_REMOVED_PATHS = new Set<string>(['/scm/incoming']);
+const INTENTIONALLY_REMOVED_PATHS = new Set<string>();
 
 /** Snapshot of every leaf path from the pre-reorganisation MENU_SIDEBAR. */
 const OLD_PATHS: string[] = [
@@ -77,7 +76,6 @@ const OLD_PATHS: string[] = [
   '/scm',
   '/scm/reorder',
   '/scm/loading-plan',
-  '/scm/incoming',
   '/scm/proforma-invoices',
   '/scm/policies',
   '/scm/sales-orders',

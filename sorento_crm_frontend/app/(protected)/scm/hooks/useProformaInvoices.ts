@@ -160,8 +160,8 @@ export function useSaveProformaInvoice(invoiceId: string) {
 
 /** Turn one or more selected invoices into ONE NEW draft packing list. Invalidates both the proforma list
  *  (their trail now shows where they went) and the invoice detail (converted_shipments +
- *  per-line shipment_number) for every invoice just converted. The caller navigates to
- *  `/scm/incoming` on success - this hook only owns the write + cache invalidation. */
+ *  per-line shipment_number) for every invoice just converted. The caller navigates to the
+ *  new draft's own record on success - this hook only owns the write + cache invalidation. */
 export function useConvertProformaInvoicesToDraftShipment() {
   const qc = useQueryClient();
   return useMutation({

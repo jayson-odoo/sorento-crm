@@ -1,16 +1,16 @@
 /**
- * Upload supplier documents (R12-R14, purchasing consolidation batch, lane C): a proforma
- * invoice, a packing list, or both, in one multi-file dialog. This file replaces the
- * single-file "Upload packing list" dialog it used to pin - that flow's own contract
+ * Upload supplier documents (R12-R14, purchasing consolidation batch, lane C; relocated
+ * S3 - AC-C2/C3 - onto Proforma Invoices, its only remaining home): a proforma invoice, a
+ * packing list, or both, in one multi-file dialog. This file replaces the single-file
+ * "Upload packing list" dialog it used to pin - that flow's own contract
  * (`previewPackingList`/`applyPackingList`, single file, one Confirm) is gone, folded into
  * `previewSupplierDocuments`/`applySupplierDocuments`.
  *
- * Self-serve supplier picker (Deviations lane A; unchanged by this lane): R3 moved this
- * dialog onto the Packing Lists page, which - unlike `/scm/incoming` - carries no
- * persistent supplier filter to source `supplierId` from. The dialog manages its own
- * `internalSupplierId` when its `supplierId` prop is left `undefined`; a caller that passes
- * an explicit `supplierId` (even `null`) keeps deciding it, unchanged
- * (`IncomingContainersView.tsx`).
+ * Self-serve supplier picker (Deviations lane A; unchanged by this lane): the Proforma
+ * Invoices page carries no persistent supplier filter to source `supplierId` from. The
+ * dialog manages its own `internalSupplierId` when its `supplierId` prop is left
+ * `undefined`; a caller that passes an explicit `supplierId` (even `null`) keeps deciding
+ * it, unchanged.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -51,7 +51,7 @@ vi.mock('@/app/(protected)/scm/hooks/useFulfilment', () => ({
   useFulfilmentSuppliers: () => useFulfilmentSuppliers(),
 }));
 
-import { PackingListUploadDialog } from './PackingListUploadDialog';
+import { SupplierDocumentsUploadDialog } from './SupplierDocumentsUploadDialog';
 
 const PI_FILE_PREVIEW = {
   name: 'invoice.xls',
@@ -134,7 +134,7 @@ function openDialog(
 ) {
   const onImported = vi.fn();
   render(
-    <PackingListUploadDialog
+    <SupplierDocumentsUploadDialog
       open
       onOpenChange={() => {}}
       supplierId={supplierId}
@@ -147,7 +147,7 @@ function openDialog(
 
 function openDialogSelfServe() {
   const onImported = vi.fn();
-  render(<PackingListUploadDialog open onOpenChange={() => {}} onImported={onImported} />);
+  render(<SupplierDocumentsUploadDialog open onOpenChange={() => {}} onImported={onImported} />);
   return { onImported };
 }
 
@@ -180,7 +180,7 @@ beforeEach(() => {
   useFulfilmentSuppliers.mockReset().mockReturnValue({ data: [], isLoading: false });
 });
 
-describe('PackingListUploadDialog - the dialog now reads "Upload supplier documents"', () => {
+describe('SupplierDocumentsUploadDialog - the dialog now reads "Upload supplier documents"', () => {
   it('titles itself for both documents, not just packing lists', () => {
     openDialog();
 
@@ -197,7 +197,7 @@ describe('PackingListUploadDialog - the dialog now reads "Upload supplier docume
   });
 });
 
-describe('PackingListUploadDialog - Test reads every file and classifies it', () => {
+describe('SupplierDocumentsUploadDialog - Test reads every file and classifies it', () => {
   it('is disabled until a file is chosen', () => {
     openDialog();
 
@@ -248,7 +248,7 @@ describe('PackingListUploadDialog - Test reads every file and classifies it', ()
   });
 });
 
-describe('PackingListUploadDialog - Confirm', () => {
+describe('SupplierDocumentsUploadDialog - Confirm', () => {
   const RESULT = {
     proforma_invoice_ids: ['pi-1', 'pi-2'],
     shipment_ids: ['ship-1', 'ship-2'],
@@ -306,7 +306,7 @@ describe('PackingListUploadDialog - Confirm', () => {
   });
 });
 
-describe('PackingListUploadDialog - translations, English beside the Chinese (R16)', () => {
+describe('SupplierDocumentsUploadDialog - translations, English beside the Chinese (R16)', () => {
   const PL_WITH_TRANSLATIONS = {
     name: 'packing-list.xls',
     kind: 'packing_list',
@@ -427,7 +427,7 @@ describe('PackingListUploadDialog - translations, English beside the Chinese (R1
   });
 });
 
-describe('PackingListUploadDialog - self-serve supplier picker (no supplierId prop)', () => {
+describe('SupplierDocumentsUploadDialog - self-serve supplier picker (no supplierId prop)', () => {
   beforeEach(() => {
     useFulfilmentSuppliers.mockReturnValue({
       data: [{ value: 'sup-1', label: 'Kailu Hardware Factory' }],
@@ -464,7 +464,7 @@ describe('PackingListUploadDialog - self-serve supplier picker (no supplierId pr
   });
 });
 
-describe('PackingListUploadDialog - the currency, asked for only when nothing else says', () => {
+describe('SupplierDocumentsUploadDialog - the currency, asked for only when nothing else says', () => {
   it('sends no currency at all when the field is left empty', async () => {
     applySupplierDocuments.mockResolvedValue({
       proforma_invoice_ids: [], shipment_ids: [], links_written: 0, attachment_ids: [],

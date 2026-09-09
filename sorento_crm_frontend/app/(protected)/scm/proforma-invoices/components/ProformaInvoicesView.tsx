@@ -61,9 +61,8 @@ import { EM_DASH, fmtDate, fmtInt, fmtQty, fmtSupplierCost } from '../../lib/for
 import { ConvertToPackingListDialog } from './ConvertToPackingListDialog';
 import { OverCapacityDialog } from './OverCapacityDialog';
 // The shared "Upload supplier documents" dialog (R12, purchasing consolidation batch, lane
-// C): this page's own `ProformaUploadDialog` (single-file, proforma only) is retired once
-// this lands, since every caller of it now opens the shared one instead.
-import { PackingListUploadDialog as ProformaUploadDialog } from '@/app/(protected)/procurement-management/packing-lists/components/PackingListUploadDialog';
+// C; its only remaining home since S3, AC-C2/C3 - Packing Lists has no upload of its own).
+import { SupplierDocumentsUploadDialog } from './SupplierDocumentsUploadDialog';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
@@ -493,9 +492,8 @@ export function ProformaInvoicesView() {
           result.lines_created === 1 ? '' : 's'
         }${skippedMsg}`,
       );
-      // The captain's second amendment moves the packing-list-to-SPO journey to the
-      // procurement packing-list book, over this same `inbound_shipments` row - so the
-      // convert hand-off lands there, by id, rather than on `/scm/incoming`.
+      // The packing-list-to-SPO journey lives in the procurement packing-list book, over
+      // this same `inbound_shipments` row - so the convert hand-off lands there, by id.
       router.push(`/procurement-management/packing-lists/${result.shipment_id}`);
     } catch (e) {
       // An over-capacity refusal is a question, not a failure: it names the volume and the
@@ -721,7 +719,7 @@ export function ProformaInvoicesView() {
       {/* No auto-close on import here: the dialog's own result summary ("Created N,
           updated M") would never paint if the parent closed it the instant the apply
           finished. The user dismisses it themselves once they have read the result. */}
-      <ProformaUploadDialog
+      <SupplierDocumentsUploadDialog
         open={uploadOpen}
         onOpenChange={setUploadOpen}
         onImported={invalidateProformaLists}
