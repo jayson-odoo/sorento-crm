@@ -209,6 +209,23 @@ export function PlanLinesSection({
     }
   };
 
+  /**
+   * S12 (round 2, 9 Sep, review fix - AC-S12.1): the SAME try/await/toast shape as the
+   * toolbar's own `doSave`, so a row's own Save gives the buyer the same feedback a bulk
+   * save already does - an unwrapped `planEdits.saveRow` left a rejected save silent, and
+   * "Saved" now says which end. `savingRowIds` (also on the hook) is the per-row disabled
+   * guard the panel reads to keep a second click from firing a second PUT.
+   */
+  const doSaveRow = async (line: PlanLine) => {
+    try {
+      const result = await planEdits.saveRow(line);
+      if (!result) return;
+      toast.success('Row saved.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not save this row.');
+    }
+  };
+
   const doConfirm = async () => {
     try {
       const result = await planEdits.confirm();
@@ -294,7 +311,8 @@ export function PlanLinesSection({
         decisions={planLines.decisions}
         edits={planEdits.edits}
         onRowEdit={planEdits.setRowEdit}
-        onSaveRow={planEdits.saveRow}
+        onSaveRow={(l) => void doSaveRow(l)}
+        savingFor={(l) => planEdits.savingRowIds.has(l.id)}
         toolbarPrimary={toolbarPrimary}
         coverFor={planLines.coverFor}
         priceFor={planLines.priceFor}

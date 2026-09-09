@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { confirmDecisions } from '../services/decisionService';
 import { savePlanEdits, type PlanEditRow } from '../services/planEditsService';
@@ -56,18 +56,14 @@ export function usePlanEdits(
     setEdits((prev) => ({ ...prev, [line.id]: { ...prev[line.id], ...patch } }));
   }, []);
 
-  /** Drop a row's draft entirely - "Use suggestion" is the absence of an edit, not a
-   *  fourth kind of one. */
-  const resetRow = useCallback((line: PlanLine) => {
-    setEdits((prev) => {
-      if (!prev[line.id]) return prev;
-      const next = { ...prev };
-      delete next[line.id];
-      return next;
-    });
-  }, []);
-
   const clearAll = useCallback(() => setEdits({}), []);
+
+  // S12 (round 2, 9 Sep, review fix): which rows' own Save (`saveRow`) is in flight -
+  // a REF for the synchronous double-click guard inside `saveRow` itself (React state
+  // updates are not synchronous, so two clicks inside the same tick would both read the
+  // OLD state and both fire), mirrored into state so the panel can disable the button.
+  const savingRowIdsRef = useRef<Set<string>>(new Set());
+  const [savingRowIds, setSavingRowIds] = useState<Set<string>>(new Set());
 
   const saveCount = useMemo(() => editedProductCount(edits, lines), [edits, lines]);
   // G5 (S6, 9 Sep 2026): `confirmSummary` no longer sizes an undecided row off the
@@ -160,15 +156,22 @@ export function usePlanEdits(
   /**
    * S12 (round 2, 9 Sep): the panel's own "Save" - persists just THIS row's draft,
    * immediately, rather than waiting on the toolbar's Save (N) to sweep up every row on
-   * the plan. Was "Use suggestion" (`resetRow`, still here for a caller that wants to
-   * drop a draft without persisting it); this button persists instead.
+   * the plan. Was "Use suggestion" (dropped the draft instead of persisting it).
+   *
+   * Own `savingRowIds` guard, separate from the toolbar's `isSaving` (review fix round
+   * 2): a row's own Save must not disable every OTHER row's button or the toolbar's,
+   * and the ref check below is what actually stops a second click from firing a second
+   * PUT - the disabled attribute the panel reads off `savingRowIds` is the visible half
+   * of the same guard, not the only one.
    */
   const saveRow = useCallback(
     async (line: PlanLine) => {
       if (!runId) return null;
+      if (savingRowIdsRef.current.has(line.id)) return null;
       const rows = rowsForLine(line, edits[line.id]);
       if (!rows.length) return null;
-      setIsSaving(true);
+      savingRowIdsRef.current.add(line.id);
+      setSavingRowIds(new Set(savingRowIdsRef.current));
       try {
         const result = await savePlanEdits(runId, rows);
         setEdits((prev) => {
@@ -180,7 +183,8 @@ export function usePlanEdits(
         await invalidatePlanQueries();
         return result;
       } finally {
-        setIsSaving(false);
+        savingRowIdsRef.current.delete(line.id);
+        setSavingRowIds(new Set(savingRowIdsRef.current));
       }
     },
     [runId, edits, rowsForLine, invalidatePlanQueries],
@@ -211,8 +215,8 @@ export function usePlanEdits(
   return {
     edits,
     setRowEdit,
-    resetRow,
     saveRow,
+    savingRowIds,
     clearAll,
     saveCount,
     confirmable,

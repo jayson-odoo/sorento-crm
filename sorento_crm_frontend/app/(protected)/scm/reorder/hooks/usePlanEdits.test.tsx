@@ -97,18 +97,6 @@ describe('usePlanEdits - the draft map (D7)', () => {
 
     await waitFor(() => expect(result.current.edits[l.id]).toEqual({ moq: 100, level: 50 }));
   });
-
-  it('resetRow drops the draft entirely - "Use suggestion" is the absence of an edit', async () => {
-    const l = line();
-    const { result } = renderHook(() => usePlanEdits('run-1', [l], {}), { wrapper });
-
-    act(() => result.current.setRowEdit(l, { moq: 100 }));
-    await waitFor(() => expect(result.current.saveCount).toBe(1));
-
-    act(() => result.current.resetRow(l));
-    await waitFor(() => expect(result.current.saveCount).toBe(0));
-    expect(result.current.edits[l.id]).toBeUndefined();
-  });
 });
 
 describe('usePlanEdits - Save (N) counts DISTINCT products (R14/E4)', () => {
@@ -398,8 +386,8 @@ describe('usePlanEdits - confirmable summary reflects the draft map live', () =>
  * AC-S12.1/AC-S12.3 (round 2, reorder-feedback-9sep): the row's "Use suggestion" button
  * becomes "Save" - it persists THAT ROW alone through the plan-edits save, immediately,
  * rather than waiting on the toolbar's Save (N). `saveRow(line)` is the hook-level half
- * of that - the same `PlanLine` argument `setRowEdit`/`resetRow` already take, rather than
- * a bare id; `PlanRowPanel.save.test.tsx` covers the button itself.
+ * of that - the same `PlanLine` argument `setRowEdit` already takes, rather than a bare
+ * id; `PlanRowPanel.save.test.tsx` covers the button itself.
  */
 describe('usePlanEdits - saveRow saves one product only (AC-S12.3)', () => {
   it('PUTs only that product\'s rec ids, drops it from the draft map, and leaves the other product\'s draft (with its own buy) intact', async () => {
@@ -433,5 +421,46 @@ describe('usePlanEdits - saveRow saves one product only (AC-S12.3)', () => {
     // B, never touched by this save, keeps its own draft and its own confirmable count.
     expect(result.current.edits.rB).toEqual({ decision: { buy: 20 } });
     expect(result.current.confirmable.products).toBe(1);
+  });
+});
+
+/**
+ * AC-S12.1 (review fix round 2, 9 Sep, BLOCKER finding 1): the guard is inside `saveRow`
+ * itself (a ref, checked synchronously) rather than only on the UI's disabled attribute -
+ * two calls issued before the first's request lands must still PUT once.
+ */
+describe('usePlanEdits - saveRow refuses a second call while the first is still in flight', () => {
+  it('two overlapping saveRow calls on the SAME row PUT exactly once', async () => {
+    let resolveFirst: (v: unknown) => void = () => {};
+    savePlanEdits.mockReset().mockReturnValue(
+      new Promise((resolve) => {
+        resolveFirst = resolve;
+      }),
+    );
+    const l = line();
+    const { result } = renderHook(() => usePlanEdits('run-1', [l], {}), { wrapper });
+    act(() => result.current.setRowEdit(l, { moq: 100 }));
+    await waitFor(() => expect(result.current.saveCount).toBe(1));
+
+    let firstCall: Promise<unknown> = Promise.resolve(null);
+    act(() => {
+      firstCall = result.current.saveRow(l);
+    });
+    await waitFor(() => expect(result.current.savingRowIds.has(l.id)).toBe(true));
+
+    // The second call, issued while the first is still on the wire, must be a no-op -
+    // never a second PUT.
+    let secondResult: unknown;
+    await act(async () => {
+      secondResult = await result.current.saveRow(l);
+    });
+    expect(secondResult).toBeNull();
+    expect(savePlanEdits).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveFirst({ saved_rows: 1, saved_products: 1 });
+      await firstCall;
+    });
+    expect(result.current.savingRowIds.has(l.id)).toBe(false);
   });
 });

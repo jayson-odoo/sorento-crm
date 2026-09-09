@@ -12,6 +12,11 @@ import { recToPlanLine } from '../lib/planLine';
 import type { ReorderRecommendation } from '../types/reorder.types';
 import type { ToolbarAction } from '@/components/ui/data-grid-list-toolbar';
 
+const toastSuccess = vi.fn();
+const toastError = vi.fn();
+vi.mock('@/lib/toast', () => ({ toast: { success: (...a: unknown[]) => toastSuccess(...a),
+                                          error: (...a: unknown[]) => toastError(...a) } }));
+
 const usePlanLines = vi.fn();
 vi.mock('../hooks/usePlanLines', () => ({ usePlanLines: (...a: unknown[]) => usePlanLines(...a) }));
 
@@ -28,7 +33,8 @@ function stubPlanEdits(over: Record<string, unknown> = {}) {
   usePlanEditsMock.mockReturnValue({
     edits: {},
     setRowEdit: vi.fn(),
-    resetRow: vi.fn(),
+    saveRow: vi.fn(),
+    savingRowIds: new Set(),
     clearAll: vi.fn(),
     saveCount: 0,
     confirmable: { products: 0, cash: 0, unpriced: 0 },
@@ -48,6 +54,8 @@ vi.mock('./PlanLinesGrid', () => ({
     lines,
     secondaryActions,
     toolbarPrimary,
+    onSaveRow,
+    savingFor,
   }: {
     runId: string | null;
     statusFilter: string | null;
@@ -55,12 +63,25 @@ vi.mock('./PlanLinesGrid', () => ({
     lines: PlanLine[];
     secondaryActions?: ToolbarAction[];
     toolbarPrimary?: React.ReactNode;
+    onSaveRow?: (line: PlanLine) => void;
+    savingFor?: (line: PlanLine) => boolean;
   }) => (
     <div>
       plan-lines-grid runId={runId} statusFilter={String(statusFilter)}
       decidedFilter={String(decidedFilter)}
       lines={lines.map((l) => l.sku).join(',')}
       secondaryActions={(secondaryActions ?? []).map((a) => a.key).join(',')}
+      {/* AC-S12.1 (round 2, review fix): a stand-in for the panel's own row Save, so a
+          test can reach the wrapper `PlanLinesSection` builds (`doSaveRow`) the same
+          way it reaches the toolbar's through `toolbarPrimary` below. */}
+      {lines[0] ? (
+        <button
+          disabled={savingFor?.(lines[0]) ?? false}
+          onClick={() => onSaveRow?.(lines[0])}
+        >
+          {savingFor?.(lines[0]) ? 'row-saving' : 'row-save'}
+        </button>
+      ) : null}
       {/* AC-S6.3: the real grid renders Save/Confirm at the toolbar's right end
           (`toolbarPrimary`) - rendered here too so a test can reach the actual buttons
           `PlanLinesSection` builds, not a restated copy of them. */}
@@ -131,6 +152,8 @@ function stubPlanLines(over: Record<string, unknown> = {}) {
 beforeEach(() => {
   usePlanLines.mockReset();
   usePlanEditsMock.mockReset();
+  toastSuccess.mockReset();
+  toastError.mockReset();
   stubPlanEdits();
 });
 
@@ -467,5 +490,41 @@ describe('PlanLinesSection - Confirm button tooltip (AC-S6.3)', () => {
       'title',
       'Save, then turn this plan into draft purchase orders',
     );
+  });
+});
+
+describe('PlanLinesSection - row Save feedback (AC-S12.1, review fix round 2)', () => {
+  it('a rejecting saveRow toasts the extracted error and never clears the draft', async () => {
+    const saveRow = vi.fn().mockRejectedValue(new Error('Could not reach the server.'));
+    stubPlanLines({ lines: [line()] });
+    stubPlanEdits({ saveRow, edits: { r1: { moq: 5 } } });
+    render(<PlanLinesSection runId="run-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'row-save' }));
+
+    await vi.waitFor(() => expect(toastError).toHaveBeenCalledWith('Could not reach the server.'));
+    expect(toastSuccess).not.toHaveBeenCalled();
+    // The hook owns clearing the draft on success only - a rejected save never reaches
+    // that line, so nothing here asserts the draft was touched.
+  });
+
+  it('toasts "Row saved." on a successful save', async () => {
+    const saveRow = vi.fn().mockResolvedValue({ saved_rows: 1, saved_products: 1 });
+    stubPlanLines({ lines: [line()] });
+    stubPlanEdits({ saveRow });
+    render(<PlanLinesSection runId="run-1" />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'row-save' }));
+
+    await vi.waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('Row saved.'));
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it('disables the row Save affordance while that row is in flight', () => {
+    stubPlanLines({ lines: [line()] });
+    stubPlanEdits({ savingRowIds: new Set(['r1']) });
+    render(<PlanLinesSection runId="run-1" />);
+
+    expect(screen.getByRole('button', { name: 'row-saving' })).toBeDisabled();
   });
 });

@@ -229,6 +229,7 @@ export function PlanLinesGrid({
   edits = {},
   onRowEdit,
   onSaveRow,
+  savingFor,
   toolbarPrimary,
   coverFor,
   priceFor,
@@ -268,6 +269,9 @@ export function PlanLinesGrid({
   /** Persist THIS row's own draft now (S12, round 2, 9 Sep - the panel's "Save" button,
    *  was "Use suggestion" which reset the draft instead of persisting it). */
   onSaveRow?: (line: PlanLine) => void;
+  /** Whether THIS row's own Save is in flight (review fix round 2, 9 Sep) - disables
+   *  just that row's button, never the toolbar's or a sibling row's. */
+  savingFor?: (line: PlanLine) => boolean;
   /** Save (N) and Confirm (N), rendered at the right end of the grid's own toolbar, after
    *  Actions (R11). The SECTION owns them - it owns the draft map they act on. */
   toolbarPrimary?: React.ReactNode;
@@ -628,6 +632,7 @@ export function PlanLinesGrid({
               lockReason={decisionsReadOnly ? readOnlyReason : null}
               onEdit={(patch) => onRowEdit?.(line, patch)}
               onSave={() => onSaveRow?.(line)}
+              saving={savingFor?.(line) ?? false}
             />
           ),
         },
@@ -1049,7 +1054,7 @@ export function PlanLinesGrid({
      trendFor, trendSeriesMonths, groupByChannel, dynamicChannels,
      poFor,
      hasPhotoFor, photoStatus, onOpenPhoto,
-     onRowEdit, onSaveRow, openDialog, readingFor, channelTotals],
+     onRowEdit, onSaveRow, savingFor, openDialog, readingFor, channelTotals],
   );
 
   // The story order (see the header comment): each chapter leads with its result and is
