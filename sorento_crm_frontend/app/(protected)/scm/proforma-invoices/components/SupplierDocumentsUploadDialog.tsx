@@ -205,7 +205,8 @@ const IMPORT_DOC_TYPE: ImportFieldAliasDocType = 'packing_list';
 
 /** Ours and theirs, in that order - the operator recognises the supplier's own reference,
  *  and our number is what the invoice is filed under. */
-function invoiceLabel(piNumber: string, supplierRef: string | null): string {
+function invoiceLabel(piNumber: string | null, supplierRef: string | null): string {
+  if (!piNumber) return supplierRef ?? '';
   return supplierRef ? `${piNumber} · ${supplierRef}` : piNumber;
 }
 
@@ -575,28 +576,37 @@ export function SupplierDocumentsUploadDialog({
                           {block.refusal.message}
                         </p>
                       ) : null}
-                      <SearchableSelect
-                        id={`attach-to-${f.name}-${block.block_index}`}
-                        size="sm"
-                        value={block.attach_to?.id ?? ''}
-                        onChange={(v: string) => {
-                          if (v) pickAttachTo(f.name, block.block_index, v);
-                        }}
-                        fetchOptions={fetchInvoiceOptions}
-                        selectedOption={
-                          block.attach_to
-                            ? {
-                                value: block.attach_to.id,
-                                label: invoiceLabel(
-                                  block.attach_to.pi_number,
-                                  block.attach_to.supplier_ref,
-                                ),
-                              }
-                            : undefined
-                        }
-                        placeholder="Choose the proforma invoice"
-                        disabled={!!attachTo || repreviewing === f.name}
-                      />
+                      {block.attach_to?.how === 'same_batch' ? (
+                        // The invoice is a FILE in this upload, not a row: there is nothing
+                        // to pick between, and it gets its number when Confirm writes it.
+                        <p className="text-2xs text-foreground">
+                          {block.attach_to.supplier_ref ?? block.attach_to.file}
+                          <span className="text-muted-foreground"> · in this upload</span>
+                        </p>
+                      ) : (
+                        <SearchableSelect
+                          id={`attach-to-${f.name}-${block.block_index}`}
+                          size="sm"
+                          value={block.attach_to?.id ?? ''}
+                          onChange={(v: string) => {
+                            if (v) pickAttachTo(f.name, block.block_index, v);
+                          }}
+                          fetchOptions={fetchInvoiceOptions}
+                          selectedOption={
+                            block.attach_to?.id
+                              ? {
+                                  value: block.attach_to.id,
+                                  label: invoiceLabel(
+                                    block.attach_to.pi_number,
+                                    block.attach_to.supplier_ref,
+                                  ),
+                                }
+                              : undefined
+                          }
+                          placeholder="Choose the proforma invoice"
+                          disabled={!!attachTo || repreviewing === f.name}
+                        />
+                      )}
                     </div>
                   ))}
                   {unmappedHeaders.length ? (

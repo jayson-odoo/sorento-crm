@@ -398,6 +398,14 @@ def _attach_rows(
                     else None
                 ),
                 "refusal": resolved.refusal,
+                # Popped by `preview()`: what this BLOCK itself states, so a refusal can be
+                # answered by a proforma invoice sitting in the same Test batch (ruling 22),
+                # which no database lookup can see because nothing is written yet.
+                "_stated": {
+                    "pi_number": block.pi_number,
+                    "container_no": block.container_no,
+                    "invoice_date": block.invoice_date,
+                },
             }
         )
     return out
@@ -423,6 +431,7 @@ def _file_preview(
             "errors": ["Could not tell whether this is a proforma invoice or a packing list."],
             "footer_note": None,
             "packing_attach": [],
+            "_pi_docs": [],
         }
 
     pi_result: Optional[ProformaReadResult] = None
@@ -535,9 +544,66 @@ def _file_preview(
         # two used to share one flat `blocks` list, keyed only by the FILE's kind, so a
         # combined file's own PI block landed in `pl_blocks` too (and vice versa) and
         # matched against itself.
+        # The invoices THIS file states, as apply would file them (`supplier_ref_for`, the
+        # same container-suffix rule), for ruling 22's same-batch resolution. Popped by
+        # `preview()` like the two match lists below.
+        "_pi_docs": (
+            [
+                {
+                    "file": name,
+                    "supplier_ref": proforma_invoice_service.supplier_ref_for(
+                        doc, siblings=pi_result.documents
+                    ),
+                    "pi_number": doc.pi_number,
+                    "container_no": doc.container_no,
+                    "invoice_date": doc.invoice_date,
+                }
+                for doc in pi_result.documents
+            ]
+            if pi_result and pi_result.ok
+            else []
+        ),
         "_pi_match": _pi_match_blocks(pi_result, known_pi) if pi_result and pi_result.ok else [],
         "_pl_match": _pl_match_blocks(pl_result, known_pl) if pl_result and pl_result.ok else [],
     }
+
+
+def _same_batch_invoice(
+    invoices: list[dict[str, Any]], stated: dict[str, Any]
+) -> Optional[dict[str, Any]]:
+    """The invoice IN THIS BATCH a packing-list block belongs to (ruling 22), by the same
+    three facts the database pass uses, in the same order of trust: the stated invoice
+    number, then the container, then the date. `None` when the batch holds no invoice, or
+    holds more than one that could be meant - a guess between two is worse than the refusal
+    it would replace.
+    """
+    def _one(candidates: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+        return candidates[0] if len(candidates) == 1 else None
+
+    number = (stated.get("pi_number") or "").strip().lower()
+    if number:
+        by_number = [
+            inv for inv in invoices
+            if (inv.get("pi_number") or "").strip().lower() == number
+        ]
+        if by_number:
+            return _one(by_number)
+
+    container = (stated.get("container_no") or "").strip().lower()
+    if container:
+        by_container = [
+            inv for inv in invoices
+            if (inv.get("container_no") or "").strip().lower() == container
+        ]
+        if by_container:
+            return _one(by_container)
+
+    date = stated.get("invoice_date")
+    if date:
+        by_date = [inv for inv in invoices if inv.get("invoice_date") == date]
+        if by_date:
+            return _one(by_date)
+    return None
 
 
 def preview(
@@ -584,8 +650,37 @@ def preview(
     # display `blocks` list - a combined file's PI part and PL part are TAGGED by which
     # helper built them, so one can never be read back as the other and matched against
     # itself (S8, review round 1).
-    pi_entries = [e for f in out_files for e in f.pop("_pi_match")]
-    pl_entries = [e for f in out_files for e in f.pop("_pl_match")]
+    # `.pop(..., [])`: an unreadable file's preview carries none of these private keys, and
+    # a bare `pop` made the whole batch 500 on the one file the operator most needs told
+    # about.
+    pi_entries = [e for f in out_files for e in f.pop("_pi_match", [])]
+    pl_entries = [e for f in out_files for e in f.pop("_pl_match", [])]
+
+    # Ruling 22: a packing list arriving WITH its invoice, in one Test, has nothing in the
+    # database to attach to yet - `resolve_attach` only sees rows, and nothing is written
+    # until Confirm. So a block that resolved to nothing is offered the batch's own
+    # proforma invoices, matched the same three ways the database pass matches on: the
+    # stated invoice number, the container, the date. Apply needs no equivalent - it writes
+    # the invoice files first, so by the time the packing loop runs the row is there.
+    batch_invoices = [d for f in out_files for d in f.pop("_pi_docs", [])]
+    for f in out_files:
+        for entry in f.get("packing_attach", []):
+            stated = entry.pop("_stated", None)
+            if entry.get("attach_to") or not stated:
+                continue
+            sibling = _same_batch_invoice(batch_invoices, stated)
+            if sibling is None:
+                continue
+            entry["attach_to"] = {
+                # No id and no number: neither exists until Confirm mints them. What names
+                # it on screen is the supplier's own reference, or failing that its file.
+                "id": None,
+                "pi_number": None,
+                "supplier_ref": sibling["supplier_ref"],
+                "how": "same_batch",
+                "file": sibling["file"],
+            }
+            entry["refusal"] = None
 
     price_matches: list[dict[str, Any]] = []
     for pi in pi_entries:

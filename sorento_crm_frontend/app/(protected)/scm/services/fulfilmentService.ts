@@ -1194,14 +1194,19 @@ export interface SupplierDocumentHeader {
  * Which proforma invoice ONE packing-list block attaches to (S2, AC-B5/B13), and how that
  * was decided - the server's own answer (`resolve_attach`), never worked out here: the
  * file's stated invoice number against a PI's `supplier_ref`, the container it names, the
- * one PI of the supplier sharing its date, or the pick this dialog posted back
- * (`how: 'explicit'`).
+ * one PI of the supplier sharing its date, the pick this dialog posted back
+ * (`how: 'explicit'`), or a proforma invoice sitting in this same Test batch that nothing
+ * has written yet (`how: 'same_batch'`, ruling 22).
  */
 export interface SupplierDocumentAttachTarget {
-  id: string;
-  pi_number: string;
+  /** Null on a `same_batch` answer: the invoice is a file in this very upload and has no
+   *  row - and so no id and no number of ours - until Confirm writes it. */
+  id: string | null;
+  pi_number: string | null;
   supplier_ref: string | null;
-  how: 'explicit' | 'invoice_number' | 'container' | 'date';
+  how: 'explicit' | 'invoice_number' | 'container' | 'date' | 'same_batch';
+  /** The file that states that invoice, on a `same_batch` answer only. */
+  file?: string;
 }
 
 /** A packing-list block with no invoice to attach to (AC-B5, AC-B16) - named with the
