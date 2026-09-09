@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date
 from typing import List, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 # --- create / poll ----------------------------------------------------------
@@ -32,6 +32,23 @@ class CreateReorderRunRequest(BaseModel):
     # it is excluded from the run's netting; demand carrying no date is always still
     # counted.
     plan_horizon_date: Optional[date] = None
+    # "Sales orders needed FROM" (S4, PLAN-reorder-feedback-9sep.md): the start-side twin.
+    # Omitted/None plans every open SO line regardless of when it was needed. Demand
+    # carrying no date is always still counted (G2, 9 Sep ruling), the same reading the end
+    # date already gives it.
+    plan_horizon_start: Optional[date] = None
+
+    @model_validator(mode="after")
+    def _start_before_end(self):
+        if (
+            self.plan_horizon_start is not None
+            and self.plan_horizon_date is not None
+            and self.plan_horizon_start > self.plan_horizon_date
+        ):
+            raise ValueError(
+                "plan_horizon_start must be on or before plan_horizon_date"
+            )
+        return self
 
 
 class ReorderRunAccepted(BaseModel):
@@ -49,6 +66,19 @@ class ReplanReorderRunRequest(BaseModel):
     warehouse_codes: List[str] = []
     product_codes: List[str] = []
     plan_horizon_date: Optional[date] = None
+    plan_horizon_start: Optional[date] = None
+
+    @model_validator(mode="after")
+    def _start_before_end(self):
+        if (
+            self.plan_horizon_start is not None
+            and self.plan_horizon_date is not None
+            and self.plan_horizon_start > self.plan_horizon_date
+        ):
+            raise ValueError(
+                "plan_horizon_start must be on or before plan_horizon_date"
+            )
+        return self
 
 
 class ReplanReorderRunAccepted(ReorderRunAccepted):
@@ -81,6 +111,8 @@ class ReorderRunStatusResponse(BaseModel):
     # The "Plan until" cutoff this run was launched with, ISO date, or None when the run
     # carried no horizon (every run has always planned every open SO line, unchanged).
     plan_horizon_date: Optional[str] = None
+    # The start-side twin (S4), ISO date, or None when the run carried no start.
+    plan_horizon_start: Optional[str] = None
     # When the engine started. The plan page's header is "Plan dd/mm/yyyy HH:mm" and this
     # response is the only thing that page reads, so without it the header can state the
     # date or a fabricated time and nothing else.
@@ -121,6 +153,7 @@ class ReorderRunListItem(BaseModel):
     # Same field as ReorderRunStatusResponse - the plan header reads it off whichever of
     # the two responses is on screen (today's run vs a past one).
     plan_horizon_date: Optional[str] = None
+    plan_horizon_start: Optional[str] = None
     # --- the plans list (PLAN-scm-reorder-revamp.md 4.1) ----------------------------
     # The scheduled daily run rather than one a person started (`created_by IS NULL` -
     # `task_scheduler._reorder_plan_tick` passes no actor). Drives the "daily" badge; the

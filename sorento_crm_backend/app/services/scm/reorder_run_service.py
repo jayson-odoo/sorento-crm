@@ -52,6 +52,7 @@ from app.services.scm.money import (
     to_base,
 )
 from app.services.scm import plan_grain
+from app.services.scm import product_supplier_service
 from app.services.scm.pool_predicate import SITE_POOL_SQL
 from app.services.scm.reorder_policy import (
     DEFAULT_DEAD_STOCK_DAYS,
@@ -75,6 +76,7 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
                enqueue: bool = True, include_market: bool = False,
                product_codes: Optional[list[str]] = None,
                plan_horizon_date: Optional[date] = None,
+               plan_horizon_start: Optional[date] = None,
                supersedes_run_id: Optional[str] = None) -> dict:
     """Insert a ``running`` ``scm.reorder_run`` (scope snapshot + started_at) and
     enqueue the RQ ``run_reorder`` task. Returns ``{run_id, status, buy_scope, stage}``.
@@ -110,9 +112,17 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
     OLD run is written only when this run actually reaches ``completed`` (see
     `_execute_run_scoped`), so a still-running or failed re-plan never makes a still-valid
     old run look superseded.
+
+    ``plan_horizon_start`` (S4, PLAN-reorder-feedback-9sep.md) is the start-side twin: demand
+    needed BEFORE it is excluded from the run's netting, undated demand always stays in (G2).
+    Enforced ``start <= end`` when both are set lives on the HTTP schema, so a direct service
+    call (tests, scripts) is trusted to pass a sane pair.
     """
     buy_scope = buy_scope if buy_scope in ("network", "warehouse") else "warehouse"
     warehouse_ids = _resolve_warehouse_ids(db, warehouse_codes)
+    # S5, AC-S5.2: G10's named-product bypass does not extend to an excluded product - a
+    # buyer who types one into Start Plan is refused outright, before anything is created.
+    _reject_excluded_named_products(db, product_codes)
     product_ids = _resolve_product_ids(db, product_codes)
     run_id = str(uuid.uuid4())
     now = datetime.utcnow()
@@ -126,6 +136,7 @@ def create_run(db: Session, warehouse_codes: Optional[list[str]],
         budget_id=budget_id or None,
         include_market=bool(include_market),
         plan_horizon_date=plan_horizon_date,
+        plan_horizon_start=plan_horizon_start,
         policy_snapshot_ref=f"policies@{now.isoformat()}",
         started_at=now,
         run_log={"stage": _STAGES[0]},
@@ -173,6 +184,32 @@ def _resolve_product_ids(
         .all()
     )
     return [str(r[0]) for r in rows]
+
+
+def _reject_excluded_named_products(db: Session, product_codes: Optional[list[str]]) -> None:
+    """S5, AC-S5.2: a NAMED product still has to earn its way into a run - G10's "buyer
+    intent bypasses the committed-demand gate" does not extend to a product the buyer has
+    switched off entirely. Refuses the whole request, naming every excluded code, rather
+    than silently dropping them from the scope (a buyer who typed a code expects it planned
+    or told why not).
+    """
+    if not product_codes:
+        return
+    rows = (
+        db.query(Product.product_code)
+        .filter(Product.product_code.in_([str(c) for c in product_codes]))
+        .filter(Product.exclude_from_planning.is_(True))
+        .all()
+    )
+    excluded = sorted({r[0] for r in rows})
+    if excluded:
+        raise AppException(
+            status_code=422,
+            message=(
+                "Excluded from reorder planning, cannot be named in a run: "
+                + ", ".join(excluded)
+            ),
+        )
 
 
 def _resolve_warehouse_ids(db: Session, warehouse_codes: Optional[list[str]]) -> list[str]:
@@ -268,6 +305,7 @@ def resolve_run_scope(db: Session, warehouse_ids, product_ids, started_at) -> di
 
 def replan_run(db: Session, old_run_id: str, *, warehouse_codes: list[str],
                product_codes: list[str], plan_horizon_date: Optional[date],
+               plan_horizon_start: Optional[date] = None,
                actor: Optional[str]) -> dict:
     """Launch a NEW run that supersedes ``old_run_id`` (G8). Runs stay immutable - this
     never mutates the old row's own scope/recommendations, it only starts a fresh run and
@@ -328,6 +366,7 @@ def replan_run(db: Session, old_run_id: str, *, warehouse_codes: list[str],
         product_codes=product_codes or None,
         actor=actor,
         plan_horizon_date=plan_horizon_date,
+        plan_horizon_start=plan_horizon_start,
         supersedes_run_id=old_run_id,
     )
 
@@ -375,7 +414,8 @@ def today_or_latest_run(db: Session, today: Optional[date] = None) -> Optional[d
     if today is None:
         today = datetime.now(_KL_TZ).date()
     cols = ("id, status, buy_scope, warehouse_ids, started_at, finished_at, run_log, "
-            "decision_grain, front_planning_contract_version, plan_horizon_date")
+            "decision_grain, front_planning_contract_version, plan_horizon_date, "
+            "plan_horizon_start")
     # Company-scoped by hand: raw SQL, so the ORM isolation filter never sees it. Without the
     # predicate the reorder page opens on whichever company ran most recently, which is
     # another company's plan wearing this company's chrome.
@@ -536,13 +576,17 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
         today = date.today()
 
         rows = _planning_rows(db, run.warehouse_ids, run.product_ids,
-                             horizon=run.plan_horizon_date)
+                             horizon=run.plan_horizon_date,
+                             horizon_start=run.plan_horizon_start)
         # Confirmed Reserve / Borrow leaves the Retail free-supply pool before anything is
         # netted against it (AC-F07); stamped on the row so every planning path sees it.
         # Horizoned on the SAME rule as the demand it offsets (AC-F-horizon): a reserve
         # claimed against a project line beyond "Plan until" must leave the pool together
-        # with that line's own demand, or it keeps subtracting cover nobody asked for.
-        _apply_project_supply_reduction(db, rows, horizon=run.plan_horizon_date)
+        # with that line's own demand, or it keeps subtracting cover nobody asked for. Same
+        # rule on the START side (S4): a reserve claimed against a line the window no longer
+        # covers must leave together with that demand too.
+        _apply_project_supply_reduction(db, rows, horizon=run.plan_horizon_date,
+                                        horizon_start=run.plan_horizon_start)
         last_move = _last_movement_map(db, [r["product_id"] for r in rows], run.warehouse_ids)
         # L5 - how long the stock sitting there has been sitting. Only ever consulted for a
         # SKU that has never moved, where until now there was no evidence at all.
@@ -568,7 +612,8 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
             recs = _plan_per_warehouse(db, run_id, rows, policies, today, last_move,
                                        wh_meta, last_buy=last_buy, rates=rates,
                                        levels=levels, last_cost=last_cost,
-                                       horizon=run.plan_horizon_date)
+                                       horizon=run.plan_horizon_date,
+                                       horizon_start=run.plan_horizon_start)
 
         # M4 cash stage - compute + FREEZE each buy's rank_score / rank / rank_factors
         # (funded/deferred is computed live at view-time against a budget, not here).
@@ -680,7 +725,8 @@ def _execute_run_scoped(db: Session, run: ReorderRun, _caller_scope) -> dict:
 
 def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
                    product_ids: Optional[list[str]] = None,
-                   horizon: Optional[date] = None) -> list[dict]:
+                   horizon: Optional[date] = None,
+                   horizon_start: Optional[date] = None) -> list[dict]:
     """Active + ongoing SKU×warehouse rows with a net position / demand in the selected
     warehouses (reuses the dashboard focus predicate).
 
@@ -737,7 +783,11 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     a purchase, and the product because 11,390 codes exist in both companies, so the same code
     resolves to two rows.
     """
-    where = ["p.is_active = true", "p.is_discontinued = false"]
+    # S5, AC-S5.2: an excluded product earns no row, even one it would otherwise be
+    # committed-demand-admitted into (G10's named-product bypass does not reach here - that
+    # case is refused outright at `create_run`, see `_reject_excluded_named_products`).
+    where = ["p.is_active = true", "p.is_discontinued = false",
+             "p.exclude_from_planning = false"]
     params: dict[str, Any] = {}
     wh_scope, wh_params = company_sql_predicate(db, "w.company_id", param_prefix="cw")
     if wh_scope:
@@ -774,6 +824,9 @@ def _planning_rows(db: Session, warehouse_ids: Optional[list[str]],
     committed_col = "COALESCE(cv.committed, 0) AS committed"
     committed_expr = "COALESCE(cv.committed, 0)"
     params["horizon"] = horizon
+    # S4: the start-side twin, bound beside `:horizon` on every leg
+    # `demand.horizon_committed_select_sql` applies the end to.
+    params["horizon_start"] = horizon_start
 
     # G1 (`PLAN-scm-reorder-oi-feedback-1sep.md`, captain-intent ruling 2 Sep - PENDING
     # CAPTAIN CONFIRM): the run universe is committed demand only, admitted at PRODUCT
@@ -955,7 +1008,8 @@ def awaiting_acknowledgement_rows(db: Session) -> int:
 
 
 def _project_supply_reduction_map(db: Session, rows: list[dict],
-                                  horizon: Optional[date] = None) -> dict[tuple, float]:
+                                  horizon: Optional[date] = None,
+                                  horizon_start: Optional[date] = None) -> dict[tuple, float]:
     """``{(product_id, warehouse_id): qty}`` of stock an ACTIVE Project decision has
     already claimed, at the location it was claimed FROM.
 
@@ -997,20 +1051,24 @@ def _project_supply_reduction_map(db: Session, rows: list[dict],
           AND sol.product_id::text = ANY(:pids)
           AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
                OR sol.required_date <= CAST(:horizon AS date))
+          AND (CAST(:horizon_start AS date) IS NULL OR sol.required_date IS NULL
+               OR sol.required_date >= CAST(:horizon_start AS date))
         GROUP BY 1, 2
-    """), {"pids": pids, "horizon": horizon}).fetchall()
+    """), {"pids": pids, "horizon": horizon, "horizon_start": horizon_start}).fetchall()
     return {(str(r[0]), str(r[1])): float(r[2] or 0.0)
             for r in found if r[1] is not None and float(r[2] or 0.0) > 0}
 
 
 def _apply_project_supply_reduction(db: Session, rows: list[dict],
-                                    horizon: Optional[date] = None) -> None:
+                                    horizon: Optional[date] = None,
+                                    horizon_start: Optional[date] = None) -> None:
     """Stamp each planning row with the confirmed Project claim on its own stock.
 
     Mutated onto the row rather than passed down, exactly like `_apply_unlocated_demand`,
     so every path that computes a cell sees it without a new parameter on four signatures.
     """
-    claims = _project_supply_reduction_map(db, rows, horizon=horizon)
+    claims = _project_supply_reduction_map(db, rows, horizon=horizon,
+                                           horizon_start=horizon_start)
     if not claims:
         return
     for r in rows:
@@ -1109,7 +1167,7 @@ def _last_purchase_cost_map(db: Session, product_ids: list[str]) -> dict[str, di
                COALESCE(w.segment, 'unattributed') AS segment,
                pol.unit_cost, COALESCE(pol.currency, po.currency) AS currency,
                po.po_number, po.issue_date, pol.created_at AS line_created_at,
-               po.supplier_id::text AS supplier_id, su.supplier_name
+               po.supplier_id::text AS supplier_id, su.supplier_code, su.supplier_name
           FROM purchase_order_lines pol
           JOIN purchase_orders po ON po.id = pol.purchase_order_id
           LEFT JOIN warehouses w ON w.id = pol.warehouse_id
@@ -1133,8 +1191,12 @@ def _last_purchase_cost_map(db: Session, product_ids: list[str]) -> dict[str, di
             "ref": r["po_number"],
             "at": r["issue_date"].isoformat() if r["issue_date"] else None,
             # Who we paid. The panel says "last price from X" (revamp plan 4.4 zone 2) and
-            # before this the row carried the price with no name against it.
+            # before this the row carried the price with no name against it. `supplier_code`
+            # (S11, round 2, 9 Sep) is what lets the panel PREFILL its supplier select to
+            # the supplier this purchase actually named, rather than the engine's own
+            # default link - the select's options are keyed by code, never by id.
             "supplier_id": r["supplier_id"],
+            "supplier_code": r["supplier_code"],
             "supplier_name": r["supplier_name"],
         }
         # `issue_date` is a DATE, so two purchases made on the same day tie on it - and
@@ -1283,7 +1345,8 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
                         rates: Optional[dict] = None,
                         levels: Optional[dict] = None,
                         last_cost: Optional[dict] = None,
-                        horizon: Optional[date] = None) -> list[ReorderRecommendation]:
+                        horizon: Optional[date] = None,
+                        horizon_start: Optional[date] = None) -> list[ReorderRecommendation]:
     """Plan each SKU against each fulfilment POOL, not each warehouse.
 
     A shortage in one bin is covered from the shared pool its site draws on before it is
@@ -1308,7 +1371,7 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
     for r in rows:
         by_product.setdefault(str(r["product_id"]), []).append(r)
 
-    _apply_unlocated_demand(db, by_product, horizon=horizon)
+    _apply_unlocated_demand(db, by_product, horizon=horizon, horizon_start=horizon_start)
 
     for pid, prows in by_product.items():
         # Each location is its own pool unless the policy says siblings may cover for one
@@ -1318,7 +1381,7 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
         computed: list[dict] = []
         for r in prows:
             c = _compute_cell(db, r, policies, cands, today, last_move, last_buy,
-                              levels=levels, last_cost=last_cost)
+                              levels=levels, last_cost=last_cost, rates=rates)
             computed.append(c)
 
         # The reorder-level basis is planned per PRODUCT, whatever the pooling
@@ -1328,7 +1391,7 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
         # the net.
         if _is_product_level_basis(db, pid, policies):
             recs.extend(_emit_product(db, run_id, prows, computed, policies, cands,
-                                      wh_meta, last_cost=last_cost))
+                                      wh_meta, last_cost=last_cost, rates=rates))
             continue
 
         by_pool: dict[str, list[tuple[dict, dict]]] = {}
@@ -1343,12 +1406,13 @@ def _plan_per_warehouse(db: Session, run_id: str, rows: list[dict], policies: li
                 recs.extend(_emit_cell(run_id, r, c))
             else:
                 recs.extend(_emit_pool(db, run_id, pool_id, members, policies, cands,
-                                       wh_meta))
+                                       wh_meta, last_cost=last_cost, rates=rates))
     return recs
 
 
 def _unlocated_demand_map(
     db: Session, product_ids: list[str], horizon: Optional[date] = None,
+    horizon_start: Optional[date] = None,
 ) -> dict[str, float]:
     """``{product_id: qty}`` of open RETAIL demand whose sales-order line names no
     warehouse.
@@ -1393,8 +1457,11 @@ def _unlocated_demand_map(
           {("AND " + co) if co else ""}
           AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
                OR sol.required_date <= CAST(:horizon AS date))
+          AND (CAST(:horizon_start AS date) IS NULL OR sol.required_date IS NULL
+               OR sol.required_date >= CAST(:horizon_start AS date))
         GROUP BY sol.product_id
-    """), {"pids": [str(p) for p in product_ids], "horizon": horizon, **co_params}).fetchall()
+    """), {"pids": [str(p) for p in product_ids], "horizon": horizon,
+           "horizon_start": horizon_start, **co_params}).fetchall()
     out: dict[str, float] = {}
     for pid, qty in rows:
         qty = float(qty or 0.0)
@@ -1404,7 +1471,8 @@ def _unlocated_demand_map(
 
 
 def _apply_unlocated_demand(db: Session, by_product: dict[str, list[dict]],
-                            horizon: Optional[date] = None) -> None:
+                            horizon: Optional[date] = None,
+                            horizon_start: Optional[date] = None) -> None:
     """Land each product's unlocated demand on the location that would actually ship it.
 
     > "all SO line should have warehouse one, no warehouse we can just put it under net"
@@ -1433,7 +1501,8 @@ def _apply_unlocated_demand(db: Session, by_product: dict[str, list[dict]],
     ``_unlocated_demand_map`` - this path alone carries ~97% of the book, so leaving it
     unhorizoned defeated the horizon for nearly the whole plan.
     """
-    unlocated = _unlocated_demand_map(db, list(by_product.keys()), horizon=horizon)
+    unlocated = _unlocated_demand_map(db, list(by_product.keys()), horizon=horizon,
+                                      horizon_start=horizon_start)
     if not unlocated:
         return
     for pid, qty in unlocated.items():
@@ -1514,7 +1583,8 @@ def _qty_label(value: float) -> str:
 
 def _emit_pool(db: Session, run_id: str, pool_id: str,
                members: list[tuple[dict, dict]], policies: list[dict], cands: list[dict],
-               wh_meta: dict) -> list[ReorderRecommendation]:
+               wh_meta: dict, *, last_cost: Optional[dict] = None,
+               rates: Optional[dict] = None) -> list[ReorderRecommendation]:
     """One buy decision for a multi-location pool, apportioned back to its locations.
 
     Reuses ``aggregate_network`` and ``allocate`` rather than growing a second netting
@@ -1533,11 +1603,23 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
     policy = eng.resolve_policy_for_sku(db, str(prows[0]["product_id"]), pool_id,
                                         policies) or {}
     tog = eng.policy_toggles(policy)
+    # G7 / AC-S13.6 (review fix round 3, 9 Sep): the pool's own product-wide last
+    # purchase, attributed to the POOL ITSELF (`pool_id` is a real warehouse id here,
+    # unlike the network scope below which plans no single location).
+    lp, _lp_basis = _last_purchase_for(
+        last_cost or {}, str(prows[0]["product_id"]), None, pool_warehouse_id=pool_id)
     sel = eng.select_supplier(cands, selection=tog["supplier_selection"])
+    sel = eng.prefer_last_purchase_supplier(
+        sel, cands, lp, rates=rates, selection=tog["supplier_selection"])
+    selection_used = (
+        "last_purchase" if (sel.get("reason") or {}).get("basis") == "last_purchase"
+        else tog["supplier_selection"]
+    )
     chosen = sel["chosen"]
     by_id = {c["supplier_id"]: c for c in cands}
-    alt_choices = [_supplier_choice(by_id[a["supplier_id"]]) for a in sel["alternatives"]
-                   if a["supplier_id"] in by_id]
+    alt_choices = [_supplier_choice(by_id[a["supplier_id"]]) if a["supplier_id"] in by_id
+                   else _supplier_choice(a)
+                   for a in sel["alternatives"]]
 
     lead = float(chosen["lead_time_days"]) if chosen else float(tog["lead_time_default_days"])
     moq = _fnum(chosen.get("moq")) if chosen else None
@@ -1629,7 +1711,7 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
                                  min_override=min_override, max_override=max_override,
                                  target_oup=target_oup, triggered=triggered,
                                  reason_label=reason_label, recommended=recommended,
-                                 rounded=rounded, cells=cells)
+                                 rounded=rounded, cells=cells, selection=selection_used)
     # ONE basis for the whole pool, carried identically by every row the pool emits -
     # including the rows that buy nothing. A member the split gave nothing to emits no row
     # at all, and a group that was covered or could not be sourced emits no buy at all, so
@@ -1762,7 +1844,8 @@ def _is_product_level_basis(db: Session, product_id: str, policies: list[dict]) 
 
 def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict],
                   policies: list[dict], cands: list[dict], wh_meta: dict,
-                  *, last_cost: Optional[dict] = None) -> list[ReorderRecommendation]:
+                  *, last_cost: Optional[dict] = None,
+                  rates: Optional[dict] = None) -> list[ReorderRecommendation]:
     """ONE decision for the whole product: one level, one net, one buy.
 
     > "our reorder is per product, so it doesn't matter your location, just take the total
@@ -1781,11 +1864,29 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
     pid = str(prows[0]["product_id"])
     policy = eng.resolve_policy_for_sku(db, pid, None, policies) or {}
     tog = eng.policy_toggles(policy)
+    # G7 / AC-S13.6 (review fix round 2, 9 Sep): the SAME product-wide lookup
+    # `_network_agg_cell` (below) makes for its own `last_purchase` output - computed
+    # here too, ahead of the pick, so the recommendation's SUPPLIER agrees with what it
+    # prints as the last purchase rather than disagreeing with it.
+    lp, _lp_basis = _last_purchase_for(
+        last_cost or {}, pid, None,
+        pool_warehouse_id=_str_or_none(prows[0].get("pool_warehouse_id")))
     sel = eng.select_supplier(cands, selection=tog["supplier_selection"])
+    sel = eng.prefer_last_purchase_supplier(
+        sel, cands, lp, rates=rates, selection=tog["supplier_selection"])
+    # The RETURNED choice's own reason, never re-derived from `lp` (review fix round 3,
+    # nit): the override can decline to fire (the last-purchase supplier already IS the
+    # pick, or - dead in practice, but never assumed - is absent from `cands`), and the
+    # reason is the one place that already knows which of those actually happened.
+    selection_used = (
+        "last_purchase" if (sel.get("reason") or {}).get("basis") == "last_purchase"
+        else tog["supplier_selection"]
+    )
     chosen = sel["chosen"]
     by_id = {c["supplier_id"]: c for c in cands}
-    alt_choices = [_supplier_choice(by_id[a["supplier_id"]]) for a in sel["alternatives"]
-                   if a["supplier_id"] in by_id]
+    alt_choices = [_supplier_choice(by_id[a["supplier_id"]]) if a["supplier_id"] in by_id
+                   else _supplier_choice(a)
+                   for a in sel["alternatives"]]
     lead = float(chosen["lead_time_days"]) if chosen else float(tog["lead_time_default_days"])
     moq = _fnum(chosen.get("moq")) if chosen else None
     order_multiple = _fnum(chosen.get("order_multiple")) if chosen else None
@@ -1838,7 +1939,7 @@ def _emit_product(db: Session, run_id: str, prows: list[dict], cells: list[dict]
                              triggered=triggered, reason_label=reason_label,
                              recommended=recommended, rounded=rounded,
                              project_need=project_need, retail_need=retail_need,
-                             last_cost=last_cost)
+                             last_cost=last_cost, selection=selection_used)
     # A location has no level of its own any more, so its own "retail need" is what it is
     # SHORT by beyond its firm project demand - a statement about that place. The group's
     # netted figure is the one that sized the buy, and it is stated once, above.
@@ -1892,7 +1993,8 @@ def _product_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_mu
                       triggered: bool, reason_label: Optional[str],
                       recommended: float, rounded: float,
                       project_need: float, retail_need: float,
-                      last_cost: Optional[dict] = None) -> dict:
+                      last_cost: Optional[dict] = None,
+                      selection: Optional[str] = None) -> dict:
     """The frozen cell of a per-product buy: the network aggregate, plus the checklist.
 
     The aggregate cell states the DECISION (supplier, terms, net, target). What it has
@@ -1906,7 +2008,7 @@ def _product_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_mu
                              policy_type="reorder_level", min_override=None,
                              max_override=None, target_oup=level, triggered=triggered,
                              reason_label=reason_label, recommended=recommended,
-                             rounded=rounded, cells=cells)
+                             rounded=rounded, cells=cells, selection=selection)
     first = cells[0]
 
     def _total(key: str) -> float:
@@ -1947,18 +2049,36 @@ def _product_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_mu
 def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict],
                   today: date, last_move: dict, last_buy: Optional[dict] = None,
                   levels: Optional[dict] = None,
-                  last_cost: Optional[dict] = None) -> dict:
+                  last_cost: Optional[dict] = None,
+                  rates: Optional[dict] = None) -> dict:
     """Run the engine for one SKU×warehouse; returns the frozen decision values."""
     pid = str(row["product_id"])
     wid = str(row["warehouse_id"])
     policy = eng.resolve_policy_for_sku(db, pid, wid, policies) or {}
     tog = eng.policy_toggles(policy)
 
+    # Moved up from below (was computed only for display) - G7 / AC-S13.6 (review fix
+    # round 2, 9 Sep) needs it BEFORE the supplier is chosen, not after.
+    lp, lp_basis = _last_purchase_for(
+        last_cost or {}, pid, row.get("segment"),
+        pool_warehouse_id=_str_or_none(row.get("pool_warehouse_id")))
+
     sel = eng.select_supplier(cands, selection=tog["supplier_selection"])
+    sel = eng.prefer_last_purchase_supplier(
+        sel, cands, lp, rates=rates, selection=tog["supplier_selection"])
+    # The RETURNED choice's own reason, never re-derived from `lp` (review fix round 3,
+    # nit): the override can decline to fire (the last-purchase supplier already IS the
+    # pick, or - dead in practice, but never assumed - is absent from `cands`), and the
+    # reason is the one place that already knows which of those actually happened.
+    selection_used = (
+        "last_purchase" if (sel.get("reason") or {}).get("basis") == "last_purchase"
+        else tog["supplier_selection"]
+    )
     chosen = sel["chosen"]
     by_id = {c["supplier_id"]: c for c in cands}
-    alt_choices = [_supplier_choice(by_id[a["supplier_id"]]) for a in sel["alternatives"]
-                   if a["supplier_id"] in by_id]
+    alt_choices = [_supplier_choice(by_id[a["supplier_id"]]) if a["supplier_id"] in by_id
+                   else _supplier_choice(a)
+                   for a in sel["alternatives"]]
 
     demand_rate = float(row["avg_daily_demand"] or 0.0)
     # Captain, 20 Aug (live test): "for reorder plan need to deduct both SPO and PO to
@@ -2020,9 +2140,7 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
     # S10 - the buyer's own level, when the resolved policy selects that basis. The forecast
     # ROP/OUP above are still computed and still frozen onto the row, because the buyer wants
     # to SEE what the industry-standard basis would have said; they simply no longer decide.
-    lp, lp_basis = _last_purchase_for(
-        last_cost or {}, pid, row.get("segment"),
-        pool_warehouse_id=_str_or_none(row.get("pool_warehouse_id")))
+    # (`lp`/`lp_basis` computed further up now - G7 needed them before supplier selection.)
     if policy_type == "reorder_level":
         # One level per PRODUCT (captain, 27 Aug) - see `_product_level`. Every location of
         # the product resolves the SAME number, which is what lets the product be netted
@@ -2133,7 +2251,11 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
         # Carried so the reason can quote the actual age rather than assert one.
         "last_purchase_days": lb_days,
         "supplier_reason": sel.get("reason"),
-        "selection": tog["supplier_selection"],
+        # G7 / AC-S13.6: "last_purchase" when the preference above actually fired,
+        # never the policy's own strategy name in that case - a buyer reading the
+        # reason should see WHY this pick won, not the toggle that would have applied
+        # to a product with no purchase history.
+        "selection": selection_used,
         "overstock": bool(disp and disp["type"] == "overstock"),
         # "Short" means short of whatever the ACTIVE basis plans against, so the shortage
         # count on the page agrees with the buys beneath it.
@@ -2289,7 +2411,7 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
         cands = eng.load_supplier_candidates(db, pid, rates=rates)
         # per-warehouse cells (drive allocation demand)
         computed = [_compute_cell(db, r, policies, cands, today, last_move, last_buy,
-                                  levels=levels, last_cost=last_cost)
+                                  levels=levels, last_cost=last_cost, rates=rates)
                     for r in prows]
 
         # Same answer under either scope: the reorder-level basis is per product, and a
@@ -2297,17 +2419,28 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
         # levels for its target, which is the multiplication this basis had to stop doing.
         if _is_product_level_basis(db, pid, policies):
             recs.extend(_emit_product(db, run_id, prows, computed, policies, cands,
-                                      wh_meta, last_cost=last_cost))
+                                      wh_meta, last_cost=last_cost, rates=rates))
             continue
 
         # --- aggregate buy on the network ---
         policy = eng.resolve_policy_for_sku(db, pid, None, policies) or {}
         tog = eng.policy_toggles(policy)
+        # G7 / AC-S13.6 (review fix round 3, 9 Sep): a network row plans no single
+        # location, so this reads the same product-wide, unattributed-first fact
+        # `_emit_product` does (segment=None, no pool to prefer).
+        lp, _lp_basis = _last_purchase_for(last_cost or {}, pid, None)
         sel = eng.select_supplier(cands, selection=tog["supplier_selection"])
+        sel = eng.prefer_last_purchase_supplier(
+            sel, cands, lp, rates=rates, selection=tog["supplier_selection"])
+        selection_used = (
+            "last_purchase" if (sel.get("reason") or {}).get("basis") == "last_purchase"
+            else tog["supplier_selection"]
+        )
         chosen = sel["chosen"]
         by_id = {c["supplier_id"]: c for c in cands}
-        alt_choices = [_supplier_choice(by_id[a["supplier_id"]]) for a in sel["alternatives"]
-                       if a["supplier_id"] in by_id]
+        alt_choices = [_supplier_choice(by_id[a["supplier_id"]]) if a["supplier_id"] in by_id
+                       else _supplier_choice(a)
+                       for a in sel["alternatives"]]
         lead = float(chosen["lead_time_days"]) if chosen else float(tog["lead_time_default_days"])
         moq = _fnum(chosen.get("moq")) if chosen else None
         order_multiple = _fnum(chosen.get("order_multiple")) if chosen else None
@@ -2374,7 +2507,7 @@ def _plan_network(db: Session, run_id: str, rows: list[dict], policies: list[dic
                                      min_override=min_override, max_override=max_override,
                                      target_oup=target_oup, triggered=triggered,
                                      reason_label=reason_label, recommended=recommended,
-                                     rounded=rounded, cells=computed)
+                                     rounded=rounded, cells=computed, selection=selection_used)
         # The network buy names NO warehouse, so without this the product row's only
         # location evidence is one nameless entry with every shared fact null, and its
         # netted replenishment reads as the sum of member cells that individually never
@@ -2413,7 +2546,8 @@ def _network_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_mu
                       policy_type: str, min_override: Optional[float],
                       max_override: Optional[float], target_oup: float, triggered: bool,
                       reason_label: Optional[str], recommended: float,
-                      rounded: float, cells: Optional[list[dict]] = None) -> dict:
+                      rounded: float, cells: Optional[list[dict]] = None,
+                      selection: Optional[str] = None) -> dict:
     """Assemble the frozen-cell dict for a network aggregate buy (fixed_days SS).
 
     The trigger / order-up-to target / qty are computed by the caller on the aggregate
@@ -2461,7 +2595,10 @@ def _network_agg_cell(policy, tog, chosen, alt_choices, agg, lead, moq, order_mu
         "confidence": eng.confidence(prows[0]["xyz_class"], demand_adequate=agg_demand > 0,
                                      supplier_adequate=supplier_adequate),
         "sample_size": int(chosen.get("supplier_sample_size") or 0) if chosen else 0,
-        "selection": tog["supplier_selection"],
+        # G7 / AC-S13.6 (review fix round 2, 9 Sep): the caller's own resolved
+        # value when the last-purchase preference fired, never the policy's bare
+        # strategy name in that case.
+        "selection": selection or tog["supplier_selection"],
         # M4 cash-ranking factor inputs on the aggregate: list_price is per-product
         # (same across warehouses); committed is summed across the network's cells.
         "list_price": _fnum(prows[0].get("list_price")),
@@ -3174,7 +3311,7 @@ def recalc_rounded_qty(recommended_qty, moq: Optional[float],
 
 
 def set_moq_override(db: Session, rec_id: str, moq: Optional[float],
-                     *, commit: bool = True) -> dict:
+                     *, commit: bool = True, remember: bool = True) -> dict:
     """Persist (or clear, on ``None``) the buyer's own MoQ for one recommendation row,
     and recalculate + PERSIST ``rounded_qty`` / ``cash_impact`` off it so the plan grid
     updates the row WITHOUT a full re-run - captain's 20 Aug live-test ask ("MoQ is
@@ -3201,11 +3338,26 @@ def set_moq_override(db: Session, rec_id: str, moq: Optional[float],
     location-level rows are what a product-grain plan is built FROM. So this stays refused
     only on a legacy run (AC-F10 - the run predates the contract and is read only outright)
     and once the row has already been decided - an accepted/adjusted rec may already sit
-    in a draft PO line keyed off the qty this would silently move out from under it."""
+    in a draft PO line keyed off the qty this would silently move out from under it.
+
+    ``0`` and an empty ``moq`` are the SAME statement - "no MoQ" - not a real figure of
+    zero (review fix round 2, finding 5): both clear the row's own override, never
+    remembering a literal 0 that would round every future buy up to nothing. The
+    remembered (product, supplier) link is left untouched either way (review fix round 3
+    ruling, finding 3) - a clear is a statement about THIS row, not a retraction of what
+    was remembered before, so a buyer who clears a row and later types a fresh number
+    must not find the link already disagrees with it.
+
+    ``remember=False`` skips this call's own resolve-and-remember step - the plan-edits
+    bulk save (`plan_edits_service`) fans one product-grain row's MoQ out to every member
+    recommendation and does that resolution ONCE per PRODUCT afterwards instead (AC-S13.1,
+    review fix round 2), so a two-location product does not have its link overwritten by
+    whichever member happened to be applied last."""
     co, co_params = company_sql_predicate(db, "company_id", param_prefix="mvo")
     rec = db.execute(text(
         "SELECT id, run_id, rec_type, status, recommended_qty, unit_cost, currency, "
-        "       rate_to_base, rate_as_of, inputs FROM scm.reorder_recommendation "
+        "       rate_to_base, rate_as_of, inputs, product_id, supplier_id "
+        "FROM scm.reorder_recommendation "
         f"WHERE id = :id AND {co or 'true'}"
     ), {"id": rec_id, **co_params}).mappings().first()
     if not rec:
@@ -3229,7 +3381,9 @@ def set_moq_override(db: Session, rec_id: str, moq: Optional[float],
             code="recommendation_already_decided",
         )
 
-    moq_value = float(moq) if moq is not None else None
+    # 0 collapses to None here (finding 5): "no MoQ" either way, checked BEFORE the
+    # conversion so the negative check above still sees the buyer's own raw input.
+    moq_value = float(moq) if moq else None
     inp = rec["inputs"] or {}
     effective, is_override = effective_moq(inp, moq_value)
     rounded = recalc_rounded_qty(rec["recommended_qty"], effective, inp.get("order_multiple"))
@@ -3239,6 +3393,20 @@ def set_moq_override(db: Session, rec_id: str, moq: Optional[float],
         "UPDATE scm.reorder_recommendation "
         "SET moq_override = :m, rounded_qty = :rq, cash_impact = :ci WHERE id = :id"
     ), {"m": moq_value, "rq": rounded, "ci": cash_impact, "id": rec_id})
+
+    # S13 (round 2, 9 Sep): the per-run override above is thrown away on the next run -
+    # this also remembers it on the (product, supplier) link `load_supplier_candidates`
+    # reads on every future one, so a correction made once stays corrected. A CLEAR
+    # (moq falsy) touches only the row's own override above and NOTHING on the link
+    # (review fix round 3 ruling, finding 3) - a buyer who clears a row and later types a
+    # fresh number must not find the link already remembers a different one from before.
+    if remember and moq_value is not None:
+        resolved_supplier = product_supplier_service.resolve_supplier_for_moq(
+            db, [rec_id], co=co, co_params=co_params)
+        if resolved_supplier:
+            product_supplier_service.remember_moq(
+                db, str(rec["product_id"]), resolved_supplier, moq_value)
+
     # `commit=False` is the plan's bulk save (`plan_edits_service`), which owns the
     # transaction across every edited row.
     if commit:

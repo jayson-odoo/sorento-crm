@@ -226,6 +226,51 @@ def test_confirm_consolidates_one_draft_po_per_supplier(scm_app):
 
 
 # ===========================================================================
+# S6 (reorder-feedback-9sep.md, G5 ruling 9 Sep 2026) - Confirm never sweeps,
+# location grain (this file's own decision surface: Accept/Adjust/Reject).
+# ===========================================================================
+
+def test_confirm_drafts_only_the_accepted_rec_of_three_buy_recs(scm_app):
+    """AC-S6.4(a), location grain: three buy recs (a, b, c), only `a` accepted.
+    `ids=None` (every decided row of the run) drafts exactly `a`'s line - `b` and `c`
+    get no PO line and no status change of their own."""
+    _, db, _, _ = scm_app
+    wid_code, a, b, c = _seed_same_supplier(db)
+    run_id = _run_buys(db, wid_code, product_codes=_SAME_SUPPLIER_CODES)
+    recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
+    assert set(recs) >= {a, b, c}
+
+    dsvc.accept_recommendation(db, recs[a]["id"], actor="tester")
+
+    out = dsvc.confirm_decisions(db, run_id, ids=None, actor="tester")
+
+    assert out["confirmed_count"] == 1, "only the accepted rec is confirmed"
+    assert _po_id_for_rec(db, recs[a]["id"]) is not None
+    assert _po_id_for_rec(db, recs[b]["id"]) is None, "an untouched rec gets no PO line"
+    assert _po_id_for_rec(db, recs[c]["id"]) is None, "an untouched rec gets no PO line"
+    assert db.execute(text(
+        "SELECT status FROM scm.reorder_recommendation WHERE id = :id"
+    ), {"id": recs[b]["id"]}).scalar() == "proposed", "confirm must not itself decide it"
+
+
+def test_confirm_with_nothing_accepted_confirms_nothing(scm_app):
+    """AC-S6.4(b), location grain: nothing accepted/adjusted anywhere on the run -
+    confirm answers 200 with confirmed=0, po_count=0, and drafts no PO line at all."""
+    _, db, _, _ = scm_app
+    wid_code, a, b, c = _seed_same_supplier(db)
+    run_id = _run_buys(db, wid_code, product_codes=_SAME_SUPPLIER_CODES)
+    recs = {str(r["product_id"]): r for r in _buy_recs(db, run_id)}
+    assert set(recs) >= {a, b, c}
+
+    out = dsvc.confirm_decisions(db, run_id, ids=None, actor="tester")
+
+    assert out["confirmed_count"] == 0
+    assert out["po_count"] == 0
+    for pid in (a, b, c):
+        assert _po_id_for_rec(db, recs[pid]["id"]) is None
+
+
+# ===========================================================================
 # AC-M4.6 - on_order excludes a draft; includes it once confirmed (BOTH directions)
 # ===========================================================================
 

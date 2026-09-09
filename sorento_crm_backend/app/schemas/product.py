@@ -166,6 +166,9 @@ class ProductBase(BaseModel):
     # description-derived **** convention every channel otherwise falls back
     # to - None means "not sent", not "false". See product_rules.is_discontinued.
     is_discontinued: Optional[bool] = None
+    # S5 (PLAN-reorder-feedback-9sep.md): the buyer's own switch, no backfill (G3) - every
+    # existing product defaults false and is flipped by hand.
+    exclude_from_planning: bool = False
 
     @field_validator("currency", mode="before")
     @classmethod
@@ -217,6 +220,8 @@ class ProductUpdate(BaseModel):
     # D2: explicit flag wins over the description-derived value (only recomputed
     # when this is absent AND description is being changed - see update_product).
     is_discontinued: Optional[bool] = None
+    # S5: None means "not sent", same convention as the other planning flags on this schema.
+    exclude_from_planning: Optional[bool] = None
 
     @field_validator("currency", mode="before")
     @classmethod

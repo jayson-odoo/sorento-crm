@@ -12,7 +12,7 @@ End-user documentation organised by department. The AI assistant is intended to 
 * `**[project-sales-manager/](./project-sales-manager/)**` - approve purchase requests / sponsorship forms via emailed token link, flow stock inquiries to purchasing.
 * `**[project-sales-rep/](./project-sales-rep/)**` - portal access (WhatsApp link + OTP) and how to file complaints / stock inquiries / purchase requests / sponsorship forms.
 * `**[system-management/](./system-management/)**` - admin/ops reference: operational logs and configuration tables (imports, integration logs, scheduled tasks, email/WhatsApp delivery, import column mappings), troubleshooting a failed notification, reading/retrying a chatbot turn trace, and the AutoCount integration contract.
-* `**[supply-chain/](./supply-chain/)**` - uploading the sales order book, purchase order book, Order Inquiry sheet and reorder-level listing that a reorder plan is built from.
+* `**[supply-chain/](./supply-chain/)**` - uploading the sales order book, purchase order book, Order Inquiry sheet and reorder-level listing that a reorder plan is built from; running a reorder plan and confirming decisions; printing the order summary sheet.
 
 ## Conventions
 
@@ -37,7 +37,7 @@ UI labels (menu items, page titles, button text, dialog titles) are quoted **ver
 * ✅ Project Sales Manager - drafted (approve via email, flow stock inquiry).
 * ✅ Project Sales Rep - drafted (portal overview, submit via portal).
 * ✅ System Management - drafted (operational data reference, troubleshoot failed notifications, chatbot turn trace + retry, AutoCount integration contract, import column mappings).
-* ✅ Supply Chain - drafted (upload sales orders / purchase orders / order inquiry sheet / reorder levels; sales & purchase history uploads retired in favour of the AutoCount integration).
+* ✅ Supply Chain - drafted (upload sales orders / purchase orders / order inquiry sheet / reorder levels; sales & purchase history uploads retired in favour of the AutoCount integration; run a reorder plan; print the order summary).
 
 ## Source-of-truth notes
 

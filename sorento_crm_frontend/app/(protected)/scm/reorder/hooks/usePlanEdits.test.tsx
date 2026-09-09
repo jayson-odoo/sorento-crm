@@ -15,6 +15,7 @@ import type { ReorderRecommendation } from '../types/reorder.types';
 import { recToPlanLine, type PlanLine } from '../lib/planLine';
 import { groupPlanLinesByChannel } from '../lib/planLineGrouping';
 import type { PlanDecisionMap } from '../lib/planDecisions';
+import type { ProductEconomics } from '../lib/productHealth';
 
 const savePlanEdits = vi.fn();
 vi.mock('../services/planEditsService', () => ({
@@ -60,6 +61,16 @@ function rec(over: Partial<ReorderRecommendation> = {}): ReorderRecommendation {
 
 const line = (over: Partial<ReorderRecommendation> = {}): PlanLine => recToPlanLine(rec(over));
 
+function economics(over: Partial<ProductEconomics> = {}): ProductEconomics {
+  return {
+    product_id: 'p1', avg_sell_price: null, sell_source: null, sold_qty: 0, on_hand: 0,
+    avg_monthly_out: 0, turnover_months: null, no_movement: true, lifecycle_decision: null,
+    lifecycle_decided_at: null, sold_recent_qty: 0, bought_recent_qty: 0,
+    movement_class: 'dead',
+    ...over,
+  };
+}
+
 beforeEach(() => {
   savePlanEdits.mockReset().mockResolvedValue({ saved_rows: 1, saved_products: 1 });
   confirmDecisions.mockReset().mockResolvedValue({ confirmed_count: 1, po_count: 1 });
@@ -85,18 +96,6 @@ describe('usePlanEdits - the draft map (D7)', () => {
     act(() => result.current.setRowEdit(l, { level: 50 }));
 
     await waitFor(() => expect(result.current.edits[l.id]).toEqual({ moq: 100, level: 50 }));
-  });
-
-  it('resetRow drops the draft entirely - "Use suggestion" is the absence of an edit', async () => {
-    const l = line();
-    const { result } = renderHook(() => usePlanEdits('run-1', [l], {}), { wrapper });
-
-    act(() => result.current.setRowEdit(l, { moq: 100 }));
-    await waitFor(() => expect(result.current.saveCount).toBe(1));
-
-    act(() => result.current.resetRow(l));
-    await waitFor(() => expect(result.current.saveCount).toBe(0));
-    expect(result.current.edits[l.id]).toBeUndefined();
   });
 });
 
@@ -255,6 +254,78 @@ describe('usePlanEdits - Confirm saves first, then confirms (order asserted, E3)
   });
 });
 
+describe('usePlanEdits - Confirm writes the health suggestion for every confirmed product (S8, G4)', () => {
+  it('injects the suggested lifecycle for a decided row the buyer never touched the radio on', async () => {
+    const l = line({ id: 'r1', product_id: 'p1' });
+    const economicsFor = () => economics({ movement_class: 'dead' });
+    const { result } = renderHook(
+      () => usePlanEdits('run-1', [l], {}, undefined, undefined, economicsFor),
+      { wrapper },
+    );
+    act(() => result.current.setRowEdit(l, { decision: { buy: 10 } }));
+
+    await act(async () => {
+      await result.current.confirm();
+    });
+
+    const [, rows] = savePlanEdits.mock.calls[0];
+    expect(rows[0]).toMatchObject({ rec_id: 'r1', lifecycle: 'discontinue' });
+  });
+
+  it('leaves the buyer\'s own lifecycle answer alone rather than overwriting it', async () => {
+    const l = line({ id: 'r1', product_id: 'p1' });
+    const economicsFor = () => economics({ movement_class: 'dead' });
+    const { result } = renderHook(
+      () => usePlanEdits('run-1', [l], {}, undefined, undefined, economicsFor),
+      { wrapper },
+    );
+    act(() => result.current.setRowEdit(l, { decision: { buy: 10 }, lifecycle: 'keep' }));
+
+    await act(async () => {
+      await result.current.confirm();
+    });
+
+    const [, rows] = savePlanEdits.mock.calls[0];
+    expect(rows[0]).toMatchObject({ lifecycle: 'keep' });
+  });
+
+  it('a stored lifecycle_decision on the product wins over the class-based suggestion', async () => {
+    const l = line({ id: 'r1', product_id: 'p1' });
+    const economicsFor = () => economics({ movement_class: 'dead', lifecycle_decision: 'keep' });
+    const { result } = renderHook(
+      () => usePlanEdits('run-1', [l], {}, undefined, undefined, economicsFor),
+      { wrapper },
+    );
+    act(() => result.current.setRowEdit(l, { decision: { buy: 10 } }));
+
+    await act(async () => {
+      await result.current.confirm();
+    });
+
+    const [, rows] = savePlanEdits.mock.calls[0];
+    expect(rows[0]).toMatchObject({ lifecycle: 'keep' });
+  });
+
+  it('writes nothing for a row Confirm is not drafting - an untouched sibling stays untouched', async () => {
+    const decided = line({ id: 'r1', product_id: 'p1', sku: 'A' });
+    const untouched = line({ id: 'r2', product_id: 'p2', sku: 'B' });
+    const economicsFor = () => economics({ movement_class: 'dead' });
+    const { result } = renderHook(
+      () => usePlanEdits('run-1', [decided, untouched], {}, undefined, undefined, economicsFor),
+      { wrapper },
+    );
+    act(() => result.current.setRowEdit(decided, { decision: { buy: 10 } }));
+
+    await act(async () => {
+      await result.current.confirm();
+    });
+
+    const [, rows] = savePlanEdits.mock.calls[0];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].rec_id).toBe('r1');
+  });
+});
+
 describe('usePlanEdits - beforeunload is armed only while drafts exist (D7)', () => {
   it('registers no listener while the draft map is empty', () => {
     const addSpy = vi.spyOn(window, 'addEventListener');
@@ -302,10 +373,158 @@ describe('usePlanEdits - confirmable summary reflects the draft map live', () =>
     const decisions: PlanDecisionMap = {};
     const { result } = renderHook(() => usePlanEdits('run-1', [l], decisions), { wrapper });
 
+    // G5 (S6, 9 Sep 2026): Confirm never sweeps - untouched counts 0.
+    expect(result.current.confirmable.products).toBe(0);
+
+    act(() => result.current.setRowEdit(l, { decision: { buy: 10 } }));
+
+    await waitFor(() => expect(result.current.confirmable.products).toBe(1));
+  });
+});
+
+/**
+ * AC-S12.1/AC-S12.3 (round 2, reorder-feedback-9sep): the row's "Use suggestion" button
+ * becomes "Save" - it persists THAT ROW alone through the plan-edits save, immediately,
+ * rather than waiting on the toolbar's Save (N). `saveRow(line)` is the hook-level half
+ * of that - the same `PlanLine` argument `setRowEdit` already takes, rather than a bare
+ * id; `PlanRowPanel.save.test.tsx` covers the button itself.
+ */
+describe('usePlanEdits - saveRow saves one product only (AC-S12.3)', () => {
+  it('PUTs only that product\'s rec ids, drops it from the draft map, and leaves the other product\'s draft (with its own buy) intact', async () => {
+    const lineA = line({ id: 'rA', product_id: 'pA', warehouse_id: 'w1', warehouse_code: 'BRW' });
+    const lineB = line({ id: 'rB', product_id: 'pB', warehouse_id: 'w2', warehouse_code: 'BRW-BB' });
+    const decisions: PlanDecisionMap = {};
+    const { result } = renderHook(() => usePlanEdits('run-1', [lineA, lineB], decisions), {
+      wrapper,
+    });
+
+    act(() => result.current.setRowEdit(lineA, { moq: 100 }));
+    act(() => result.current.setRowEdit(lineB, { decision: { buy: 20 } }));
+
+    await waitFor(() => expect(result.current.saveCount).toBe(2));
+    // B's own drafted buy already counts towards Confirm, live off the draft map.
     expect(result.current.confirmable.products).toBe(1);
 
-    act(() => result.current.setRowEdit(l, { decision: { skip: true } }));
+    await act(async () => {
+      await result.current.saveRow(lineA);
+    });
 
-    await waitFor(() => expect(result.current.confirmable.products).toBe(0));
+    expect(savePlanEdits).toHaveBeenCalledTimes(1);
+    const [runId, rows] = savePlanEdits.mock.calls[0];
+    expect(runId).toBe('run-1');
+    expect(rows.map((r: { rec_id: string }) => r.rec_id)).toEqual(['rA']);
+    expect(rows[0].moq).toBe(100);
+
+    // A is gone from the draft map - Save (N) drops by one.
+    expect(result.current.edits.rA).toBeUndefined();
+    expect(result.current.saveCount).toBe(1);
+    // B, never touched by this save, keeps its own draft and its own confirmable count.
+    expect(result.current.edits.rB).toEqual({ decision: { buy: 20 } });
+    expect(result.current.confirmable.products).toBe(1);
+  });
+});
+
+/**
+ * AC-S12.1 (review fix round 2, 9 Sep, BLOCKER finding 1): the guard is inside `saveRow`
+ * itself (a ref, checked synchronously) rather than only on the UI's disabled attribute -
+ * two calls issued before the first's request lands must still PUT once.
+ */
+describe('usePlanEdits - saveRow refuses a second call while the first is still in flight', () => {
+  it('two overlapping saveRow calls on the SAME row PUT exactly once', async () => {
+    let resolveFirst: (v: unknown) => void = () => {};
+    savePlanEdits.mockReset().mockReturnValue(
+      new Promise((resolve) => {
+        resolveFirst = resolve;
+      }),
+    );
+    const l = line();
+    const { result } = renderHook(() => usePlanEdits('run-1', [l], {}), { wrapper });
+    act(() => result.current.setRowEdit(l, { moq: 100 }));
+    await waitFor(() => expect(result.current.saveCount).toBe(1));
+
+    let firstCall: Promise<unknown> = Promise.resolve(null);
+    act(() => {
+      firstCall = result.current.saveRow(l);
+    });
+    await waitFor(() => expect(result.current.savingRowIds.has(l.id)).toBe(true));
+
+    // The second call, issued while the first is still on the wire, must be a no-op -
+    // never a second PUT.
+    let secondResult: unknown;
+    await act(async () => {
+      secondResult = await result.current.saveRow(l);
+    });
+    expect(secondResult).toBeNull();
+    expect(savePlanEdits).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveFirst({ saved_rows: 1, saved_products: 1 });
+      await firstCall;
+    });
+    expect(result.current.savingRowIds.has(l.id)).toBe(false);
+  });
+});
+
+/**
+ * AC-S12.5 (round 2, reorder-feedback-9sep): a Buy value typed but not yet blurred lives
+ * only in `PlanRowPanel`'s own `buyDraft` state - `edits[line.id]` has nothing until blur.
+ * The row's Save button flushes that value straight into THIS save by passing it as
+ * `saveRow`'s second argument (`pendingPatch`), merged synchronously with whatever is
+ * already drafted, so the PUT that fires carries it even though the click beat the blur.
+ * `PlanRowPanel.save.test.tsx` covers the panel computing that patch; this is the
+ * hook-level half - the merge and the PUT it produces.
+ */
+describe('usePlanEdits - saveRow flushes a pending (un-blurred) patch (AC-S12.5)', () => {
+  it('a pendingPatch with nothing else drafted on the row still PUTs, carrying buy_qty from the patch', async () => {
+    const l = line();
+    const { result } = renderHook(() => usePlanEdits('run-1', [l], {}), { wrapper });
+
+    // Nothing drafted yet - the buyer typed into Buy but never blurred it.
+    expect(result.current.edits[l.id]).toBeUndefined();
+
+    let saveResult: unknown;
+    await act(async () => {
+      saveResult = await result.current.saveRow(l, { decision: { buy: 25 } });
+    });
+
+    expect(savePlanEdits).toHaveBeenCalledTimes(1);
+    const [runId, rows] = savePlanEdits.mock.calls[0];
+    expect(runId).toBe('run-1');
+    expect(rows).toHaveLength(1);
+    expect(rows[0].decision).toEqual(expect.objectContaining({ buy_qty: 25 }));
+    expect(saveResult).toEqual({ saved_rows: 1, saved_products: 1 });
+
+    // The flushed value is gone from the draft too - this row's save just cleared it.
+    expect(result.current.edits[l.id]).toBeUndefined();
+  });
+
+  it('a pendingPatch merges with an ALREADY-drafted field on the same row (MOQ typed earlier, Buy typed then Saved unblurred)', async () => {
+    const l = line();
+    const { result } = renderHook(() => usePlanEdits('run-1', [l], {}), { wrapper });
+
+    act(() => result.current.setRowEdit(l, { moq: 100 }));
+    await waitFor(() => expect(result.current.edits[l.id]).toEqual({ moq: 100 }));
+
+    await act(async () => {
+      await result.current.saveRow(l, { decision: { buy: 25 } });
+    });
+
+    expect(savePlanEdits).toHaveBeenCalledTimes(1);
+    const [, rows] = savePlanEdits.mock.calls[0];
+    expect(rows[0].moq).toBe(100);
+    expect(rows[0].decision).toEqual(expect.objectContaining({ buy_qty: 25 }));
+  });
+
+  it('no draft and no pendingPatch: saveRow resolves null and fires no request', async () => {
+    const l = line();
+    const { result } = renderHook(() => usePlanEdits('run-1', [l], {}), { wrapper });
+
+    let saveResult: unknown = 'not set';
+    await act(async () => {
+      saveResult = await result.current.saveRow(l);
+    });
+
+    expect(saveResult).toBeNull();
+    expect(savePlanEdits).not.toHaveBeenCalled();
   });
 });

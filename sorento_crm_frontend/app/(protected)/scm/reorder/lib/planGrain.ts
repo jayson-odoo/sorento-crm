@@ -22,9 +22,10 @@
 export type PlanGrain = 'product' | 'location';
 
 /** `decisionLockReason`'s own wording for the Product-grain case, exported so a caller that
- *  wants to say MORE than the flat sentence (the Order summary sheet's own product-grain
- *  lock, `SummaryOrderReportView.tsx`) can recognise it without duplicating the string. NOT
- *  used by the reorder plan row any more (S16, 21 Aug) - see `legacyLockReason` below. */
+ *  wants to say MORE than the flat sentence can recognise it without duplicating the
+ *  string. Order summary, the sheet this once locked, is retired (S10, round 2, 9 Sep) -
+ *  no current caller reaches `decisionLockReason` outside its own test. NOT used by the
+ *  reorder plan row (S16, 21 Aug) - see `legacyLockReason` below. */
 export const DECIDED_AT_PRODUCT_GRAIN = 'Decided at Product grain';
 
 /** Shared wording for a run that predates the front-planning contract - its decisions are

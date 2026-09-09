@@ -107,6 +107,38 @@ class OrderSummaryRowOut(BaseModel):
     # NULL when nothing is outstanding, which is not the same fact as 0 days outstanding.
     max_days_outstanding: Optional[int] = None
 
+    # --- S9 (PLAN-reorder-feedback-9sep.md, G6 ruling, 9 Sep 2026): the printed sheet's
+    # own columns, frozen with the row at run time so nothing on the export is typed
+    # twice. See `summaryOrder.types.ts` for the field-for-field FE shape this mirrors. ---
+    delivery_by_month: List["DeliveryByMonthOut"] = Field(default_factory=list)
+    project_customers: List["ProjectCustomerOut"] = Field(default_factory=list)
+    # The chosen supplier's name, else the frozen suggestion - the sheet always names ONE.
+    supplier_name: Optional[str] = None
+    po_open_qty: float = 0.0
+    incoming_spo_qty: float = 0.0
+    last_receipt: Optional["LastReceiptOut"] = None
+    moq: Optional[float] = None
+
+    # --- S14 (PLAN-reorder-feedback-9sep.md Round 3, AC-S14.1): the sheet's "BRW"
+    # reading, frozen beside the network-wide facts above. ---
+    pool_on_hand: Optional[float] = None
+    reorder_level: Optional[float] = None
+
+
+class DeliveryByMonthOut(BaseModel):
+    month: Optional[str] = None
+    qty: float = 0.0
+
+
+class ProjectCustomerOut(BaseModel):
+    label: str
+    qty: float = 0.0
+
+
+class LastReceiptOut(BaseModel):
+    date: str
+    qty: float = 0.0
+
 
 class OrderSummaryReportOut(BaseModel):
     """The whole frozen report for one run (AC-C2.9)."""

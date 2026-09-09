@@ -10,7 +10,7 @@ The list is a DataGrid with these columns: **Product Code**, **Product Name**, *
 
 * **Search products...** - matches product code, product name, and description.
 * **Filters** (popover) - **Category** (default **All categories**), **Brand** (default **All brands**), **Status** (**All status** / **Active** / **Inactive**). **Clear Filters** resets them.
-* **Advanced filters** (toolbar, **More** menu) - opens the list-query builder for column-level conditions on any product field.
+* **Advanced filters** (toolbar, **More** menu) - opens the list-query builder for column-level conditions on any product field, including **Reorder Planning** (below).
 * **Export** - downloads the current filtered/searched list to `products_export.xlsx`.
 * Clicking a row opens that product's detail page. Per-row icons: **Edit**, **Duplicate**, **Delete**.
 
@@ -29,6 +29,8 @@ The list is a DataGrid with these columns: **Product Code**, **Product Name**, *
    * **Brand** - optional, searchable picker.
    * **Item Type** - **None**, **Product**, **Bundle**, **Service**, or **Other**.
    * **Active Status** - switch; controls whether the product is active.
+   * **Exclude from reorder planning** - switch; see [Exclude a product from reorder
+     planning](#exclude-a-product-from-reorder-planning) below.
 
    **Pricing**
    * **List Price \*** - required, ≥ 0.
@@ -84,6 +86,17 @@ Use the **Delete** row icon (single) or select rows and use the **Delete** bulk 
   products)** under **[User Management → Settings](/user-management/settings)**) - the same link
   the product master upload creates.
 
+## Exclude a product from reorder planning
+
+The **Exclude from reorder planning** switch (create/edit form and the product detail page)
+keeps a product out of every reorder plan, even when it is named directly at Start Plan.
+Nothing is excluded by default - every product plans until you switch it on by hand.
+
+On the products list, an optional **Reorder Planning** column (hidden by default, reachable
+from **Columns**) shows **Included** or **Excluded** for each product, and the same field is
+available as a condition under **Advanced filters** so you can find every excluded product at
+once. See [Run a reorder plan](../supply-chain/run-a-reorder-plan.md).
+
 ## Bulk import
 
 To create or update many products at once from Excel, see [Upload the product master](../purchasing/upload-product-master.md). That flow runs in the background and reports progress in a **Latest products import** panel on this page.
@@ -94,6 +107,7 @@ To create or update many products at once from Excel, see [Upload the product ma
 * [Units of measure](units-of-measure.md)
 * [Product attachments](product-attachments.md)
 * [Verify product specifications](verify-product-specifications.md)
+* [Run a reorder plan](../supply-chain/run-a-reorder-plan.md)
 * [Upload the product master](../purchasing/upload-product-master.md)
 * [Upload product attachments](../purchasing/upload-product-attachments.md)
 * [Product Management - Data analysis for the AI assistant](data-analysis.md)

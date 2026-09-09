@@ -363,7 +363,7 @@ def _project_committed(world, *, planned: bool) -> Decimal:
             f"{demand.horizon_committed_select_sql()}) cv "
             "WHERE cv.product_id = :pid"
         )
-        params = {"pid": str(world.product.id), "horizon": None}
+        params = {"pid": str(world.product.id), "horizon": None, "horizon_start": None}
     else:
         sql = (
             "SELECT COALESCE(SUM(project_committed), 0) FROM scm.committed_v "

@@ -62,11 +62,16 @@ _ZERO_UUID = "00000000-0000-0000-0000-000000000000"
 def monthly_movement(db: Session, product_ids: list[str],
                      warehouse_ids: Optional[list[str]] = None,
                      *, months: int = DEFAULT_STUDY_MONTHS,
-                     as_of: Optional[date] = None) -> dict[str, list[dict[str, Any]]]:
+                     as_of: Optional[date] = None,
+                     retail_only: bool = False) -> dict[str, list[dict[str, Any]]]:
     """Quantity that left each product, by calendar month, newest month last.
 
     Keyed by product id. Months with no movement are present with 0 rather than absent, so
     "sold nothing in June" and "we have no June" cannot be confused on the way to a UI.
+
+    ``retail_only`` (S7, G1 ruling 9 Sep 2026): dealer-segment deliveries only, so the
+    3-month chart under the level agrees with the ADU it accompanies. False (the default,
+    health's own read) stays every delivery, unchanged.
     """
     if not product_ids:
         return {}
@@ -82,6 +87,7 @@ def monthly_movement(db: Session, product_ids: list[str],
     if warehouse_ids:
         where_wh = " AND c.warehouse_id = ANY(CAST(:whs AS uuid[]))"
         params["whs"] = _texts(warehouse_ids)
+    where_retail = " AND c.warehouse_segment = 'dealer'" if retail_only else ""
 
     rows = db.execute(text(f"""
         SELECT c.product_id::text AS product_id,
@@ -91,6 +97,7 @@ def monthly_movement(db: Session, product_ids: list[str],
          WHERE c.product_id = ANY(CAST(:pids AS uuid[]))
            AND c.day >= :start AND c.day < :end
            {where_wh}
+           {where_retail}
          GROUP BY 1, 2
     """), params).mappings().all()
 
@@ -125,7 +132,8 @@ def _add_months(d: date, delta: int) -> date:
 
 def average_daily_usage(db: Session, product_ids: list[str], *,
                         window_days: int = LEVEL_WINDOW_DAYS,
-                        as_of: Optional[date] = None) -> dict[str, dict[str, Any]]:
+                        as_of: Optional[date] = None,
+                        retail_only: bool = False) -> dict[str, dict[str, Any]]:
     """Delivery-order quantity per day over the window, EVERY warehouse, per product.
 
     The reorder level is a product fact (captain, 27 Aug: "our reorder is per product, so
@@ -136,17 +144,25 @@ def average_daily_usage(db: Session, product_ids: list[str], *,
 
     The window is the `window_days` days BEFORE `as_of` (`day >= as_of - n`, `day < as_of`):
     a part-day today would drag the average down for no reason anyone could explain.
+
+    ``retail_only`` (S7, G1 ruling 9 Sep 2026): "Retail deliveries = delivery-order lines
+    shipped from a `dealer`-segment warehouse. A line shipped from a `project` bin is a
+    project delivery." Reads `scm.consumption_v.warehouse_segment` alone - the level
+    suggestion's own call opts in (`level_suggestion_service.refresh_for_run`); every other
+    caller (health's `movement_class`) leaves this False and stays on every delivery.
     """
     if not product_ids:
         return {}
     n = max(1, int(window_days or LEVEL_WINDOW_DAYS))
     until = as_of or date.today()
     since = until - timedelta(days=n)
-    rows = db.execute(text("""
+    where_retail = " AND c.warehouse_segment = 'dealer'" if retail_only else ""
+    rows = db.execute(text(f"""
         SELECT c.product_id::text AS product_id, COALESCE(sum(c.qty_out), 0) AS qty
           FROM scm.consumption_v c
          WHERE c.product_id = ANY(CAST(:pids AS uuid[]))
            AND c.day >= :since AND c.day < :until
+           {where_retail}
          GROUP BY 1
     """), {"pids": _texts(product_ids), "since": since, "until": until}).mappings().all()
 
@@ -155,7 +171,10 @@ def average_daily_usage(db: Session, product_ids: list[str], *,
         pid: {
             "window_qty": round(moved.get(pid, 0.0), 4),
             "window_days": n,
-            "adu": round(moved.get(pid, 0.0) / n, 6),
+            # Unrounded: the only consumer (`suggest_level_from_usage`) rounds its OWN
+            # `basis.adu` for display/storage, and a second, coarser rounding here made
+            # this an approximation of an approximation for no reader that needs it.
+            "adu": moved.get(pid, 0.0) / n,
             "since": since.isoformat(),
             "until": until.isoformat(),
         }
@@ -168,7 +187,8 @@ def suggest_level_from_usage(*, adu: float, lead_time_days: Optional[float],
                              window_days: int = LEVEL_WINDOW_DAYS,
                              window_qty: Optional[float] = None,
                              months: Optional[list[dict[str, Any]]] = None,
-                             lead_time_source: Optional[str] = None) -> dict[str, Any]:
+                             lead_time_source: Optional[str] = None,
+                             retail_only: bool = False) -> dict[str, Any]:
     """`ADU x lead_time + ADU x 14`, rounded up to a whole unit (captain, 27 Aug).
 
     Returns the level AND the arithmetic. A suggestion the buyer cannot argue with is a
@@ -202,6 +222,11 @@ def suggest_level_from_usage(*, adu: float, lead_time_days: Optional[float],
             "months": list(months or []),
             # Said explicitly so a 0 reads as "nothing moved", never as "not computed".
             "no_movement": rate <= 0,
+            # S7, G1 ruling 9 Sep 2026: whether this ADU was sized off dealer-segment
+            # deliveries alone. Always True for the level suggestion's own call
+            # (`level_suggestion_service.refresh_for_run`) - stamped rather than assumed, so
+            # a stored suggestion states which reading produced it.
+            "retail_only": bool(retail_only),
         },
     }
 
@@ -467,8 +492,13 @@ def refresh_suggestions(db: Session, product_ids: list[str],
     if not product_ids:
         return 0
     constraints = supplier_constraints(db, product_ids)
-    usage = average_daily_usage(db, product_ids, as_of=as_of)
-    movement = monthly_movement(db, product_ids, None, months=study_months, as_of=as_of)
+    # S7 (G1 ruling, Phase 3 fix round): ONE level rule everywhere - this is the same
+    # suggestion `level_suggestion_service.refresh_for_run` computes per run, so a caller
+    # of this function must not size against a different (unfiltered) reading of the same
+    # product's usage.
+    usage = average_daily_usage(db, product_ids, as_of=as_of, retail_only=True)
+    movement = monthly_movement(db, product_ids, None, months=study_months, as_of=as_of,
+                                retail_only=True)
     written = 0
     # A suggestion is per location when locations are named, and product-wide otherwise, so
     # a tenant who plans one warehouse is not forced to set up a level per bin.
@@ -480,7 +510,8 @@ def refresh_suggestions(db: Session, product_ids: list[str],
             out = suggest_level_from_usage(
                 adu=u.get("adu", 0.0), lead_time_days=c.get("lead_time_days"),
                 window_days=u.get("window_days", LEVEL_WINDOW_DAYS),
-                window_qty=u.get("window_qty"), months=movement.get(pid, []))
+                window_qty=u.get("window_qty"), months=movement.get(pid, []),
+                retail_only=True)
             store_suggestion(db, product_id=pid, warehouse_id=wid,
                              suggested_level=out["level"], basis=out["basis"],
                              company_id=company_id)

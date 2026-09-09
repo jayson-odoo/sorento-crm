@@ -11,12 +11,14 @@ import { fmtInt, fmtMoney } from '../../lib/format';
  * view, so it never appears here. `needs_level` and `disposition` (Stock allocation) are
  * NOT views here either (user feedback, 2026-08-12: "I don't really need these" tiles) -
  * both are already reachable as a Status filter on the one grid (`buy`), so removing the
- * shortcut tile lost nothing. `order_summary` / `plan_exceptions` / `po_worklist` are
- * genuinely separate reports with no row in the grid to filter to, so THEIR entry points
- * moved to a quiet action in the grid's own toolbar (`PlanLinesGrid`'s secondary actions,
- * next to Filters / Columns / Export) instead of disappearing.
+ * shortcut tile lost nothing. `plan_exceptions` / `po_worklist` are genuinely separate
+ * reports with no row in the grid to filter to, so THEIR entry points moved to a quiet
+ * action in the grid's own toolbar (`PlanLinesGrid`'s secondary actions, next to Filters /
+ * Columns / Export) instead of disappearing. `order_summary` was here too until S10 (round
+ * 2, 9 Sep): the page it opened is retired, the same sheet now prints straight off the
+ * Actions menu's "Order sheet PDF/Excel" through the existing export endpoint.
  */
-export type ReorderPlanView = 'buy' | 'order_summary' | 'plan_exceptions' | 'po_worklist';
+export type ReorderPlanView = 'buy' | 'plan_exceptions' | 'po_worklist';
 
 function Tile({
   label,

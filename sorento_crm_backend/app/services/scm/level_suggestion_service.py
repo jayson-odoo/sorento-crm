@@ -91,10 +91,13 @@ def refresh_for_run(db: Session, run_id: str, *, as_of: Optional[date] = None) -
     product_ids = sorted({p["product_id"] for p in pairs})
     constraints = rl.supplier_constraints(db, product_ids)
     # ADU and the evidence bars are PRODUCT facts, read once across every warehouse - the
-    # level does not care which bin the units left from (captain, 27 Aug).
-    usage = rl.average_daily_usage(db, product_ids, as_of=as_of)
+    # level does not care which bin the units left from (captain, 27 Aug). S7 (G1 ruling,
+    # 9 Sep 2026): retail deliveries only, so a project job that shipped once does not lift
+    # the dealer reorder level - the ONLY call site that opts into `retail_only`.
+    usage = rl.average_daily_usage(db, product_ids, as_of=as_of, retail_only=True)
     movement = rl.monthly_movement(db, product_ids, None,
-                                   months=windows["study_months"], as_of=as_of)
+                                   months=windows["study_months"], as_of=as_of,
+                                   retail_only=True)
 
     written = 0
     for pair in pairs:
@@ -104,7 +107,8 @@ def refresh_for_run(db: Session, run_id: str, *, as_of: Optional[date] = None) -
         out = rl.suggest_level_from_usage(
             adu=u.get("adu", 0.0), lead_time_days=lead, lead_time_source=source,
             window_days=u.get("window_days", rl.LEVEL_WINDOW_DAYS),
-            window_qty=u.get("window_qty"), months=movement.get(pid, []))
+            window_qty=u.get("window_qty"), months=movement.get(pid, []),
+            retail_only=True)
         rl.store_suggestion(db, product_id=pid, warehouse_id=wid,
                             suggested_level=out["level"], basis=out["basis"],
                             company_id=pair["company_id"])

@@ -131,6 +131,20 @@ export function healthVerdict(
 }
 
 /**
+ * The lifecycle radio's own default (S8, G4 ruling, 9 Sep 2026): Dead suggests
+ * Discontinue, everything else suggests Keep selling. A stored decision (`lifecycle_decision`
+ * on `ProductEconomics`, or a drafted edit) always outranks this - it is a SUGGESTION for
+ * a product nobody has decided yet, not a standing answer. Undefined (no economics on
+ * file at all) defaults to Keep, the safer of the two: a product cannot be discontinued
+ * by a class the engine never computed.
+ */
+export function suggestedLifecycle(
+  movementClass: MovementClass | undefined,
+): 'keep' | 'discontinue' {
+  return movementClass === 'dead' ? 'discontinue' : 'keep';
+}
+
+/**
  * The MOQ pump-up, explained with its sell-through odds.
  *
  * > "if the quantity can't reach MoQ, we need to flag the gap, then suggest to fill the

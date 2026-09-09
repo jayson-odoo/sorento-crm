@@ -76,7 +76,7 @@ function rec(over: Partial<ReorderRecommendation> = {}): ReorderRecommendation {
     alternatives: [primary, beta],
     cash_impact: 13440,
     lead_time_days: 14,
-    ...(over as ReorderRecommendation),
+    ...over,
   } as ReorderRecommendation;
 }
 
@@ -147,7 +147,7 @@ describe('AdjustRecommendationModal (AC-M4.7)', () => {
     fireEvent.change(screen.getByLabelText('Select a supplier'), { target: { value: 'SUP-BETA' } });
     // Preview recomputes off Beta (38 × 320 = 12,160).
     expect(screen.getByText(/Recomputed off Beta Supplies/i)).toBeInTheDocument();
-    expect(screen.getByText('RM 12,160')).toBeInTheDocument();
+    expect(screen.getByText('RM 12,160.00')).toBeInTheDocument();
   });
 
   it('still renders when the rec has NO alternatives (empty-alternatives case)', () => {
@@ -211,8 +211,8 @@ describe('AdjustRecommendationModal - money says which money it is (AC-2.2)', ()
     fireEvent.change(screen.getByLabelText('Select a supplier'), { target: { value: 'SUP-USD' } });
 
     // 320 x RM 36 restated, not 320 x USD 8.
-    expect(screen.getByText('RM 11,520')).toBeInTheDocument();
-    expect(screen.queryByText('RM 2,560')).not.toBeInTheDocument();
+    expect(screen.getByText('RM 11,520.00')).toBeInTheDocument();
+    expect(screen.queryByText('RM 2,560.00')).not.toBeInTheDocument();
   });
 
   it('falls back to the supplier currency when the choice has no restated price', () => {
@@ -222,14 +222,14 @@ describe('AdjustRecommendationModal - money says which money it is (AC-2.2)', ()
     renderModal({ rec: rec({ alternatives: [primary, noRate] }) });
     fireEvent.change(screen.getByLabelText('Select a supplier'), { target: { value: 'SUP-USD' } });
 
-    expect(screen.getByText('USD 2,560')).toBeInTheDocument();
+    expect(screen.getByText('USD 2,560.00')).toBeInTheDocument();
   });
 
   it('still previews a ringgit supplier in ringgit', () => {
     renderModal();
     fireEvent.change(screen.getByLabelText('Select a supplier'), { target: { value: 'SUP-BETA' } });
 
-    expect(screen.getByText('RM 12,160')).toBeInTheDocument();
+    expect(screen.getByText('RM 12,160.00')).toBeInTheDocument();
   });
 });
 

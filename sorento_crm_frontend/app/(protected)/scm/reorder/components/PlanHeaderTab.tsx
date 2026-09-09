@@ -12,8 +12,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { EM_DASH, fmtDate, fmtInt, fmtMoney } from '../../lib/format';
-import { runStartedLabel } from '../lib/runListing';
+import { EM_DASH, fmtInt, fmtMoney } from '../../lib/format';
+import { describeWindow, runStartedLabel } from '../lib/runListing';
 import { searchProductOptions } from '../../services/scmOptionsService';
 import { useWarehouseOptions } from '../../hooks/useScmOptions';
 import { runHistoryKey, todayRunKey } from '../hooks/useReorderRun';
@@ -85,6 +85,7 @@ export function PlanHeaderTab({
   const router = useRouter();
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
+  const [horizonStart, setHorizonStart] = useState('');
   const [horizon, setHorizon] = useState('');
   const [warehouses, setWarehouses] = useState<string[]>([]);
   const [products, setProducts] = useState<string[]>([]);
@@ -123,6 +124,9 @@ export function PlanHeaderTab({
     // the buyer is allowed to pick.
     const stored = run.plan_horizon_date ?? '';
     setHorizon(stored && stored > today ? stored : stored ? today : '');
+    // S4: the START carries no `min` floor, so it is never clamped the way the cut-off
+    // above is - a window that already started in the past is still a real window.
+    setHorizonStart(run.plan_horizon_start ?? '');
     setWarehouses(run.is_all_warehouses ? [] : (run.warehouse_codes ?? []));
     setProducts(run.product_codes ?? []);
     setError(null);
@@ -140,6 +144,10 @@ export function PlanHeaderTab({
 
   const openConfirm = () => {
     setError(null);
+    if (horizonStart && horizon && horizon < horizonStart) {
+      setError('The To date cannot be before the From date.');
+      return;
+    }
     if (horizon && horizon < today) {
       setError('The cut-off cannot be in the past - it would leave the run with no demand.');
       return;
@@ -160,6 +168,7 @@ export function PlanHeaderTab({
       const created = await replanReorderRun(runId, {
         warehouse_codes: warehouses,
         product_codes: products,
+        plan_horizon_start: horizonStart || null,
         plan_horizon_date: horizon || null,
       });
       setConfirmOpen(false);
@@ -239,7 +248,9 @@ export function PlanHeaderTab({
                   </Button>
                 </div>
               ) : (
-                <Button variant="outline" size="sm" onClick={beginEdit}>
+                // AC-S2.5: Edit is the Plan card's primary call to action - the default
+                // `variant` (primary), same placement.
+                <Button size="sm" onClick={beginEdit}>
                   <SquarePen className="size-4" />
                   Edit
                 </Button>
@@ -268,20 +279,36 @@ export function PlanHeaderTab({
                 Completed
               </Badge>
             </Field>
-            <Field label="Sales order cut-off" htmlFor={isEditing ? 'plan-header-cutoff' : undefined}>
+            <Field label="Sales orders needed">
               {isEditing ? (
-                <Input
-                  id="plan-header-cutoff"
-                  type="date"
-                  min={today}
-                  value={horizon}
-                  onChange={(e) => setHorizon(e.target.value)}
-                />
-              ) : run.plan_horizon_date ? (
-                <span className="tabular-nums">{fmtDate(run.plan_horizon_date)}</span>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <Label htmlFor="plan-header-window-start" className="mb-0.5 block text-2xs text-muted-foreground">
+                      From
+                    </Label>
+                    <Input
+                      id="plan-header-window-start"
+                      type="date"
+                      value={horizonStart}
+                      onChange={(e) => setHorizonStart(e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="plan-header-cutoff" className="mb-0.5 block text-2xs text-muted-foreground">
+                      To
+                    </Label>
+                    <Input
+                      id="plan-header-cutoff"
+                      type="date"
+                      min={today}
+                      value={horizon}
+                      onChange={(e) => setHorizon(e.target.value)}
+                    />
+                  </div>
+                </div>
               ) : (
-                <span className="text-muted-foreground" title="Every open order counted">
-                  Every open order
+                <span className="tabular-nums">
+                  {describeWindow(run.plan_horizon_start, run.plan_horizon_date)}
                 </span>
               )}
             </Field>

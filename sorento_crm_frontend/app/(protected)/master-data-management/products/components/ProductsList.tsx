@@ -12,6 +12,7 @@ import {
   RowSelectionState,
   SortingState,
   useReactTable,
+  VisibilityState,
 } from '@tanstack/react-table';
 import {
   Plus,
@@ -617,6 +618,36 @@ const ProductsList = () => {
         enableHiding: true,
       },
       {
+        // S5 (reorder-feedback-9sep.md, 9 Sep 2026): optional, hidden by default -
+        // reachable via the Columns control for a buyer auditing which products
+        // never enter a reorder run.
+        accessorKey: 'exclude_from_planning',
+        id: 'exclude_from_planning',
+        header: ({ column }) => (
+          <DataGridColumnHeader
+            title="Reorder Planning"
+            visibility={true}
+            column={column}
+          />
+        ),
+        cell: ({ row }) => (
+          <Badge
+            variant={row.original.exclude_from_planning ? 'destructive' : 'secondary'}
+            appearance="light"
+          >
+            <BadgeDot />
+            {row.original.exclude_from_planning ? 'Excluded' : 'Included'}
+          </Badge>
+        ),
+        size: 140,
+        meta: {
+          headerTitle: 'Reorder Planning',
+          skeleton: <Skeleton className="w-16 h-7" />,
+        },
+        enableSorting: true,
+        enableHiding: true,
+      },
+      {
         accessorKey: 'created_at',
         id: 'created_at',
         header: ({ column }) => (
@@ -679,6 +710,11 @@ const ProductsList = () => {
   const [columnOrder, setColumnOrder] = useState<string[]>(
     columns.map((column) => column.id as string),
   );
+  // S5: "Reorder Planning" starts hidden - reachable via the Columns control, same
+  // shape the SPO document Lines tab already uses for its own optional columns.
+  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({
+    exclude_from_planning: false,
+  });
 
   const table = useReactTable({
     columns,
@@ -689,10 +725,12 @@ const ProductsList = () => {
       pagination,
       sorting,
       columnOrder,
+      columnVisibility,
       rowSelection,
     },
     columnResizeMode: 'onChange',
     onColumnOrderChange: setColumnOrder,
+    onColumnVisibilityChange: setColumnVisibility,
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     onRowSelectionChange: setRowSelection,

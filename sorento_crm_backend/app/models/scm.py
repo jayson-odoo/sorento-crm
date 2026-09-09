@@ -282,6 +282,13 @@ class ReorderRun(Base, CompanyScopedMixin):
     # decision_grain - a per-RUN choice, not a live policy, so it cannot move under a run
     # already planned.
     plan_horizon_date = Column(Date, nullable=True)
+    # "Sales orders needed FROM" (S4, PLAN-reorder-feedback-9sep.md): demand needed BEFORE
+    # this date is excluded from the run's netting, the start-side twin of
+    # `plan_horizon_date`. NULL (the default) plans every open SO line regardless of when
+    # it was needed, unchanged from before this column existed. Demand carrying no date at
+    # all is always counted (G2, 9 Sep ruling), the same reading the end date already gives
+    # it.
+    plan_horizon_start = Column(Date, nullable=True)
     policy_snapshot_ref = Column(String, nullable=True)
     started_at = Column(DateTime(timezone=False), nullable=True)
     finished_at = Column(DateTime(timezone=False), nullable=True)
@@ -916,6 +923,43 @@ class OrderSummaryRow(Base, CompanyScopedMixin):
     source_system = Column(String, nullable=True)
     source_ref = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+
+    # --- S9 (PLAN-reorder-feedback-9sep.md, G6 ruling): the sheet's own columns, frozen
+    # with the row at run time exactly like everything above. ---
+    #: `[{month: "2026-09" | null, qty}]` (S14, AC-S14.3, superseding the original S9
+    #: SO-book reading) - project Order Inquiry ORDER rows only (`verb = 'ORDER'`,
+    #: `qty > 0`, state not cancelled, on an ACTIVE supply decision), by `delivery_date`,
+    #: undated under a null month. A retail SO line carries no Order Inquiry row and so
+    #: never reaches this cell.
+    delivery_by_month = Column(JSONB, nullable=True)
+    #: `[{label, qty}]` (S14, AC-S14.3) - the SAME Order Inquiry book `delivery_by_month`
+    #: reads, split by customer, so the two totals always tie by construction.
+    project_customers = Column(JSONB, nullable=True)
+    #: The buyer's chosen supplier wins at READ time (`_serialise_row`); this is the
+    #: FROZEN suggestion - the primary product-supplier link, same precedence
+    #: `_supplier_constraints` already uses for MOQ.
+    supplier_name = Column(String, nullable=True)
+    #: Open PO qty (BRW pool), same book `po_book_service` reads.
+    po_open_qty = Column(Numeric, nullable=True)
+    #: Open SPO qty still to arrive, at a SITE POOL warehouse only (S14, AC-S14.2, same
+    #: `pool_predicate.ACTIVE_SITE_POOL_SQL` rule the PO column above applies) - an
+    #: allocation at a project bin or naming no warehouse is not counted.
+    incoming_spo_qty = Column(Numeric, nullable=True)
+    #: The latest `goods_received` picking line for the product, network-wide.
+    last_receipt_date = Column(Date, nullable=True)
+    last_receipt_qty = Column(Numeric, nullable=True)
+    #: The suggested supplier's own MOQ (`ProductSupplier.moq`), alongside its name above.
+    moq = Column(Numeric, nullable=True)
+
+    # --- S14 (PLAN-reorder-feedback-9sep.md Round 3, AC-S14.1): the sheet's "BRW" reading,
+    # frozen beside the network-wide facts above rather than replacing them. ---
+    #: Site-pool stock only (`pool_predicate.ACTIVE_SITE_POOL_SQL`) - the sheet's "BRW on
+    #: hand". `on_hand` above stays network-wide and is what the grid's own column reads.
+    pool_on_hand = Column(Numeric, nullable=True)
+    #: The run's OWN frozen `inputs.reorder_level` for the product - the first
+    #: recommendation that carries the key. NULL when none does (the engine plans against
+    #: one product-wide level, never a per-warehouse one).
+    reorder_level = Column(Numeric, nullable=True)
 
     __table_args__ = (
         # One row per product per run, or the report reads whichever duplicate comes back

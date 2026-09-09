@@ -218,6 +218,8 @@ export interface ReorderRunHistoryItem {
    * carried none (every run has always planned every open SO line, unchanged).
    */
   plan_horizon_date?: string | null;
+  /** S4: the window's START this run was launched with, or null - no lower bound. */
+  plan_horizon_start?: string | null;
   /**
    * The scheduled daily run rather than one a person started (`reorder_run.created_by IS
    * NULL` - `task_scheduler._reorder_plan_tick` passes no actor). Drives the "daily" badge
@@ -339,6 +341,7 @@ interface ReorderRunStatusDto {
   decision_grain?: PlanGrain | null;
   front_planning_contract_version?: number | null;
   plan_horizon_date?: string | null;
+  plan_horizon_start?: string | null;
   /** When the engine started. The plan page's header reads "Plan dd/mm/yyyy HH:mm" off
    *  it (C1) and this response is the only thing that page reads. */
   started_at?: string | null;
@@ -374,6 +377,8 @@ export async function createReorderRun(req: CreateReorderRunRequest): Promise<Re
       // "Plan until" (captain, 20 Aug). Omitted when empty, same reasoning: a run that
       // never set a horizon must send a byte-identical request to before this existed.
       ...(req.plan_horizon_date ? { plan_horizon_date: req.plan_horizon_date } : {}),
+      // S4 (9 Sep 2026): the window's START, same "omit when empty" rule.
+      ...(req.plan_horizon_start ? { plan_horizon_start: req.plan_horizon_start } : {}),
     }),
   });
   if (!res.ok) throw new Error(await extractApiError(res, 'Failed to start planning run'));
@@ -406,6 +411,7 @@ export async function getReorderRun(runId: string): Promise<ReorderRun> {
     decision_grain: dto.decision_grain ?? null,
     front_planning_contract_version: dto.front_planning_contract_version ?? null,
     plan_horizon_date: dto.plan_horizon_date ?? null,
+    plan_horizon_start: dto.plan_horizon_start ?? null,
     started_at: dto.started_at ?? null,
     warehouse_codes: dto.warehouse_codes ?? [],
     is_all_warehouses: dto.is_all_warehouses ?? false,
@@ -434,6 +440,7 @@ export async function replanReorderRun(
         warehouse_codes: req.warehouse_codes,
         product_codes: req.product_codes ?? [],
         plan_horizon_date: req.plan_horizon_date || null,
+        plan_horizon_start: req.plan_horizon_start || null,
       }),
     },
   );
@@ -786,10 +793,12 @@ export interface PlanDemandLine {
    * directly"): which document this line traces back to. `order_inquiry_confirmed` is
    * the CS-confirmed-for-buy leg (`project_need`); a bare `order_inquiry` means the ORDER
    * was created by the Order Inquiry import - it says nothing about whether a row still
-   * exists for this line today (`has_inquiry_row` does). Optional - absent on a cached
-   * response that predates the field.
+   * exists for this line today (`has_inquiry_row` does). `order_inquiry_form` (S3, 9 Sep
+   * 2026) is the THIRD leg: a form row raised but never assigned a supply decision, so
+   * there is no sales order behind it at all - `so_number` on that line is the inquiry's
+   * own document number. Optional - absent on a cached response that predates the field.
    */
-  source?: 'sales_order' | 'order_inquiry' | 'order_inquiry_confirmed' | null;
+  source?: 'sales_order' | 'order_inquiry' | 'order_inquiry_confirmed' | 'order_inquiry_form' | null;
   /**
    * Whether the Order Inquiry worklist actually has a row for this line right now. The
    * `order_inquiry` source above is a stamp on the ORDER, made permanent at creation and

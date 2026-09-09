@@ -485,7 +485,8 @@ _PLACED_ON_LINE_SQL = """
 
 
 def _project_open_need(
-    db: Session, product_ids: set[str], *, horizon: Optional[date] = None
+    db: Session, product_ids: set[str], *, horizon: Optional[date] = None,
+    horizon_start: Optional[date] = None,
 ) -> dict[str, dict]:
     """Project need per product: the open project SO book, less what CS already placed.
 
@@ -532,12 +533,15 @@ def _project_open_need(
               AND {_OPEN_QTY_SQL} > 0
               AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
                    OR sol.required_date <= CAST(:horizon AS date))
+              AND (CAST(:horizon_start AS date) IS NULL OR sol.required_date IS NULL
+                   OR sol.required_date >= CAST(:horizon_start AS date))
         ) p
         WHERE qty > 0
         GROUP BY product_id
     """
     rows = db.execute(
-        text(sql), {"pids": list(product_ids), "horizon": horizon}
+        text(sql), {"pids": list(product_ids), "horizon": horizon,
+                    "horizon_start": horizon_start}
     ).mappings().all()
     return {
         r["product_id"]: {
@@ -723,7 +727,8 @@ def _identity(info: dict, entry: Optional[dict]) -> dict:
 
 
 def _open_need(
-    db: Session, product_ids: set[str], *, horizon: Optional[date] = None
+    db: Session, product_ids: set[str], *, horizon: Optional[date] = None,
+    horizon_start: Optional[date] = None,
 ) -> dict[str, Any]:
     """Outstanding SO need per product, split by demand class.
 
@@ -788,6 +793,11 @@ def _open_need(
         query = query.filter(
             SalesOrderLine.required_date.is_(None) | (SalesOrderLine.required_date <= horizon)
         )
+    if horizon_start is not None:
+        query = query.filter(
+            SalesOrderLine.required_date.is_(None)
+            | (SalesOrderLine.required_date >= horizon_start)
+        )
     rows = query.group_by(SalesOrderLine.product_id).all()
     return {str(r.product_id): r for r in rows}
 
@@ -809,6 +819,7 @@ def _open_lines(
     catalogue: dict[str, dict],
     *,
     horizon: Optional[date] = None,
+    horizon_start: Optional[date] = None,
 ) -> list[dict]:
     """The open SO lines behind the demand rows, at line grain - CHANGE 2.
 
@@ -883,6 +894,8 @@ def _open_lines(
               -- a no-op.
               AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
                    OR sol.required_date <= CAST(:horizon AS date))
+              AND (CAST(:horizon_start AS date) IS NULL OR sol.required_date IS NULL
+                   OR sol.required_date >= CAST(:horizon_start AS date))
               {("AND " + co) if co else ""}
         ) l
         -- A project line placed in full has nothing left to ask for, so it is not a line on
@@ -891,7 +904,8 @@ def _open_lines(
         ORDER BY required_date NULLS LAST, so_number
     """
     rows = db.execute(
-        text(sql), {"pids": product_ids, "horizon": horizon, **co_params}
+        text(sql), {"pids": product_ids, "horizon": horizon, "horizon_start": horizon_start,
+                    **co_params}
     ).mappings().all()
     return [
         {
@@ -1445,6 +1459,7 @@ def build(
     supplier_id: str,
     include_lines: bool = False,
     plan_horizon_date: Optional[date] = None,
+    plan_horizon_start: Optional[date] = None,
     plan: Optional[Any] = None,
 ) -> dict:
     """What to ask this supplier for, ranked. Pure read - persists nothing.
@@ -1498,8 +1513,10 @@ def build(
     universe = (
         _linked_products(db, supplier_id) | set(product_holdings) | driver_ids
     ) - {None}
-    need = _open_need(db, universe, horizon=plan_horizon_date)
-    project = _project_open_need(db, universe, horizon=plan_horizon_date)
+    need = _open_need(db, universe, horizon=plan_horizon_date,
+                      horizon_start=plan_horizon_start)
+    project = _project_open_need(db, universe, horizon=plan_horizon_date,
+                                 horizon_start=plan_horizon_start)
 
     def _owed(pid: Optional[str]) -> bool:
         return bool(pid) and (pid in need or pid in project)
@@ -1672,6 +1689,9 @@ def build(
         "rows": prepared + no_demand_rows,
         "sources": _sources(db, stock_list_as_of=stock_list_as_of, proforma=proforma),
         "plan_horizon_date": plan_horizon_date.isoformat() if plan_horizon_date else None,
+        "plan_horizon_start": (
+            plan_horizon_start.isoformat() if plan_horizon_start else None
+        ),
     }
     if include_lines:
         # The drivers too: the "Open SOs" cell on a set row drills into this list keyed on
@@ -1682,6 +1702,7 @@ def build(
             sorted(set(demand_ids) | {sets[key]["driver_product_id"] for key in set_demand_keys}),
             catalogue,
             horizon=plan_horizon_date,
+            horizon_start=plan_horizon_start,
         )
     return result
 

@@ -116,7 +116,7 @@ const poReceipts: PoReceipt[] = [
 
 function renderPanel(over: Partial<React.ComponentProps<typeof PlanRowPanel>> = {}) {
   const onEdit = vi.fn();
-  const onUseSuggestion = vi.fn();
+  const onSave = vi.fn();
   const props: React.ComponentProps<typeof PlanRowPanel> = {
     line: line(),
     edit: undefined,
@@ -127,11 +127,11 @@ function renderPanel(over: Partial<React.ComponentProps<typeof PlanRowPanel>> = 
     levelSuggestion: undefined,
     economics: undefined,
     onEdit,
-    onUseSuggestion,
+    onSave,
     ...over,
   };
   render(<PlanRowPanel {...props} />);
-  return { onEdit, onUseSuggestion };
+  return { onEdit, onSave };
 }
 
 describe('PlanRowPanel - four zones render (D1)', () => {
@@ -176,10 +176,10 @@ describe('PlanRowPanel - Cover zone (D2)', () => {
     expect(screen.queryByText(/short of suggested/)).not.toBeInTheDocument();
   });
 
-  it('Use suggestion and Skip write through onEdit/onUseSuggestion, never a direct save', () => {
-    const { onEdit, onUseSuggestion } = renderPanel();
-    fireEvent.click(screen.getByRole('button', { name: 'Use suggestion' }));
-    expect(onUseSuggestion).toHaveBeenCalledTimes(1);
+  it('Save and Skip write through onSave/onEdit (S12, round 2, 9 Sep)', () => {
+    const { onEdit, onSave } = renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    expect(onSave).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole('button', { name: 'Skip' }));
     expect(onEdit).toHaveBeenCalledWith({ decision: { skip: true } });
@@ -351,6 +351,71 @@ describe('PlanRowPanel - Price and supplier zone (D4)', () => {
     });
     expect(screen.getByRole('combobox')).toHaveValue('S1');
   });
+
+  // S2 (AC-S2.3, 9 Sep 2026): the last price is labelled in the PURCHASE's own currency,
+  // never a mismatched "RM 110.00" beside a "CNY 110.00" sub-line. AC-S2.4 (the "No MYR
+  // rate" hint) is retired by S11 (round 2, 9 Sep): most buying is CNY, and the line cost
+  // now reads in that currency instead of asking for a rate to convert it with.
+  describe('money says which money it is (AC-S2.3)', () => {
+    const cnyPrice: PriceAdvice = {
+      ...price,
+      last: { po_number: 'PO-CNY', issue_date: '2026-05-01', unit_cost: 110, currency: 'CNY', qty: 50 },
+    } as unknown as PriceAdvice;
+
+    it('labels the last price in the purchase\'s own currency, matching the sub-line', () => {
+      renderPanel({ price: cnyPrice, line: line({ unit_cost: 10, currency: 'MYR' }) });
+
+      expect(screen.getByText('CNY 110.00')).toBeInTheDocument();
+      expect(screen.getByText(/CNY 110\.00, on PO-CNY/)).toBeInTheDocument();
+      expect(screen.queryByText('RM 110.00')).not.toBeInTheDocument();
+    });
+
+    it('falls back to the FROZEN rec\'s own last_purchase fields when price advice has not loaded', () => {
+      // Finding 4 (review fix round 2, 9 Sep): NOT the chosen supplier's own cost
+      // (`line.unit_cost`) - that is a different fact, and printing it here under
+      // "Last price" for an item never purchased is exactly the mislabel this fixes.
+      renderPanel({
+        price: undefined,
+        line: line({ unit_cost: 999, currency: 'MYR',
+                    last_purchase_cost: 15, last_purchase_currency: 'USD' }),
+      });
+      expect(screen.getByText('USD 15.00')).toBeInTheDocument();
+      expect(screen.queryByText(/999/)).not.toBeInTheDocument();
+    });
+
+    it('says "No price on file" when neither price advice nor a frozen last purchase exists', () => {
+      renderPanel({
+        price: undefined,
+        line: line({ unit_cost: 999, currency: 'MYR',
+                    last_purchase_cost: null, last_purchase_currency: null }),
+      });
+      expect(screen.getByText('No price on file')).toBeInTheDocument();
+    });
+
+    it('the loaded price advice wins over the frozen rec when the two disagree (finding 4)', () => {
+      // Line cost and "Last price" must read the SAME fact - `price.last` once it has
+      // loaded, even though the frozen rec still carries an older/different figure.
+      renderPanel({
+        price: cnyPrice,
+        line: line({ unit_cost: 10, currency: 'MYR',
+                    last_purchase_cost: 999, last_purchase_currency: 'MYR' }),
+        edit: { decision: { buy: 5 } },
+      });
+      expect(screen.getByText('CNY 110.00')).toBeInTheDocument();
+      expect(screen.queryByText(/999/)).not.toBeInTheDocument();
+      // Line cost: 5 x CNY 110.00 = CNY 550.00, never MYR 999-based.
+      expect(screen.getByText('CNY 550.00')).toBeInTheDocument();
+    });
+
+    it('never shows the retired "No MYR rate" hint (AC-S11.3)', () => {
+      renderPanel({
+        price: cnyPrice,
+        line: line({ unit_cost: 110, currency: 'CNY', cash_impact: null }),
+      });
+      expect(screen.queryByText(/No MYR rate/)).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'SCM policies' })).not.toBeInTheDocument();
+    });
+  });
 });
 
 describe('PlanRowPanel - AutoCount level + qty zone (D5)', () => {
@@ -467,7 +532,7 @@ describe('PlanRowPanel - legacy run locks every input (D8)', () => {
     expect(screen.getByLabelText('MOQ')).toBeDisabled();
     expect(screen.getByLabelText('AutoCount level')).toBeDisabled();
     expect(screen.getByLabelText('AutoCount reorder qty')).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Use suggestion' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Skip' })).toBeDisabled();
   });
 });

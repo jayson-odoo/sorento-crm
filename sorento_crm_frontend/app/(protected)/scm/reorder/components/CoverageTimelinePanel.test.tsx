@@ -253,7 +253,7 @@ describe('CoverageTimelinePanel - undated demand, horizon and transfers', () => 
     withData(SHORTFALL);
     const section = screen.getByRole('region', { name: 'Transfer proposals' });
     expect(within(section).getByText('MWH')).toBeInTheDocument();
-    expect(within(section).getByText('RM 480')).toBeInTheDocument();
+    expect(within(section).getByText('RM 480.00')).toBeInTheDocument();
     expect(within(section).getByText('5')).toBeInTheDocument();
     expect(within(section).getByText('08/08/2026')).toBeInTheDocument();
     expect(within(section).getByText(/Not counted in the balance above/i)).toBeInTheDocument();

@@ -22,7 +22,7 @@ with an existing invoice - a company created after this migration must not be re
 upload after this migration continues the same series.
 
 Revision ID: 499_scm_pi_supplier_ref
-Revises: 498_committed_v_bundled_qty
+Revises: 504_order_summary_pool_cols
 Create Date: 2026-09-09
 """
 import logging
@@ -34,7 +34,7 @@ from app.services.numbering_defaults import seed_proforma_invoice_rule
 from app.services.scm.proforma_invoice_numbering_backfill import backfill_pi_numbers
 
 revision = "499_scm_pi_supplier_ref"
-down_revision = "498_committed_v_bundled_qty"
+down_revision = "504_order_summary_pool_cols"
 branch_labels = None
 depends_on = None
 
