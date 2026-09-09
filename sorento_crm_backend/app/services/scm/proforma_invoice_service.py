@@ -1721,8 +1721,21 @@ def convert_to_draft_shipment(
                     f"{ln.item_code} places whole packing rows, not a partial quantity.",
                     code="packing_rows_place_whole",
                 )
+            # What a PREVIOUS convert already took off this line, walked over its rows in
+            # order (AC-D2b): placement is whole rows, so the quantity on the link rows
+            # covers the line's first N rows and those are the ones already in a box. Without
+            # this a second convert of a partly-placed invoice put the same carton on two
+            # containers - the row branch read nothing of what was placed.
+            already_placed = _dec(placed_per_line.get(str(ln.id), 0))
+            covered = Decimal("0")
+            unplaced_rows = []
+            for row in rows_for_line:
+                if covered < already_placed:
+                    covered += _dec(row.qty) if row.qty is not None else Decimal("0")
+                    continue
+                unplaced_rows.append(row)
             selected_rows = [
-                r for r in rows_for_line
+                r for r in unplaced_rows
                 if selected_row_ids is None or str(r.id) in selected_row_ids
             ]
             for row in selected_rows:
@@ -2863,8 +2876,9 @@ def list_for_supplier(
 
     needle = (query or "").strip()
     if needle:
-        # The four things somebody has in their hand when they come looking for an invoice:
-        # its number, whose it is, which box it went in and which bill of lading covers it.
+        # The five things somebody has in their hand when they come looking for an invoice:
+        # our number, the supplier's own reference, whose it is, which box it went in and
+        # which bill of lading covers it.
         # The supplier is matched through a scoped subquery rather than a join, so the
         # company filter the ORM puts on `Supplier` still applies and the page count below
         # stays one query.
@@ -2879,6 +2893,9 @@ def list_for_supplier(
         )
         q = q.filter(
             func.lower(ProformaInvoice.pi_number).like(func.lower(like))
+            # Ours and theirs both: Ms Tee has the supplier's own number in the email in
+            # front of her far more often than she has ours (AC-A5).
+            | func.lower(ProformaInvoice.supplier_ref).like(func.lower(like))
             | func.lower(ProformaInvoice.container_ref).like(func.lower(like))
             | func.lower(ProformaInvoice.bl_ref).like(func.lower(like))
             | ProformaInvoice.supplier_id.in_(db.query(supplier_ids.c.id))
@@ -2992,9 +3009,16 @@ def serialize(
         "supplier_code": supplier_code,
         "supplier_name": supplier_name,
         "pi_number": invoice.pi_number,
+        # What the SUPPLIER calls this document (AC-A2/AC-A5). Ours is `pi_number`; this is
+        # the number Ms Tee quotes back to the factory, and the list column and header meta
+        # both read it, so it belongs on the payload rather than only in the identity key.
+        "supplier_ref": invoice.supplier_ref,
         "invoice_date": invoice.invoice_date.isoformat() if invoice.invoice_date else None,
         "currency": invoice.currency or None,
         "container_no": invoice.container_ref,
+        # The seal the packing list stated, carried onto the draft at convert (AC-D2c) and
+        # shown beside the container it belongs to.
+        "seal_no": invoice.seal_ref,
         "bl_no": invoice.bl_ref,
         "total_amount": _f(invoice.total_amount),
         "line_count": invoice.line_count,
@@ -3282,11 +3306,16 @@ def serialize(
         for link in links
         if link.attachment is not None
     ]
-    packing_files = [
-        f
-        for f, link in zip(out["source_files"], links)
-        if f["type"] == _PACKING_LIST_TYPE_NAME
-    ]
+    # The file the packing rows came off, for the tab's header (AC-B10). The Packing List
+    # type names it outright; a COMBINED sheet (Jinbaichuan) is ONE file filed once, under
+    # the invoice's own type, and it is the packing file too - so when this PI holds packing
+    # rows and nothing is filed under the packing type, the newest source file is what fed
+    # them. `zip(out["source_files"], links)` used to pair these two lists positionally,
+    # which is only correct while no link has a missing attachment - and `source_files`
+    # drops exactly those.
+    packing_files = [f for f in out["source_files"] if f["type"] == _PACKING_LIST_TYPE_NAME]
+    if not packing_files and out["packing_lines"] and out["source_files"]:
+        packing_files = out["source_files"][-1:]
     out["packing_file"] = (
         {"name": packing_files[-1]["name"], "uploaded_at": packing_files[-1]["uploaded_at"]}
         if packing_files

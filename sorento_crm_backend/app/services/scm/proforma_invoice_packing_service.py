@@ -16,6 +16,7 @@ re-upload is a CORRECTION (AC-B5) - it never appends.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from typing import Optional
 
 from sqlalchemy import func
@@ -90,7 +91,6 @@ def replace_packing_rows(
     ).delete(synchronize_session=False)
     db.flush()
 
-    touched_lines: dict[str, ProformaInvoiceLine] = {}
     for row_no, ln in enumerate(lines, start=1):
         code_upper = ln.item_code.upper()
         product = known.get(code_upper)
@@ -123,8 +123,8 @@ def replace_packing_rows(
         # dismissed row still names a real line when its code resolves to one - convert
         # needs `proforma_invoice_line_id` set so it can tell "this line's only row is
         # dismissed" apart from "this line has no packing list at all" - the dismissal
-        # itself is applied on top, as the row's own `match_state`, never fed into the
-        # line's roll-up (`touched_lines`), which is genuinely-matched rows only.
+        # itself is applied on top, as the row's own `match_state`, and `rollup_invoice`
+        # then leaves every dismissed row out of the figures it sums.
         if product:
             row.product_id = product.get("id")
             row.product_set_id = product.get("product_set_id")
@@ -140,7 +140,6 @@ def replace_packing_rows(
         elif matched_line is not None:
             row.match_state = "matched"
             row.proforma_invoice_line_id = matched_line.id
-            touched_lines[str(matched_line.id)] = matched_line
         else:
             # A resolved product no line of this PI holds, or no product at all - both
             # read the same to the operator: this row is not on the invoice (AC-B6).
@@ -148,15 +147,110 @@ def replace_packing_rows(
         db.add(row)
     db.flush()
 
-    for line in touched_lines.values():
-        rows = (
-            db.query(ProformaInvoicePackingLine)
-            .filter(ProformaInvoicePackingLine.proforma_invoice_line_id == line.id)
-            .all()
-        )
-        _rollup_packing(db, line, rows)
+    rollup_invoice(db, str(invoice.id))
 
     return len(lines)
+
+
+def rebind_packing_rows(
+    db: Session,
+    *,
+    supplier_id: str,
+    code: str,
+    product_id: Optional[str],
+    product_set_id: Optional[str],
+) -> int:
+    """Point this supplier's packing rows under `code` at whatever it now means (S2 + R16).
+
+    The third reader `supplier_code_alias_service._rebind` has to reach: a ruling made on
+    the Packing tab (Match, Dismiss) or anywhere else in this channel has to land on the
+    packing rows already uploaded under that code, or the tab goes on showing "Not in
+    catalogue" for a code the operator has just answered.
+
+    The row's LINE and its `match_state` follow from the product, never from the caller:
+    a row whose product is on this PI is matched to that line, one whose product no line
+    holds is `unmatched` (AC-B6's `not_on_invoice`), and a code carrying an active
+    dismissal is `dismissed` whatever it resolves to. Every invoice a row moved on is
+    re-rolled afterwards (AC-B8).
+    """
+    rows = (
+        db.query(ProformaInvoicePackingLine)
+        .join(
+            ProformaInvoice,
+            ProformaInvoice.id == ProformaInvoicePackingLine.proforma_invoice_id,
+        )
+        .filter(
+            ProformaInvoice.supplier_id == str(supplier_id),
+            ProformaInvoicePackingLine.item_code.ilike(code),
+        )
+        .all()
+    )
+    if not rows:
+        return 0
+
+    dismissed = bool(_dismissed_codes(db, str(supplier_id), {code}))
+    invoice_ids = {str(r.proforma_invoice_id) for r in rows}
+    lines_by_invoice: dict[str, list[ProformaInvoiceLine]] = {}
+    for line in (
+        db.query(ProformaInvoiceLine)
+        .filter(ProformaInvoiceLine.invoice_id.in_(invoice_ids))
+        .all()
+    ):
+        lines_by_invoice.setdefault(str(line.invoice_id), []).append(line)
+
+    for row in rows:
+        row.product_id = product_id
+        row.product_set_id = product_set_id
+        matched_line = None
+        for line in lines_by_invoice.get(str(row.proforma_invoice_id), []):
+            if product_id and str(line.product_id or "") == str(product_id):
+                matched_line = line
+                break
+            if product_set_id and str(line.product_set_id or "") == str(product_set_id):
+                matched_line = line
+                break
+        row.proforma_invoice_line_id = matched_line.id if matched_line is not None else None
+        if dismissed:
+            row.match_state = _DISMISSED
+        else:
+            row.match_state = "matched" if matched_line is not None else "unmatched"
+    db.flush()
+
+    for invoice_id in invoice_ids:
+        rollup_invoice(db, invoice_id)
+    return len(rows)
+
+
+def rollup_invoice(db: Session, invoice_id: str) -> None:
+    """Re-roll EVERY line of this PI from its own non-dismissed packing rows (AC-B8).
+
+    Run after ANY packing write - replace, dismiss, undo, match - because all four change
+    which rows feed which line, and re-rolling only the lines one write happened to touch
+    left the OTHER lines carrying figures from rows that no longer feed them (a dismissed
+    row's cartons stayed in its line's total until the next whole re-upload).
+
+    A dismissed row is not a packing row for this purpose: it is the operator saying the
+    invoice does not price it. A line left with no rows at all is not touched - it keeps
+    whatever the PI document itself stated, which is the only figure anybody has for it.
+    """
+    rows_by_line: dict[str, list[ProformaInvoicePackingLine]] = {}
+    for row in (
+        db.query(ProformaInvoicePackingLine)
+        .filter(
+            ProformaInvoicePackingLine.proforma_invoice_id == str(invoice_id),
+            ProformaInvoicePackingLine.match_state != _DISMISSED,
+            ProformaInvoicePackingLine.proforma_invoice_line_id.isnot(None),
+        )
+        .all()
+    ):
+        rows_by_line.setdefault(str(row.proforma_invoice_line_id), []).append(row)
+
+    for line in (
+        db.query(ProformaInvoiceLine)
+        .filter(ProformaInvoiceLine.invoice_id == str(invoice_id))
+        .all()
+    ):
+        _rollup_packing(db, line, rows_by_line.get(str(line.id), []))
 
 
 def _sum_or_none(values) -> Optional[float]:
@@ -195,44 +289,59 @@ def _rollup_packing(
     line.carton_height_cm = _shared_or_none(r.carton_height_cm for r in rows)
 
 
-def resolve_attach_pi(
+@dataclass
+class AttachResolution:
+    """Which PI a packing-list block attaches to, and why - one answer, shared by the
+    preview (which SHOWS it and its refusal) and by apply (which acts on it). Server truth:
+    the dialog never works this out for itself, it only overrides it (`attach_to`)."""
+
+    invoice: Optional[ProformaInvoice] = None
+    #: How it was decided - what the preview row says out loud beside the invoice.
+    how: Optional[str] = None
+    #: `{code, message}` when nothing resolved (AC-B5/B16), naming the supplier and the
+    #: date the packing list itself states.
+    refusal: Optional[dict] = None
+
+
+def resolve_attach(
     db: Session,
     block: PackingBlock,
     *,
     supplier_id: str,
     attach_to: Optional[str] = None,
-) -> ProformaInvoice:
-    """Which PI a packing-list-alone file's block attaches to (AC-B5), in order:
+) -> AttachResolution:
+    """Which PI this block attaches to (AC-B5), in order:
 
-      0. The block's own container number equals exactly one CURRENT PI's `container_ref`,
-         for this supplier - the Jiexia shape, where the invoice number label is stated
-         once above the FIRST block and never repeated for the rest, but every container
-         gets its own PI (`supplier_ref_for`'s own container-suffix rule) and its own line
-         on the packing list either way.
-      1. Else the block's own stated invoice number equals a PI's `supplier_ref` - bare, or
+      1. The caller's own `attach_to` - the dialog's explicit pick, either the invoice a
+         "Attach packing list" was started from (AC-B10, locked) or the one an operator
+         chose on the preview row. Explicit beats derived: nothing the file states can
+         overrule the person holding both documents.
+      2. The block's own stated invoice number equals a PI's `supplier_ref` - bare, or
          suffixed with the block's own container (the same suffix `supplier_ref_for` gives
          a reference more than one document in a parse shares).
-      2. Else exactly one CURRENT PI of this supplier - shares the block's stated date,
-         when there is more than one and the file states one to narrow by; when there is
-         only ONE current PI of the supplier PERIOD, that is the "exactly one" the rule
-         means and the file need not restate the date already on both documents.
-      3. Else the caller's own `attach_to` (the dialog's explicit pick).
+      3. The block's own container number equals exactly one CURRENT PI's `container_ref`
+         for this supplier - the Jiexia shape, where the invoice number is stated once
+         above the FIRST block and never repeated, but every container has its own PI and
+         its own block here.
+      4. Exactly one CURRENT PI of this supplier states the SAME DATE as the block.
 
-    None of the four -> 409 `proforma_invoice_required`, naming the supplier and the date
-    (or "no date") so the operator knows what to search by.
+    None of the four -> a refusal naming the supplier and the packing list's own stated
+    date, so the operator knows what to search by (AC-B16). There is deliberately no
+    "exactly one current PI of this supplier, whatever the dates" shortcut: an invoice
+    that happens to be the only one on file is not evidence that THIS packing list belongs
+    to it, and the picker is right there.
     """
-    if block.container_no:
-        by_container = (
+    if attach_to:
+        picked = (
             db.query(ProformaInvoice)
             .filter(
+                ProformaInvoice.id == str(attach_to),
                 ProformaInvoice.supplier_id == str(supplier_id),
-                ProformaInvoice.container_ref == block.container_no,
-                func.coalesce(ProformaInvoice.status, "current") == "current",
             )
-            .all()
+            .first()
         )
-        if len(by_container) == 1:
-            return by_container[0]
+        if picked is not None:
+            return AttachResolution(invoice=picked, how="explicit")
 
     if block.pi_number:
         candidates = [block.pi_number]
@@ -247,49 +356,87 @@ def resolve_attach_pi(
             .first()
         )
         if by_ref is not None:
-            return by_ref
+            return AttachResolution(invoice=by_ref, how="invoice_number")
 
-    current = (
-        db.query(ProformaInvoice)
-        .filter(
-            ProformaInvoice.supplier_id == str(supplier_id),
-            func.coalesce(ProformaInvoice.status, "current") == "current",
-        )
-        .all()
-    )
-    if len(current) == 1:
-        return current[0]
-    if len(current) > 1 and block.invoice_date:
-        by_date = [inv for inv in current if inv.invoice_date == block.invoice_date]
-        if len(by_date) == 1:
-            return by_date[0]
-
-    if attach_to:
-        picked = (
+    if block.container_no:
+        by_container = (
             db.query(ProformaInvoice)
             .filter(
-                ProformaInvoice.id == str(attach_to),
                 ProformaInvoice.supplier_id == str(supplier_id),
+                ProformaInvoice.container_ref == block.container_no,
+                func.coalesce(ProformaInvoice.status, "current") == "current",
             )
-            .first()
+            .all()
         )
-        if picked is not None:
-            return picked
+        if len(by_container) == 1:
+            return AttachResolution(invoice=by_container[0], how="container")
+
+    if block.invoice_date:
+        by_date = (
+            db.query(ProformaInvoice)
+            .filter(
+                ProformaInvoice.supplier_id == str(supplier_id),
+                ProformaInvoice.invoice_date == block.invoice_date,
+                func.coalesce(ProformaInvoice.status, "current") == "current",
+            )
+            .all()
+        )
+        if len(by_date) == 1:
+            return AttachResolution(invoice=by_date[0], how="date")
 
     from app.models.procurement import Supplier
 
     supplier = db.query(Supplier).filter(Supplier.id == str(supplier_id)).first()
     supplier_name = supplier.supplier_name if supplier else "this supplier"
-    when = block.invoice_date.isoformat() if block.invoice_date else "no date"
-    raise AppException(
-        409,
-        f"No proforma invoice on file for {supplier_name} matches this packing list "
-        f"({when}). Pick which invoice it belongs to.",
-        code="proforma_invoice_required",
+    dated = (
+        f"dated {block.invoice_date.isoformat()}"
+        if block.invoice_date
+        else "with no date on it"
+    )
+    return AttachResolution(
+        refusal={
+            "code": "proforma_invoice_required",
+            "message": (
+                f"No proforma invoice on file for {supplier_name} matches this packing "
+                f"list {dated}. Pick which invoice it belongs to."
+            ),
+        }
     )
 
 
+def resolve_attach_pi(
+    db: Session,
+    block: PackingBlock,
+    *,
+    supplier_id: str,
+    attach_to: Optional[str] = None,
+) -> ProformaInvoice:
+    """`resolve_attach`, for the write path: the invoice, or the refusal as a 409."""
+    resolved = resolve_attach(db, block, supplier_id=supplier_id, attach_to=attach_to)
+    if resolved.invoice is None:
+        refusal = resolved.refusal or {}
+        raise AppException(
+            409,
+            refusal.get("message", "No proforma invoice matches this packing list."),
+            code=refusal.get("code", "proforma_invoice_required"),
+        )
+    return resolved.invoice
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(str(value))
+    except (ValueError, AttributeError, TypeError):
+        return False
+    return True
+
+
 def _row_or_404(db: Session, invoice_id: str, row_id: str) -> ProformaInvoicePackingLine:
+    # A path segment that is not a uuid at all is a 404, not a 500: comparing it against a
+    # uuid column raises a DataError out of the driver, which the operator reads as "the
+    # server broke" for what is really a bad link.
+    if not _is_uuid(row_id) or not _is_uuid(invoice_id):
+        raise AppException(404, "That packing row does not exist.", detail="row_id")
     row = (
         db.query(ProformaInvoicePackingLine)
         .filter(
@@ -316,6 +463,10 @@ def dismiss_packing_line(
         db, supplier_id=str(invoice.supplier_id), supplier_code=row.item_code, actor=actor
     )
     row.match_state = "dismissed"
+    db.flush()
+    # Its line loses those cartons and that weight the moment it stops counting (AC-B8,
+    # ruling 8): the roll-up is re-run for the whole invoice after EVERY packing write.
+    rollup_invoice(db, str(invoice.id))
     return row
 
 
@@ -340,4 +491,40 @@ def undo_dismiss_packing_line(
     if alias is not None:
         supplier_code_alias_service.delete(db, str(alias.id), actor=actor)
     row.match_state = "unmatched"
+    db.flush()
+    rollup_invoice(db, str(invoice.id))
+    return row
+
+
+def match_packing_line(
+    db: Session,
+    invoice_id: str,
+    row_id: str,
+    *,
+    product_id: Optional[str] = None,
+    product_set_id: Optional[str] = None,
+    actor: Optional[str] = None,
+) -> ProformaInvoicePackingLine:
+    """"It is this product after all" on a packing row (AC-B12).
+
+    ONE decision, written where every other match in this channel is written: the
+    supplier's own `manual` alias for the code. `supplier_code_alias_service.create` then
+    rebinds every row already uploaded under it - stock rows, invoice lines and (S2) this
+    packing row - which is what links it to the PI line of that product, sets its
+    `match_state` and re-rolls the line's figures. Nothing here writes the row itself, so
+    a match made on this tab and one made from the Lines tab cannot drift apart.
+    """
+    row = _row_or_404(db, invoice_id, row_id)
+    from app.services.scm.proforma_invoice_service import get_or_404
+
+    invoice = get_or_404(db, invoice_id)
+    supplier_code_alias_service.create(
+        db,
+        supplier_id=str(invoice.supplier_id),
+        supplier_code=row.item_code,
+        product_id=product_id,
+        product_set_id=product_set_id,
+        actor=actor,
+    )
+    db.refresh(row)
     return row

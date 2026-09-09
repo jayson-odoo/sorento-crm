@@ -66,6 +66,11 @@ class ConvertToDraftShipmentRequest(BaseModel):
                     "default. Written onto the draft shipment; the over-capacity check "
                     "compares the COMBINED volume of every selected invoice against it.",
     )
+    packing_row_ids: Optional[List[str]] = Field(
+        None,
+        description="Which supplier packing rows go in this container (AC-D2b). A row is "
+                    "placed whole or not at all; omitted = every row not already placed.",
+    )
 
 
 class ProformaLineUpdate(BaseModel):
@@ -269,6 +274,7 @@ def convert_proforma_invoices_to_draft_shipment(
         override_reason=payload.override_reason,
         line_quantities=payload.line_quantities,
         container_size_id=payload.container_size_id,
+        packing_row_ids=payload.packing_row_ids,
     )
     db.commit()
     return out
@@ -470,6 +476,39 @@ def dismiss_packing_line(
     channel makes, so a later upload lands this code dismissed without asking again."""
     proforma_invoice_packing_service.dismiss_packing_line(
         db, invoice_id, row_id, actor=_actor(current_user)
+    )
+    db.commit()
+    return proforma_invoice_service.serialize(
+        db, proforma_invoice_service.get_or_404(db, invoice_id)
+    )
+
+
+class PackingLineMatchRequest(BaseModel):
+    """The same body the Lines tab's own Match dialog sends: a product OR a set, never
+    both and never neither (`supplier_code_alias_service.create` enforces it)."""
+
+    product_id: Optional[str] = None
+    product_set_id: Optional[str] = None
+
+
+@router.post("/proforma-invoices/{invoice_id}/packing-lines/{row_id}/match")
+def match_packing_line(
+    invoice_id: str,
+    row_id: str,
+    payload: PackingLineMatchRequest = Body(...),
+    current_user: dict = Depends(_UPLOAD),
+    db: Session = Depends(get_db),
+):
+    """"It is this product after all" (AC-B12): writes the supplier's manual alias for the
+    code, which rebinds the row, links it to the PI line of that product and re-rolls the
+    line's figures. Returns the whole invoice, like every other packing write here."""
+    proforma_invoice_packing_service.match_packing_line(
+        db,
+        invoice_id,
+        row_id,
+        product_id=payload.product_id,
+        product_set_id=payload.product_set_id,
+        actor=_actor(current_user),
     )
     db.commit()
     return proforma_invoice_service.serialize(

@@ -413,7 +413,11 @@ def _line_from(raw: list, col_field: dict[int, str], row_number: int) -> Optiona
 
     code = _text(vals.get("item_code"))
     description = _text(vals.get("product_name"))
-    identifier = code or description
+    # Truncated to the column's own width (`item_code String(100)` on every table this
+    # feeds): a row with no code falls back to its DESCRIPTION, and a supplier's
+    # sentence-long 品名 then overflowed the insert with a DataError nobody could read
+    # back to the row that caused it.
+    identifier = (code or description or "")[:100] or None
     qty = _number(vals.get("qty"))
     if not identifier:
         return None

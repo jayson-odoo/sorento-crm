@@ -810,12 +810,50 @@ class SpoCreateRequest(BaseModel):
     )
 
 
+def _block_attach(raw: Optional[str]) -> dict[tuple[str, int], str]:
+    """`[{"file": name, "block_index": 0, "invoice_id": "..."}]` as the service wants it
+    (AC-B13): which invoice the operator picked for ONE packing-list block. A JSON form
+    field rather than a repeated one because it is a list of triples, and the dialog posts
+    the whole list every time it changes one of them."""
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError) as exc:
+        raise AppException(422, "attach_to_blocks must be a JSON array", detail="attach_to_blocks") from exc
+    if not isinstance(parsed, list):
+        raise AppException(422, "attach_to_blocks must be a JSON array", detail="attach_to_blocks")
+    out: dict[tuple[str, int], str] = {}
+    for entry in parsed:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("file")
+        invoice_id = entry.get("invoice_id")
+        try:
+            index = int(entry.get("block_index"))
+        except (TypeError, ValueError):
+            continue
+        if name and invoice_id:
+            out[(str(name), index)] = str(invoice_id)
+    return out
+
+
 @router.post("/supplier-documents/preview")
 async def preview_supplier_documents(
     files: list[UploadFile] = File(..., description="One or more proforma invoices / packing lists"),
     supplier_id: Optional[str] = Form(None),
     currency: Optional[str] = Form(
         None, description="Only needed when neither the file nor the price list says"
+    ),
+    attach_to: Optional[str] = Form(
+        None, description="One proforma invoice for the whole upload (AC-B10)"
+    ),
+    attach_to_blocks: Optional[str] = Form(
+        None,
+        description=(
+            "JSON array of {file, block_index, invoice_id} - the Attaches-to pick on one "
+            "packing-list block (AC-B13)"
+        ),
     ),
     _user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
@@ -832,7 +870,13 @@ async def preview_supplier_documents(
     """
     read = [(f.filename, await read_upload(f)) for f in files]
     out = await run_in_threadpool(
-        supplier_document_service.preview, db, read, supplier_id=supplier_id, currency=currency,
+        supplier_document_service.preview,
+        db,
+        read,
+        supplier_id=supplier_id,
+        currency=currency,
+        attach_to=attach_to,
+        block_attach=_block_attach(attach_to_blocks),
     )
     db.commit()
     return out
@@ -852,11 +896,22 @@ async def apply_supplier_documents(
             "translation cells (R16)"
         ),
     ),
+    attach_to: Optional[str] = Form(
+        None, description="One proforma invoice for the whole upload (AC-B10)"
+    ),
+    attach_to_blocks: Optional[str] = Form(
+        None,
+        description=(
+            "JSON array of {file, block_index, invoice_id} - the Attaches-to pick on one "
+            "packing-list block (AC-B13)"
+        ),
+    ),
     current_user: dict = Depends(_WRITE),
     db: Session = Depends(get_db),
 ):
-    """Proforma invoices first, then packing lists, then price links (R12-R14). Each file
-    is filed in Drive under its own type (Proforma Invoice / Packing List)."""
+    """Proforma invoices first, then packing lists (S2). Each file is filed in Drive under
+    its own type (Proforma Invoice / Packing List) and linked to the invoice it belongs to;
+    a packing list's rows land on that invoice, and no shipment is created here (AC-C1)."""
     read = [(f.filename, await read_upload(f), f.content_type) for f in files]
     parsed_translations = None
     if translations:
@@ -875,6 +930,8 @@ async def apply_supplier_documents(
         actor_id=current_user.get("id"),
         actor_name=_actor(current_user),
         translations=parsed_translations,
+        attach_to=attach_to,
+        block_attach=_block_attach(attach_to_blocks),
     )
     db.commit()
     return out

@@ -355,7 +355,63 @@ def _header_of(
     }
 
 
-def _file_preview(db: Session, name: str, data: bytes) -> dict[str, Any]:
+def _attach_rows(
+    db: Session,
+    pl_result: Optional[PackingReadResult],
+    *,
+    supplier_id: Optional[str],
+    attach_to: Optional[str],
+    block_attach: dict[int, str],
+) -> list[dict[str, Any]]:
+    """Which PI each packing-list BLOCK attaches to, and the refusal when none does
+    (AC-B5/B13/B16), straight off `resolve_attach` - the server decides, the dialog only
+    shows it and overrides it.
+
+    Per BLOCK, not per file: Jiexia's one packing list carries two containers, and each
+    container's rows belong to that container's OWN invoice. Keyed by block index and
+    container so the dialog can post a change back for one of them without touching the
+    other.
+    """
+    if not pl_result or not pl_result.ok or not supplier_id:
+        return []
+    out: list[dict[str, Any]] = []
+    for i, block in enumerate(pl_result.blocks):
+        resolved = packing_service.resolve_attach(
+            db,
+            block,
+            supplier_id=supplier_id,
+            attach_to=block_attach.get(i, attach_to),
+        )
+        invoice = resolved.invoice
+        out.append(
+            {
+                "block_index": i,
+                "container_no": block.container_no,
+                "attach_to": (
+                    {
+                        "id": str(invoice.id),
+                        "pi_number": invoice.pi_number,
+                        "supplier_ref": invoice.supplier_ref,
+                        "how": resolved.how,
+                    }
+                    if invoice is not None
+                    else None
+                ),
+                "refusal": resolved.refusal,
+            }
+        )
+    return out
+
+
+def _file_preview(
+    db: Session,
+    name: str,
+    data: bytes,
+    *,
+    supplier_id: Optional[str] = None,
+    attach_to: Optional[str] = None,
+    block_attach: Optional[dict[int, str]] = None,
+) -> dict[str, Any]:
     kind = classify(data, db)
     if kind is None:
         return {
@@ -366,6 +422,7 @@ def _file_preview(db: Session, name: str, data: bytes) -> dict[str, Any]:
             "unmatched": [],
             "errors": ["Could not tell whether this is a proforma invoice or a packing list."],
             "footer_note": None,
+            "packing_attach": [],
         }
 
     pi_result: Optional[ProformaReadResult] = None
@@ -457,6 +514,20 @@ def _file_preview(db: Session, name: str, data: bytes) -> dict[str, Any]:
         "header": _header_of(pi_result, pl_result),
         "unmatched": sorted(set(unmatched))[:200],
         "unmapped_headers": unmapped_headers,
+        # AC-B13, per BLOCK. A COMBINED file states its own invoice on the same sheet and
+        # attaches its blocks to the PIs that apply creates from it, so it asks nothing:
+        # only a packing-list-ALONE file has a question to answer here.
+        "packing_attach": (
+            _attach_rows(
+                db,
+                pl_result,
+                supplier_id=supplier_id,
+                attach_to=attach_to,
+                block_attach=block_attach or {},
+            )
+            if kind == "packing_list" and not errors
+            else []
+        ),
         "errors": errors,
         "footer_note": footer_note,
         # Popped by `preview()` before the response goes out - kept OFF the block dicts
@@ -475,12 +546,36 @@ def preview(
     *,
     supplier_id: Optional[str] = None,
     currency: Optional[str] = None,
+    attach_to: Optional[str] = None,
+    block_attach: Optional[dict[tuple[str, int], str]] = None,
 ) -> dict[str, Any]:
-    """What each file is, and what it would create - writes nothing."""
+    """What each file is, and what it would create - writes nothing.
+
+    `attach_to` is one invoice for the whole upload (the dialog opened from a PI's own
+    "Attach packing list", AC-B10); `block_attach` is `{(file name, block index): invoice
+    id}`, what the operator picked on ONE packing-list block's own Attaches-to select. The
+    more specific of the two wins, and every block that has neither is resolved by
+    `resolve_attach` (AC-B5).
+    """
     if supplier_id:
         assert_supplier(db, supplier_id)
 
-    out_files = [_file_preview(db, name, data) for name, data in files]
+    per_file = block_attach or {}
+    out_files = [
+        _file_preview(
+            db,
+            name,
+            data,
+            supplier_id=supplier_id,
+            attach_to=attach_to,
+            block_attach={
+                index: invoice_id
+                for (file_name, index), invoice_id in per_file.items()
+                if file_name == name
+            },
+        )
+        for name, data in files
+    ]
 
     # Price matches: a PI document and a PL block sharing a container in THIS batch.
     # Uploaded separately (PL after PI, PI after PL) is answered by `apply`'s own DB-wide
@@ -521,8 +616,11 @@ def apply(
     actor_name: Optional[str] = None,
     translations: Optional[list[dict[str, Any]]] = None,
     attach_to: Optional[str] = None,
+    block_attach: Optional[dict[tuple[str, int], str]] = None,
 ) -> dict[str, Any]:
-    """Proforma invoices first, then packing lists (S2), then price links (R12).
+    """Proforma invoices first, then packing lists (S2). No shipment, no price links: the
+    packing rows land on the invoice that prices them (AC-C1), and a packing list is born
+    by convert or by hand.
 
     `files` is `[(filename, data, content_type)]`. Refuses the WHOLE upload when any file is
     unclassifiable, named, rather than silently applying the others and leaving the operator
@@ -533,10 +631,13 @@ def apply(
     edit made in the preview outranks any `ai` guess the memory already held for the
     same text.
 
-    `attach_to` (AC-B5/B13) is the dialog's own explicit pick - ONE invoice id for the
-    whole upload, not per file: the two contexts that state one are "Attach packing list"
-    from a PI's own empty Packing tab (AC-B10, locked to that PI) and an operator resolving
-    a `proforma_invoice_required` refusal by hand, and neither ever names two.
+    `attach_to` (AC-B5/B13) is the dialog's own explicit pick for the WHOLE upload - the
+    "Attach packing list" button on a PI's own empty Packing tab (AC-B10), locked to that
+    PI. `block_attach` is `{(file name, block index): invoice id}`, the pick an operator
+    made on ONE packing-list block's Attaches-to select: a two-container packing list
+    (Jiexia) attaches each container's rows to that container's own invoice, so the
+    question is asked and answered per block. The more specific of the two wins, and a
+    block with neither is resolved by `resolve_attach_pi` (AC-B5).
     """
     assert_supplier(db, supplier_id)
     if translations:
@@ -605,7 +706,10 @@ def apply(
                 invoice = proforma_invoice_service.get_or_404(db, combined_invoice_ids[i])
             else:
                 invoice = resolve_attach_pi(
-                    db, block, supplier_id=supplier_id, attach_to=attach_to,
+                    db,
+                    block,
+                    supplier_id=supplier_id,
+                    attach_to=(block_attach or {}).get((name, i), attach_to),
                 )
             packing_rows_written += packing_service.replace_packing_rows(
                 db, invoice, block.lines, supplier_id=supplier_id, actor=actor_name,
