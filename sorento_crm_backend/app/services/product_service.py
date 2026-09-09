@@ -1118,6 +1118,7 @@ class ProductService:
     def delete_product(self, product_id: str):
         """Delete a product."""
         product = self.get_product(product_id)
+        self._reject_if_companion_rule_dependency(product_id)
         # Capture children BEFORE delete so we can re-anchor them to the next
         # existing ancestor afterwards (DB ondelete=SET NULL orphans them).
         ex_children = self._variant_child_ids(product_id)
@@ -1126,6 +1127,41 @@ class ProductService:
         for child_id in ex_children:
             self._reconcile_variant_links(child_id)
         return {"message": "Product deleted successfully"}
+
+    def _reject_if_companion_rule_dependency(self, product_id: str) -> None:
+        """RESTRICT is real at the DB level (migration 495), but a bare
+        `IntegrityError` names no rule - this pre-check answers with the same 409 the
+        FK would raise anyway, naming what is actually blocking it (UAC A6)."""
+        from app.models.product_companion import ProductCompanionRule, ProductCompanionRuleHost
+
+        as_companion = (
+            self.db.query(ProductCompanionRule)
+            .filter(ProductCompanionRule.companion_product_id == product_id)
+            .first()
+        )
+        if as_companion is not None:
+            raise AppException(
+                status_code=409,
+                message=(
+                    f"This product is the companion of a \"supplied with\" rule "
+                    f"({as_companion.id}). Delete the rule first."
+                ),
+                code="CONFLICT",
+            )
+        as_host = (
+            self.db.query(ProductCompanionRuleHost)
+            .filter(ProductCompanionRuleHost.host_product_id == product_id)
+            .first()
+        )
+        if as_host is not None:
+            raise AppException(
+                status_code=409,
+                message=(
+                    "This product is named as a host in a \"supplied with\" rule "
+                    f"({as_host.rule_id}). Delete the rule first."
+                ),
+                code="CONFLICT",
+            )
 
     def _reconcile_variant_links(self, code_or_id: str) -> None:
         """Best-effort post-commit variant-graph reconcile. Never raises - a
