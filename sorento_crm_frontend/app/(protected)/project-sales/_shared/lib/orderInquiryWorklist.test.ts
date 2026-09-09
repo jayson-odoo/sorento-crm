@@ -99,27 +99,28 @@ describe('flowExclusionLabel', () => {
   });
 });
 
-describe('linkedSummary - a document that arrives late (AC-P3-7)', () => {
-  it('marks the document late without unlinking it', () => {
+describe('linkedSummary: the headline only (slice A, 8 Sep 2026 - AC-A3 drops lateness entirely)', () => {
+  it('reads the coverage headline off qty and linkedQty, regardless of a late link among them', () => {
+    // AC-A3: nothing in this column says "late" any more. A late link still counts
+    // toward the headline exactly like an on-time one - lateness is simply not read.
     const summary = linkedSummary('25', '25', [
       { id: 'l1', kind: 'po', document: '202604-S0083', qty: '10', late: false },
       { id: 'l2', kind: 'po', document: '202606-S0082', qty: '15', late: true },
     ]);
     expect(summary).not.toBeNull();
-    expect(summary?.documents.map((entry) => [entry.document, entry.late])).toEqual([
-      ['202604-S0083', false],
-      ['202606-S0082', true],
-    ]);
-    expect(summary?.headline).toBe('25 of 25');
+    expect(summary).toEqual({ headline: '25 of 25' });
   });
 
-  it('makes the whole document late when any of its lines is', () => {
-    const summary = linkedSummary('20', '20', [
-      { id: 'l1', kind: 'po', document: '202604-S0083', qty: '10', late: false },
-      { id: 'l2', kind: 'po', document: '202604-S0083', qty: '10', late: true },
-    ]);
-    expect(summary?.documents).toHaveLength(1);
-    expect(summary?.documents[0].late).toBe(true);
+  it('answers null for a row with no links - the cell reads "Not found (new order)"', () => {
+    expect(linkedSummary('85', '0', [])).toBeNull();
+    expect(linkedSummary('85', '0', null)).toBeNull();
+  });
+
+  it('carries no fourth argument any more - the call is (qty, linkedQty, links)', () => {
+    // The PHASE2-era signature took a fourth parameter; the current one does not, and a
+    // caller passing one is simply ignored rather than erroring - asserted here so a
+    // regression that resurrects it is caught by a signature test rather than by chance.
+    expect(linkedSummary.length).toBe(3);
   });
 });
 
@@ -144,50 +145,3 @@ describe('lateDaysOf (AC-D17): reads late_days off the wire, never recomputes it
   });
 });
 
-describe('linkedSummary: location first, the line label only in the title (item 5)', () => {
-  it('prints the location and quantity, and puts the line label in the title only', () => {
-    const summary = linkedSummary('1', '1', [
-      {
-        id: 'l1',
-        kind: 'spo',
-        document: 'SPO-2026/08-0015',
-        line_label: 'L14',
-        location: 'BRW',
-        qty: '1',
-      },
-    ]);
-    expect(summary?.documents[0].parts).toBe('BRW 1');
-    expect(summary?.documents[0].parts).not.toContain('L14');
-    expect(summary?.documents[0].partsTitle).toBe('L14 BRW 1');
-  });
-
-  it('reads "no location" when neither a location nor a line label is known', () => {
-    const summary = linkedSummary('5', '5', [
-      { id: 'l1', kind: 'po', document: '202607-S0105', qty: '5', location: null },
-    ]);
-    expect(summary?.documents[0].parts).toBe('no location 5');
-    expect(summary?.documents[0].partsTitle).toBe('no location 5');
-  });
-
-  it('reads the location alone in the title when the book named no line label', () => {
-    const summary = linkedSummary('5', '5', [
-      {
-        id: 'l1',
-        kind: 'po',
-        document: '202607-S0105',
-        qty: '5',
-        location: 'BRW-NTC',
-        line_label: null,
-      },
-    ]);
-    expect(summary?.documents[0].parts).toBe('BRW-NTC 5');
-    expect(summary?.documents[0].partsTitle).toBe('BRW-NTC 5');
-  });
-
-  it('carries no fourth argument any more - the call is (qty, linkedQty, links)', () => {
-    // The PHASE2-era signature took a fourth parameter; the current one does not, and a
-    // caller passing one is simply ignored rather than erroring - asserted here so a
-    // regression that resurrects it is caught by a signature test rather than by chance.
-    expect(linkedSummary.length).toBe(3);
-  });
-});

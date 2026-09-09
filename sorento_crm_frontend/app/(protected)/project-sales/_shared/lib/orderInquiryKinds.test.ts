@@ -10,7 +10,7 @@ import {
   fullyLinked,
   kindText,
   kindTotals,
-  segmentsOfRow,
+  segmentsOfRows,
 } from './orderInquiryKinds';
 import type { OrderInquiryKindRow } from './orderInquiryKinds';
 import type { OrderInquiryLink } from '../types/orderInquiry.types';
@@ -29,33 +29,33 @@ function row(over: Partial<OrderInquiryKindRow> = {}): OrderInquiryKindRow {
   return { qty: '10', links: [], state: 'raised', ...over };
 }
 
-describe('segmentsOfRow', () => {
+describe('segmentsOfRows, one row at a time (the schedule matrix bar reads it this way)', () => {
   it('is one solid rose segment for a wholly unlinked row', () => {
-    const segments = segmentsOfRow(row({ qty: '85', links: [] }));
+    const segments = segmentsOfRows([row({ qty: '85', links: [] })]);
 
     expect(segments).toEqual([{ kind: 'buy', qty: '85' }]);
   });
 
   it('is one solid segment for a row wholly linked to a purchase order', () => {
-    const segments = segmentsOfRow(
+    const segments = segmentsOfRows([
       row({ qty: '35', links: [link({ kind: 'po', qty: '35' })] }),
-    );
+    ]);
 
     expect(segments).toEqual([{ kind: 'po', qty: '35' }]);
   });
 
   it('is one solid violet segment for a row wholly linked to an SPO allocation', () => {
-    const segments = segmentsOfRow(
+    const segments = segmentsOfRows([
       row({ qty: '10', links: [link({ kind: 'spo', qty: '10' })] }),
-    );
+    ]);
 
     expect(segments).toEqual([{ kind: 'spo', qty: '10' }]);
   });
 
   it('splits a partly linked row: PO 5 off a quantity of 8 leaves a Buy of 3', () => {
-    const segments = segmentsOfRow(
+    const segments = segmentsOfRows([
       row({ qty: '8', links: [link({ kind: 'po', qty: '5' })] }),
-    );
+    ]);
 
     expect(segments).toEqual([
       { kind: 'po', qty: '5' },
@@ -64,12 +64,12 @@ describe('segmentsOfRow', () => {
   });
 
   it('carries both a spo and a po segment when an ORDER BACK row sits on both', () => {
-    const segments = segmentsOfRow(
+    const segments = segmentsOfRows([
       row({
         qty: '10',
         links: [link({ kind: 'spo', qty: '4' }), link({ kind: 'po', qty: '6' })],
       }),
-    );
+    ]);
 
     expect(segments).toEqual([
       { kind: 'spo', qty: '4' },
@@ -121,12 +121,12 @@ describe('kindTotals', () => {
 
 describe('kindText', () => {
   it('names one kind alone as "Buy 85"', () => {
-    expect(kindText(segmentsOfRow(row({ qty: '85', links: [] })))).toBe('Buy 85');
+    expect(kindText(segmentsOfRows([row({ qty: '85', links: [] })]))).toBe('Buy 85');
   });
 
   it('names a split row as "PO 5 · Buy 3"', () => {
     const text = kindText(
-      segmentsOfRow(row({ qty: '8', links: [link({ kind: 'po', qty: '5' })] })),
+      segmentsOfRows([row({ qty: '8', links: [link({ kind: 'po', qty: '5' })] })]),
     );
 
     expect(text).toBe('PO 5 · Buy 3');

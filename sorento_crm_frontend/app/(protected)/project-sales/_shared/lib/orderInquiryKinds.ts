@@ -125,11 +125,6 @@ export function segmentsOfRows(rows: OrderInquiryKindRow[]): OrderInquiryKindSeg
   return kindTotals(rows).filter((segment) => toMinor(segment.qty) !== 0);
 }
 
-/** One row's own split - "sky 5, rose 3" on a row linked 5 of 8 to a purchase order. */
-export function segmentsOfRow(row: OrderInquiryKindRow): OrderInquiryKindSegment[] {
-  return segmentsOfRows([row]);
-}
-
 /**
  * A composition in the fewest words that still name it: "Buy 3", "PO 8", "PO 5 · Buy 3".
  *

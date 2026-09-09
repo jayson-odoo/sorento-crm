@@ -268,7 +268,11 @@ describe('OrderInquiriesClient: reading the page', () => {
     expect(screen.getByText('SRTWC8605-SC-RL')).toBeInTheDocument();
     expect(screen.getByText('Wall hung basin 5400')).toBeInTheDocument();
     expect(screen.getByText('DAFUYUAN')).toBeInTheDocument();
-    expect(screen.getByText('202601-S0015')).toBeInTheDocument();
+    // AC-A6 (slice A, 8 Sep 2026 cut): the document number is no longer printed in the
+    // Outstanding PO/SPO cell, even for a row backing exactly one document - it moved
+    // behind the info icon. The coverage headline is what still shows here.
+    expect(screen.queryByText('202601-S0015')).not.toBeInTheDocument();
+    expect(screen.getByText('35 of 35')).toBeInTheDocument();
   });
 
   it("reads the columns in the sheet's own order, renamed (AC-D15)", async () => {
