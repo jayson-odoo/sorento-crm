@@ -1040,6 +1040,33 @@ class StockService:
             q = q.filter(pred)
         return {str(pid): int(qty or 0) for pid, qty in q.group_by(Stock.product_id).all()}
 
+    def no_feed_company_ids(self) -> set[str]:
+        """Every company whose AutoCount SO feed is not connected
+        (``companies.so_feed_live = false``) - the gate ``_with_sellable`` uses to
+        withhold ``open_so_qty`` / ``sellable`` for their rows (PLAN
+        company-so-feed-flag). No ``company_ids`` filter: the table holds a
+        handful of rows, so this is cheaper called once than filtered by
+        candidate ids on every stock page - and an empty result lets the caller
+        skip `company_id_by_product` entirely on the common (all-feed-on) path."""
+        from app.models.company import Company
+
+        rows = self.db.query(Company.id).filter(Company.so_feed_live.is_(False)).all()
+        return {str(r[0]) for r in rows}
+
+    def company_id_by_product(self, product_ids: list[str]) -> dict[str, str]:
+        """``{product_id: company_id}`` for the products given - a compact or
+        synthesised summary entry carries no company of its own, so the feed gate
+        resolves it through the product (PLAN company-so-feed-flag)."""
+        ids = [str(pid) for pid in product_ids if pid]
+        if not ids:
+            return {}
+        rows = (
+            self.db.query(Product.id, Product.company_id)
+            .filter(Product.id.in_(ids))
+            .all()
+        )
+        return {str(pid): str(cid) for pid, cid in rows if cid}
+
     def open_so_qty_by_product(self, product_ids: list[str]) -> dict[str, int]:
         """Open (not-yet-DO'd) SO quantity per PRODUCT, across every warehouse (A2).
 

@@ -66,6 +66,7 @@ def _allocation(
     spo_number=None,
     created_at=None,
     retired_at=None,
+    container_number=None,
 ):
     row = SPOAllocation(
         id=str(uuid.uuid4()),
@@ -79,6 +80,7 @@ def _allocation(
         issue_date=issue_date,
         receipt_status=status,
         retired_at=retired_at,
+        container_number=container_number,
         company_id=DEFAULT_COMPANY_ID,
     )
     db.add(row)
@@ -395,6 +397,44 @@ def client(db, monkeypatch):
         app.dependency_overrides.clear()
 
 
+def test_container_number_answers_on_the_per_product_branch(db):
+    """AC-1 (chatbot-last-in-container-number)."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    _allocation(
+        db, product_id=prod.id, expected_date=date(2026, 6, 10), quantity=15,
+        container_number="CMAU7650091",
+    )
+    db.commit()
+
+    rows = last_receipt_rows(db, product_ids=[prod.id])
+    assert rows[0]["container_number"] == "CMAU7650091"
+
+
+def test_container_number_answers_on_the_unscoped_branch(db):
+    """AC-2 (chatbot-last-in-container-number)."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    _allocation(
+        db, product_id=prod.id, expected_date=date(2026, 6, 10), quantity=15,
+        container_number="CMAU7650091",
+    )
+    db.commit()
+
+    rows = last_receipt_rows(db, top_n=1)
+    assert rows[0]["container_number"] == "CMAU7650091"
+
+
+def test_container_number_is_none_when_the_line_has_none(db):
+    """AC-3 (chatbot-last-in-container-number). Key is present, value is None."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="P1")
+    _allocation(db, product_id=prod.id, expected_date=date(2026, 6, 10), quantity=15)
+    db.commit()
+
+    rows = last_receipt_rows(db, product_ids=[prod.id])
+    row = rows[0]
+    assert "container_number" in row
+    assert row["container_number"] is None
+
+
 def test_route_last_receipt_default_top_n_one(client, db):
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code="SRTWC8517")
     _allocation(db, product_id=prod.id, expected_date=date(2026, 6, 10), quantity=15)
@@ -425,6 +465,21 @@ def test_route_last_receipt_with_warehouse_filter_and_top_n(client, db):
     assert len(body["data"]) == 3
     assert body["data"][0]["spo_date_source"] is not None
     assert body["empty"] is False
+
+
+def test_route_last_receipt_carries_container_number(client, db):
+    """AC-4 (chatbot-last-in-container-number)."""
+    prod = product(db, company_id=DEFAULT_COMPANY_ID, code="SRTWC8517")
+    _allocation(
+        db, product_id=prod.id, expected_date=date(2026, 6, 10), quantity=15,
+        container_number="CMAU7650091",
+    )
+    db.commit()
+
+    resp = client.get(f"{BASE}/last-receipt", params={"product_ids": prod.id})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["data"][0]["container_number"] == "CMAU7650091"
 
 
 # ------------------------------------- blocker 3: the company scope actually narrows

@@ -412,12 +412,15 @@ def test_spo_last_receipt_intro_names_the_new_meaning():
 
 
 def test_spo_last_receipt_field_order_is_the_owners_reading_order():
-    """AC-9, owner ruling 8 Sep 2026 (against the rendered screenshot): SPO Number, then
+    """AC-9, owner ruling 8 Sep 2026 (against the rendered screenshot), amended 9 Sep 2026
+    (`PLAN-chatbot-last-in-container-number.md`, owner ruling: "the container number can
+    put below the SPO number in the answer"): SPO Number, then Container Number if any,
     Product Code, SPO Quantity, GR Quantity if any, SPO Date, GR Date if any, Warehouse.
     Asserted as an exact LIST, not a membership test - the order IS the ruling."""
     out = env("crm_procurement_spo_allocations_last_receipt_list", {
         "data": [{
-            "spo_number": "SPO-2026-01", "product_code": "SRTWC8517",
+            "spo_number": "SPO-2026-01", "container_number": "CMAU7650091",
+            "product_code": "SRTWC8517",
             "spo_quantity": 30, "gr_quantity": 12,
             "spo_date": "2026-06-10", "spo_date_source": "expected",
             "gr_date": "2026-06-18", "warehouse": "BRW",
@@ -427,6 +430,7 @@ def test_spo_last_receipt_field_order_is_the_owners_reading_order():
     assert item["title"] == "SPO-2026-01"
     assert [f["label"] for f in item["fields"]] == [
         "SPO Number",
+        "Container Number",
         "Product Code",
         "SPO Quantity",
         "GR Quantity",
@@ -435,7 +439,32 @@ def test_spo_last_receipt_field_order_is_the_owners_reading_order():
         "Warehouse",
     ]
     assert [f["value"] for f in item["fields"]] == [
-        "SPO-2026-01", "SRTWC8517", "30", "12", "2026-06-10", "2026-06-18", "BRW",
+        "SPO-2026-01", "CMAU7650091", "SRTWC8517", "30", "12", "2026-06-10", "2026-06-18", "BRW",
+    ]
+    assert item["fields"][1]["key"] == "container_number"
+
+
+def test_spo_last_receipt_without_a_container_keeps_the_seven_field_row():
+    """AC-6 (chatbot-last-in-container-number). A row with no `container_number` renders
+    the previous seven labels in the previous order - "if any" holds for the new field
+    exactly as it already does for the two GR fields."""
+    out = env("crm_procurement_spo_allocations_last_receipt_list", {
+        "data": [{
+            "spo_number": "SPO-2026-01", "product_code": "SRTWC8517",
+            "spo_quantity": 30, "gr_quantity": 12,
+            "spo_date": "2026-06-10", "spo_date_source": "expected",
+            "gr_date": "2026-06-18", "warehouse": "BRW",
+        }],
+    })
+    item = out["items"][0]
+    assert [f["label"] for f in item["fields"]] == [
+        "SPO Number",
+        "Product Code",
+        "SPO Quantity",
+        "GR Quantity",
+        "SPO Date",
+        "GR Date",
+        "Warehouse",
     ]
 
 

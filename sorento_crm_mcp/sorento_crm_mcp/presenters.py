@@ -460,14 +460,20 @@ def _purchase_orders_placed(rows: list[dict], b: _Builder) -> None:
 
 def _spo_last_receipt(rows: list[dict], b: _Builder) -> None:
     """Owner ruling 8 Sep 2026, against the rendered answer (chatbot-warehouse-entity-and-
-    last-in, AC-9 / AC-9b). A row reads, in this order:
+    last-in, AC-9 / AC-9b), amended 9 Sep 2026 (`PLAN-chatbot-last-in-container-number.md`,
+    owner ruling: "the container number can put below the SPO number in the answer"). A
+    row reads, in this order:
 
-        SPO Number, Product Code, SPO Quantity, GR Quantity (if any), SPO Date,
-        GR Date (if any), Warehouse
+        SPO Number, Container Number (if any), Product Code, SPO Quantity,
+        GR Quantity (if any), SPO Date, GR Date (if any), Warehouse
 
     SPO Number stays first because it is the identity line - the same string the item
     title carries. The ORDER is the ruling, so it is asserted as an exact list in
     `tests/test_presenters.py`, not as a membership test.
+
+    `container_number` is None on every line not ingested from a shipping order that
+    named its container (14 of 77,260 on the 7 Sep 2026 prod copy) - same "if any"
+    treatment as the two GR fields below.
 
     Both GR fields are "if any", and they are absent independently:
 
@@ -482,7 +488,7 @@ def _spo_last_receipt(rows: list[dict], b: _Builder) -> None:
     `SPO Date` is labelled `SPO Date (recorded)` when the backend fell back to
     `created_at` (`spo_date_source == "recorded"`, ~3% of lines): a bookkeeping timestamp
     must not be read as a promised delivery date. `b.item` drops any pair whose value is
-    None, which is what makes the two "if any" fields disappear rather than render empty.
+    None, which is what makes the "if any" fields disappear rather than render empty.
     """
     for r in rows:
         source = str(r.get("spo_date_source") or "").strip().lower()
@@ -491,6 +497,7 @@ def _spo_last_receipt(rows: list[dict], b: _Builder) -> None:
             r.get("spo_number"),
             [
                 ("spo_number", "SPO Number", r.get("spo_number")),
+                ("container_number", "Container Number", r.get("container_number")),
                 ("product_code", "Product Code", r.get("product_code")),
                 ("spo_quantity", "SPO Quantity", _qty(r.get("spo_quantity"))),
                 ("gr_quantity", "GR Quantity", _qty(r.get("gr_quantity"))),
