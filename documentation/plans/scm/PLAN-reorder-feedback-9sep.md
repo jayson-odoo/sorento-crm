@@ -1,6 +1,6 @@
 # PLAN: Reorder planning feedback batch (9 Sep 2026)
 
-Status: IN PROGRESS 9 Sep 2026. All rulings settled (captain, lavish review 9 Sep 14:20). Issues #770-#778 (S1-S9 in order).
+Status: BUILT 9 Sep 2026, PR #784 draft, pending captain review. All rulings settled (captain, lavish review 9 Sep 14:20). Issues #770-#778 (S1-S9 in order).
 UAC: `reorder-feedback-9sep-acceptance-criteria.md` (journey J1-J7 lives there).
 Lane: worktree `.claude/worktrees/reorder-feedback-9sep`, branch `feat/reorder-feedback-9sep`
 off `origin/main` 3c3738ad7.

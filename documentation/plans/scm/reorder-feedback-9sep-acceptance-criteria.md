@@ -1,6 +1,6 @@
 # UAC: Reorder planning feedback batch, 9 Sep 2026
 
-Plan: `PLAN-reorder-feedback-9sep.md`. Status: IN PROGRESS 9 Sep 2026; issues #770-#778.
+Plan: `PLAN-reorder-feedback-9sep.md`. Status: S1-S9 done, 9 Sep 2026; issues #770-#778.
 
 ## Journey
 
@@ -189,8 +189,16 @@ Tags: [BE] backend, [FE] frontend, [E2E] browser walk, [T] test pinned.
 - AC-S9.2 [FE] Order summary grid adds columns Delivery (month groups rendered "Sep 30 -
   Oct 30", newest last), Project / customer (names, qty in brackets, truncated with title),
   Supplier, Remarks ("PO 400 + incoming 89 = 489", "Last in 21/07/2026 - 300", "MOQ 1000").
-  Column order mirrors the sheet: Item, On hand, Project qty, Dealer o/s, Order qty,
-  Delivery, Project/customer, Supplier, Remarks.
+  Browser round 3 (9 Sep): the screen and the export are NOT the same column set. The
+  screen keeps the pre-existing combined "SO demand" cell (Project / Retail stacked in one
+  cell, with its own drill popovers) rather than splitting it - column order there is
+  Product, On hand, SO demand (Project / Retail stacked), Order qty, Delivery, Project /
+  customer, Supplier, Remarks, then the screen's own remaining existing columns
+  (Locations, Ordered, Incoming, Short vs orders, Suggested (policy)). The PDF/Excel
+  export renders the sheet's own nine SEPARATE columns instead: Item, On hand, Project
+  qty, Dealer o/s, Order qty, Delivery, Project / customer, Supplier, Remarks - the split
+  the printed sheet has always used, generated fresh for the document rather than reused
+  from the grid's combined cell.
 - AC-S9.3 [BE] `GET /order-summary/export?run_id=&format=pdf|xlsx` renders the same rows:
   PDF landscape A4 via `pdf_render`, Excel via an openpyxl workbook built directly in
   `summary_order_service` (Phase 3 ruling S2 - `xlsx_renderer`'s fixed multi-sheet register
