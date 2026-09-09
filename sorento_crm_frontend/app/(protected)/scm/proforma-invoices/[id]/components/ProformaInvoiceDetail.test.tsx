@@ -166,6 +166,10 @@ vi.mock('../../../hooks/useFulfilment', () => ({
     ],
     isLoading: false,
   }),
+  // The Packing tab's "Attach packing list" mounts `SupplierDocumentsUploadDialog`
+  // (S2), whose self-serve supplier picker reads this hook - irrelevant here since the
+  // dialog is opened with `supplierId` already fixed to the invoice's own.
+  useFulfilmentSuppliers: () => ({ data: [], isLoading: false }),
 }));
 
 import { ProformaInvoiceDetail } from './ProformaInvoiceDetail';
@@ -371,9 +375,12 @@ describe('ProformaInvoiceDetail - the record header', () => {
     state.data = detail({ adjusted_by: 'Ms Tee', adjusted_at: '2026-08-02T02:00:00' });
     renderDetail();
 
-    expect(screen.getByText(/proforma\.xlsx/)).toBeInTheDocument();
-    expect(screen.getByText(/Uploaded by Ms Tee/)).toBeInTheDocument();
-    expect(screen.getByText(/Adjusted by Ms Tee/)).toBeInTheDocument();
+    // "proforma.xlsx" now ALSO names an entry in the General tab's own Source files
+    // block (S2, AC-B14) - a second, legitimate occurrence, so the meta line itself is
+    // found by its own unique text and its source-file mention checked from there.
+    const meta = screen.getByText(/Uploaded by Ms Tee/).closest('p')!;
+    expect(within(meta).getByText(/proforma\.xlsx/)).toBeInTheDocument();
+    expect(within(meta).getByText(/Adjusted by Ms Tee/)).toBeInTheDocument();
   });
 
   it('offers Convert as the ONE primary action, with everything else in the gear menu', () => {
@@ -547,12 +554,15 @@ describe('ProformaInvoiceDetail - the tab lives in the URL (S1)', () => {
 });
 
 describe('ProformaInvoiceDetail - the tabs', () => {
-  it('renders four tabs, in a fixed order', () => {
+  it('renders five tabs, in a fixed order', () => {
     state.data = detail();
     renderDetail();
 
+    // Packing (S2, AC-B9) sits between Lines and Revisions - the supplier's own packing
+    // rows, a different question from the Packing lists tab (which SHIPMENT this
+    // invoice's lines went to, once converted).
     const names = screen.getAllByRole('tab').map((t) => t.textContent);
-    expect(names).toEqual(['General', 'Lines', 'Revisions', 'Packing lists']);
+    expect(names).toEqual(['General', 'Lines', 'Packing', 'Revisions', 'Packing lists']);
   });
 
   it('names each card of the General tab as its own region', () => {
@@ -694,6 +704,7 @@ describe('ProformaInvoiceDetail - editing is a draft until Save', () => {
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual([
       'General',
       'Lines',
+      'Packing',
       'Revisions',
       'Packing lists',
     ]);

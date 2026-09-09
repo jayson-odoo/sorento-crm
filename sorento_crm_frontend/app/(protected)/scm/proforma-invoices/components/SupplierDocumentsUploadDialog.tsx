@@ -45,6 +45,13 @@ import {
  * never says which kind a file is. Confirm applies every proforma invoice first, then every
  * packing list, matching invoice prices onto the lines they price.
  *
+ * Attach a packing list to a proforma invoice (S2, AC-B5/B10/B13): a packing-list (or
+ * combined) file shows an **Attaches to** picker prefilled by the resolution order in
+ * `decorateWithMockAttachTo` (invoice number, then date) - disabled and locked when
+ * `attachTo` is passed (opened from a PI's own "Attach packing list" button). A file with
+ * no PI to attach to is refused inline (AC-B16) and Confirm stays disabled while any file
+ * is refused.
+ *
  * Self-serve supplier picker (Deviations lane A, purchasing consolidation batch; carried
  * over unchanged by this lane): this page carries no persistent supplier filter to source
  * `supplierId` from. The dialog manages its own `internalSupplierId` when `supplierId` is
@@ -188,6 +195,7 @@ export function SupplierDocumentsUploadDialog({
   onOpenChange,
   supplierId: supplierIdProp,
   supplierName: supplierNameProp,
+  attachTo,
   onImported,
 }: {
   open: boolean;
@@ -200,6 +208,9 @@ export function SupplierDocumentsUploadDialog({
   supplierId?: string | null;
   /** Shown in the header so the factory the lines will be filed under is never a guess. */
   supplierName?: string | null;
+  /** Opened from a PI's own "Attach packing list" (AC-B10): every packing-list file's
+   *  Attaches-to locks to this invoice rather than resolving one. */
+  attachTo?: { id: string; pi_number: string } | null;
   onImported?: (result: SupplierDocumentsApplyResult) => void;
 }) {
   const selfServe = supplierIdProp === undefined;
@@ -248,6 +259,7 @@ export function SupplierDocumentsUploadDialog({
       const read = await previewSupplierDocuments(files, {
         supplierId,
         currency: trimmedCurrency,
+        attachTo,
       });
       setPreview(read);
       setTranslationEdits({});
@@ -281,7 +293,9 @@ export function SupplierDocumentsUploadDialog({
   };
 
   const unreadable = preview?.files.filter((f) => f.kind === 'unreadable') ?? [];
-  const canConfirm = !!supplierId && files.length > 0 && !applying && unreadable.length === 0;
+  const refused = preview?.files.filter((f) => f.refusal) ?? [];
+  const canConfirm =
+    !!supplierId && files.length > 0 && !applying && unreadable.length === 0 && refused.length === 0;
   const counts = confirmCounts(preview);
   const confirmLabel = preview
     ? `Confirm: ${fmtInt(counts.invoices)} invoice${counts.invoices === 1 ? '' : 's'}, ` +
@@ -367,7 +381,9 @@ export function SupplierDocumentsUploadDialog({
 
           {preview && !result ? (
             <div className="divide-y divide-border rounded-lg border">
-              {preview.files.map((f) => (
+              {preview.files.map((f) => {
+                const isPackingListLike = f.kind === 'packing_list' || f.kind === 'combined';
+                return (
                 <div key={f.name} className="space-y-1 p-2.5">
                   <div className="flex items-center justify-between gap-2">
                     <span className="min-w-0 truncate text-xs font-medium" title={f.name}>
@@ -409,6 +425,44 @@ export function SupplierDocumentsUploadDialog({
                       ) : null}
                     </div>
                   )}
+                  {isPackingListLike ? (
+                    <div className="pt-1">
+                      <Label
+                        htmlFor={`attach-to-${f.name}`}
+                        className="mb-1 block text-2xs text-muted-foreground"
+                      >
+                        Attaches to
+                      </Label>
+                      {f.refusal ? (
+                        <p className="flex items-center gap-1.5 text-2xs text-destructive">
+                          <TriangleAlert className="size-3.5 shrink-0" />
+                          {f.refusal.message}
+                        </p>
+                      ) : (
+                        <SearchableSelect
+                          id={`attach-to-${f.name}`}
+                          size="sm"
+                          value={f.attach_to?.id ?? ''}
+                          onChange={() => {
+                            /* Phase 1 mock: the resolved invoice is read-only here - the
+                             * real S2 backend route reruns resolution when it changes. */
+                          }}
+                          options={
+                            f.attach_to
+                              ? [{ value: f.attach_to.id, label: f.attach_to.pi_number }]
+                              : []
+                          }
+                          selectedOption={
+                            f.attach_to
+                              ? { value: f.attach_to.id, label: f.attach_to.pi_number }
+                              : undefined
+                          }
+                          placeholder="No proforma invoice resolved"
+                          disabled={!!attachTo}
+                        />
+                      )}
+                    </div>
+                  ) : null}
                   {f.kind !== 'unreadable' && translationItems(f).length > 0 ? (
                     <div className="space-y-1 rounded-md border border-dashed p-2">
                       <p className="text-2xs font-medium text-foreground">
@@ -428,7 +482,8 @@ export function SupplierDocumentsUploadDialog({
                     </div>
                   ) : null}
                 </div>
-              ))}
+                );
+              })}
               {preview.price_matches.length ? (
                 <div className="p-2.5 text-2xs text-muted-foreground">
                   {preview.price_matches.map((m) => (
@@ -488,7 +543,9 @@ export function SupplierDocumentsUploadDialog({
                   ? 'Choose a supplier first'
                   : unreadable.length
                     ? `Could not read ${unreadable.map((f) => f.name).join(', ')}`
-                    : undefined
+                    : refused.length
+                      ? `No proforma invoice to attach ${refused.map((f) => f.name).join(', ')} to`
+                      : undefined
               }
             >
               {applying ? <LoaderCircle className="size-4 animate-spin" /> : null}
