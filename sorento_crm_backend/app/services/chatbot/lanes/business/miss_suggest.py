@@ -746,19 +746,6 @@ def _field_val(answer: Any, pattern: re.Pattern[str]) -> Any:
     return jsc.get(field, "value") if jsc.truthy(field) else None
 
 
-def _flag_val(answer: Any, key: str) -> Any:
-    """#768: an item-level flag off a `raw_item` row.
-
-    `_stock_availability` (`sorento_crm_mcp/presenters.py` ~1305) nests `needs_quantity` /
-    `available` under a `flags` dict via `_Builder.raw_item`; read that first and fall back
-    to the flag sitting flat on the item itself.
-    """
-    flags = jsc.get(answer, "flags")
-    if isinstance(flags, dict) and key in flags:
-        return flags.get(key)
-    return jsc.get(answer, key)
-
-
 def _annotate(
     probe: Any,
     *,
@@ -836,10 +823,15 @@ def _annotate(
         result_type = jsc.get(probe_json, "result_type")
         if isinstance(sv_mode, str) and sv_mode:
             mode = sv_mode
-        else:
+        elif isinstance(result_type, str):
+            # Guarded: `.get()` on a dict raises for an unhashable key, and this whole
+            # function runs OUTSIDE the probe's own try - a hostile, non-string
+            # `result_type` must fall to "detailed" rather than fail the turn.
             mode = {"stock_compact": "compact", "stock_availability": "availability"}.get(
                 result_type, "detailed"
             )
+        else:
+            mode = "detailed"
         if (isinstance(sv_mode, str) and sv_mode) or jsc.truthy(result_type):
             meta["mode"] = mode
 
@@ -862,7 +854,11 @@ def _annotate(
         elif mode == "compact":
             # `_stock_compact` rows carry one "Total" field plus one per location code
             # (which `hide_zero_locations` can drop to none) - the per-location fields are
-            # never summed, only "Total" drives availability.
+            # never summed, only "Total" drives availability. Rows are per (product,
+            # company): a Sorento twin and a Mocha twin of the same code carry NO company
+            # field to tell them apart, so their totals ACCUMULATE the same way the
+            # detailed arm's `sums` do - overwriting let a zero-stock twin erase a
+            # stocked one.
             totals: dict[str, Any] = {}
             for answer in answers:
                 code = _code_of(answer)
@@ -873,30 +869,19 @@ def _annotate(
                 total = number if jsc.is_integer(number) or isinstance(number, float) else 0
                 if jsc.is_nan(number) or number in (float("inf"), float("-inf")):
                     total = 0
-                totals[code] = total
+                totals[code] = totals.get(code, 0) + total
             available = [code for code, total in totals.items() if total > 0]
             meta["ok"] = True
         elif mode == "availability":
-            # `_stock_availability` rows carry no fields at all, only the item-level
-            # `needs_quantity` / `available` flags. Any item still needing a quantity, or
-            # with an unresolved verdict, means the WHOLE probe cannot say - fail open
-            # rather than guess per item (the F1 ambiguity ruling, applied here to flags).
-            unknown = False
-            codes_available: list = []
-            for answer in answers:
-                needs_quantity = _flag_val(answer, "needs_quantity")
-                is_available = _flag_val(answer, "available")
-                if jsc.truthy(needs_quantity) or is_available is None:
-                    unknown = True
-                    break
-                code = _code_of(answer)
-                if code and is_available is True:
-                    codes_available.append(code)
-            if unknown:
-                meta["reason"] = "availability_unknown"
-            else:
-                available = codes_available
-                meta["ok"] = True
+            # #768 ruling: this arm always fails open, and is written to say why rather
+            # than to read the row. The DYM probe seam never sends `requested_qty`
+            # (`entity_ids_transformer` in fetch.py emits no such key), so the backend
+            # answers `needs_quantity: True, available: None` on every row today. And even
+            # if `requested_qty` ever arrived, `available` is a QUANTITY VERDICT
+            # (`on_hand >= requested_qty`), not "has stock details" - trusting a False
+            # would render a confident "no" on a code that has SOME stock, just less than
+            # the (irrelevant, did-you-mean-context) requested amount.
+            meta["reason"] = "availability_unknown"
         else:
             meta["reason"] = "unknown_stock_mode"
     elif full and meta["predicate"] == "row_present":

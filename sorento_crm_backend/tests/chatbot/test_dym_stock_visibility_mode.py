@@ -10,15 +10,18 @@ wrongly rendered "no stock details" even when it has stock.
 Contract under test (see issue #768 for the full spec):
   1. `detailed` (or no stock_visibility/result_type at all): unchanged baseline behaviour.
   2. `compact`: available iff the row's "Total" field parses > 0. Per-location fields ignored.
-  3. `availability`: available iff `item["available"] is True`. If ANY probed item has
-     `needs_quantity` true or `available` null, the annotator cannot say: `ok: False`,
-     `reason: "availability_unknown"`, `dym_available_codes == []`.
+     Twin codes (same code, different company, no Company field to tell them apart)
+     ACCUMULATE their totals rather than overwrite.
+  3. `availability`: ALWAYS fails open (`ok: False`, `reason: "availability_unknown"`,
+     `dym_available_codes == []`) regardless of the row's flags - the probe never sends
+     `requested_qty`, so `needs_quantity` is always true today, and even when it isn't
+     `available` is a quantity verdict, not "has stock details".
   4. Unknown mode string: `ok: False`, `reason: "unknown_stock_mode"`, `dym_available_codes == []`.
   5. `dym_probe_meta["mode"]` records which mode was used (or the raw unknown string).
 
-These tests are written BEFORE the fix (Phase 2 test-first). The detailed baseline test must
-PASS against today's code; the compact / availability / unknown-mode tests are expected to FAIL
-until `_annotate` is taught to read `stock_visibility.mode`.
+These tests were written BEFORE the fix (Phase 2 test-first) and revised after review found
+the compact arm could overwrite a stocked twin with a zero-stock one, and that the
+availability arm's flag-driven design could never be reached honestly.
 """
 
 from app.services.chatbot.lanes.business.miss_suggest import dym_annotate
@@ -122,14 +125,54 @@ class TestCompactModeUsesTotalField:
             "get the same compact-mode fix as the miss-lane one"
         )
 
+    def test_twin_codes_across_companies_accumulate_not_overwrite(self) -> None:
+        """A Sorento and a Mocha twin share the same code and carry no Company field to
+        tell them apart in a compact row - a zero-stock twin must not erase a stocked one.
+        """
+        item = _base_item(
+            stock_visibility={
+                "mode": "compact",
+                "warehouse_codes": None,
+                "hide_zero_locations": True,
+                "source": "contact",
+            },
+            result_type="stock_compact",
+            answers=[
+                {
+                    "title": "MWC-SC08B",
+                    "fields": [
+                        {"label": "Product Code", "value": "MWC-SC08B"},
+                        {"label": "Total", "value": 6},
+                    ],
+                },
+                {
+                    "title": "MWC-SC08B",
+                    "fields": [
+                        {"label": "Product Code", "value": "MWC-SC08B"},
+                        {"label": "Total", "value": 0},
+                    ],
+                },
+            ],
+        )
+        out = dym_annotate(item)
+        assert out["dym_probe_meta"]["ok"] is True
+        assert out["dym_available_codes"] == ["mwc-sc08b"], (
+            "the zero-stock twin's Total must not overwrite the stocked twin's Total - "
+            "the two rows accumulate, like the detailed arm's per-code sum"
+        )
+
 
 # --------------------------------------------------------------------------- #
-# AC 3: availability mode - the `available` flag drives it; any uncertain item
-# (needs_quantity true, or available null) makes the WHOLE probe fail open.
+# AC 3: availability mode ALWAYS fails open. The did-you-mean probe never sends
+# `requested_qty` (`entity_ids_transformer` in fetch.py emits no such key), so the
+# backend answers `needs_quantity: True, available: None` on every row today - and even
+# if `requested_qty` ever arrived, `available` is a QUANTITY VERDICT
+# (`on_hand >= requested_qty`), not "has stock details", so trusting it would render a
+# false "no" on a code that has some stock, just less than the requested amount.
 # --------------------------------------------------------------------------- #
 
 
-class TestAvailabilityModeFlags:
+class TestAvailabilityModeAlwaysFailsOpen:
     def _item(self, answers):
         return _base_item(
             stock_visibility={
@@ -142,7 +185,7 @@ class TestAvailabilityModeFlags:
             answers=answers,
         )
 
-    def test_available_true_marks_has_stock_available_false_does_not(self) -> None:
+    def test_available_true_still_fails_open(self) -> None:
         item = self._item(
             [
                 {"title": "SRTWC282", "fields": [], "needs_quantity": False, "available": True},
@@ -150,10 +193,12 @@ class TestAvailabilityModeFlags:
             ]
         )
         out = dym_annotate(item)
-        assert out["dym_probe_meta"]["ok"] is True
-        assert out["dym_available_codes"] == ["srtwc282"]
+        assert out["dym_probe_meta"]["ok"] is False
+        assert out["dym_probe_meta"]["reason"] == "availability_unknown"
+        assert out["dym_available_codes"] == []
+        assert out["dym_probe_meta"]["mode"] == "availability"
 
-    def test_any_item_needing_quantity_makes_the_whole_probe_unknown(self) -> None:
+    def test_needs_quantity_still_fails_open(self) -> None:
         item = self._item(
             [
                 {"title": "SRTWC282", "fields": [], "needs_quantity": False, "available": True},
@@ -163,20 +208,20 @@ class TestAvailabilityModeFlags:
         out = dym_annotate(item)
         assert out["dym_probe_meta"]["ok"] is False
         assert out["dym_probe_meta"]["reason"] == "availability_unknown"
-        assert out["dym_available_codes"] == [], (
-            "one item needing quantity must fail the WHOLE probe open, not just that item"
-        )
+        assert out["dym_available_codes"] == []
+        assert out["dym_probe_meta"]["mode"] == "availability"
 
-    def test_available_null_makes_the_whole_probe_unknown(self) -> None:
+    def test_no_flags_at_all_still_fails_open(self) -> None:
         item = self._item(
             [
-                {"title": "SRTWC282", "fields": [], "needs_quantity": False, "available": None},
+                {"title": "SRTWC282", "fields": []},
             ]
         )
         out = dym_annotate(item)
         assert out["dym_probe_meta"]["ok"] is False
         assert out["dym_probe_meta"]["reason"] == "availability_unknown"
         assert out["dym_available_codes"] == []
+        assert out["dym_probe_meta"]["mode"] == "availability"
 
 
 # --------------------------------------------------------------------------- #
