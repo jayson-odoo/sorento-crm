@@ -2739,6 +2739,12 @@ class SPOAllocationService:
                     grns=line_grns.get(str(allocation.id), []),
                     line_status=allocation.line_status,
                     po=po_info.get(str(allocation.po_line_id)) if allocation.po_line_id else None,
+                    # The AutoCount book's own source purchase order, straight off the
+                    # ingested column - text, never resolved into `po` above. The two can
+                    # disagree (`po_line_id` names a CRM line, `from_po_number` names a
+                    # different document) and neither is wrong when they do; see
+                    # `PLAN-scm-book-linkage-on-document-lines.md` Slice B.
+                    from_po_number=allocation.from_po_number,
                     so_covered=so_covered_by_alloc.get(str(allocation.id), []),
                 )
             )

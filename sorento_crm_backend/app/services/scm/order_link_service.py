@@ -673,6 +673,125 @@ def placed_by_claim(db: Session, claim_ids: Sequence[str]) -> dict[str, Decimal]
     return out
 
 
+def book_so_numbers_by_ref(db: Session, refs: Sequence[str]) -> dict[str, str]:
+    """`from_so_line_ref` -> the sales order NUMBER it names, for the refs that resolve.
+
+    The book's own SO linkage on a purchase line is `purchase_order_lines.from_so_line_ref`
+    - AutoCount's own `"{database}:{DocKey}:{DtlKey}"`, one value, one sales order. This
+    reader turns that machine key into the number a buyer can read, and nothing else.
+
+    RESOLVED AT DOCUMENT LEVEL, against `sales_orders.source_ref`, which carries
+    `"{database}:{DocKey}"` - the ref's first TWO segments. The `DtlKey` is deliberately
+    unused here. The cell displays a sales order NUMBER, which is a property of the
+    document, so document -> number is the whole question and no `sales_order_lines` row
+    needs to exist to answer it. Resolving through the LINE table instead (an earlier cut
+    of this function did) makes a line we happen not to hold suppress a number we could
+    legitimately name: an order header ingested without its lines, or a line since
+    removed, would read as "not held" while `sales_orders` names it perfectly well.
+
+    Measured on `sorento_ai_automation_0907` (7 Sep book copy), stated precisely because
+    the first version of this note was not: of the 33,225 purchase lines carrying a ref,
+    the document-key join resolves 11,592 and leaves 21,633 unresolved. The line-level
+    join it replaced happens to resolve the SAME 11,592 today - the two agree on every
+    row, with no case where one finds an order and the other does not. So this change is
+    not a bug fix against current data; it is the correct altitude for the question, and
+    it removes the latent failure mode above before it can bite.
+
+    The document key is rebuilt from the ref's OWN first two segments rather than a
+    hardcoded `"AED_SORENTO:"`. The database name is data, not a constant - it is the
+    first field of the format - and every ref on this book happens to be `AED_SORENTO`
+    only because there is one book today. Hardcoding it would fail silently the day a
+    second one is ingested, and splitting costs nothing.
+
+    A ref that does not resolve is simply ABSENT from the result, and that absence is a
+    third state rather than an error: the sales order lives in the book but has not been
+    pushed to this CRM. The caller distinguishes it from "the book named no sales order at
+    all" by looking at the ref column itself.
+
+    ONE query for however many refs the caller asks about, so a whole document costs one
+    round trip whatever its line count (`202405-S0046` alone has 584 lines). The signature
+    is keyed by the FULL ref the caller passes in: neither service should have to know
+    that a DocKey exists, so the split lives in here.
+
+    `SalesOrder` is `CompanyScopedMixin`, so the plain ORM query below is already
+    company-scoped by the `do_orm_execute` event: another company's sales order cannot be
+    named on this company's line. No explicit `company_id` filter is needed or wanted.
+
+    No tie-break ordering, because the join cannot fan out: `sales_orders.source_ref` is
+    UNIQUE across the `AED_SORENTO:` namespace (75,600 rows, 0 duplicate keys). That is
+    the other reason this altitude is right - `sales_order_lines.source_ref` is NOT unique
+    (187 values repeat, legacy bare line numbers from an old import) and the line-level
+    version needed a deterministic ORDER BY to be total at all.
+    """
+    out: dict[str, str] = {}
+    # full ref -> its document key, and the reverse, so one query answers for every ref.
+    doc_key_of: dict[str, str] = {}
+    for raw in refs:
+        if not raw:
+            continue
+        ref = str(raw)
+        parts = ref.split(":")
+        if len(parts) < 2 or not parts[0] or not parts[1]:
+            # Not the documented `{database}:{DocKey}:{DtlKey}` shape, so there is no
+            # document key to look up. Absent from the result = unresolved, which is the
+            # honest answer for a value we cannot read.
+            continue
+        doc_key_of[ref] = f"{parts[0]}:{parts[1]}"
+    if not doc_key_of:
+        return out
+
+    rows = (
+        db.query(SalesOrder.source_ref, SalesOrder.so_number)
+        .filter(SalesOrder.source_ref.in_(sorted(set(doc_key_of.values()))))
+        .all()
+    )
+    number_of_doc = {
+        str(source_ref): so_number for source_ref, so_number in rows if so_number
+    }
+    for ref, doc_key in doc_key_of.items():
+        found = number_of_doc.get(doc_key)
+        if found:
+            out[ref] = found
+    return out
+
+
+#: Passed as `book_so_by_ref` to a serializer's line-fields helper when the caller has
+#: deliberately NOT resolved the book linkage on this path - the PO list route (review of
+#: PR #764, F2/F4): a page of orders re-resolves `sales_orders` on every keystroke and no
+#: list consumer reads the result. Distinct from an EMPTY dict, which means "resolved, and
+#: none of these refs named an order held here" - the sentinel means "not computed", and
+#: every line reads `book_so_number=None`, `book_so_unresolved=None` rather than the
+#: `False` a resolved-but-empty dict would produce. `None` is a safe sentinel here because
+#: `book_so_numbers_by_ref` never returns `None` itself, only a `dict`.
+BOOK_SO_NOT_RESOLVED = None
+
+
+def book_so_fields(ref: Optional[str], by_ref: Optional[dict[str, str]]) -> dict:
+    """The three-state `book_so_number` / `book_so_unresolved` pair for ONE line's
+    `from_so_line_ref`, against a `book_so_numbers_by_ref(...)` result (or
+    `BOOK_SO_NOT_RESOLVED`).
+
+    ONE function for both surfaces that print this fact - `PurchaseOrderService.serialize`
+    and `OrderInquiryWorklistService.get_po_detail` - which had each grown their own copy
+    of this derivation (review of PR #764, F5). A drift between the two copies is exactly
+    the failure the shared `BookSoCell` component on the frontend was built to prevent, and
+    a copy-pasted backend derivation is the same risk one layer down.
+
+    Three wire values, not two:
+      * `ref` is falsy -> `(None, False)`. The book named no sales order for this line.
+      * `ref` is set and `by_ref` names it -> `(number, False)`.
+      * `ref` is set and `by_ref` does not name it -> `(None, True)` - "linked, not held".
+      * `by_ref is BOOK_SO_NOT_RESOLVED` -> `(None, None)` on every line, whatever `ref`
+        says: this path never asked the question.
+    """
+    if by_ref is BOOK_SO_NOT_RESOLVED:
+        return {"book_so_number": None, "book_so_unresolved": None}
+    if not ref:
+        return {"book_so_number": None, "book_so_unresolved": False}
+    number = by_ref.get(ref)
+    return {"book_so_number": number, "book_so_unresolved": number is None}
+
+
 def _claim_rows(db: Session, *, target_ids=None, so_line_ids=None) -> list[dict]:
     """Every RESOLVED claim naming a purchase line, as raw rows.
 

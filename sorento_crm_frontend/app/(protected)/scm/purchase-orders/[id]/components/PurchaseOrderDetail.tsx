@@ -61,6 +61,7 @@ import DetailActions from '@/components/common/DetailActions';
 import { purchaseOrdersPagerQuery } from '../../../hooks/usePurchaseOrders';
 import { PlanRowDialog } from '../../../components/PlanRowDialog';
 import { PlanNumberButton } from '../../../components/PlanNumberButton';
+import { BookSoCell, bookSoSortValue } from '../../../components/BookSoCell';
 import { PoLinePlacementsBody, placedQtyOf } from './PoLinePlacementsBody';
 import { PoPlanCard } from './PoPlanCard';
 import { BASE_CURRENCY, fmtDate, fmtInt } from '../../../lib/format';
@@ -777,6 +778,20 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         },
         size: 140,
         meta: { headerTitle: 'Location' },
+      },
+      {
+        id: 'book_so',
+        // The AutoCount book's own linkage, read off the line's own `from_so_line_ref` -
+        // not the allocations panel below (that answers who RESERVED the line through our
+        // own order-inquiry flow; this answers what the book records the line as raised
+        // FOR). ONE sales order, because the column holds one value. Rendered by the same
+        // component the order-inquiry PO lightbox uses, so one fact reads one way on both
+        // screens.
+        accessorFn: bookSoSortValue,
+        header: ({ column }) => <DataGridColumnHeader title="S/O" column={column} />,
+        cell: ({ row }) => <BookSoCell line={row.original} />,
+        size: 150,
+        meta: { headerTitle: 'S/O' },
       },
       {
         id: 'expected_date',

@@ -92,6 +92,13 @@ export interface OrderInquiryLink {
   linked_by_name?: string | null;
   /** Addresses the PO popover. Null on an SPO link - there is no purchase order to open. */
   po_id?: string | null;
+  /**
+   * The purchase order an SPO link's allocation was raised FROM, per the AutoCount
+   * feed's own statement (owner's 9 Sep feedback: "if we link by SPO, where do we see
+   * the PO number of this SPO?"). Plain text, never a link yet - a later slice decides
+   * where it goes. Null on a `po`-kind link and on an SPO the book named no source for.
+   */
+  source_po_number?: string | null;
 }
 
 /**
@@ -721,6 +728,14 @@ export interface OrderInquiryPoDetailLine {
   qty_received: string;
   remaining: string;
   location?: string | null;
+  /**
+   * The AutoCount book's own sales-order linkage for this line - the SAME fact and the
+   * SAME fields the SCM purchase-order detail's Lines tab prints, rendered by the SAME
+   * component, so a line's linkage reads identically on both screens. Never a guess.
+   */
+  book_so_number?: string | null;
+  /** True when the book named a sales order this CRM does not hold. */
+  book_so_unresolved?: boolean | null;
 }
 
 /**
@@ -778,6 +793,12 @@ export interface OrderInquirySpoDetailLine {
    * named neither, and the cell says "no location" rather than printing a dash.
    */
   location?: string | null;
+  /**
+   * The purchase order this line was raised from, per AutoCount's own statement
+   * (owner's 9 Sep feedback). Plain text, never a link yet. Null when the book named
+   * no source.
+   */
+  source_po_number?: string | null;
 }
 
 export interface OrderInquirySpoDetail {

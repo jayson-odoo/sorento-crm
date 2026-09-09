@@ -593,6 +593,21 @@ export interface PurchaseOrderLine {
   line_total?: string | null;
   /** The currency the figures above are IN. Blank predates the book having more than one. */
   currency?: string | null;
+  /**
+   * The AutoCount book's own sales-order linkage for this LINE, read off the line's own
+   * `from_so_line_ref` - ONE sales order, never a list, because the book records a
+   * purchase line as raised for a single sales-order line. Distinct from
+   * `PurchaseOrderLineAllocation.dedicated_to` below, which is who RESERVED the line
+   * through our own order-inquiry flow. A line can carry one, the other, both or neither.
+   *
+   * `null` both when the book named no sales order at all and when it named one this CRM
+   * does not hold; `book_so_unresolved` is what tells those two apart
+   * (`PLAN-scm-book-linkage-on-document-lines.md`).
+   */
+  book_so_number?: string | null;
+  /** True when the book named a sales order this CRM does not hold. Three display states,
+   *  not two - see `BookSoCell`. */
+  book_so_unresolved?: boolean | null;
 }
 
 /**

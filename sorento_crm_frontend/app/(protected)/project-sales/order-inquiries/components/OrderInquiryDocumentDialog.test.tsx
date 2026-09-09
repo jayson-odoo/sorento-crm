@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const getOrderInquiryPoDetail = vi.fn();
@@ -239,6 +239,152 @@ describe('PO lightbox body', () => {
   });
 });
 
+describe('PO lightbox lines - the book\'s own S/O linkage, a third surface for slice A', () => {
+  const detailWithLine = (extra: Record<string, unknown>) => ({
+    id: 'po-1',
+    po_number: '202607-S0105',
+    supplier_name: 'DAFUYUAN',
+    status: 'confirmed',
+    expected_date: '2026-09-01',
+    lines: [
+      {
+        sku: 'SRTWB5400',
+        product_name: 'Wall hung basin 5400',
+        qty_ordered: '35',
+        qty_received: '0',
+        remaining: '35',
+        location: 'BRW-BB',
+        ...extra,
+      },
+    ],
+    allocations: [],
+  });
+
+  it('prints the sales order the book names on the line', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue(
+      detailWithLine({ book_so_number: 'SO391853', book_so_unresolved: false }),
+    );
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0105" poId="po-1" open onOpenChange={vi.fn()} />,
+    );
+
+    const row = (await screen.findByText('SRTWB5400')).closest('tr') as HTMLElement;
+    expect(within(row).getByText('SO391853')).toBeInTheDocument();
+  });
+
+  it('reads a muted dash when the book names no sales order, never a guess', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue(
+      detailWithLine({ book_so_number: null, book_so_unresolved: false }),
+    );
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0105" poId="po-1" open onOpenChange={vi.fn()} />,
+    );
+
+    const row = (await screen.findByText('SRTWB5400')).closest('tr') as HTMLElement;
+    expect(within(row).getByText('-')).toBeInTheDocument();
+    expect(within(row).queryByText('Linked, not held')).not.toBeInTheDocument();
+  });
+
+  it('distinguishes a linkage this system does not hold from no linkage at all', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue(
+      detailWithLine({ book_so_number: null, book_so_unresolved: true }),
+    );
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0105" poId="po-1" open onOpenChange={vi.fn()} />,
+    );
+
+    const row = (await screen.findByText('SRTWB5400')).closest('tr') as HTMLElement;
+    expect(within(row).getByText('Linked, not held')).toBeInTheDocument();
+    expect(within(row).queryByText('-')).not.toBeInTheDocument();
+  });
+
+  it('never renders the raw AutoCount ref, which is a machine key', async () => {
+    const { container } = renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0105" poId="po-1" open onOpenChange={vi.fn()} />,
+    );
+    getOrderInquiryPoDetail.mockResolvedValue(
+      detailWithLine({
+        book_so_number: null,
+        book_so_unresolved: true,
+        from_so_line_ref: 'AED_SORENTO:45322312:45322332',
+      }),
+    );
+
+    await screen.findByText('SRTWB5400');
+    expect(container.textContent).not.toContain('AED_SORENTO');
+    expect(container.textContent).not.toContain('45322312');
+    expect(document.body.textContent).not.toContain('AED_SORENTO');
+  });
+
+  it('has no "+N more" overflow, because a line carries ONE sales order', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue(
+      detailWithLine({ book_so_number: 'SO391853', book_so_unresolved: false }),
+    );
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0105" poId="po-1" open onOpenChange={vi.fn()} />,
+    );
+
+    await screen.findByText('SRTWB5400');
+    expect(document.body.textContent).not.toMatch(/\+\d+ more/);
+  });
+
+  it('renders the three states exactly as the purchase-order detail does', async () => {
+    // One fact, one presentation: both surfaces render through `BookSoCell`, so this
+    // pins the SHARED wording rather than a second copy of it drifting.
+    getOrderInquiryPoDetail.mockResolvedValue({
+      id: 'po-1',
+      po_number: '202607-S0105',
+      supplier_name: 'DAFUYUAN',
+      status: 'confirmed',
+      expected_date: '2026-09-01',
+      lines: [
+        {
+          sku: 'RESOLVED',
+          product_name: 'Resolved',
+          qty_ordered: '1',
+          qty_received: '0',
+          remaining: '1',
+          location: 'BRW-BB',
+          book_so_number: 'SO391853',
+          book_so_unresolved: false,
+        },
+        {
+          sku: 'UNRESOLVED',
+          product_name: 'Unresolved',
+          qty_ordered: '1',
+          qty_received: '0',
+          remaining: '1',
+          location: 'BRW-BB',
+          book_so_number: null,
+          book_so_unresolved: true,
+        },
+        {
+          sku: 'UNLINKED',
+          product_name: 'Unlinked',
+          qty_ordered: '1',
+          qty_received: '0',
+          remaining: '1',
+          location: 'BRW-BB',
+          book_so_number: null,
+          book_so_unresolved: false,
+        },
+      ],
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog kind="po" document="202607-S0105" poId="po-1" open onOpenChange={vi.fn()} />,
+    );
+
+    const resolved = (await screen.findByText('RESOLVED')).closest('tr') as HTMLElement;
+    const unresolved = screen.getByText('UNRESOLVED').closest('tr') as HTMLElement;
+    const unlinked = screen.getByText('UNLINKED').closest('tr') as HTMLElement;
+
+    expect(within(resolved).getByText('SO391853')).toBeInTheDocument();
+    expect(within(unresolved).getByText('Linked, not held')).toBeInTheDocument();
+    expect(within(unlinked).getByText('-')).toBeInTheDocument();
+  });
+});
+
 describe('SPO lightbox body (AC-D19)', () => {
   it('reads the shipment / container when an inbound shipment exists', async () => {
     getOrderInquirySpoDetail.mockResolvedValue({
@@ -330,5 +476,45 @@ describe('SPO lightbox body (AC-D19)', () => {
     fireEvent.change(search, { target: { value: 'BRW-IB' } });
     expect(screen.getByText('SRTWCY7405-PJ')).toBeInTheDocument();
     expect(screen.queryByText('ZZT-1')).not.toBeInTheDocument();
+  });
+
+  it('AC-A13/AC-A14: the SPO grid names each line\'s source PO, and a muted dash when it has none', async () => {
+    // Owner's 9 Sep feedback, surface 2: the document lightbox is the other place a
+    // buyer meets an SPO, so it carries the same fact the backing-documents dialog does.
+    getOrderInquirySpoDetail.mockResolvedValue({
+      spo_number: 'SPO-2026/09-0036',
+      supplier_name: 'CHAOSHENG',
+      eta: '2026-09-15',
+      lines: [
+        {
+          sku: 'SRTWCX8605-S-RL-PJ',
+          product_name: 'Wall hung WC 8605',
+          allocated: '52',
+          received: '0',
+          remaining: '52',
+          location: 'BRW-IB',
+          source_po_number: '202606-S0110',
+        },
+        {
+          sku: 'ZZT-0002',
+          product_name: null,
+          allocated: '10',
+          received: '0',
+          remaining: '10',
+          location: 'BRW',
+          source_po_number: null,
+        },
+      ],
+      allocations: [],
+    });
+    renderNode(
+      <OrderInquiryDocumentDialog kind="spo" document="SPO-2026/09-0036" open onOpenChange={vi.fn()} />,
+    );
+
+    expect(await screen.findByText('202606-S0110')).toBeInTheDocument();
+    // The sourceless line reads a muted dash, never an empty cell or a guess.
+    const rows = document.querySelectorAll('tbody tr');
+    expect(rows).toHaveLength(2);
+    expect(within(rows[1] as HTMLElement).getByText('-')).toBeInTheDocument();
   });
 });

@@ -423,6 +423,26 @@ class PurchaseOrderLine(BaseModel):
     line_status: str = "open"
     #: When this line's goods are due. Per line, for the same reason as the location.
     expected_date: Optional[str] = None
+    #: The AutoCount book's own SO linkage for this line (Slice A), read off the line's own
+    #: `from_so_line_ref` column and resolved to a number through
+    #: `order_link_service.book_so_numbers_by_ref`. ONE sales order, because the column is
+    #: one value: the book records a purchase line as having been raised for a single
+    #: sales-order line. Distinct from the allocations panel, which answers who RESERVED
+    #: the line through our own order-inquiry flow.
+    #:
+    #: `None` when the book named a sales order this CRM does not hold, in which case
+    #: `book_so_unresolved` is True - see below. The raw ref is NEVER serialized: it is a
+    #: machine key (`AED_SORENTO:<DocKey>:<DtlKey>`), and no machine identifier reaches the
+    #: UI, the same reason `from_po_line_ref` is not printed either.
+    book_so_number: Optional[str] = None
+    #: THREE wire values, not two (review of PR #764, F2). `False` - a ref is present and
+    #: resolved, or there is no ref at all. `True` - a ref is present and the CRM does not
+    #: hold the sales order it names ("linked, not held"). `None` - this response did NOT
+    #: resolve the linkage at all: the PO list route passes
+    #: `order_link_service.BOOK_SO_NOT_RESOLVED` because no list consumer reads the field
+    #: and resolving it per page would be a full `sales_orders` scan per search keystroke.
+    #: The detail/update routes (`get_one`, `update`) always resolve and never emit `None`.
+    book_so_unresolved: Optional[bool] = None
 
 
 class PurchaseOrderSpoLanding(BaseModel):

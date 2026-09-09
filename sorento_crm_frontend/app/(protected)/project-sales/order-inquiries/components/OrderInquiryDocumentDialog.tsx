@@ -27,6 +27,7 @@ import type {
   OrderInquiryPoDetailLine,
   OrderInquirySpoDetailLine,
 } from '../../_shared/types/orderInquiry.types';
+import { BookSoCell, bookSoSortValue } from '@/app/(protected)/scm/components/BookSoCell';
 
 /**
  * ONE document, read-only, in a real dialog (R9; the captain, 27 Aug: "the popup on the
@@ -296,6 +297,18 @@ const PO_LINE_COLUMNS: ColumnDef<OrderInquiryPoDetailLine>[] = [
     size: 140,
     meta: { headerTitle: 'Location' },
   },
+  {
+    id: 'book_so',
+    // The AutoCount book's own linkage (`PLAN-scm-book-linkage-on-document-lines.md`),
+    // read off the line's own `from_so_line_ref`. The SAME fact and the SAME component
+    // `PurchaseOrderDetail.tsx`'s own S/O column uses, so one fact has one presentation
+    // on both screens.
+    accessorFn: bookSoSortValue,
+    header: ({ column }) => <DataGridColumnHeader title="S/O" column={column} />,
+    cell: ({ row }) => <BookSoCell line={row.original} />,
+    size: 150,
+    meta: { headerTitle: 'S/O' },
+  },
 ];
 
 const SPO_LINE_COLUMNS: ColumnDef<OrderInquirySpoDetailLine>[] = [
@@ -355,6 +368,22 @@ const SPO_LINE_COLUMNS: ColumnDef<OrderInquirySpoDetailLine>[] = [
     cell: ({ row }) => <LocationCellContent location={row.original.location} />,
     size: 140,
     meta: { headerTitle: 'Location' },
+  },
+  {
+    // Owner's 9 Sep feedback: "if we link by SPO, where do we see the PO number of
+    // this SPO?" - the document lightbox is the other surface a buyer meets an SPO
+    // on, so it gets the same fact the backing-documents dialog does. Plain text,
+    // never a link yet - a later slice decides where it goes.
+    id: 'source_po_number',
+    accessorFn: (line) => line.source_po_number ?? '',
+    header: ({ column }) => <DataGridColumnHeader title="Source PO" column={column} />,
+    cell: ({ row }) => (
+      <span className="block truncate" title={row.original.source_po_number ?? undefined}>
+        {row.original.source_po_number || <span className="text-muted-foreground">-</span>}
+      </span>
+    ),
+    size: 140,
+    meta: { headerTitle: 'Source PO' },
   },
 ];
 
