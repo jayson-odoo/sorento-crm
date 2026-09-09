@@ -9,10 +9,11 @@ set (`import_alias_service.canonical_fields`), never a hand-typed list that drif
 """
 from __future__ import annotations
 
+import uuid as _uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -24,15 +25,44 @@ from app.services.import_alias_service import canonical_fields
 
 router = APIRouter()
 
+#: How each document type reads on screen - the 409 above is shown to an operator, and
+#: "packing_list" is our column name, not their word for the document.
+_DOC_TYPE_LABELS = {
+    "proforma_invoice": "proforma invoices",
+    "packing_list": "packing lists",
+    "outstanding_so": "outstanding sales orders",
+}
+
 _VIEW = require_permission("system.import_field_aliases.view")
 _EDIT = require_permission("system.import_field_aliases.edit")
 
 
 class ImportFieldAliasCreate(BaseModel):
-    doc_type: str
-    field: str
-    alias: str
-    locale: Optional[str] = None
+    # Bounded to the columns' own widths (`import_field_alias`): a body longer than the
+    # column is a 422 on the way in rather than a DataError out of the driver.
+    doc_type: str = Field(..., min_length=1, max_length=64)
+    field: str = Field(..., min_length=1, max_length=64)
+    alias: str = Field(..., min_length=1, max_length=255)
+    locale: Optional[str] = Field(None, max_length=8)
+
+
+def _assert_known_field(doc_type: str, field: str) -> None:
+    """A mapping only means something for a field one of the readers actually asks for
+    (AC-E1): the resolver looks up `canonical_fields(doc_type)` and nothing else, so a row
+    naming a document type with no reader, or a field that reader never reads, is a row
+    that can never resolve anything - and it would sit on the settings page looking as if
+    it had."""
+    known = canonical_fields(doc_type)
+    if not known:
+        raise AppException(
+            422, f"'{doc_type}' is not a document type this system reads.", detail="doc_type"
+        )
+    if field not in known:
+        raise AppException(
+            422,
+            f"'{field}' is not a field the {doc_type} reader asks for.",
+            detail="field",
+        )
 
 
 def _serialize_alias(row: ImportFieldAlias) -> dict:
@@ -88,6 +118,7 @@ def create_import_field_alias(
     db: Session = Depends(get_db),
 ):
     """One new header spelling for a field. 409 on a triple already on file."""
+    _assert_known_field(payload.doc_type, payload.field)
     existing = (
         db.query(ImportFieldAlias)
         .filter(
@@ -100,7 +131,8 @@ def create_import_field_alias(
     if existing is not None:
         raise AppException(
             status.HTTP_409_CONFLICT,
-            f"'{payload.alias}' is already mapped to {payload.field} for {payload.doc_type}.",
+            f"Header {payload.alias} is already mapped to "
+            f"{field_label(payload.field)} for {_DOC_TYPE_LABELS.get(payload.doc_type, payload.doc_type)}.",
             code="duplicate_alias",
         )
     row = ImportFieldAlias(
@@ -133,6 +165,12 @@ def delete_import_field_alias(
     db: Session = Depends(get_db),
 ):
     """Forget this mapping - the header goes back to reading as unmapped."""
+    # A path segment that is not a uuid is a 404, not the DataError the uuid column raises
+    # when a bad link is followed.
+    try:
+        _uuid.UUID(str(alias_id))
+    except (ValueError, AttributeError, TypeError):
+        raise AppException(404, "That mapping does not exist.", detail="alias_id") from None
     row = db.query(ImportFieldAlias).filter(ImportFieldAlias.id == alias_id).first()
     if row is None:
         raise AppException(404, "That mapping does not exist.", detail="alias_id")

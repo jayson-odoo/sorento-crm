@@ -1,9 +1,15 @@
 """Permissions for the import column mappings page (S5, AC-E1).
 
-`system.import_field_aliases.view`/`.edit`, swept onto every role that already holds the
-sibling `system.numbering_rules.view`/`.edit` - both pages are the same kind of admin
-surface (a rule that shapes how an importer reads a file), so a role trusted with one is
-trusted with the other.
+`.view` is swept onto every role that already holds the sibling
+`system.numbering_rules.view` - both pages are the same kind of admin surface (a rule that
+shapes how an importer reads a file), and seeing which header means which field is
+harmless.
+
+`.edit` is NOT swept (security review, fix round 1): a mapping row changes how EVERY later
+import of that document type is read, for every company, and a wrong one silently mis-reads
+a column on every file from then on. That is an administrator's decision, so it goes to
+`admin` and `superadmin` only and is widened by hand from the roles page if somebody else
+needs it.
 
 Revision ID: 505_import_field_aliases_perms
 Revises: 504_ship_line_prod_sup_nonuniq
@@ -32,8 +38,9 @@ _PERMISSIONS = [
 #: (new slug, sibling slug already granted to the roles that should get it too).
 _SWEEP = [
     ("system.import_field_aliases.view", "system.numbering_rules.view"),
-    ("system.import_field_aliases.edit", "system.numbering_rules.edit"),
 ]
+#: Roles that get `.edit` - named, not swept. See the module docstring.
+_EDIT_ROLE_SLUGS = ("admin", "superadmin")
 _EXCLUDED_ROLE_PREFIX = "integration\\_%"
 
 
@@ -69,12 +76,29 @@ def _sweep(bind, target: str, source: str) -> None:
     )
 
 
+def _grant_to_roles(bind, slug: str, role_slugs: tuple[str, ...]) -> None:
+    bind.execute(
+        sa.text(
+            """
+            INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at)
+            SELECT gen_random_uuid()::text, r.id, p.id, now()
+            FROM user_roles r
+            CROSS JOIN user_permissions p
+            WHERE p.slug = :slug AND r.slug = ANY(:roles)
+            ON CONFLICT (role_id, permission_id) DO NOTHING
+            """
+        ),
+        {"slug": slug, "roles": list(role_slugs)},
+    )
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     for slug, name, description in _PERMISSIONS:
         _insert_permission(bind, slug, name, description)
     for target, source in _SWEEP:
         _sweep(bind, target, source)
+    _grant_to_roles(bind, "system.import_field_aliases.edit", _EDIT_ROLE_SLUGS)
 
 
 def downgrade() -> None:

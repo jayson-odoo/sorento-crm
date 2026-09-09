@@ -96,7 +96,9 @@ def test_list_groups_aliases_by_field(scm_app):
 def test_create_then_409_on_the_same_triple(scm_app):
     client, db = _client(scm_app, view=True, edit=True)
     _clear(db, "proforma_invoice")
-    field = f"{MARKER}_field_2"
+    # A CANONICAL field (security fix round 1, item 14): the create route refuses a field
+    # the reader never asks for, since an alias pointing at one can never resolve anything.
+    field = "item_code"
     payload = {"doc_type": "proforma_invoice", "field": field, "alias": f"{MARKER}_alias"}
 
     r1 = client.post(URL, json=payload)
