@@ -53,6 +53,14 @@ vi.mock('@/app/(protected)/scm/services/fulfilmentService', () => ({
   getFulfilmentSuppliers: (...a: unknown[]) => getFulfilmentSuppliers(...(a as [])),
 }));
 
+const createImportFieldAlias = vi.fn();
+const listImportFieldAliasFields = vi.fn();
+
+vi.mock('@/app/(protected)/system-management/import-field-aliases/services/importFieldAliasService', () => ({
+  createImportFieldAlias: (...a: unknown[]) => createImportFieldAlias(...a),
+  listImportFieldAliasFields: (...a: unknown[]) => listImportFieldAliasFields(...a),
+}));
+
 vi.mock('@/app/(protected)/scm/services/proformaInvoiceService', () => ({
   listProformaInvoices: vi.fn(async () => ({ data: [], total: 0 })),
 }));
@@ -184,6 +192,8 @@ beforeEach(() => {
   previewSupplierDocuments.mockReset().mockResolvedValue(PREVIEW);
   applySupplierDocuments.mockReset();
   getFulfilmentSuppliers.mockReset().mockResolvedValue([]);
+  createImportFieldAlias.mockReset();
+  listImportFieldAliasFields.mockReset().mockResolvedValue([]);
 });
 
 describe('SupplierDocumentsUploadDialog - the dialog now reads "Upload supplier documents"', () => {
@@ -501,5 +511,110 @@ describe('SupplierDocumentsUploadDialog - the currency, asked for only when noth
     fireEvent.change(screen.getByLabelText('Currency'), { target: { value: 'cnyx' } });
 
     expect((screen.getByLabelText('Currency') as HTMLInputElement).value).toBe('CNY');
+  });
+});
+
+describe('SupplierDocumentsUploadDialog - server-resolved Attaches-to per block (AC-B13, fix round 1 items 4/18)', () => {
+  it('prefills Attaches-to from the server resolution and enables Confirm (how = date)', async () => {
+    previewSupplierDocuments.mockResolvedValue({
+      files: [
+        {
+          ...PL_FILE_PREVIEW,
+          blocks: [PL_FILE_PREVIEW.blocks[0]],
+          packing_attach: [
+            {
+              block_index: 0,
+              container_no: null,
+              // The server's own answer (`resolve_attach`), never guessed by this dialog -
+              // `how: 'date'` is the same-date fallback order, the fourth of the four.
+              attach_to: { id: 'pi-1', pi_number: 'PI-2609-001', supplier_ref: null, how: 'date' },
+              refusal: null,
+            },
+          ],
+        },
+      ],
+      price_matches: [],
+    });
+    openDialog();
+    pickFiles([xlsx('packing-list.xls')]);
+    fireEvent.click(testButton());
+
+    // Shown WITHOUT the operator picking anything - the SearchableSelect's own
+    // trigger text is the server's `attach_to` label.
+    expect(await screen.findByText('PI-2609-001')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Confirm/ })).toBeEnabled();
+  });
+
+  it('shows the blocks own refusal inline and disables Confirm (AC-B16)', async () => {
+    previewSupplierDocuments.mockResolvedValue({
+      files: [
+        {
+          ...PL_FILE_PREVIEW,
+          blocks: [PL_FILE_PREVIEW.blocks[0]],
+          packing_attach: [
+            {
+              block_index: 0,
+              container_no: null,
+              attach_to: null,
+              refusal: {
+                code: 'proforma_invoice_required',
+                message:
+                  'No proforma invoice on file for Kailu matches this packing list dated 2026-07-30.',
+              },
+            },
+          ],
+        },
+      ],
+      price_matches: [],
+    });
+    openDialog();
+    pickFiles([xlsx('packing-list.xls')]);
+    fireEvent.click(testButton());
+
+    expect(
+      await screen.findByText(/No proforma invoice on file for Kailu/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Confirm/ })).toBeDisabled();
+  });
+});
+
+describe('SupplierDocumentsUploadDialog - "Map to..." re-runs Test for that file automatically (AC-E4, ruling 20)', () => {
+  it('writes the alias, then re-previews the SAME file (not an optimistic hide of the chip)', async () => {
+    const withUnmapped = {
+      files: [{ ...PI_FILE_PREVIEW, name: 'jinbaichuan.xlsx', unmapped_headers: ['尺寸（mm）'] }],
+      price_matches: [],
+    };
+    const afterMapping = {
+      files: [{ ...PI_FILE_PREVIEW, name: 'jinbaichuan.xlsx', unmapped_headers: [] }],
+      price_matches: [],
+    };
+    previewSupplierDocuments.mockReset();
+    previewSupplierDocuments.mockResolvedValueOnce(withUnmapped).mockResolvedValueOnce(afterMapping);
+    listImportFieldAliasFields.mockResolvedValue([{ field: 'carton_dims', label: 'Carton dims' }]);
+    createImportFieldAlias.mockResolvedValue({});
+
+    openDialog();
+    pickFiles([xlsx('jinbaichuan.xlsx')]);
+    fireEvent.click(testButton());
+
+    expect(await screen.findByText('尺寸（mm）')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Map to...' }));
+
+    // The field list is server-sourced (E1), not hand-typed.
+    expect(await screen.findByText('Choose a field')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('combobox'));
+    fireEvent.click(await screen.findByRole('option', { name: 'Carton dims' }));
+
+    await waitFor(() =>
+      expect(createImportFieldAlias).toHaveBeenCalledWith({
+        doc_type: 'packing_list',
+        field: 'carton_dims',
+        alias: '尺寸（mm）',
+      }),
+    );
+    // The SECOND preview call, for the SAME file - the re-run this AC is about, not just
+    // the mapping write.
+    await waitFor(() => expect(previewSupplierDocuments).toHaveBeenCalledTimes(2));
+    expect(previewSupplierDocuments.mock.calls[1][0][0].name).toBe('jinbaichuan.xlsx');
   });
 });
